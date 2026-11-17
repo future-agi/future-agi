@@ -2,10 +2,13 @@ import gzip
 import json
 import logging
 import uuid
-from datetime import datetime, timezone
-from typing import Any, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 from integrations.services.base import BaseIntegrationService, register_service
+from integrations.services.endpoints import endpoint_override
+from integrations.services.export_failures import validation_failure
+from model_hub.utils.model_endpoints import signs_in_only_at_googles_own_addresses
 
 logger = logging.getLogger(__name__)
 
@@ -13,6 +16,51 @@ logger = logging.getLogger(__name__)
 S3 = "s3"
 AZURE_BLOB = "azure_blob"
 GCS = "gcs"
+
+# A Google service account key is accepted only when it names Google's own
+# sign-in addresses (signs_in_only_at_googles_own_addresses, the one rule for
+# every place that takes a customer's Google key). The connection check
+# answers any other key with this sentence, and an upload or publish that uses
+# the stored key stops with it.
+GOOGLE_KEY_NOT_ACCEPTED = (
+    "Service account JSON is accepted only when it names Google's own sign-in "
+    "addresses. Use the key file exactly as Google Cloud created it."
+)
+
+
+class GoogleKeyNotAccepted(ValueError):
+    """A Google service account key that names a sign-in address other than
+    Google's own. ``str()`` is GOOGLE_KEY_NOT_ACCEPTED."""
+
+    def __init__(self):
+        super().__init__(GOOGLE_KEY_NOT_ACCEPTED)
+
+
+def _s3_client(credentials: dict):
+    """An S3 client for the connection: Amazon S3 itself, or the override.
+
+    With INTEGRATIONS_S3_ENDPOINT_URL set (an S3-compatible endpoint in front
+    of the bucket), requests go there with path-style addressing, which such
+    endpoints serve; unset, boto3 addresses Amazon S3 in the bucket's region.
+    """
+    import boto3
+
+    kwargs = {}
+    endpoint = endpoint_override("INTEGRATIONS_S3_ENDPOINT_URL")
+    if endpoint:
+        from botocore.config import Config
+
+        kwargs = {
+            "endpoint_url": endpoint,
+            "config": Config(s3={"addressing_style": "path"}),
+        }
+    return boto3.client(
+        "s3",
+        region_name=credentials.get("region") or "us-east-1",
+        aws_access_key_id=credentials.get("access_key_id"),
+        aws_secret_access_key=credentials.get("secret_access_key"),
+        **kwargs,
+    )
 
 
 class CloudStorageService(BaseIntegrationService):
@@ -46,7 +94,7 @@ class CloudStorageService(BaseIntegrationService):
         self,
         host_url: str,
         credentials: dict,
-        ca_certificate: Optional[str] = None,
+        ca_certificate: str | None = None,
     ) -> dict:
         sub_platform = credentials.get("sub_platform", "")
         if not sub_platform:
@@ -68,12 +116,10 @@ class CloudStorageService(BaseIntegrationService):
                     "error": f"Unknown storage type: {sub_platform}",
                 }
         except Exception as e:
-            logger.exception("Error validating cloud storage credentials")
-            return {"valid": False, "error": f"Validation failed: {str(e)}"}
+            return validation_failure("cloud_storage", e, logger)
 
     def _validate_s3(self, credentials: dict) -> dict:
         bucket = credentials.get("bucket", "")
-        region = credentials.get("region", "us-east-1")
         access_key = credentials.get("access_key_id", "")
         secret_key = credentials.get("secret_access_key", "")
 
@@ -86,15 +132,9 @@ class CloudStorageService(BaseIntegrationService):
             }
 
         try:
-            import boto3
             from botocore.exceptions import ClientError
 
-            client = boto3.client(
-                "s3",
-                region_name=region,
-                aws_access_key_id=access_key,
-                aws_secret_access_key=secret_key,
-            )
+            client = _s3_client(credentials)
 
             # Test write → read → delete
             test_key = (
@@ -108,9 +148,7 @@ class CloudStorageService(BaseIntegrationService):
             return {"valid": True, "projects": [], "total_traces": 0}
 
         except ClientError as e:
-            code = e.response["Error"]["Code"]
-            msg = e.response["Error"]["Message"]
-            return {"valid": False, "error": f"S3 error ({code}): {msg}"}
+            return validation_failure("cloud_storage", e, logger)
         except ImportError:
             return {"valid": False, "error": "boto3 is not installed on the server."}
 
@@ -145,7 +183,7 @@ class CloudStorageService(BaseIntegrationService):
                 "error": "azure-storage-blob is not installed on the server.",
             }
         except Exception as e:
-            return {"valid": False, "error": f"Azure error: {str(e)}"}
+            return validation_failure("cloud_storage", e, logger)
 
     def _validate_gcs(self, credentials: dict) -> dict:
         bucket_name = credentials.get("bucket", "")
@@ -161,6 +199,8 @@ class CloudStorageService(BaseIntegrationService):
             from google.oauth2 import service_account
 
             info = json.loads(sa_json)
+            if not signs_in_only_at_googles_own_addresses(info):
+                return {"valid": False, "error": GOOGLE_KEY_NOT_ACCEPTED}
             creds = service_account.Credentials.from_service_account_info(info)
             client = storage.Client(credentials=creds)
             bucket = client.bucket(bucket_name)
@@ -183,17 +223,17 @@ class CloudStorageService(BaseIntegrationService):
         except json.JSONDecodeError:
             return {"valid": False, "error": "Invalid service account JSON."}
         except Exception as e:
-            return {"valid": False, "error": f"GCS error: {str(e)}"}
+            return validation_failure("cloud_storage", e, logger)
 
     def fetch_traces(
         self,
         host_url: str,
         credentials: dict,
-        from_timestamp: Optional[str] = None,
-        to_timestamp: Optional[str] = None,
+        from_timestamp: str | None = None,
+        to_timestamp: str | None = None,
         page: int = 1,
         limit: int = 100,
-        ca_certificate: Optional[str] = None,
+        ca_certificate: str | None = None,
     ) -> dict:
         """Not used — Cloud storage is an export target."""
         return {"traces": [], "has_more": False, "next_page": 1, "total_items": 0}
@@ -203,7 +243,7 @@ class CloudStorageService(BaseIntegrationService):
         host_url: str,
         credentials: dict,
         trace_id: str,
-        ca_certificate: Optional[str] = None,
+        ca_certificate: str | None = None,
     ) -> dict[str, Any]:
         """Not used — Cloud storage is an export target."""
         return {}
@@ -229,7 +269,7 @@ class CloudStorageService(BaseIntegrationService):
         config = config or {}
         sub_platform = credentials.get("sub_platform", "")
         prefix = credentials.get("prefix", "").strip("/")
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         partition = f"{prefix}/logs/{now.strftime('%Y/%m/%d')}/hour={now.strftime('%H')}".lstrip(
             "/"
         )
@@ -250,14 +290,7 @@ class CloudStorageService(BaseIntegrationService):
         return {"sent": len(logs), "object_key": object_key}
 
     def _upload_s3(self, credentials: dict, key: str, data: bytes):
-        import boto3
-
-        client = boto3.client(
-            "s3",
-            region_name=credentials.get("region", "us-east-1"),
-            aws_access_key_id=credentials["access_key_id"],
-            aws_secret_access_key=credentials["secret_access_key"],
-        )
+        client = _s3_client(credentials)
         client.put_object(
             Bucket=credentials["bucket"],
             Key=key,
@@ -280,6 +313,8 @@ class CloudStorageService(BaseIntegrationService):
         from google.oauth2 import service_account
 
         info = json.loads(credentials["service_account_json"])
+        if not signs_in_only_at_googles_own_addresses(info):
+            raise GoogleKeyNotAccepted()
         creds = service_account.Credentials.from_service_account_info(info)
         client = storage.Client(credentials=creds)
         bucket = client.bucket(credentials["bucket"])

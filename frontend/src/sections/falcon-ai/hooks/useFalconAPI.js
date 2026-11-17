@@ -17,14 +17,18 @@ export async function fetchConversations({
 }
 
 export async function createConversation(title, contextPage, options = {}) {
-  const { data } = await axiosInstance.post(endpoints.falconAI.conversations, {
-    title,
-    context_page: contextPage,
-    // `hidden: true` flags an internal conversation (e.g. the Error Feed "Fix"
-    // tab's RCA runs) so it stays out of Falcon's user-facing chat-history list.
-    // `hidden` is a contracted ConversationCreateRequest field (boolean).
-    ...(options.hidden ? { hidden: true } : {}),
-  });
+  const { data } = await axiosInstance.post(
+    endpoints.falconAI.conversations,
+    {
+      title,
+      context_page: contextPage,
+      // `hidden: true` flags an internal conversation (e.g. the Error Feed "Fix"
+      // tab's RCA runs) so it stays out of Falcon's user-facing chat-history list.
+      // `hidden` is a contracted ConversationCreateRequest field (boolean).
+      ...(options.hidden ? { hidden: true } : {}),
+    },
+    { falconSubmissionId: options.submissionId },
+  );
   return data;
 }
 

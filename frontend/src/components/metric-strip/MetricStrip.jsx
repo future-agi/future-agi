@@ -1,78 +1,136 @@
 import React from "react";
 import PropTypes from "prop-types";
-import { Box, ButtonBase, Tooltip, Typography } from "@mui/material";
-
+import { Box, Tooltip, Typography } from "@mui/material";
 import { STATUS_ROLES } from "src/utils/runStatus";
+import { dsRadius, dsTypography } from "src/theme/ds-tokens";
 
-// Future AGI Design System · Metric strip. A page's few headline numbers in
-// one bordered strip divided by hairlines — not a row of separate cards.
-// Label in caption/fg.tertiary, value 20px/600 in fg.default with tabular
-// figures, optional change. Colour goes only on the change or a verdict hint
-// (role), never on the number itself.
-
-const DELTA = { better: "status.success.fg", worse: "status.danger.fg", flat: "text.tertiary" };
+// Adapted from Vel 05a5f9f77a. Actual result measures only, never navigation
+// counts or object facts. Missing values are a dash, not a fabricated zero.
+const DELTA = {
+  better: "status.success.fg",
+  worse: "status.danger.fg",
+  flat: "text.tertiary",
+};
 
 export default function MetricStrip({ items, sx }) {
+  if (!items.length) return null;
   return (
     <Box
+      component="dl"
       sx={{
         display: "grid",
-        gridTemplateColumns: `repeat(${items.length}, minmax(0, 1fr))`,
+        gridTemplateColumns: {
+          xs: "1fr",
+          sm: `repeat(${items.length}, minmax(0, 1fr))`,
+        },
+        m: 0,
         border: "1px solid",
         borderColor: "divider",
-        borderRadius: "8px",
+        borderRadius: `${dsRadius.lg}px`,
         ...sx,
       }}
     >
-      {items.map((m, i) => (
+      {items.map((item, index) => (
         <Box
-          key={m.key || (typeof m.label === "string" ? m.label : i)}
-          {...(m.onClick && { component: ButtonBase, onClick: m.onClick })}
+          key={
+            item.key || (typeof item.label === "string" ? item.label : index)
+          }
+          role={item.onClick ? "button" : undefined}
+          tabIndex={item.onClick ? 0 : undefined}
+          onClick={item.onClick}
+          onKeyDown={
+            item.onClick
+              ? (event) => {
+                  if (
+                    event.target === event.currentTarget &&
+                    ["Enter", " "].includes(event.key)
+                  ) {
+                    event.preventDefault();
+                    item.onClick(event);
+                  }
+                }
+              : undefined
+          }
           sx={{
+            ...(item.onClick && {
+              cursor: "pointer",
+              "&:hover": { bgcolor: "action.hover" },
+              "&:focus-visible": {
+                outline: "2px solid",
+                outlineColor: "primary.main",
+                outlineOffset: -2,
+              },
+            }),
             px: 2,
             py: 1.5,
-            borderLeft: i ? "1px solid" : 0,
-            borderColor: "divider",
             minWidth: 0,
-            display: "block",
-            textAlign: "left",
-            ...(m.onClick && { "&:hover": { bgcolor: "action.hover" } }),
+            borderColor: "divider",
+            "&:not(:first-of-type)": {
+              borderLeft: { xs: 0, sm: "1px solid" },
+              borderTop: { xs: "1px solid", sm: 0 },
+              borderColor: "divider",
+            },
           }}
         >
-          <Tooltip title={m.tooltip || ""} disableHoverListener={!m.tooltip} placement="top-start" arrow>
-            <Typography noWrap sx={{ fontSize: 12, lineHeight: "16px", color: "text.tertiary" }}>
-              {m.label}
+          <Tooltip
+            title={item.tooltip || ""}
+            disableHoverListener={!item.tooltip}
+            placement="top-start"
+            arrow
+          >
+            <Typography
+              component="dt"
+              sx={{
+                ...dsTypography.caption,
+                fontSize: 12,
+                lineHeight: "16px",
+                color: "text.tertiary",
+              }}
+            >
+              {item.label}
             </Typography>
           </Tooltip>
-          <Box sx={{ display: "flex", alignItems: "baseline", gap: 0.75, mt: 0.5 }}>
+          <Typography
+            component="dd"
+            sx={{
+              ...dsTypography.metric_lg,
+              fontSize: 20,
+              lineHeight: "28px",
+              fontWeight: 600,
+              m: 0,
+              mt: 0.5,
+              color: "text.primary",
+              fontVariantNumeric: "tabular-nums",
+              overflowWrap: "anywhere",
+            }}
+          >
+            {item.value ?? "—"}
+          </Typography>
+          {item.change != null && (
             <Typography
               sx={{
-                fontSize: 20,
-                lineHeight: "28px",
-                fontWeight: 600,
-                color: "text.primary",
-                fontVariantNumeric: "tabular-nums",
-              }}
-            >
-              {m.value}
-            </Typography>
-            {m.change && (
-              <Typography
-                sx={{ fontSize: 12, fontWeight: 500, color: DELTA[m.trend] || "text.tertiary" }}
-              >
-                {m.change}
-              </Typography>
-            )}
-          </Box>
-          {m.hint && (
-            <Typography
-              noWrap
-              sx={{
+                ...dsTypography.caption,
                 fontSize: 12,
-                color: m.hintRole ? `status.${m.hintRole}.fg` : "text.tertiary",
+                fontWeight: 500,
+                color: DELTA[item.trend] || "text.tertiary",
               }}
             >
-              {m.hint}
+              {item.change}
+              {item.trend ? ` (${item.trend})` : ""}
+            </Typography>
+          )}
+          {item.hint && (
+            <Typography
+              sx={{
+                ...dsTypography.caption,
+                fontSize: 12,
+                lineHeight: "16px",
+                color: item.hintRole
+                  ? `status.${item.hintRole}.fg`
+                  : "text.tertiary",
+              }}
+            >
+              {item.hint}
             </Typography>
           )}
         </Box>
@@ -80,20 +138,18 @@ export default function MetricStrip({ items, sx }) {
     </Box>
   );
 }
-
 MetricStrip.propTypes = {
   items: PropTypes.arrayOf(
     PropTypes.shape({
+      key: PropTypes.string,
       label: PropTypes.node.isRequired,
       value: PropTypes.node,
       change: PropTypes.node,
       trend: PropTypes.oneOf(["better", "worse", "flat"]),
       hint: PropTypes.node,
-      // Colours a verdict hint (e.g. "Slow") by status role.
       hintRole: PropTypes.oneOf(STATUS_ROLES),
-      tooltip: PropTypes.node,
       onClick: PropTypes.func,
-      key: PropTypes.string,
+      tooltip: PropTypes.node,
     }),
   ).isRequired,
   sx: PropTypes.object,

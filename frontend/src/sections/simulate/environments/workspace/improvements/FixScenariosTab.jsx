@@ -1,7 +1,7 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
 import { useLocation } from "react-router-dom";
-import { Box, Link, Stack, Typography } from "@mui/material";
+import { Box, Button, Link, Stack, Typography } from "@mui/material";
 
 import { RouterLink } from "src/routes/components";
 import { paths } from "src/routes/paths";
@@ -9,7 +9,7 @@ import { useFixScenarioRows } from "src/api/simulate-environments/fixRuns";
 
 import { BUILD_TONES } from "../../buildEnvironment/buildTones";
 
-import { winnerOf } from "./fixRunView";
+import { reviewTrialOf } from "./fixRunView";
 import { OUTCOME_ORDER, scenarioOutcomes } from "./scenarioOutcomes";
 
 const OUTCOME = {
@@ -30,25 +30,54 @@ const splitOf = (request, key) => {
 // what the chosen trial did to each scenario against today's version.
 export default function FixScenariosTab({ fix, candidateId }) {
   const location = useLocation();
-  const picked = candidateId || winnerOf(fix)?.id;
-  const { before, after, run, isLoading } = useFixScenarioRows(fix, picked);
+  // The trial "Review Trial N" or the trial picker asked for, else the winner,
+  // else the trial that did best on its targets.
+  const picked = candidateId || reviewTrialOf(fix)?.id;
+  const candidate = (fix.candidates || []).find((c) => c.id === picked);
+  const trial =
+    candidate?.attempt != null ? `Trial ${candidate.attempt}` : "This trial";
+  const {
+    before,
+    after,
+    runByScenario,
+    isLoading,
+    isError,
+    isFetching,
+    refetch,
+  } = useFixScenarioRows(fix, picked);
   const [only, setOnly] = useState(null);
   const rows = scenarioOutcomes(before, after);
   const counts = Object.fromEntries(
     OUTCOME_ORDER.map((k) => [k, rows.filter((r) => r.outcome === k).length]),
   );
   const shown = rows.filter((r) => !only || r.outcome === only);
-  const runHref = run
-    ? paths.dashboard.simulate.environments.execution(
-        fix.environment_id,
-        run.run_id,
-        run.test_execution_id,
-      )
-    : null;
   if (isLoading) {
     return (
       <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
         Loading the results…
+      </Typography>
+    );
+  }
+  // A run that failed to load leaves its scenarios out, so nothing is counted
+  // until every run is read: partial counts would read as measured results.
+  if (isError) {
+    return (
+      <Stack direction="row" alignItems="center" spacing={1}>
+        <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
+          {`Could not load ${trial}'s results.`}
+        </Typography>
+        <Button size="small" disabled={isFetching} onClick={() => refetch()}>
+          Try again
+        </Button>
+      </Stack>
+    );
+  }
+  if (!rows.length) {
+    return (
+      <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
+        {candidate?.check_runs?.length
+          ? `${trial}'s check runs have no scenario results to compare.`
+          : `${trial} has no check results: it stopped before its checks ran.`}
       </Typography>
     );
   }
@@ -115,56 +144,66 @@ export default function FixScenariosTab({ fix, candidateId }) {
           <Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />
         }
       >
-        {shown.map((r) => (
-          <Stack
-            key={r.key}
-            data-testid={`scenario-${r.key}`}
-            direction="row"
-            alignItems="center"
-            spacing={1.5}
-            sx={{ px: 2, py: 0.875 }}
-          >
-            <Typography noWrap sx={{ typography: "s2", flex: 1, minWidth: 0 }}>
-              {r.name}
-            </Typography>
-            <Typography
-              sx={{
-                typography: "s3",
-                color: "text.tertiary",
-                width: 70,
-                flexShrink: 0,
-              }}
+        {shown.map((r) => {
+          const run = runByScenario.get(r.key);
+          const runHref = run
+            ? paths.dashboard.simulate.environments.execution(
+                fix.environment_id,
+                run.run_id,
+                run.test_execution_id,
+              )
+            : null;
+          return (
+            <Stack
+              key={r.key}
+              data-testid={`scenario-${r.key}`}
+              direction="row"
+              alignItems="center"
+              spacing={1.5}
+              sx={{ px: 2, py: 0.875 }}
             >
-              {splitOf(fix.request, r.key)}
-            </Typography>
-            <Typography
-              sx={{
-                typography: "s3",
-                fontWeight: 600,
-                width: 84,
-                flexShrink: 0,
-                color:
-                  r.outcome === "fixed"
-                    ? BUILD_TONES.green
-                    : r.outcome === "broke"
-                      ? BUILD_TONES.red
-                      : "text.secondary",
-              }}
-            >
-              {OUTCOME[r.outcome]}
-            </Typography>
-            {runHref && (
-              <Link
-                component={RouterLink}
-                href={runHref}
-                state={{ backTo: location.pathname }}
-                sx={{ typography: "s3", flexShrink: 0 }}
+              <Typography noWrap sx={{ typography: "s2", flex: 1, minWidth: 0 }}>
+                {r.name}
+              </Typography>
+              <Typography
+                sx={{
+                  typography: "s3",
+                  color: "text.tertiary",
+                  width: 70,
+                  flexShrink: 0,
+                }}
               >
-                Open run
-              </Link>
-            )}
-          </Stack>
-        ))}
+                {splitOf(fix.request, r.key)}
+              </Typography>
+              <Typography
+                sx={{
+                  typography: "s3",
+                  fontWeight: 600,
+                  width: 84,
+                  flexShrink: 0,
+                  color:
+                    r.outcome === "fixed"
+                      ? BUILD_TONES.green
+                      : r.outcome === "broke"
+                        ? BUILD_TONES.red
+                        : "text.secondary",
+                }}
+              >
+                {OUTCOME[r.outcome]}
+              </Typography>
+              {runHref && (
+                <Link
+                  component={RouterLink}
+                  href={runHref}
+                  state={{ backTo: location.pathname }}
+                  sx={{ typography: "s3", flexShrink: 0 }}
+                >
+                  Open run
+                </Link>
+              )}
+            </Stack>
+          );
+        })}
       </Stack>
     </Box>
   );

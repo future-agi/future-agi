@@ -30,6 +30,7 @@ from tracer.utils.filter_operators import (
     normalize_span_attribute_filter_type,
     validate_json_map_filter_value,
 )
+from tracer.utils.input_output_search import validate_input_output_search
 
 _MAX_ATTRIBUTE_KEY_UTF8_BYTES = ATTRIBUTE_KEY_MAX_UTF8_BYTES
 _MAX_LEGACY_ASCII_BLOOM_VARIANTS = 256
@@ -1880,6 +1881,48 @@ def _expression_plan(
     )
 
 
+def _input_output_plan(config, *, index: int, scope: str) -> LatestFilterPredicate:
+    try:
+        needle = validate_input_output_search(
+            config.get("filter_type") or config.get("filterType"),
+            config.get("filter_op") or config.get("filterOp"),
+            config.get("filter_value", config.get("filterValue")),
+        )
+    except ValueError as exc:
+        raise UnsupportedFilterShapeError(str(exc)) from exc
+    param = f"input_output_needle_{index}"
+    aliases = (f"latest_input_{index}", f"latest_output_{index}")
+
+    def predicate(columns):
+        return (
+            "("
+            + " OR ".join(
+                build_literal_text_predicate(
+                    column, param, "contains", case_insensitive=True
+                )
+                for column in columns
+            )
+            + ")"
+        )
+
+    raw_predicate = predicate(("input", "output"))
+    return LatestFilterPredicate(
+        # CH25 replay packs these into one physical winner before classification.
+        # Never join the strings: that would admit cross-field matches.
+        aggregates=tuple(
+            f"argMax({column}, _peerdb_version) AS {alias}"
+            for column, alias in zip(("input", "output"), aliases, strict=True)
+        ),
+        predicate=predicate(aliases),
+        seed_predicate=raw_predicate,
+        params={param: needle},
+        scope=scope,
+        raw_witness_predicate=raw_predicate,
+        raw_witness_rank=10,
+        source_metric="input_output",
+    )
+
+
 _NUMERIC_SYSTEM_COLUMNS = {
     "latency_ms",
     "cost",
@@ -1907,6 +1950,10 @@ def _system_metric_plan(
     """
 
     key, config = _parts(item)
+    if key == "input_output":
+        return _input_output_plan(
+            config, index=index, scope="any" if trace_mode else "span"
+        )
     if key in filter_builder_cls._ENDUSER_STRING_COLUMNS:
         raise UnsupportedFilterShapeError(
             "end-user string metric needs residual lookup"
@@ -1976,6 +2023,15 @@ def _system_metric_plan(
             index=index,
             expression=filter_builder_cls.VOICE_SYSTEM_METRIC_STR_EXPRS[key],
             value_type="text",
+            nullable=True,
+            scope="any" if trace_mode else "span",
+        )
+    if key in filter_builder_cls.SPAN_SYSTEM_METRIC_EXPRS:
+        return _expression_plan(
+            item,
+            index=index,
+            expression=filter_builder_cls.SPAN_SYSTEM_METRIC_EXPRS[key],
+            value_type="number",
             nullable=True,
             scope="any" if trace_mode else "span",
         )

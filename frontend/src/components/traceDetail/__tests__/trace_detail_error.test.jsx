@@ -80,6 +80,30 @@ describe("trace detail failure states", () => {
     expect(mocks.refetch).toHaveBeenCalledExactlyOnceWith();
   });
 
+  it("says a trace over the size limits is too large and offers no Retry that would fail again", () => {
+    mocks.ownTrace.mockReturnValue(
+      failedTrace(400, {
+        error: {
+          statusCode: 400,
+          code: "trace_too_large",
+          result: "Server-side size limit text",
+        },
+      }),
+    );
+    renderDrawer();
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent("This trace is too large to open here.");
+    expect(alert).toHaveTextContent(
+      "up to 1,000 spans, 5,000 eval results and 5,000 annotations",
+    );
+    expect(alert).not.toHaveTextContent("Try again, or contact");
+    expect(alert).not.toHaveTextContent("Server-side size limit text");
+    expect(
+      screen.queryByRole("button", { name: "Retry" }),
+    ).not.toBeInTheDocument();
+    expect(mocks.refetch).not.toHaveBeenCalled();
+  });
+
   it.each([
     [401, "Sign in again"],
     [403, "Ask your workspace administrator for access"],

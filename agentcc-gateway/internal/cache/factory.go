@@ -50,16 +50,14 @@ func NewBackend(cfg config.CacheConfig) (Backend, error) {
 		return backend, nil
 
 	case "redis":
+		// Mode single, cluster or sentinel, over TLS when tls is true; a
+		// TLS connection that fails is an error here, never plaintext.
 		r := cfg.Redis
-		addr := r.Address
-		if addr == "" && len(r.Addresses) > 0 {
-			addr = r.Addresses[0]
-		}
-		backend, err := NewRedisBackend(addr, r.Password, r.DB, r.KeyPrefix, r.Compress, r.PoolSize, r.Timeout)
+		backend, err := NewRedisBackendFromConfig(r)
 		if err != nil {
 			return nil, fmt.Errorf("redis cache: %w", err)
 		}
-		slog.Info("cache backend: redis", "address", addr, "mode", r.Mode)
+		slog.Info("cache backend: redis", "mode", r.Mode, "address", r.Address, "addresses", r.Addresses, "tls", r.TLS)
 		return backend, nil
 
 	default:

@@ -353,6 +353,27 @@ def test_dataset_row_data_api_rejects_legacy_filter_shape(
     assert response.status_code == status.HTTP_400_BAD_REQUEST
 
 
+def test_dataset_row_data_current_carries_the_row_order(
+    auth_client, dataset_filter_seed
+):
+    """PF-1 (PUX-4, PUX-9): the Row view numbers the open row
+    from get-row-data's `current.order`, the same field get-dataset-table
+    sends per row. Without it the header reads a bare "Row" and the palette
+    verbs keep the deep link's empty registration."""
+    dataset, rows, _text_col, _bool_col = dataset_filter_seed
+
+    response = auth_client.post(
+        f"/model-hub/develops/{dataset.id}/get-row-data/",
+        {"row_id": str(rows[1].id), "filters": [], "sort": []},
+        format="json",
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    current = response.json()["result"]["current"]
+    assert current["row_id"] == str(rows[1].id)
+    assert current.get("order") == rows[1].order == 2
+
+
 @pytest.fixture
 def array_col_seed(organization, workspace):
     """A dataset with an array-typed column (e.g. PDF-to-text / extracted

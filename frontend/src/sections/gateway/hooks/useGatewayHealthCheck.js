@@ -10,11 +10,13 @@ export const HEALTH_CHECK_TIMEOUT_MS = 30000;
 export const HEALTH_CHECK_TIMEOUT_MESSAGE =
   "Health check timed out after 30 seconds without a response, so the gateway status was not confirmed. Try again in a moment.";
 
-function failureMessage(error) {
+// Why a health check failed, from src/utils/axios's flat rejection, or ""
+// when the server's text is not safe to show.
+export function healthCheckFailureReason(error) {
   // Failed probes return a typed result whose `error` is written for users.
   const typedError =
     typeof error?.result?.error === "string" ? error.result.error : undefined;
-  const reason = getSafeActionErrorMessage(
+  return getSafeActionErrorMessage(
     {
       statusCode: error?.statusCode,
       code: error?.code,
@@ -22,6 +24,10 @@ function failureMessage(error) {
     },
     "",
   );
+}
+
+export function healthCheckFailureMessage(error) {
+  const reason = healthCheckFailureReason(error);
   return reason ? `Health check failed: ${reason}` : "Health check failed";
 }
 
@@ -51,7 +57,7 @@ export function useGatewayHealthCheck() {
         enqueueSnackbar(HEALTH_CHECK_TIMEOUT_MESSAGE, { variant: "warning" });
         return;
       }
-      enqueueSnackbar(failureMessage(error), { variant: "error" });
+      enqueueSnackbar(healthCheckFailureMessage(error), { variant: "error" });
     },
     onSettled: () => {
       // An unreachable gateway is still a completed check. Refresh its status

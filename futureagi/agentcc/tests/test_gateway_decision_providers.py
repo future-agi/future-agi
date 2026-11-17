@@ -382,6 +382,13 @@ class TestDecisionProvidersAreNeverProbed:
     answers for a System One provider without calling it."""
 
     @pytest.fixture(autouse=True)
+    def discovery_on(self, settings):
+        # Model discovery is off unless the deployment turns it on, and then
+        # it refuses before any provider is read. These pin what discovery,
+        # once on, does for a decision provider: answer without calling it.
+        settings.GATEWAY_PROVIDER_MODEL_DISCOVERY_ENABLED = True
+
+    @pytest.fixture(autouse=True)
     def no_vendor_call(self):
         with patch(
             "agentcc.views.provider_credential.AgentccProviderCredentialViewSet._fetch_models_from_provider"

@@ -166,7 +166,8 @@ class PromptBasedAgentAdapter:
             pattern = r"\{\{\s*" + re.escape(var_name) + r"\s*\}\}"
             # Ensure var_value is a string
             str_value = str(var_value) if not isinstance(var_value, str) else var_value
-            result = re.sub(pattern, str_value, result)
+            # A callable keeps backslashes in variable values literal.
+            result = re.sub(pattern, lambda _match, value=str_value: value, result)
         return result
 
     def _prepare_messages(
@@ -353,6 +354,44 @@ class PromptBasedAgentAdapter:
                 processed = self._inject_variables(msg.get("content", ""))
                 return self._content_to_string(processed)
         return None
+
+
+def create_adapter_from_call_execution(
+    call_execution,
+    organization_id: UUID,
+    workspace_id: Optional[UUID] = None,
+    variable_values: Optional[dict[str, Any]] = None,
+) -> PromptBasedAgentAdapter:
+    """Use the version recorded when the call was queued, not the current selector."""
+    run_test = call_execution.test_execution.run_test
+    if run_test.source_type != "prompt":
+        raise ValueError(
+            f"RunTest {run_test.id} is not a prompt-based test (source_type={run_test.source_type})"
+        )
+
+    prompt_version_id = (call_execution.call_metadata or {}).get("prompt_version_id")
+    if not prompt_version_id:
+        raise ValueError(
+            f"CallExecution {call_execution.id} has no recorded prompt_version_id"
+        )
+
+    # Never fall back to RunTest.prompt_version: it may have changed while this
+    # call was queued. Resolve the recorded version within this simulation's
+    # template and organization, whichever of the organization's workspaces the
+    # template sits in, and fail the call if that version is unavailable.
+    prompt_version = PromptVersion.objects.get(
+        id=prompt_version_id,
+        original_template_id=run_test.prompt_template_id,
+        original_template__organization_id=organization_id,
+        original_template__deleted=False,
+        deleted=False,
+    )
+    return PromptBasedAgentAdapter(
+        prompt_version=prompt_version,
+        organization_id=organization_id,
+        workspace_id=workspace_id,
+        variable_values=variable_values,
+    )
 
 
 def create_adapter_from_run_test(

@@ -1,17 +1,17 @@
 /**
- * Billing Page V2 — Usage-based billing dashboard (Phase 7c)
+ * Billing Page V2 — the one central billing page.
  *
- * Replaces wallet-based UI with:
- * - Current period cost breakdown (platform fee + per-dimension costs)
- * - Invoice history with expandable line items
- * - Payment method management
- * - Billing details
+ * On cloud: the usage-based platform plan (next invoice, budgets, invoice
+ * history, payment methods). Wherever the AI Gateway's managed-credit ledger
+ * answers (cloud or self-hosted): the AI Gateway credits (balance, top-up,
+ * auto-reload, ledger, statement). Anyone with neither goes to their profile.
  */
 
 import EmptyState from "src/components/empty-state";
 import PageHeader from "src/components/page-header";
-import { useState } from "react";
+import React, { useState } from "react";
 import PropTypes from "prop-types";
+import { Navigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
   Box,
@@ -33,11 +33,32 @@ import {
 } from "@mui/material";
 import Section from "src/components/section";
 import Iconify from "src/components/iconify";
+import LoadFailedState from "src/components/load-failed-state";
 
 import axios, { endpoints } from "src/utils/axios";
-import { fCurrency } from "src/utils/format-number";
+import { formatExactMoney } from "src/sections/common/format/money";
 import BudgetManager from "./BudgetManager";
 import PaymentMethods from "./PaymentMethods";
+import GatewayCreditsSection from "./gateway-credits/GatewayCreditsSection";
+import { CREDITS_ANCHOR } from "./gateway-credits/links";
+import { useCentralBilling } from "./useCentralBilling";
+
+// Billing amounts always show cents ($128.40, never $128.4 or $50), with
+// thousands grouped and every digit the API sends kept: a sub-cent rate
+// stays exact.
+const usd = (value) => formatExactMoney(value, { grouping: true });
+
+// An invoice's plan code, named as Usage Summary names the plan (the
+// backend's PlanChoices labels; an add-on sits on Pay-as-you-go).
+const PLAN_NAMES = {
+  free: "Free",
+  payg: "Pay-as-you-go",
+  boost: "Pay-as-you-go + Boost",
+  scale: "Pay-as-you-go + Scale",
+  enterprise: "Pay-as-you-go + Enterprise",
+  custom: "Custom",
+};
+const planName = (plan) => PLAN_NAMES[plan] || plan;
 
 // Status badge colors
 const STATUS_CONFIG = {
@@ -60,14 +81,59 @@ const STATUS_CONFIG = {
   void: { color: "default", icon: "solar:danger-circle-linear", label: "Void" },
 };
 
-// ── Current Period Summary ─────────────────────────────────────────────────
+// ── Next Invoice ───────────────────────────────────────────────────────────
+// A paid plan's card previews the next invoice: the server sends the day it
+// is issued (issue_date), and its fee and usage lines name their months.
+// The free plan's card, and the card for a server that sends no issue_date,
+// keep the "Current period" heading; that server's period is this month.
 
-function CurrentPeriodSummary({ data }) {
+const MONTH_NAMES = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+];
+
+// A calendar date sent as YYYY-MM-DD, written as the app writes dates
+// ("1 Dec 2026"). It names a day, not an instant, so the viewer's time zone
+// never moves it; anything else gives null.
+function calendarDay(value) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value ?? "");
+  const month = match && MONTH_NAMES[Number(match[2]) - 1];
+  return month ? `${Number(match[3])} ${month} ${match[1]}` : null;
+}
+
+// The UTC calendar day (YYYY-MM-DD) of an instant the server sends, or null.
+function utcDay(value) {
+  const instant = new Date(value ?? "");
+  return Number.isNaN(instant.getTime())
+    ? null
+    : instant.toISOString().slice(0, 10);
+}
+
+// Shown under the total when an add-on removal takes effect on the issue
+// date (any time that UTC day), or is pending with no time given. A removal
+// at 00:00 UTC falls at the same moment as the monthly invoice run: if the
+// run comes first the invoice still carries the ending add-on's fee, while
+// the preview is priced without it. A removal later that day comes after the
+// run, and the preview already carries the fee; the line stays true there.
+const REMOVAL_ON_ISSUE_DATE =
+  "If your change and this invoice fall at the same moment, the ending add-on may still be on this invoice.";
+
+function NextInvoiceSummary({ data }) {
   if (!data || data.plan === "free") {
     return (
       <Section variant="panel" sx={{ p: 3 }}>
         <Typography variant="subtitle1" fontWeight={600} mb={1}>
-          Current Period
+          Current period
         </Typography>
         <Typography variant="body2" color="text.secondary">
           You&apos;re on the Free plan. No billing this period.
@@ -84,6 +150,31 @@ function CurrentPeriodSummary({ data }) {
     );
   }
 
+  // The card is called the next invoice only when the server says it is one
+  // and names its issue date. Without that date it keeps its earlier words.
+  const issued = calendarDay(data.issue_date);
+  // The monthly run issues no invoice for a preview with no lines and a
+  // total of 0 (EE invoice_generation.py, run_for_period), so that card
+  // names no date and says there is nothing to invoice yet.
+  const nothingToInvoice =
+    issued !== null &&
+    !(data.line_items?.length > 0) &&
+    Number(data.total) === 0;
+
+  // A pending removal with no time given is priced as ending by the issue
+  // date (EE billing_overview), so it gets the same line.
+  const removalOnIssueDate =
+    issued !== null &&
+    Boolean(data.pending_cancel) &&
+    (!data.cancel_at || utcDay(data.cancel_at) === data.issue_date);
+
+  let subline = data.period;
+  if (issued) {
+    subline = nothingToInvoice
+      ? "Nothing to invoice so far."
+      : `Invoice date ${issued}`;
+  }
+
   return (
     <Section variant="panel" sx={{ p: 3 }}>
       <Stack
@@ -94,10 +185,10 @@ function CurrentPeriodSummary({ data }) {
       >
         <Box>
           <Typography variant="subtitle1" fontWeight={600}>
-            Current Period
+            {issued ? "Next invoice" : "Current period"}
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            {data.period}
+            {subline}
           </Typography>
         </Box>
         <Box textAlign="right">
@@ -105,8 +196,18 @@ function CurrentPeriodSummary({ data }) {
             Estimated total
           </Typography>
           <Typography variant="h4" fontWeight={600}>
-            {fCurrency(data.total || 0)}
+            {usd(data.total)}
           </Typography>
+          {removalOnIssueDate && (
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              display="block"
+              sx={{ maxWidth: 280, mt: 0.5 }}
+            >
+              {REMOVAL_ON_ISSUE_DATE}
+            </Typography>
+          )}
         </Box>
       </Stack>
 
@@ -132,8 +233,7 @@ function CurrentPeriodSummary({ data }) {
                       fontWeight={500}
                       color={item.amount < 0 ? "success.main" : "text.primary"}
                     >
-                      {item.amount < 0 ? "-" : ""}
-                      {fCurrency(Math.abs(item.amount))}
+                      {usd(item.amount)}
                     </Typography>
                   </TableCell>
                 </TableRow>
@@ -153,7 +253,7 @@ function CurrentPeriodSummary({ data }) {
                   }}
                 >
                   <Typography variant="subtitle2" fontWeight={600}>
-                    {fCurrency(data.total || 0)}
+                    {usd(data.total)}
                   </Typography>
                 </TableCell>
               </TableRow>
@@ -165,10 +265,13 @@ function CurrentPeriodSummary({ data }) {
   );
 }
 
-CurrentPeriodSummary.propTypes = {
+NextInvoiceSummary.propTypes = {
   data: PropTypes.shape({
     plan: PropTypes.string,
     period: PropTypes.string,
+    issue_date: PropTypes.string,
+    pending_cancel: PropTypes.bool,
+    cancel_at: PropTypes.string,
     total: PropTypes.number,
     line_items: PropTypes.arrayOf(
       PropTypes.shape({
@@ -181,9 +284,13 @@ CurrentPeriodSummary.propTypes = {
 
 // ── Invoice History ────────────────────────────────────────────────────────
 
-function InvoiceRow({ inv }) {
+function InvoiceRow({ inv, isLast }) {
   const [expanded, setExpanded] = useState(false);
   const status = STATUS_CONFIG[inv.status] || STATUS_CONFIG.draft;
+  // The table's outline already draws its bottom edge, so the last invoice
+  // clears its own cell line, as NextInvoiceSummary clears its last row:
+  // the main row's while collapsed, the detail cell's while open.
+  const lastLine = isLast && !expanded ? { borderBottom: 0 } : undefined;
 
   const { data: detail, isFetching } = useQuery({
     queryKey: ["v2-invoice-detail", inv.id],
@@ -199,7 +306,7 @@ function InvoiceRow({ inv }) {
         sx={{ cursor: "pointer" }}
         onClick={() => setExpanded(!expanded)}
       >
-        <TableCell sx={{ width: 30, pr: 0 }}>
+        <TableCell sx={{ width: 30, pr: 0, ...lastLine }}>
           <IconButton size="small">
             <Iconify
               icon={
@@ -211,22 +318,25 @@ function InvoiceRow({ inv }) {
             />
           </IconButton>
         </TableCell>
-        <TableCell>
+        <TableCell sx={lastLine}>
           <Typography variant="body2">
             {inv.period_start} — {inv.period_end}
           </Typography>
         </TableCell>
-        <TableCell>
+        <TableCell sx={lastLine}>
           <Typography variant="body2" color="text.primary">
-            {inv.plan}
+            {planName(inv.plan)}
           </Typography>
         </TableCell>
-        <TableCell sx={{ fontVariantNumeric: "tabular-nums" }} align="right">
+        <TableCell
+          sx={{ fontVariantNumeric: "tabular-nums", ...lastLine }}
+          align="right"
+        >
           <Typography variant="body2" fontWeight={500}>
-            {fCurrency(inv.total)}
+            {usd(inv.total)}
           </Typography>
         </TableCell>
-        <TableCell align="center">
+        <TableCell align="center" sx={lastLine}>
           <Chip
             icon={<Iconify icon={status.icon} width={16} />}
             label={status.label}
@@ -235,7 +345,10 @@ function InvoiceRow({ inv }) {
             variant="outlined"
           />
         </TableCell>
-        <TableCell sx={{ fontVariantNumeric: "tabular-nums" }} align="right">
+        <TableCell
+          sx={{ fontVariantNumeric: "tabular-nums", ...lastLine }}
+          align="right"
+        >
           {inv.stripe_pdf_url && (
             <IconButton
               className="row-hover-action"
@@ -251,9 +364,15 @@ function InvoiceRow({ inv }) {
         </TableCell>
       </TableRow>
       <TableRow>
+        {/* height: auto drops the theme's row height, so a collapsed
+            invoice leaves no empty band under its row. */}
         <TableCell
           colSpan={6}
-          sx={{ py: 0, borderBottom: expanded ? undefined : 0 }}
+          sx={{
+            py: 0,
+            height: "auto",
+            borderBottom: expanded && !isLast ? undefined : 0,
+          }}
         >
           <Collapse in={expanded} timeout="auto" unmountOnExit>
             <Box sx={{ py: 2, px: 1 }}>
@@ -309,9 +428,7 @@ function InvoiceRow({ inv }) {
                           align="right"
                         >
                           <Typography variant="caption">
-                            {item.unit_price
-                              ? fCurrency(item.unit_price, true)
-                              : "—"}
+                            {item.unit_price ? usd(item.unit_price) : "—"}
                           </Typography>
                         </TableCell>
                         <TableCell
@@ -325,8 +442,7 @@ function InvoiceRow({ inv }) {
                               item.amount < 0 ? "success.main" : "text.primary"
                             }
                           >
-                            {item.amount < 0 ? "-" : ""}
-                            {fCurrency(Math.abs(item.amount))}
+                            {usd(item.amount)}
                           </Typography>
                         </TableCell>
                       </TableRow>
@@ -356,10 +472,17 @@ InvoiceRow.propTypes = {
     status: PropTypes.string,
     stripe_pdf_url: PropTypes.string,
   }).isRequired,
+  isLast: PropTypes.bool,
 };
 
 function InvoiceHistory() {
-  const { data: invoiceData, isLoading } = useQuery({
+  const {
+    data: invoiceData,
+    isLoading,
+    isError,
+    refetch,
+    isRefetching,
+  } = useQuery({
     queryKey: ["v2-invoices"],
     queryFn: () => axios.get(endpoints.settings.v2.invoices),
     select: (res) => res.data?.result?.invoices || [],
@@ -369,15 +492,28 @@ function InvoiceHistory() {
     return <Skeleton variant="rounded" height={200} />;
   }
 
+  if (isError && !invoiceData) {
+    return (
+      <LoadFailedState
+        title="Invoices couldn't be loaded"
+        onRetry={refetch}
+        retrying={isRefetching}
+      />
+    );
+  }
+
   const invoices = invoiceData || [];
+  // The last column holds a PDF download; it is titled only when some
+  // invoice has one, so the title never sits over cells that are all empty.
+  const anyPdf = invoices.some((inv) => inv.stripe_pdf_url);
 
   if (invoices.length === 0) {
     return (
       <Section variant="panel" sx={{ p: 0 }}>
         <EmptyState
           icon="solar:document-text-linear"
-          title="No invoices yet"
-          description="Your first invoice will appear at the end of the billing period."
+          title="No invoices"
+          description="Issued invoices are listed here."
           sx={{ pt: 6, pb: 6 }}
         />
       </Section>
@@ -407,13 +543,17 @@ function InvoiceHistory() {
               sx={{ fontVariantNumeric: "tabular-nums" }}
               align="right"
             >
-              Actions
+              {anyPdf ? "Actions" : null}
             </TableCell>
           </TableRow>
         </TableHead>
         <TableBody>
-          {invoices.map((inv) => (
-            <InvoiceRow key={inv.id} inv={inv} />
+          {invoices.map((inv, i) => (
+            <InvoiceRow
+              key={inv.id}
+              inv={inv}
+              isLast={i === invoices.length - 1}
+            />
           ))}
         </TableBody>
       </Table>
@@ -424,19 +564,41 @@ function InvoiceHistory() {
 // ── Main Page ──────────────────────────────────────────────────────────────
 
 export default function BillingPageV2() {
-  const { data: billingData, isLoading } = useQuery({
+  const {
+    isCloud,
+    creditsAvailable,
+    creditsError,
+    retryCredits,
+    creditsRetrying,
+    isLoading: accessLoading,
+  } = useCentralBilling();
+
+  const {
+    data: billingData,
+    isLoading: platformLoading,
+    isError,
+    refetch,
+    isRefetching,
+  } = useQuery({
     queryKey: ["v2-billing-overview"],
     queryFn: () => axios.get(endpoints.settings.v2.billingOverview),
     select: (res) => res.data?.result,
+    enabled: isCloud,
   });
 
   const { data: notifications } = useQuery({
     queryKey: ["v2-notifications"],
     queryFn: () => axios.get(endpoints.settings.v2.notifications),
     select: (res) => res.data?.result?.banners || [],
+    enabled: isCloud,
   });
 
   const [dismissedBanners, setDismissedBanners] = useState(new Set());
+  const isLoading = accessLoading || (isCloud && platformLoading);
+
+  if (!isLoading && !isCloud && !creditsAvailable && !creditsError) {
+    return <Navigate to="/dashboard/settings/profile-settings" replace />;
+  }
 
   if (isLoading) {
     return (
@@ -448,14 +610,89 @@ export default function BillingPageV2() {
     );
   }
 
+  const header = (
+    <PageHeader
+      title="Billing"
+      description={
+        isCloud
+          ? "Manage your billing, view invoices, and update payment methods."
+          : "Future AGI credits for the AI Gateway."
+      }
+      sx={{ mb: 3 }}
+    />
+  );
+
+  // Keep the cached-enabled wallet mounted so its checkout-return polling and
+  // delayed refresh survive summary errors. Its own isError gate hides stale
+  // content; a separate sibling supplies the visible error and Retry.
+  const creditsSection =
+    creditsAvailable || creditsError ? (
+      <>
+        {creditsError && (
+          <Box
+            component="section"
+            id={CREDITS_ANCHOR}
+            aria-label="AI Gateway credits"
+          >
+            <LoadFailedState
+              title="AI Gateway credits couldn't be loaded"
+              detail="Your credit balance and history are not shown until the summary loads."
+              onRetry={retryCredits}
+              retrying={creditsRetrying}
+            />
+          </Box>
+        )}
+        {creditsAvailable && <GatewayCreditsSection />}
+      </>
+    ) : null;
+
+  // The plan and the next invoice all come from this request. When it fails,
+  // say so: a "Free plan, no billing this period" drawn from nothing is not
+  // a fact.
+  if (isCloud && isError && !billingData) {
+    return (
+      <Box>
+        {header}
+        <LoadFailedState
+          title="Billing couldn't be loaded"
+          detail="Your plan, next invoice and invoice history are not shown until billing loads."
+          onRetry={refetch}
+          retrying={isRefetching}
+        />
+        {creditsSection && <Box mt={4}>{creditsSection}</Box>}
+      </Box>
+    );
+  }
+
   return (
     <Box>
-      <PageHeader
-        title="Billing"
-        description="Manage your billing, view invoices, and update payment methods."
-        sx={{ mb: 3 }}
-      />
+      {header}
 
+      {!isCloud && creditsSection}
+
+      {isCloud && (
+        <PlatformBilling
+          billingData={billingData}
+          notifications={notifications}
+          dismissedBanners={dismissedBanners}
+          setDismissedBanners={setDismissedBanners}
+          creditsSection={creditsSection}
+        />
+      )}
+    </Box>
+  );
+}
+
+// The cloud platform plan, then the AI Gateway credits.
+function PlatformBilling({
+  billingData,
+  notifications,
+  dismissedBanners,
+  setDismissedBanners,
+  creditsSection,
+}) {
+  return (
+    <Box>
       {/* Alert banners from notifications API */}
       {notifications?.filter((b) => !dismissedBanners.has(b.id)).length > 0 && (
         <Stack spacing={1} mb={3}>
@@ -503,8 +740,8 @@ export default function BillingPageV2() {
         </Alert>
       )}
 
-      {/* Current period cost breakdown */}
-      <CurrentPeriodSummary data={billingData} />
+      {/* Next invoice preview and its line items */}
+      <NextInvoiceSummary data={billingData} />
 
       {/* Usage budgets */}
       <Box mt={4}>
@@ -513,7 +750,7 @@ export default function BillingPageV2() {
 
       {/* Invoice history */}
       <Typography variant="subtitle1" fontWeight={600} mt={4} mb={2}>
-        Invoice History
+        Invoice history
       </Typography>
       <InvoiceHistory />
 
@@ -521,6 +758,16 @@ export default function BillingPageV2() {
       <Box mt={4}>
         <PaymentMethods />
       </Box>
+
+      {creditsSection && <Box mt={4}>{creditsSection}</Box>}
     </Box>
   );
 }
+
+PlatformBilling.propTypes = {
+  billingData: PropTypes.object,
+  notifications: PropTypes.array,
+  dismissedBanners: PropTypes.instanceOf(Set).isRequired,
+  setDismissedBanners: PropTypes.func.isRequired,
+  creditsSection: PropTypes.node,
+};

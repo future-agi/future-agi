@@ -7,20 +7,32 @@ import React, {
 } from "react";
 import { createPortal } from "react-dom";
 import PropTypes from "prop-types";
-import { Badge, Button, MenuItem, Popover, Stack } from "@mui/material";
+import { useParams } from "react-router";
+import {
+  Badge,
+  Button,
+  MenuItem,
+  Popover,
+  Stack,
+  ToggleButton,
+  ToggleButtonGroup,
+} from "@mui/material";
 import Iconify from "src/components/iconify";
 import DisplayPanel from "./DisplayPanel";
 import TraceFilterPanel from "./TraceFilterPanel";
+import InputOutputSearch from "./InputOutputSearch";
+import { isInputOutputSearchFilter } from "./inputOutputSearch";
 import BulkActionsBar from "./BulkActionsBar";
 import EvaluateMenu from "./InstantEval/EvaluateMenu";
 import { pillSx } from "./toolbarStyles";
 import { useTabStoreShallow } from "./tabStore";
 import CustomDateRangePicker from "src/components/custom-datepicker/DatePicker";
 import { observePresetDateFilter } from "../timeWindowPresets";
-import { buildApiFilterFromPanelRow } from "src/api/contracts/filter-contract";
 import {
   apiFiltersToPanelRows,
   filterPanelSettings,
+  panelRowsToApiFilters,
+  TIMESTAMP_FILTER_FIELD,
 } from "../observeFilterConfig";
 
 const DATE_OPTIONS = [
@@ -37,6 +49,33 @@ const DATE_OPTIONS = [
 // Views whose rows Instant eval can ask about (traces mode covers the Spans
 // tab too). Insights runs on all of them but spans.
 const ASK_MODES = new Set(["traces", "sessions", "users"]);
+
+// The trace list's Trace / Spans toggle: spans one click away, on the same
+// Group-by setting as Display → "Group traces by" (keys from its options,
+// labels from the old Trace and Spans tabs).
+const SPAN_TOGGLE_OPTIONS = [
+  { key: "trace", label: "Trace" },
+  { key: "span", label: "Spans" },
+];
+
+// The toolbar pill's type and height; the group draws the joined borders.
+const spanToggleSx = {
+  textTransform: "none",
+  fontWeight: 500,
+  fontSize: 12,
+  fontFamily: "'IBM Plex Sans', sans-serif",
+  height: 26,
+  px: 1,
+  py: 0,
+  color: "text.primary",
+  bgcolor: "background.paper",
+  borderColor: "divider",
+  "&:hover": { bgcolor: "background.neutral" },
+  "&.Mui-selected, &.Mui-selected:hover": {
+    bgcolor: "action.selected",
+    color: "text.primary",
+  },
+};
 
 const ObserveToolbar = ({
   // Mode: "traces" (default) | "sessions" | "users"
@@ -57,6 +96,11 @@ const ObserveToolbar = ({
   dateLabel,
   dateFilter,
   setDateFilter,
+  // Committed content search lives in the parent's canonical filter state.
+  inputOutputSearch = "",
+  inputOutputSearchScope = "",
+  inputOutputSearchTarget = "primary",
+  onInputOutputSearchChange,
   // Filter
   hasActiveFilter,
   canSaveView,
@@ -104,6 +148,9 @@ const ObserveToolbar = ({
   // Compare
   onCompareToggle,
   isCompareActive,
+  // Set on a view that draws no graphs (e.g. Sessions on a user's page):
+  // Compare graph stays listed but disabled, with this reason.
+  compareDisabledReason,
   // Bulk actions
   selectedCount,
   onClearSelection,
@@ -119,6 +166,13 @@ const ObserveToolbar = ({
   // View persistence
   onResetView,
   onSetDefaultView,
+  // Set on a view that cannot share its view (e.g. Traces or Sessions on a
+  // user's page): "Share with project" stays listed but disabled, with this
+  // reason.
+  setDefaultDisabledReason,
+  // The action's label, for a caller whose action saves without sharing;
+  // DisplayPanel says "Share with project" otherwise.
+  setDefaultLabel,
   // External filter anchor (compare mode)
   externalFilterAnchor,
   // Compare mode: which graph's filter is being edited
@@ -133,13 +187,33 @@ const ObserveToolbar = ({
   // Spans view — swaps "Trace Name" filter label to "Span Name"
   isSpansView = false,
 }) => {
+  // Traces, Sessions and project Users draw a Compare graph with its own
+  // date and filters. The standalone users page (no observeId, as in
+  // DisplayPanel) and a view with a compareDisabledReason draw none, so they
+  // ignore compare flags restored from URLs, local storage or saved views.
+  const { observeId } = useParams();
+  const isStandaloneUsersPage = mode === "users" && !observeId;
+  const isGraphCompareActive =
+    !isStandaloneUsersPage &&
+    !compareDisabledReason &&
+    Boolean(isCompareActive);
   // Asking needs a project (the views only pass handlers when they have one)
   // and isn't offered in compare mode, nor on a simulator (voice) project:
   // Ask and Find patterns read the trace list, not the calls on screen (and
   // not its "Show simulated calls" toggle). The tab bar hides Insights there
   // the same way.
-  const canAsk = ASK_MODES.has(mode) && !isCompareActive && !isSimulator;
+  const canAsk = ASK_MODES.has(mode) && !isGraphCompareActive && !isSimulator;
   const askUnit = mode === "traces" && isSpansView ? "spans" : mode;
+  // Trace / Spans shows where Display's "Group traces by" switches this list
+  // between traces and spans: a traces toolbar with a grouping handler that
+  // offers both. Sessions and Users group by navigating to another view.
+  const showSpanToggle =
+    mode === "traces" &&
+    typeof onGroupByChange === "function" &&
+    SPAN_TOGGLE_OPTIONS.every(
+      (option) => !hiddenGroupByOptions?.includes(option.key),
+    );
+  const [searchReset, setSearchReset] = useState(0);
   const [displayAnchor, setDisplayAnchor] = useState(null);
   const filterButtonRef = useRef(null);
   const [filterButtonEl, setFilterButtonEl] = useState(null);
@@ -155,6 +229,15 @@ const ObserveToolbar = ({
     source: filterValueSource,
     attributeSource,
   } = filterPanelSettings({ mode, tab, isSimulator });
+  // The Traces list and the Spans view also filter their rows by Timestamp.
+  const panelFilterFields = useMemo(
+    () =>
+      mode === "traces" &&
+      (effectiveFilterTab === "trace" || effectiveFilterTab === "spans")
+        ? [...(filterFields || []), TIMESTAMP_FILTER_FIELD]
+        : filterFields,
+    [mode, effectiveFilterTab, filterFields],
+  );
   const setFilterButtonNode = useCallback((node) => {
     filterButtonRef.current = node;
     setFilterButtonEl(node);
@@ -183,7 +266,10 @@ const ObserveToolbar = ({
   // button switches filterTarget, so an effect would hand it the other
   // graph's filters.
   const graphPanelFilters = useMemo(
-    () => apiFiltersToPanelRows(graphFilters),
+    () =>
+      apiFiltersToPanelRows(
+        graphFilters?.filter((filter) => !isInputOutputSearchFilter(filter)),
+      ),
     [graphFilters],
   );
   const panelFilters =
@@ -206,10 +292,55 @@ const ObserveToolbar = ({
     return () => clearTimeout(timer);
   }, []);
 
+  const clearPanelFilters = () => {
+    setAppliedPanelFilters(null);
+    // The panel can edit a different graph from the search input. Only
+    // clearing the search's own graph should cancel its uncommitted draft.
+    const clearedTarget = filterTarget === "compare" ? "compare" : "primary";
+    if (clearedTarget === inputOutputSearchTarget) {
+      setSearchReset((version) => version + 1);
+    }
+    if (filterTarget === "compare") {
+      if (onClearCompareExtraFilters) onClearCompareExtraFilters();
+      else onApplyCompareExtraFilters?.([]);
+    } else {
+      if (onClearExtraFilters) onClearExtraFilters();
+      else onApplyExtraFilters?.([]);
+    }
+  };
+
   const toolbarContent = (
     <Stack direction="row" alignItems="center" gap={1}>
+      {/* Trace / Spans — the list's grouping one click away; it reads and
+          sets the same groupBy as Display → "Group traces by". */}
+      {showSpanToggle && (
+        <ToggleButtonGroup
+          exclusive
+          size="small"
+          value={groupBy === "span" ? "span" : "trace"}
+          onChange={(_, key) => {
+            if (key && key !== groupBy) onGroupByChange(key);
+          }}
+          aria-label="Group traces by"
+        >
+          {SPAN_TOGGLE_OPTIONS.map((option) => (
+            <ToggleButton key={option.key} value={option.key} sx={spanToggleSx}>
+              {option.label}
+            </ToggleButton>
+          ))}
+        </ToggleButtonGroup>
+      )}
+
+      {mode === "traces" && !isSimulator && onInputOutputSearchChange && (
+        <InputOutputSearch
+          key={`${inputOutputSearchScope}:${tab}:${searchReset}`}
+          value={inputOutputSearch}
+          onChange={onInputOutputSearchChange}
+        />
+      )}
+
       {/* Date picker — hidden in compare mode (each graph has its own) */}
-      {dateLabel && !isCompareActive && (
+      {dateLabel && !isGraphCompareActive && (
         <>
           <Button
             ref={dateButtonRef}
@@ -275,7 +406,7 @@ const ObserveToolbar = ({
       ) : (
         <>
           {/* Filter — hidden in compare mode (each graph has its own) */}
-          {!isCompareActive && (
+          {!isGraphCompareActive && (
             <Button
               ref={setFilterButtonNode}
               variant="outlined"
@@ -298,49 +429,6 @@ const ObserveToolbar = ({
               Filter
             </Button>
           )}
-
-          {/* Filter Panel (popover) */}
-          <TraceFilterPanel
-            anchorEl={externalFilterAnchor || filterButtonEl}
-            open={
-              isFilterOpen && Boolean(externalFilterAnchor || filterButtonEl)
-            }
-            onClose={onFilterToggle}
-            currentFilters={panelFilters}
-            filterFields={filterFields}
-            tab={effectiveFilterTab}
-            isSimulator={isSimulator}
-            isSpansView={isSpansView}
-            source={filterValueSource}
-            propertyNamespace={propertyNamespace}
-            attributeSource={attributeSource}
-            projectId={projectId}
-            allowWorkspaceScope={allowWorkspaceScope}
-            onApply={(newFilters) => {
-              setAppliedPanelFilters(newFilters);
-              if (!newFilters || newFilters.length === 0) {
-                if (filterTarget === "compare") {
-                  if (onClearCompareExtraFilters) {
-                    onClearCompareExtraFilters();
-                  } else {
-                    onApplyCompareExtraFilters?.([]);
-                  }
-                } else if (onClearExtraFilters) {
-                  onClearExtraFilters();
-                } else {
-                  onApplyExtraFilters?.([]);
-                }
-                return;
-              }
-              const apiFilters = newFilters.map(buildApiFilterFromPanelRow);
-              // Route to correct handler based on which graph's filter was clicked
-              if (filterTarget === "compare" && onApplyCompareExtraFilters) {
-                onApplyCompareExtraFilters(apiFilters);
-              } else {
-                onApplyExtraFilters?.(apiFilters);
-              }
-            }}
-          />
 
           {/* Save view — updates the currently-active saved view in place
               when its state has diverged from the saved baseline. The "+"
@@ -417,9 +505,12 @@ const ObserveToolbar = ({
             onGroupByChange={onGroupByChange}
             hiddenGroupByOptions={hiddenGroupByOptions}
             onCompareToggle={onCompareToggle}
-            isCompareActive={isCompareActive}
+            isCompareActive={isGraphCompareActive}
+            compareDisabledReason={compareDisabledReason}
             onResetView={onResetView}
             onSetDefaultView={onSetDefaultView}
+            setDefaultDisabledReason={setDefaultDisabledReason}
+            setDefaultLabel={setDefaultLabel}
             isSimulator={isSimulator}
             excludeSimulationCalls={excludeSimulationCalls}
             onToggleSimulationCalls={onToggleSimulationCalls}
@@ -435,6 +526,48 @@ const ObserveToolbar = ({
           />
         </>
       )}
+
+      {/* Filter Panel (popover). Mounted outside the selection branch: the
+          filter chips, the chip-strip "+" and the compare graphs' Filter
+          buttons open it through externalFilterAnchor while rows are
+          selected too. With no external anchor it stays closed while the
+          bulk actions bar hides the Filter button (filterButtonEl is null). */}
+      <TraceFilterPanel
+        anchorEl={externalFilterAnchor || filterButtonEl}
+        open={isFilterOpen && Boolean(externalFilterAnchor || filterButtonEl)}
+        onClose={onFilterToggle}
+        currentFilters={panelFilters}
+        filterFields={panelFilterFields}
+        tab={effectiveFilterTab}
+        isSimulator={isSimulator}
+        isSpansView={isSpansView}
+        source={filterValueSource}
+        propertyNamespace={propertyNamespace}
+        attributeSource={attributeSource}
+        projectId={projectId}
+        allowWorkspaceScope={allowWorkspaceScope}
+        onClear={clearPanelFilters}
+        onApply={(newFilters) => {
+          setAppliedPanelFilters(newFilters);
+          const contentFilters = (graphFilters || []).filter(isInputOutputSearchFilter);
+          // Removing the last ordinary row must not remove content search.
+          // Explicit Clear all goes through onClear instead.
+          const apiFilters = [
+            ...panelRowsToApiFilters(newFilters || []),
+            ...contentFilters,
+          ];
+          if (apiFilters.length === 0) {
+            clearPanelFilters();
+            return;
+          }
+          // Route to correct handler based on which graph's filter was clicked
+          if (filterTarget === "compare" && onApplyCompareExtraFilters) {
+            onApplyCompareExtraFilters(apiFilters);
+          } else {
+            onApplyExtraFilters?.(apiFilters);
+          }
+        }}
+      />
     </Stack>
   );
 
@@ -452,6 +585,10 @@ ObserveToolbar.propTypes = {
   dateLabel: PropTypes.string,
   dateFilter: PropTypes.object,
   setDateFilter: PropTypes.func,
+  inputOutputSearch: PropTypes.string,
+  inputOutputSearchScope: PropTypes.string,
+  inputOutputSearchTarget: PropTypes.oneOf(["primary", "compare"]),
+  onInputOutputSearchChange: PropTypes.func,
   hasActiveFilter: PropTypes.bool,
   canSaveView: PropTypes.bool,
   onSaveView: PropTypes.func,
@@ -485,6 +622,7 @@ ObserveToolbar.propTypes = {
   rowCount: PropTypes.number,
   onCompareToggle: PropTypes.func,
   isCompareActive: PropTypes.bool,
+  compareDisabledReason: PropTypes.string,
   selectedCount: PropTypes.number,
   selectedCountIsLowerBound: PropTypes.bool,
   allMatching: PropTypes.bool,
@@ -505,6 +643,8 @@ ObserveToolbar.propTypes = {
   graphFilters: PropTypes.array,
   onResetView: PropTypes.func,
   onSetDefaultView: PropTypes.func,
+  setDefaultDisabledReason: PropTypes.string,
+  setDefaultLabel: PropTypes.string,
   externalFilterAnchor: PropTypes.any,
   filterTarget: PropTypes.string,
   onApplyCompareExtraFilters: PropTypes.func,

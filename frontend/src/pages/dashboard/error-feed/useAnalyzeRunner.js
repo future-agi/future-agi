@@ -30,7 +30,7 @@ export function useAnalyzeRunner(clusterId, error, { enabled = true } = {}) {
     (s) => s.removeAnalyzePendingStart,
   );
   const pendingStart = useErrorFeedStore(
-    (s) => !!s.analyzePendingStartByCluster[clusterId],
+    (s) => s.analyzePendingStartByCluster[clusterId],
   );
   const hasThread = useErrorFeedStore(
     (s) => !!s.analyzeThreadsByCluster[clusterId],
@@ -57,7 +57,15 @@ export function useAnalyzeRunner(clusterId, error, { enabled = true } = {}) {
   // Auto-fire when pending-start flag flips on.
   useEffect(() => {
     if (!enabled || !clusterId || !pendingStart) return;
+    // A recovery (or another mounted runner) may have consumed this entry
+    // after render but before passive effects. Never promote that old intent.
+    if (
+      useErrorFeedStore.getState().analyzePendingStartByCluster[clusterId] !==
+      pendingStart
+    )
+      return;
     removeAnalyzePendingStart(clusterId);
+    if (typeof pendingStart !== "function" || !pendingStart()) return;
     startRun();
   }, [enabled, clusterId, pendingStart, removeAnalyzePendingStart, startRun]);
 

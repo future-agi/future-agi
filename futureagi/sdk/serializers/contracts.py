@@ -20,6 +20,19 @@ class SDKErrorResponseSerializer(serializers.Serializer):
     )
 
 
+class SDKAdmissionErrorResponseSerializer(SDKErrorResponseSerializer):
+    code = serializers.CharField()
+    error_code = serializers.CharField()
+    detail = serializers.CharField()
+    retryable = serializers.BooleanField()
+    dimension = serializers.CharField(required=False, allow_blank=True)
+    current_usage = serializers.FloatField(required=False)
+    limit = serializers.FloatField(required=False)
+    upgrade_cta = serializers.DictField(
+        child=serializers.CharField(), required=False,
+    )
+
+
 class ConfigureEvaluationsRequestSerializer(serializers.Serializer):
     eval_config = ConfigureEvaluationsSerializer()
     platform = serializers.CharField()
@@ -145,11 +158,32 @@ class SDKCICDEvaluationRunAcceptedSerializer(serializers.Serializer):
     evaluation_run_id = serializers.UUIDField()
 
 
+class SDKCICDFailedEvaluationGroupSerializer(serializers.Serializer):
+    eval_template = serializers.CharField()
+    # A failure after the evaluation returned keeps the evaluator's own reason,
+    # which can be blank or null. Rows written before failed evaluations had a
+    # reason hold null or the evaluator's own reason.
+    reason = serializers.CharField(allow_null=True, allow_blank=True)
+    count = serializers.IntegerField(min_value=1)
+
+
+class SDKCICDCompletedEvaluationGroupSerializer(serializers.Serializer):
+    eval_template = serializers.CharField()
+    # The model the evaluations were stored with. Null when none was stored,
+    # for example for code evaluations, a system template without a models
+    # list, an agent sent without model_name, and an LLM judge sent without
+    # model_name that runs on its template's configured model.
+    model = serializers.CharField(allow_null=True, allow_blank=True)
+    count = serializers.IntegerField(min_value=1)
+
+
 class SDKCICDEvaluationRunSummarySerializer(serializers.Serializer):
     id = serializers.UUIDField()
     project = serializers.CharField()
     version = serializers.CharField()
     results_summary = serializers.DictField()
+    failed_evaluations = SDKCICDFailedEvaluationGroupSerializer(many=True)
+    completed_evaluations = SDKCICDCompletedEvaluationGroupSerializer(many=True)
 
 
 class SDKCICDEvaluationRunsResultSerializer(serializers.Serializer):

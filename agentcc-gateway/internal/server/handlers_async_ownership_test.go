@@ -28,16 +28,19 @@ func TestAsyncJobOwnership(t *testing.T) {
 				{Key: "other-token", Metadata: map[string]string{"org_id": "other-org"}},
 				{Key: "unscoped-token"},
 			}})
-			h := &Handlers{asyncStore: store, asyncWorker: async.NewWorker(store, nil, 1), keyStore: keys}
+			h := &Handlers{asyncStore: store, asyncWorker: async.NewWorker(store, async.WorkerConfig{MaxWorkers: 1}), keyStore: keys}
 			rc := models.AcquireRequestContext()
 			defer rc.Release()
 			rc.Request = &models.ChatCompletionRequest{Model: "test-model"}
+			// On this release only an internal key queues an async job (every
+			// other key is limited to its org's providers).
+			rc.Metadata["key_type"] = "internal"
 			rc.Metadata["org_id"] = ownerMeta["org_id"]
 			req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 			req.Header.Set("Authorization", "Bearer owner-token")
 			req.Header.Set("x-agentcc-async", "true")
 			rec := httptest.NewRecorder()
-			if !h.AsyncMiddleware(rec, req, rc) || rec.Code != http.StatusAccepted {
+			if !asyncSubmit(h, rec, req, rc) || rec.Code != http.StatusAccepted {
 				t.Fatalf("submit: %d %s", rec.Code, rec.Body.String())
 			}
 			var submitted struct {
@@ -62,9 +65,9 @@ func TestAsyncJobOwnership(t *testing.T) {
 				r.Header.Set("x-agentcc-org-id", "owner-org")
 				w := httptest.NewRecorder()
 				if method == http.MethodGet {
-					h.GetAsyncJob(w, r)
+					asyncGet(h)(w, r)
 				} else {
-					h.DeleteAsyncJob(w, r)
+					asyncDelete(h)(w, r)
 				}
 				return w
 			}

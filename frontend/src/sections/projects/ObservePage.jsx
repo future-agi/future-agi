@@ -167,25 +167,35 @@ const ObservePage = React.memo(() => {
   // sets it on click, but a page reload re-mounts with no in-memory state —
   // children read activeViewConfig for extraFilters, visibleColumns, etc.,
   // and without this all of those fall back to defaults until the user clicks
-  // the tab again. Re-runs only when the URL tab key or the saved-views list
-  // changes; the value for `tab=view-<id>` is stable across saved-views
-  // refetches so we don't churn the apply effect on every mutation invalidate.
+  // the tab again. Ordinary routes and missing views clear the shared config
+  // so saved filters cannot follow the user into another project. Keep the
+  // project + tab stable across refetches to avoid reapplying a present view.
   const lastHydratedTabRef = useRef(null);
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     const tab = params.get("tab");
     if (!tab || !tab.startsWith("view-")) {
       lastHydratedTabRef.current = null;
+      setActiveViewConfig(null);
       return;
     }
-    if (lastHydratedTabRef.current === tab) return;
+    // useGetSavedViews(observeId) supplies only the current project's list.
     const customViews = savedViewsData?.custom_views ?? [];
-    if (!customViews.length) return;
     const view = customViews.find((v) => `view-${v.id}` === tab);
-    if (!view?.config) return;
-    lastHydratedTabRef.current = tab;
+    if (!view?.config) {
+      lastHydratedTabRef.current = null;
+      setActiveViewConfig(null);
+      return;
+    }
+    if (
+      lastHydratedTabRef.current?.observeId === observeId &&
+      lastHydratedTabRef.current?.tab === tab
+    ) {
+      return;
+    }
+    lastHydratedTabRef.current = { observeId, tab };
     setActiveViewConfig(view.config);
-  }, [location.search, savedViewsData, setActiveViewConfig]);
+  }, [observeId, location.search, savedViewsData, setActiveViewConfig]);
 
   // Handle tab change from ObserveTabBar
   const handleTabChange = useCallback(
@@ -376,6 +386,7 @@ const ObservePage = React.memo(() => {
         <ObserveHeader
           text={headerConfig.text}
           filterTrace={headerConfig.filterTrace}
+          traceAttributeKeys={headerConfig.traceAttributeKeys}
           filterSpan={headerConfig.filterSpan}
           selectedTab={headerConfig.selectedTab}
           filterSession={headerConfig.filterSession}

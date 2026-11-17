@@ -9,11 +9,14 @@ import {
   Typography,
   Button,
 } from "@mui/material";
+import { useSnackbar } from "notistack";
 import PropTypes from "prop-types";
 import React, { useCallback, useState } from "react";
 import Iconify from "src/components/iconify";
 import SvgColor from "src/components/svg-color";
+import ConfirmDialog from "src/sections/common/ux/ConfirmDialog";
 import axios, { endpoints } from "src/utils/axios";
+import { getThrottledMessage } from "src/utils/errorUtils";
 import CodeEditor from "./CodeEditor";
 
 export const PYTHON_CODE_TEMPLATE = `from typing import Any
@@ -56,6 +59,25 @@ function evaluate({ input, output, expected, context, ...kwargs }) {
   };
 }`;
 
+const STARTERS = [PYTHON_CODE_TEMPLATE, JS_CODE_TEMPLATE];
+
+const LANGUAGE_NAMES = { python: "Python", javascript: "JavaScript" };
+
+const REPLACE_CODE_BODY =
+  "Your current code will be replaced. The run's language is detected from the code, so you can keep your code and only change the language setting.";
+
+const starterFor = (language) =>
+  language === "python" ? PYTHON_CODE_TEMPLATE : JS_CODE_TEMPLATE;
+
+const replaceCodeTitle = (language) =>
+  `Replace your code with the ${LANGUAGE_NAMES[language]} starter?`;
+
+// Only empty code or an untouched starter may be swapped without asking.
+const isEmptyOrStarter = (code) => {
+  const trimmed = (code || "").trim();
+  return !trimmed || STARTERS.includes(trimmed);
+};
+
 // System prompt for Falcon AI to generate eval code
 const AI_CODE_SYSTEM_PROMPT = `You are an expert code evaluator writer. Generate evaluation functions based on user descriptions.
 
@@ -96,34 +118,45 @@ const CodeEvalEditor = ({
   datasetColumns = [],
   disabled = false,
 }) => {
+  const { enqueueSnackbar } = useSnackbar();
   const [aiMode, setAiMode] = useState(false);
   const [aiPrompt, setAiPrompt] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
   const [hasResult, setHasResult] = useState(false);
   const [originalCode, setOriginalCode] = useState(null);
   const followUpRef = React.useRef(null);
+  // The question asked before the user's code is replaced by a starter. The
+  // language stays set while the dialog closes so its title does not change.
+  const [replacePrompt, setReplacePrompt] = useState({
+    open: false,
+    language: "python",
+  });
 
   const handleLanguageChange = useCallback(
     (e) => {
       const newLang = e.target.value;
       setCodeLanguage(newLang);
-      // Swap template if code is empty, matches a known template, or looks
-      // like the default (starts with the template signature pattern).
-      const trimmed = code.trim();
-      const isDefaultPython =
-        code === PYTHON_CODE_TEMPLATE ||
-        trimmed.startsWith("from typing import Any") ||
-        trimmed.startsWith("def evaluate(");
-      const isDefaultJs =
-        code === JS_CODE_TEMPLATE ||
-        trimmed.startsWith("// Return:") ||
-        trimmed.startsWith("function evaluate(");
-      if (isDefaultPython || isDefaultJs || !trimmed) {
-        setCode(newLang === "python" ? PYTHON_CODE_TEMPLATE : JS_CODE_TEMPLATE);
+      if (disabled) return;
+      // Empty code or an untouched starter becomes the new language's
+      // starter. Anything else is the user's work: ask before replacing it.
+      if (isEmptyOrStarter(code)) {
+        setCode(starterFor(newLang));
+      } else {
+        setReplacePrompt({ open: true, language: newLang });
       }
     },
-    [code, setCode, setCodeLanguage],
+    [code, disabled, setCode, setCodeLanguage],
   );
+
+  const keepCode = useCallback(() => {
+    setReplacePrompt((prompt) => ({ ...prompt, open: false }));
+  }, []);
+
+  const replaceCode = useCallback(() => {
+    if (!replacePrompt.open) return;
+    setCode(starterFor(replacePrompt.language));
+    setReplacePrompt((prompt) => ({ ...prompt, open: false }));
+  }, [replacePrompt, setCode]);
 
   // Build context description for the AI
   const buildContext = useCallback(() => {
@@ -209,7 +242,13 @@ const CodeEvalEditor = ({
           setAiPrompt(prompt.trim());
           setTimeout(() => followUpRef.current?.focus(), 100);
         }
-      } catch {
+      } catch (err) {
+        const limitMessage = getThrottledMessage(err);
+        if (limitMessage) {
+          // Past the writer's limit: say when to try again, not a local template.
+          enqueueSnackbar(limitMessage, { variant: "error" });
+          return;
+        }
         // Fallback to local generation
         const desc = prompt.trim().toLowerCase();
         setCode(
@@ -223,7 +262,7 @@ const CodeEvalEditor = ({
         setAiLoading(false);
       }
     },
-    [code, originalCode, codeLanguage, setCode, buildContext],
+    [code, originalCode, codeLanguage, setCode, buildContext, enqueueSnackbar],
   );
 
   const handleAccept = useCallback(() => {
@@ -286,6 +325,14 @@ const CodeEvalEditor = ({
           </Select>
         </Box>
       </Box>
+      <Typography
+        variant="caption"
+        color="text.secondary"
+        sx={{ display: "block", textAlign: "right", mb: 0.5 }}
+      >
+        The run&apos;s language is detected from the code; this choice decides
+        it only when the code could be either.
+      </Typography>
 
       {/* AI writer bar — shows above editor when active (hidden for system evals) */}
       {aiMode && !disabled && (
@@ -470,6 +517,16 @@ const CodeEvalEditor = ({
           </Tooltip>
         )}
       </Box>
+
+      <ConfirmDialog
+        open={replacePrompt.open}
+        title={replaceCodeTitle(replacePrompt.language)}
+        body={REPLACE_CODE_BODY}
+        confirmLabel="Replace"
+        cancelLabel="Keep my code"
+        onConfirm={replaceCode}
+        onClose={keepCode}
+      />
     </Box>
   );
 };

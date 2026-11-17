@@ -1,12 +1,15 @@
 import json
+import re
 import traceback
 import uuid
+from decimal import Decimal
 
 import structlog
 from django.db.models import Q
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
+from model_hub.models.choices import DataTypeChoices
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from model_hub.models.experiments import ExperimentDatasetTable
 from model_hub.serializers.contracts import (
@@ -32,6 +35,19 @@ except ImportError:
 logger = structlog.get_logger(__name__)
 
 
+def _lossless_numeric_copy(value):
+    """Check numeric cross-type copies without converting the stored value."""
+    if value is None or value == "":
+        return True
+    # The integer grid uses parseInt: exponent notation and fractional digits
+    # can display a different number even when Decimal considers it integral.
+    text = value.strip()
+    if not re.fullmatch(r"[+-]?[0-9]+(?:\.0+)?", text):
+        return False
+    # Stay within JavaScript's safe integer range; do not round via float().
+    return Decimal(text).copy_abs() <= 2**53 - 1
+
+
 def _request_organization(request):
     return getattr(request, "organization", None) or request.user.organization
 
@@ -39,7 +55,9 @@ def _request_organization(request):
 def _request_workspace_filter(request, field_name="workspace"):
     workspace = getattr(request, "workspace", None)
     if not workspace:
-        return Q()
+        from tfc.utils.workspace_scope import empty_workspace_filter
+
+        return empty_workspace_filter()
 
     if getattr(workspace, "is_default", False):
         return (
@@ -148,18 +166,60 @@ class AddRowsFromExistingView(APIView):
             except ValueError:
                 return self._gm.bad_request(get_error_message("COLUMN_NOT_FOUND"))
             target_column_ids = list(column_mapping.values())
-            if Column.objects.filter(
+            source_columns = Column.objects.filter(
                 id__in=source_column_ids,
                 dataset=source_dataset,
                 deleted=False,
-            ).count() != len(source_column_ids):
+            ).in_bulk()
+            if len(source_columns) != len(source_column_ids):
                 return self._gm.bad_request(get_error_message("COLUMN_NOT_FOUND"))
-            if Column.objects.filter(
+            target_columns = Column.objects.filter(
                 id__in=target_column_ids,
                 dataset=target_dataset,
                 deleted=False,
-            ).count() != len(target_column_ids):
+            ).in_bulk()
+            if len(target_columns) != len(target_column_ids):
                 return self._gm.bad_request(get_error_message("COLUMN_NOT_FOUND"))
+
+            numeric_mappings = {}
+            for source_id, target_id in zip(source_column_ids, target_column_ids):
+                source_column = source_columns[source_id]
+                target_column = target_columns[target_id]
+                if source_column.data_type == target_column.data_type:
+                    continue
+                if {source_column.data_type, target_column.data_type} != {
+                    DataTypeChoices.INTEGER.value,
+                    DataTypeChoices.FLOAT.value,
+                }:
+                    return self._gm.bad_request(
+                        f'Cannot copy column "{source_column.name}" '
+                        f'({source_column.data_type}) to "{target_column.name}" '
+                        f"({target_column.data_type}). Map it to a column of the "
+                        "same type or convert the source column first."
+                    )
+                numeric_mappings[source_id] = target_column
+
+            # Validate every copied cross-type value before quota or any writes,
+            # including values beyond the first insertion batch. Same-type
+            # copies retain their existing values and statuses unchanged.
+            if numeric_mappings:
+                source_cells = Cell.objects.filter(
+                    row__dataset=source_dataset,
+                    row__deleted=False,
+                    deleted=False,
+                    column_id__in=numeric_mappings,
+                ).values_list("column_id", "value")
+                for source_id, value in source_cells.iterator(chunk_size=1000):
+                    if not _lossless_numeric_copy(value):
+                        source_column = source_columns[source_id]
+                        target_column = numeric_mappings[source_id]
+                        return self._gm.bad_request(
+                            f'Cannot copy column "{source_column.name}" '
+                            f'({source_column.data_type}) to "{target_column.name}" '
+                            f"({target_column.data_type}) without changing a value. "
+                            "Map it to a column of the same type or convert the "
+                            "source column first."
+                        )
 
             # --- Row Limit Check Start ---
 

@@ -17,8 +17,9 @@ const mocks = vi.hoisted(() => ({
   get: vi.fn(),
   post: vi.fn(),
   agentDefinitions: {
+    // AGENT_TYPES.CHAT is "text".
     agentDefinitions: [
-      { id: "agent-1", agent_name: "Support Agent", agent_type: "chat" },
+      { id: "agent-1", agent_name: "Support Agent", agent_type: "text" },
     ],
     fetchNextPage: () => {},
     isLoading: false,
@@ -150,7 +151,7 @@ describe("Choose Scenarios step — paging", () => {
       ).toBeInTheDocument(),
     );
     expect(
-      screen.queryByText("Add your first scenario"),
+      screen.queryByText("No scenarios for chat agents yet"),
     ).not.toBeInTheDocument();
 
     releaseScenarios({ data: scenarioPage(2) });
@@ -178,6 +179,8 @@ describe("Choose Scenarios step — paging", () => {
   // Guards the fix from over-correcting: the empty state must still appear
   // once the fetch settles with nothing. Driven inline rather than through
   // `goToScenarioStep`, which waits on a heading this case never renders.
+  // The list is filtered by the agent's type, so the empty state names it
+  // (it is true whether the workspace has no scenarios or only other types).
   it("still shows the empty state when the workspace really has no scenarios", async () => {
     mocks.get.mockImplementation((url) => {
       if (url === "/scenarios/")
@@ -199,7 +202,7 @@ describe("Choose Scenarios step — paging", () => {
     fireEvent.click(next);
 
     expect(
-      await screen.findByText("Add your first scenario"),
+      await screen.findByText("No scenarios for chat agents yet"),
     ).toBeInTheDocument();
   });
 });

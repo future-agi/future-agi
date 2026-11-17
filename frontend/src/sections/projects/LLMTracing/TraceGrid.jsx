@@ -51,7 +51,11 @@ import {
   shareInFlightListPage,
 } from "./listCursorPagination";
 import ListCursorContinuationNotice from "./ListCursorContinuationNotice";
-import { getListReadMessage, getListTotalState } from "./listTotalMetadata";
+import {
+  getEmptyListOverlay,
+  getListReadMessage,
+  getListTotalState,
+} from "./listTotalMetadata";
 import { getTraceAttributeRequestKey } from "./traceAttributeRequest";
 import {
   parseAxiosResult,
@@ -117,6 +121,12 @@ const TraceGrid = React.forwardRef(
       compareType,
       // Only the visible grid of a primary/compare pair renders the drawer.
       hideDetailDrawer = false,
+      // Empty-page context (primary grids): the date pill text and the next
+      // steps the empty overlay can offer.
+      rangeLabel,
+      onClearFilters,
+      onWidenRange,
+      listWindow,
     },
     gridRef,
   ) => {
@@ -191,6 +201,7 @@ const TraceGrid = React.forwardRef(
     const {
       beginPageLoad,
       endUnknown,
+      exactTotal,
       frontierPage,
       hasMore,
       page,
@@ -202,6 +213,7 @@ const TraceGrid = React.forwardRef(
       isPageLoading,
       publishPage,
       resetPagination,
+      visibleRowCount,
     } = useCursorGridPagination(gridRef, gridElementRef);
 
     // Use ref to track latest columns for comparison without triggering dataSource recreation
@@ -374,6 +386,9 @@ const TraceGrid = React.forwardRef(
             setOpenQuickFilter,
             setFilterOpen,
           ),
+          // This grid sits on the page, under the trace drawer: a hovered
+          // name cell's funnel stacks beneath side drawers, not over them.
+          quickFilterBelowDrawers: true,
         },
       }),
       [setFilterOpen, setExtraFilters],
@@ -961,14 +976,23 @@ const TraceGrid = React.forwardRef(
           // same flag back into AG Grid suppresses the target rows whose paint
           // is used to finish that transition.
           loading={isGridReadPending}
-          noRowsOverlayComponent={() =>
-            isGridReadPending || continuationNotice
-              ? null
-              : NoRowsOverlay(
-                  readMessageRef.current ||
-                    (showErrors ? "No error found" : "No traces found"),
-                )
-          }
+          noRowsOverlayComponent={() => {
+            if (isGridReadPending || continuationNotice) return null;
+            if (readMessageRef.current) {
+              return NoRowsOverlay(readMessageRef.current);
+            }
+            return NoRowsOverlay(
+              showErrors ? "No error found" : "No traces found",
+              getEmptyListOverlay({
+                noun: showErrors ? "errors" : "traces",
+                rangeLabel,
+                hasFilters: extraFilters?.length > 0,
+                onClearFilters,
+                onWidenRange,
+                listWindow,
+              }),
+            );
+          }}
           onSortChanged={({ api }) => {
             const next = api
               .getColumnState()
@@ -1034,6 +1058,8 @@ const TraceGrid = React.forwardRef(
           furthestPage={furthestPage}
           hasMore={hasMore}
           provenNext={provenNext}
+          rowCount={visibleRowCount}
+          totalCount={exactTotal}
           onPageChange={goToPage}
           onPageSizeChange={changePageSize}
         />
@@ -1068,6 +1094,10 @@ TraceGrid.propTypes = {
   metricFilters: PropTypes.array,
   enabled: PropTypes.bool,
   showErrors: PropTypes.bool,
+  rangeLabel: PropTypes.string,
+  onClearFilters: PropTypes.func,
+  onWidenRange: PropTypes.func,
+  listWindow: PropTypes.object,
 };
 
 export default TraceGrid;

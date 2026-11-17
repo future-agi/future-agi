@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -581,7 +580,6 @@ func TestEngine_TimeoutFailClosed(t *testing.T) {
 }
 
 func TestEngine_AsyncDoesNotBlock(t *testing.T) {
-	var called atomic.Bool
 	registry := map[string]Guardrail{
 		"async-checker": &mockGuardrail{
 			name:  "async-checker",
@@ -621,7 +619,6 @@ func TestEngine_AsyncDoesNotBlock(t *testing.T) {
 
 	// Wait for async to complete.
 	time.Sleep(200 * time.Millisecond)
-	_ = called // async guardrail ran in background
 }
 
 func TestEngine_MultipleGuardrails_FirstBlockWins(t *testing.T) {
@@ -922,9 +919,8 @@ func TestPlugin_PostBlock(t *testing.T) {
 	if result.Error == nil {
 		t.Fatal("post-block should return error")
 	}
-	// The content goes; the usage stays, so the request is still priced.
-	if rc.Response == nil || len(rc.Response.Choices) != 0 {
-		t.Error("a post-block should drop the content and keep the response's usage")
+	if rc.Response != nil {
+		t.Error("response should be cleared on post-block")
 	}
 	if !rc.Flags.GuardrailTriggered {
 		t.Error("GuardrailTriggered should be set")

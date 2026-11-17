@@ -32,7 +32,8 @@ import ErrorFeedView from "../ErrorFeedView";
 import { useErrorFeedStore } from "../store";
 
 const NO_PROJECTS_TITLE = "No Observe projects in this workspace.";
-const NO_ERRORS_TITLE = "No errors — everything looks good!";
+// The feed's default window is 7 days; an empty list names it.
+const NO_ERRORS_TITLE = "No errors in the last 7 days";
 const FEED_FAILED_TITLE = "Couldn't load the Error Feed";
 
 const emptyPage = {

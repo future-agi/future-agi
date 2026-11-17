@@ -321,6 +321,11 @@ def render_reference(data: dict, ref: str = "main") -> str:
         header,
         comment,
         "## In this page",
+        "> **Self-hosted tracing:** For Omega or the Future AGI SDKs' default HTTP transport, set `FI_BASE_URL` to your own collector before or together with `FI_API_KEY` and `FI_SECRET_KEY`.\n"
+        ">\n"
+        "> Give the collector's address without a path, for example `http://localhost:4318` on the Compose host. Otherwise, trace content and both keys go to Future AGI cloud.\n"
+        ">\n"
+        "> Compose publishes port 4318 only on loopback; containers and remote clients need a collector address they can reach.",
         data["intro"],
         f"<TLDR>\n{data['tldr'].strip()}\n</TLDR>",
         "## How configuration works",

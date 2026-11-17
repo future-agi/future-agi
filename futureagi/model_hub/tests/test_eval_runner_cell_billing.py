@@ -33,6 +33,8 @@ def runner():
     )
     run.organization_id = "org-1"
     run.eval_template = SimpleNamespace(eval_type="llm")
+    # As the constructor sets it: no pinned version.
+    run.version_number = None
     run.source = "dataset"
     run.source_id = "dataset-1"
     run.replace_column_id = "column-1"

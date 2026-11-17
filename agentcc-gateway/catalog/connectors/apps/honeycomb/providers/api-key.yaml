@@ -1,0 +1,46 @@
+# Honeycomb documents management API keys for unattended agents. The secret
+# supplied here is the key ID and key secret joined by a colon, without spaces.
+schema: "connector-manifest/v1#provider"
+app: honeycomb
+id: api-key
+version: 1.1.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.honeycomb.io/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: Management key ID and secret
+      help: "A team owner creates a Management API Key in Account > Team Settings > API Keys. Enter KEY_ID:SECRET_KEY without spaces. Grant Model Context Protocol and Environments read access, plus write only if needed. Enable Honeycomb Intelligence. This endpoint serves the US region."
+      helpUrl: https://docs.honeycomb.io/integrations/mcp/configuration-guide
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_metered
+  source: https://www.honeycomb.io/pricing
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://docs.honeycomb.io/integrations/mcp/configuration-guide
+    fetchedAt: 2026-11-09
+  - fact: transport.variant
+    url: https://docs.honeycomb.io/integrations/mcp/configuration-guide
+    fetchedAt: 2026-11-09
+  - fact: auth.kind
+    url: https://docs.honeycomb.io/integrations/mcp/configuration-guide
+    fetchedAt: 2026-11-09
+  - fact: auth.credentialParts
+    url: https://docs.honeycomb.io/integrations/mcp/configuration-guide
+    fetchedAt: 2026-11-09

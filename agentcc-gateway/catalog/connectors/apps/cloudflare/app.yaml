@@ -1,0 +1,22 @@
+schema: "connector-manifest/v1#app"
+id: cloudflare
+version: 1.0.1
+name: Cloudflare
+description: "The Cloudflare API through search and execute tools, and developer docs through the docs tool."
+vendor:
+  name: Cloudflare
+  domains: [cloudflare.com]
+eeCategory: developer
+group: other
+categories: [developer, cloud-infrastructure]
+tags: [dns, workers, security]
+docsUrl: https://developers.cloudflare.com/agents/model-context-protocol/cloudflare/servers-for-cloudflare/
+defaultProvider: api-token
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://developers.cloudflare.com/agents/model-context-protocol/cloudflare/servers-for-cloudflare/
+    fetchedAt: 2026-10-21
+  - fact: description
+    url: https://developers.cloudflare.com/agents/model-context-protocol/cloudflare/servers-for-cloudflare/
+    fetchedAt: 2026-11-09

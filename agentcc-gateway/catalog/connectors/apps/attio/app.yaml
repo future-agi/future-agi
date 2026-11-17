@@ -1,0 +1,20 @@
+schema: "connector-manifest/v1#app"
+id: attio
+version: 1.0.0
+name: Attio
+description: "CRM records, lists, notes, tasks and reports in an Attio workspace."
+vendor:
+  name: Attio
+  domains: [attio.com]
+eeCategory: data
+group: other
+categories: [data, crm]
+tags: [sales, crm]
+docsUrl: https://docs.attio.com/mcp/overview
+archetype: crm
+defaultProvider: mcp
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://docs.attio.com/mcp/overview
+    fetchedAt: 2026-11-11

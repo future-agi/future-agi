@@ -1,0 +1,443 @@
+{
+  "schema": "connector-manifest/v1#tools-generated",
+  "spec": {
+    "url": "https://raw.githubusercontent.com/microsoftgraph/msgraph-metadata/8c562525694550601a232cb54014e48c6c7f6da0/openapi/v1.0/openapi.yaml",
+    "sha256": "533f6d86985584327109ba2c52c0e51454ce1ba2153c11f4d841e898b88c5b1b"
+  },
+  "tools": [
+    {
+      "name": "list_worksheets",
+      "title": "List worksheets",
+      "description": "Read list worksheets from an Excel workbook in a business drive. Use IDs from list_worksheets or list_tables.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "auto",
+      "scopes": ["Files.ReadWrite"],
+      "operation": {
+        "method": "GET",
+        "path": "/v1.0/drives/{drive-id}/items/{driveItem-id}/workbook/worksheets"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "drive-id": {
+            "type": "string",
+            "description": "The unique identifier of drive"
+          },
+          "driveItem-id": {
+            "type": "string",
+            "description": "The unique identifier of driveItem"
+          },
+          "top": {
+            "type": "integer",
+            "minimum": 0,
+            "examples": [50],
+            "description": "Show only the first n items",
+            "x-wireName": "$top"
+          },
+          "skip": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Skip the first n items",
+            "x-wireName": "$skip"
+          },
+          "filter": {
+            "type": "string",
+            "description": "Filter items by property values",
+            "x-wireName": "$filter"
+          },
+          "orderby": {
+            "type": "string",
+            "description": "Order items by property values. Comma-separated values.",
+            "x-wireName": "$orderby"
+          },
+          "select": {
+            "type": "string",
+            "description": "Select properties to be returned. Comma-separated values.",
+            "x-wireName": "$select"
+          }
+        },
+        "required": ["drive-id", "driveItem-id"],
+        "additionalProperties": false,
+        "x-origin": "https://graph.microsoft.com"
+      }
+    },
+    {
+      "name": "get_worksheet",
+      "title": "Get worksheet",
+      "description": "Read get worksheet from an Excel workbook in a business drive. Use IDs from list_worksheets or list_tables.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "auto",
+      "scopes": ["Files.ReadWrite"],
+      "operation": {
+        "method": "GET",
+        "path": "/v1.0/drives/{drive-id}/items/{driveItem-id}/workbook/worksheets/{workbookWorksheet-id}"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "drive-id": {
+            "type": "string",
+            "description": "The unique identifier of drive"
+          },
+          "driveItem-id": {
+            "type": "string",
+            "description": "The unique identifier of driveItem"
+          },
+          "workbookWorksheet-id": {
+            "type": "string",
+            "description": "The unique identifier of workbookWorksheet"
+          },
+          "select": {
+            "type": "string",
+            "description": "Select properties to be returned. Comma-separated values.",
+            "x-wireName": "$select"
+          }
+        },
+        "required": ["drive-id", "driveItem-id", "workbookWorksheet-id"],
+        "additionalProperties": false,
+        "x-origin": "https://graph.microsoft.com"
+      }
+    },
+    {
+      "name": "list_tables",
+      "title": "List tables",
+      "description": "Read list tables from an Excel workbook in a business drive. Use IDs from list_worksheets or list_tables.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "auto",
+      "scopes": ["Files.ReadWrite"],
+      "operation": {
+        "method": "GET",
+        "path": "/v1.0/drives/{drive-id}/items/{driveItem-id}/workbook/tables"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "drive-id": {
+            "type": "string",
+            "description": "The unique identifier of drive"
+          },
+          "driveItem-id": {
+            "type": "string",
+            "description": "The unique identifier of driveItem"
+          },
+          "top": {
+            "type": "integer",
+            "minimum": 0,
+            "examples": [50],
+            "description": "Show only the first n items",
+            "x-wireName": "$top"
+          },
+          "skip": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Skip the first n items",
+            "x-wireName": "$skip"
+          },
+          "filter": {
+            "type": "string",
+            "description": "Filter items by property values",
+            "x-wireName": "$filter"
+          },
+          "orderby": {
+            "type": "string",
+            "description": "Order items by property values. Comma-separated values.",
+            "x-wireName": "$orderby"
+          },
+          "select": {
+            "type": "string",
+            "description": "Select properties to be returned. Comma-separated values.",
+            "x-wireName": "$select"
+          }
+        },
+        "required": ["drive-id", "driveItem-id"],
+        "additionalProperties": false,
+        "x-origin": "https://graph.microsoft.com"
+      }
+    },
+    {
+      "name": "get_table",
+      "title": "Get table",
+      "description": "Read get table from an Excel workbook in a business drive. Use IDs from list_worksheets or list_tables.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "auto",
+      "scopes": ["Files.ReadWrite"],
+      "operation": {
+        "method": "GET",
+        "path": "/v1.0/drives/{drive-id}/items/{driveItem-id}/workbook/tables/{workbookTable-id}"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "drive-id": {
+            "type": "string",
+            "description": "The unique identifier of drive"
+          },
+          "driveItem-id": {
+            "type": "string",
+            "description": "The unique identifier of driveItem"
+          },
+          "workbookTable-id": {
+            "type": "string",
+            "description": "The unique identifier of workbookTable"
+          },
+          "select": {
+            "type": "string",
+            "description": "Select properties to be returned. Comma-separated values.",
+            "x-wireName": "$select"
+          }
+        },
+        "required": ["drive-id", "driveItem-id", "workbookTable-id"],
+        "additionalProperties": false,
+        "x-origin": "https://graph.microsoft.com"
+      }
+    },
+    {
+      "name": "list_table_rows",
+      "title": "List table rows",
+      "description": "Read list table rows from an Excel workbook in a business drive. Use IDs from list_worksheets or list_tables.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "auto",
+      "scopes": ["Files.ReadWrite"],
+      "operation": {
+        "method": "GET",
+        "path": "/v1.0/drives/{drive-id}/items/{driveItem-id}/workbook/tables/{workbookTable-id}/rows"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "drive-id": {
+            "type": "string",
+            "description": "The unique identifier of drive"
+          },
+          "driveItem-id": {
+            "type": "string",
+            "description": "The unique identifier of driveItem"
+          },
+          "workbookTable-id": {
+            "type": "string",
+            "description": "The unique identifier of workbookTable"
+          },
+          "top": {
+            "type": "integer",
+            "minimum": 0,
+            "examples": [50],
+            "description": "Show only the first n items",
+            "x-wireName": "$top"
+          },
+          "skip": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Skip the first n items",
+            "x-wireName": "$skip"
+          },
+          "filter": {
+            "type": "string",
+            "description": "Filter items by property values",
+            "x-wireName": "$filter"
+          },
+          "orderby": {
+            "type": "string",
+            "description": "Order items by property values. Comma-separated values.",
+            "x-wireName": "$orderby"
+          },
+          "select": {
+            "type": "string",
+            "description": "Select properties to be returned. Comma-separated values.",
+            "x-wireName": "$select"
+          }
+        },
+        "required": ["drive-id", "driveItem-id", "workbookTable-id"],
+        "additionalProperties": false,
+        "x-origin": "https://graph.microsoft.com"
+      }
+    },
+    {
+      "name": "list_table_columns",
+      "title": "List table columns",
+      "description": "Read list table columns from an Excel workbook in a business drive. Use IDs from list_worksheets or list_tables.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "auto",
+      "scopes": ["Files.ReadWrite"],
+      "operation": {
+        "method": "GET",
+        "path": "/v1.0/drives/{drive-id}/items/{driveItem-id}/workbook/tables/{workbookTable-id}/columns"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "drive-id": {
+            "type": "string",
+            "description": "The unique identifier of drive"
+          },
+          "driveItem-id": {
+            "type": "string",
+            "description": "The unique identifier of driveItem"
+          },
+          "workbookTable-id": {
+            "type": "string",
+            "description": "The unique identifier of workbookTable"
+          },
+          "top": {
+            "type": "integer",
+            "minimum": 0,
+            "examples": [50],
+            "description": "Show only the first n items",
+            "x-wireName": "$top"
+          },
+          "skip": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Skip the first n items",
+            "x-wireName": "$skip"
+          },
+          "filter": {
+            "type": "string",
+            "description": "Filter items by property values",
+            "x-wireName": "$filter"
+          },
+          "orderby": {
+            "type": "string",
+            "description": "Order items by property values. Comma-separated values.",
+            "x-wireName": "$orderby"
+          },
+          "select": {
+            "type": "string",
+            "description": "Select properties to be returned. Comma-separated values.",
+            "x-wireName": "$select"
+          }
+        },
+        "required": ["drive-id", "driveItem-id", "workbookTable-id"],
+        "additionalProperties": false,
+        "x-origin": "https://graph.microsoft.com"
+      }
+    },
+    {
+      "name": "list_names",
+      "title": "List names",
+      "description": "Read list names from an Excel workbook in a business drive. Use IDs from list_worksheets or list_tables.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "auto",
+      "scopes": ["Files.ReadWrite"],
+      "operation": {
+        "method": "GET",
+        "path": "/v1.0/drives/{drive-id}/items/{driveItem-id}/workbook/names"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "drive-id": {
+            "type": "string",
+            "description": "The unique identifier of drive"
+          },
+          "driveItem-id": {
+            "type": "string",
+            "description": "The unique identifier of driveItem"
+          },
+          "top": {
+            "type": "integer",
+            "minimum": 0,
+            "examples": [50],
+            "description": "Show only the first n items",
+            "x-wireName": "$top"
+          },
+          "skip": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Skip the first n items",
+            "x-wireName": "$skip"
+          },
+          "filter": {
+            "type": "string",
+            "description": "Filter items by property values",
+            "x-wireName": "$filter"
+          },
+          "orderby": {
+            "type": "string",
+            "description": "Order items by property values. Comma-separated values.",
+            "x-wireName": "$orderby"
+          },
+          "select": {
+            "type": "string",
+            "description": "Select properties to be returned. Comma-separated values.",
+            "x-wireName": "$select"
+          }
+        },
+        "required": ["drive-id", "driveItem-id"],
+        "additionalProperties": false,
+        "x-origin": "https://graph.microsoft.com"
+      }
+    },
+    {
+      "name": "get_used_range",
+      "title": "Get used range",
+      "description": "Read get used range from an Excel workbook in a business drive. Use IDs from list_worksheets or list_tables.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "auto",
+      "scopes": ["Files.ReadWrite"],
+      "operation": {
+        "method": "GET",
+        "path": "/v1.0/drives/{drive-id}/items/{driveItem-id}/workbook/worksheets/{workbookWorksheet-id}/usedRange()"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "drive-id": {
+            "type": "string",
+            "description": "The unique identifier of drive"
+          },
+          "driveItem-id": {
+            "type": "string",
+            "description": "The unique identifier of driveItem"
+          },
+          "workbookWorksheet-id": {
+            "type": "string",
+            "description": "The unique identifier of workbookWorksheet"
+          }
+        },
+        "required": ["drive-id", "driveItem-id", "workbookWorksheet-id"],
+        "additionalProperties": false,
+        "x-origin": "https://graph.microsoft.com"
+      }
+    }
+  ]
+}

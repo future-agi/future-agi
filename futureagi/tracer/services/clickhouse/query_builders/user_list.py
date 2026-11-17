@@ -301,6 +301,39 @@ def _user_trace_metrics_projection() -> str:
     )
 
 
+def _user_trace_latency_ctes() -> str:
+    """Average one measured time envelope per canonical user/project/trace.
+
+    The input is already latest-live and window-fenced. Derive each measured
+    span's end from its start and latency so nullable latency winners stay
+    unknown rather than reviving an older duration. Integer microseconds keep
+    the bounds precise before converting the trace duration to milliseconds.
+    """
+    return """
+        trace_durations AS (
+            SELECT
+                end_user_id,
+                project_id,
+                trace_id,
+                if(
+                    countIf(isNotNull(latency_ms)) = 0,
+                    NULL,
+                    (
+                        max(toUnixTimestamp64Micro(start_time) + latency_ms * 1000)
+                        - minIf(toUnixTimestamp64Micro(start_time), isNotNull(latency_ms))
+                    ) / 1000.0
+                ) AS duration_ms
+            FROM resolved_candidate_spans
+            GROUP BY end_user_id, project_id, trace_id
+        ),
+        trace_latency_metrics AS (
+            SELECT end_user_id, avg(duration_ms) AS avg_trace_latency
+            FROM trace_durations
+            GROUP BY end_user_id
+        )
+    """
+
+
 class UserListQueryBuilder(BaseQueryBuilder):
     """Build the Observe Users table query from ClickHouse.
 
@@ -2021,7 +2054,7 @@ class UserListQueryBuilder(BaseQueryBuilder):
                 "argMax(tuple(trace_session_id), _version).1 AS latest_trace_session_id",
                 "argMax(status, _version) AS latest_status",
                 "argMax(tuple(end_time), _version).1 AS latest_end_time",
-                "argMax(latency_ms, _version) AS latest_latency_ms",
+                "argMax(tuple(latency_ms), _version).1 AS latest_latency_ms",
             ],
             include_sessions=True,
         )
@@ -2036,6 +2069,7 @@ class UserListQueryBuilder(BaseQueryBuilder):
             SELECT
                 {resolved_latest_eu} AS end_user_id,
                 {resolved_latest_session} AS trace_session_id,
+                project_id,
                 trace_id,
                 latest_start_time AS start_time,
                 latest_end_time AS end_time,
@@ -2052,12 +2086,12 @@ class UserListQueryBuilder(BaseQueryBuilder):
               AND latest_start_time < fromUnixTimestamp64Micro(%(user_window_end_us)s, 'UTC')
               AND {resolved_latest_eu} IN %(candidate_end_user_ids)s
         ),
+        {_user_trace_latency_ctes()},
         extra_metrics AS (
             SELECT
                 end_user_id,
                 countIf(observation_type = 'llm') AS num_llm_calls,
                 uniqExactIf(trace_id, observation_type = 'guardrail') AS num_guardrails_triggered,
-                round(avgIf(latency_ms, isNotNull(latency_ms)), 2) AS avg_trace_latency,
                 uniqExact(toDate(start_time)) AS num_active_days,
                 uniqExactIf(trace_id, status = 'ERROR') AS num_traces_with_errors
             FROM resolved_candidate_spans
@@ -2091,7 +2125,7 @@ class UserListQueryBuilder(BaseQueryBuilder):
             ids.end_user_id AS end_user_id,
             coalesce(sa.num_sessions, 0) AS num_sessions,
             coalesce(sa.avg_session_duration, 0) AS avg_session_duration,
-            coalesce(em.avg_trace_latency, 0) AS avg_trace_latency,
+            coalesce(round(tl.avg_trace_latency, 2), 0) AS avg_trace_latency,
             coalesce(em.num_llm_calls, 0) AS num_llm_calls,
             coalesce(em.num_guardrails_triggered, 0) AS num_guardrails_triggered,
             coalesce(em.num_active_days, 0) AS num_active_days,
@@ -2099,6 +2133,7 @@ class UserListQueryBuilder(BaseQueryBuilder):
         FROM metric_user_ids AS ids
         LEFT JOIN session_aggregates AS sa ON sa.end_user_id = ids.end_user_id
         LEFT JOIN extra_metrics AS em ON em.end_user_id = ids.end_user_id
+        LEFT JOIN trace_latency_metrics AS tl ON tl.end_user_id = ids.end_user_id
         """
         return query, params
 
@@ -2523,19 +2558,25 @@ class UserListQueryBuilder(BaseQueryBuilder):
         )
         if span_fields:
             state_selects: list[str] = []
+            resolved_columns = ["project_id", "trace_id", "latest_start_time"]
             projections: list[str] = []
-            if "avg_trace_latency" in span_fields:
+            needs_latency = "avg_trace_latency" in span_fields
+            if needs_latency:
                 state_selects.append(
                     "argMax(tuple(latency_ms), _version).1 AS latest_latency_ms"
                 )
-                projections.append(
-                    "avgIf(latest_latency_ms, "
-                    "isNotNull(latest_latency_ms)) AS avg_trace_latency"
+                resolved_columns.extend(
+                    [
+                        "latest_start_time AS start_time",
+                        "latest_latency_ms AS latency_ms",
+                    ]
                 )
+                projections.append("any(tl.avg_trace_latency) AS avg_trace_latency")
             if {"num_llm_calls", "num_guardrails_triggered"} & set(span_fields):
                 state_selects.append(
                     "argMax(observation_type, _version) AS latest_observation_type"
                 )
+                resolved_columns.append("latest_observation_type")
             if "num_llm_calls" in span_fields:
                 projections.append(
                     "countIf(latest_observation_type = 'llm') AS num_llm_calls"
@@ -2553,6 +2594,7 @@ class UserListQueryBuilder(BaseQueryBuilder):
                 state_selects.append(
                     "argMax(tuple(status), _version).1 AS latest_status"
                 )
+                resolved_columns.append("latest_status")
                 projections.append(
                     "uniqExactIf(trace_id, latest_status = 'ERROR') "
                     "AS num_traces_with_errors"
@@ -2562,19 +2604,34 @@ class UserListQueryBuilder(BaseQueryBuilder):
                 state_selects,
                 include_sessions=False,
             )
+            latency_ctes = f", {_user_trace_latency_ctes()}" if needs_latency else ""
+            latency_join = (
+                "LEFT JOIN trace_latency_metrics AS tl "
+                "ON tl.end_user_id = metric_spans.end_user_id"
+                if needs_latency
+                else ""
+            )
             query = f"""
-            {prefix}
+            {prefix},
+            resolved_candidate_spans AS (
+                SELECT
+                    {resolved_eu} AS end_user_id,
+                    {", ".join(resolved_columns)}
+                FROM latest_candidate_spans
+                LEFT JOIN eu_survivor_map AS span_eu_remap
+                    ON latest_end_user_id = span_eu_remap.any_id
+                WHERE latest_is_deleted = 0
+                  AND latest_start_time >= fromUnixTimestamp64Micro(%(user_window_start_us)s, 'UTC')
+                  AND latest_start_time < fromUnixTimestamp64Micro(%(user_window_end_us)s, 'UTC')
+                  AND {resolved_eu} IN %(candidate_end_user_ids)s
+            )
+            {latency_ctes}
             SELECT
-                toString({resolved_eu}) AS end_user_id,
+                toString(metric_spans.end_user_id) AS end_user_id,
                 {", ".join(projections)}
-            FROM latest_candidate_spans
-            LEFT JOIN eu_survivor_map AS span_eu_remap
-                ON latest_end_user_id = span_eu_remap.any_id
-            WHERE latest_is_deleted = 0
-              AND latest_start_time >= fromUnixTimestamp64Micro(%(user_window_start_us)s, 'UTC')
-              AND latest_start_time < fromUnixTimestamp64Micro(%(user_window_end_us)s, 'UTC')
-              AND {resolved_eu} IN %(candidate_end_user_ids)s
-            GROUP BY end_user_id
+            FROM resolved_candidate_spans AS metric_spans
+            {latency_join}
+            GROUP BY metric_spans.end_user_id
             """
             queries.append((query, dict(base_params), span_fields))
 
@@ -2866,7 +2923,7 @@ class UserListQueryBuilder(BaseQueryBuilder):
                 argMax(observation_type, _version) AS latest_observation_type,
                 argMax(status, _version) AS latest_status,
                 argMax(tuple(end_time), _version).1 AS latest_end_time,
-                argMax(latency_ms, _version) AS latest_latency_ms,
+                argMax(tuple(latency_ms), _version).1 AS latest_latency_ms,
                 argMax(is_deleted, _version) AS latest_is_deleted
             FROM spans
             PREWHERE {self._project_predicate("spans")}
@@ -2891,6 +2948,7 @@ class UserListQueryBuilder(BaseQueryBuilder):
             SELECT
                 {resolved_latest_eu} AS end_user_id,
                 {resolved_latest_session} AS trace_session_id,
+                project_id,
                 trace_id,
                 start_time,
                 latest_end_time AS end_time,
@@ -2907,12 +2965,12 @@ class UserListQueryBuilder(BaseQueryBuilder):
                   SELECT end_user_id FROM candidate_users
               )
         ),
+        {_user_trace_latency_ctes()},
         extra_metrics AS (
             SELECT
                 end_user_id,
                 countIf(observation_type = 'llm') AS num_llm_calls,
                 uniqExactIf(trace_id, observation_type = 'guardrail') AS num_guardrails_triggered,
-                round(avgIf(latency_ms, isNotNull(latency_ms)), 2) AS avg_trace_latency,
                 uniqExact(toDate(start_time)) AS num_active_days,
                 uniqExactIf(trace_id, status = 'ERROR') AS num_traces_with_errors
             FROM resolved_candidate_spans
@@ -2949,7 +3007,7 @@ class UserListQueryBuilder(BaseQueryBuilder):
             cu.num_traces AS num_traces,
             coalesce(sa.num_sessions, 0) AS num_sessions,
             coalesce(sa.avg_session_duration, 0) AS avg_session_duration,
-            coalesce(em.avg_trace_latency, 0) AS avg_trace_latency,
+            coalesce(round(tl.avg_trace_latency, 2), 0) AS avg_trace_latency,
             coalesce(em.num_llm_calls, 0) AS num_llm_calls,
             coalesce(em.num_guardrails_triggered, 0) AS num_guardrails_triggered,
             cu.activated_at AS activated_at,
@@ -2966,6 +3024,7 @@ class UserListQueryBuilder(BaseQueryBuilder):
         FROM candidate_users AS cu
         LEFT JOIN session_aggregates AS sa ON sa.end_user_id = cu.end_user_id
         LEFT JOIN extra_metrics AS em ON em.end_user_id = cu.end_user_id
+        LEFT JOIN trace_latency_metrics AS tl ON tl.end_user_id = cu.end_user_id
         {order_by}
         """
         return query, self.params

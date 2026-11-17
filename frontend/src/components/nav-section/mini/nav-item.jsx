@@ -15,6 +15,15 @@ import CustomTooltip from "src/components/tooltip/CustomTooltip";
 
 // ----------------------------------------------------------------------
 
+// Match vertical navigation: the anchor owns keyboard focus, not its visual row.
+const NAV_LINK_FOCUS = {
+  outline: "none",
+  "&:focus-visible": {
+    outline: (theme) => `2px solid ${theme.palette.primary.main}`,
+    outlineOffset: "-2px",
+  },
+};
+
 /**
  * @typedef {Object} NavItemProps
  * @property {string} title
@@ -53,6 +62,7 @@ const NavItem = forwardRef(
       open,
       depth,
       active,
+      "aria-current": ariaCurrent,
       hasChild,
       externalLink,
       currentRole = "admin",
@@ -75,6 +85,7 @@ const NavItem = forwardRef(
           }
         }}
         {...other}
+        {...(!disabled && { tabIndex: -1, role: "presentation" })}
         sx={{
           /* Design system: the current item is grey (bg.selected), never purple. */
           backgroundColor: active ? "action.selected" : "transparent",
@@ -166,6 +177,7 @@ const NavItem = forwardRef(
               width: 1,
               minHeight: "24px",
               height: "24px",
+              ...NAV_LINK_FOCUS,
               ...(disabled && {
                 cursor: "default",
               }),
@@ -181,12 +193,14 @@ const NavItem = forwardRef(
         <Link
           component={RouterLink}
           href={path}
+          aria-current={ariaCurrent || (active ? "page" : undefined)}
           color="inherit"
           underline="none"
           sx={{
             width: 1,
             minHeight: "24px",
             height: "24px",
+            ...NAV_LINK_FOCUS,
             ...(disabled && {
               cursor: "default",
             }),
@@ -202,6 +216,7 @@ const NavItem = forwardRef(
 NavItem.propTypes = {
   open: PropTypes.bool,
   active: PropTypes.bool,
+  "aria-current": PropTypes.string,
   path: PropTypes.string,
   depth: PropTypes.number,
   icon: PropTypes.element,

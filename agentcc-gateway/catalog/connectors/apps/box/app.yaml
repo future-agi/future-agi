@@ -1,0 +1,23 @@
+schema: "connector-manifest/v1#app"
+id: box
+version: 1.0.0
+name: Box
+description: "Search and manage files, folders and enterprise content in Box."
+vendor:
+  name: Box
+  domains: [box.com]
+eeCategory: productivity
+group: other
+categories: [productivity, storage]
+tags: [files, documents]
+docsUrl: https://developer.box.com/guides/box-mcp/setup
+archetype: cloud-drive
+defaultProvider: mcp
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://developer.box.com/guides/box-mcp
+    fetchedAt: 2026-11-15
+  - fact: description
+    url: https://developer.box.com/guides/box-mcp
+    fetchedAt: 2026-11-15

@@ -1,0 +1,45 @@
+schema: "connector-manifest/v1#provider"
+app: fal-ai
+id: api-key
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://api.fal.ai/v1/mcp/platform
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Key "
+      secret: true
+      label: API key
+      help: "Create a fal API key at fal.ai/dashboard/keys using the recommended Read-only preset. Platform tools inspect apps, logs, requests and usage within the key's permissions; this is not the model-generation MCP relay."
+      helpUrl: https://fal.ai/docs/documentation/setting-up/platform-mcp
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: free
+  source: https://fal.ai/docs/documentation/setting-up/platform-mcp
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://fal.ai/docs/documentation/setting-up/platform-mcp
+    fetchedAt: 2026-11-09
+  - fact: transport.variant
+    url: https://fal.ai/docs/documentation/setting-up/platform-mcp
+    fetchedAt: 2026-11-09
+  - fact: auth.kind
+    url: https://fal.ai/docs/documentation/setting-up/platform-mcp
+    fetchedAt: 2026-11-09
+  - fact: auth.credentialParts
+    url: https://fal.ai/docs/documentation/setting-up/platform-mcp
+    fetchedAt: 2026-11-09
+x-omega: { oss: exclude }

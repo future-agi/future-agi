@@ -9,6 +9,7 @@ import PropTypes from "prop-types";
 import HeadingAndSubHeading from "src/components/HeadingAndSubheading/HeadingAndSubheading";
 import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectField";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
+import { vectorStoreAuthHelp } from "./retrievalCopy";
 
 const WeivateForm = ({ control, allColumns }) => {
   return (
@@ -34,12 +35,12 @@ const WeivateForm = ({ control, allColumns }) => {
         }
       />
       <SecretSelect
-        label="Weaviate Api Key"
+        label="Weaviate API Key"
         control={control}
         fieldName="apiKey"
         fullWidth
         helperText={
-          <HelperText text="API Key for authenticating with Weaviate" />
+          <HelperText text={vectorStoreAuthHelp("Weaviate", "cluster")} />
         }
         size="small"
       />
@@ -105,7 +106,7 @@ const WeivateForm = ({ control, allColumns }) => {
             fieldName="searchType"
             fullWidth
             options={[
-              { label: "Sematic Search", value: "semantic_search" },
+              { label: "Semantic Search", value: "semantic_search" },
               { label: "Hybrid", value: "hybrid" },
             ]}
             helperText={<HelperText text="The type of search to perform" />}

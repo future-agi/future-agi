@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: digitalocean
+version: 1.0.0
+name: DigitalOcean
+description: "Discover and invoke tools for cloud compute, apps, databases, networking and storage."
+vendor:
+  name: DigitalOcean
+  domains: [digitalocean.com]
+eeCategory: developer
+group: other
+categories: [developer, cloud-infrastructure]
+tags: [deployments, database, projects]
+docsUrl: https://docs.digitalocean.com/reference/mcp/configure-mcp/
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://docs.digitalocean.com/reference/mcp/configure-mcp/
+    fetchedAt: 2026-11-09

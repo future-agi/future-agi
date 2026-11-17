@@ -1,0 +1,124 @@
+eval_id: 108
+name: embedding_similarity
+description: Measures the cosine semantic similarity between the generated text and the reference text.
+criteria: Measures the semantic similarity between the generated and reference text.
+eval_tags:
+- NLP Metrics
+- RAG
+visible_ui: true
+permissions:
+  allow_edit: false
+  allow_copy: true
+output_type_normalized: percentage
+pass_threshold: 0.5
+config:
+  required_keys:
+  - output
+  - expected
+  output: score
+  eval_type_id: CustomCodeEval
+  config: {}
+  config_params_desc: {}
+  code: |
+    def evaluate(input, output, expected, context, **kwargs):
+        import base64
+        import json
+        import math
+        import re
+        import urllib.request
+
+        # Set by the engine's preprocessing from MODEL_SERVING_URL.
+        BASE = (kwargs.get("_model_serving_url") or "http://serving:8080").rstrip("/") + "/model/v1"
+
+        generated = output
+        reference = expected
+        if generated is None or reference is None:
+            return {"score": 0.0, "reason": "Missing output or expected value"}
+        if isinstance(generated, str) and not generated.strip():
+            return {"score": 0.0, "reason": "Empty output"}
+        if isinstance(reference, str) and not reference.strip():
+            return {"score": 0.0, "reason": "Empty expected value"}
+
+        def _is_url(val):
+            return isinstance(val, str) and re.match(r"https?://", val.strip())
+
+        def _is_audio_url(val):
+            return _is_url(val) and re.search(r"\.(mp3|wav|ogg|m4a|flac|aac)(\?|$)", val, re.I)
+
+        def _is_image_url(val):
+            return _is_url(val) and re.search(r"\.(png|jpg|jpeg|gif|webp|svg|bmp|tiff)(\?|$)", val, re.I)
+
+        def _detect_type(val):
+            s = str(val).strip() if val else ""
+            if _is_audio_url(s):
+                return "audio"
+            if _is_image_url(s):
+                return "image"
+            return "text"
+
+        def _post(path, payload, timeout=30):
+            data = json.dumps(payload).encode()
+            req = urllib.request.Request(f"{BASE}{path}", data=data, headers={"Content-Type": "application/json"})
+            resp = urllib.request.urlopen(req, timeout=timeout)
+            return json.loads(resp.read())
+
+        def _embed_text(texts):
+            r = _post("/embed", {"text": texts, "input_type": "text"})
+            return r["embeddings"]
+
+        def _download_as_b64(url, mime_prefix):
+            req = urllib.request.Request(url, headers={"User-Agent": "FutureAGI-Eval/1.0"})
+            raw = urllib.request.urlopen(req, timeout=15).read()
+            return f"data:{mime_prefix};base64,{base64.b64encode(raw).decode()}"
+
+        def _embed_image(url):
+            b64 = _download_as_b64(url, "image/jpeg")
+            r = _post("/embed/image", {"image": b64, "input_type": "image"})
+            emb = r["embeddings"]
+            return emb[0] if isinstance(emb[0], list) else emb
+
+        def _embed_audio(url):
+            b64 = _download_as_b64(url, "audio/wav")
+            r = _post("/embed/audio", {"audio": b64, "input_type": "audio"}, timeout=60)
+            emb = r["embeddings"]
+            return emb[0] if isinstance(emb[0], list) else emb
+
+        def _cosine(a, b):
+            dot = sum(x * y for x, y in zip(a, b))
+            na = math.sqrt(sum(x * x for x in a))
+            nb = math.sqrt(sum(x * x for x in b))
+            return dot / (na * nb) if na and nb else 0.0
+
+        gen_str = str(generated)
+        ref_str = str(reference)
+        gen_type = _detect_type(gen_str)
+        ref_type = _detect_type(ref_str)
+
+        try:
+            if gen_type == "text" and ref_type == "text":
+                embs = _embed_text([gen_str, ref_str])
+                emb_a, emb_b = embs[0], embs[1]
+                modality = "text"
+            elif gen_type == "image" and ref_type == "image":
+                emb_a = _embed_image(gen_str)
+                emb_b = _embed_image(ref_str)
+                modality = "image"
+            elif gen_type == "audio" and ref_type == "audio":
+                emb_a = _embed_audio(gen_str)
+                emb_b = _embed_audio(ref_str)
+                modality = "audio"
+            else:
+                # Mixed types — embed each with its own modality
+                embed_fn = {"text": lambda v: _embed_text([v])[0], "image": _embed_image, "audio": _embed_audio}
+                emb_a = embed_fn[gen_type](gen_str)
+                emb_b = embed_fn[ref_type](ref_str)
+                modality = f"{gen_type}-vs-{ref_type}"
+
+            similarity = _cosine(emb_a, emb_b)
+        except Exception as e:
+            return {"score": 0.0, "reason": f"Embedding error ({gen_type}/{ref_type}): {e}"}
+
+        return {
+            "score": float(round(max(0.0, min(1.0, similarity)), 4)),
+            "reason": f"Cosine similarity ({modality}): {similarity:.4f}",
+        }

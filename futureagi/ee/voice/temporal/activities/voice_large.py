@@ -32,6 +32,7 @@ from django.db import close_old_connections
 from temporalio import activity
 
 from ee.voice.exceptions import VapiApiError
+from evaluations.usage_step import log_unreadable_step, step_event_id
 from simulate.models.test_execution import CallExecution, TestExecution
 from simulate.semantics import CallType
 from simulate.temporal.types.activities import (
@@ -47,6 +48,39 @@ from simulate.temporal.types.activities import (
     MonitorCallOutput,
     PersistResultInput,
 )
+from simulate.utils.ended_reason import (
+    EndedReasonSource,
+    recorded_ended_reason_source,
+    set_ended_reason,
+)
+from tfc.logging.temporal import try_activity_info
+
+
+async def _dispatch_credentials(input: InitiateCallInput) -> dict[str, str]:
+    """The customer's provider credentials the simulator dispatch carries.
+
+    Values the input carries are used as they are; otherwise they are read by
+    call id. The LiveKit key and secret go only with a LiveKit bridge call.
+    """
+    from ee.voice.temporal.activities.customer_credentials import (
+        read_customer_credentials,
+    )
+
+    carried = input.metadata or {}
+    api_key = input.user_api_key or ""
+    livekit_api_key = carried.get("customer_livekit_api_key") or ""
+    livekit_api_secret = carried.get("customer_livekit_api_secret") or ""
+    if not (api_key or livekit_api_key or livekit_api_secret):
+        credentials = await read_customer_credentials(input.call_id)
+        api_key = credentials.api_key
+        livekit_api_key = credentials.livekit_api_key
+        livekit_api_secret = credentials.livekit_api_secret
+
+    values = {"customer_api_key": api_key}
+    if input.connection_type == "web_livekit_bridge":
+        values["customer_livekit_api_key"] = livekit_api_key
+        values["customer_livekit_api_secret"] = livekit_api_secret
+    return values
 
 
 @activity.defn(name="initiate_call")
@@ -78,6 +112,10 @@ async def initiate_call(input: InitiateCallInput) -> InitiateCallOutput:
 
         try:
             from ee.voice.services.voice_service_manager import VoiceServiceManager
+            from ee.voice.temporal.activities.customer_credentials import (
+                read_customer_credentials,
+                strip_customer_secrets,
+            )
 
             call_data = input.call_data
             call_type = call_data.get("call_type")
@@ -91,7 +129,7 @@ async def initiate_call(input: InitiateCallInput) -> InitiateCallOutput:
             # Common variables for both inbound and outbound
             system_prompt = input.system_prompt
             voice_settings = input.voice_settings
-            metadata = input.metadata
+            metadata = strip_customer_secrets(input.metadata)
             background_sound = voice_settings.get("background_sound")
             language = voice_settings.get("language", "en-US")
 
@@ -120,6 +158,7 @@ async def initiate_call(input: InitiateCallInput) -> InitiateCallOutput:
 
                 from ee.voice.services.types.voice import InboundCallInput
 
+                dispatch_credentials = await _dispatch_credentials(input)
                 result = await sync_to_async(
                     system_vsm.initiate_inbound_call, thread_sensitive=False
                 )(
@@ -129,8 +168,8 @@ async def initiate_call(input: InitiateCallInput) -> InitiateCallOutput:
                         system_prompt=system_prompt,
                         voice_settings=voice_settings,
                         metadata={
-                            **(metadata or {}),
-                            "customer_api_key": input.user_api_key or "",
+                            **metadata,
+                            **dispatch_credentials,
                             "customer_assistant_id": input.user_assistant_id or "",
                         },
                         connection_type=connection_type,
@@ -158,8 +197,13 @@ async def initiate_call(input: InitiateCallInput) -> InitiateCallOutput:
                 # 1. System-side setup (provider-agnostic via initiate_outbound_call)
                 # 2. Trigger outbound call using USER's credentials
 
-                # Validate required outbound parameters
-                user_api_key = input.user_api_key or None
+                # Validate required outbound parameters. The customer's key is
+                # the input's value, or else read by call id.
+                user_api_key = (
+                    input.user_api_key
+                    or (await read_customer_credentials(input.call_id)).api_key
+                    or None
+                )
                 user_assistant_id = input.user_assistant_id or None
                 user_phone = input.user_phone_number or None
                 system_phone_number = input.phone_number
@@ -169,7 +213,7 @@ async def initiate_call(input: InitiateCallInput) -> InitiateCallOutput:
                     missing_fields.append("phone_number (from phone acquisition)")
                 if not user_api_key:
                     missing_fields.append(
-                        "user_api_key (from configuration_snapshot.api_key)"
+                        "user_api_key (from the agent version's credentials)"
                     )
                 if not user_assistant_id:
                     missing_fields.append(
@@ -245,13 +289,18 @@ async def initiate_call(input: InitiateCallInput) -> InitiateCallOutput:
                         f"acquired_phone={setup_result.phone_number}"
                     )
 
+                    # The result keeps the provider's call id and status from
+                    # its create-call answer, nothing else.
                     return InitiateCallOutput(
                         success=True,
                         provider_call_id=provider_call_id,
                         provider_data={
                             "assistant_id": setup_result.assistant_id,
                             "phone_number": setup_result.phone_number,
-                            "trigger_response": trigger_response,
+                            "trigger_response": {
+                                "id": provider_call_id,
+                                "status": trigger_response.get("status"),
+                            },
                         },
                     )
 
@@ -305,19 +354,24 @@ async def monitor_call_until_complete(input: MonitorCallInput) -> MonitorCallOut
         )
 
         from ee.voice.services.voice_service_manager import VoiceServiceManager
+        from ee.voice.temporal.activities.customer_credentials import (
+            read_customer_credentials,
+        )
         from tracer.models.observability_provider import ProviderChoices
 
         # Only OUTBOUND calls poll the customer's provider account: the
         # provider_call_id belongs there and we poll with the customer's API key
-        # (via provider_config). Inbound flows through the VAPI simulator, so its
-        # call id lives in our VAPI account — poll with the system engine. An
-        # unknown/unregistered client_provider (web_<provider>, livekit_bridge)
-        # falls back to VAPI, preserving today's behavior; polling Bland with a
-        # VAPI call-id would throw every iteration and spin the monitor to its
-        # 4h cap.
+        # (from provider_config, or else read by call id). Inbound flows through
+        # the VAPI simulator, so its call id lives in our VAPI account — poll
+        # with the system engine. An unknown/unregistered client_provider
+        # (web_<provider>, livekit_bridge) falls back to VAPI, preserving
+        # today's behavior; polling Bland with a VAPI call-id would throw every
+        # iteration and spin the monitor to its 4h cap.
         api_key = (
             input.provider_config.get("api_key") if input.provider_config else None
         )
+        if not api_key and input.call_type == CallType.OUTBOUND.value:
+            api_key = (await read_customer_credentials(input.call_id)).api_key or None
         try:
             client_enum = ProviderChoices(input.client_provider)
         except ValueError:
@@ -450,6 +504,9 @@ async def fetch_and_persist_call_result(
 
         from simulate.models.run_test import CreateCallExecution
         from ee.voice.services.voice_service_manager import VoiceServiceManager
+        from ee.voice.temporal.activities.customer_credentials import (
+            read_customer_credentials,
+        )
         from tracer.models.observability_provider import ProviderChoices
 
         async with Heartbeater(factor=4) as heartbeater:
@@ -463,11 +520,12 @@ async def fetch_and_persist_call_result(
             )
             # SIP outbound: the customer's own account holds the call data, so
             # fetch from their provider engine (selected from the registry by
-            # client_provider) with their API key. Inbound / web bridge / LiveKit
-            # keep the system engine — transcripts and recordings live on our
-            # server. Every engine exposes the same fetch/recordings/costs
-            # methods the steps below call, so the rest of the activity is
-            # provider-agnostic.
+            # client_provider) with their API key (from provider_config, or
+            # else read by call id when there is a provider call to fetch).
+            # Inbound / web bridge / LiveKit keep the system engine —
+            # transcripts and recordings live on our server. Every engine
+            # exposes the same fetch/recordings/costs methods the steps below
+            # call, so the rest of the activity is provider-agnostic.
             use_customer_account = is_outbound and not is_web_bridge
 
             if use_customer_account:
@@ -476,6 +534,9 @@ async def fetch_and_persist_call_result(
                     if input.provider_config
                     else None
                 )
+                if not api_key and input.provider_call_id:
+                    credentials = await read_customer_credentials(input.call_id)
+                    api_key = credentials.api_key
                 voice_manager = VoiceServiceManager(
                     api_key=api_key or "",
                     system_voice_provider=ProviderChoices(input.client_provider),
@@ -526,16 +587,45 @@ async def fetch_and_persist_call_result(
             update_fields: list[str] = []
 
             if call.ended_reason:
+                # The reason step 1 left: the provider's own, the workflow's
+                # end_reason when the provider gave none, or an earlier
+                # writer's text that the engine kept or wrote again. Record
+                # where it came from. Bland keeps its error message in its end
+                # reason, a failed call whose reason is the workflow's own
+                # end_reason holds the workflow's failure text, and a reason
+                # already recorded as provider-error stays provider-error.
+                reason_provider = (
+                    input.client_provider if use_customer_account else input.provider
+                )
+                is_bland = reason_provider == ProviderChoices.BLAND.value
+                reason_status = str(getattr(input.status, "value", input.status))
+                failed = reason_status.lower() == CallExecution.CallStatus.FAILED
+                is_failure_text = failed and call.ended_reason == input.end_reason
+                was_provider_error = (
+                    recorded_ended_reason_source(call)
+                    == EndedReasonSource.PROVIDER_ERROR
+                )
+                reason = call.ended_reason
                 provider_enum = ProviderChoices(input.provider)
                 if provider_enum == ProviderChoices.VAPI and not is_outbound:
-                    swapped = (
-                        call.ended_reason.replace("assistant", "\x00")
+                    reason = (
+                        reason.replace("assistant", "\x00")
                         .replace("customer", "assistant")
                         .replace("\x00", "customer")
                     )
-                    if swapped != call.ended_reason:
-                        call.ended_reason = swapped
-                        update_fields.append("ended_reason")
+                # Saved at once: a shared link shows step 1's reason by this
+                # source without waiting for the recordings and costs below.
+                await call.asave(
+                    update_fields=set_ended_reason(
+                        call,
+                        reason,
+                        (
+                            EndedReasonSource.PROVIDER_ERROR
+                            if is_bland or is_failure_text or was_provider_error
+                            else EndedReasonSource.PROVIDER
+                        ),
+                    )
+                )
             # For outbound calls, customer_call_id = provider call ID
             if is_outbound:
                 call.customer_call_id = input.provider_call_id
@@ -762,6 +852,33 @@ async def fetch_and_persist_call_result(
         )
 
 
+def _call_cost_event_id(call: CallExecution) -> str | None:
+    """The usage event id of the call's cost, or None when the call workflow
+    run cannot be read.
+
+    The id is keyed to the call and the call workflow run, never the attempt.
+    An attempt lost after its emit is run again in the same workflow run and
+    emits the same id, and the consumer, which keeps one event per id, charges
+    the call once. A rerun a person starts is a new run, also when it reuses
+    the call's row and the workflow's id, so it is charged again. With no run
+    to key it to, the event gets a fresh id and is charged.
+    """
+    try:
+        info = try_activity_info()
+        if info is None or not (info.workflow_id and info.workflow_run_id):
+            return None
+        return step_event_id(
+            {
+                "evaluated": ("simulate_call", str(call.id)),
+                "run": (info.workflow_id, info.workflow_run_id),
+                "evaluator": ("call_cost",),
+            }
+        )
+    except Exception:
+        log_unreadable_step()
+        return None
+
+
 @activity.defn(name="deduct_call_cost")
 async def deduct_call_cost(input: DeductCostInput) -> None:
     """
@@ -769,6 +886,8 @@ async def deduct_call_cost(input: DeductCostInput) -> None:
 
     Replaces the old wallet-deduction model with postpaid usage tracking.
     Emits to the Redis usage stream, consumed by UsageConsumerWorkflow.
+    The event is keyed to the call and its workflow run, so a retried
+    attempt is charged once (_call_cost_event_id).
 
     Timeout: 1 minute
     Queue: tasks_l
@@ -810,10 +929,13 @@ async def deduct_call_cost(input: DeductCostInput) -> None:
         org_id = str(call.test_execution.run_test.organization_id)
         is_voice = call.simulation_call_type == CallExecution.SimulationCallType.VOICE
         duration_minutes = math.ceil(call.duration_seconds / 60)
+        event_id = _call_cost_event_id(call)
+        keyed = {"event_id": event_id} if event_id else {}
 
         if is_voice:
             emit(
                 UsageEvent(
+                    **keyed,
                     org_id=org_id,
                     event_type=BillingEventType.VOICE_CALL,
                     amount=max(1, duration_minutes),
@@ -827,6 +949,7 @@ async def deduct_call_cost(input: DeductCostInput) -> None:
         else:
             emit(
                 UsageEvent(
+                    **keyed,
                     org_id=org_id,
                     event_type=BillingEventType.TEXT_CALL,
                     amount=1,

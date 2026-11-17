@@ -7,7 +7,9 @@ from model_hub.models.run_prompt import PromptVersion
 
 def _workspace_filter(workspace, field_name):
     if workspace is None:
-        return Q()
+        from tfc.utils.workspace_scope import empty_workspace_filter
+
+        return empty_workspace_filter()
     if getattr(workspace, "is_default", False):
         organization = getattr(workspace, "organization", None)
         query = Q(**{field_name: workspace})

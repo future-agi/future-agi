@@ -1,0 +1,16 @@
+{
+  "http": {
+    "status": 403,
+    "headers": {
+      "content-type": "application/json"
+    }
+  },
+  "body": {
+    "error": {
+      "message": "This API key may call only the MCP endpoint and POST /v1/chat/completions, /v1/embeddings and /v1/responses; GET /v1/models is outside its scope.",
+      "type": "permission_error",
+      "param": null,
+      "code": "key_scope_denied"
+    }
+  }
+}

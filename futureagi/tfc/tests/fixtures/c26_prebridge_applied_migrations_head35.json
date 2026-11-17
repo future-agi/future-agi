@@ -1,0 +1,4011 @@
+{
+  "revision": "b8e04f4323167afdd8bb72082f0f054458f3a055",
+  "base": "4e245e142d54827b93017620fff3bc793e8c7631",
+  "historyScope": "All repository migrations at head-35; not a queried live history.",
+  "apps": [
+    {
+      "root": "futureagi/accounts",
+      "name": "accounts",
+      "label": "accounts"
+    },
+    {
+      "root": "futureagi/agent_playground",
+      "name": "agent_playground",
+      "label": "agent_playground"
+    },
+    {
+      "root": "futureagi/agentcc",
+      "name": "agentcc",
+      "label": "prism"
+    },
+    {
+      "root": "futureagi/ee/falcon_ai",
+      "name": "ee.falcon_ai",
+      "label": "falcon_ai"
+    },
+    {
+      "root": "futureagi/ee/usage",
+      "name": "ee.usage",
+      "label": "usage"
+    },
+    {
+      "root": "futureagi/integrations",
+      "name": "integrations",
+      "label": "integrations"
+    },
+    {
+      "root": "futureagi/mcp_server",
+      "name": "mcp_server",
+      "label": "mcp_server"
+    },
+    {
+      "root": "futureagi/model_hub",
+      "name": "model_hub",
+      "label": "model_hub"
+    },
+    {
+      "root": "futureagi/omega_hub",
+      "name": "omega_hub",
+      "label": "omega_hub"
+    },
+    {
+      "root": "futureagi/omega_rollout",
+      "name": "omega_rollout",
+      "label": "omega_rollout"
+    },
+    {
+      "root": "futureagi/saml2_auth",
+      "name": "saml2_auth",
+      "label": "saml2_auth"
+    },
+    {
+      "root": "futureagi/simulate",
+      "name": "simulate",
+      "label": "simulate"
+    },
+    {
+      "root": "futureagi/tfc/deployment_telemetry",
+      "name": "tfc.deployment_telemetry",
+      "label": "deployment_telemetry"
+    },
+    {
+      "root": "futureagi/tracer",
+      "name": "tracer",
+      "label": "tracer"
+    },
+    {
+      "root": "futureagi/webhooks",
+      "name": "webhooks",
+      "label": "webhooks"
+    }
+  ],
+  "applied": [
+    [
+      "accounts",
+      "0001_initial"
+    ],
+    [
+      "accounts",
+      "0002_user_config"
+    ],
+    [
+      "accounts",
+      "0003_alter_authtoken_auth_type"
+    ],
+    [
+      "accounts",
+      "0004_alter_user_organization_role_organizationmembership_and_more"
+    ],
+    [
+      "accounts",
+      "0004_awsmarketplacecustomer"
+    ],
+    [
+      "accounts",
+      "0005_orgapikey_workspace"
+    ],
+    [
+      "accounts",
+      "0006_alter_organizationmembership_role_and_more"
+    ],
+    [
+      "accounts",
+      "0006_merge_20250826_0917"
+    ],
+    [
+      "accounts",
+      "0006_organization_ws_enabled_and_more"
+    ],
+    [
+      "accounts",
+      "0007_alter_organizationmembership_role_and_more"
+    ],
+    [
+      "accounts",
+      "0007_alter_orgapikey_options_and_more"
+    ],
+    [
+      "accounts",
+      "0007_merge_20250903_1403"
+    ],
+    [
+      "accounts",
+      "0008_merge_20250904_1413"
+    ],
+    [
+      "accounts",
+      "0009_merge_20250905_1045"
+    ],
+    [
+      "accounts",
+      "0009_merge_20250905_1157"
+    ],
+    [
+      "accounts",
+      "0009_merge_20250905_1827"
+    ],
+    [
+      "accounts",
+      "0010_merge_20250905_1241"
+    ],
+    [
+      "accounts",
+      "0011_merge_20250908_0727"
+    ],
+    [
+      "accounts",
+      "0012_user_goals_user_role"
+    ],
+    [
+      "accounts",
+      "0013_alter_user_organization_role"
+    ],
+    [
+      "accounts",
+      "0014_alter_orgapikey_type"
+    ],
+    [
+      "accounts",
+      "0014_organization_region"
+    ],
+    [
+      "accounts",
+      "0014_organization_require_2fa_and_more"
+    ],
+    [
+      "accounts",
+      "0015_backfill_rbac_data"
+    ],
+    [
+      "accounts",
+      "0016_merge_0014_0015"
+    ],
+    [
+      "accounts",
+      "0016_merge_20260316_1144"
+    ],
+    [
+      "accounts",
+      "0017_merge_0016_merge_0014_0015_0016_merge_20260316_1144"
+    ],
+    [
+      "accounts",
+      "0018_add_eval_template_version"
+    ],
+    [
+      "accounts",
+      "0018_blockedkeyproxy"
+    ],
+    [
+      "accounts",
+      "0019_merge_20260407_1927"
+    ],
+    [
+      "accounts",
+      "0020_reseed_broken_demo_data"
+    ],
+    [
+      "accounts",
+      "0020_user_last_timezone"
+    ],
+    [
+      "accounts",
+      "0021_merge_20260526_0921"
+    ],
+    [
+      "accounts",
+      "0022_backfill_ws_org_membership_fk"
+    ],
+    [
+      "accounts",
+      "0023_create_missing_org_memberships"
+    ],
+    [
+      "accounts",
+      "0024_sosloginproxy"
+    ],
+    [
+      "accounts",
+      "0025_gcpmarketplaceprocessedevent_gcpmarketplaceaccount_and_more"
+    ],
+    [
+      "accounts",
+      "0026_authtoken_scope"
+    ],
+    [
+      "accounts",
+      "0026_host_event_outbox"
+    ],
+    [
+      "accounts",
+      "0026_orgapikey_ingest_type"
+    ],
+    [
+      "accounts",
+      "0026_orgapikey_secret_hash"
+    ],
+    [
+      "accounts",
+      "0027_orgapikey_simulation_agent_id"
+    ],
+    [
+      "accounts",
+      "0027_seal_api_secrets"
+    ],
+    [
+      "accounts",
+      "0028_merge_20261019_1400"
+    ],
+    [
+      "accounts",
+      "0028_merge_authtoken_scope_and_simulation_agent_key"
+    ],
+    [
+      "accounts",
+      "0029_demotracepublication_demoseedrequest"
+    ],
+    [
+      "accounts",
+      "0029_omega_purge_lifecycle"
+    ],
+    [
+      "accounts",
+      "0030_merge_omega_purge_and_simulation_agent_key"
+    ],
+    [
+      "accounts",
+      "0030_queue_existing_demo_trace_publications"
+    ],
+    [
+      "accounts",
+      "0031_retire_org_keys"
+    ],
+    [
+      "accounts",
+      "0032_service_grants"
+    ],
+    [
+      "accounts",
+      "0033_batch_submission_intent"
+    ],
+    [
+      "accounts",
+      "0034_retirement_manifest"
+    ],
+    [
+      "accounts",
+      "0035_gateway_retirement_fence"
+    ],
+    [
+      "accounts",
+      "0036_authtoken_password_reset_type"
+    ],
+    [
+      "accounts",
+      "0037_merge_c26_dev_candidate"
+    ],
+    [
+      "accounts",
+      "0038_organizationmembership_removed_at"
+    ],
+    [
+      "agent_playground",
+      "0001_initial"
+    ],
+    [
+      "agent_playground",
+      "0002_graph_collaborators_graph_created_by_and_more"
+    ],
+    [
+      "agent_playground",
+      "0003_alter_graphversion_status"
+    ],
+    [
+      "agent_playground",
+      "0004_remove_graph_agent_playg_workspa_79211d_idx_and_more"
+    ],
+    [
+      "agent_playground",
+      "0005_remove_port_unique_node_port_key_port_display_name_and_more"
+    ],
+    [
+      "agent_playground",
+      "0006_graphdataset"
+    ],
+    [
+      "agent_playground",
+      "0007_port_ref_port"
+    ],
+    [
+      "agent_playground",
+      "0008_nodeconnection"
+    ],
+    [
+      "agent_playground",
+      "0008_prompttemplatenode"
+    ],
+    [
+      "agent_playground",
+      "0009_merge_0008_nodeconnection_0008_prompttemplatenode"
+    ],
+    [
+      "agent_playground",
+      "0010_node_unique_node_name_per_graph_version"
+    ],
+    [
+      "agent_playground",
+      "0011_alter_prompttemplatenode_prompt_template_and_more"
+    ],
+    [
+      "deployment_telemetry",
+      "0001_initial"
+    ],
+    [
+      "deployment_telemetry",
+      "0002_boot_event"
+    ],
+    [
+      "falcon_ai",
+      "0001_initial"
+    ],
+    [
+      "falcon_ai",
+      "0002_conversation_mode_message_input_tokens_and_more"
+    ],
+    [
+      "falcon_ai",
+      "0003_falconfile"
+    ],
+    [
+      "falcon_ai",
+      "0004_message_files_alter_falconfile_conversation_and_more"
+    ],
+    [
+      "falcon_ai",
+      "0005_mcpconnector_oauth_access_token_and_more"
+    ],
+    [
+      "falcon_ai",
+      "0006_add_context_compaction"
+    ],
+    [
+      "falcon_ai",
+      "0007_global_builtin_skills"
+    ],
+    [
+      "falcon_ai",
+      "0008_seed_cluster_rca_skill"
+    ],
+    [
+      "falcon_ai",
+      "0009_resync_builtin_skills"
+    ],
+    [
+      "falcon_ai",
+      "0010_encrypt_connector_credentials"
+    ],
+    [
+      "falcon_ai",
+      "0011_mcpconnector_credential_generation"
+    ],
+    [
+      "integrations",
+      "0001_initial"
+    ],
+    [
+      "integrations",
+      "0002_alter_integrationconnection_platform"
+    ],
+    [
+      "integrations",
+      "0003_linear_integration"
+    ],
+    [
+      "integrations",
+      "0004_integrationconnection_uq_intconn_org_ws_action_only_active"
+    ],
+    [
+      "integrations",
+      "0005_slack_integration"
+    ],
+    [
+      "mcp_server",
+      "0001_initial"
+    ],
+    [
+      "mcp_server",
+      "0002_mcpoauthcode"
+    ],
+    [
+      "mcp_server",
+      "0003_streamable_http_transport"
+    ],
+    [
+      "mcp_server",
+      "0004_remove_retired_tool_groups"
+    ],
+    [
+      "mcp_server",
+      "0005_personal_key_reconnect"
+    ],
+    [
+      "model_hub",
+      "0001_initial"
+    ],
+    [
+      "model_hub",
+      "0002_initial"
+    ],
+    [
+      "model_hub",
+      "0003_alter_evaluator_config_alter_evaluator_description_and_more"
+    ],
+    [
+      "model_hub",
+      "0003_remove_prompttemplate_evaluation_configs_and_more"
+    ],
+    [
+      "model_hub",
+      "0004_alter_annotationslabels_options_and_more"
+    ],
+    [
+      "model_hub",
+      "0005_alter_column_source_and_more"
+    ],
+    [
+      "model_hub",
+      "0006_merge_20250724_1016"
+    ],
+    [
+      "model_hub",
+      "0007_alter_feedback_source"
+    ],
+    [
+      "model_hub",
+      "0008_alter_dataset_source"
+    ],
+    [
+      "model_hub",
+      "0009_alter_column_status_alter_errorlocalizertask_source_and_more"
+    ],
+    [
+      "model_hub",
+      "0010_cell_completion_tokens_cell_prompt_tokens_and_more"
+    ],
+    [
+      "model_hub",
+      "0010_evaluation"
+    ],
+    [
+      "model_hub",
+      "0011_dataset_synthetic_dataset_config"
+    ],
+    [
+      "model_hub",
+      "0011_merge_20250809_0613"
+    ],
+    [
+      "model_hub",
+      "0012_merge_20250811_1553"
+    ],
+    [
+      "model_hub",
+      "0012_merge_20250822_0853"
+    ],
+    [
+      "model_hub",
+      "0013_merge_20250812_0649"
+    ],
+    [
+      "model_hub",
+      "0014_promptlabel_promptversion_labels_and_more"
+    ],
+    [
+      "model_hub",
+      "0015_alter_column_data_type_alter_column_name_and_more"
+    ],
+    [
+      "model_hub",
+      "0016_aimodel_workspace_annotations_workspace_and_more"
+    ],
+    [
+      "model_hub",
+      "0016_annotationslabels_metadata"
+    ],
+    [
+      "model_hub",
+      "0016_dataset_eval_reasons"
+    ],
+    [
+      "model_hub",
+      "0017_merge_20250826_0917"
+    ],
+    [
+      "model_hub",
+      "0017_merge_20250826_1225"
+    ],
+    [
+      "model_hub",
+      "0018_remove_dataset_eval_reasons"
+    ],
+    [
+      "model_hub",
+      "0019_dataset_eval_reasons"
+    ],
+    [
+      "model_hub",
+      "0019_promptversion_placeholders"
+    ],
+    [
+      "model_hub",
+      "0019_remove_annotationslabels_unique_active_label_org_name_type_project_and_more"
+    ],
+    [
+      "model_hub",
+      "0020_dataset_eval_reason_last_updated"
+    ],
+    [
+      "model_hub",
+      "0020_evaluation_error_localizer_and_more"
+    ],
+    [
+      "model_hub",
+      "0020_merge_20250828_1205"
+    ],
+    [
+      "model_hub",
+      "0020_prompttemplate_placeholders"
+    ],
+    [
+      "model_hub",
+      "0021_merge_20250902_0743"
+    ],
+    [
+      "model_hub",
+      "0022_merge_20250904_0542"
+    ],
+    [
+      "model_hub",
+      "0022_merge_20250905_1157"
+    ],
+    [
+      "model_hub",
+      "0022_merge_20250905_1827"
+    ],
+    [
+      "model_hub",
+      "0023_errorlocalizertask_error_local_status_5890d8_idx_and_more"
+    ],
+    [
+      "model_hub",
+      "0023_prompttemplate_is_sample_promptbasetemplate_and_more"
+    ],
+    [
+      "model_hub",
+      "0024_merge_20250905_1045"
+    ],
+    [
+      "model_hub",
+      "0025_merge_20250905_1241"
+    ],
+    [
+      "model_hub",
+      "0026_alter_promptbasetemplate_organization_and_more"
+    ],
+    [
+      "model_hub",
+      "0026_merge_20250908_0727"
+    ],
+    [
+      "model_hub",
+      "0027_merge_20250908_1108"
+    ],
+    [
+      "model_hub",
+      "0028_promptbasetemplate_created_by_and_more"
+    ],
+    [
+      "model_hub",
+      "0029_prompttemplate_created_by"
+    ],
+    [
+      "model_hub",
+      "0030_merge_20250911_0838"
+    ],
+    [
+      "model_hub",
+      "0031_evalgroup_history"
+    ],
+    [
+      "model_hub",
+      "0032_promptevalconfig_eval_group"
+    ],
+    [
+      "model_hub",
+      "0033_remove_evalgroup_unique_eval_group_name_organization_workspace_not_deleted_and_more"
+    ],
+    [
+      "model_hub",
+      "0034_evalgroup_is_sample"
+    ],
+    [
+      "model_hub",
+      "0035_alter_column_data_type"
+    ],
+    [
+      "model_hub",
+      "0035_userevalmetric_eval_group_alter_column_data_type"
+    ],
+    [
+      "model_hub",
+      "0036_merge_20251001_0933"
+    ],
+    [
+      "model_hub",
+      "0037_add_promptversion_labels_composite_index"
+    ],
+    [
+      "model_hub",
+      "0037_alter_runprompter_output_format"
+    ],
+    [
+      "model_hub",
+      "0038_merge_20251105_1047"
+    ],
+    [
+      "model_hub",
+      "0039_ttsvoice"
+    ],
+    [
+      "model_hub",
+      "0040_alter_ttsvoice_description"
+    ],
+    [
+      "model_hub",
+      "0041_alter_dataset_eval_reasons"
+    ],
+    [
+      "model_hub",
+      "0041_pendingrowtask"
+    ],
+    [
+      "model_hub",
+      "0042_alter_files_name_alter_files_updated_by_and_more"
+    ],
+    [
+      "model_hub",
+      "0042_pendingrowtask_model_hub_p_status_600b9b_idx_and_more"
+    ],
+    [
+      "model_hub",
+      "0043_merge_20251210_1300"
+    ],
+    [
+      "model_hub",
+      "0044_merge_20251215_1003"
+    ],
+    [
+      "model_hub",
+      "0045_alter_column_status_and_more"
+    ],
+    [
+      "model_hub",
+      "0046_dataset_eval_reason_status_and_more"
+    ],
+    [
+      "model_hub",
+      "0047_alter_dataset_eval_reason_status"
+    ],
+    [
+      "model_hub",
+      "0048_alter_secretmodel_unique_together"
+    ],
+    [
+      "model_hub",
+      "0049_row_metadata"
+    ],
+    [
+      "model_hub",
+      "0050_alter_dataset_source"
+    ],
+    [
+      "model_hub",
+      "0050_alter_feedback_options_feedback_organization_and_more"
+    ],
+    [
+      "model_hub",
+      "0051_add_indexes_to_develop_dataset_models"
+    ],
+    [
+      "model_hub",
+      "0051_optimizedataset_optimizer_fields"
+    ],
+    [
+      "model_hub",
+      "0052_datasetoptimizationstep_datasetoptimizationtrial"
+    ],
+    [
+      "model_hub",
+      "0052_remove_dataset_model_hub_d_organiz_edc982_idx_and_more"
+    ],
+    [
+      "model_hub",
+      "0053_optimize_dataset_inherit_basemodel"
+    ],
+    [
+      "model_hub",
+      "0054_add_trial_item_models"
+    ],
+    [
+      "model_hub",
+      "0055_merge_20260203_0956"
+    ],
+    [
+      "model_hub",
+      "0056_remove_dataset_model_hub_d_organiz_edc982_idx_and_more"
+    ],
+    [
+      "model_hub",
+      "0057_alter_experimentdatasettable_prompt_config_and_more"
+    ],
+    [
+      "model_hub",
+      "0057_alter_optimizedataset_status"
+    ],
+    [
+      "model_hub",
+      "0057_merge_20260227_1332"
+    ],
+    [
+      "model_hub",
+      "0057_promptevalconfig_config"
+    ],
+    [
+      "model_hub",
+      "0058_merge_20260302_0732"
+    ],
+    [
+      "model_hub",
+      "0059_alter_dataset_eval_reason_status"
+    ],
+    [
+      "model_hub",
+      "0059_clear_uc_session_ids_from_row_metadata"
+    ],
+    [
+      "model_hub",
+      "0060_alter_dataset_eval_reason_status_annotationqueue_and_more"
+    ],
+    [
+      "model_hub",
+      "0060_merge_20260309_1317"
+    ],
+    [
+      "model_hub",
+      "0060_merge_20260311_1110"
+    ],
+    [
+      "model_hub",
+      "0061_add_trace_session_to_queue_item"
+    ],
+    [
+      "model_hub",
+      "0061_merge_20260306_0640"
+    ],
+    [
+      "model_hub",
+      "0062_merge_20260316_1301"
+    ],
+    [
+      "model_hub",
+      "0062_ttsvoice_score"
+    ],
+    [
+      "model_hub",
+      "0063_annotationqueue_project_is_default"
+    ],
+    [
+      "model_hub",
+      "0064_annotationqueue_dataset_agent_definition"
+    ],
+    [
+      "model_hub",
+      "0065_alter_score_call_execution_alter_score_dataset_row_and_more"
+    ],
+    [
+      "model_hub",
+      "0066_merge_20260312_0339"
+    ],
+    [
+      "model_hub",
+      "0067_merge_20260316_0730"
+    ],
+    [
+      "model_hub",
+      "0068_annotationqueue_auto_assign"
+    ],
+    [
+      "model_hub",
+      "0068_merge_20260319_0729"
+    ],
+    [
+      "model_hub",
+      "0069_queueitemassignment"
+    ],
+    [
+      "model_hub",
+      "0070_migrate_assigned_to_m2m"
+    ],
+    [
+      "model_hub",
+      "0071_merge_20260323_0811"
+    ],
+    [
+      "model_hub",
+      "0072_add_scoring_fields"
+    ],
+    [
+      "model_hub",
+      "0072_merge_20260331_0222"
+    ],
+    [
+      "model_hub",
+      "0072_update_run_prompter_validators"
+    ],
+    [
+      "model_hub",
+      "0073_add_eval_template_version"
+    ],
+    [
+      "model_hub",
+      "0073_merge_20260403_2145"
+    ],
+    [
+      "model_hub",
+      "0074_add_composite_eval"
+    ],
+    [
+      "model_hub",
+      "0075_add_ground_truth"
+    ],
+    [
+      "model_hub",
+      "0076_add_eval_summary_template"
+    ],
+    [
+      "model_hub",
+      "0077_add_eval_type"
+    ],
+    [
+      "model_hub",
+      "0078_ground_truth_embeddings"
+    ],
+    [
+      "model_hub",
+      "0079_eval_permissions_fields"
+    ],
+    [
+      "model_hub",
+      "0080_optimize_dataset_list_indexes"
+    ],
+    [
+      "model_hub",
+      "0081_merge_20260407_1927"
+    ],
+    [
+      "model_hub",
+      "0082_add_error_localizer_to_eval_template"
+    ],
+    [
+      "model_hub",
+      "0083_composite_aggregation"
+    ],
+    [
+      "model_hub",
+      "0084_composite_child_axis"
+    ],
+    [
+      "model_hub",
+      "0085_alter_column_status_alter_dataset_source_and_more"
+    ],
+    [
+      "model_hub",
+      "0085_composite_wiring_fields"
+    ],
+    [
+      "model_hub",
+      "0086_alter_column_status_alter_dataset_source_and_more"
+    ],
+    [
+      "model_hub",
+      "0087_merge_20260416_1409"
+    ],
+    [
+      "model_hub",
+      "0088_add_allow_notes_to_annotations_labels"
+    ],
+    [
+      "model_hub",
+      "0088_cell_model_hub_cell_value_trgm_idx"
+    ],
+    [
+      "model_hub",
+      "0089_merge_20260422_1854"
+    ],
+    [
+      "model_hub",
+      "0089_merge_20260423_0001"
+    ],
+    [
+      "model_hub",
+      "0090_merge_20260423_1541"
+    ],
+    [
+      "model_hub",
+      "0091_automationrule_trigger_frequency"
+    ],
+    [
+      "model_hub",
+      "0091_evaltemplateversion_snapshot_columns"
+    ],
+    [
+      "model_hub",
+      "0092_alter_evaltemplate_output_type_normalized_and_more"
+    ],
+    [
+      "model_hub",
+      "0092_annotationqueueannotator_roles"
+    ],
+    [
+      "model_hub",
+      "0093_queueitemreviewcomment"
+    ],
+    [
+      "model_hub",
+      "0094_queueitemreviewthread"
+    ],
+    [
+      "model_hub",
+      "0095_queueitemnote"
+    ],
+    [
+      "model_hub",
+      "0096_queueitemreviewcomment_mentions"
+    ],
+    [
+      "model_hub",
+      "0097_queueitemreviewcomment_reactions"
+    ],
+    [
+      "model_hub",
+      "0098_merge_20260513_1258"
+    ],
+    [
+      "model_hub",
+      "0099_annotationnotificationstate"
+    ],
+    [
+      "model_hub",
+      "0099_backfill_empty_eval_template_versions"
+    ],
+    [
+      "model_hub",
+      "0099_compositeevalchild_config"
+    ],
+    [
+      "model_hub",
+      "0100_merge_20260521_0749"
+    ],
+    [
+      "model_hub",
+      "0100_score_queue_scoped_uniqueness"
+    ],
+    [
+      "model_hub",
+      "0101_backfill_composite_v1_config_snapshots"
+    ],
+    [
+      "model_hub",
+      "0101_canonicalize_automation_rule_filter_fields"
+    ],
+    [
+      "model_hub",
+      "0102_canonicalize_performance_report_filters"
+    ],
+    [
+      "model_hub",
+      "0103_score_value_history"
+    ],
+    [
+      "model_hub",
+      "0104_merge_20260526_0921"
+    ],
+    [
+      "model_hub",
+      "0105_decouple_score_telemetry_fk_constraints"
+    ],
+    [
+      "model_hub",
+      "0105_optimizedataset_workspace_scope"
+    ],
+    [
+      "model_hub",
+      "0106_decouple_telemetry_fk_constraints"
+    ],
+    [
+      "model_hub",
+      "0106_tools_workspace_uniqueness"
+    ],
+    [
+      "model_hub",
+      "0107_customaimodel_baseline_default_metric"
+    ],
+    [
+      "model_hub",
+      "0107_merge_20260608_1551"
+    ],
+    [
+      "model_hub",
+      "0108_merge_20260602_1148"
+    ],
+    [
+      "model_hub",
+      "0109_merge_20260605_1359"
+    ],
+    [
+      "model_hub",
+      "0110_merge_20260609_1253"
+    ],
+    [
+      "model_hub",
+      "0111_userevalmetric_pinned_version"
+    ],
+    [
+      "model_hub",
+      "0112_eval_ground_truth_tenant_scope"
+    ],
+    [
+      "model_hub",
+      "0113_annotation_queue_label_required_default"
+    ],
+    [
+      "model_hub",
+      "0114_backfill_eval_version_is_default"
+    ],
+    [
+      "model_hub",
+      "0115_eval_usage_version_backfill"
+    ],
+    [
+      "model_hub",
+      "0116_queueitem_project"
+    ],
+    [
+      "model_hub",
+      "0117_backfill_queueitem_project"
+    ],
+    [
+      "model_hub",
+      "0118_score_tracer_project_id_and_more"
+    ],
+    [
+      "model_hub",
+      "0119_score_tracer_project_index_concurrent"
+    ],
+    [
+      "model_hub",
+      "0120_backfill_score_tracer_project"
+    ],
+    [
+      "model_hub",
+      "0121_queueitem_source_preview"
+    ],
+    [
+      "model_hub",
+      "0122_backfill_queueitem_source_preview"
+    ],
+    [
+      "model_hub",
+      "0123_datasetversion_datasetversionitem_and_more"
+    ],
+    [
+      "model_hub",
+      "0123_promptlabelhead"
+    ],
+    [
+      "model_hub",
+      "0123_usereval_is_experiment_default"
+    ],
+    [
+      "model_hub",
+      "0124_dataset_description_tags"
+    ],
+    [
+      "model_hub",
+      "0124_dataset_saved_view"
+    ],
+    [
+      "model_hub",
+      "0124_datasetversionitem_unique_dataset_version_external_id"
+    ],
+    [
+      "model_hub",
+      "0124_evaltemplate_eval_type_dag"
+    ],
+    [
+      "model_hub",
+      "0124_experiment_run_control"
+    ],
+    [
+      "model_hub",
+      "0124_experiment_run_scope"
+    ],
+    [
+      "model_hub",
+      "0124_score_value_updated_at"
+    ],
+    [
+      "model_hub",
+      "0124_widen_model_hub_key_columns"
+    ],
+    [
+      "model_hub",
+      "0125_backfill_score_value_updated_at"
+    ],
+    [
+      "model_hub",
+      "0125_dataset_splits"
+    ],
+    [
+      "model_hub",
+      "0125_dataset_stars"
+    ],
+    [
+      "model_hub",
+      "0125_encrypt_model_hub_keys_at_rest"
+    ],
+    [
+      "model_hub",
+      "0125_experiment_run_control_phase"
+    ],
+    [
+      "model_hub",
+      "0125_experiment_run_mvp"
+    ],
+    [
+      "model_hub",
+      "0125_experiment_run_policy"
+    ],
+    [
+      "model_hub",
+      "0125_generated_input_snapshot"
+    ],
+    [
+      "model_hub",
+      "0126_dataset_folders"
+    ],
+    [
+      "model_hub",
+      "0126_evaltemplate_external_eval_type"
+    ],
+    [
+      "model_hub",
+      "0126_experiment_row_budget"
+    ],
+    [
+      "model_hub",
+      "0126_merge_dsx_works_705_r1"
+    ],
+    [
+      "model_hub",
+      "0126_row_source"
+    ],
+    [
+      "model_hub",
+      "0127_experimentrun_ordinal_datasetbaseline"
+    ],
+    [
+      "model_hub",
+      "0127_merge_dsx_works_705_r4"
+    ],
+    [
+      "model_hub",
+      "0127_merge_scope_and_run_control"
+    ],
+    [
+      "model_hub",
+      "0128_merge_keys_at_rest_and_experiment_runs"
+    ],
+    [
+      "model_hub",
+      "0128_merge_scope_and_splits"
+    ],
+    [
+      "model_hub",
+      "0129_merge_prompt_label_heads_and_experiment_runs"
+    ],
+    [
+      "model_hub",
+      "0130_merge_dsx_and_integration"
+    ],
+    [
+      "model_hub",
+      "0134_merge_dataset_works_and_integration"
+    ],
+    [
+      "model_hub",
+      "0135_evaltemplate_eval_type_external_and_dag"
+    ],
+    [
+      "model_hub",
+      "0136_merge_708j_round3"
+    ],
+    [
+      "model_hub",
+      "0137_merge_dsx3e_grid_snapshot"
+    ],
+    [
+      "model_hub",
+      "0137_merge_score_value_clock_and_708j_round3"
+    ],
+    [
+      "model_hub",
+      "0138_merge_dsx3e_c7_and_grid_snapshot"
+    ],
+    [
+      "model_hub",
+      "0138_merge_dsx3e_pgrid_row_source"
+    ],
+    [
+      "model_hub",
+      "0139_merge_dsx3f_c7_and_pgrid"
+    ],
+    [
+      "model_hub",
+      "0140_rebackfill_queueitem_project_upgraded"
+    ],
+    [
+      "model_hub",
+      "0141_native_experiment_run_bindings"
+    ],
+    [
+      "omega_hub",
+      "0001_initial"
+    ],
+    [
+      "omega_hub",
+      "0002_version_strict_semver"
+    ],
+    [
+      "omega_hub",
+      "0003_erasure_and_email_verification"
+    ],
+    [
+      "omega_hub",
+      "0003_hub_operations"
+    ],
+    [
+      "omega_hub",
+      "0004_queue_age_and_bundle_locks"
+    ],
+    [
+      "omega_hub",
+      "0005_merge_hub_operations_and_erasure"
+    ],
+    [
+      "omega_rollout",
+      "0001_initial"
+    ],
+    [
+      "prism",
+      "0001_initial"
+    ],
+    [
+      "prism",
+      "0002_prismrequestlog_guardrail_results_and_more"
+    ],
+    [
+      "prism",
+      "0003_make_gateway_org_nullable"
+    ],
+    [
+      "prism",
+      "0004_prismorgconfig"
+    ],
+    [
+      "prism",
+      "0005_prismguardrailpolicy_and_more"
+    ],
+    [
+      "prism",
+      "0006_prismblocklist"
+    ],
+    [
+      "prism",
+      "0007_prismguardrailfeedback"
+    ],
+    [
+      "prism",
+      "0008_remaining_models"
+    ],
+    [
+      "prism",
+      "0009_prismorgconfig_cache"
+    ],
+    [
+      "prism",
+      "0010_prismorgconfig_rate_limiting"
+    ],
+    [
+      "prism",
+      "0011_org_config_category_e_fields"
+    ],
+    [
+      "prism",
+      "0012_shadow_experiments"
+    ],
+    [
+      "prism",
+      "0013_prismorgconfig_mcp"
+    ],
+    [
+      "prism",
+      "0014_prismorgconfig_a2a"
+    ],
+    [
+      "prism",
+      "0015_prismorgconfig_audit"
+    ],
+    [
+      "prism",
+      "0016_prismorgconfig_model_database"
+    ],
+    [
+      "prism",
+      "0017_prismorgconfig_model_map"
+    ],
+    [
+      "prism",
+      "0018_provider_credential_key_hash_admin_encrypt"
+    ],
+    [
+      "prism",
+      "0019_workspace_and_shadow_org_fields"
+    ],
+    [
+      "prism",
+      "0020_request_log_meta"
+    ],
+    [
+      "prism",
+      "0021_prismguardrailpolicy_encrypted_check_configs"
+    ],
+    [
+      "prism",
+      "0022_remove_prismgateway_organization_and_more"
+    ],
+    [
+      "prism",
+      "0023_alter_prismshadowexperiment_unique_together_and_more"
+    ],
+    [
+      "prism",
+      "0024_rename_prism_to_agentcc"
+    ],
+    [
+      "prism",
+      "0025_rename_indexes_and_related_name_alters"
+    ],
+    [
+      "prism",
+      "0026_clear_stuck_ui_guardrails_encrypted_configs"
+    ],
+    [
+      "prism",
+      "0027_request_log_metadata_gin"
+    ],
+    [
+      "prism",
+      "0028_drop_rejected_org_config_keys"
+    ],
+    [
+      "prism",
+      "0029_org_config_managed_models"
+    ],
+    [
+      "prism",
+      "0029_request_log_unique_request_id"
+    ],
+    [
+      "prism",
+      "0030_request_log_v2"
+    ],
+    [
+      "prism",
+      "0031_request_log_v2_indexes"
+    ],
+    [
+      "prism",
+      "0032_request_attempt"
+    ],
+    [
+      "prism",
+      "0033_managed_upstream_key"
+    ],
+    [
+      "prism",
+      "0034_request_outcome"
+    ],
+    [
+      "prism",
+      "0035_mcp_credential"
+    ],
+    [
+      "prism",
+      "0036_mcp_tool_call"
+    ],
+    [
+      "prism",
+      "0037_mcp_tool_revision"
+    ],
+    [
+      "prism",
+      "0038_mcp_approval"
+    ],
+    [
+      "prism",
+      "0039_mcp_registry"
+    ],
+    [
+      "prism",
+      "0040_mcp_oauth"
+    ],
+    [
+      "prism",
+      "0041_mcp_indexes"
+    ],
+    [
+      "prism",
+      "0042_delegated_grant"
+    ],
+    [
+      "prism",
+      "0043_attempt_hollow_request_log_evidence"
+    ],
+    [
+      "prism",
+      "0044_memory_forget"
+    ],
+    [
+      "prism",
+      "0045_org_config_tools_identity"
+    ],
+    [
+      "prism",
+      "0046_org_config_db_defaults"
+    ],
+    [
+      "prism",
+      "0047_encrypt_org_config_secrets"
+    ],
+    [
+      "prism",
+      "0048_r7_batch_jobs"
+    ],
+    [
+      "prism",
+      "0048_r7_email_alert_state"
+    ],
+    [
+      "prism",
+      "0049_merge_r7"
+    ],
+    [
+      "prism",
+      "0050_encrypt_org_config_secret_aliases"
+    ],
+    [
+      "prism",
+      "0051_encrypt_alert_channel_urls"
+    ],
+    [
+      "prism",
+      "0052_auto_reload_consent"
+    ],
+    [
+      "prism",
+      "0052_cap_policy_activation"
+    ],
+    [
+      "prism",
+      "0052_mcp_service_provisioning"
+    ],
+    [
+      "prism",
+      "0053_cap_policy_revision"
+    ],
+    [
+      "prism",
+      "0053_ee_agent_key_policy"
+    ],
+    [
+      "prism",
+      "0054_ee_agent_key_expiry_backfill"
+    ],
+    [
+      "prism",
+      "0055_ee_agent_key_mint_idempotency"
+    ],
+    [
+      "prism",
+      "0056_mcp_secrets_to_vault"
+    ],
+    [
+      "prism",
+      "0057_mcp_credential_origin"
+    ],
+    [
+      "prism",
+      "0058_mcp_upstream_oauth"
+    ],
+    [
+      "prism",
+      "0058_retire_ee_credentials"
+    ],
+    [
+      "prism",
+      "0059_mcp_connect_org_client"
+    ],
+    [
+      "prism",
+      "0060_mcp_connect_shared_mode"
+    ],
+    [
+      "prism",
+      "0061_mcp_personal_principal_cleanup"
+    ],
+    [
+      "prism",
+      "0062_mcp_cleanup_receipts"
+    ],
+    [
+      "prism",
+      "0063_mcp_credential_grant_revision"
+    ],
+    [
+      "prism",
+      "0063_mcp_grant_org_only"
+    ],
+    [
+      "prism",
+      "0064_mcp_vendor_connections"
+    ],
+    [
+      "prism",
+      "0064_siem_export"
+    ],
+    [
+      "prism",
+      "0065_mcp_vendor_optimistic_lifecycle"
+    ],
+    [
+      "prism",
+      "0065_merge_mcp_adapters_siem"
+    ],
+    [
+      "prism",
+      "0065_siem_hec"
+    ],
+    [
+      "prism",
+      "0066_mcp_vendor_cleanup_obligations"
+    ],
+    [
+      "prism",
+      "0067_mcp_vendor_retained_receipts"
+    ],
+    [
+      "prism",
+      "0068_mcp_vendor_connect_leases"
+    ],
+    [
+      "prism",
+      "0069_merge_mcp_vendor_adapters_siem"
+    ],
+    [
+      "prism",
+      "0070_merge_mcp_line_siem_hec"
+    ],
+    [
+      "prism",
+      "0071_mcp_connect_cancellation_generation"
+    ],
+    [
+      "prism",
+      "0071_merge_request_log_consent_and_mcp"
+    ],
+    [
+      "prism",
+      "0072_api_key_ownership_immutable"
+    ],
+    [
+      "prism",
+      "0073_merge_708j_round3"
+    ],
+    [
+      "prism",
+      "0074_api_key_provisioning_state"
+    ],
+    [
+      "prism",
+      "0075_w11_approval_lifecycle"
+    ],
+    [
+      "prism",
+      "0075_webhook_credential_columns"
+    ],
+    [
+      "prism",
+      "0076_encrypt_webhook_credentials"
+    ],
+    [
+      "prism",
+      "0077_remove_webhook_plaintext"
+    ],
+    [
+      "prism",
+      "0078_historical_key_revocations"
+    ],
+    [
+      "prism",
+      "0078_merge_w11_webhook_credentials"
+    ],
+    [
+      "prism",
+      "0079_auto_reload_payment_method"
+    ],
+    [
+      "prism",
+      "0079_merge_r8c_revocation_webhooks"
+    ],
+    [
+      "prism",
+      "0080_auto_reload_arming"
+    ],
+    [
+      "prism",
+      "0081_auto_reload_intent_exclusion"
+    ],
+    [
+      "prism",
+      "0082_auto_reload_credit_optional_threshold"
+    ],
+    [
+      "prism",
+      "0083_managed_credit_checkout_binding"
+    ],
+    [
+      "prism",
+      "0084_checkout_actor_identifier"
+    ],
+    [
+      "prism",
+      "0085_dispatch_claim"
+    ],
+    [
+      "prism",
+      "0086_merge_dispatch_claim_webhook_at_rest"
+    ],
+    [
+      "saml2_auth",
+      "0001_initial"
+    ],
+    [
+      "saml2_auth",
+      "0002_idp_generation"
+    ],
+    [
+      "saml2_auth",
+      "0003_login_state"
+    ],
+    [
+      "simulate",
+      "0001_initial"
+    ],
+    [
+      "simulate",
+      "0002_scenarios_dataset_scenarios_description"
+    ],
+    [
+      "simulate",
+      "0003_agentdefinition"
+    ],
+    [
+      "simulate",
+      "0004_simulatoragent"
+    ],
+    [
+      "simulate",
+      "0005_simulatoragent_organization"
+    ],
+    [
+      "simulate",
+      "0006_runtest"
+    ],
+    [
+      "simulate",
+      "0007_runtest_description_remove_runtest_evals_and_more"
+    ],
+    [
+      "simulate",
+      "0008_remove_runtest_evals_simulateevalconfig"
+    ],
+    [
+      "simulate",
+      "0009_callexecution_calltranscript_testexecution_and_more"
+    ],
+    [
+      "simulate",
+      "0010_callexecution_analysis_data_and_more"
+    ],
+    [
+      "simulate",
+      "0011_callexecution_row_id_testexecution_scenario_ids_and_more"
+    ],
+    [
+      "simulate",
+      "0012_callexecution_eval_outputs"
+    ],
+    [
+      "simulate",
+      "0013_agentversion"
+    ],
+    [
+      "simulate",
+      "0014_agentdefinition_provider"
+    ],
+    [
+      "simulate",
+      "0015_alter_simulatoragent_conversation_speed_and_more"
+    ],
+    [
+      "simulate",
+      "0016_alter_agentdefinition_assistant_id"
+    ],
+    [
+      "simulate",
+      "0017_alter_simulateevalconfig_status"
+    ],
+    [
+      "simulate",
+      "0018_alter_callexecution_ended_reason"
+    ],
+    [
+      "simulate",
+      "0019_testexecution_picked_up_by_executor"
+    ],
+    [
+      "simulate",
+      "0020_testexecution_agent_definition_and_more"
+    ],
+    [
+      "simulate",
+      "0021_agentdefinition_workspace_agentversion_workspace_and_more"
+    ],
+    [
+      "simulate",
+      "0022_createcallexecution"
+    ],
+    [
+      "simulate",
+      "0023_scenariograph_scenariocase_and_more"
+    ],
+    [
+      "simulate",
+      "0023_testexecution_idx_status_executor"
+    ],
+    [
+      "simulate",
+      "0024_agentdefinition_agent_type_and_more"
+    ],
+    [
+      "simulate",
+      "0024_scenarionode_scenarioedge_and_more"
+    ],
+    [
+      "simulate",
+      "0025_callexecution_agent_version"
+    ],
+    [
+      "simulate",
+      "0025_remove_scenarioedge_from_node_and_more"
+    ],
+    [
+      "simulate",
+      "0026_scenarios_metadata_scenarios_simulator_agent_and_more"
+    ],
+    [
+      "simulate",
+      "0027_scenarios_agent_definition"
+    ],
+    [
+      "simulate",
+      "0028_merge_20250917_1327"
+    ],
+    [
+      "simulate",
+      "0029_alter_runtest_simulator_agent"
+    ],
+    [
+      "simulate",
+      "0030_alter_createcallexecution_options_and_more"
+    ],
+    [
+      "simulate",
+      "0031_remove_scenariograph_workspace_and_more"
+    ],
+    [
+      "simulate",
+      "0032_agentdefinition_api_key_and_more"
+    ],
+    [
+      "simulate",
+      "0032_agentversion_commit_message_and_more"
+    ],
+    [
+      "simulate",
+      "0032_callexecution_ai_interruption_count_and_more"
+    ],
+    [
+      "simulate",
+      "0032_simulateevalconfig_eval_group_and_more"
+    ],
+    [
+      "simulate",
+      "0033_callexecution_conversation_metrics_data"
+    ],
+    [
+      "simulate",
+      "0033_merge_20251001_0823"
+    ],
+    [
+      "simulate",
+      "0034_merge_20251001_0933"
+    ],
+    [
+      "simulate",
+      "0035_callexecution_monitor_call_data"
+    ],
+    [
+      "simulate",
+      "0036_alter_testexecution_status"
+    ],
+    [
+      "simulate",
+      "0036_merge_20251001_1957"
+    ],
+    [
+      "simulate",
+      "0037_merge_20251002_1633"
+    ],
+    [
+      "simulate",
+      "0038_remove_agentdefinition_observability_enabled"
+    ],
+    [
+      "simulate",
+      "0039_callexecutionsnapshot"
+    ],
+    [
+      "simulate",
+      "0039_runtest_agent_version"
+    ],
+    [
+      "simulate",
+      "0040_merge_20251015_1159"
+    ],
+    [
+      "simulate",
+      "0041_alter_callexecution_options_persona"
+    ],
+    [
+      "simulate",
+      "0041_callexecution_tool_outputs_and_more"
+    ],
+    [
+      "simulate",
+      "0041_simulationphonenumber"
+    ],
+    [
+      "simulate",
+      "0042_alter_persona_accent_alter_persona_age_group_and_more"
+    ],
+    [
+      "simulate",
+      "0042_callexecutionsnapshot_tool_outputs"
+    ],
+    [
+      "simulate",
+      "0043_merge_20251031_0632"
+    ],
+    [
+      "simulate",
+      "0043_merge_20251031_1023"
+    ],
+    [
+      "simulate",
+      "0044_agentdefinition_webhook_secret"
+    ],
+    [
+      "simulate",
+      "0044_merge_20251103_1151"
+    ],
+    [
+      "simulate",
+      "0045_merge_20251104_0904"
+    ],
+    [
+      "simulate",
+      "0046_remove_agentdefinition_webhook_secret"
+    ],
+    [
+      "simulate",
+      "0047_agentdefinition_authentication_method_and_more"
+    ],
+    [
+      "simulate",
+      "0047_callexecution_customer_cost_breakdown_and_more"
+    ],
+    [
+      "simulate",
+      "0048_merge_20251113_1830"
+    ],
+    [
+      "simulate",
+      "0049_testexecution_eval_explanation_summary_and_more"
+    ],
+    [
+      "simulate",
+      "0050_testexecution_eval_explanation_summary_status"
+    ],
+    [
+      "simulate",
+      "0051_agentoptimiser_agentoptimiserrun_and_more"
+    ],
+    [
+      "simulate",
+      "0052_agentpromptoptimiserrun_agentpromptoptimiserrunstep_and_more"
+    ],
+    [
+      "simulate",
+      "0052_callexecution_idx_callexec_testexec_status"
+    ],
+    [
+      "simulate",
+      "0053_merge_20251209_0754"
+    ],
+    [
+      "simulate",
+      "0053_testexecution_error_reason"
+    ],
+    [
+      "simulate",
+      "0054_agentpromptoptimiserrunstep_step_number_and_more"
+    ],
+    [
+      "simulate",
+      "0054_alter_scenarios_status_and_more"
+    ],
+    [
+      "simulate",
+      "0055_agentdefinition_model_chatmessagemodel"
+    ],
+    [
+      "simulate",
+      "0055_agentpromptoptimiserrun_name"
+    ],
+    [
+      "simulate",
+      "0055_alter_callexecution_status"
+    ],
+    [
+      "simulate",
+      "0056_persona_emoji_usage_persona_punctuation_and_more"
+    ],
+    [
+      "simulate",
+      "0056_prompttrial_trialitemresult_componentevaluation"
+    ],
+    [
+      "simulate",
+      "0057_agentdefinition_model_details"
+    ],
+    [
+      "simulate",
+      "0057_agentpromptoptimiserrun_idx_prompt_opt_run_status_and_more"
+    ],
+    [
+      "simulate",
+      "0058_alter_agentdefinition_authentication_method_and_more"
+    ],
+    [
+      "simulate",
+      "0058_merge_20251218_1019"
+    ],
+    [
+      "simulate",
+      "0059_agentpromptoptimiserrun_error_message"
+    ],
+    [
+      "simulate",
+      "0059_callexecution_simulation_call_type"
+    ],
+    [
+      "simulate",
+      "0060_merge_20251226_1007"
+    ],
+    [
+      "simulate",
+      "0060_remove_persona_writing_style_persona_tone_and_more"
+    ],
+    [
+      "simulate",
+      "0061_chatmessagemodel_latency_ms_chatmessagemodel_tokens"
+    ],
+    [
+      "simulate",
+      "0062_merge_20251231_0627"
+    ],
+    [
+      "simulate",
+      "0063_alter_persona_regional_mix_and_more"
+    ],
+    [
+      "simulate",
+      "0063_remove_callexecution_logurl_and_more"
+    ],
+    [
+      "simulate",
+      "0064_add_prompt_simulation_fields"
+    ],
+    [
+      "simulate",
+      "0064_remove_callexecution_customer_vapi_call_id_and_more"
+    ],
+    [
+      "simulate",
+      "0065_make_agent_definition_nullable"
+    ],
+    [
+      "simulate",
+      "0065_merge_20260115_1844"
+    ],
+    [
+      "simulate",
+      "0066_make_phone_number_nullable"
+    ],
+    [
+      "simulate",
+      "0067_merge_20260203_1444"
+    ],
+    [
+      "simulate",
+      "0068_chatsimulatorassistant_chatsimulatorsession"
+    ],
+    [
+      "simulate",
+      "0068_rename_vapi_phone_number_id_to_provider_phone_id"
+    ],
+    [
+      "simulate",
+      "0069_callexecution_storage_cost_cents"
+    ],
+    [
+      "simulate",
+      "0070_merge_20260303_1055"
+    ],
+    [
+      "simulate",
+      "0071_provider_credentials"
+    ],
+    [
+      "simulate",
+      "0072_alter_scenarios_status_and_more"
+    ],
+    [
+      "simulate",
+      "0073_merge_20260416_1406"
+    ],
+    [
+      "simulate",
+      "0074_canonicalize_simulate_eval_config_filters"
+    ],
+    [
+      "simulate",
+      "0075_add_agent_version_to_provider_credentials"
+    ],
+    [
+      "simulate",
+      "0076_backfill_provider_credentials"
+    ],
+    [
+      "simulate",
+      "0077_relax_simulate_eval_config_model_choices"
+    ],
+    [
+      "simulate",
+      "0078_agentdefinition_target_speaks_first"
+    ],
+    [
+      "simulate",
+      "0079_harness_environment_credentials"
+    ],
+    [
+      "simulate",
+      "0079_hosted_harness_channels"
+    ],
+    [
+      "simulate",
+      "0080_merge_20260825_1857"
+    ],
+    [
+      "simulate",
+      "0081_harness_stage_output_and_bundle_digest"
+    ],
+    [
+      "simulate",
+      "0081_hostedharnessjob_stage_outputs"
+    ],
+    [
+      "simulate",
+      "0082_merge_hosted_harness_outputs"
+    ],
+    [
+      "simulate",
+      "0083_hostedharnessjob_workspace"
+    ],
+    [
+      "simulate",
+      "0084_expand_hosted_harness_scenario_limit"
+    ],
+    [
+      "simulate",
+      "0085_hostedharnessscenario_dataset_row"
+    ],
+    [
+      "simulate",
+      "0086_hostedharnessattempt_diagnostics"
+    ],
+    [
+      "simulate",
+      "0086_parallelism_admission_and_degrade_projection"
+    ],
+    [
+      "simulate",
+      "0087_hosted_harness_conversations"
+    ],
+    [
+      "simulate",
+      "0087_hostedharnessattempt_usage_state"
+    ],
+    [
+      "simulate",
+      "0087_hostedharnessjob_content_updated_at"
+    ],
+    [
+      "simulate",
+      "0087_merge_hosted_harness_attempt_fields"
+    ],
+    [
+      "simulate",
+      "0088_expand_hosted_harness_scenario_limit"
+    ],
+    [
+      "simulate",
+      "0088_hostedconversation_control_only"
+    ],
+    [
+      "simulate",
+      "0088_hostedharnessjob_name"
+    ],
+    [
+      "simulate",
+      "0089_hosted_harness_conversation_transcript"
+    ],
+    [
+      "simulate",
+      "0090_conversation_transcript_id"
+    ],
+    [
+      "simulate",
+      "0091_merge_hosted_harness_dev"
+    ],
+    [
+      "simulate",
+      "0092_harness_scenario_queryable"
+    ],
+    [
+      "simulate",
+      "0092_merge_environments_v3"
+    ],
+    [
+      "simulate",
+      "0092_merge_parallelism_environment_v3"
+    ],
+    [
+      "simulate",
+      "0092_selected_harness_runs"
+    ],
+    [
+      "simulate",
+      "0093_harness_scenario_authored_before_call"
+    ],
+    [
+      "simulate",
+      "0093_merge_environments_list_parallelism"
+    ],
+    [
+      "simulate",
+      "0094_harness_scenario_keywords"
+    ],
+    [
+      "simulate",
+      "0095_merge_scenario_quality_environment_v3"
+    ],
+    [
+      "simulate",
+      "0096_merge_environments_list_scenario_quality"
+    ],
+    [
+      "simulate",
+      "0097_merge_selected_runs_environment_v3"
+    ],
+    [
+      "simulate",
+      "0098_agent_version_setup"
+    ],
+    [
+      "simulate",
+      "0099_harness_versioning"
+    ],
+    [
+      "simulate",
+      "0100_agent_fix"
+    ],
+    [
+      "simulate",
+      "0100_sandbox_harness_job"
+    ],
+    [
+      "simulate",
+      "0101_agent_fix_candidate_override"
+    ],
+    [
+      "simulate",
+      "0102_agent_definition_encrypted_api_key"
+    ],
+    [
+      "simulate",
+      "0102_agent_fix_engine_notes"
+    ],
+    [
+      "simulate",
+      "0102_prompt_optimizer_tenant_lineage"
+    ],
+    [
+      "simulate",
+      "0103_encrypt_agent_definition_api_key"
+    ],
+    [
+      "simulate",
+      "0103_merge_sandbox_harness_job"
+    ],
+    [
+      "simulate",
+      "0104_remove_agent_definition_api_key"
+    ],
+    [
+      "simulate",
+      "0105_merge_api_key_at_rest_tenant_lineage"
+    ],
+    [
+      "simulate",
+      "0106_merge_c25_credentials_agent_fix_notes"
+    ],
+    [
+      "simulate",
+      "0107_merge_r8c_r3a_leaves"
+    ],
+    [
+      "tracer",
+      "0001_initial"
+    ],
+    [
+      "tracer",
+      "0002_externalevalconfig"
+    ],
+    [
+      "tracer",
+      "0003_alter_observationspan_eval_status"
+    ],
+    [
+      "tracer",
+      "0003_alter_useralertmonitor_options_and_more"
+    ],
+    [
+      "tracer",
+      "0004_alter_useralertmonitor_metric_type_and_more"
+    ],
+    [
+      "tracer",
+      "0005_useralertmonitorlog_time_window_end_and_more"
+    ],
+    [
+      "tracer",
+      "0006_alter_observationspan_eval_status_delete_tracealert"
+    ],
+    [
+      "tracer",
+      "0007_merge_20250803_1321"
+    ],
+    [
+      "tracer",
+      "0008_alter_project_options_and_more"
+    ],
+    [
+      "tracer",
+      "0008_enduser_observationspan_end_user"
+    ],
+    [
+      "tracer",
+      "0008_inlineeval_tracer_inli_status_78e96c_idx"
+    ],
+    [
+      "tracer",
+      "0009_merge_20250813_0953"
+    ],
+    [
+      "tracer",
+      "0010_merge_20250814_1000"
+    ],
+    [
+      "tracer",
+      "0011_evaluationrun_evaluationresult_and_more"
+    ],
+    [
+      "tracer",
+      "0011_observationspan_prompt_version"
+    ],
+    [
+      "tracer",
+      "0012_enduser_workspace_evaluationresult_workspace_and_more"
+    ],
+    [
+      "tracer",
+      "0012_merge_20250821_1940"
+    ],
+    [
+      "tracer",
+      "0012_traceerroranalysis_traceerrordetail_traceerrorgroup_and_more"
+    ],
+    [
+      "tracer",
+      "0013_merge_20250826_0926"
+    ],
+    [
+      "tracer",
+      "0014_merge_20250828_0334"
+    ],
+    [
+      "tracer",
+      "0014_remove_project_unique_project_per_org_type_and_more"
+    ],
+    [
+      "tracer",
+      "0015_analysiserrorgroup"
+    ],
+    [
+      "tracer",
+      "0015_remove_inlineeval_data_and_more"
+    ],
+    [
+      "tracer",
+      "0016_traceerroranalysistask"
+    ],
+    [
+      "tracer",
+      "0017_traceerroranalysistask_processed_traces"
+    ],
+    [
+      "tracer",
+      "0018_merge_20250903_1404"
+    ],
+    [
+      "tracer",
+      "0019_remove_traceerroranalysistask_processed_traces_and_more"
+    ],
+    [
+      "tracer",
+      "0020_remove_trace_error_analysis_processed_and_more"
+    ],
+    [
+      "tracer",
+      "0021_remove_trace_tracer_trac_project_d6fec8_idx_and_more"
+    ],
+    [
+      "tracer",
+      "0022_remove_traceerrorgroup_affected_spans_and_more"
+    ],
+    [
+      "tracer",
+      "0023_merge_20250905_1045"
+    ],
+    [
+      "tracer",
+      "0024_alter_observationspan_name_alter_trace_name"
+    ],
+    [
+      "tracer",
+      "0024_customevalconfig_eval_group"
+    ],
+    [
+      "tracer",
+      "0025_observabilityprovider"
+    ],
+    [
+      "tracer",
+      "0026_alter_observationspan_observation_type"
+    ],
+    [
+      "tracer",
+      "0027_merge_20250925_0731"
+    ],
+    [
+      "tracer",
+      "0027_remove_observabilityprovider_credentials"
+    ],
+    [
+      "tracer",
+      "0028_merge_20250925_1146"
+    ],
+    [
+      "tracer",
+      "0028_traceerrorgroup_unique_project_cluster_if_not_deleted"
+    ],
+    [
+      "tracer",
+      "0029_alter_project_source"
+    ],
+    [
+      "tracer",
+      "0030_merge_20250930_1302"
+    ],
+    [
+      "tracer",
+      "0031_observationspan_prompt_label"
+    ],
+    [
+      "tracer",
+      "0031_observationspan_tracer_obse_metadat_19717b_gin"
+    ],
+    [
+      "tracer",
+      "0031_remove_observationspan_cost_and_more"
+    ],
+    [
+      "tracer",
+      "0032_add_prompt_label_indexes"
+    ],
+    [
+      "tracer",
+      "0032_auto_20251030_1000"
+    ],
+    [
+      "tracer",
+      "0032_observationspan_cost"
+    ],
+    [
+      "tracer",
+      "0033_merge_20251030_1927"
+    ],
+    [
+      "tracer",
+      "0034_alter_enduser_user_id_type"
+    ],
+    [
+      "tracer",
+      "0034_merge_20251103_0656"
+    ],
+    [
+      "tracer",
+      "0035_merge_20251111_1229"
+    ],
+    [
+      "tracer",
+      "0036_add_graph_query_indexes"
+    ],
+    [
+      "tracer",
+      "0037_remove_evallogger_evallog_config_time_idx_and_more"
+    ],
+    [
+      "tracer",
+      "0038_observationspan_input_backup_and_more"
+    ],
+    [
+      "tracer",
+      "0039_remove_observationspan_input_backup_and_more"
+    ],
+    [
+      "tracer",
+      "0040_remove_observationspan_input_and_more"
+    ],
+    [
+      "tracer",
+      "0041_rename_input_json_observationspan_input_and_more"
+    ],
+    [
+      "tracer",
+      "0042_alter_observabilityprovider_provider"
+    ],
+    [
+      "tracer",
+      "0043_alter_observabilityprovider_provider"
+    ],
+    [
+      "tracer",
+      "0044_alter_observationspan_eval_status"
+    ],
+    [
+      "tracer",
+      "0045_alter_observationspan_options_and_more"
+    ],
+    [
+      "tracer",
+      "0046_replaysession"
+    ],
+    [
+      "tracer",
+      "0047_add_livekit_provider_choice"
+    ],
+    [
+      "tracer",
+      "0047_remove_observationspan_system_and_more"
+    ],
+    [
+      "tracer",
+      "0048_merge_20260310_1407"
+    ],
+    [
+      "tracer",
+      "0058_dashboard_models"
+    ],
+    [
+      "tracer",
+      "0059_dashboardwidget_dashboard_pos_idx"
+    ],
+    [
+      "tracer",
+      "0060_merge_20260325_0715"
+    ],
+    [
+      "tracer",
+      "0060_merge_20260325_1051"
+    ],
+    [
+      "tracer",
+      "0060_saved_view"
+    ],
+    [
+      "tracer",
+      "0061_merge_20260326_0747"
+    ],
+    [
+      "tracer",
+      "0062_merge_0060_saved_view_0061_merge_20260326_0747"
+    ],
+    [
+      "tracer",
+      "0062_projectcapability_tracescanconfig_tracescanissue_and_more"
+    ],
+    [
+      "tracer",
+      "0063_add_shared_link_models"
+    ],
+    [
+      "tracer",
+      "0063_alter_traceerrorgroup_status_and_more"
+    ],
+    [
+      "tracer",
+      "0063_dashboardwidget_description"
+    ],
+    [
+      "tracer",
+      "0064_add_tags_to_project"
+    ],
+    [
+      "tracer",
+      "0064_linear_integration"
+    ],
+    [
+      "tracer",
+      "0065_imagine_analysis"
+    ],
+    [
+      "tracer",
+      "0066_saved_view_workspace_scope"
+    ],
+    [
+      "tracer",
+      "0067_saved_view_user_detail_tab"
+    ],
+    [
+      "tracer",
+      "0068_alter_evaltask_sampling_rate"
+    ],
+    [
+      "tracer",
+      "0069_merge_20260416_1406"
+    ],
+    [
+      "tracer",
+      "0070_merge_20260417_1113"
+    ],
+    [
+      "tracer",
+      "0071_observation_span_eval_attributes_gin"
+    ],
+    [
+      "tracer",
+      "0072_alter_traceerrorgroup_title_and_more"
+    ],
+    [
+      "tracer",
+      "0072_saved_view_sessions_tab"
+    ],
+    [
+      "tracer",
+      "0073_merge_20260428_1309"
+    ],
+    [
+      "tracer",
+      "0073_merge_20260428_1653"
+    ],
+    [
+      "tracer",
+      "0074_drop_unused_span_attribute_gin_indexes"
+    ],
+    [
+      "tracer",
+      "0074_evaltask_row_type"
+    ],
+    [
+      "tracer",
+      "0075_evallogger_target_type_evallogger_trace_session_and_more"
+    ],
+    [
+      "tracer",
+      "0075_merge_20260509_1148"
+    ],
+    [
+      "tracer",
+      "0076_canonicalise_filter_ops"
+    ],
+    [
+      "tracer",
+      "0076_merge_20260513_1258"
+    ],
+    [
+      "tracer",
+      "0077_merge_20260514_1559"
+    ],
+    [
+      "tracer",
+      "0078_canonicalize_persisted_filter_contracts"
+    ],
+    [
+      "tracer",
+      "0078_ch25_apply_schema"
+    ],
+    [
+      "tracer",
+      "0078_evallogger_skipped_reason"
+    ],
+    [
+      "tracer",
+      "0079_backfill_skipped_reason"
+    ],
+    [
+      "tracer",
+      "0079_merge_ch25_with_filter_contracts"
+    ],
+    [
+      "tracer",
+      "0079_traceerrorgroup_rca_at_and_more"
+    ],
+    [
+      "tracer",
+      "0080_alter_tracescanconfig_sampling_rate"
+    ],
+    [
+      "tracer",
+      "0080_decouple_telemetry_fk_constraints"
+    ],
+    [
+      "tracer",
+      "0080_traceerrorgroup_rca_trace"
+    ],
+    [
+      "tracer",
+      "0081_alter_errorclustertraces_unique_together_and_more"
+    ],
+    [
+      "tracer",
+      "0081_rename_eval_task_filters_key"
+    ],
+    [
+      "tracer",
+      "0081_trace_session_overlay"
+    ],
+    [
+      "tracer",
+      "0082_decouple_trace_session_fk"
+    ],
+    [
+      "tracer",
+      "0083_merge_20260610_1220"
+    ],
+    [
+      "tracer",
+      "0084_alter_observabilityprovider_provider"
+    ],
+    [
+      "tracer",
+      "0084_eval_entry_work_item_columns"
+    ],
+    [
+      "tracer",
+      "0084_merge_20260611_1517"
+    ],
+    [
+      "tracer",
+      "0084_rewrite_latency_ms_refs"
+    ],
+    [
+      "tracer",
+      "0085_alter_errorclustertraces_trace_session"
+    ],
+    [
+      "tracer",
+      "0085_eval_entry_live_unique_indexes"
+    ],
+    [
+      "tracer",
+      "0086_eval_entry_attempts"
+    ],
+    [
+      "tracer",
+      "0086_tracescanconfig_last_swept_at"
+    ],
+    [
+      "tracer",
+      "0087_eval_entry_baseline_backfill"
+    ],
+    [
+      "tracer",
+      "0087_merge_20260627_1336"
+    ],
+    [
+      "tracer",
+      "0088_merge_20260627_1942"
+    ],
+    [
+      "tracer",
+      "0088_merge_20260702_1056"
+    ],
+    [
+      "tracer",
+      "0089_evaltask_continuous_cursor"
+    ],
+    [
+      "tracer",
+      "0090_merge_20260706_0640"
+    ],
+    [
+      "tracer",
+      "0091_relax_custom_eval_config_model_choices"
+    ],
+    [
+      "tracer",
+      "0092_relax_external_eval_config_model_choices"
+    ],
+    [
+      "tracer",
+      "0093_register_eval_task_search_attributes"
+    ],
+    [
+      "tracer",
+      "0094_canonicalize_dashboard_widget_configs"
+    ],
+    [
+      "tracer",
+      "0094_normalize_eval_task_filter_casing"
+    ],
+    [
+      "tracer",
+      "0095_merge_20260722_1400"
+    ],
+    [
+      "tracer",
+      "0096_repair_scanner_cluster_error_count"
+    ],
+    [
+      "tracer",
+      "0097_eval_logger_task_created_idx"
+    ],
+    [
+      "tracer",
+      "0098_observabilityprovider_poll_state"
+    ],
+    [
+      "tracer",
+      "0099_evaltask_reclassified_evals_revision"
+    ],
+    [
+      "tracer",
+      "0099_trace_investigation_control"
+    ],
+    [
+      "tracer",
+      "0100_reconcile_pre_release_schema"
+    ],
+    [
+      "tracer",
+      "0101_backfill_legacy_scans"
+    ],
+    [
+      "tracer",
+      "0102_reconcile_report_flags"
+    ],
+    [
+      "tracer",
+      "0103_merge_error_feed_and_evaltask"
+    ],
+    [
+      "tracer",
+      "0104_grouping_feature_jobs"
+    ],
+    [
+      "tracer",
+      "0105_tracegroupingattempt_and_more"
+    ],
+    [
+      "tracer",
+      "0106_grouping_severity"
+    ],
+    [
+      "tracer",
+      "0107_investigation_attribution_explanation"
+    ],
+    [
+      "tracer",
+      "0108_sharedlink_call_execution_resource_type"
+    ],
+    [
+      "tracer",
+      "0109_simulation_debug_analysis"
+    ],
+    [
+      "tracer",
+      "0110_expand_investigation_requirement_id"
+    ],
+    [
+      "tracer",
+      "0111_grouping_budget_wait"
+    ],
+    [
+      "tracer",
+      "0112_grouping_failure_recovery"
+    ],
+    [
+      "tracer",
+      "0113_error_group_redirect"
+    ],
+    [
+      "tracer",
+      "0114_backfill_group_redirects"
+    ],
+    [
+      "tracer",
+      "0115_omega_deployment_observe_link"
+    ],
+    [
+      "tracer",
+      "0115_project_simulation_agent"
+    ],
+    [
+      "tracer",
+      "0115_traceinvestigationreport_grouping_gate"
+    ],
+    [
+      "tracer",
+      "0116_error_feed_alert_models"
+    ],
+    [
+      "tracer",
+      "0116_insight_reports"
+    ],
+    [
+      "tracer",
+      "0117_instant_eval_scale"
+    ],
+    [
+      "tracer",
+      "0117_merge_error_feed_and_simulation_project"
+    ],
+    [
+      "tracer",
+      "0118_instant_eval_answers"
+    ],
+    [
+      "tracer",
+      "0118_merge_omega_observe_link_and_error_feed"
+    ],
+    [
+      "tracer",
+      "0118_sharedlink_error_feed_issue_resource_type"
+    ],
+    [
+      "tracer",
+      "0119_instant_eval_scope_preset"
+    ],
+    [
+      "tracer",
+      "0119_omega_agent_observe_link"
+    ],
+    [
+      "tracer",
+      "0119_retire_deleted_eval_memberships"
+    ],
+    [
+      "tracer",
+      "0120_alert_issue_state_occurrences_high_water"
+    ],
+    [
+      "tracer",
+      "0120_merge_error_feed_alerts_and_instant_eval"
+    ],
+    [
+      "tracer",
+      "0120_merge_sharedlink_and_agent_observe"
+    ],
+    [
+      "tracer",
+      "0121_background_trace_analysis_state"
+    ],
+    [
+      "tracer",
+      "0121_remove_insightconfig_schedule"
+    ],
+    [
+      "tracer",
+      "0122_merge_instant_eval_and_simulation_project"
+    ],
+    [
+      "tracer",
+      "0123_merge_instant_eval_and_shared_link_resource"
+    ],
+    [
+      "tracer",
+      "0124_merge_analysis_and_alert_high_water"
+    ],
+    [
+      "tracer",
+      "0125_insightrun_source_started_at"
+    ],
+    [
+      "tracer",
+      "0126_analysis_source_arrival"
+    ],
+    [
+      "tracer",
+      "0127_project_analysis_source_generation"
+    ],
+    [
+      "tracer",
+      "0128_instantevalrow_source_session_ids"
+    ],
+    [
+      "tracer",
+      "0129_project_analysis_source_generation_db_default"
+    ],
+    [
+      "tracer",
+      "0130_merge_c26_dev_candidate"
+    ],
+    [
+      "usage",
+      "0001_initial"
+    ],
+    [
+      "usage",
+      "0002_alter_apicalltype_name"
+    ],
+    [
+      "usage",
+      "0003_alter_apicalltype_name"
+    ],
+    [
+      "usage",
+      "0003_apicalllog_workspace"
+    ],
+    [
+      "usage",
+      "0004_merge_20250909_1029"
+    ],
+    [
+      "usage",
+      "0005_alter_apicalltype_name"
+    ],
+    [
+      "usage",
+      "0006_add_usage_summary_indexes"
+    ],
+    [
+      "usage",
+      "0007_add_usage_apicalllog_indexes"
+    ],
+    [
+      "usage",
+      "0008_alter_apicalllog_options_alter_apicalltype_name"
+    ],
+    [
+      "usage",
+      "0009_creditbalance_alter_organizationsubscription_options_and_more"
+    ],
+    [
+      "usage",
+      "0010_usageeventlog_usagesummary"
+    ],
+    [
+      "usage",
+      "0011_planentitlement"
+    ],
+    [
+      "usage",
+      "0012_invoice_invoicelineitem_planpricing_usagebudget_and_more"
+    ],
+    [
+      "usage",
+      "0013_eelicense"
+    ],
+    [
+      "usage",
+      "0014_eelicensegrant_eelicenseinstance_eeinstanceheartbeat"
+    ],
+    [
+      "usage",
+      "0015_backfill_plan_and_wallet_credits"
+    ],
+    [
+      "usage",
+      "0015_stripeproductmap"
+    ],
+    [
+      "usage",
+      "0016_merge_0015"
+    ],
+    [
+      "usage",
+      "0017_add_custom_plan_choice"
+    ],
+    [
+      "usage",
+      "0017_decimal_usage_fields"
+    ],
+    [
+      "usage",
+      "0018_increase_price_precision"
+    ],
+    [
+      "usage",
+      "0019_add_custom_plan_fields"
+    ],
+    [
+      "usage",
+      "0020_merge_20260409_0657"
+    ],
+    [
+      "usage",
+      "0021_add_code_evaluator_choice"
+    ],
+    [
+      "usage",
+      "0021_remove_is_dev_account"
+    ],
+    [
+      "usage",
+      "0022_merge_20260417_1114"
+    ],
+    [
+      "usage",
+      "0023_unlock_features_free_tier"
+    ],
+    [
+      "usage",
+      "0024_increase_usage_display_precision"
+    ],
+    [
+      "usage",
+      "0025_organizationsubscription_plan_changed_at"
+    ],
+    [
+      "usage",
+      "0026_deployment_telemetry"
+    ],
+    [
+      "usage",
+      "0027_organizationsubscription_card_last_4_digits_and_more"
+    ],
+    [
+      "usage",
+      "0027_retire_legacy_license_models"
+    ],
+    [
+      "usage",
+      "0028_delete_deploymenttelemetryheartbeat_and_more"
+    ],
+    [
+      "usage",
+      "0029_merge_20260806_1623"
+    ],
+    [
+      "usage",
+      "0030_add_jev_evaluator_call_type"
+    ],
+    [
+      "usage",
+      "0030_managed_credit_ledger"
+    ],
+    [
+      "usage",
+      "0031_ledger_phase2a"
+    ],
+    [
+      "usage",
+      "0032_ledger_opening_buckets"
+    ],
+    [
+      "usage",
+      "0033_backfill_topup_payment_intent"
+    ],
+    [
+      "usage",
+      "0034_merge_c26_dev_candidate"
+    ],
+    [
+      "webhooks",
+      "0001_initial"
+    ],
+    [
+      "webhooks",
+      "0002_api"
+    ],
+    [
+      "webhooks",
+      "0002_operations"
+    ],
+    [
+      "webhooks",
+      "0003_merge"
+    ],
+    [
+      "webhooks",
+      "0004_delivery_endpoint_created"
+    ]
+  ],
+  "baseLeaves": {
+    "accounts": [
+      [
+        "accounts",
+        "0040_alter_user_invited_by"
+      ]
+    ],
+    "prism": [
+      [
+        "prism",
+        "0089_normalize_two_key_org_period"
+      ]
+    ],
+    "simulate": [
+      [
+        "simulate",
+        "0110_seed_system_personas"
+      ]
+    ]
+  },
+  "baseStateSourceSha256": {
+    "futureagi/accounts/migrations/0001_initial.py": "23e828bb61ec7901725418329afe06f450c3b5862dc8050540a174b99a009648",
+    "futureagi/accounts/migrations/0002_user_config.py": "7703e9dbcd8e225a17eeba2e82e88a8eb43cc148f32beb0733610f68d41a8be3",
+    "futureagi/accounts/migrations/0003_alter_authtoken_auth_type.py": "a6569923f3ee925a715863ba64e62ed9d68c319c0941d7973c4738dce3f7f9ce",
+    "futureagi/accounts/migrations/0004_alter_user_organization_role_organizationmembership_and_more.py": "3844a6f074bb23bd456e5ad7f366f3804d9a21f699753c07627b0cd770a3f36c",
+    "futureagi/accounts/migrations/0004_awsmarketplacecustomer.py": "44b68ba506fc5669d56ff05bf3a544bf20279ec8e84b20c65a62e924f8c6fa97",
+    "futureagi/accounts/migrations/0005_orgapikey_workspace.py": "e5847756076ac2190b27d9ebbfa94fa448fa6eef8e6763b3ce8bc34476af538f",
+    "futureagi/accounts/migrations/0006_alter_organizationmembership_role_and_more.py": "852d9c880f5a23baee00875c49383718c6ec0fa06fa0391cf4e80f09e255e3c8",
+    "futureagi/accounts/migrations/0006_merge_20250826_0917.py": "0e55df4dba33b6207c1b093d7189261ce28b4fb54db855d63c9af5ffe097e229",
+    "futureagi/accounts/migrations/0006_organization_ws_enabled_and_more.py": "a12aa7589ea8a86d4f9e29d246ee3d37a97f0bb8668ce285028c69b1917ac37f",
+    "futureagi/accounts/migrations/0007_alter_organizationmembership_role_and_more.py": "7b57ca1bfc8bdb525dd70536d70e357d7f81909c61c6dd3e032e801302dbff52",
+    "futureagi/accounts/migrations/0007_alter_orgapikey_options_and_more.py": "2eed7ecc69451b09001ca9d19d8641aa8c891140e4c4a2e2ed14212662fdb173",
+    "futureagi/accounts/migrations/0007_merge_20250903_1403.py": "46c1e8a21acae822416c18fd6ac50cd9716b8a958a74c068bc574de873606ebd",
+    "futureagi/accounts/migrations/0008_merge_20250904_1413.py": "bac370c31da30509e8cca5376baa1bfa3f56b5451c8b7cffb0a2684c0015203d",
+    "futureagi/accounts/migrations/0009_merge_20250905_1045.py": "31783c764c2a493b5aac251d0247852d690f2b839d895560b91b6f6b7ae848cf",
+    "futureagi/accounts/migrations/0009_merge_20250905_1157.py": "0b43c1ec4c8b73aac0b1196a20aa6a78e6ffeed46c0043e3ecdc8f359cec7993",
+    "futureagi/accounts/migrations/0009_merge_20250905_1827.py": "88dde6df59d61167f3ddf6270fd7cefd36b14d37ca1eceb094edeb8880645ace",
+    "futureagi/accounts/migrations/0010_merge_20250905_1241.py": "ece0872a02ff1d0efc5f91575f03c27a10615db448f6a1e46f7c463bd1fc6ceb",
+    "futureagi/accounts/migrations/0011_merge_20250908_0727.py": "15f693e6a31eec01b8f79aba27fa43c5d6794835a4280e38fcc532639d8e0c67",
+    "futureagi/accounts/migrations/0012_user_goals_user_role.py": "18def578abab938b7ccfab710937a521fb3d907cb2dd55ef5960279c07bf9a16",
+    "futureagi/accounts/migrations/0013_alter_user_organization_role.py": "6f04af17a4f858d60e3fd0e1cdad0b8027e129447f8170ab550a37ab7d764fe6",
+    "futureagi/accounts/migrations/0014_alter_orgapikey_type.py": "7f4e15a6fc6f84712a879e49845e8ccb1cd33652ed6ca92bad186ff38faa187b",
+    "futureagi/accounts/migrations/0014_organization_region.py": "a25b427ac74a339eb59951f9c9e8b06f7b7a855ee1564995e46d0aea7bd2e62c",
+    "futureagi/accounts/migrations/0014_organization_require_2fa_and_more.py": "126a78d9be735c1f8519dc2ec43f38c01d1332764e5f850546cc4b93e21185ad",
+    "futureagi/accounts/migrations/0015_backfill_rbac_data.py": "f37e52da9e395565bf2ed2002bc4512ac00032f6333b2c26f9f7b15489369167",
+    "futureagi/accounts/migrations/0016_merge_0014_0015.py": "1c4d684f382d36e13cd587109f443f37fb6a71497cbbea6b7c0102c27ee5eec0",
+    "futureagi/accounts/migrations/0016_merge_20260316_1144.py": "3ce9088b8f6656978854aadd74d4fa19e2d18dda57bbfee3b8ed6e1fdcbf47f5",
+    "futureagi/accounts/migrations/0017_merge_0016_merge_0014_0015_0016_merge_20260316_1144.py": "eedb68134f502bd5d32c680b008a79510b2e050e6879835dab737140ce164af5",
+    "futureagi/accounts/migrations/0018_add_eval_template_version.py": "6d9b528bf44ebff766d967c17df599701c02da4c6b9bf0d3f85e02e54d8fdec3",
+    "futureagi/accounts/migrations/0018_blockedkeyproxy.py": "5c6d32aacee2b776526c2b29f583c03fe21c784a202731ba5e15cc443428f796",
+    "futureagi/accounts/migrations/0019_merge_20260407_1927.py": "7142459b71e529667861f40eb6f3a3ae5376ea5d0ff52bc34c9745ec36b17c6b",
+    "futureagi/accounts/migrations/0020_reseed_broken_demo_data.py": "7cf73555e33b59c069cec844072a61d3c28a4b9205d91527dc3db3fa1b3baa4b",
+    "futureagi/accounts/migrations/0020_user_last_timezone.py": "c2a57655516312c257afda50a99f13ec4b8f9b171d727e5e70a4d7602480c897",
+    "futureagi/accounts/migrations/0021_merge_20260526_0921.py": "bec2ea222ae713a5bd42129cd6b73b4b785b884c7741c4064beb4b5832f530d0",
+    "futureagi/accounts/migrations/0022_backfill_ws_org_membership_fk.py": "9c8d4f90c39d12fece2015bbc6dfd5a0779719e4c3444112d556d7cb8bec3ab3",
+    "futureagi/accounts/migrations/0023_create_missing_org_memberships.py": "7eb4f06c0934efa4a9fa5df22dfe388691d10cb801772cfbb36bd4c540315e42",
+    "futureagi/accounts/migrations/0024_sosloginproxy.py": "31937a01ea5bd26ceb3e4bbf47feb316919dd94f3d8b794fd709016cde621cba",
+    "futureagi/accounts/migrations/0025_gcpmarketplaceprocessedevent_gcpmarketplaceaccount_and_more.py": "6110f4f94ecde1314ae0c08d60f12dc029063f7f7de6d09dcaf72bf93e3f809e",
+    "futureagi/accounts/migrations/0026_authtoken_scope.py": "5cebac77e0bf635bc050c7f6211017031acb489de96b6e34268013fbd1c45f11",
+    "futureagi/accounts/migrations/0026_host_event_outbox.py": "9f0230063340683f0f7eef1a60b77bd2eadffa8c6fc58b260e8ad5b394f6fd08",
+    "futureagi/accounts/migrations/0026_orgapikey_ingest_type.py": "4e6a36b262b4b3e2587a9b20a9b74af8ae04b558ed704711ec1a9b52751a58bf",
+    "futureagi/accounts/migrations/0026_orgapikey_secret_hash.py": "293dc38e76959b63b08ccff36f8b6664a20e0fbfe798f238edb79c1f1998fdaf",
+    "futureagi/accounts/migrations/0027_orgapikey_simulation_agent_id.py": "a477defb7ca77682d4b60a636578acaef81ee8ae2f5d394f217b6cd1ed4548af",
+    "futureagi/accounts/migrations/0027_seal_api_secrets.py": "47958cbac0d0968525ecafbe5a102d14b3f020c63c913d00f62bb62e185468be",
+    "futureagi/accounts/migrations/0028_merge_20261019_1400.py": "43123491a3c1a21c5f8e56a0968e7d9190ed9286184d2805ed3b31a478d409f5",
+    "futureagi/accounts/migrations/0028_merge_authtoken_scope_and_simulation_agent_key.py": "b13c91e672734d2c0b9eb485aea2c8ceab4ab829981cee174f534cd8970f65df",
+    "futureagi/accounts/migrations/0029_demotracepublication_demoseedrequest.py": "e8075607f9af8be1975d203cb3ee6ef68a4253c6b807e67af344d633d590024a",
+    "futureagi/accounts/migrations/0029_omega_purge_lifecycle.py": "7f09067ba19c6011b79317f43969d790a5e640f09d464ed61bae9c6e6f2cd5a5",
+    "futureagi/accounts/migrations/0030_merge_omega_purge_and_simulation_agent_key.py": "7d80d7260cb8266ed770ad244e6f932abe458a546c4c4ded49cd0c5e2268da2c",
+    "futureagi/accounts/migrations/0030_queue_existing_demo_trace_publications.py": "047048b6d0b9e5017ea2240f9cdbeca3b0956234b16c82c37fbb369f99dd9e5f",
+    "futureagi/accounts/migrations/0031_orgapikey_coding_agent.py": "0dcb140a30a1e824dec22e37d2d9034d76f2e8d7d144c46c1e59a0c244133848",
+    "futureagi/accounts/migrations/0031_retire_org_keys.py": "b1f09274671ef16a7740ff0189e24c3ebf6c45cb6d363ba149ca021628f86202",
+    "futureagi/accounts/migrations/0032_service_grants.py": "ca5779a3e6dbe8ebc06264607ef24ebe88a8712ccd5e0f1234666fa566671f56",
+    "futureagi/accounts/migrations/0033_batch_submission_intent.py": "6c73bbe3ff13d754a67777f4d0d2a41717e099d4ec32be1f130c4b8d1c0d217f",
+    "futureagi/accounts/migrations/0034_retirement_manifest.py": "ab82a989faaeef8e5c3efa7ea224479d09b66a0848cc3b72e7295d35b7ad945a",
+    "futureagi/accounts/migrations/0035_gateway_retirement_fence.py": "0b66c99ee9c17357b4742f967ac12e6b6130e1ae7ab1958a84b8bc67a7a7a932",
+    "futureagi/accounts/migrations/0036_authtoken_password_reset_type.py": "6d62f4d7d3a7e27d9d489f991ba499a31ab43b477a7e70f4315c1665c4a6198d",
+    "futureagi/accounts/migrations/0037_merge_c26_dev_candidate.py": "c05d44a7575788eec59816fe5434df8ebce721e49d8779c02fff0cef122f44a3",
+    "futureagi/accounts/migrations/0038_organizationmembership_removed_at.py": "1f5a0d4f535ee979375e62302d97087e245c2fcb6f2c5b9c39eb2164a408379a",
+    "futureagi/accounts/migrations/0039_merge_c26_dev_1109.py": "623aa8a8ac6ed3e6b70989bb91162347715de9e540e1d623afcf070793e0122c",
+    "futureagi/accounts/migrations/0040_alter_user_invited_by.py": "cd3a928771be2357d304bb0c7f5fca9a8276eaa0408bcff172484c2d4670ea55",
+    "futureagi/agentcc/migrations/0001_initial.py": "877c4067f27dd3680b66a569ce4224379d584c8d094ac83b552b6b58b88aebde",
+    "futureagi/agentcc/migrations/0002_prismrequestlog_guardrail_results_and_more.py": "812b9825702b33f229951591c8632dd0c94d469f47d27663b8d126d22961804c",
+    "futureagi/agentcc/migrations/0003_make_gateway_org_nullable.py": "69bf71b57c6b0e6e9d7ab3c31d9264b6094f90a1cad17a0ae394b298c763a7d1",
+    "futureagi/agentcc/migrations/0004_prismorgconfig.py": "3e8bd9259926983ea24d5a3f4a4910968209bc602ebbbd4dfa37f87afbe1f963",
+    "futureagi/agentcc/migrations/0005_prismguardrailpolicy_and_more.py": "b62309297f53de8e7ad0e974a9a6665e9011800e67f2effec3806eb32ff6f9b2",
+    "futureagi/agentcc/migrations/0006_prismblocklist.py": "58ffc99943635599d094c2f8e7535781c5a1f488632c0f1f50a7f228ed463b0a",
+    "futureagi/agentcc/migrations/0007_prismguardrailfeedback.py": "9b523b0143ccf86b6dc5f1239ff1392c1b7f3027166651da4fe6a27cea37df77",
+    "futureagi/agentcc/migrations/0008_remaining_models.py": "31b777b3885fb7b283a272d6fac319731a830890b86f7a48b4df318cdbbf6ed6",
+    "futureagi/agentcc/migrations/0009_prismorgconfig_cache.py": "0ba2b2f1f22d11f55481f9a428727451ff01a09d4da67aaab85f966de577dc48",
+    "futureagi/agentcc/migrations/0010_prismorgconfig_rate_limiting.py": "f61885d400fe40045760620e840396b9430d8ba5092f90ae2c8dc2af98b65402",
+    "futureagi/agentcc/migrations/0011_org_config_category_e_fields.py": "ff9239e7573a6195fba90d57c9a6fcef0d6f87bb25fac946065cc80f7463ab28",
+    "futureagi/agentcc/migrations/0012_shadow_experiments.py": "7449b12d7ae2355d4124f220df42256549c49a1addf7f187fc57eda5428ce7a4",
+    "futureagi/agentcc/migrations/0013_prismorgconfig_mcp.py": "7f0b96a4e7024330490dc70e2b398cce8b11cc32282b41c92d159452d9c0935e",
+    "futureagi/agentcc/migrations/0014_prismorgconfig_a2a.py": "28a5830137e853e35f3a1c42150e707ab1ed19d18456355a52a84bea3bef0bd3",
+    "futureagi/agentcc/migrations/0015_prismorgconfig_audit.py": "3d211b33178d57ca21075deba7c854981c2508bf0d604e11efeea9b4dd9e5390",
+    "futureagi/agentcc/migrations/0016_prismorgconfig_model_database.py": "6274aa4dd1f1e3f4a263f88362a4cd3fddb2324335de46384ff6376f19d8e5b3",
+    "futureagi/agentcc/migrations/0017_prismorgconfig_model_map.py": "7ef765e7e7cdf0243c83bb0e64d0b627902bc871eb91fb33bdaaebb94e718100",
+    "futureagi/agentcc/migrations/0018_provider_credential_key_hash_admin_encrypt.py": "5d650b5a90c94c7d2f303442508d456ed3936a4e530a6aaa1b7d42e63e927b04",
+    "futureagi/agentcc/migrations/0019_workspace_and_shadow_org_fields.py": "771a7197f2c1dc699518a150532c1fe226c242f8e4a6644fb0dd9e02018c26e1",
+    "futureagi/agentcc/migrations/0020_request_log_meta.py": "40ad537baf1382a098666d4701fd585ee68f6ca9a24e589151985a201e978b44",
+    "futureagi/agentcc/migrations/0021_prismguardrailpolicy_encrypted_check_configs.py": "0b7a08784a7509be0cf807d5269a4f0659c3e8b995e3b3ae2225f3c6cf3d6c69",
+    "futureagi/agentcc/migrations/0022_remove_prismgateway_organization_and_more.py": "d0cbee0abfb493fd5f299993462d1a646b0ed9e09ba8f322889e5883b3b4c6ad",
+    "futureagi/agentcc/migrations/0023_alter_prismshadowexperiment_unique_together_and_more.py": "f7297e15745418cfa3fbb554d3c5058eaa0af02667c3094a7a61da8b465ec5e4",
+    "futureagi/agentcc/migrations/0024_rename_prism_to_agentcc.py": "73fcb0e3bcc1071c8aa5ed0d97572a7b30e4ccdc3abec0f5af3218ce1f57b498",
+    "futureagi/agentcc/migrations/0025_rename_indexes_and_related_name_alters.py": "b9c1be5a3317c6f41f004e223cd3224f99f2a20df214e3ec1838ded2185f324b",
+    "futureagi/agentcc/migrations/0026_clear_stuck_ui_guardrails_encrypted_configs.py": "8846472e2fe6e20340b9e60638fb48e109292920ac6c320fdbf87559f9748fc5",
+    "futureagi/agentcc/migrations/0027_request_log_metadata_gin.py": "af5d0f14e34b8d9bc32f16c1b60be775c1e08c6b3e7c84b84abe91d76e001ad1",
+    "futureagi/agentcc/migrations/0028_drop_rejected_org_config_keys.py": "59963d687b181d32bf7ae3bfd7c53d37808c3e0b869794ad9318ae8be5d07ba9",
+    "futureagi/agentcc/migrations/0029_org_config_managed_models.py": "baca0f85edaa9d4d22d2921fd40da7f453abe5dbe4d7efe4bb7800125768fa8a",
+    "futureagi/agentcc/migrations/0029_request_log_unique_request_id.py": "68f08b9ec342f84198ca748271d4b1b3a98668ffb5d51563c42d5a0818244c7c",
+    "futureagi/agentcc/migrations/0030_request_log_v2.py": "0dae9d09cc0491cd1741cbc32fe61840f55721bb265a70ad405b7edbb1a4dc12",
+    "futureagi/agentcc/migrations/0031_request_log_v2_indexes.py": "05c6a8d91ecc7b52cfd78ca3c98c2341ef97d79b07de999f656aa1a2af87be9f",
+    "futureagi/agentcc/migrations/0032_request_attempt.py": "83041dccecd122e1a16e2795270ffeff8f887f2dcf37f34ad8d3e06b26a9ede0",
+    "futureagi/agentcc/migrations/0033_managed_upstream_key.py": "8a4102c9f687da2aea8755db2923d13fa207757062f55b6232774d85bf11d9f6",
+    "futureagi/agentcc/migrations/0034_request_outcome.py": "35acbfa8e535d7ce4819abc19e04a3a04cea0de8f8c06456a22d16fcda3aa6fb",
+    "futureagi/agentcc/migrations/0035_mcp_credential.py": "f795fc8cd843054ce3d6c35de4c6109262245d417aab2f91ffe224d4ae632520",
+    "futureagi/agentcc/migrations/0036_mcp_tool_call.py": "ca750619bffe063c610e65a4b00cb2a7ec0743321419da719cc45b738fdacd4d",
+    "futureagi/agentcc/migrations/0037_mcp_tool_revision.py": "93df5d54e1bf0d9bae5632339db62d2e60adc328f36668554a58ab396dc8cf4b",
+    "futureagi/agentcc/migrations/0038_mcp_approval.py": "921a7bace2927ae39b3c7374ccb040f3fc55032ba5e3056fdb84cfcb1ac74c3a",
+    "futureagi/agentcc/migrations/0039_mcp_registry.py": "009689e5568a13350730540dfce06e574030ea048f8f8322e7f772f37175419a",
+    "futureagi/agentcc/migrations/0040_mcp_oauth.py": "a22cdb5649a25df0fe1e9d85a51f26412baf77ad5e2a1033ecd82f4f4dec9867",
+    "futureagi/agentcc/migrations/0041_mcp_indexes.py": "5d73a778cb570b6e9889fd140d14d474487420efd131cf2cf964e26ff48a815c",
+    "futureagi/agentcc/migrations/0042_delegated_grant.py": "01d62c90eaa257c54f6d6a9e9bb653ab0f602714dc09f362283bbb1283575470",
+    "futureagi/agentcc/migrations/0043_attempt_hollow_request_log_evidence.py": "e21bc323c6abfdfea56e1a3a0c703bc64ad1af69ae872ac5a5bd3fd4183ff915",
+    "futureagi/agentcc/migrations/0044_memory_forget.py": "b5500e3ac10170c3dc6269fe89ba36932e67b5998a0535b9149fa47769b085d0",
+    "futureagi/agentcc/migrations/0045_org_config_tools_identity.py": "df64545f5b38b52fb85c8e35fd3e0489a6c54dac95a9ccac5047cdf13b5eb483",
+    "futureagi/agentcc/migrations/0046_org_config_db_defaults.py": "411608ad1599aca4eb5c7d75e624c75bb2c2ab505448bd1f7585319bc4f24b29",
+    "futureagi/agentcc/migrations/0047_encrypt_org_config_secrets.py": "bcba85e8e84b743b089cc95af680969fb9185a70206d8960f3b77a1195f191a6",
+    "futureagi/agentcc/migrations/0048_r7_batch_jobs.py": "5a0bc9de8169095b2388a4b454c897afcf489786667c8cd53aafc0c12b1d9c32",
+    "futureagi/agentcc/migrations/0048_r7_email_alert_state.py": "2d2e0218cba80f6217ef820472938ab9cdd85a23ff836675dfe5738e7268255e",
+    "futureagi/agentcc/migrations/0049_merge_r7.py": "fd43e40873167e71d01054777fe9fc035f0f6f0ce209acfab41bdf88d34c1113",
+    "futureagi/agentcc/migrations/0050_encrypt_org_config_secret_aliases.py": "0e203d2c11ee4cd3d590ef56f5a3ba25f420178459da3610cbbf15eae54ec164",
+    "futureagi/agentcc/migrations/0051_encrypt_alert_channel_urls.py": "06b46ee3bc631cbc75314222711ec10f4c02bfdbc0dcbbfffd915e033187a6d3",
+    "futureagi/agentcc/migrations/0052_auto_reload_consent.py": "6f6da0cde930d2952d305ded84611f3046697e6d20f56bdbad583c8aa5584283",
+    "futureagi/agentcc/migrations/0052_cap_policy_activation.py": "24e093f37e47787f3af0f7ece2a5ec5a98032236259a1adf73c8af32d63818fb",
+    "futureagi/agentcc/migrations/0052_mcp_service_provisioning.py": "c5f529581aa5cd6530ef933868546ab86e8f35398b7caf7cccd798e5b07601a3",
+    "futureagi/agentcc/migrations/0053_cap_policy_revision.py": "0a5fc41df1344f8d43057301af26563b2ce9f185f151961e084f350ad9772a26",
+    "futureagi/agentcc/migrations/0053_ee_agent_key_policy.py": "78d0bf2b72c8a7428f1ab3b4f42b6694d6a5e4304ceabdf36ec2f2c4af7516b6",
+    "futureagi/agentcc/migrations/0054_ee_agent_key_expiry_backfill.py": "e8efda43918484adcb606a8a18fae7eb00c1e26994b47c0cbc055627318d3244",
+    "futureagi/agentcc/migrations/0055_ee_agent_key_mint_idempotency.py": "27eba163b778df1d567d298ce41bddff09611803a1ab8e333788bade4c6f1cf2",
+    "futureagi/agentcc/migrations/0056_mcp_secrets_to_vault.py": "ff5940d4280da24aa27700c2c8beb30947aa611ecbe8b5a5f812630906d610f7",
+    "futureagi/agentcc/migrations/0057_mcp_credential_origin.py": "87fa1e44657de99d149d14c1286761a78a0a1be6a0bcd2049fac3b771bbc9169",
+    "futureagi/agentcc/migrations/0058_mcp_upstream_oauth.py": "0fbc084df0dd35abdb9b487683157ce59b2cba081c1fec123fac91a90eeb4289",
+    "futureagi/agentcc/migrations/0058_retire_ee_credentials.py": "6dc2c1d24f0748033699019afbd62ca8b55a0077150d308fa02f7e2b6edee62d",
+    "futureagi/agentcc/migrations/0059_mcp_connect_org_client.py": "1aa2313c9f24c84808501fc0d82a94d25111efd5e5c78204cc38e390fc8d3a17",
+    "futureagi/agentcc/migrations/0060_mcp_connect_shared_mode.py": "14262e5a90092c7ee76f433ad4b244f5222e2b746246e78118dc1cb611165ff6",
+    "futureagi/agentcc/migrations/0061_mcp_personal_principal_cleanup.py": "9e4743dfae2845d8e74615a3ec4b95c88e73dbed91c03199a5854cdaf1c61ba5",
+    "futureagi/agentcc/migrations/0062_mcp_cleanup_receipts.py": "e35a454d92351950943929fa34f7b0fd2165279176051515fdaeb026404ebb19",
+    "futureagi/agentcc/migrations/0063_mcp_credential_grant_revision.py": "4b730f86e21e4b583971d2b7a12f29497548bbdc707fe002167fadac0007786c",
+    "futureagi/agentcc/migrations/0063_mcp_grant_org_only.py": "1b256e2531cdaa5260b7c2e17f0894cb0e5c345d336a7e49e7675f9cdc938462",
+    "futureagi/agentcc/migrations/0064_mcp_vendor_connections.py": "0e04f0395ac952a48e74ae07a40d8bfe5e2472097350230974ff39bbc423df89",
+    "futureagi/agentcc/migrations/0064_siem_export.py": "6f76e79fd40442069ed7b362395b962be1b4a2689520de8bb68eed40e0d5822c",
+    "futureagi/agentcc/migrations/0065_mcp_vendor_optimistic_lifecycle.py": "e922b75834024447d8040f51a56777d7d2883d8a44d78e03bdaea3a9d6654225",
+    "futureagi/agentcc/migrations/0065_merge_mcp_adapters_siem.py": "b01e2fb6188a70e207dc7474af47ca4214ce4be992bfb5f923f28881018eb268",
+    "futureagi/agentcc/migrations/0065_siem_hec.py": "4925a2cf6854b884a68de14e7f4bddfdd31fe555bc5ba593e577a52140262668",
+    "futureagi/agentcc/migrations/0066_mcp_vendor_cleanup_obligations.py": "5f9950222e31ef2a2f3d4c8c297c5983093edb915f4146dd1216354aff267e76",
+    "futureagi/agentcc/migrations/0067_mcp_vendor_retained_receipts.py": "cf7e7e0f2aa482a1f886a6442b5d4dcf3388cc3a7d4163b27d1c7132986e47e0",
+    "futureagi/agentcc/migrations/0068_mcp_vendor_connect_leases.py": "5693bd8d2dbc80a6b0c0e289ae1e0ed6d0156783441e9c709a2021245071e491",
+    "futureagi/agentcc/migrations/0069_merge_mcp_vendor_adapters_siem.py": "0bd74be778afa2801b427c9ff90fb9b21414048c019ceede0ca0c0809ff96572",
+    "futureagi/agentcc/migrations/0070_merge_mcp_line_siem_hec.py": "32c55cb2fff42ae9de613cc37525a6d7c728b9780975c79aaca15b79d8f84d02",
+    "futureagi/agentcc/migrations/0071_mcp_connect_cancellation_generation.py": "645604d046d734265fcbf625dbb0b089cf6b9e85422298449eb329676a23bc89",
+    "futureagi/agentcc/migrations/0071_merge_request_log_consent_and_mcp.py": "8b9da0dc64934dca12b609f6e121429a5300d8839acdc4acb6045c5addadc950",
+    "futureagi/agentcc/migrations/0072_api_key_ownership_immutable.py": "2daae9902f95ea62f15fe16abe5f9a1c156e5de10a2ac637dbbf7f5a44673cc8",
+    "futureagi/agentcc/migrations/0073_merge_708j_round3.py": "40c1c09aa56c5985ea62dcce481ea1baf1b2d0294b9f57fdb846317a7cbea35b",
+    "futureagi/agentcc/migrations/0074_api_key_provisioning_state.py": "afa572948caeb2d6d5414151adcd12b6bf29d905e2910705ea30e38e1c9971c4",
+    "futureagi/agentcc/migrations/0075_w11_approval_lifecycle.py": "1810e864ef80ba9fc0323b335aedd80ffde031e109595a8230c0e7e62dbeb31e",
+    "futureagi/agentcc/migrations/0075_webhook_credential_columns.py": "17b388c0e7cdee498dc8bdebafd6306039ca8de57b461e2efa079f877a2211a6",
+    "futureagi/agentcc/migrations/0076_encrypt_webhook_credentials.py": "060950da58cd1a19d3f53e5c03f783c6e8b484ea7abebf73138c3b9b7ff8291f",
+    "futureagi/agentcc/migrations/0077_remove_webhook_plaintext.py": "1d8e917067c452104f617d2ea71ed90b04cf5610269981cbce4ed7799df205d6",
+    "futureagi/agentcc/migrations/0078_historical_key_revocations.py": "961705f6e06e520f350a8912ec4168668fa169c8e540615ba567bda6c4dfcb2d",
+    "futureagi/agentcc/migrations/0078_merge_w11_webhook_credentials.py": "4617559dee3fc3683bab23db655c7f148b7dfcdacec702675a6222e6d8b58fdd",
+    "futureagi/agentcc/migrations/0079_auto_reload_payment_method.py": "b92692f1f652275a1b9b72b8751bb7421c609ecf3271d3ae071d5c04f382c204",
+    "futureagi/agentcc/migrations/0079_merge_r8c_revocation_webhooks.py": "8e531673c77ba032f7648b078ef774bdd3858a99e4f63e9c49dcd5666b08637d",
+    "futureagi/agentcc/migrations/0080_auto_reload_arming.py": "8657e17423d86fed1f6d6c6bf3476486df1819b52e5095db25e5714dc141eba7",
+    "futureagi/agentcc/migrations/0081_auto_reload_intent_exclusion.py": "234cf5522083c2c7a5e7f7f31a7e92c1b3cfd0c16571090784a1cdf20684b917",
+    "futureagi/agentcc/migrations/0082_auto_reload_credit_optional_threshold.py": "c3717c24e20b6ebcbd53bfe14c088d9019a6304ce1ccd46f716a9dfc30be50a8",
+    "futureagi/agentcc/migrations/0083_managed_credit_checkout_binding.py": "ce201171ba9fc12ee04ccaca222b77a4fd0486eaee63ae0ffdc101ee7cd99699",
+    "futureagi/agentcc/migrations/0084_checkout_actor_identifier.py": "d9c2f8d46d58818a97d26f9af9304d8498810a427c3a8765e2c8d5ff02abdf3a",
+    "futureagi/agentcc/migrations/0085_dispatch_claim.py": "408baf226bfefb9bd4817b6af030b9dba3f9d7d31230044fd417f85d51e2ea65",
+    "futureagi/agentcc/migrations/0086_merge_dispatch_claim_webhook_at_rest.py": "0bea71ae5f9e1d962aec0eab404af6188f24b0ab9bb897a8f065a59a68fef5f4",
+    "futureagi/agentcc/migrations/0087_mcp_credential_oauth_resource.py": "d85f103452c5004d4f7148b29a6cf06dcb0adf037f8114a49aac519619bf72be",
+    "futureagi/agentcc/migrations/0088_mcp_shared_connect_generation.py": "1d1ea522b70c79d8e3c38960c35db2ba1d5b89d87b5a46ede3868596feff31ba",
+    "futureagi/agentcc/migrations/0089_normalize_two_key_org_period.py": "f97335c6d45417513643476b8cbb5069c19c594522402acf35a4c931d8dc9416",
+    "futureagi/simulate/migrations/0001_initial.py": "ee4b38bc048fa68ad7bfc811aeae65839a730941d0e84f76d32273da22f01b0a",
+    "futureagi/simulate/migrations/0002_scenarios_dataset_scenarios_description.py": "becf8099abc01683179a457d360b614ea7bd964731e9eaacdb147b42fc5f5c57",
+    "futureagi/simulate/migrations/0003_agentdefinition.py": "abe148a0dee1fef7c9e521e4cef7c2a94a4c3992efdd023b32d763108c2ec6ab",
+    "futureagi/simulate/migrations/0004_simulatoragent.py": "21717237b37bae591a7a6071baee7a5408b4f4bae1771fbbfe8a8dd5b91ab1b1",
+    "futureagi/simulate/migrations/0005_simulatoragent_organization.py": "07a95e7339bf9a364c7a174adfa7e58691d617b69f94c04e5514aa0b990fde36",
+    "futureagi/simulate/migrations/0006_runtest.py": "7a09fab8cd8cff92ca870a0502a9156e5e19ddee5903de94054d4e3067d89c95",
+    "futureagi/simulate/migrations/0007_runtest_description_remove_runtest_evals_and_more.py": "b68cfd6d7899aded7adc693d1be7ee1f17b0e57a81e3cdeedc6fe702f4ec37fb",
+    "futureagi/simulate/migrations/0008_remove_runtest_evals_simulateevalconfig.py": "a32ae35dd2642ef7ed66238a27937ea36ccdc4acda634433c8b11245645e4608",
+    "futureagi/simulate/migrations/0009_callexecution_calltranscript_testexecution_and_more.py": "b8ef331138c4e1f36ecc2a1923e48e227087ef0a92653f1699eb7e35c0a701c0",
+    "futureagi/simulate/migrations/0010_callexecution_analysis_data_and_more.py": "d46354317c48e23fda1c3b4c3edaa73dad8c0823b45a250efef1dc83540d459b",
+    "futureagi/simulate/migrations/0011_callexecution_row_id_testexecution_scenario_ids_and_more.py": "76ce1217939b0abe286677bc7f003f3f8fdc363e82639a820ee98b3c856f5f2a",
+    "futureagi/simulate/migrations/0012_callexecution_eval_outputs.py": "fa56eb04ba2b57abfef97cfd299ef6a0b4e640a48a877a4f71839762ba802853",
+    "futureagi/simulate/migrations/0013_agentversion.py": "4c6d1905164ca3bdb19234f3aa398514ef82bef62e6157b428469b4f9c78469c",
+    "futureagi/simulate/migrations/0014_agentdefinition_provider.py": "8ac21649ec9bb4fda9aa55bd6e30c21d26acc4befceb5cdc6ef0c528915bf80e",
+    "futureagi/simulate/migrations/0015_alter_simulatoragent_conversation_speed_and_more.py": "bd17530d80895e692d3d77edb251928522ff3b2e3d15cfc15b6540feebc7482f",
+    "futureagi/simulate/migrations/0016_alter_agentdefinition_assistant_id.py": "f24ceff38ae1f8a960387fbe23806b0b82ae073698d46b499d586567240a9fd7",
+    "futureagi/simulate/migrations/0017_alter_simulateevalconfig_status.py": "b4814026e21607815169ee371ce36b520ad089d0f4ff0de7d4ad860be91f5fe2",
+    "futureagi/simulate/migrations/0018_alter_callexecution_ended_reason.py": "68807dadf6468c9b7cd765e5294cf4de27e3f31eb083208d6cc5b4b41235ae3d",
+    "futureagi/simulate/migrations/0019_testexecution_picked_up_by_executor.py": "df4e75512d5e95e1154aa76ce61cea74d484e3aae23b3709aeec724d1978a7cb",
+    "futureagi/simulate/migrations/0020_testexecution_agent_definition_and_more.py": "b7f0497d673af8e45859867faa40b886859eade3768bb752adf4b18d29318f35",
+    "futureagi/simulate/migrations/0021_agentdefinition_workspace_agentversion_workspace_and_more.py": "88f2acd3100c5c46f7a322eb4b321d8211bcd65ea47b845e93016e1642a67c70",
+    "futureagi/simulate/migrations/0022_createcallexecution.py": "137906e792c6b4b431807e345ef2616d0157d8c70b21fce0e061738e6fd83ed4",
+    "futureagi/simulate/migrations/0023_scenariograph_scenariocase_and_more.py": "b63b00b3b7c3676ba100438669983462121b3d7b249be2eae54930f79518d60e",
+    "futureagi/simulate/migrations/0023_testexecution_idx_status_executor.py": "13556949cc2b10c64efe9d7e7469b4c14c677a99edd26fd522be0f60bce856d8",
+    "futureagi/simulate/migrations/0024_agentdefinition_agent_type_and_more.py": "326469ed6d88f69642bbca96fe998fb858a29e6cbda10a31772a1dc181b0bc51",
+    "futureagi/simulate/migrations/0024_scenarionode_scenarioedge_and_more.py": "8cca8c9f790e55b0def022d82565b20621d0bdcf93ad81fe6cccd075daed9242",
+    "futureagi/simulate/migrations/0025_callexecution_agent_version.py": "fb820124138109025c148c5e010f1315f7eae45bdca3fa741af652cf415393e6",
+    "futureagi/simulate/migrations/0025_remove_scenarioedge_from_node_and_more.py": "03bf2d2372a4c7e1625290e6028bc1d2d58b77cf3e199a2dab6ed191454c220b",
+    "futureagi/simulate/migrations/0026_scenarios_metadata_scenarios_simulator_agent_and_more.py": "e3ebf224ade88403751b9b393a1c51b75412f543b73220be9b7e8eea4efcb01e",
+    "futureagi/simulate/migrations/0027_scenarios_agent_definition.py": "81899e22d210aff15a9884662dcebbeac20ccc5b98ed0b5066eed96432f0aaca",
+    "futureagi/simulate/migrations/0028_merge_20250917_1327.py": "61b04a816674601eaeb02f0b21dbd456b064f6af68afb91705e4faf9acfb2acd",
+    "futureagi/simulate/migrations/0029_alter_runtest_simulator_agent.py": "1be1b496610e0dcaf7b3ab05f12f9ea6388e272db4c42d03fc3bcf88b6a58f88",
+    "futureagi/simulate/migrations/0030_alter_createcallexecution_options_and_more.py": "5f4c0bb4c9eed8e53cce350dc917722f5f24a8a0d19223c8021161507e0867e8",
+    "futureagi/simulate/migrations/0031_remove_scenariograph_workspace_and_more.py": "82ffeb2f6a65f39c14822955976a7eb98dd62e8b6368c1dbf19f53b0a8687732",
+    "futureagi/simulate/migrations/0032_agentdefinition_api_key_and_more.py": "095e85098afdeb12328b751d2df4306dc15d488b6aa4e4fdc777f56df326cd13",
+    "futureagi/simulate/migrations/0032_agentversion_commit_message_and_more.py": "ed1ba3bb49d45d7dabed5c87cbdfe61804246cb913aeaf4d1f979db7f63fb168",
+    "futureagi/simulate/migrations/0032_callexecution_ai_interruption_count_and_more.py": "e77aad52e6a4301c0e445e5fddc489afc10398afe748e3bc45420f54d13ebe31",
+    "futureagi/simulate/migrations/0032_simulateevalconfig_eval_group_and_more.py": "be1fceaad392d2fac6a4fcf2a119336c82c78c720d011333f3f293815d579f7f",
+    "futureagi/simulate/migrations/0033_callexecution_conversation_metrics_data.py": "952973862d3628a1efb8871834c9fd73f1d74e943be201c3eced19d3ad96f079",
+    "futureagi/simulate/migrations/0033_merge_20251001_0823.py": "fae8ddfe5d14b317f23538ea3161b415505ac4f75aac56b8f8c5c5ae6a1cc80f",
+    "futureagi/simulate/migrations/0034_merge_20251001_0933.py": "cf5d4f65a0576a2d0df6bf4ae0c91cf786da8f7c509402e2bcfbe8e0d285442a",
+    "futureagi/simulate/migrations/0035_callexecution_monitor_call_data.py": "44f7a4952a94a27310f8eab8492c6366d574aedff6046c25593871f13001c4a0",
+    "futureagi/simulate/migrations/0036_alter_testexecution_status.py": "576a5f6dedca63c931e305093809332f8af1a3a354181e006b60ea62dcfd1e09",
+    "futureagi/simulate/migrations/0036_merge_20251001_1957.py": "368d3e56ec80f7211acf9b1203469adf3c0e45ae23a94ca16129ef4afc33e141",
+    "futureagi/simulate/migrations/0037_merge_20251002_1633.py": "d3b1e80df9c2848d755dd355b8e09660ea57d370352053598e5d949ddc364f5b",
+    "futureagi/simulate/migrations/0038_remove_agentdefinition_observability_enabled.py": "7f4e9382cae352473186252b9097449c761dc47a72b065f208dc226779288e63",
+    "futureagi/simulate/migrations/0039_callexecutionsnapshot.py": "b9be65135cad21c04b6716c8b4eda92a70aa9c8c4a62d91c5c1fccd958bb8bb4",
+    "futureagi/simulate/migrations/0039_runtest_agent_version.py": "931ad822ec0c410493eb0aaccb5bc5fe37f531e43577bef81edc7e74bb7d5d7c",
+    "futureagi/simulate/migrations/0040_merge_20251015_1159.py": "cbdfb123af8247d6cceb076f217c277c1fde60601ca0a6d6a00be8d2fffcdd2f",
+    "futureagi/simulate/migrations/0041_alter_callexecution_options_persona.py": "0bd87f57708b2fb4f68f1c0dc767798a71b5d107528208b5d8e932bb161069f1",
+    "futureagi/simulate/migrations/0041_callexecution_tool_outputs_and_more.py": "1480c29a9baf87d6988f7ad109a784fec7d8d8eb70691d3be01df7f26a1da93d",
+    "futureagi/simulate/migrations/0041_simulationphonenumber.py": "06124f1206c7944195e7c8825246bb6dd4e7ed415a8583edcbd5a355018600cd",
+    "futureagi/simulate/migrations/0042_alter_persona_accent_alter_persona_age_group_and_more.py": "a572b58e91db2ee0e07f3f34db276cb7bab18323be132b21a277509984c54d08",
+    "futureagi/simulate/migrations/0042_callexecutionsnapshot_tool_outputs.py": "d3af20308d445dabd4004d5fa24f4f8320eaf15033c0229355af95a436587ba1",
+    "futureagi/simulate/migrations/0043_merge_20251031_0632.py": "ab88e930aff3695ef560c1054b1ccd980e77713a75be1d85187b82de2a7c291d",
+    "futureagi/simulate/migrations/0043_merge_20251031_1023.py": "e8c581b22482a51c29100b949eca4c671bd9d128be4951174ac940d8d9a6bef9",
+    "futureagi/simulate/migrations/0044_agentdefinition_webhook_secret.py": "d1324f48aadcef7e56765c1f8682ae0ae6ad6b7b582d832429c1005cd4c59e6e",
+    "futureagi/simulate/migrations/0044_merge_20251103_1151.py": "42c79416f5dc34d1d25603e158b0000238b87d293c47f6428c06552177d249c7",
+    "futureagi/simulate/migrations/0045_merge_20251104_0904.py": "c7ddb1b4c4bbae8bd50893e50360e51479051f9d6b3dbb2cb966d4a160ca0518",
+    "futureagi/simulate/migrations/0046_remove_agentdefinition_webhook_secret.py": "e6f7e228e6ec993bf0899e6eae1db0d3803b7fac5580df50ca9dc14dab6691ef",
+    "futureagi/simulate/migrations/0047_agentdefinition_authentication_method_and_more.py": "e418562416f90506b9675831fd91eb5e1895afd5390c26988b4ff307ac9080df",
+    "futureagi/simulate/migrations/0047_callexecution_customer_cost_breakdown_and_more.py": "e9cbf606e55be0056b9e0e52dc51cdcc752f6ba11b285ddb6a995910c517517c",
+    "futureagi/simulate/migrations/0048_merge_20251113_1830.py": "f0a825c6713772ef0826e79ce17cddb9aed02f9c7e7f4bb629e10c74d3578959",
+    "futureagi/simulate/migrations/0049_testexecution_eval_explanation_summary_and_more.py": "c321c5ba0f3af8cf78fb8a2df3daad4c5c543df6e70c73703c75e3634394324b",
+    "futureagi/simulate/migrations/0050_testexecution_eval_explanation_summary_status.py": "1c81f128ad7e51ec17407d716fe230140a08b9b77f76e0cc35cecd37b1d5c639",
+    "futureagi/simulate/migrations/0051_agentoptimiser_agentoptimiserrun_and_more.py": "4d5daa4b7e5b9b2f9cc0d90cc5b2415216c8b224ae08eaa6587eb1f15700d693",
+    "futureagi/simulate/migrations/0052_agentpromptoptimiserrun_agentpromptoptimiserrunstep_and_more.py": "e5a16f5b6de2aa368c0c2209cd82831ae9ceba2e0a126da311e8592180a4dc60",
+    "futureagi/simulate/migrations/0052_callexecution_idx_callexec_testexec_status.py": "8ec45e39207f9f19b86866f4fb3606f8871975a8979fcbcd3d32f9b9476aad16",
+    "futureagi/simulate/migrations/0053_merge_20251209_0754.py": "a764241d667d0ebd7f39ad9cb6c024384d6c7a725c9da8af41e1b09bd168660c",
+    "futureagi/simulate/migrations/0053_testexecution_error_reason.py": "a6cf743747617ab0e492a28cd2123ff45c55e1d4c7385aea867ee0fe2eeb6e39",
+    "futureagi/simulate/migrations/0054_agentpromptoptimiserrunstep_step_number_and_more.py": "ea400c8a7642eb9160e96eef54bc11e2fd88ccdf310f313af9285eaae04b0de6",
+    "futureagi/simulate/migrations/0054_alter_scenarios_status_and_more.py": "dc920c63e0d62ac77ae5d59ab9dbda4e84eb7ed378dfa6c6170db7fe1ebf6ac2",
+    "futureagi/simulate/migrations/0055_agentdefinition_model_chatmessagemodel.py": "664cc7e56f1daf5dbc40fd15ce127f5cfc941d849503c047371e21a252ffed4e",
+    "futureagi/simulate/migrations/0055_agentpromptoptimiserrun_name.py": "a2758645dffaa1f05ffe3bdfad98edcf44f9e707d15732e39d7fe27e1a91d1cb",
+    "futureagi/simulate/migrations/0055_alter_callexecution_status.py": "00556781d6ae65fde53dafe067c8bf1758b125e6daf5bfb796c60e5ad1e8352b",
+    "futureagi/simulate/migrations/0056_persona_emoji_usage_persona_punctuation_and_more.py": "053cbf17f9903983e8b942d23c45fdd6ad1145d3e0971678772d3c274cce2804",
+    "futureagi/simulate/migrations/0056_prompttrial_trialitemresult_componentevaluation.py": "704cd16a9dddf885d92113bcda85cec75c1f62eb3dfddac1582715c73f816086",
+    "futureagi/simulate/migrations/0057_agentdefinition_model_details.py": "eacc25db18621032631b3dfacd63a7232002694424c5a3f6f37d29354ea68b66",
+    "futureagi/simulate/migrations/0057_agentpromptoptimiserrun_idx_prompt_opt_run_status_and_more.py": "5283d8a748971fca9075f3925735f32a4ad29fa85a22cf5896aba920c91748e5",
+    "futureagi/simulate/migrations/0058_alter_agentdefinition_authentication_method_and_more.py": "38224e36ef06eaf6df41821e46699a4aab49dd9a2dc33aaeea6ba27f0f58b9a6",
+    "futureagi/simulate/migrations/0058_merge_20251218_1019.py": "9a3a03b5205f00543b0178686bb2b38279cd45205da6fc342bdef2465d66e132",
+    "futureagi/simulate/migrations/0059_agentpromptoptimiserrun_error_message.py": "366585e14b82cc286986ace4a8aaf76af634e9ff88e100fc4944c8aa132cc514",
+    "futureagi/simulate/migrations/0059_callexecution_simulation_call_type.py": "394f4ea075b767b9fb4471e717a5bf6fb7c82c74746b826dd57497b9157aabef",
+    "futureagi/simulate/migrations/0060_merge_20251226_1007.py": "d3dbe7ce341917ea72fe46b7a13a3a1169c76dc5a46cad47c389613655d2832f",
+    "futureagi/simulate/migrations/0060_remove_persona_writing_style_persona_tone_and_more.py": "85c88d4404f2747fb0dcb5a43065bd9a8dd98ee15569cbe1d2349c7f2b11abb2",
+    "futureagi/simulate/migrations/0061_chatmessagemodel_latency_ms_chatmessagemodel_tokens.py": "45870acc7fdf825b88bc729b9477010ca0db24eb2e1291baa8d030f05568c40a",
+    "futureagi/simulate/migrations/0062_merge_20251231_0627.py": "b22916f8e3fbf191737132cf8d47b67dd7447738978e90844c0ad90bfdd2908c",
+    "futureagi/simulate/migrations/0063_alter_persona_regional_mix_and_more.py": "e981348a25826617997dee34736c591c1289050786ffe597e9f907a3f32f94a1",
+    "futureagi/simulate/migrations/0063_remove_callexecution_logurl_and_more.py": "92c23870570aa7225d8448844f847584004ebbef94254931cc3fae07c7fc83ec",
+    "futureagi/simulate/migrations/0064_add_prompt_simulation_fields.py": "04c2ac838941f889dd7e229a6c5bcd4771089b2a0b855caa9a3280b90bf46f4b",
+    "futureagi/simulate/migrations/0064_remove_callexecution_customer_vapi_call_id_and_more.py": "a53b27e5ab735883f0e3b30dd8a1ddcd751b04dfb2ef260cd91f3fff4a004167",
+    "futureagi/simulate/migrations/0065_make_agent_definition_nullable.py": "5e55669661ed55bbe59d6b425fcb8d93468202267705b81cab485be9344ae315",
+    "futureagi/simulate/migrations/0065_merge_20260115_1844.py": "3501ceb9f68d1595ef28b64681b08b17c8a666443c0d8dea5417d9189473b4f2",
+    "futureagi/simulate/migrations/0066_make_phone_number_nullable.py": "60d67a5b19a5ca13ade44d41d1ba524ff9a1926e2c17e482e6fac15c6d947233",
+    "futureagi/simulate/migrations/0067_merge_20260203_1444.py": "dca312f1644e23b1ac910abff25ed21ec63f5ff76262138980a7dfa0bdb62006",
+    "futureagi/simulate/migrations/0068_chatsimulatorassistant_chatsimulatorsession.py": "ee00167fe76619714e80bb39577038392e42416efd3dc7bde1b136abcfa75345",
+    "futureagi/simulate/migrations/0068_rename_vapi_phone_number_id_to_provider_phone_id.py": "e535a04f412683c0abfb7072fa5fa99977993fa7975d6127d9a32654de1cb824",
+    "futureagi/simulate/migrations/0069_callexecution_storage_cost_cents.py": "ee0e0aef4f308a972c09b7cf69b63f67eea0e81741b812cd169331bbdfe50828",
+    "futureagi/simulate/migrations/0070_merge_20260303_1055.py": "b3898f49e5640b050c30d69b65873d3e11483228c0218b93112048e58c2e8522",
+    "futureagi/simulate/migrations/0071_provider_credentials.py": "d7bfff9639d276c6f282dc45115ae0393b4a88934d0914b3dd96d5deabbb4a33",
+    "futureagi/simulate/migrations/0072_alter_scenarios_status_and_more.py": "721b003e2065e4cce7e5a4604e1a269a71b51bf24b6d21bc8e2cf91aa684b1d2",
+    "futureagi/simulate/migrations/0073_merge_20260416_1406.py": "6c6ba2ee77dab4bb64f69c655957e99cc85a67c6172665e6eb06b6f95364bfac",
+    "futureagi/simulate/migrations/0074_canonicalize_simulate_eval_config_filters.py": "fad5729a48aada2043b469862997ad57aa3f5dec5467c014a9e56fdc9fbc7911",
+    "futureagi/simulate/migrations/0075_add_agent_version_to_provider_credentials.py": "f3ff2a5d328ef24838e2d7ff2a50b456931be003bf6a99034351665debcc25da",
+    "futureagi/simulate/migrations/0076_backfill_provider_credentials.py": "0feaaf2e92741e32adaee1efbf4e77137081c05fbd73558ef7f791ee8aad86a7",
+    "futureagi/simulate/migrations/0077_relax_simulate_eval_config_model_choices.py": "0828e3891bcde3e78fa0fd628d6a8a4572947058c266d1aa8a31671741490209",
+    "futureagi/simulate/migrations/0078_agentdefinition_target_speaks_first.py": "6326c8f83f81bb48572e9fb964cecc48b25a57bd624b262068945046acf328d4",
+    "futureagi/simulate/migrations/0079_harness_environment_credentials.py": "f6faea1e3f289666817b059e9f318f48a98d54c52048452cdfc835567ead8979",
+    "futureagi/simulate/migrations/0079_hosted_harness_channels.py": "331726aa966e24ec28891bb51d9e7621e602ce6261e5f5ce90171395127bec11",
+    "futureagi/simulate/migrations/0080_merge_20260825_1857.py": "c49f587fb7dd3ab10ebfa5243e7d3523a987caf719cc940b74e5ffddda5e7e93",
+    "futureagi/simulate/migrations/0081_harness_stage_output_and_bundle_digest.py": "aca52a4762e6e4ad8bc379c5f0d773fbc002a07aebb6403656331f88b137b420",
+    "futureagi/simulate/migrations/0081_hostedharnessjob_stage_outputs.py": "b42d2a6fbb21d7d3decbbb9be31f78fdb85a038ecae054cdabafbfaba8cd6c99",
+    "futureagi/simulate/migrations/0082_merge_hosted_harness_outputs.py": "14e67cee7964a731a34ac66e5e66a299c58a295a2816815b0b61bb73b8c4a290",
+    "futureagi/simulate/migrations/0083_hostedharnessjob_workspace.py": "f95999dcdeb2f52410efa089c935326e2c06d497e527025a4fe9605285b73054",
+    "futureagi/simulate/migrations/0084_expand_hosted_harness_scenario_limit.py": "a070ab05df39be26734ff8fd73c06f0b20fb9cd0321bc066837f0748d720c56f",
+    "futureagi/simulate/migrations/0085_hostedharnessscenario_dataset_row.py": "b0fa0baab82281e4d996a37991bb0ab5a4d0946f1c025ccfbb7287bb0de6f2f0",
+    "futureagi/simulate/migrations/0086_hostedharnessattempt_diagnostics.py": "15052de0fb1cdfb67515d1c3b237c7caea7c49c299ae516b4680c80c88f694b4",
+    "futureagi/simulate/migrations/0086_parallelism_admission_and_degrade_projection.py": "982ab167264b44d4c5311f546b6fa40602107b2e09506e9725d1a365a203b7f7",
+    "futureagi/simulate/migrations/0087_hosted_harness_conversations.py": "1f461f7a4f40d4e2ceeb38dbc6469d82422e7fe7fd243d0098301fde15eb45d6",
+    "futureagi/simulate/migrations/0087_hostedharnessattempt_usage_state.py": "9a1860e4e83f24bd8215be7d1598681d27b4f712cf6f84418bc1897268de5323",
+    "futureagi/simulate/migrations/0087_hostedharnessjob_content_updated_at.py": "a507f40fe3946bc694924839dfd7c5eccceed609c47d4f9f124bf68de3ddc52e",
+    "futureagi/simulate/migrations/0087_merge_hosted_harness_attempt_fields.py": "ba05a02a5908a779c9f721c98e50f797c4a9490b1011c3ec59fe4dd7afde5b8e",
+    "futureagi/simulate/migrations/0088_expand_hosted_harness_scenario_limit.py": "2d912e8060f3b1b677aaf202001ff591a2232097181675fa691fd778f8d74f13",
+    "futureagi/simulate/migrations/0088_hostedconversation_control_only.py": "3529fa782792a6b5258becb77d127f60475c1d1ad1425c4b499bc6c38241ce34",
+    "futureagi/simulate/migrations/0088_hostedharnessjob_name.py": "403900cd8f7fae1545bde58fedd754af3822387c5851c1f193fa318f98449f55",
+    "futureagi/simulate/migrations/0089_hosted_harness_conversation_transcript.py": "9f024fdf399df8cfa6dd8851e2bcfd0977e56651383d6c1a8d5f39843b609091",
+    "futureagi/simulate/migrations/0090_conversation_transcript_id.py": "cf8a963f05aa9c72c969dce8c51450198567c23cf4379c4afd263d560c6b71b0",
+    "futureagi/simulate/migrations/0091_merge_hosted_harness_dev.py": "c48304e14111eb4da18990cdfcaf2c204997abb3e16db328a34bbe5c1db33997",
+    "futureagi/simulate/migrations/0092_harness_scenario_queryable.py": "12c5dd15642295797ad14bdc91ac360c11b4e951206bd5afb1d181fc13d36d3f",
+    "futureagi/simulate/migrations/0092_merge_environments_v3.py": "cf16d58c862416630710df349dc74fa2f91ef86b350f17ad0fb797ebd4bb0456",
+    "futureagi/simulate/migrations/0092_merge_parallelism_environment_v3.py": "0aa16eba437618860b805ab555d10f1fca60d1a14d9ad85f29846f585b3ac0f3",
+    "futureagi/simulate/migrations/0092_selected_harness_runs.py": "46048d5abfa62189fc6ac09183762b364a0fc00c11534ee08696d244758c92bd",
+    "futureagi/simulate/migrations/0093_harness_scenario_authored_before_call.py": "e61fcb29f0cc350199737e083d6dcc9067c7ef9d016703d629aebc2b64be6ea1",
+    "futureagi/simulate/migrations/0093_merge_environments_list_parallelism.py": "f996efe9db035480659d542846a7c444ade6505043f6fb63c8510e383497a9cb",
+    "futureagi/simulate/migrations/0094_harness_scenario_keywords.py": "05f2f9f8eba8cd730ac579349ef4b6f3498df2984ccd52d53e13b3944bf17cdf",
+    "futureagi/simulate/migrations/0095_merge_scenario_quality_environment_v3.py": "90d4786fb66d7225a54047cb34ece9c8ed986d17bb162438ef63f787eb251095",
+    "futureagi/simulate/migrations/0096_merge_environments_list_scenario_quality.py": "20f842cbe8a0cc538158efc8e68ab55fdcd558ca73994a2c847a6c985b9660e7",
+    "futureagi/simulate/migrations/0097_merge_selected_runs_environment_v3.py": "ca117d1af61a92bbf42c27ad5e0147a5fd6d15a9319bcf804f03feb5a651b840",
+    "futureagi/simulate/migrations/0098_agent_version_setup.py": "73c74637b0ab6fcf2d3d3a71cea43de60ced8d42ebf3d7c1732fc671c1066040",
+    "futureagi/simulate/migrations/0099_harness_versioning.py": "727713a3979defadbc14719ac4d5d8f98616185b1fdca16e5485d0b581aa9389",
+    "futureagi/simulate/migrations/0100_agent_fix.py": "9aac4d044f0f7867115224e2f97a9f1d005a0b1031076811495e33e588d95099",
+    "futureagi/simulate/migrations/0100_sandbox_harness_job.py": "ab2a85d22d4c6cbbd93523524f4eedae83b3d381d516a181ca77b9fe7c2a3cf9",
+    "futureagi/simulate/migrations/0101_agent_fix_candidate_override.py": "9131b22bafe64f5c8f84289582c046317e068f8185da5c610970a6d4b6020695",
+    "futureagi/simulate/migrations/0102_agent_definition_encrypted_api_key.py": "2fde5816291515d93a23b12b5b0b545b2bc0cbc0debcbc0d94620862c63817f2",
+    "futureagi/simulate/migrations/0102_agent_fix_engine_notes.py": "4fb75a2e77ccef331df109a981121d0fe24717040f836b68ea63bb871740f27a",
+    "futureagi/simulate/migrations/0102_prompt_optimizer_tenant_lineage.py": "a34c9538986895734343a06efc6692a31efda654fefba91d8e586862b24743eb",
+    "futureagi/simulate/migrations/0103_encrypt_agent_definition_api_key.py": "1bdc620840b3156b657144644d4ac3219c21184f381ef3f1e5d7ed5237280551",
+    "futureagi/simulate/migrations/0103_harness_job_verify_of.py": "687ef8ca20c95d7248102b0bcd389205b2ff5b4e91960249b1b6ea324c6b9a57",
+    "futureagi/simulate/migrations/0103_merge_sandbox_harness_job.py": "f0f8ce8555922189dcb2b4db23cc386691ac87479ff369c405492731cb39dbeb",
+    "futureagi/simulate/migrations/0104_remove_agent_definition_api_key.py": "0bf9e4f6e6a9a63641436f2cabcbc879e2ee6197d2e771fa94d9bd8e2d77f90e",
+    "futureagi/simulate/migrations/0105_merge_api_key_at_rest_tenant_lineage.py": "19b440b617693f70b2b9ac66fbb6cfcf59870cec514a48a3c79de12d101e2a6f",
+    "futureagi/simulate/migrations/0106_merge_c25_credentials_agent_fix_notes.py": "a4a7ec5389abc628de3f56f402d1d1d5f25cc843c1b34e86aac1b0eacf49510b",
+    "futureagi/simulate/migrations/0107_merge_r8c_r3a_leaves.py": "4871885098894fa6a856ddd859903e53006ce550fb7bcc2c9965490e6ede1196",
+    "futureagi/simulate/migrations/0108_merge_c26_dev_1109.py": "f5fac91c11c06128a117f9cf8368ee20b223278eb945377b16c6868bc6ac8acf",
+    "futureagi/simulate/migrations/0109_agent_fix_model_reserved_usd.py": "733e0a1cc686e82721d9e5c138f4a73585d4b089e91b24aa25bc03f41f22b3ca",
+    "futureagi/simulate/migrations/0110_seed_system_personas.py": "28489c77d28241ee490d31ecb6fa5550622ef2c5cb9bcdb66e044ed50f3c52b2"
+  },
+  "stateScope": "Names-only ProjectState projection for prism/simulate/accounts. Hashes cover complete head-54 migration sources; remove only the documented bridge envelope before checking.",
+  "baseStateExecutableSha256": {
+    "futureagi/accounts/migrations/0001_initial.py": "0713a4e0aa0c26b8b74cfa4a13207dbacaf81cf4a6bb24cdf3e8a8f5bec15224",
+    "futureagi/accounts/migrations/0002_user_config.py": "43b0ff34ad2c4d99ec591856f1a98b92a4e2924c9dba9f39651bb05207a38099",
+    "futureagi/accounts/migrations/0003_alter_authtoken_auth_type.py": "9faa4470be06e7de0a512cc6c1f2111a62c78798cfd0422dd40bcf9274f2fa84",
+    "futureagi/accounts/migrations/0004_alter_user_organization_role_organizationmembership_and_more.py": "7a35c1c46267ac43f22ae476dd82b12ab40b87df61e3053317f2283e3f6cc548",
+    "futureagi/accounts/migrations/0004_awsmarketplacecustomer.py": "99c3971607de80fda9f52ef930dbcdb9c174177365a92bb96880cc406b15a3e8",
+    "futureagi/accounts/migrations/0005_orgapikey_workspace.py": "004fc77563bdf90afc496c75a3ce672a241f01c3c07b8e44e6e86c3ee707517a",
+    "futureagi/accounts/migrations/0006_alter_organizationmembership_role_and_more.py": "ba8de80bf6fae37b47ec075f2de2c897dbfcf066dc742e8ba632f3fe129f2cd7",
+    "futureagi/accounts/migrations/0006_merge_20250826_0917.py": "cfc3d7f71723a07b76303f8ec099b5aa5e0074ae99ff5701f37d2eb0a20e7704",
+    "futureagi/accounts/migrations/0006_organization_ws_enabled_and_more.py": "4aaa249e6666b93e3deff0ab7bede02b71696e279ad96507f8911401ee696783",
+    "futureagi/accounts/migrations/0007_alter_organizationmembership_role_and_more.py": "6b00f4b91e0c851a03497ffcac3eced17bae437c8baa297fdcfe3a6516357254",
+    "futureagi/accounts/migrations/0007_alter_orgapikey_options_and_more.py": "0b732917a537768f66db1a0279379eec62abea75d56b20ccf22164cd5c4d332a",
+    "futureagi/accounts/migrations/0007_merge_20250903_1403.py": "1a5ceaff566bd8ab04cd81693fedf64e9ea635d03fb18ab497a1c5dc5ed636bc",
+    "futureagi/accounts/migrations/0008_merge_20250904_1413.py": "2d057bcc378b8bfbda7f913180077bffdf61daec317b3cd91a1171bf83a4663b",
+    "futureagi/accounts/migrations/0009_merge_20250905_1045.py": "eeb3c1daa394afbc5c9d771ead1dc5168bcc599182eda44649e3b64a8a3b6c03",
+    "futureagi/accounts/migrations/0009_merge_20250905_1157.py": "eeb3c1daa394afbc5c9d771ead1dc5168bcc599182eda44649e3b64a8a3b6c03",
+    "futureagi/accounts/migrations/0009_merge_20250905_1827.py": "eeb3c1daa394afbc5c9d771ead1dc5168bcc599182eda44649e3b64a8a3b6c03",
+    "futureagi/accounts/migrations/0010_merge_20250905_1241.py": "b40d0f910039ce5324d9d3e8f125b00c4c16bd1c479b0f84b8c264e452cbe1a3",
+    "futureagi/accounts/migrations/0011_merge_20250908_0727.py": "2035fd423120ba3e8e0b97a4b68f744b5d806f682a5f00abe8bc73cb8704fcce",
+    "futureagi/accounts/migrations/0012_user_goals_user_role.py": "b48a9be80802364b715c318e460c855bec3b575806760918d8cf470f19e5bd7b",
+    "futureagi/accounts/migrations/0013_alter_user_organization_role.py": "137863f2c193613b7e546d4e4423677ee2afb99125ea52c1a7d64de98ad4108b",
+    "futureagi/accounts/migrations/0014_alter_orgapikey_type.py": "3f736a8b06936f3ec4aabe5121183c5560113b65a4d7211e25622071392ce39a",
+    "futureagi/accounts/migrations/0014_organization_region.py": "4878c569dc0d71fe3cd829c67539147c09fe24f78fd8f0bc8c5317bbb6b61d94",
+    "futureagi/accounts/migrations/0014_organization_require_2fa_and_more.py": "2b039acab4a8a5cc93865ad308e097c95a2242d10a03ef10179c1ee800e603c5",
+    "futureagi/accounts/migrations/0015_backfill_rbac_data.py": "6c822d2cb4546e319c926a94959d3e79af6137ca722dd23c41270145937f1ff9",
+    "futureagi/accounts/migrations/0016_merge_0014_0015.py": "62e268fcb3d6c3625531d80320eb82c1f8756fadbdaef138f9c88e50a138156c",
+    "futureagi/accounts/migrations/0016_merge_20260316_1144.py": "35e254f633f12454af209255faa616b209821fed05de42125903261ef8c4ce65",
+    "futureagi/accounts/migrations/0017_merge_0016_merge_0014_0015_0016_merge_20260316_1144.py": "acef5776c77465d90a541837e03d5a9ece56ac60807d90c7fa16811d83c55135",
+    "futureagi/accounts/migrations/0018_add_eval_template_version.py": "2db300f5d35f5102d6c3c4efffed12b8adac9e1cf97f9fa4e5b97f402a9c00ad",
+    "futureagi/accounts/migrations/0018_blockedkeyproxy.py": "2db300f5d35f5102d6c3c4efffed12b8adac9e1cf97f9fa4e5b97f402a9c00ad",
+    "futureagi/accounts/migrations/0019_merge_20260407_1927.py": "1cdeb4ede1328ee1b47d23f92654e46f17a921441f0a819efa12314d26dfc5b8",
+    "futureagi/accounts/migrations/0020_reseed_broken_demo_data.py": "68ffd1653b9dae115cfc1a9820ac2e9075512a33079206591308447dee502d0e",
+    "futureagi/accounts/migrations/0020_user_last_timezone.py": "e048a1ab2a2c44e57dd8cffeb55dd845e1051d8657fff4b62b8e9956b14bce6a",
+    "futureagi/accounts/migrations/0021_merge_20260526_0921.py": "ead58583bf17e82c382b371f5278816560610d9fb06cab0c4eb270074a2b1ab3",
+    "futureagi/accounts/migrations/0022_backfill_ws_org_membership_fk.py": "ccf75fbf87be0a0079231137c4c80e10a5e8d79f73b5b071fac370177182338b",
+    "futureagi/accounts/migrations/0023_create_missing_org_memberships.py": "01d879a0fea674eacfa43807053b3c1def15f611a355e9602cded0e93bdca787",
+    "futureagi/accounts/migrations/0024_sosloginproxy.py": "a7566c4cb96a666bb6d93d3b6802e2eb17bbf15b9826f9baf9df6d49101ae24f",
+    "futureagi/accounts/migrations/0025_gcpmarketplaceprocessedevent_gcpmarketplaceaccount_and_more.py": "15524d0216650751195d0c7de00eb429e3c4af619c3fde753728d1c80ec2bffd",
+    "futureagi/accounts/migrations/0026_authtoken_scope.py": "4e0eb5614270269139c1521ac09fbce860a201b863622bfd90dcde3f435035c9",
+    "futureagi/accounts/migrations/0026_host_event_outbox.py": "dfac0c69a81de00048cab2662b2329ae8f7daf061801bf243a46be6cd995f9f5",
+    "futureagi/accounts/migrations/0026_orgapikey_ingest_type.py": "eeb3699b34caa084ebc61cc559e06f77caef763f4b25144d600d0342daaa4e5f",
+    "futureagi/accounts/migrations/0026_orgapikey_secret_hash.py": "24bf01573d5b1e4acdb5b89e5f8505b30789dabac13e6ff23f1fe20d52d72dc0",
+    "futureagi/accounts/migrations/0027_orgapikey_simulation_agent_id.py": "d85b905a2b0743ef6e425e4b10053f27a81f2b9f6215e33e86a542b9b2ba5a10",
+    "futureagi/accounts/migrations/0027_seal_api_secrets.py": "df2ca475fe91aab2b943aad16bbe0ad1389b184f16f1551e5e7afb7e412912a0",
+    "futureagi/accounts/migrations/0028_merge_20261019_1400.py": "f43e55a2b1d0b89415255df7f46eccb1a57c10c883ca6edfcf57f15bc9e633c8",
+    "futureagi/accounts/migrations/0028_merge_authtoken_scope_and_simulation_agent_key.py": "deff78d8ee157d9d4c03d67ee4fcf468c56cb66bda42916f9eaebc8dcf9cb829",
+    "futureagi/accounts/migrations/0029_demotracepublication_demoseedrequest.py": "e3319306af9d5f66c565ab3c9b0c403f167c1c1eb6208c52a08d63ac6b6e02da",
+    "futureagi/accounts/migrations/0029_omega_purge_lifecycle.py": "c4a01a618638f0b0ed75bb62a39090c29d1aee71509c61be8b259c44573cb7a2",
+    "futureagi/accounts/migrations/0030_merge_omega_purge_and_simulation_agent_key.py": "82e1cb7f5863bd644b40d16d4a78e073ec4fe8f6b38f1d6a18329a9b3f4b3dc1",
+    "futureagi/accounts/migrations/0030_queue_existing_demo_trace_publications.py": "604597619da569ab5841cd9d3e70e8e481830331572eb9934b65768cc727aba1",
+    "futureagi/accounts/migrations/0031_orgapikey_coding_agent.py": "5d97dd88112816feeffa0acab57bb16ecbda99c9c3fee2de7164be7aa1dbf7cf",
+    "futureagi/accounts/migrations/0031_retire_org_keys.py": "77c7b8189f004d7475b3a5a1d85e642daef5ca6477be697884478a39e1fda43f",
+    "futureagi/accounts/migrations/0032_service_grants.py": "783900ecae03d5000b731f31bf27b2a29619e116815015ef2a13da09b3375a5a",
+    "futureagi/accounts/migrations/0033_batch_submission_intent.py": "fa858f18fe5843539638bbd70187451c68d113066ce940f910067b0bed648b85",
+    "futureagi/accounts/migrations/0034_retirement_manifest.py": "8ee079349a35a6a894a16338e8c2c67ac053ce06287aa5650c9a2b49b112c6c1",
+    "futureagi/accounts/migrations/0035_gateway_retirement_fence.py": "be2f6c594c1f3a55628dbf02741c99326c0a511e47e858c6368f37bb38bcc81b",
+    "futureagi/accounts/migrations/0036_authtoken_password_reset_type.py": "b9a1558f684b9dbfefa2925999b4a36aa73bbd2a832d677aed961761cdaa73b5",
+    "futureagi/accounts/migrations/0037_merge_c26_dev_candidate.py": "dd9aa977101303958f4c3fcd43b3003296c8b5d1077b0364feb99c72684a2589",
+    "futureagi/accounts/migrations/0038_organizationmembership_removed_at.py": "d203160c0eed942da25330527fe079757409cf6d9bb77344554affca9e19902a",
+    "futureagi/accounts/migrations/0039_merge_c26_dev_1109.py": "15e88585482f7fe9f7fa99e3e2c383bb47d2c80a08f55e56513347b35271c064",
+    "futureagi/accounts/migrations/0040_alter_user_invited_by.py": "b2b700061c072dfdb5af3868a7fb102a57271c3835560cecf201e398c84bf1f9",
+    "futureagi/agentcc/migrations/0001_initial.py": "b2c795f4e00fb763bf503592b821ca66abc5d7e5ed479fe9979d165b9703a828",
+    "futureagi/agentcc/migrations/0002_prismrequestlog_guardrail_results_and_more.py": "6329b8640e4f9d6317940cebe9ecb499e42e1c4859d7a3d228dde61819f606e1",
+    "futureagi/agentcc/migrations/0003_make_gateway_org_nullable.py": "b6c6e937816f33f69b8a59c5aa1f9bf09845ed911be82e660409f373a7d40357",
+    "futureagi/agentcc/migrations/0004_prismorgconfig.py": "5d1545c5b29345d37d6596f893f91f1a09242035f80e144b137aac966348fad9",
+    "futureagi/agentcc/migrations/0005_prismguardrailpolicy_and_more.py": "4abd7e05fde9f2f19f2da02fc54d1124c45299abcbc6ad5f4d5aa119b511ec3a",
+    "futureagi/agentcc/migrations/0006_prismblocklist.py": "d20196fba2a0e01925396ba8c859ad78f77e5e08deda6925379d0d3aa3c36b82",
+    "futureagi/agentcc/migrations/0007_prismguardrailfeedback.py": "b459eaffca424738e2a5dca2da7214e800c74f8c35f05d18d74c198663cfe601",
+    "futureagi/agentcc/migrations/0008_remaining_models.py": "4ed26112e6777818effc4248c3a3f2bf8a3ea9b28c0477c4d054f8f6739c52c8",
+    "futureagi/agentcc/migrations/0009_prismorgconfig_cache.py": "84d3b6486d8a1fbcbbcf0e1938a9e3a9e69b0b1bdaea92e857196c80fa5aab04",
+    "futureagi/agentcc/migrations/0010_prismorgconfig_rate_limiting.py": "b2ff2c64512452752e1c0e41ad2c4f29509dda0b909e74e1c68c67a709abed2c",
+    "futureagi/agentcc/migrations/0011_org_config_category_e_fields.py": "229b9905424d211703eef7db90444e955fd43a58d5cc8826d474e5bff05a32d7",
+    "futureagi/agentcc/migrations/0012_shadow_experiments.py": "64ea08eb8a4ace03bffbe9738167d638e9b19a2e61afdb6ef28d754424127f95",
+    "futureagi/agentcc/migrations/0013_prismorgconfig_mcp.py": "20665cc5e08d34bb9b7ae125e9b6d2fe54b11e64c77548627b5a25ff50ae2b40",
+    "futureagi/agentcc/migrations/0014_prismorgconfig_a2a.py": "8bad9c77ef313dc5994b01e37ef73c9e16f4d1db7c73752dfe24c36359f3c459",
+    "futureagi/agentcc/migrations/0015_prismorgconfig_audit.py": "b6d311d6a29990e7bb1e26c4937d6d2ec7587f170ec641e5efb2f7001ef7ac87",
+    "futureagi/agentcc/migrations/0016_prismorgconfig_model_database.py": "397b867c7b4dc7eb3abc0a8fe0167310610a0e2fe5dfe22011538d0c32b09e7f",
+    "futureagi/agentcc/migrations/0017_prismorgconfig_model_map.py": "22d8b683cab7699a5bb0689533e489db437e258118aac8c2b17b1717d79abfbc",
+    "futureagi/agentcc/migrations/0018_provider_credential_key_hash_admin_encrypt.py": "25bb838d3481128b80a6c909d1c9cc14c9b25d778f5340a00f162d41a40ea53e",
+    "futureagi/agentcc/migrations/0019_workspace_and_shadow_org_fields.py": "b6a5fa57d8fbe398c776c3195d99e82fa40687581b378142046f08180a735a19",
+    "futureagi/agentcc/migrations/0020_request_log_meta.py": "538f78eba2c4208878583100590f5c5b34e819017602070f91336dc5b8551652",
+    "futureagi/agentcc/migrations/0021_prismguardrailpolicy_encrypted_check_configs.py": "d849ce7aec8f0f8f4e72be694459542afbb6fa22e00621af3460443726a8e562",
+    "futureagi/agentcc/migrations/0022_remove_prismgateway_organization_and_more.py": "49961d5fcadffe4e9cde25f6bca16b5a88d73772c667a924f15c68ac2955b6c9",
+    "futureagi/agentcc/migrations/0023_alter_prismshadowexperiment_unique_together_and_more.py": "deb3f0f70ea0f8f5b40bd264babc8c6eefc32f09985bd08f4d88d146843544a2",
+    "futureagi/agentcc/migrations/0024_rename_prism_to_agentcc.py": "c3cf258d9162755cfb3b1cbefcb1eb39ea1e840a87f624918c474f6862af9ce8",
+    "futureagi/agentcc/migrations/0025_rename_indexes_and_related_name_alters.py": "1454eb588e75497c49444d7a5e8c55a861a3a893affe9412fad08a82c318124b",
+    "futureagi/agentcc/migrations/0026_clear_stuck_ui_guardrails_encrypted_configs.py": "7d2f570f2d91b0e2a0c3ea164b0f12948177a3e59238aff1041355cfe79e1baf",
+    "futureagi/agentcc/migrations/0027_request_log_metadata_gin.py": "9b7148ed0f54df8e4426658bb3a67ab66dc5652c5ffeeb6eb89a4397c52038fb",
+    "futureagi/agentcc/migrations/0028_drop_rejected_org_config_keys.py": "a1a86908828d72990951dab027b8b9231c344eea1d59403ef39c8f957c05cc5a",
+    "futureagi/agentcc/migrations/0029_org_config_managed_models.py": "d5a4d0b14cc29825127920f9d41f8b47c3f4f0dc6865a93bd97b8516ee5b06b8",
+    "futureagi/agentcc/migrations/0029_request_log_unique_request_id.py": "391269ac834cf66933710d7caa6f5d4744896ef7c60234c2283b56ed6b091695",
+    "futureagi/agentcc/migrations/0030_request_log_v2.py": "9e80a9f925672c608f8de1e227c34a67cb0fd6406c90c37f2ea0f8b75b5edd52",
+    "futureagi/agentcc/migrations/0031_request_log_v2_indexes.py": "aabc660186f382649b3958416bb2cddf017eea8814669d7cbc95c9eb4db81d75",
+    "futureagi/agentcc/migrations/0032_request_attempt.py": "c367fea3ed463a23b2bec7e9f1222dcbebd499007a5c161ed1171b3af08d2fbf",
+    "futureagi/agentcc/migrations/0033_managed_upstream_key.py": "5c89c73cd625a8112cafa6d5d272789d5e82da0e5a069d0dc3764f2e47f8c6a0",
+    "futureagi/agentcc/migrations/0034_request_outcome.py": "8bac87e11dc1991a13946e1f9047cf3b8ef2a47e056fbd7f7792e808e4d15845",
+    "futureagi/agentcc/migrations/0035_mcp_credential.py": "ff4f35014f5b0db2d48fc99a17e51a17199066961ac9e50c6bcb8f34d8ed0e46",
+    "futureagi/agentcc/migrations/0036_mcp_tool_call.py": "79e4af92ba7e4f3c6a034dcbfe02dfbc7c20ec4835a3f9458abc3434936c4633",
+    "futureagi/agentcc/migrations/0037_mcp_tool_revision.py": "205650dfcdfb62c9467990aa5079061b0f855331307d29a182da0e665551f5b2",
+    "futureagi/agentcc/migrations/0038_mcp_approval.py": "463fd5106bd60dbbcaa5d9c66e5ae40fa80a8dd60b80a96785c2970a525588e7",
+    "futureagi/agentcc/migrations/0039_mcp_registry.py": "7e28f5e2d5c27b65da446264e6e22323fbe7320aa21c7aa043748ec9a09246e0",
+    "futureagi/agentcc/migrations/0040_mcp_oauth.py": "8ad9e702f9f1338572cde442258faee637746199133fa8a2783b7593d4265435",
+    "futureagi/agentcc/migrations/0041_mcp_indexes.py": "6fa8ffd6c22d6a390453fd0c5e7002f23ea840c657181ad20263b1ada45576d6",
+    "futureagi/agentcc/migrations/0042_delegated_grant.py": "d0715944296421f3cc05ccfd7d2e32b0931f0edbae37f18b4cd54bf5fc1688eb",
+    "futureagi/agentcc/migrations/0043_attempt_hollow_request_log_evidence.py": "12ef3c1938628d584b71f789798f5f31d21eb9bc2178567e3e035715fdcd0d40",
+    "futureagi/agentcc/migrations/0044_memory_forget.py": "ed6e3033f0734adcc51fcb2f7e6832fa3afa003dbdb4dea97659078a7019c7f0",
+    "futureagi/agentcc/migrations/0045_org_config_tools_identity.py": "19e1bf9a65458a36293b62f80c7c09a07e7a57cd5d7649e0797c580e5562b853",
+    "futureagi/agentcc/migrations/0046_org_config_db_defaults.py": "ecd980b926d206458f049281bcfec67856663e86540e4232d08e621a4b103f16",
+    "futureagi/agentcc/migrations/0047_encrypt_org_config_secrets.py": "cc47ca5cd15f13bbb21f94755c38ba5f0535321223b7d9aeec4b25c9d93e4169",
+    "futureagi/agentcc/migrations/0048_r7_batch_jobs.py": "40fa12729492bac193bf94d127a2f08e6727587b97fe648e729c73a182a3d8c5",
+    "futureagi/agentcc/migrations/0048_r7_email_alert_state.py": "20fc2791c506e76d646fce7359441ae798220c933b411b942e70322d99cc50b3",
+    "futureagi/agentcc/migrations/0049_merge_r7.py": "8044d57454f2eca9fafa43e2ec2eb9074728967467046d1c8549a97819ba34c4",
+    "futureagi/agentcc/migrations/0050_encrypt_org_config_secret_aliases.py": "68b1ccbc4901f87b6f1cf1326bcfc195085ed8932108fefd00d277b75bd1be83",
+    "futureagi/agentcc/migrations/0051_encrypt_alert_channel_urls.py": "ed59214bd2213a4d354024a3eb4814a0c47459d323e0d8b74da1ff5238dfb06d",
+    "futureagi/agentcc/migrations/0052_auto_reload_consent.py": "0e2b4a143d34a2f558940baf622754abe97d7a1c692a4ba29b225550c5f23d57",
+    "futureagi/agentcc/migrations/0052_cap_policy_activation.py": "bec74280ab5df1020fd91b1a2c51f85a85225b4696b2c568eeb94b85317abb32",
+    "futureagi/agentcc/migrations/0052_mcp_service_provisioning.py": "5110c99686cff89fb9bb8dd6df5de944387126ab71bcaeeb54bc89476341c70f",
+    "futureagi/agentcc/migrations/0053_cap_policy_revision.py": "8eb558678f534cf87524b061eaaab1439b267272e0b5cde4758dc4b2533141e4",
+    "futureagi/agentcc/migrations/0053_ee_agent_key_policy.py": "ad50adf2acc0fcc5602047446a434568e9cb5bbb3dd7c8c9dacfe1702daa7a9d",
+    "futureagi/agentcc/migrations/0054_ee_agent_key_expiry_backfill.py": "9a8bbc19991697dbbdf7404626caaa403f6e80356f94fae1832f6cbe51d5893c",
+    "futureagi/agentcc/migrations/0055_ee_agent_key_mint_idempotency.py": "976484b58f0747981caaece37862096a793061b9b889ad831cccc1ad13be7607",
+    "futureagi/agentcc/migrations/0056_mcp_secrets_to_vault.py": "363532c36cd131db91e1ed160a5eda78edc774cbe253a172b74ee4ca8195b2d9",
+    "futureagi/agentcc/migrations/0057_mcp_credential_origin.py": "f58c1a33491e031ff7afcf714e74a40e5a2ebd1b2a74a3961506a83a1bb818fa",
+    "futureagi/agentcc/migrations/0058_mcp_upstream_oauth.py": "b42c83936bdfc50b292ebd335e88cd3c25c8d5b69856ae0897e88e1aceef8fd3",
+    "futureagi/agentcc/migrations/0058_retire_ee_credentials.py": "943fc803a2c081f9856ef995efdf074fae3b897ee8cbde47d1353f199d9ec61e",
+    "futureagi/agentcc/migrations/0059_mcp_connect_org_client.py": "167e0e329492e61bf363667b8dae6cb81a6b2c23de588cd9d4fcf73d3a1a0f24",
+    "futureagi/agentcc/migrations/0060_mcp_connect_shared_mode.py": "e4b4cf81216fdaa7938cf988fc2b386367e90b991dd055395064fa2db6fcc5b1",
+    "futureagi/agentcc/migrations/0061_mcp_personal_principal_cleanup.py": "0c71db777890fa02a431a0c68ab30f558c048d6c1f07bcf2239ef4cd42b10784",
+    "futureagi/agentcc/migrations/0062_mcp_cleanup_receipts.py": "452dcc7564b3f8792600b09c0af4be4f2404e7f2124938b5343eda724f27f08c",
+    "futureagi/agentcc/migrations/0063_mcp_credential_grant_revision.py": "16da5ed2f2255fbb296dda8cf4411e1435aa31f053f896b09dd1baeab90d5970",
+    "futureagi/agentcc/migrations/0063_mcp_grant_org_only.py": "e1e911444ea19f7268ddd412ffd394613fda69f47de7bdb2d82a9111b9c44731",
+    "futureagi/agentcc/migrations/0064_mcp_vendor_connections.py": "38678664bae8e8aea53e6f328b4c97fcc80df6738f09c56740a1903b4985818c",
+    "futureagi/agentcc/migrations/0064_siem_export.py": "af6a794b74b2ff7f2c213cd6c6e7b78d3506aa413072f79ccdbe3b636e7b1d7c",
+    "futureagi/agentcc/migrations/0065_mcp_vendor_optimistic_lifecycle.py": "1ed2919106c4a44b6a1de3f270bf6469b07a6aeb2c0031713eaa65209e0ab54e",
+    "futureagi/agentcc/migrations/0065_merge_mcp_adapters_siem.py": "1425ce387376b4229a6c7618fec2628b6e81429b84ecebd1e4c68b0339a13bd8",
+    "futureagi/agentcc/migrations/0065_siem_hec.py": "9351dea8556ac1ca8905bfc850dd910c8a63ee2780b7a98c49c6bbf63a256e2c",
+    "futureagi/agentcc/migrations/0066_mcp_vendor_cleanup_obligations.py": "a640e3a3342b1449c57bf010d24dc7cd02d79fabb4e708c7cb92d8faaed3bb56",
+    "futureagi/agentcc/migrations/0067_mcp_vendor_retained_receipts.py": "842f17508fd60b80f36b12ec868832da9a8316c487985ae9e8155e4190305ec7",
+    "futureagi/agentcc/migrations/0068_mcp_vendor_connect_leases.py": "b4e1091f4f6f2cfc4671b122e9b96f62bf3b739dad4d12002a4011ba4d72d34f",
+    "futureagi/agentcc/migrations/0069_merge_mcp_vendor_adapters_siem.py": "9b4a0c99781bbd0b2ee1c2c3e89ec7d44418d14aafa99674e2545699fd429352",
+    "futureagi/agentcc/migrations/0070_merge_mcp_line_siem_hec.py": "9a0139486f3e2400340671cff5975207f323eb97512022a79f2726b73b39d869",
+    "futureagi/agentcc/migrations/0071_mcp_connect_cancellation_generation.py": "f32b9f1d4419ae0531a4f1646711d9b5a93b35fecc50df7d5aa60baaa89b54fc",
+    "futureagi/agentcc/migrations/0071_merge_request_log_consent_and_mcp.py": "3e95a08dfa9818418c4477bd158b578cd04972988156efe2406c53dbc1fcd6f8",
+    "futureagi/agentcc/migrations/0072_api_key_ownership_immutable.py": "4d31f718a15b204aa354237edb08a34a05cb67c1d394575c010135c1ea2b128e",
+    "futureagi/agentcc/migrations/0073_merge_708j_round3.py": "b2792cbf4121ad2d61c9b98486b3598ca12153d5071616cc2f52130031fdd1b6",
+    "futureagi/agentcc/migrations/0074_api_key_provisioning_state.py": "292b93c029b5471fe128329e0ca9e373325c67b8f069444aedf2219aec6444af",
+    "futureagi/agentcc/migrations/0075_w11_approval_lifecycle.py": "01aea06753bda52962042fe3f82748a8d2fd8ed2253e0e9121236f4e1d0eaa79",
+    "futureagi/agentcc/migrations/0075_webhook_credential_columns.py": "973654c1db0922ae88a4c6e22d60a7c9e04ce5c72e94e2c8b6246765f0b29e7e",
+    "futureagi/agentcc/migrations/0076_encrypt_webhook_credentials.py": "bc50ebc7365410bf2074fb5db9cd9ac771e44dbc7b6ccde41b8393bcdf7669f0",
+    "futureagi/agentcc/migrations/0077_remove_webhook_plaintext.py": "be361def87ff4fbe4e844ff31ba7b286cdb334fca74a4958d1ad854ba74562bd",
+    "futureagi/agentcc/migrations/0078_historical_key_revocations.py": "abfedf86b34bb7280a4097e5745db9356a55fc4416550e0388ed209ad44eb1c2",
+    "futureagi/agentcc/migrations/0078_merge_w11_webhook_credentials.py": "0f7ab74da2baf97df86bf9b4defddb1d5eb5915c3f555fe7253f39b46099951f",
+    "futureagi/agentcc/migrations/0079_auto_reload_payment_method.py": "9ee42059fa1f631c91cbf1726872e876dde01faa0c825173cda3b93c260669c2",
+    "futureagi/agentcc/migrations/0079_merge_r8c_revocation_webhooks.py": "9f32454e5a0d56b745b680a417148131891d7c68a965ce3456895f83c178ac01",
+    "futureagi/agentcc/migrations/0080_auto_reload_arming.py": "e3bf3b2cec3ae0655232ef519d551ddbf1ee2beaef8c07c4e82433ad1dd6d176",
+    "futureagi/agentcc/migrations/0081_auto_reload_intent_exclusion.py": "170a00c95b06f14354d2c0dd05da0328f8bbbbd13c5090eb3125bacf28b2c8ab",
+    "futureagi/agentcc/migrations/0082_auto_reload_credit_optional_threshold.py": "0a788eafa2c380879cdcb449c95ba2aac0562ee06e7223cd61270a868d983687",
+    "futureagi/agentcc/migrations/0083_managed_credit_checkout_binding.py": "06978109271a3e9d60fd8624a44d27c0823d6589e2149a6450e5ae09363f50de",
+    "futureagi/agentcc/migrations/0084_checkout_actor_identifier.py": "5fcb361e218537dacf5a88e2a3508c1a0935dc92bccadde5fc25a6a9033d1ea5",
+    "futureagi/agentcc/migrations/0085_dispatch_claim.py": "84e04c8cc2b976ab80d91b892d9ed33b13c770d766bf317610badb686f18101a",
+    "futureagi/agentcc/migrations/0086_merge_dispatch_claim_webhook_at_rest.py": "b8e5897808f97c8b1ab7f9a2db6212038c978f2a42920f7bc845bc743ebccded",
+    "futureagi/agentcc/migrations/0087_mcp_credential_oauth_resource.py": "9df4ad53052234c46b0a4c14d87991f6ff0940764eb652b3b266ee2c355e76cb",
+    "futureagi/agentcc/migrations/0088_mcp_shared_connect_generation.py": "7227c738617f9dab2d4d77b34f024503b9fb523b6cd9ae5de2301211a5909d2d",
+    "futureagi/agentcc/migrations/0089_normalize_two_key_org_period.py": "eb3983bb7dd5707d87c288b4dd2e11027c6818bb16db928985b5d35fffa6e139",
+    "futureagi/simulate/migrations/0001_initial.py": "546f1012f19aa83826a5b108c466a5558d75fbed5c740628713855726be0d198",
+    "futureagi/simulate/migrations/0002_scenarios_dataset_scenarios_description.py": "f9e1a71d27255f3c50c0b8bfc2a5a682183311ae55a320e8942570e7bdfbfd32",
+    "futureagi/simulate/migrations/0003_agentdefinition.py": "db48a9761a1ca3a766f86435122f1666cd85c5c3139f04e0d876c5d827db9aab",
+    "futureagi/simulate/migrations/0004_simulatoragent.py": "4596b4ead02f0b228c7db52b04137ed5f1e3022c9423e708c7a89871918601c0",
+    "futureagi/simulate/migrations/0005_simulatoragent_organization.py": "a5426b1d2dd91e4ba9c4b01a4060ab7cc310e584ccc3b2eeb15d636e5b8626ad",
+    "futureagi/simulate/migrations/0006_runtest.py": "f5c3be02e497b424be6bb7a58ad87cb3cccf77a959f45055c64b1c729ef7e141",
+    "futureagi/simulate/migrations/0007_runtest_description_remove_runtest_evals_and_more.py": "86cf3c898537adedbc40d098b47d9916b935c5fd45291534ad137b3f77dae665",
+    "futureagi/simulate/migrations/0008_remove_runtest_evals_simulateevalconfig.py": "1821b0189678963f64e96231840ea10dae78800a6e9e16d77351d8c479f53979",
+    "futureagi/simulate/migrations/0009_callexecution_calltranscript_testexecution_and_more.py": "137083ce87e9b9d0829d219ee67b06e8f4913cf636e6bb48de892a309e217049",
+    "futureagi/simulate/migrations/0010_callexecution_analysis_data_and_more.py": "f6f62c6a6f616d90fb488646ea222a356cbac9a25a6897efc536477b58c71087",
+    "futureagi/simulate/migrations/0011_callexecution_row_id_testexecution_scenario_ids_and_more.py": "787b854dfc80fd20d410f9718f1ddefc0d444ea8b9e43ee90e6060a0d08785e6",
+    "futureagi/simulate/migrations/0012_callexecution_eval_outputs.py": "3903bd04ea62cc9ef2b452b5be842a3e9f92120762b6123811db18ad21e8b793",
+    "futureagi/simulate/migrations/0013_agentversion.py": "c51ec66e30b25a0e727da413d382e040ffe90317c9a9467d8a4a1531893a2dad",
+    "futureagi/simulate/migrations/0014_agentdefinition_provider.py": "78a848fe43342bbe61e3898de22b4010b684dada92135d7b5a4bbadf05830b31",
+    "futureagi/simulate/migrations/0015_alter_simulatoragent_conversation_speed_and_more.py": "00697dad622234663999113e1b0ac2aab7666cb9188d140dea84f897eff5f528",
+    "futureagi/simulate/migrations/0016_alter_agentdefinition_assistant_id.py": "2214db90e13016494c8bb2274f225f6fb956f3a5253ccd76f963ad7d10f73dc4",
+    "futureagi/simulate/migrations/0017_alter_simulateevalconfig_status.py": "fb0e578b9273069329b041cd69b74643f9ca94039b22815b431d1e47eb604e2a",
+    "futureagi/simulate/migrations/0018_alter_callexecution_ended_reason.py": "1f992d4c41b1bab1cbfd22ae6b601c36b67068eb1ce646348d7dfc73548b9af9",
+    "futureagi/simulate/migrations/0019_testexecution_picked_up_by_executor.py": "c7d61ead9d3cd03b31898b21a716149d6bfc895c3b5ccd4e2ea664541dda3ba6",
+    "futureagi/simulate/migrations/0020_testexecution_agent_definition_and_more.py": "1fbf77545881c60660ab2a37353828e60a94d2dccdb459e3a02585cf7f94d591",
+    "futureagi/simulate/migrations/0021_agentdefinition_workspace_agentversion_workspace_and_more.py": "4098106fd81745ba7dbb6d11c140eca666fb3d3dffc5cea1859c0fd5c79852a2",
+    "futureagi/simulate/migrations/0022_createcallexecution.py": "273e10db83edd84a8bb0fd040b8e40086b413c46fe840ccf547df8e19c7b0bf1",
+    "futureagi/simulate/migrations/0023_scenariograph_scenariocase_and_more.py": "5f5630bc6dfa6b1cb69c0ac0581aa171718866c28784914de1256f435d3e6ab0",
+    "futureagi/simulate/migrations/0023_testexecution_idx_status_executor.py": "e2e9b360d8e700deff84381f781d11d8965554bdcb5289d9332233cc27c260d5",
+    "futureagi/simulate/migrations/0024_agentdefinition_agent_type_and_more.py": "1955ea2583fbb95556c658f7b2306c94fcf44f22113e2b37d29ef17a86a93d0a",
+    "futureagi/simulate/migrations/0024_scenarionode_scenarioedge_and_more.py": "7c5e4f3551d59f986532091631d23245895be7f36fe6027ec7255afb133f25fd",
+    "futureagi/simulate/migrations/0025_callexecution_agent_version.py": "e7448da22d57a536748487dbd01d702b06c14e8db71ef1e1940accbab94b94f9",
+    "futureagi/simulate/migrations/0025_remove_scenarioedge_from_node_and_more.py": "8fde770b68422d16fc6548d01fd42d493d9517ad4088101cd795954757e9d8a8",
+    "futureagi/simulate/migrations/0026_scenarios_metadata_scenarios_simulator_agent_and_more.py": "1a0075b25eb6e16d16bac946385d047fa85464fbc06bd78ad5a29a6f8a1614cd",
+    "futureagi/simulate/migrations/0027_scenarios_agent_definition.py": "d6d114b2eb4d2ef34b03e5d33237692f52e36e001b2c59e5858b3c4e50e86c4f",
+    "futureagi/simulate/migrations/0028_merge_20250917_1327.py": "6d418a4d40769db6d0e679524e707504dbd2c55f2bab0a3e9d7859c9a7e84dd3",
+    "futureagi/simulate/migrations/0029_alter_runtest_simulator_agent.py": "116680810c609c38f92d602507b142eef505d5275097e57d97c48aa45f7f92db",
+    "futureagi/simulate/migrations/0030_alter_createcallexecution_options_and_more.py": "056d4250e562092b4197b28ce4c2eb2f5aa9cac540ccfb5b9e29fe1899fba8eb",
+    "futureagi/simulate/migrations/0031_remove_scenariograph_workspace_and_more.py": "b013a250b2519ac9672cbb34e88bb28c1a81e8ffe25ae0d0c257a58e16a2b18d",
+    "futureagi/simulate/migrations/0032_agentdefinition_api_key_and_more.py": "cc5c55b09446863ca8dde1f5f9e6440095e4eedfb04b47a696d12ac12ff011ea",
+    "futureagi/simulate/migrations/0032_agentversion_commit_message_and_more.py": "29e802ba4e2e9aa599e0e25f1a3702b3ef0eddef69da1a179f6563d5cef0c793",
+    "futureagi/simulate/migrations/0032_callexecution_ai_interruption_count_and_more.py": "a305eb2b6a1fa9a9d76208976ea4b6fd9f71e9dee12f496729837bad53c8841e",
+    "futureagi/simulate/migrations/0032_simulateevalconfig_eval_group_and_more.py": "1939d935d33343944aef724d7b192c52beccdc4a397a3bce84ebf0c130f7ed64",
+    "futureagi/simulate/migrations/0033_callexecution_conversation_metrics_data.py": "6c026c9d4e99558322b357a01b61cc23a5cbbafe7e6d43395b4499e63ddc9dc8",
+    "futureagi/simulate/migrations/0033_merge_20251001_0823.py": "ec0fa43b19a8b272c81c60ab7d020c3d9d439b61edc353bd8d74a5b6b45c5254",
+    "futureagi/simulate/migrations/0034_merge_20251001_0933.py": "d72c50e550d020ce3c5711ba8a186ab2a76d6fb188621a2170e015a44bb407ea",
+    "futureagi/simulate/migrations/0035_callexecution_monitor_call_data.py": "29a0d7ba7c1a494cbf33904e5ed33c889a42998afe523add19d531909ce64385",
+    "futureagi/simulate/migrations/0036_alter_testexecution_status.py": "9a49bd3c44b72c0224ec39a0919df3f85df82f646f75aa6ac788d724631e5b24",
+    "futureagi/simulate/migrations/0036_merge_20251001_1957.py": "f1d6c20df58ead5cfddd99564a12d92d8da7fb8bfeb977b1e522c6e8da94cbc5",
+    "futureagi/simulate/migrations/0037_merge_20251002_1633.py": "d929ef970accab11f2ad5fbcd9c30cc0499ce0e8cc2d4b4cb06af9739e268fd2",
+    "futureagi/simulate/migrations/0038_remove_agentdefinition_observability_enabled.py": "3e46b0c0f2fb5295d23b2a30744f948ca4c2c20ac7662b47bc1db2d65efcbdb0",
+    "futureagi/simulate/migrations/0039_callexecutionsnapshot.py": "d0527f96004b8517f5d5baf2e4323a7685c212584eec01dd4bc8c9748195d89a",
+    "futureagi/simulate/migrations/0039_runtest_agent_version.py": "cfff0d03c7a7d94cb76c4834952b7e107af6ae95da4a6277657d1fe22884f116",
+    "futureagi/simulate/migrations/0040_merge_20251015_1159.py": "57282582752e99f3bbbefd14aae4d6774faef106f791ad25476e72b111bd15aa",
+    "futureagi/simulate/migrations/0041_alter_callexecution_options_persona.py": "f4d609dc23e7220e3556306fa24e2793bd6c556f1468471c3fe06153cbf0c5a8",
+    "futureagi/simulate/migrations/0041_callexecution_tool_outputs_and_more.py": "f419cffac16edba39429c95124cf0296aaafa5aa7357335f59ca9fb5fabbc807",
+    "futureagi/simulate/migrations/0041_simulationphonenumber.py": "469a493477276c9679151b3b7d95ce1c363072a8c60dcfcd49685a67462bd1f8",
+    "futureagi/simulate/migrations/0042_alter_persona_accent_alter_persona_age_group_and_more.py": "81c1b4dd67287d024679e00f25772d7daa0a5e613fc2d0f56cf7b965ce42f895",
+    "futureagi/simulate/migrations/0042_callexecutionsnapshot_tool_outputs.py": "a6eaa35a03dd74bfe8cff58e902da38f2b0cdbeaa4d1e3b79b103798bbdb663e",
+    "futureagi/simulate/migrations/0043_merge_20251031_0632.py": "3d6724ec791491d5c43e951085774ffc01f78bb39423c94b374054b4c37d33e9",
+    "futureagi/simulate/migrations/0043_merge_20251031_1023.py": "ff00255ff2588d3cbf03a3e8168b769fcddf9510ff250719128016c63b67928b",
+    "futureagi/simulate/migrations/0044_agentdefinition_webhook_secret.py": "a8c4e471ddcf138b351736849afcf2269222f8d3ba5bd2fd716c0f0f602c934b",
+    "futureagi/simulate/migrations/0044_merge_20251103_1151.py": "e3bd5a53e02f12460635263e2e217f63ba38342644ea30970cefb676cccd585b",
+    "futureagi/simulate/migrations/0045_merge_20251104_0904.py": "5b9dee5fcc97ac14de42651264140e8412336f5e6c842073772290298fea0645",
+    "futureagi/simulate/migrations/0046_remove_agentdefinition_webhook_secret.py": "7435f9ed65e58e94f1566005bad91a3588dbce175032073707eb546a7c2539aa",
+    "futureagi/simulate/migrations/0047_agentdefinition_authentication_method_and_more.py": "f72b2b7928467bc2d4fbaa5627c79d15bf8b6d2273d039f5b9df7413fbdd6c8f",
+    "futureagi/simulate/migrations/0047_callexecution_customer_cost_breakdown_and_more.py": "d80265fdbfa4fe9904c588f2248d161bd3c195a08adaf20a766983644b99a26b",
+    "futureagi/simulate/migrations/0048_merge_20251113_1830.py": "cb65c4ca3ee0da497223aded8ea5ee24422bee524c43ae253924b77386551bfa",
+    "futureagi/simulate/migrations/0049_testexecution_eval_explanation_summary_and_more.py": "90b76cd83c67fa0bee3fbd2824c5ebc770b29489bb3d57289d53c6e4287d6da3",
+    "futureagi/simulate/migrations/0050_testexecution_eval_explanation_summary_status.py": "ff9c3c0d094c8218966c761d65e5e23042a327026cf041eac008778a0649b813",
+    "futureagi/simulate/migrations/0051_agentoptimiser_agentoptimiserrun_and_more.py": "9a7dd0673eba61c75e0dde1e6818f3bb8db654df7e1896073b0a6dcdb1b4c1dd",
+    "futureagi/simulate/migrations/0052_agentpromptoptimiserrun_agentpromptoptimiserrunstep_and_more.py": "173a017e3193e5e755457667580f3e9aebbd57c3e7d7375479728d4dd8c5c4d9",
+    "futureagi/simulate/migrations/0052_callexecution_idx_callexec_testexec_status.py": "0cf4fc4f233c9a98d2f64cdf474ada8c3144a806733439641d5516714b555919",
+    "futureagi/simulate/migrations/0053_merge_20251209_0754.py": "116f5e7e27520ea9b7d1f00766120b90ead715870e48a9c1b3bc8389a95c9eb2",
+    "futureagi/simulate/migrations/0053_testexecution_error_reason.py": "35e70a96ff22198579336bb9e7925a82322d0399858e3cec6893b1e3d51bb248",
+    "futureagi/simulate/migrations/0054_agentpromptoptimiserrunstep_step_number_and_more.py": "e1adec0cfec054486d0fc77b15cd6ae5c5bd1c6cf18f4c57a79948456a2e3945",
+    "futureagi/simulate/migrations/0054_alter_scenarios_status_and_more.py": "6edd99cda00b7819c979950425c8d77a75c3f924202ac3a8ab6c9af9ce75dd62",
+    "futureagi/simulate/migrations/0055_agentdefinition_model_chatmessagemodel.py": "ae28eb0d55a3301022c700f3bdbd2a9c8e438f0b4446fb3d754a749e2bee7b40",
+    "futureagi/simulate/migrations/0055_agentpromptoptimiserrun_name.py": "ceb4674e86c243d96fc4c4f9a0fe282eaed0e950ca533cf1d7cf97b1acbf8036",
+    "futureagi/simulate/migrations/0055_alter_callexecution_status.py": "509434f6810c4449488188bf44cfc3ef398cfb4ffbe4530a479251347e80d9ae",
+    "futureagi/simulate/migrations/0056_persona_emoji_usage_persona_punctuation_and_more.py": "d1ad6ad12bfbd58d6aed62fde4726bccebb33c436da19cf93cf74ba70443d53d",
+    "futureagi/simulate/migrations/0056_prompttrial_trialitemresult_componentevaluation.py": "bd4b5432657463ad68becfd1bc8d18d5a9ba44480aa5b2aa8dc2e9ccfd23008e",
+    "futureagi/simulate/migrations/0057_agentdefinition_model_details.py": "17135c5d0a1a7558e9f93ee099595d3d4ef76f074e1f0355203bed20b25d9ad4",
+    "futureagi/simulate/migrations/0057_agentpromptoptimiserrun_idx_prompt_opt_run_status_and_more.py": "7559ec15173135761cd5d6cb64b09cdf231e07daf389812d601dd9ceed981de7",
+    "futureagi/simulate/migrations/0058_alter_agentdefinition_authentication_method_and_more.py": "592c3abf1ade6899b5102541171c0bebf539a8a1cda2e4ce2fcd7463613bfeba",
+    "futureagi/simulate/migrations/0058_merge_20251218_1019.py": "c260acd321f930ca9ee48740f593faaa930719bcdcf118fce8cfc691490a72ee",
+    "futureagi/simulate/migrations/0059_agentpromptoptimiserrun_error_message.py": "804a8c092bebb0da978a75408a488f62899560881ecbe7c1ce0e57387789933f",
+    "futureagi/simulate/migrations/0059_callexecution_simulation_call_type.py": "69f41b49e410eb49263b9266d6e45741dd36f88123385349ebf8479d13a1b81c",
+    "futureagi/simulate/migrations/0060_merge_20251226_1007.py": "84be71d3ea877530f9d5b15f7960f74efaa028d002cfc9c937b3a8bdf7d6c0e5",
+    "futureagi/simulate/migrations/0060_remove_persona_writing_style_persona_tone_and_more.py": "123af6f2d83135d02fb4b3feade27b1bf555270b56c4eb20fc27df3d93c28373",
+    "futureagi/simulate/migrations/0061_chatmessagemodel_latency_ms_chatmessagemodel_tokens.py": "cd816e26e12c0e94066de6dbbc13cb8b77ab0f84d98426b327e882eaaad7cb71",
+    "futureagi/simulate/migrations/0062_merge_20251231_0627.py": "2ee1af833d149f5bce8e37e75340e43a48055a8ed64684d66b6fd9bfcc99fa78",
+    "futureagi/simulate/migrations/0063_alter_persona_regional_mix_and_more.py": "8bedb108e58a4a702f80da6e2fc4ecf3165a69e95e5721a233edbd1c458cfbe8",
+    "futureagi/simulate/migrations/0063_remove_callexecution_logurl_and_more.py": "f1f02d8a0e2458f2ffafefd61ff19879ad8404f90e217738baa8bbaa55b3867f",
+    "futureagi/simulate/migrations/0064_add_prompt_simulation_fields.py": "825e933917c8a41faa1bb0c1aeb715d47bf8457c95170f7f9d31e5420a742836",
+    "futureagi/simulate/migrations/0064_remove_callexecution_customer_vapi_call_id_and_more.py": "fc84683fdc35027e517034b61c6ed800b322cb147a9d450c5b84cb985cc8ce91",
+    "futureagi/simulate/migrations/0065_make_agent_definition_nullable.py": "f340d96c6cc0fd5d78e5facb3d6ae22e0ea551306e7b9daaa04a738607acf1fc",
+    "futureagi/simulate/migrations/0065_merge_20260115_1844.py": "8120c60f60fa16ac905b26d675a60898bdb9327efa8b7e447ab40a1e15c2352a",
+    "futureagi/simulate/migrations/0066_make_phone_number_nullable.py": "8fe0a211ed349e9bceea33185b3d2b36d0add7607fdaf97d318cce2ac6d49a21",
+    "futureagi/simulate/migrations/0067_merge_20260203_1444.py": "d7245bec73ee0dd3613a54d029aec647b8cba3f6895b7af99113f52939c768f7",
+    "futureagi/simulate/migrations/0068_chatsimulatorassistant_chatsimulatorsession.py": "c6453d86d5043b4a60c5d91a0bed80592506bbea98ec4ee9ef1e5bf2afe19b0b",
+    "futureagi/simulate/migrations/0068_rename_vapi_phone_number_id_to_provider_phone_id.py": "37fd5238840a037aa55a03812a099dde097388ea9fa0c1403c194f8477b80955",
+    "futureagi/simulate/migrations/0069_callexecution_storage_cost_cents.py": "ba9ca350c740ff250d1ac2734c0ac7ec594f3c5a04467633755e2e6c39de4722",
+    "futureagi/simulate/migrations/0070_merge_20260303_1055.py": "c08afab920fe17195ddcdb2af0e9257288a9beb8114492416cef32f9e06202a1",
+    "futureagi/simulate/migrations/0071_provider_credentials.py": "89783628f2534808cbf30863cba28d0dd255a439ad3f44c66f1936c42ee436dc",
+    "futureagi/simulate/migrations/0072_alter_scenarios_status_and_more.py": "c763d8400329597c606c1af017262d41ce0e2a60e16932c217ef2de31314d2d7",
+    "futureagi/simulate/migrations/0073_merge_20260416_1406.py": "c7e03b9bba2c10c62d3002781566123cf2cb1e8b6706da51d9f35c7f133e3fa8",
+    "futureagi/simulate/migrations/0074_canonicalize_simulate_eval_config_filters.py": "30e7aa9bcebf47c6ca6f50719f3a9a8db28ff4b296145a577ead4538b84e64d3",
+    "futureagi/simulate/migrations/0075_add_agent_version_to_provider_credentials.py": "36da8ed849d316f0cb8fae4decda5d3310825241eeb47971d1393068b1af0ad0",
+    "futureagi/simulate/migrations/0076_backfill_provider_credentials.py": "877c0ca5dc6debd19e4cda24ca17ad2eabc6ca66650010bbdaf01f80076f0256",
+    "futureagi/simulate/migrations/0077_relax_simulate_eval_config_model_choices.py": "1966e940bbf06dac411bf4d4e9d28b2629c29f6372973733f765f4fbbda011c9",
+    "futureagi/simulate/migrations/0078_agentdefinition_target_speaks_first.py": "ca791fae1b4fa547356892a955ca5d7ed5970614c498deca0f17d7abb61b3474",
+    "futureagi/simulate/migrations/0079_harness_environment_credentials.py": "975ce7cc3f94a4e7c9e22efc46a7eb6d8f7e1164a1b78094dadb42043e3a4742",
+    "futureagi/simulate/migrations/0079_hosted_harness_channels.py": "72540fad988fd3349bf02c1662e4da34083ff8b8df4059a8df3ac12edd1763ec",
+    "futureagi/simulate/migrations/0080_merge_20260825_1857.py": "928853d524b7f640671b105a0bb4c37dae7a4554a398279f57499f057e6cbbea",
+    "futureagi/simulate/migrations/0081_harness_stage_output_and_bundle_digest.py": "32c3907b8fa577ab55685fa0a3a0aef5a8758e0068c84f5f93d61428d6d909aa",
+    "futureagi/simulate/migrations/0081_hostedharnessjob_stage_outputs.py": "20883f9b86fb0bbfdb012366a2a6b59e40b193cea5a32cc31f24de2e83c22411",
+    "futureagi/simulate/migrations/0082_merge_hosted_harness_outputs.py": "b12b57b837165fcc985c4e4671e2b828ce361575c2d74b2c3d4f1346dd8d8a19",
+    "futureagi/simulate/migrations/0083_hostedharnessjob_workspace.py": "1aa7c067c27b820596773123b0b1252235addc4efb60ab746f74a72948db3c9b",
+    "futureagi/simulate/migrations/0084_expand_hosted_harness_scenario_limit.py": "8e59aa53ee8d515068fff44ed8db3f5bfaab3483ad3bb2515c551513f5405987",
+    "futureagi/simulate/migrations/0085_hostedharnessscenario_dataset_row.py": "5f0c705f13b93f5a1de48c5b30d7cd07bfd8b486979b6800e3ba7e65dd6be93e",
+    "futureagi/simulate/migrations/0086_hostedharnessattempt_diagnostics.py": "cf21b0d21869a5c27c85bd79a1b1615f810272e33c24fdfd06b7f9b1041e0178",
+    "futureagi/simulate/migrations/0086_parallelism_admission_and_degrade_projection.py": "f90151a5e632899cbc7d8f375c098fea4257462c0721129bd706296b9e318d0b",
+    "futureagi/simulate/migrations/0087_hosted_harness_conversations.py": "5ba73ca208766cc9e209572692092026cabac3bb5463f48361b0d2f6055ae9a8",
+    "futureagi/simulate/migrations/0087_hostedharnessattempt_usage_state.py": "b939cec18319a09255fbdab475fafc4e5e5559e27d59cc9570711a7964dafc1b",
+    "futureagi/simulate/migrations/0087_hostedharnessjob_content_updated_at.py": "14d573b220aacdd816fad1f1558352534b4bc007e809ff14f8cdf88f60b3b4a7",
+    "futureagi/simulate/migrations/0087_merge_hosted_harness_attempt_fields.py": "a266b100e6983ab7632e9bfab0a964db0035b2185b543be3841c45ce43dd88c3",
+    "futureagi/simulate/migrations/0088_expand_hosted_harness_scenario_limit.py": "905318da7a5b3909001a87101eb6ed3e33942260084c5491c99798f35274882b",
+    "futureagi/simulate/migrations/0088_hostedconversation_control_only.py": "1cf6e9d5c8a63126bebc7557ab2819239cfafcd0d76dafa7b7523104c749f733",
+    "futureagi/simulate/migrations/0088_hostedharnessjob_name.py": "b7700660d1f801912e92fc24f5d1f7ea92ea2517c19b972c927981018648eb1a",
+    "futureagi/simulate/migrations/0089_hosted_harness_conversation_transcript.py": "4168f5dbbb4f10e65d70094c7faa382b061df06cebc85575184be85d4533b18a",
+    "futureagi/simulate/migrations/0090_conversation_transcript_id.py": "9928f5e38cadf08fd2c8140d3582f7aa3ac698674d7d2a8e76a9826f347c3a2d",
+    "futureagi/simulate/migrations/0091_merge_hosted_harness_dev.py": "89d91d5251bd661634233e05018ac5d8a30fafc72e75b496fc8e3dd10ad64127",
+    "futureagi/simulate/migrations/0092_harness_scenario_queryable.py": "6d63c7d95b86d840c8f14cc96cb30a3dc95657cd3500bf4b06ff99f10d67b11d",
+    "futureagi/simulate/migrations/0092_merge_environments_v3.py": "ebb4abd2e7aa9e9618e387a3759bb6fb21284cb0b0edb29ee8a6fd8c558e5a87",
+    "futureagi/simulate/migrations/0092_merge_parallelism_environment_v3.py": "a42d9a4f435e73c44d9c0a4c976aa84f390b15acb97cc4023071c647ade79c17",
+    "futureagi/simulate/migrations/0092_selected_harness_runs.py": "953081b1aba51dd9b48c60705a4c292ee981b437cb4083195e7724ed48ba3025",
+    "futureagi/simulate/migrations/0093_harness_scenario_authored_before_call.py": "8a0ab0091b8b67c14f22afdb1fa5f540af9dbb7afb11d7c90b4b8d31e618cd37",
+    "futureagi/simulate/migrations/0093_merge_environments_list_parallelism.py": "9749b0fd31e8f9e613af5948389044b498b08f322366f3898068ff50ac18a80c",
+    "futureagi/simulate/migrations/0094_harness_scenario_keywords.py": "e76e356da5e5f3684ade1cbcedfed7e072df3b147d7ad7ee382a871fc5a8c06a",
+    "futureagi/simulate/migrations/0095_merge_scenario_quality_environment_v3.py": "54aef0f5674ea16b8125aa90723fe498ce2f6730a45fba25c58a8647f4463d5e",
+    "futureagi/simulate/migrations/0096_merge_environments_list_scenario_quality.py": "edfdb4f413f65e30d89074ca7d4e11b6fbfc89cf525d44f8796dd05a87d1609c",
+    "futureagi/simulate/migrations/0097_merge_selected_runs_environment_v3.py": "20c6cf4f8be2b3dc444bbdfac01210259192c3e05cdcfb4e78967d6c3d0aa321",
+    "futureagi/simulate/migrations/0098_agent_version_setup.py": "8fba52c5ca776981bc446a56d352aacc051247fa912d8906ca691b5860685c50",
+    "futureagi/simulate/migrations/0099_harness_versioning.py": "df9ef808957b4385ba8088247e522ccd749d23d67276ce3d61baf575e092abf4",
+    "futureagi/simulate/migrations/0100_agent_fix.py": "1bd0c8ad74a6743b45da9c26ff8ee5a046cade7d6a1049b5ad79f57cf91d9c90",
+    "futureagi/simulate/migrations/0100_sandbox_harness_job.py": "a44967db9afdc4fa3990a011ee9eab73aa3319ed7f5b4edaa670ee1d43391a04",
+    "futureagi/simulate/migrations/0101_agent_fix_candidate_override.py": "5d9101c08b4adcb9bf7513686400397298c8d90da9df071ebc316efde72c4921",
+    "futureagi/simulate/migrations/0102_agent_definition_encrypted_api_key.py": "0365bca7938affea0740de4d718821699986df58d2d57f3dc1d9de23d4a7f81b",
+    "futureagi/simulate/migrations/0102_agent_fix_engine_notes.py": "514ade650dd7d568101b3015d4bcf41284ec91a56f84cf563b7d8cb146cce643",
+    "futureagi/simulate/migrations/0102_prompt_optimizer_tenant_lineage.py": "712062a7f25038f948316e5efe41f9276ab2f4c528e19d727af9738b65ff2284",
+    "futureagi/simulate/migrations/0103_encrypt_agent_definition_api_key.py": "c94a07e04d2ba9ebf0881908855ef636b08275d4ad525e7c6cc894f85cfc836c",
+    "futureagi/simulate/migrations/0103_harness_job_verify_of.py": "01cbacc962a4d40371233d218fb28c5fa8cf859aa5d33f65cb74999804538824",
+    "futureagi/simulate/migrations/0103_merge_sandbox_harness_job.py": "81ea5cb4cf364a67de37e4c3d27ff137be4e389a196ba4b0c07c143e26d2904c",
+    "futureagi/simulate/migrations/0104_remove_agent_definition_api_key.py": "c5ebad07fa6e2bb66f9941f775a2663491e829172c24649083e8c8d1cfe1f20f",
+    "futureagi/simulate/migrations/0105_merge_api_key_at_rest_tenant_lineage.py": "f0b87bd7360aba961ea5d882c8d0062cc27bb4e5fb924adaf4f26a4248d55d51",
+    "futureagi/simulate/migrations/0106_merge_c25_credentials_agent_fix_notes.py": "fa2668541b79db34fca071243181c478d1e99e802a4399f1f6249a2cc2b93a52",
+    "futureagi/simulate/migrations/0107_merge_r8c_r3a_leaves.py": "9c8117dc576060a2ec4aa8fd0479c392fe1bf4e5c126e90903aaa6e738991833",
+    "futureagi/simulate/migrations/0108_merge_c26_dev_1109.py": "c21a137f70c4efc5fd1278b37b3c3e026f3f3a28bcc7d171a52545722776a35f",
+    "futureagi/simulate/migrations/0109_agent_fix_model_reserved_usd.py": "0dbd959a139f1af577c6194b8a76afa57e68c69982bfca6c43d7b8387d40f853",
+    "futureagi/simulate/migrations/0110_seed_system_personas.py": "f60f832a4fd990f37216b920ee58a0fbecc800647ffdaac537180d3f5b7616af"
+  },
+  "executablePinSources": {
+    "revision": "b8e04f4323167afdd8bb72082f0f054458f3a055",
+    "laterRevisions": {
+      "futureagi/accounts/migrations/0031_orgapikey_coding_agent.py": "93da4d1ef5dfb7363b928c6ff04d8bd871d6fc90",
+      "futureagi/accounts/migrations/0039_merge_c26_dev_1109.py": "5d86f18efb6d157b4a014d0a07441f1fc650e09f",
+      "futureagi/accounts/migrations/0040_alter_user_invited_by.py": "cc030bf05977f945aa79bbaffd8e5d50eae77b78",
+      "futureagi/agentcc/migrations/0087_mcp_credential_oauth_resource.py": "e9c16ee7bfcd2175eba5e3d4c312205288a700fd",
+      "futureagi/agentcc/migrations/0088_mcp_shared_connect_generation.py": "8fc76f7988ac6e58f751ca9b2fd4c1ac6708adc1",
+      "futureagi/agentcc/migrations/0089_normalize_two_key_org_period.py": "8317624520d50258a49538a68126e9c74753d9b6",
+      "futureagi/simulate/migrations/0103_harness_job_verify_of.py": "41f78d3ff3580dfdfa51a6a6d9bc020843d9166c",
+      "futureagi/simulate/migrations/0108_merge_c26_dev_1109.py": "5d86f18efb6d157b4a014d0a07441f1fc650e09f",
+      "futureagi/simulate/migrations/0109_agent_fix_model_reserved_usd.py": "85d4f9d93215d2e66f05b73f58518e27dae549a4",
+      "futureagi/simulate/migrations/0110_seed_system_personas.py": "0b59ee0a3f9ab5dcb1e46cef27b8afe0f25ded6a"
+    }
+  },
+  "executableDigestDefinition": "baseStateExecutableSha256 is SHA-256 of the canonical AST text (the test's _canonical) of each migration after removing only the bridge envelope, every module, class and function docstring, and a module-level UPDATE_SAFETY assignment with one Name target whose value is a dict literal. Each value was computed from the exact source whose baseStateSourceSha256 it reproduces: the file at executablePinSources.revision, or at the commit named in executablePinSources.laterRevisions. baseStateSourceSha256 stays as that audit record. A path listed in repins was recomputed from the file as changed by repins[].change, a commit on this line or, for a change that lands by replay, that commit's subject; for that path the pin no longer reproduces baseStateSourceSha256, which records the source before that change.",
+  "repins": [
+    {
+      "path": "futureagi/agentcc/migrations/0078_historical_key_revocations.py",
+      "previous": "4f6ccc7e6a7cc9378f9ce854a30b6c55c5d2d097a44a6183ac403d1d55b1ac1a",
+      "pin": "abfedf86b34bb7280a4097e5745db9356a55fc4416550e0388ed209ad44eb1c2",
+      "change": "622ff05524697960ff40297c520d2a4d6777dc4e"
+    },
+    {
+      "path": "futureagi/simulate/migrations/0104_remove_agent_definition_api_key.py",
+      "previous": "fe4a1602e2c937537194058dc1fa6321c770777286435601ff94b2952c659473",
+      "pin": "c5ebad07fa6e2bb66f9941f775a2663491e829172c24649083e8c8d1cfe1f20f",
+      "change": "fix(simulate): hold writes and check the key column before the drop; declare data steps"
+    },
+    {
+      "path": "futureagi/agentcc/migrations/0029_org_config_managed_models.py",
+      "previous": "654f59de0508126dd9ab2d34241b288ab18140a2b2f354faf4dde10cdad6e99f",
+      "pin": "d5a4d0b14cc29825127920f9d41f8b47c3f4f0dc6865a93bd97b8516ee5b06b8",
+      "change": "fix(agentcc): 0029 and 0045 add their settings columns with a database default"
+    },
+    {
+      "path": "futureagi/agentcc/migrations/0031_request_log_v2_indexes.py",
+      "previous": "4c0097faf77692727d07e0c51b9e1fe8fb4f11db61469187964fd30a9bcacd10",
+      "pin": "be1780c7fdb5592f9929c48d7d7af13f56f0bbdf1ec6a7ba2888bcdf51c5f348",
+      "change": "fix(agentcc): the request-log and tool-call index migrations resume after an interruption"
+    },
+    {
+      "path": "futureagi/agentcc/migrations/0031_request_log_v2_indexes.py",
+      "previous": "be1780c7fdb5592f9929c48d7d7af13f56f0bbdf1ec6a7ba2888bcdf51c5f348",
+      "pin": "aabc660186f382649b3958416bb2cddf017eea8814669d7cbc95c9eb4db81d75",
+      "change": "fix(agentcc): 0031 and 0041 write their five AddIndex operations out as literals"
+    },
+    {
+      "path": "futureagi/agentcc/migrations/0041_mcp_indexes.py",
+      "previous": "76084b2528d10e100783b9ba9697f70c2292e8f18ac2a64f61daeccaf5530de7",
+      "pin": "aa064449e99fdcd52063fbd35d1f4970fb00b008817b45fb30346524de20b542",
+      "change": "fix(agentcc): the request-log and tool-call index migrations resume after an interruption"
+    },
+    {
+      "path": "futureagi/agentcc/migrations/0041_mcp_indexes.py",
+      "previous": "aa064449e99fdcd52063fbd35d1f4970fb00b008817b45fb30346524de20b542",
+      "pin": "6fa8ffd6c22d6a390453fd0c5e7002f23ea840c657181ad20263b1ada45576d6",
+      "change": "fix(agentcc): 0031 and 0041 write their five AddIndex operations out as literals"
+    },
+    {
+      "path": "futureagi/agentcc/migrations/0045_org_config_tools_identity.py",
+      "previous": "9f6abdfa3b7d12c62fb72e5cda7be1db77562a2d87e7f16c2f2b9975f72d5875",
+      "pin": "19e1bf9a65458a36293b62f80c7c09a07e7a57cd5d7649e0797c580e5562b853",
+      "change": "fix(agentcc): 0029 and 0045 add their settings columns with a database default"
+    },
+    {
+      "path": "futureagi/agentcc/migrations/0047_encrypt_org_config_secrets.py",
+      "previous": "00fb1a8070705981d8f1ab1b651cfbf93dbccaa749e5fa4173be0cbc0a770a28",
+      "pin": "cc47ca5cd15f13bbb21f94755c38ba5f0535321223b7d9aeec4b25c9d93e4169",
+      "change": "fix(agentcc): encrypting migrations refuse to run without a stable key"
+    },
+    {
+      "path": "futureagi/agentcc/migrations/0050_encrypt_org_config_secret_aliases.py",
+      "previous": "4329dfd67f40e7334a6cd75eea254a6b4e7d089e4ac7b8907b784433c90194c1",
+      "pin": "68b1ccbc4901f87b6f1cf1326bcfc195085ed8932108fefd00d277b75bd1be83",
+      "change": "fix(agentcc): encrypting migrations refuse to run without a stable key"
+    },
+    {
+      "path": "futureagi/agentcc/migrations/0051_encrypt_alert_channel_urls.py",
+      "previous": "56118ca84eb2530ed2e9475b504121900e766e0e2e7db68cecc9b31c67682ae7",
+      "pin": "ed59214bd2213a4d354024a3eb4814a0c47459d323e0d8b74da1ff5238dfb06d",
+      "change": "fix(agentcc): encrypting migrations refuse to run without a stable key"
+    },
+    {
+      "path": "futureagi/agentcc/migrations/0056_mcp_secrets_to_vault.py",
+      "previous": "18c1675cfc5bdb9de4070f99d86e4fe9b45a70e3c4ce59d8ac913464dc57dab9",
+      "pin": "30a68944247f76282d458bb144f4d886e12685665f27f9b56ee3a5f8131e20ea",
+      "change": "fix(agentcc): encrypting migrations refuse to run without a stable key"
+    },
+    {
+      "path": "futureagi/agentcc/migrations/0056_mcp_secrets_to_vault.py",
+      "previous": "30a68944247f76282d458bb144f4d886e12685665f27f9b56ee3a5f8131e20ea",
+      "pin": "bf66c1c6dbddd1a623c978cc7edfe1bcf9b96b2261ed5dc41eba0aa18e6317de",
+      "change": "fix(agentcc): 0056 keeps values the vault does not accept; long server ids"
+    },
+    {
+      "path": "futureagi/agentcc/migrations/0056_mcp_secrets_to_vault.py",
+      "previous": "bf66c1c6dbddd1a623c978cc7edfe1bcf9b96b2261ed5dc41eba0aa18e6317de",
+      "pin": "363532c36cd131db91e1ed160a5eda78edc774cbe253a172b74ee4ca8195b2d9",
+      "change": "fix(agentcc): agentcc_mcp_migrate_secrets --remove-kept deletes the values 0056 kept"
+    },
+    {
+      "path": "futureagi/agentcc/migrations/0076_encrypt_webhook_credentials.py",
+      "previous": "a3151154c8e8232f0885a8b5f0e807b7a2a9c52ee51fcd92dd77dc8185590fed",
+      "pin": "76127ecd34d2599cd11e82526df9000f6547ebc8066b43be660bbc55f9bf44fc",
+      "change": "fix(agentcc): encrypting migrations refuse to run without a stable key"
+    },
+    {
+      "path": "futureagi/agentcc/migrations/0076_encrypt_webhook_credentials.py",
+      "previous": "76127ecd34d2599cd11e82526df9000f6547ebc8066b43be660bbc55f9bf44fc",
+      "pin": "bc50ebc7365410bf2074fb5db9cd9ac771e44dbc7b6ccde41b8393bcdf7669f0",
+      "change": "fix(agentcc): 0076 gives a webhook with no address the reserved address"
+    },
+    {
+      "path": "futureagi/agentcc/migrations/0077_remove_webhook_plaintext.py",
+      "previous": "3783b55ecb89f0fb485a8c52b9d99ebe57ffb5922872aebd46ea442772c73ec4",
+      "pin": "be361def87ff4fbe4e844ff31ba7b286cdb334fca74a4958d1ad854ba74562bd",
+      "change": "fix(agentcc): encrypting migrations refuse to run without a stable key"
+    }
+  ]
+}

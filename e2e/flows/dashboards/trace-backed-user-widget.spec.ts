@@ -428,7 +428,7 @@ test('DASH-E2E-008: a saved User widget keeps project and identifier-type scope'
         await uiExpect(card.getByText('Distinct Count', { exact: true })).toBeVisible();
         for (const label of ['Project', 'User', 'User ID Type']) await uiExpect(card.getByText(label, { exact: true })).toHaveCount(0);
       }
-      await uiExpect(page.locator('.breakdown-section-title').locator('../..').getByText('User', { exact: true })).toBeVisible();
+      await uiExpect(page.getByRole('button', { name: 'Change breakdown User', exact: true })).toBeVisible();
       await uiExpect(page.getByRole('combobox').filter({ hasText: 'Table' })).toBeVisible();
       await uiExpect(page.getByRole('combobox').filter({ hasText: 'Day' })).toBeVisible();
       await uiExpect(page.getByText('7D', { exact: true })).toBeVisible();
@@ -638,7 +638,7 @@ test('DASH-E2E-008: a saved User widget keeps project and identifier-type scope'
           await uiExpect(row.getByRole('checkbox')).toBeChecked(); await popup.getByRole('button', { name: 'Add', exact: true }).click();
         });
         await queryAfter('both-users', configFor(0), bothGroups, async () => {
-          await page.locator('.breakdown-section-title').click(); await selectCategory('Users');
+          await page.getByRole('button', { name: 'Add breakdown', exact: true }).click(); await selectCategory('Users');
           await page.getByPlaceholder('Search breakdown attributes...').fill('User'); await assertCatalog(properties[4], false);
           await page.getByRole('button', { name: 'User (string, Traces)', exact: true }).click();
         });

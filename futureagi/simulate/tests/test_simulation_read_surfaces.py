@@ -264,7 +264,7 @@ def test_hosted_recording_artifacts_surface_in_detail_recording_shape(simulation
             "recording_stereo": {"url": "https://media.example/stereo.wav"},
             "recording_customer": {"url": "https://media.example/customer.wav"},
             "recording_assistant": {"url": "https://media.example/assistant.wav"},
-        }
+        },
     }
 
     recordings = CallExecutionDetailSerializer(
@@ -281,7 +281,9 @@ def test_hosted_recording_artifacts_surface_in_detail_recording_shape(simulation
 
 
 @pytest.mark.django_db
-def test_explicit_voice_call_type_wins_over_stale_text_agent_definition(simulation_tree):
+def test_explicit_voice_call_type_wins_over_stale_text_agent_definition(
+    simulation_tree,
+):
     call_execution = simulation_tree["call_execution"]
     agent_definition = call_execution.test_execution.run_test.agent_definition
     agent_definition.agent_type = AgentDefinition.AgentTypeChoices.TEXT
@@ -300,7 +302,6 @@ def test_explicit_voice_call_type_wins_over_stale_text_agent_definition(simulati
     }
 
 
-
 @pytest.mark.django_db
 def test_call_detail_exposes_harness_outcome_separately_from_transport(
     simulation_tree,
@@ -313,6 +314,7 @@ def test_call_detail_exposes_harness_outcome_separately_from_transport(
 
     assert data["status"] == CallExecution.CallStatus.COMPLETED
     assert data["harness_outcome_status"] == "error"
+
 
 @pytest.mark.django_db
 def test_get_eval_metrics_skips_missing_config(simulation_tree, eval_configs):
@@ -923,9 +925,7 @@ def _seed_run_detail_columns(test_execution, live, deleted):
 
 def _eval_column_ids(column_order):
     return [
-        str(col.get("id"))
-        for col in column_order
-        if col.get("type") == "evaluation"
+        str(col.get("id")) for col in column_order if col.get("type") == "evaluation"
     ]
 
 
@@ -1174,6 +1174,166 @@ def test_run_detail_shape_is_unchanged_with_no_removed_evals(
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("call_statuses", "expected_status"),
+    [
+        (("pending", "pending"), "pending"),
+        (("queued", "queued"), "queued"),
+        (("ongoing", "ongoing"), "ongoing"),
+        (("analyzing", "analyzing"), "analyzing"),
+        (("completed", "completed"), "running"),
+        (("failed", "failed"), "running"),
+        (("cancelled", "cancelled"), "running"),
+        (("queued", "pending"), "pending"),
+        (("ongoing", "pending"), "pending"),
+        (("ongoing", "queued"), "queued"),
+        (("analyzing", "ongoing"), "ongoing"),
+        (("completed", "analyzing"), "analyzing"),
+        (("failed", "completed"), "running"),
+        (("cancelled", "failed"), "running"),
+    ],
+)
+def test_run_detail_status_shows_the_earliest_active_call_status(
+    auth_client, simulation_tree, call_statuses, expected_status
+):
+    test_execution = simulation_tree["test_execution"]
+    test_execution.status = SimulationTestExecution.ExecutionStatus.RUNNING
+    test_execution.save(update_fields=["status"])
+    first_call = simulation_tree["call_execution"]
+    first_call.status = call_statuses[0]
+    first_call.save(update_fields=["status"])
+    second_call = CallExecution.objects.create(
+        test_execution=test_execution,
+        scenario=first_call.scenario,
+        status=call_statuses[1],
+        simulation_call_type=CallExecution.SimulationCallType.TEXT,
+    )
+
+    response = auth_client.get(f"/simulate/test-executions/{test_execution.id}/")
+
+    assert response.status_code == status.HTTP_200_OK
+    assert response.data["status"] == expected_status
+    assert response.data["count"] == 2
+    assert {str(row["id"]) for row in response.data["results"]} == {
+        str(first_call.id),
+        str(second_call.id),
+    }
+    assert response.data["error_messages"] == []
+    assert response.data["provider"] == test_execution.agent_definition.provider
+    assert response.data["agent_type"] == AgentDefinition.AgentTypeChoices.TEXT
+    test_execution.refresh_from_db()
+    assert test_execution.status == SimulationTestExecution.ExecutionStatus.RUNNING
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("stored_status", "call_statuses", "expected_status"),
+    [
+        ("pending", ("ongoing", "completed"), "ongoing"),
+        ("evaluating", ("analyzing", "completed"), "analyzing"),
+        ("evaluating", ("completed", "completed"), "evaluating"),
+        ("cancelling", ("pending", "ongoing"), "cancelling"),
+        ("cancelled", ("completed", "cancelled"), "cancelled"),
+        ("cancelled", ("analyzing", "cancelled"), "cancelled"),
+        ("failed", ("completed", "failed"), "failed"),
+        ("completed", ("pending", "completed"), "completed"),
+    ],
+)
+def test_run_detail_status_replaces_only_an_in_progress_stored_status(
+    auth_client, simulation_tree, stored_status, call_statuses, expected_status
+):
+    test_execution = simulation_tree["test_execution"]
+    test_execution.status = stored_status
+    test_execution.save(update_fields=["status"])
+    first_call = simulation_tree["call_execution"]
+    first_call.status = call_statuses[0]
+    first_call.save(update_fields=["status"])
+    CallExecution.objects.create(
+        test_execution=test_execution,
+        scenario=first_call.scenario,
+        status=call_statuses[1],
+        simulation_call_type=CallExecution.SimulationCallType.TEXT,
+    )
+
+    response = auth_client.get(f"/simulate/test-executions/{test_execution.id}/")
+
+    assert response.status_code == status.HTTP_200_OK
+    assert response.data["status"] == expected_status
+    test_execution.refresh_from_db()
+    assert test_execution.status == stored_status
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("stored_status", ["pending", "running", "cancelled"])
+def test_run_detail_status_is_the_stored_status_without_calls(
+    auth_client, simulation_tree, stored_status
+):
+    test_execution = simulation_tree["test_execution"]
+    test_execution.status = stored_status
+    test_execution.save(update_fields=["status"])
+    # A soft-deleted call does not count as a call of the run.
+    call_execution = simulation_tree["call_execution"]
+    call_execution.delete()
+
+    response = auth_client.get(f"/simulate/test-executions/{test_execution.id}/")
+
+    assert response.status_code == status.HTTP_200_OK
+    assert response.data["status"] == stored_status
+    assert response.data["count"] == 0
+    assert response.data["results"] == []
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "query",
+    [
+        {"limit": 1},
+        {"limit": 1, "page": 99},
+        {"search": "15559990299"},
+        {
+            "filters": json.dumps(
+                [
+                    {
+                        "column_id": "status",
+                        "filter_config": {
+                            "filter_type": "text",
+                            "filter_op": "equals",
+                            "filter_value": "completed",
+                        },
+                    }
+                ]
+            ),
+        },
+    ],
+)
+def test_run_detail_status_includes_calls_outside_the_visible_page(
+    auth_client, simulation_tree, query
+):
+    test_execution = simulation_tree["test_execution"]
+    test_execution.status = SimulationTestExecution.ExecutionStatus.RUNNING
+    test_execution.save(update_fields=["status"])
+    pending_call = simulation_tree["call_execution"]
+    pending_call.status = CallExecution.CallStatus.PENDING
+    pending_call.save(update_fields=["status"])
+    completed_call = CallExecution.objects.create(
+        test_execution=test_execution,
+        scenario=pending_call.scenario,
+        phone_number="+15559990299",
+        status=CallExecution.CallStatus.COMPLETED,
+        simulation_call_type=CallExecution.SimulationCallType.TEXT,
+    )
+
+    response = auth_client.get(f"/simulate/test-executions/{test_execution.id}/", query)
+
+    assert response.status_code == status.HTTP_200_OK
+    assert response.data["status"] == "pending"
+    assert response.data["error_messages"] == []
+    assert [str(row["id"]) for row in response.data["results"]] == (
+        [] if query.get("page") == 99 else [str(completed_call.id)]
+    )
+
+
+@pytest.mark.django_db
 def test_run_detail_filters_on_a_removed_evals_column(
     auth_client, simulation_tree, eval_configs
 ):
@@ -1239,9 +1399,7 @@ def test_run_detail_filters_on_a_removed_evals_column(
         str(graded_one.id),
         str(graded_two.id),
     }
-    assert str(ungraded.id) not in {
-        str(row["id"]) for row in response.data["results"]
-    }
+    assert str(ungraded.id) not in {str(row["id"]) for row in response.data["results"]}
     assert response.data["count"] == 2
 
 
@@ -1291,14 +1449,10 @@ def test_late_added_eval_column_appears_only_after_it_has_been_evaluated(
     orig_b = three_eval_configs["orig_b"]
     late_add = three_eval_configs["late_add"]
 
-    response_before = auth_client.get(
-        f"/simulate/test-executions/{test_execution.id}/"
-    )
+    response_before = auth_client.get(f"/simulate/test-executions/{test_execution.id}/")
     assert response_before.status_code == 200
     eval_cols_before = [
-        c
-        for c in response_before.data["column_order"]
-        if c.get("type") == "evaluation"
+        c for c in response_before.data["column_order"] if c.get("type") == "evaluation"
     ]
     assert [str(c["id"]) for c in eval_cols_before] == [
         str(orig_a.id),
@@ -1312,14 +1466,10 @@ def test_late_added_eval_column_appears_only_after_it_has_been_evaluated(
     }
     call_execution.save(update_fields=["eval_outputs"])
 
-    response_after = auth_client.get(
-        f"/simulate/test-executions/{test_execution.id}/"
-    )
+    response_after = auth_client.get(f"/simulate/test-executions/{test_execution.id}/")
     assert response_after.status_code == 200
     eval_cols_after = [
-        c
-        for c in response_after.data["column_order"]
-        if c.get("type") == "evaluation"
+        c for c in response_after.data["column_order"] if c.get("type") == "evaluation"
     ]
     assert [str(c["id"]) for c in eval_cols_after] == [
         str(orig_a.id),
@@ -1461,7 +1611,7 @@ def _parse_csv_response(response):
     rows = list(reader)
     assert rows, "CSV response is empty"
     header = rows[0]
-    data_rows = [dict(zip(header, r)) for r in rows[1:]]
+    data_rows = [dict(zip(header, r, strict=False)) for r in rows[1:]]
     return header, data_rows
 
 
@@ -1627,9 +1777,7 @@ class TestCSVExportRowFormat:
         assert tricky_row["Live Eval"] == "Passed"
         assert tricky_row["Live Eval_reason"] == "clean, tidy"
 
-    def test_csv_export_masks_sensitive_fields(
-        self, auth_client, simulation_tree
-    ):
+    def test_csv_export_masks_sensitive_fields(self, auth_client, simulation_tree):
         call_execution = simulation_tree["call_execution"]
         call_execution.call_metadata = {
             "api_key": "sk-should-not-leak-1234",
@@ -1659,9 +1807,7 @@ class TestCSVExportRowFormat:
                 f"Sensitive value {banned_value!r} leaked into export body"
             )
 
-    def test_csv_export_other_workspace_returns_404(
-        self, auth_client, user
-    ):
+    def test_csv_export_other_workspace_returns_404(self, auth_client, user):
         other_org = Organization.objects.create(name="Other Org For Export")
         other_workspace = Workspace.no_workspace_objects.create(
             name="Other Org Default Workspace",
@@ -1746,15 +1892,11 @@ class TestRunTestComponentsPatch:
         assert response.status_code == status.HTTP_200_OK
         run_test.refresh_from_db()
         assert run_test.simulator_agent_id == new_simulator_agent.id
-        scenario_ids_on_run = list(
-            run_test.scenarios.values_list("id", flat=True)
-        )
+        scenario_ids_on_run = list(run_test.scenarios.values_list("id", flat=True))
         # The view uses .set() which replaces the m2m contents.
         assert scenario_ids_on_run == [new_scenario.id]
 
-    def test_components_patch_other_workspace_returns_404(
-        self, auth_client, user
-    ):
+    def test_components_patch_other_workspace_returns_404(self, auth_client, user):
         """PATCH against a sibling-organization RunTest must 404 and must not mutate the foreign row."""
         other_org = Organization.objects.create(name="Other Org For Components")
         other_workspace = Workspace.no_workspace_objects.create(
@@ -1791,9 +1933,7 @@ class TestRunTestComponentsPatch:
         other_run_test.refresh_from_db()
         assert other_run_test.simulator_agent_id == original_simulator_id
         assert (
-            RunTestScenariosThrough.objects.filter(
-                runtest_id=other_run_test.id
-            ).count()
+            RunTestScenariosThrough.objects.filter(runtest_id=other_run_test.id).count()
             == original_through_count
         )
 
@@ -1860,9 +2000,7 @@ class TestSDKCodeContent:
         )
         other_run_test = other["run_test"]
 
-        response = auth_client.get(
-            self.URL.format(run_test_id=other_run_test.id)
-        )
+        response = auth_client.get(self.URL.format(run_test_id=other_run_test.id))
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
         body = response.content.decode()

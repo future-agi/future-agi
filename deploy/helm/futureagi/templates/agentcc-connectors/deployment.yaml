@@ -1,0 +1,110 @@
+{{- if include "futureagi.agentccConnectors.enabled" . }}
+{{- $v := .Values -}}
+{{- $c := $v.agentccConnectors -}}
+{{- $ctx := dict "root" . "component" "agentcc-connectors" -}}
+{{- $preStop := int ($c.preStopSleepSeconds | default 0) -}}
+{{- $grace := int $c.terminationGracePeriodSeconds -}}
+{{- $drain := int (include "futureagi.agentccConnectors.drainSeconds" .) -}}
+{{- if lt $grace (add $preStop $drain) -}}
+{{- fail (printf "agentccConnectors.terminationGracePeriodSeconds (%d) must be at least agentccConnectors.preStopSleepSeconds (%d) plus the %d s the runtime drains its in-flight calls after SIGTERM" $grace $preStop $drain) -}}
+{{- end -}}
+{{- /* The catalog is the bundle embedded in the binary; the chart offers no
+catalog directory (deploy notes in _helpers.tpl, AM-C23 c). */ -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "futureagi.component" $ctx }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "futureagi.componentLabels" $ctx | nindent 4 }}
+  {{- include "futureagi.block" (dict "text" (include "futureagi.workloadAnnotations" $) "indent" 2) }}
+spec:
+  replicas: {{ $c.replicas }}
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      {{- include "futureagi.selectorLabels" $ctx | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "futureagi.componentLabels" $ctx | nindent 8 }}
+        {{- with $c.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with $c.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      # The namespace's default ServiceAccount and no token: the runtime needs
+      # no Kubernetes API, and runs apart from the identity (cloud workload
+      # identity annotations) of the chart's ServiceAccount, since it handles
+      # users' vendor tokens and vendor responses.
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      {{- include "futureagi.block" (dict "text" (include "futureagi.imagePullSecrets" .) "indent" 6) }}
+      terminationGracePeriodSeconds: {{ $grace }}
+      securityContext:
+        {{- include "futureagi.podSecurityContext" (dict "root" $ "uid" 65532) | nindent 8 }}
+      {{- include "futureagi.block" (dict "text" (include "futureagi.scheduling" (dict "root" . "values" $c "spread" true "component" "agentcc-connectors" "multi" (include "futureagi.multiReplica" (dict "replicas" $c.replicas)))) "indent" 6) }}
+      containers:
+        - name: agentcc-connectors
+          # The gateway image ships the runtime as a second binary.
+          image: {{ include "futureagi.image" (dict "root" . "image" $v.agentccGateway.image "digestKey" "agentccGateway") }}
+          imagePullPolicy: {{ include "futureagi.imagePullPolicy" (dict "root" . "image" $v.agentccGateway.image) }}
+          command: ["/app/agentcc-connectors"]
+          args: ["--addr", ":{{ include "futureagi.agentccConnectors.port" . }}"]
+          ports:
+            - name: http
+              containerPort: {{ include "futureagi.agentccConnectors.port" . }}
+              protocol: TCP
+          {{- include "futureagi.block" (dict "text" (include "futureagi.preStop" (dict "root" . "seconds" $preStop "native" true)) "indent" 10) }}
+          {{- $goMemLimit := include "futureagi.agentccConnectors.goMemLimit" . }}
+          # No proxy variables: the runtime dials each vendor itself, through
+          # its SSRF guard, which must see the real destination.
+          env:
+            - name: AGENTCC_MCP_K2_APPS_ENABLED
+              value: {{ $v.mcpFeatures.k2Apps | toString | quote }}
+            {{- with $goMemLimit }}
+            # 90% of the memory limit.
+            - name: GOMEMLIMIT
+              value: {{ . | quote }}
+            {{- end }}
+            {{- if include "futureagi.caBundle.enabled" . }}
+            # global.caBundle replaces the image's trust store for the vendor calls.
+            - name: SSL_CERT_FILE
+              value: {{ include "futureagi.caBundle.path" . | quote }}
+            {{- end }}
+          # The runtime answers GET /healthz once its catalog is loaded and it
+          # listens; a catalog it cannot serve stops the process instead.
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            {{- toYaml $c.resources | nindent 12 }}
+          securityContext:
+            {{- include "futureagi.containerSecurityContext" (dict "root" $) | nindent 12 }}
+          {{- with (include "futureagi.caBundle.volumeMount" $) }}
+          volumeMounts:
+            {{- . | nindent 12 }}
+          {{- end }}
+      {{- with (include "futureagi.caBundle.volume" $) }}
+      volumes:
+        {{- . | nindent 8 }}
+      {{- end }}
+{{- end }}

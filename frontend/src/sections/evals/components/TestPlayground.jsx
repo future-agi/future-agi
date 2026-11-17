@@ -12,11 +12,11 @@ import {
   Button,
   ButtonBase,
 } from "@mui/material";
-import { SegmentedTabs } from "src/components/tabs/tabs";
 import PropTypes from "prop-types";
 import React, {
   useCallback,
   useEffect,
+  useId,
   useImperativeHandle,
   useRef,
   useState,
@@ -26,6 +26,7 @@ import { useSearchParams } from "react-router-dom";
 import { CreditExhaustionBanner } from "src/components/CreditExhaustionBanner";
 import Iconify from "src/components/iconify";
 import SvgColor from "src/components/svg-color";
+import { SegmentedTabs } from "src/components/tabs/tabs";
 import { useCreditExhaustion } from "src/hooks/use-credit-exhaustion";
 import axios, { endpoints } from "src/utils/axios";
 import { extractCodeEvaluateParams } from "src/utils/codeEvalParams";
@@ -33,7 +34,10 @@ import { extractJinjaVariables } from "src/utils/jinjaVariables";
 import logger from "src/utils/logger";
 import { canonicalEntries } from "src/utils/utils";
 import { camelCaseToTitleCase } from "src/utils/utils";
-import { getSafeActionErrorMessage } from "src/utils/errorUtils";
+import {
+  getSafeActionErrorMessage,
+  getThrottledMessage,
+} from "src/utils/errorUtils";
 import CodeEditor from "./CodeEditor";
 import DatasetTestMode from "./DatasetTestMode";
 import TracingTestMode from "./TracingTestMode";
@@ -45,7 +49,8 @@ import {
 import useErrorLocalizerPoll from "../hooks/useErrorLocalizerPoll";
 import EvalResultDisplay from "./EvalResultDisplay";
 import { buildCompositeRuntimeConfig } from "../Helpers/compositeRuntimeConfig";
-import VersionBadge from "./VersionBadge";
+import { unsavedDefinitionConfig } from "../utils/unsavedDefinition";
+import { RECORDED_VERSION_TOOLTIP } from "../Helpers/evalVersionCopy";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import {
@@ -306,9 +311,11 @@ const CustomJsonInput = ({
         }
       } catch (err) {
         logger.error("Test data generation failed", err);
-        enqueueSnackbar("Couldn't generate test data. Please try again.", {
-          variant: "error",
-        });
+        enqueueSnackbar(
+          getThrottledMessage(err) ||
+            "Couldn't generate test data. Please try again.",
+          { variant: "error" },
+        );
       } finally {
         setAiLoading(false);
       }
@@ -663,6 +670,8 @@ const TestPlayground = React.forwardRef(
       errorLocalizerEnabled = false,
       isComposite = false,
       compositeAdhocConfig = null,
+      // The editor's unsaved definition: Test runs it and saves nothing.
+      unsavedDefinition = null,
       templateFormat = "mustache",
       functionParamsSchema = null,
       configParamsDesc = null,
@@ -676,6 +685,7 @@ const TestPlayground = React.forwardRef(
     },
     ref,
   ) => {
+    const mainTabsId = useId();
     const [activeMainTab, setActiveMainTab] = useState("test"); // "test" or "versions"
     const [activeTab, setActiveTab] = useState("Custom");
     const { data: versionsData } = useEvalVersions(templateId);
@@ -754,8 +764,11 @@ const TestPlayground = React.forwardRef(
 
     const handleRestore = useCallback(() => {
       if (!menuVersion) return;
+      if (onVersionSelect?.(menuVersion) === false) {
+        handleVersionMenuClose();
+        return;
+      }
       setSelectedVersionId(menuVersion.id);
-      onVersionSelect?.(menuVersion);
       enqueueSnackbar(
         `Loaded V${menuVersion.version_number} config - edit and save to create a new version`,
         { variant: "info" },
@@ -766,13 +779,10 @@ const TestPlayground = React.forwardRef(
     const handleVersionClick = useCallback(
       (version) => {
         const isAlreadySelected = selectedVersionId === version.id;
-        if (isAlreadySelected) {
-          setSelectedVersionId(null);
-          onVersionSelect?.(null); // deselect - go back to current config
-        } else {
-          setSelectedVersionId(version.id);
-          onVersionSelect?.(version);
-        }
+        const nextVersion = isAlreadySelected ? null : version;
+        // Keep the highlight when the parent rejects discarding unsaved edits.
+        if (onVersionSelect?.(nextVersion) === false) return;
+        setSelectedVersionId(nextVersion?.id ?? null);
       },
       [selectedVersionId, onVersionSelect],
     );
@@ -1003,6 +1013,7 @@ const TestPlayground = React.forwardRef(
               ...(runConfig ? { run_config: runConfig } : {}),
               mapping,
               ...(evalType === "code" ? { params } : {}),
+              ...unsavedDefinitionConfig(unsavedDefinition),
             },
           },
         );
@@ -1056,6 +1067,7 @@ const TestPlayground = React.forwardRef(
       compositeAdhocConfig,
       executeCompositeAdhoc,
       handleCreditError,
+      unsavedDefinition,
     ]);
 
     // Expose runTest and switchToVersion to parent via ref
@@ -1101,91 +1113,43 @@ const TestPlayground = React.forwardRef(
         }}
       >
         {/* Header - Test Evaluations + Versions (only if saved) */}
-        <Box sx={{ display: "flex", gap: 2, mb: 1.5 }}>
-          <ButtonBase
-            onClick={() => setActiveMainTab("test")}
-            sx={{
-              display: "flex",
-              alignItems: "center",
-              gap: 0.75,
-              px: 1,
-              py: 0.5,
-              cursor: "pointer",
-              borderBottom:
-                activeMainTab === "test"
-                  ? "2px solid"
-                  : "2px solid transparent",
-              borderColor:
-                activeMainTab === "test" ? "primary.main" : "transparent",
-            }}
-          >
-            <Iconify
-              icon="solar:play-linear"
-              width={14}
-              sx={{
-                color:
-                  activeMainTab === "test" ? "primary.main" : "text.secondary",
-              }}
-            />
-            <Typography
-              variant="body2"
-              sx={{
-                fontSize: "12px",
-                fontWeight: activeMainTab === "test" ? 500 : 400,
-                color:
-                  activeMainTab === "test" ? "primary.main" : "text.secondary",
-              }}
-            >
-              Test Evaluation
-            </Typography>
-          </ButtonBase>
+        <SegmentedTabs
+          value={activeMainTab}
+          onChange={(_, value) => setActiveMainTab(value)}
+          sx={{ mb: 1.5, flexShrink: 0 }}
+        >
+          <Tab
+            value="test"
+            id={`${mainTabsId}-test`}
+            aria-controls={`${mainTabsId}-test-panel`}
+            label="Test Evaluation"
+            icon={<Iconify icon="solar:play-linear" width={14} />}
+            iconPosition="start"
+          />
           {(templateId || showVersions) && (
-            <ButtonBase
-              onClick={() => setActiveMainTab("versions")}
-              sx={{
-                display: "flex",
-                alignItems: "center",
-                gap: 0.75,
-                px: 1,
-                py: 0.5,
-                cursor: "pointer",
-                borderBottom:
-                  activeMainTab === "versions"
-                    ? "2px solid"
-                    : "2px solid transparent",
-                borderColor:
-                  activeMainTab === "versions" ? "primary.main" : "transparent",
-              }}
-            >
-              <Iconify
-                icon="solar:history-linear"
-                width={14}
-                sx={{
-                  color:
-                    activeMainTab === "versions"
-                      ? "primary.main"
-                      : "text.secondary",
-                }}
-              />
-              <Typography
-                variant="body2"
-                sx={{
-                  fontSize: "12px",
-                  fontWeight: activeMainTab === "versions" ? 500 : 400,
-                  color:
-                    activeMainTab === "versions"
-                      ? "primary.main"
-                      : "text.secondary",
-                }}
-              >
-                Versions
-              </Typography>
-            </ButtonBase>
+            <Tab
+              value="versions"
+              id={`${mainTabsId}-versions`}
+              aria-controls={`${mainTabsId}-versions-panel`}
+              label="Versions"
+              icon={<Iconify icon="solar:history-linear" width={14} />}
+              iconPosition="start"
+            />
           )}
-        </Box>
+        </SegmentedTabs>
 
         {activeMainTab === "test" ? (
-          <>
+          <Box
+            role="tabpanel"
+            id={`${mainTabsId}-test-panel`}
+            aria-labelledby={`${mainTabsId}-test`}
+            sx={{
+              display: "flex",
+              flexDirection: "column",
+              flex: 1,
+              minHeight: 0,
+            }}
+          >
             {/* Source tabs + Map Variables - same row */}
             <Box sx={{ display: "flex", alignItems: "center", mb: 2 }}>
               <SegmentedTabs
@@ -1197,7 +1161,14 @@ const TestPlayground = React.forwardRef(
                   setInputValues({});
                   onSourceTabChange?.();
                 }}
-                sx={{ width: "fit-content" }}
+                variant="scrollable"
+                scrollButtons="auto"
+                sx={{
+                  width: "fit-content",
+                  "& .MuiTab-root:not(.Mui-selected)": {
+                    color: "text.secondary",
+                  },
+                }}
               >
                 {SOURCE_TABS.map((tab) => (
                   <Tab key={tab} value={tab} label={tab} />
@@ -1401,6 +1372,7 @@ const TestPlayground = React.forwardRef(
                   onReadyChange={handleDatasetReady}
                   isComposite={isComposite}
                   compositeAdhocConfig={compositeAdhocConfig}
+                  unsavedDefinition={unsavedDefinition}
                 />
               )}
 
@@ -1419,6 +1391,7 @@ const TestPlayground = React.forwardRef(
                   onReadyChange={handleTracingReady}
                   isComposite={isComposite}
                   compositeAdhocConfig={compositeAdhocConfig}
+                  unsavedDefinition={unsavedDefinition}
                   hostsFilter
                 />
               )}
@@ -1438,6 +1411,7 @@ const TestPlayground = React.forwardRef(
                   onReadyChange={handleSimulationReady}
                   isComposite={isComposite}
                   compositeAdhocConfig={compositeAdhocConfig}
+                  unsavedDefinition={unsavedDefinition}
                 />
               )}
 
@@ -1522,10 +1496,15 @@ const TestPlayground = React.forwardRef(
                   </Box>
                 )}
             </Box>
-          </>
+          </Box>
         ) : (
           /* =================== VERSIONS TAB =================== */
-          <Box sx={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+          <Box
+            role="tabpanel"
+            id={`${mainTabsId}-versions-panel`}
+            aria-labelledby={`${mainTabsId}-versions`}
+            sx={{ flex: 1, minHeight: 0, overflow: "auto" }}
+          >
             {!templateId ? (
               <Typography
                 variant="body2"
@@ -1599,18 +1578,28 @@ const TestPlayground = React.forwardRef(
                         onMouseEnter={() => setHoveredVersionId(v.id)}
                         onMouseLeave={() => setHoveredVersionId(null)}
                       >
-                        {/* Version badge + connecting line */}
-                        <Box
+                        {/* Native badge activation bubbles to the existing row
+                            handler; metadata and Actions stay outside it. */}
+                        <ButtonBase
+                          aria-current={isSelected ? "true" : undefined}
                           sx={{
                             display: "flex",
                             flexDirection: "column",
                             alignItems: "center",
+                            justifyContent: "flex-start",
+                            alignSelf: "stretch",
                             width: 28,
                             flexShrink: 0,
                             pt: 0.25,
+                            "&:focus-visible, &.Mui-focusVisible": {
+                              outline: (theme) =>
+                                `2px solid ${theme.palette.border.focus}`,
+                              outlineOffset: "-2px",
+                            },
                           }}
                         >
                           <Box
+                            component="span"
                             sx={{
                               width: 26,
                               height: 26,
@@ -1630,6 +1619,7 @@ const TestPlayground = React.forwardRef(
                             }}
                           >
                             <Typography
+                              component="span"
                               sx={{
                                 fontSize: "12px",
                                 fontWeight: 600,
@@ -1646,6 +1636,7 @@ const TestPlayground = React.forwardRef(
                           </Box>
                           {!isLast && (
                             <Box
+                              component="span"
                               sx={{
                                 width: 1.5,
                                 flex: 1,
@@ -1656,7 +1647,7 @@ const TestPlayground = React.forwardRef(
                               }}
                             />
                           )}
-                        </Box>
+                        </ButtonBase>
 
                         {/* Content */}
                         <Box sx={{ flex: 1, minWidth: 0 }}>
@@ -1679,6 +1670,7 @@ const TestPlayground = React.forwardRef(
                             </Typography>
                             {isDefault && (
                               <Box
+                                title={RECORDED_VERSION_TOOLTIP}
                                 sx={{
                                   px: 0.75,
                                   py: 0.125,
@@ -1691,7 +1683,7 @@ const TestPlayground = React.forwardRef(
                                   lineHeight: 1.4,
                                 }}
                               >
-                                Default
+                                Recorded default
                               </Box>
                             )}
                             {isSelected && !isDefault && (
@@ -1758,32 +1750,41 @@ const TestPlayground = React.forwardRef(
                           )}
                         </Box>
 
-                        {/* Three-dot menu - always visible */}
-                        <Tooltip title="Actions" arrow placement="left">
-                          <IconButton
-                            size="small"
-                            disabled={!canEditEvals}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleVersionMenuOpen(e, v);
-                            }}
-                            sx={{
-                              flexShrink: 0,
-                              mt: 0.25,
-                              opacity: isHovered || versionMenuAnchor ? 1 : 0.4,
-                              transition: "opacity 0.15s",
-                              "&:hover": {
-                                backgroundColor: "border.default",
-                              },
-                            }}
-                          >
-                            <Iconify
-                              icon="solar:menu-dots-bold"
-                              width={16}
-                              sx={{ color: "text.secondary" }}
-                            />
-                          </IconButton>
-                        </Tooltip>
+                        {/* Three-dot menu. Hidden for system evals: they are
+                            read-only (Restore asks for an edit and save that
+                            cannot happen), and Set as Default works only on
+                            user templates. Their versions come from the
+                            platform's seed. */}
+                        {!isSystemEval && (
+                          <Tooltip title="Actions" arrow placement="left">
+                            <IconButton
+                              size="small"
+                              disabled={!canEditEvals}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleVersionMenuOpen(e, v);
+                              }}
+                              sx={{
+                                width: 28,
+                                height: 28,
+                                flexShrink: 0,
+                                mt: 0.25,
+                                opacity:
+                                  isHovered || versionMenuAnchor ? 1 : 0.4,
+                                transition: "opacity 0.15s",
+                                "&:hover": {
+                                  backgroundColor: "border.default",
+                                },
+                              }}
+                            >
+                              <Iconify
+                                icon="solar:menu-dots-bold"
+                                width={16}
+                                sx={{ color: "text.secondary" }}
+                              />
+                            </IconButton>
+                          </Tooltip>
+                        )}
                       </Box>
                     );
                   })}
@@ -1849,6 +1850,7 @@ TestPlayground.propTypes = {
   errorLocalizerEnabled: PropTypes.bool,
   isComposite: PropTypes.bool,
   compositeAdhocConfig: PropTypes.object,
+  unsavedDefinition: PropTypes.object,
   templateFormat: PropTypes.string,
   onSourceTabChange: PropTypes.func,
   onClearResult: PropTypes.func,

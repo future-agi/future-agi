@@ -65,6 +65,17 @@ export default function NodeSelectionPanel({ width, disabled = false }) {
     [disabled, guardNodeInsert, insertNode],
   );
 
+  // Cards are divs, so keyboard users get Enter and Space wired by hand; both
+  // go through the same click path (and the same Agent guard).
+  const handleNodeKeyDown = useCallback(
+    (event, node) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      handleNodeClick(node);
+    },
+    [handleNodeClick],
+  );
+
   // Dragging onto the canvas bypasses the click guard, so the Agent card is
   // only draggable while an eligible agent exists; otherwise clicking it
   // opens the setup dialog instead of inserting an unusable node.
@@ -123,7 +134,11 @@ export default function NodeSelectionPanel({ width, disabled = false }) {
             <Box
               key={node.id}
               data-testid={`sidebar-node-${node.id}`}
+              role="button"
+              tabIndex={disabled ? -1 : 0}
+              aria-disabled={disabled || undefined}
               onClick={() => handleNodeClick(node)}
+              onKeyDown={(e) => handleNodeKeyDown(e, node)}
               onDragStart={(e) => handleDragStart(e, node)}
               draggable={isDraggable(node)}
               sx={{

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import React, { useState } from "react";
 import PropTypes from "prop-types";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import {
@@ -9,6 +9,7 @@ import {
   IconButton,
   Menu,
   MenuItem,
+  Tooltip,
   Typography,
   useTheme,
 } from "@mui/material";
@@ -29,15 +30,31 @@ import StatusBadge from "./StatusBadge";
 import IntegrationSyncHistory from "./IntegrationSyncHistory";
 import EditIntegrationDialog from "./EditIntegrationDialog";
 import DeleteIntegrationDialog from "./DeleteIntegrationDialog";
+import RemoveToReconnectDialog from "./RemoveToReconnectDialog";
 import { backButtonSx, outlinedNeutralButtonSx } from "./styles";
+import { useCanManageIntegrations } from "./access";
+import IntegrationAdminOnly from "./IntegrationAdminOnly";
+import {
+  EXPORT_PLATFORMS,
+  UNREADABLE_CREDENTIALS,
+  platformName,
+  reconnectsInEdit,
+} from "./constants";
+import { connectionDestination } from "./utils";
 
 function InfoRow({ label, value }) {
   return (
     <Grid item xs={12} sm={6}>
-      <Typography sx={{ typography: "s2", color: "text.disabled" }}>
+      <Typography sx={{ typography: "s2", color: "text.secondary" }}>
         {label}
       </Typography>
-      <Typography sx={{ typography: "s1", color: "text.primary" }}>
+      <Typography
+        sx={{
+          typography: "s1",
+          color: "text.primary",
+          overflowWrap: "anywhere",
+        }}
+      >
         {value || "—"}
       </Typography>
     </Grid>
@@ -59,6 +76,7 @@ function formatInterval(seconds) {
 export default function IntegrationDetail() {
   const theme = useTheme();
   const { connectionId, workspaceId } = useParams();
+  const canManage = useCanManageIntegrations();
   const navigate = useNavigate();
   const location = useLocation();
   const integrationsPath =
@@ -74,19 +92,25 @@ export default function IntegrationDetail() {
     isError,
     error,
   } = useIntegrationConnection(connectionId);
-  const { mutate: syncNow, isPending: isSyncing } = useSyncNow();
+  const {
+    mutate: syncNow,
+    isPending: isSyncing,
+    completionUnconfirmed,
+    checkStatus,
+  } = useSyncNow(connectionId);
   const { mutate: pause, isPending: isPausing } = usePauseConnection();
   const { mutate: resume, isPending: isResuming } = useResumeConnection();
 
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [removeOpen, setRemoveOpen] = useState(false);
   const [menuAnchor, setMenuAnchor] = useState(null);
 
   if (isLoading) {
     return <LoadingScreen sx={{ height: "100%", minHeight: "60vh" }} />;
   }
 
-  if (isError) {
+  if (isError && !(connection && (isSyncing || completionUnconfirmed))) {
     return (
       <Box py={theme.spacing(4)}>
         <Alert severity="error">
@@ -127,6 +151,24 @@ export default function IntegrationDetail() {
   }
 
   const connData = connection;
+  const isExport = EXPORT_PLATFORMS.includes(connData.platform);
+  // Saved credentials that cannot be read: the page says so once, in place
+  // of any earlier error, with a Reconnect that opens Edit, or, where Edit
+  // can't take its credentials again, says so and offers to remove it.
+  const unreadable = connData.credentials_unreadable === true;
+  const reconnectsHere = unreadable && reconnectsInEdit(connData);
+  // In Error, Sync Now is Retry; while a sync runs or the connection is
+  // paused it waits, and says why.
+  const inError = connData.status === "error";
+  const syncRunning =
+    connData.status === "syncing" || connData.status === "backfilling";
+  const syncWaits = completionUnconfirmed
+    ? ""
+    : syncRunning
+      ? "A sync is running."
+      : connData.status === "paused"
+        ? "Resume the connection to sync it."
+        : "";
 
   return (
     <Box>
@@ -152,35 +194,61 @@ export default function IntegrationDetail() {
           display="flex"
           justifyContent="space-between"
           alignItems="center"
+          gap={theme.spacing(2)}
           mb={theme.spacing(2)}
         >
-          <Box display="flex" alignItems="center" gap={theme.spacing(2)}>
+          <Box
+            display="flex"
+            alignItems="center"
+            gap={theme.spacing(2)}
+            minWidth={0}
+            flex={1}
+          >
             <PlatformLogo platform={connData.platform} />
-            <Box>
+            <Box minWidth={0}>
               <Typography
                 sx={{
                   typography: "m2",
                   fontWeight: "fontWeightSemiBold",
                   color: "text.primary",
+                  overflowWrap: "anywhere",
                 }}
               >
                 {connData.display_name ||
                   connData.external_project_name ||
                   "Unnamed"}
               </Typography>
-              <Typography sx={{ typography: "s1", color: "text.secondary" }}>
-                {connData.host_url || "—"}
+              <Typography
+                data-testid="integration-header-destination"
+                sx={{
+                  typography: "s1",
+                  color: "text.secondary",
+                  overflowWrap: "anywhere",
+                }}
+              >
+                {connectionDestination(connData) || "—"}
               </Typography>
             </Box>
           </Box>
-          <Box display="flex" alignItems="center" gap={theme.spacing(1)}>
-            <StatusBadge status={connData.status} />
-            <IconButton
-              aria-label="Integration options menu"
-              onClick={(e) => setMenuAnchor(e.currentTarget)}
-            >
-              <Iconify icon="solar:menu-dots-bold" />
-            </IconButton>
+          <Box
+            display="flex"
+            alignItems="center"
+            gap={theme.spacing(1)}
+            flexShrink={0}
+          >
+            <StatusBadge
+              status={unreadable ? "error" : connData.status}
+              isExport={isExport}
+            />
+            <IntegrationAdminOnly allowed={canManage}>
+              <IconButton
+                aria-label="Integration options menu"
+                disabled={!canManage}
+                onClick={(e) => setMenuAnchor(e.currentTarget)}
+              >
+                <Iconify icon="solar:menu-dots-bold" />
+              </IconButton>
+            </IntegrationAdminOnly>
             <Menu
               anchorEl={menuAnchor}
               open={Boolean(menuAnchor)}
@@ -206,24 +274,56 @@ export default function IntegrationDetail() {
           </Box>
         </Box>
 
-        {connData.status === "error" && connData.status_message && (
-          <Alert severity="error" sx={{ mb: theme.spacing(2) }}>
-            {connData.status_message}
+        {unreadable ? (
+          <Alert
+            severity="error"
+            sx={{ mb: theme.spacing(2) }}
+            action={
+              <IntegrationAdminOnly allowed={canManage}>
+                <Button
+                  color="inherit"
+                  size="small"
+                  disabled={!canManage}
+                  onClick={() =>
+                    reconnectsHere ? setEditOpen(true) : setRemoveOpen(true)
+                  }
+                >
+                  Reconnect
+                </Button>
+              </IntegrationAdminOnly>
+            }
+          >
+            {UNREADABLE_CREDENTIALS}
           </Alert>
+        ) : (
+          connData.status === "error" &&
+          connData.status_message && (
+            <Alert severity="error" sx={{ mb: theme.spacing(2) }}>
+              {connData.status_message}
+            </Alert>
+          )
         )}
 
         <Grid container spacing={2}>
-          <InfoRow label="Platform" value={connData.platform || "Unknown"} />
           <InfoRow
-            label="Langfuse Project"
-            value={connData.external_project_name}
+            label="Platform"
+            value={connData.platform ? platformName(connData.platform) : null}
           />
-          <InfoRow
-            label="FutureAGI Project"
-            value={connData.project_name || connData.project?.name}
-          />
-          <InfoRow label="Public Key" value={connData.public_key_display} />
-          <InfoRow label="Secret Key" value={connData.secret_key_display} />
+          {/* An export has no Langfuse project, FutureAGI project or key pair. */}
+          {!isExport && (
+            <>
+              <InfoRow
+                label="Langfuse Project"
+                value={connData.external_project_name}
+              />
+              <InfoRow
+                label="FutureAGI Project"
+                value={connData.project_name || connData.project?.name}
+              />
+              <InfoRow label="Public Key" value={connData.public_key_display} />
+              <InfoRow label="Secret Key" value={connData.secret_key_display} />
+            </>
+          )}
           <InfoRow
             label="Created"
             value={connData.created_at ? fDateTime(connData.created_at) : null}
@@ -259,23 +359,35 @@ export default function IntegrationDetail() {
                 : "Never"
             }
           />
-          <InfoRow
-            label="Total Traces"
-            value={connData.total_traces_synced?.toLocaleString() || "0"}
-          />
-          <InfoRow
-            label="Total Spans"
-            value={connData.total_spans_synced?.toLocaleString() || "0"}
-          />
-          <InfoRow
-            label="Total Scores"
-            value={connData.total_scores_synced?.toLocaleString() || "0"}
-          />
+          {isExport && (
+            <InfoRow
+              label="Request Log Deliveries (Including Repeats)"
+              value={(connData.total_traces_synced || 0).toLocaleString()}
+            />
+          )}
+          {!isExport && (
+            <>
+              <InfoRow
+                label="Total Traces"
+                value={connData.total_traces_synced?.toLocaleString() || "0"}
+              />
+              <InfoRow
+                label="Total Spans"
+                value={connData.total_spans_synced?.toLocaleString() || "0"}
+              />
+              <InfoRow
+                label="Total Scores"
+                value={connData.total_scores_synced?.toLocaleString() || "0"}
+              />
+            </>
+          )}
         </Grid>
 
-        {connData.backfill_completed === false && (
+        {/* No sync runs while the connection is in Error, so no backfill is
+            in progress; the Error banner above says why it stopped. */}
+        {connData.backfill_completed === false && !inError && (
           <Alert severity="info" sx={{ mb: theme.spacing(2) }}>
-            Backfill in progress
+            {isExport ? "First export in progress" : "Backfill in progress"}
             {connData.backfill_progress?.total_windows > 0
               ? `: ${Math.min(
                   100,
@@ -292,50 +404,73 @@ export default function IntegrationDetail() {
           </Alert>
         )}
 
+        {completionUnconfirmed && (
+          <Alert severity="warning" sx={{ mb: theme.spacing(2) }}>
+            Sync completion could not be confirmed. Check sync status to refresh
+            its history without starting another sync.
+          </Alert>
+        )}
+
         <Box display="flex" gap={theme.spacing(2)}>
-          <LoadingButton
-            variant="outlined"
-            size="small"
-            loading={isSyncing}
-            onClick={() => syncNow(connectionId)}
-            disabled={
-              connData.status === "syncing" || connData.status === "backfilling"
-            }
-            startIcon={<Iconify icon="solar:refresh-bold" width={16} />}
-            sx={outlinedNeutralButtonSx}
-          >
-            Sync Now
-          </LoadingButton>
-          {connData.status === "active" && (
-            <LoadingButton
-              variant="outlined"
-              size="small"
-              loading={isPausing}
-              onClick={() => pause(connectionId)}
-              startIcon={<Iconify icon="solar:pause-linear" width={16} />}
-              sx={{
-                ...outlinedNeutralButtonSx,
-                color: "text.primary",
-                "&:hover": {
-                  borderColor: "text.disabled",
+          <Tooltip title={syncWaits}>
+            <Box component="span" display="inline-flex">
+              <LoadingButton
+                variant="outlined"
+                size="small"
+                loading={isSyncing}
+                onClick={() =>
+                  completionUnconfirmed
+                    ? checkStatus(connectionId)
+                    : syncNow(connectionId)
+                }
+                disabled={Boolean(syncWaits)}
+                startIcon={<Iconify icon="solar:refresh-bold" width={16} />}
+                sx={outlinedNeutralButtonSx}
+              >
+                {completionUnconfirmed
+                  ? "Check sync status"
+                  : inError
+                    ? "Retry"
+                    : "Sync Now"}
+              </LoadingButton>
+            </Box>
+          </Tooltip>
+          {(connData.status === "active" || inError) && (
+            <IntegrationAdminOnly allowed={canManage}>
+              <LoadingButton
+                variant="outlined"
+                size="small"
+                loading={isPausing}
+                disabled={!canManage}
+                onClick={() => pause(connectionId)}
+                startIcon={<Iconify icon="solar:pause-linear" width={16} />}
+                sx={{
+                  ...outlinedNeutralButtonSx,
                   color: "text.primary",
-                },
-              }}
-            >
-              Pause
-            </LoadingButton>
+                  "&:hover": {
+                    borderColor: "text.disabled",
+                    color: "text.primary",
+                  },
+                }}
+              >
+                Pause
+              </LoadingButton>
+            </IntegrationAdminOnly>
           )}
           {connData.status === "paused" && (
-            <LoadingButton
-              variant="contained"
-              color="primary"
-              size="small"
-              loading={isResuming}
-              onClick={() => resume(connectionId)}
-              startIcon={<Iconify icon="solar:play-bold" width={16} />}
-            >
-              Resume
-            </LoadingButton>
+            <IntegrationAdminOnly allowed={canManage}>
+              <LoadingButton
+                variant="contained"
+                color="primary"
+                size="small"
+                loading={isResuming}
+                disabled={!canManage}
+                onClick={() => resume(connectionId)}
+                startIcon={<Iconify icon="solar:play-bold" width={16} />}
+              >
+                Resume
+              </LoadingButton>
+            </IntegrationAdminOnly>
           )}
         </Box>
       </Section>
@@ -352,17 +487,31 @@ export default function IntegrationDetail() {
         >
           Sync History
         </Typography>
-        <IntegrationSyncHistory connectionId={connectionId} />
+        <IntegrationSyncHistory
+          connectionId={connectionId}
+          isExport={isExport}
+        />
       </Section>
 
       {/* Dialogs */}
       <EditIntegrationDialog
-        open={editOpen}
+        open={canManage && editOpen}
         onClose={() => setEditOpen(false)}
         connection={connData}
       />
+      {unreadable && !reconnectsHere && (
+        <RemoveToReconnectDialog
+          open={canManage && removeOpen}
+          onClose={() => setRemoveOpen(false)}
+          onRemove={() => {
+            setRemoveOpen(false);
+            setDeleteOpen(true);
+          }}
+          connection={connData}
+        />
+      )}
       <DeleteIntegrationDialog
-        open={deleteOpen}
+        open={canManage && deleteOpen}
         onClose={() => setDeleteOpen(false)}
         onDeleted={() => {
           setDeleteOpen(false);

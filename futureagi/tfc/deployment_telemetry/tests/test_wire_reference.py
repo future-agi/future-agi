@@ -22,10 +22,7 @@ from pathlib import Path
 import pytest
 
 from tfc.deployment_telemetry import config
-from tfc.deployment_telemetry.payloads import (
-    build_minimal_registration_payload,
-    serialized_size,
-)
+from tfc.deployment_telemetry.payloads import serialized_size
 from tfc.deployment_telemetry.schema import (
     COUNT_FIELDS,
     HEARTBEAT_FIELDS,
@@ -126,10 +123,8 @@ def test_the_example_heartbeat_is_a_valid_payload(wire):
     assert serialized_size(example) <= MAX_PAYLOAD_BYTES
 
 
-def test_the_opt_out_fields_are_what_the_opt_out_registration_sends(wire):
-    payload = build_minimal_registration_payload(uuid.uuid4())
-    assert wire["opt_out"]["fields"] == list(payload)
-    assert payload["telemetry_disabled"] is True
+def test_the_opt_out_sends_no_fields(wire):
+    assert wire["opt_out"]["fields"] == []
 
 
 def test_every_telemetry_setting_has_a_reference_row(telemetry_rows):
@@ -167,3 +162,39 @@ def test_the_telemetry_blocks_render_as_mdx(wire):
     heartbeat = docs_site.render_telemetry_heartbeat(wire)
     for name in REGISTRATION_FIELDS | HEARTBEAT_FIELDS:
         assert f"`{name}`" in registration + heartbeat, name
+
+
+_DEFAULT_FIELDS = re.compile(r"By default the registration contains exactly ([^;]+);")
+
+
+def _default_fields(text: str) -> set[str]:
+    (listed,) = _DEFAULT_FIELDS.findall(text)
+    return {name.split("=", 1)[0] for name in re.findall(r"`([^`]+)`", listed)}
+
+
+def test_the_registration_intro_lists_the_default_fields_exactly(wire):
+    """Every registration field but `users`, which only the opt-in adds."""
+    intro = wire["registration"]["intro"]
+    assert "when the first owner/admin account exists" in intro
+    assert _default_fields(intro) == REGISTRATION_FIELDS - {"users"}
+
+
+def test_the_admin_email_row_lists_the_default_fields_exactly(telemetry_rows):
+    (row,) = [
+        r
+        for r in telemetry_rows
+        if r["keys"] == ["FUTURE_AGI_TELEMETRY_SHARE_ADMIN_EMAILS"]
+    ]
+    assert _default_fields(row["text"]) == REGISTRATION_FIELDS - {"users"}
+
+
+def test_the_registration_block_ends_with_the_re_registration_note(wire):
+    script = _ENV_REFERENCE.parents[1] / "scripts" / "docs_site.py"
+    if not script.is_file():
+        pytest.skip(f"{script} not present in this checkout")
+    spec = importlib.util.spec_from_file_location("docs_site", script)
+    docs_site = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(docs_site)
+    after = wire["registration"]["after"].strip()
+    assert "re-registers once without `users`" in after
+    assert docs_site.render_telemetry_registration(wire).rstrip().endswith(after)

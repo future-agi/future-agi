@@ -1,0 +1,7 @@
+[
+  {
+    "name": "ops_restart",
+    "description": "The operator's YAML server's tool (65_m9_tenancy.sh).",
+    "inputSchema": { "type": "object" }
+  }
+]

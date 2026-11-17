@@ -2383,7 +2383,7 @@ class DirectoryHashSkipsEditorAndOsLitterTests(unittest.TestCase):
         self.assertEqual(hash_path(host.parent, "catalog"), expected.hexdigest())
 
     def test_this_repositorys_listed_directories_do_not_drift_over_litter(self):
-        # The report's repro: a copy of futureagi/scripts/property_catalog_oss with 'bootstrap_clickhouse.sh~'
+        # The case: a copy of futureagi/scripts/property_catalog_oss with 'bootstrap_clickhouse.sh~'
         # or Thumbs.db in it read as drift. Every directory the real deployment-file list names is checked.
         directories = [entry for entry in read_deployment_file_list(ROOT) if (ROOT / entry).is_dir()]
         self.assertIn("futureagi/scripts/property_catalog_oss", directories)

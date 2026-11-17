@@ -46,28 +46,28 @@ const getValidationSchema = () => {
         description: z.string().min(1, "Description is required"),
         displayOption: z.string().optional(),
 
-        min: z
-          .string()
-          .transform((val) => Number(val))
-          .optional(),
-
-        max: z
-          .string()
-          .transform((val) => Number(val))
-          .optional(),
-
-        stepSize: z
-          .string()
-          .optional()
-          .transform((val) => Number(val)),
+        // Kept as typed, so a numeric label can tell an empty field from a 0.
+        min: z.string().optional(),
+        max: z.string().optional(),
+        stepSize: z.string().optional(),
         promptDesc: z.string().optional(),
         multiChoice: z.boolean().default(false),
         placeholderText: z.string().optional(),
       })
-      .superRefine((data, ctx) => {
+      .superRefine((fields, ctx) => {
+        // Every check below reads Min, Max and Step Size as numbers.
+        const data = {
+          ...fields,
+          min: Number(fields.min),
+          max: Number(fields.max),
+          stepSize: Number(fields.stepSize),
+        };
         const type = data.type;
         isAutoAnnotated = data.auto_annotate;
         isAnnoType = data.type;
+        // A numeric label's 0 is a value: only an empty field is missing.
+        const isMissing = (key) =>
+          type === "numeric" ? (fields[key] ?? "") === "" : !data[key];
 
         if (type === "text" && !data.placeholderText) {
           ctx.addIssue({
@@ -76,13 +76,13 @@ const getValidationSchema = () => {
           });
         }
 
-        if (type !== "categorical" && !data.min) {
+        if (type !== "categorical" && isMissing("min")) {
           ctx.addIssue({
             path: ["min"],
             message: "Min value is required",
           });
         }
-        if (type !== "categorical" && !data.max) {
+        if (type !== "categorical" && isMissing("max")) {
           ctx.addIssue({
             path: ["max"],
             message: "Max value is required",
@@ -96,7 +96,7 @@ const getValidationSchema = () => {
           });
         }
 
-        if (type === "numeric" && !data.stepSize) {
+        if (type === "numeric" && isMissing("stepSize")) {
           ctx.addIssue({
             path: ["stepSize"],
             message: "Step size is required",
@@ -108,35 +108,33 @@ const getValidationSchema = () => {
           const maxVal = data.max;
           const stepSize = data.stepSize;
 
-          if (data.min && (isNaN(data.min) || data.min <= 0)) {
+          // The same words as the other numeric label forms. A field's sign
+          // comes first; while it is wrong, the field is not compared.
+          if (!isMissing("min") && (isNaN(minVal) || minVal < 0)) {
             ctx.addIssue({
               path: ["min"],
-              message: `Min value must be a non-negative number`,
+              message: "Enter a value of 0 or more",
             });
           }
 
-          if (maxVal && isNaN(maxVal)) {
+          if (!isMissing("max") && (isNaN(maxVal) || maxVal <= 0)) {
             ctx.addIssue({
               path: ["max"],
-              message: `Max value must be a valid number`,
+              message: "Enter a value above 0",
             });
-          }
-
-          if (stepSize && (isNaN(stepSize) || stepSize <= 0)) {
-            ctx.addIssue({
-              path: ["stepSize"],
-              message: `Step size must be a positive number`,
-            });
-          }
-
-          if (maxVal <= minVal) {
+          } else if (maxVal <= minVal) {
             ctx.addIssue({
               path: ["max"],
               message: "Max value must be greater than Min",
             });
           }
 
-          if (stepSize <= 0 || stepSize > maxVal - minVal) {
+          if (!isMissing("stepSize") && (isNaN(stepSize) || stepSize <= 0)) {
+            ctx.addIssue({
+              path: ["stepSize"],
+              message: "Enter a value above 0",
+            });
+          } else if (stepSize <= 0 || stepSize > maxVal - minVal) {
             ctx.addIssue({
               path: ["stepSize"],
               message: `Step size must lie between 0 and (Max - Min)`,

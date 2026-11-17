@@ -125,7 +125,7 @@ describe("org config mutations", () => {
 
       await waitFor(() =>
         expect(mockEnqueueSnackbar).toHaveBeenCalledWith(
-          "Gateway sync failed. Changes will apply on next gateway restart.",
+          "Gateway sync failed. A gateway connected to this app retries fetching saved configs during its periodic sync.",
           { variant: "warning" },
         ),
       );

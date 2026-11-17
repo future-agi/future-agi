@@ -1,0 +1,23 @@
+schema: "connector-manifest/v1#app"
+id: netlify
+version: 1.0.0
+name: Netlify
+description: "Create, deploy and manage Netlify projects."
+vendor:
+  name: Netlify
+  domains: [netlify.com]
+  githubOrgs: [netlify]
+eeCategory: developer
+group: other
+categories: [developer, hosting]
+tags: [deployments, projects]
+docsUrl: https://docs.netlify.com/build/build-with-ai/agent-setup-guides/agent-setup-overview/
+defaultProvider: mcp
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://docs.netlify.com/build/build-with-ai/agent-setup-guides/agent-setup-overview/
+    fetchedAt: 2026-10-21
+  - fact: vendor.githubOrgs
+    url: https://github.com/netlify/netlify-mcp
+    fetchedAt: 2026-10-21

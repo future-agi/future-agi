@@ -31,10 +31,12 @@ import {
   scopeFromSeed,
 } from "src/sections/projects/observeScope";
 import {
+  COST_UNCHECKED,
   draftConfig,
   actionCreditsBlocked,
   previewConfig,
   rememberPopulation,
+  scopeRefusal,
   startRun,
   useActionCredits,
   useExampleRows,
@@ -116,6 +118,11 @@ const normalizeAttributes = (attributes = []) =>
       filter_by: a.type === "boolean" && Boolean(a.filter_by),
     }));
 
+// The same settings; the note on a moved scope is not one.
+const sameDraft = (a, b) =>
+  JSON.stringify({ ...a, scopeNotice: null }) ===
+  JSON.stringify({ ...b, scopeNotice: null });
+
 // Another unit keeps the date; filters it can't read are dropped, and the
 // form says so.
 function withUnit(draft, unit) {
@@ -191,7 +198,9 @@ Step.propTypes = {
   action: PropTypes.node,
 };
 
-function BusyLine({ label, startedAt, onCancel }) {
+// No Cancel: the server finishes (and charges) a draft, preview or start it
+// was sent, so a cancel would only throw the paid result away.
+function BusyLine({ label, startedAt }) {
   const seconds = useElapsedSeconds(startedAt, true);
   return (
     <Stack direction="row" spacing={1.25} alignItems="center">
@@ -199,11 +208,6 @@ function BusyLine({ label, startedAt, onCancel }) {
       <Typography variant="body2" color="text.secondary">
         {label} {seconds > 0 ? `${seconds} s` : ""}
       </Typography>
-      {onCancel && (
-        <Button size="small" color="inherit" onClick={onCancel}>
-          Cancel
-        </Button>
-      )}
     </Stack>
   );
 }
@@ -211,7 +215,6 @@ function BusyLine({ label, startedAt, onCancel }) {
 BusyLine.propTypes = {
   label: PropTypes.string.isRequired,
   startedAt: PropTypes.number,
-  onCancel: PropTypes.func,
 };
 
 function LensPicker({ value, onChange, disabled }) {
@@ -286,6 +289,7 @@ export default function NewReport({
   configs,
   onCancel,
   onStarted,
+  onDirtyChange,
 }) {
   const queryClient = useQueryClient();
   const canRun = useCanStartRuns();
@@ -298,6 +302,9 @@ export default function NewReport({
   );
   const fixed = fixedPopulation.length > 0;
   const [draft, setDraft] = useState(() => initialDraft(seed, initialLens));
+  // The form as it opened, with the defaults it fills in by itself: leaving
+  // a draft that differs from it asks first.
+  const [pristine, setPristine] = useState(draft);
   const [touched, setTouched] = useState(() => ({
     unit: Boolean(UNITS[seed?.unit]),
     question: Boolean(seed?.question),
@@ -317,9 +324,10 @@ export default function NewReport({
   const defaultUnit = hasSessions.data === false ? "traces" : "sessions";
   useEffect(() => {
     if (touched.unit || fixed || hasSessions.data !== false) return;
-    setDraft((current) =>
-      current.unit === "sessions" ? withUnit(current, "traces") : current,
-    );
+    const toTraces = (current) =>
+      current.unit === "sessions" ? withUnit(current, "traces") : current;
+    setDraft(toTraces);
+    setPristine(toTraces);
   }, [hasSessions.data, touched.unit, fixed]);
 
   // The agent rarely changes between reports; start from the last one's.
@@ -329,11 +337,12 @@ export default function NewReport({
   );
   useEffect(() => {
     if (touched.agent || !priorAgent) return;
-    setDraft((current) =>
+    const withAgent = (current) =>
       current.agentDescription
         ? current
-        : { ...current, agentDescription: priorAgent.agent_description },
-    );
+        : { ...current, agentDescription: priorAgent.agent_description };
+    setDraft(withAgent);
+    setPristine(withAgent);
   }, [priorAgent, touched.agent]);
 
   const setLens = (key) => {
@@ -390,6 +399,9 @@ export default function NewReport({
     fixed && (handedCost.isLoading || handedCost.isPlaceholderData);
   const stillCounting =
     !fixed && draft.unit === "users" && Boolean(count.data?.totalIsLowerBound);
+  // The server can't count this scope at all: its reason names what to
+  // change, and a retry gets the same answer.
+  const refusal = !fixed && count.isError ? scopeRefusal(count.error) : null;
   const population = fixed
     ? {
         total: fixedPopulation.length,
@@ -426,6 +438,17 @@ export default function NewReport({
     "The report could not be started.",
     "Couldn't start right now. Try again in a moment.",
   );
+
+  // Changed settings, and an AI draft or preview paid for, are lost on leaving.
+  const paid = (state) => state.status === "busy" || state.status === "done";
+  const dirty =
+    !sameDraft(draft, pristine) ||
+    paid(drafting.state) ||
+    paid(previewing.state);
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+    return () => onDirtyChange?.(false);
+  }, [dirty, onDirtyChange]);
 
   const draftWithAI = () => {
     if (actionCreditsBlocked(draftCredits)) return;
@@ -469,7 +492,16 @@ export default function NewReport({
       }),
     [draft, namePlaceholder],
   );
-  const configKey = JSON.stringify(configForPreview);
+  // Rows handed over from a report keep the window it read them in, so a
+  // user's activity is read in that window only, as the source report did.
+  // (A seed's own date opens the scope bar; it never bounds handed-over rows.)
+  const scopeForPreview = fixed
+    ? fixedScope(seed?.label, seed?.sourceWindow)
+    : storedScope(draft.scope);
+  const configKey = JSON.stringify({
+    config: configForPreview,
+    scope: scopeForPreview,
+  });
 
   const preview = (offset) => {
     if (actionCreditsBlocked(previewCredits)) return;
@@ -480,6 +512,7 @@ export default function NewReport({
         {
           project_id: projectId,
           config: configForPreview,
+          scope: scopeForPreview,
           unit_ids: spreadPick(items, PREVIEW_EXAMPLES, offset).map(
             (item) => item.id,
           ),
@@ -499,8 +532,12 @@ export default function NewReport({
     attributeError(attribute, draft.attributes),
   );
   const noData = !fixed && !counting && population && total === 0;
+  // The server may start (and charge) the run before it answers, so the form
+  // stays until it does: a cancel or close would only stop the browser
+  // waiting, as in the rerun dialog.
+  const startingBusy = starting.state.status === "busy";
   const busy =
-    starting.state.status === "busy" ||
+    startingBusy ||
     drafting.state.status === "busy" ||
     previewing.state.status === "busy";
   // What the run costs, and whether the credits left pay for it.
@@ -514,9 +551,11 @@ export default function NewReport({
     ? "Write the question this report should answer."
     : attributeProblem
       ? "Fix the attribute keys first."
-      : noData
-        ? `There are no ${UNITS[draft.unit].plural} in this scope.`
-        : creditBlocker;
+      : refusal
+        ? "This scope can't be counted. Change the date or filters."
+        : noData
+          ? `There are no ${UNITS[draft.unit].plural} in this scope.`
+          : creditBlocker;
 
   const runReport = () =>
     starting.run(async () => {
@@ -526,6 +565,7 @@ export default function NewReport({
         scope = fixedScope(
           seed?.label ||
             `${formatCount(fixedPopulation.length)} ${unitWord(draft.unit, fixedPopulation.length)}${seed?.source ? ` from ${seed.source}` : ""}`,
+          seed?.sourceWindow,
         );
         rows = fixedPopulation;
         if (!rows.length) {
@@ -590,6 +630,7 @@ export default function NewReport({
         <IconButton
           aria-label="Close new report"
           onClick={onCancel}
+          disabled={startingBusy}
           size="small"
         >
           <Iconify icon="mdi:close" width={18} />
@@ -730,7 +771,9 @@ export default function NewReport({
                 </Stack>
               ) : count.isError && !fixed ? (
                 <Typography variant="body2" color="text.secondary">
-                  The scope and report cost could not be checked.
+                  {refusal
+                    ? "This scope can't be counted."
+                    : "The scope and report cost could not be checked."}
                 </Typography>
               ) : population ? (
                 <Stack direction="row" spacing={1} alignItems="center">
@@ -784,23 +827,27 @@ export default function NewReport({
               </Typography>
             )}
           </Stack>
-          {((fixed ? handedCost.isError : count.isError) ||
-            credits?.unavailable) && (
-            <Alert
-              severity="error"
-              action={
-                <Button
-                  color="inherit"
-                  onClick={() => (fixed ? handedCost : count).refetch()}
-                >
-                  Retry cost check
-                </Button>
-              }
-            >
-              {credits?.unavailable
-                ? credits.message
-                : "The report cost could not be checked. Check it before running."}
+          {refusal ? (
+            <Alert severity="error">
+              {`${refusal} Change the date or filters, then run the report.`}
             </Alert>
+          ) : (
+            ((fixed ? handedCost.isError : count.isError) ||
+              credits?.unavailable) && (
+              <Alert
+                severity="error"
+                action={
+                  <Button
+                    color="inherit"
+                    onClick={() => (fixed ? handedCost : count).refetch()}
+                  >
+                    Retry cost check
+                  </Button>
+                }
+              >
+                {credits?.unavailable ? credits.message : COST_UNCHECKED}
+              </Alert>
+            )
           )}
           {creditLimited && !credits.unavailable && (
             <CreditLimit
@@ -834,7 +881,6 @@ export default function NewReport({
               <BusyLine
                 label={`Reading ${Math.min(DRAFT_EXAMPLES, items.length)} examples and drafting…`}
                 startedAt={draftState.startedAt}
-                onCancel={drafting.cancel}
               />
             ) : (
               <Stack spacing={0.5} alignItems="flex-end">
@@ -925,7 +971,6 @@ export default function NewReport({
             <BusyLine
               label={`Reading ${PREVIEW_EXAMPLES} examples…`}
               startedAt={previewState.startedAt}
-              onCancel={previewing.cancel}
             />
           ) : (
             <Button
@@ -942,6 +987,7 @@ export default function NewReport({
               disabled={
                 !canRun ||
                 busy ||
+                counting ||
                 !items.length ||
                 questionMissing ||
                 attributeProblem ||
@@ -1007,7 +1053,7 @@ export default function NewReport({
       >
         <Stack direction="row" alignItems="center" spacing={2}>
           <Box sx={{ flex: 1, minWidth: 0 }}>
-            {starting.state.status === "busy" ? (
+            {startingBusy ? (
               <BusyLine
                 label={startPhase || "Starting…"}
                 startedAt={starting.state.startedAt}
@@ -1043,7 +1089,7 @@ export default function NewReport({
               </Typography>
             )}
           </Box>
-          <Button color="inherit" onClick={onCancel}>
+          <Button color="inherit" onClick={onCancel} disabled={startingBusy}>
             Cancel
           </Button>
           <Button
@@ -1076,4 +1122,5 @@ NewReport.propTypes = {
   configs: PropTypes.array,
   onCancel: PropTypes.func.isRequired,
   onStarted: PropTypes.func.isRequired,
+  onDirtyChange: PropTypes.func,
 };

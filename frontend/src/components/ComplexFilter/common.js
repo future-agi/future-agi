@@ -396,15 +396,18 @@ export const isEmptyFilter = (filter) => {
   });
 };
 
-export const handleNumericInput = (v) => {
+// allowNegative keeps one "-" typed first; every other "-" is dropped. Off by
+// default, so every caller that passes only the value is unchanged.
+export const handleNumericInput = (v, { allowNegative = false } = {}) => {
+  const sign = allowNegative && v.startsWith("-") ? "-" : "";
   // Allow digits 0-9 and decimal point
   const value = v.replace(/[^0-9.]/g, "");
   // Ensure only one decimal point
   const parts = value.split(".");
   if (parts.length > 2) {
-    return parts[0] + "." + parts.slice(1).join("");
+    return sign + parts[0] + "." + parts.slice(1).join("");
   }
-  return value;
+  return sign + value;
 };
 
 export const avoidDuplicateFilterSet = (prev, filter) => {

@@ -19,6 +19,12 @@ import PropTypes from "prop-types";
 import { paths } from "src/routes/paths";
 import { FormSearchSelectFieldState } from "src/components/FromSearchSelectField";
 import RightSectionAuth from "./RightSectionAuth";
+import {
+  authSplitSx,
+  authFormPanelSx,
+  authAsideSx,
+  authFormGutterSx,
+} from "src/layouts/auth/responsive-styles";
 import { useDeploymentMode } from "src/hooks/useDeploymentMode";
 import { Controller, useForm, useFieldArray, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -137,6 +143,7 @@ const MemberRow = React.memo(
         {member.organization_role !== "Owner" && (
           <IconButton
             className="remove-btn"
+            aria-label="Remove teammate"
             onClick={() => onRemove(index)}
             sx={{
               position: "absolute",
@@ -238,11 +245,13 @@ const SetupOrganization = ({ getStarted = false }) => {
     return rt && rt.startsWith("/") && !rt.startsWith("//") ? rt : null;
   })();
 
+  // Steps go into browser history so the browser Back button moves between
+  // them; `replace` is for corrections the user should not step back into.
   const setActiveStep = useCallback(
-    (newStep) => {
+    (newStep, { replace = false } = {}) => {
       const params = new URLSearchParams(searchParams);
       params.set("step", newStep.toString());
-      setSearchParams(params, { replace: true });
+      setSearchParams(params, { replace });
     },
     [searchParams, setSearchParams],
   );
@@ -286,13 +295,20 @@ const SetupOrganization = ({ getStarted = false }) => {
     meta: { errorHandled: true },
   });
 
-  const { mutate: saveUserData, isPending: isSavingUserData } = useMutation({
+  const {
+    mutate: saveUserData,
+    isPending: isSavingUserData,
+    isSuccess: userDataSaved,
+  } = useMutation({
     mutationFn: async (data) => {
       return await axios.post(endpoints.auth.user_onboarding_info, data);
     },
     meta: {
       errorHandled: true,
     },
+    // A read still on its way answers from before this save.
+    onMutate: () =>
+      queryClient.cancelQueries({ queryKey: ["user-role-goals"] }),
     onSuccess: async (data, variables) => {
       // An in-flight read must not overwrite the saved profile on a later mount.
       await queryClient.cancelQueries({ queryKey: ["user-role-goals"] });
@@ -323,7 +339,7 @@ const SetupOrganization = ({ getStarted = false }) => {
           localStorage.setItem("initial-render", "done");
           localStorage.removeItem("redirectUrl");
         }
-        window.location.href = returnTo || paths.dashboard.develop;
+        redirectAfterOrgSetup(returnTo || paths.dashboard.develop);
       }
     },
     onError: (error) => {
@@ -622,7 +638,7 @@ const SetupOrganization = ({ getStarted = false }) => {
           {!isOSS && (
             <>
               <Typography variant="m2" fontWeight="fontWeightMedium">
-                Invite people to collaborate in FutureAGI
+                Invite people to collaborate in Future AGI
               </Typography>
 
               <Box
@@ -696,33 +712,21 @@ const SetupOrganization = ({ getStarted = false }) => {
                 })}
 
                 <Box sx={{ mt: 2 }}>
-                  <Typography
-                    variant={getStarted ? "body2" : "s1.2"}
-                    sx={{
-                      color: "primary.main",
-                      cursor: "pointer",
-                      display: "inline-flex",
-                      alignItems: "center",
-                      border: "1px solid",
-                      borderColor: "primary.main",
-                      borderRadius: getStarted ? 1 : 0.5,
-                      padding: "4px 10px",
-                      transition: "all 0.2s",
-                      fontWeight: !getStarted && 500,
-                      "&:hover": { bgcolor: "action.hover" },
-                    }}
+                  <Button
+                    variant="outlined"
+                    color="primary"
+                    size="small"
+                    startIcon={
+                      <SvgColor
+                        src="/assets/icons/ic_add.svg"
+                        width={15}
+                        height={15}
+                      />
+                    }
                     onClick={addMember}
-                    disable={!getStarted && memberToadd?.length > 3}
                   >
-                    <SvgColor
-                      src="/assets/icons/ic_add.svg"
-                      width={15}
-                      height={15}
-                      sx={{ mr: 1 }}
-                    />
-
                     {getStarted ? "Add members" : "Add"}
-                  </Typography>
+                  </Button>
                 </Box>
               </Box>
             </>
@@ -767,6 +771,19 @@ const SetupOrganization = ({ getStarted = false }) => {
     </Box>
   );
 
+  const renderBackButton = (step, disabled) => (
+    <Button
+      variant="text"
+      color="inherit"
+      size="small"
+      disabled={disabled}
+      onClick={() => setActiveStep(step)}
+      sx={{ alignSelf: "flex-start" }}
+    >
+      Back
+    </Button>
+  );
+
   const renderContent = () => {
     switch (activeStep) {
       case 0:
@@ -779,6 +796,7 @@ const SetupOrganization = ({ getStarted = false }) => {
         }
         return (
           <Stack spacing={4} maxWidth="440px">
+            {renderBackButton(1, isCreating)}
             <Box>
               <Typography
                 fontWeight={"fontWeightSemiBold"}
@@ -853,11 +871,10 @@ const SetupOrganization = ({ getStarted = false }) => {
   }
 
   return (
-    <Box sx={{ width: "100%", height: "100vh", display: "flex" }}>
+    <Box sx={authSplitSx}>
       <Box
         sx={{
-          width: "50%",
-          height: "100vh",
+          ...authFormPanelSx,
           bgcolor: "background.paper",
           display: "flex",
           flexDirection: "column",
@@ -869,7 +886,7 @@ const SetupOrganization = ({ getStarted = false }) => {
           sx={{
             maxWidth: "640px",
             width: "100%",
-            px: 10,
+            ...authFormGutterSx,
             paddingY: "100px",
             display: "flex",
             flexDirection: "column",
@@ -890,6 +907,7 @@ const SetupOrganization = ({ getStarted = false }) => {
               setActiveStep={setActiveStep}
               saveUserData={saveUserData}
               isSavingUserData={isSavingUserData}
+              userDataSaved={userDataSaved}
             />
           ) : (
             (activeStep === 0 || activeStep === 1) &&
@@ -907,13 +925,7 @@ const SetupOrganization = ({ getStarted = false }) => {
         </Box>
       </Box>
 
-      <Box
-        sx={{
-          width: "50%",
-          height: "100%",
-          backgroundColor: "background.neutral",
-        }}
-      >
+      <Box sx={authAsideSx}>
         <RightSectionAuth />
       </Box>
     </Box>

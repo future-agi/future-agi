@@ -11,7 +11,7 @@ describe("session cost display", () => {
     [null, "-"],
     [undefined, "-"],
     [0.000001, "$0.000001"],
-    [0.00000004, "< $0.0000001"],
+    [0.00000004, "$0.00000004"],
     [0.0015, "$0.0015"],
   ])(
     "formats %s without losing zero, unknown or microdollars",

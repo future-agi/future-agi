@@ -220,56 +220,56 @@ export default function AnnotationQueuesView() {
           View Docs
         </Button>
       }
+      // The toolbar stays when no active queues remain (as on the Labels
+      // tab): the Archived toggle is the only way back to archived queues.
       toolbar={
-        isEmpty ? null : (
-          <>
-            <FormSearchField
-              size="small"
-              placeholder="Search"
-              searchQuery={searchInput}
-              onChange={handleSearch}
-              sx={{ width: 280 }}
-            />
-            <ToggleButtonGroup
-              exclusive
-              size="small"
-              value={filters.archived ? "archived" : "active"}
-              onChange={handleArchiveViewChange}
-            >
-              <ToggleButton value="active">Active</ToggleButton>
-              <ToggleButton value="archived">Archived</ToggleButton>
-            </ToggleButtonGroup>
-            <TextField
-              size="small"
-              select
-              value={filters.status}
-              onChange={handleStatusFilter}
-              sx={{ minWidth: 160 }}
-              SelectProps={{
-                displayEmpty: true,
-                renderValue: (v) =>
-                  STATUS_OPTIONS.find((o) => o.value === v)?.label ||
-                  "All Statuses",
-              }}
-            >
-              {STATUS_OPTIONS.map((opt) => (
-                <MenuItem key={opt.value} value={opt.value}>
-                  {opt.label}
-                </MenuItem>
-              ))}
-            </TextField>
-            <Box sx={{ flex: 1 }} />
-            <Button
-              variant="contained"
-              color="primary"
-              startIcon={<Iconify icon="solar:add-linear" />}
-              onClick={handleCreateNew}
-              disabled={!canWrite}
-            >
-              Create Queue
-            </Button>
-          </>
-        )
+        <>
+          <FormSearchField
+            size="small"
+            placeholder="Search"
+            searchQuery={searchInput}
+            onChange={handleSearch}
+            sx={{ width: 280 }}
+          />
+          <ToggleButtonGroup
+            exclusive
+            size="small"
+            value={filters.archived ? "archived" : "active"}
+            onChange={handleArchiveViewChange}
+          >
+            <ToggleButton value="active">Active</ToggleButton>
+            <ToggleButton value="archived">Archived</ToggleButton>
+          </ToggleButtonGroup>
+          <TextField
+            size="small"
+            select
+            value={filters.status}
+            onChange={handleStatusFilter}
+            sx={{ minWidth: 160 }}
+            SelectProps={{
+              displayEmpty: true,
+              renderValue: (v) =>
+                STATUS_OPTIONS.find((o) => o.value === v)?.label ||
+                "All Statuses",
+            }}
+          >
+            {STATUS_OPTIONS.map((opt) => (
+              <MenuItem key={opt.value} value={opt.value}>
+                {opt.label}
+              </MenuItem>
+            ))}
+          </TextField>
+          <Box sx={{ flex: 1 }} />
+          <Button
+            variant="contained"
+            color="primary"
+            startIcon={<Iconify icon="solar:add-linear" />}
+            onClick={handleCreateNew}
+            disabled={!canWrite}
+          >
+            Create Queue
+          </Button>
+        </>
       }
     >
       {isEmpty ? (

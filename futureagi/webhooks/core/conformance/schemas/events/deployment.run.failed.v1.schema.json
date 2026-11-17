@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:futureagi:webhooks:v1:deployment.run.failed",
+  "title": "deployment.run.failed, api_version v1 (B8-EVENT-CONTRACT.md section 6.4 and DESIGN.md section 14.4)",
+  "allOf": [{"$ref": "urn:futureagi:webhooks:v1:envelope"}, {"$ref": "urn:futureagi:webhooks:v1:deployment.run"}],
+  "type": "object",
+  "properties": {
+    "type": {"const": "deployment.run.failed"},
+    "data": {
+      "type": "object",
+      "properties": {
+        "run": {
+          "type": "object",
+          "properties": {
+            "status": {"enum": ["failed", "cancelled", "interrupted"]},
+            "error": {
+              "type": "object",
+              "required": ["type", "code"],
+              "properties": {
+                "type": {"type": "string", "pattern": "^[A-Za-z0-9_.]{1,128}$"},
+                "code": {"type": "string", "pattern": "^[a-z_]{1,32}$"},
+                "http_status": {"type": "integer", "minimum": 100, "maximum": 599},
+                "host": {"type": "string", "maxLength": 253}
+              },
+              "additionalProperties": false
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,6 +1,7 @@
 """OAuth token utilities using Fernet encryption."""
 
 import base64
+import binascii
 import hashlib
 import json
 import secrets
@@ -59,8 +60,26 @@ def generate_refresh_token(user_id, org_id, client_id):
     return encrypted.decode()
 
 
+def is_canonical_oauth_token(token: str) -> bool:
+    """Require the exact URL-safe base64 text emitted by Fernet.
+
+    This is a format check, not authentication. A single accepted spelling keeps
+    bearer-text revocation digests authoritative, including existing tombstones.
+    """
+    if not isinstance(token, str) or not token:
+        return False
+    try:
+        encoded = token.encode("ascii")
+        decoded = base64.b64decode(encoded, altchars=b"-_", validate=True)
+    except (UnicodeEncodeError, binascii.Error):
+        return False
+    return base64.urlsafe_b64encode(decoded) == encoded
+
+
 def decrypt_oauth_token(token):
     """Decrypt and validate an OAuth token. Returns payload dict or None."""
+    if not is_canonical_oauth_token(token):
+        return None
     try:
         f = _get_fernet()
         decrypted = f.decrypt(token.encode())

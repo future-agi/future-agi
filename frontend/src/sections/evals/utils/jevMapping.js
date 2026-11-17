@@ -1,7 +1,13 @@
 import { decisionCompatibilityError } from "./decisionModels";
 
+export const JEV_GROUND_TRUTH_MESSAGE =
+  "Ground truth is not supported with Jev models. Disable ground truth or choose another evaluator model. Your uploaded examples are kept.";
+
 export const JEV_RUBRIC_ERROR =
   "Jev rubric score requires 2 to 10 ordered levels";
+
+export const JEV_RUBRIC_REPEAT_ERROR =
+  "Jev rubric levels must all be different. Rename or remove the repeated level.";
 
 // choice_scores is a jsonb column, which returns object keys shortest first,
 // so its key order is not the order the author saved. Put the authored labels
@@ -90,6 +96,7 @@ export function getJevValidationErrors({
   inputDataTypes,
   messages,
   choiceScores,
+  groundTruthEnabled = false,
   modelLabel = "Jev",
   modelGroup,
 }) {
@@ -120,6 +127,8 @@ export function getJevValidationErrors({
     (feature) =>
       `${feature} is not supported with Jev models. Nothing was changed or removed from your template.`,
   );
+  if (groundTruthEnabled || hasEntries(config.ground_truth_blocks))
+    errors.unshift(JEV_GROUND_TRUTH_MESSAGE);
   if (!mapping.question_type)
     errors.push(
       "This output type is not supported with Jev models. Nothing was changed or removed from your template.",
@@ -136,14 +145,15 @@ export function getJevValidationErrors({
       levels.some(
         (level) =>
           typeof level !== "string" || !level.trim() || level.length > 2000,
-      ) ||
-      new Set(
-        levels.map((level) =>
-          typeof level === "string" ? level.trim() : level,
-        ),
-      ).size !== levels.length
+      )
     )
       errors.push(JEV_RUBRIC_ERROR);
+    // A valid count of written levels where two read the same: say so, not
+    // the count (the counter already shows 2 / 10).
+    else if (
+      new Set(levels.map((level) => level.trim())).size !== levels.length
+    )
+      errors.push(JEV_RUBRIC_REPEAT_ERROR);
   }
   if (mapping.question_type === "choice") {
     const { labels } = mapping.choice;

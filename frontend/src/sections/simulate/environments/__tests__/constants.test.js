@@ -60,6 +60,7 @@ describe("environmentOptions", () => {
 describe("agentTypes", () => {
   it("gates the agent-type roster", () => {
     expect(liveIds(ENTRY_AGENT_TYPES)).toEqual(["voice", "text"]);
+    // Modalities not built in this release stay listed, disabled.
     expect(comingSoonIds(ENTRY_AGENT_TYPES)).toEqual([
       "computer",
       "code",
@@ -71,6 +72,13 @@ describe("agentTypes", () => {
 describe("repoProviders", () => {
   it("only github is live", () => {
     expect(liveIds(REPO_PROVIDERS)).toEqual(["github"]);
+    expect(comingSoonIds(REPO_PROVIDERS)).toEqual(["gitlab", "bitbucket"]);
+    // The Source repository card previews every host it lists.
+    expect(OPTIONS.find((o) => o.id === "source").preview).toEqual([
+      "GitHub",
+      "GitLab",
+      "Bitbucket",
+    ]);
   });
 });
 
@@ -81,10 +89,24 @@ describe("hostedPlatforms", () => {
       "vapi",
       "retell",
       "other",
+      "livekit",
       "bland",
       "elevenlabs",
+    ]);
+    // Bland and ElevenLabs are not connectors in this release: listed,
+    // disabled, after the voice platforms that can be chosen.
+    expect(liveIds(HOSTED_PLATFORMS_BY_TYPE.voice)).toEqual([
+      "vapi",
+      "retell",
+      "other",
       "livekit",
     ]);
+    expect(comingSoonIds(HOSTED_PLATFORMS_BY_TYPE.voice)).toEqual([
+      "bland",
+      "elevenlabs",
+    ]);
+    // Chat lists the real connector first, then the platforms that are not
+    // connectors in this release, disabled.
     expect(HOSTED_PLATFORMS_BY_TYPE.text.map((p) => p.id)).toEqual([
       "retell_chat",
       "openai_assistants",
@@ -92,6 +114,7 @@ describe("hostedPlatforms", () => {
       "crewai",
       "claude_agents",
     ]);
+    expect(liveIds(HOSTED_PLATFORMS_BY_TYPE.text)).toEqual(["retell_chat"]);
   });
 });
 

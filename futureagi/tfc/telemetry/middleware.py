@@ -35,6 +35,8 @@ from typing import Any
 import structlog
 from django.http import HttpRequest, HttpResponse
 
+from tfc.logging.checkout import scrub_checkout_payload
+
 from .context import set_request_context, set_user_context
 
 logger = structlog.get_logger(__name__)
@@ -187,7 +189,7 @@ class OTelContextMiddleware:
         structlog.contextvars.bind_contextvars(
             request_id=request_id,
             http_method=request.method,
-            http_path=request.path,
+            http_path=scrub_checkout_payload(request.path),
             client_ip=self._get_client_ip(request),
         )
 
@@ -226,9 +228,11 @@ class OTelContextMiddleware:
     def _capture_request(self, span, request: HttpRequest) -> None:
         """Capture request details in span."""
         try:
-            # Route/path
-            span.set_attribute("http.route", request.path)
-            span.set_attribute("http.url", request.build_absolute_uri())
+            # Route/path, with a checkout session redacted (others unchanged)
+            span.set_attribute("http.route", scrub_checkout_payload(request.path))
+            span.set_attribute(
+                "http.url", scrub_checkout_payload(request.build_absolute_uri())
+            )
 
             # Query parameters (masked)
             if request.GET:

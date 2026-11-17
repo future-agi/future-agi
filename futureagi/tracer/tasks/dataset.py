@@ -9,6 +9,7 @@ import uuid
 
 import structlog
 from django.db import close_old_connections, transaction
+from django.db.models import Q
 
 from tfc.temporal import temporal_activity
 
@@ -58,7 +59,12 @@ def _chspan_field_value(span, field_name):
         strings on CHSpan; decode them so callers see Python dicts/lists
         (matching the prior Django JSONField behavior).
     """
-    if field_name in ("model_parameters", "input_images", "eval_input", "eval_attributes"):
+    if field_name in (
+        "model_parameters",
+        "input_images",
+        "eval_input",
+        "eval_attributes",
+    ):
         from tracer.services.clickhouse.v2.span_reader import CHSpanReader
 
         extra = CHSpanReader.attributes_extra_as_dict(span)
@@ -76,7 +82,12 @@ def _chspan_field_value(span, field_name):
         merged.update(span.attrs_number or {})
         merged.update(span.attrs_bool or {})
         for k, v in extra.items():
-            if k not in ("model_parameters", "input_images", "eval_input", "eval_attributes"):
+            if k not in (
+                "model_parameters",
+                "input_images",
+                "eval_input",
+                "eval_attributes",
+            ):
                 merged[k] = v
         return merged
     if field_name == "metadata":
@@ -180,13 +191,16 @@ def _mapped_span_fields(column_span_mapping_data):
     virtual_fields = {"child_spans", "eval_metrics", "annotation_metrics"}
     fields = set()
     for mapping in column_span_mapping_data:
-        field_name = mapping.get("span_field") or mapping.get("column_name")
+        # Explicit None leaves a cell blank; only an omitted key falls back.
+        field_name = mapping.get("span_field", mapping.get("column_name"))
         if field_name and field_name not in virtual_fields:
             fields.add(field_name)
     return fields
 
 
-def _export_span_rows(reader, span_ids, mapped_span_fields, project_id=None, org_id=None):
+def _export_span_rows(
+    reader, span_ids, mapped_span_fields, project_id=None, org_id=None
+):
     if not span_ids:
         return {}
 
@@ -348,6 +362,7 @@ def process_spans_chunk_task(
     column_span_mapping_data,
     project_id=None,
     org_id=None,
+    source_context=None,
 ):
     """
     Process a chunk of observation spans and create rows + cells.
@@ -360,8 +375,11 @@ def process_spans_chunk_task(
         dataset_id: Target dataset ID
         column_span_mapping_data: List of column mapping dicts with keys:
             - column_id: UUID of the column
-            - span_field: Field name on ObservationSpan
-            - column_name: Column name (fallback if span_field not provided)
+            - span_field: Field name on ObservationSpan, or None for a blank cell
+            - column_name: Column name (fallback if span_field key is omitted)
+        source_context: Optional row source context (v1) built by the import
+            request. When given, each new row's source is recorded with its
+            rows; ``None`` records nothing.
 
     Returns:
         Dict with rows_created and cells_created counts
@@ -376,6 +394,20 @@ def process_spans_chunk_task(
         # dataset cells; hydrating full CHSpan rows reads fat payload columns
         # and can exceed CH memory limits on large exports.
         mapped_span_fields = _mapped_span_fields(column_span_mapping_data)
+        if not project_id:
+            # Without a task project, each span's own project scopes what is
+            # copied with it; it comes back in the same batched span read.
+            mapped_span_fields = mapped_span_fields | {"project_id"}
+        # shared-edit(F54): an import with a source context also reads provenance.
+        if source_context is not None:
+            from model_hub.services.row_sources import provenance_span_fields
+
+            mapped_span_fields = mapped_span_fields | provenance_span_fields(
+                source_context,
+                dataset_id=dataset_id,
+                project_id=project_id,
+                org_id=org_id,
+            )
         with get_reader() as reader:
             by_id = {}
             for start in range(0, len(span_ids), CH_EXPORT_READ_BATCH_SIZE):
@@ -418,41 +450,77 @@ def process_spans_chunk_task(
         rows_to_create = []
         cells_to_create = []
 
-        rows_count = Row.objects.filter(dataset_id=dataset_id, deleted=False).count()
+        last_order = (
+            Row.all_objects.filter(dataset_id=dataset_id)
+            .order_by("-order")
+            .values_list("order", flat=True)
+            .first()
+        )
+        start_order = 0 if last_order is None else last_order + 1
 
         # Check if any mapping needs child_spans
         needs_child_spans = any(
-            (m.get("span_field") or m.get("column_name")) == "child_spans"
+            m.get("span_field", m.get("column_name")) == "child_spans"
             for m in column_span_mapping_data
         )
 
         # Check if any mapping needs virtual eval/annotation fields
         needs_eval_metrics = any(
-            (m.get("span_field") or m.get("column_name")) == "eval_metrics"
+            m.get("span_field", m.get("column_name")) == "eval_metrics"
             for m in column_span_mapping_data
         )
         needs_annotation_metrics = any(
-            (m.get("span_field") or m.get("column_name")) == "annotation_metrics"
+            m.get("span_field", m.get("column_name")) == "annotation_metrics"
             for m in column_span_mapping_data
         )
+
+        from collections import defaultdict
+
+        # A span id can be held by more than one project, and eval rows,
+        # annotations and child trees are read by span or trace id. Each span
+        # copies only what belongs to its own project: the task's project, or
+        # the project read with the span when the task has none.
+        span_ids_by_project = defaultdict(list)
+        for observation_span in observation_spans:
+            span_project_id = project_id or observation_span.get("project_id")
+            if span_project_id:
+                span_ids_by_project[str(span_project_id)].append(
+                    str(observation_span["id"])
+                )
 
         # Pre-fetch child span trees if needed (batch to avoid N+1 CH queries)
         child_spans_cache = {}
         if needs_child_spans:
-            child_spans_cache = _serialize_span_trees_batch(
-                span_ids, project_id=project_id
-            )
+            if project_id:
+                child_spans_cache = _serialize_span_trees_batch(
+                    span_ids, project_id=project_id
+                )
+            else:
+                for span_project_id, project_span_ids in span_ids_by_project.items():
+                    child_spans_cache.update(
+                        _serialize_span_trees_batch(
+                            project_span_ids, project_id=span_project_id
+                        )
+                    )
 
         # Pre-fetch eval metrics (EvalLogger) if needed — single bulk query, no N+1
-        from collections import defaultdict
-
         eval_metrics_cache = defaultdict(dict)
-        if needs_eval_metrics:
+        if needs_eval_metrics and span_ids_by_project:
             from tracer.models.observation_span import EvalLogger
 
-            for log in EvalLogger.objects.filter(
-                observation_span_id__in=span_ids
-            ).order_by(
+            # An eval run from a config belongs to the config's project (its
+            # trace may live only in ClickHouse); a row with no config, such as
+            # an imported score, belongs to its trace's project.
+            eval_scope = Q()
+            for span_project_id, project_span_ids in span_ids_by_project.items():
+                eval_scope |= Q(observation_span_id__in=project_span_ids) & (
+                    Q(custom_eval_config__project_id=span_project_id)
+                    | Q(
+                        custom_eval_config__isnull=True,
+                        trace__project_id=span_project_id,
+                    )
+                )
+            for log in EvalLogger.objects.filter(eval_scope).order_by(
                 "created_at"
             ):  # ascending → most recent wins per key
                 key = log.eval_type_id or str(log.id)
@@ -473,13 +541,32 @@ def process_spans_chunk_task(
 
         # Pre-fetch annotation metrics (Score) if needed — single bulk query, no N+1
         annotation_metrics_cache = defaultdict(dict)
-        if needs_annotation_metrics:
+        if needs_annotation_metrics and span_ids_by_project:
             from model_hub.models.score import Score
+            from model_hub.utils.annotation_queue_helpers import (
+                scores_in_their_own_organization,
+            )
 
+            # A score belongs to the tracer project it records. One written
+            # before scores recorded it stays within the task's organization,
+            # as the score readers keep it. A score filed in one organization
+            # over another organization's project is not exported.
+            score_scope = Q()
+            for span_project_id, project_span_ids in span_ids_by_project.items():
+                project_scope = Q(tracer_project_id=span_project_id)
+                if org_id:
+                    project_scope |= Q(
+                        tracer_project_id__isnull=True, organization_id=org_id
+                    )
+                score_scope |= (
+                    Q(observation_span_id__in=project_span_ids) & project_scope
+                )
             for score in (
-                Score.objects.filter(
-                    observation_span_id__in=span_ids,
-                    deleted=False,
+                scores_in_their_own_organization(
+                    Score.objects.filter(
+                        score_scope,
+                        deleted=False,
+                    )
                 )
                 .select_related("label")
                 .order_by("created_at")
@@ -489,8 +576,8 @@ def process_spans_chunk_task(
                 ] = score.value
 
         # Create all Row objects for this chunk (in memory - no DB operation)
-        for i, observation_span in enumerate(observation_spans):
-            row = Row(id=uuid.uuid4(), dataset_id=dataset_id, order=rows_count + i)
+        for i, _observation_span in enumerate(observation_spans):
+            row = Row(id=uuid.uuid4(), dataset_id=dataset_id, order=start_order + i)
             rows_to_create.append(row)
 
         # Create all Rows and Cells in a single transaction for atomicity
@@ -500,17 +587,19 @@ def process_spans_chunk_task(
             created_rows = Row.objects.bulk_create(rows_to_create)
 
             # Create all Cell objects (in memory - no DB operation yet)
-            for observation_span, row in zip(observation_spans, created_rows):
+            for observation_span, row in zip(
+                observation_spans, created_rows, strict=False
+            ):
                 for column_mapping in column_span_mapping_data:
                     column_id = column_mapping["column_id"]
-                    span_field = column_mapping["span_field"]
-                    column_name = column_mapping["column_name"]
-
-                    # Use span_field if provided, otherwise fall back to column_name
-                    field_name = span_field or column_name
+                    field_name = column_mapping.get(
+                        "span_field", column_mapping.get("column_name")
+                    )
 
                     observation_span_id = str(observation_span["id"])
-                    if field_name == "child_spans":
+                    if field_name is None:
+                        value = None
+                    elif field_name == "child_spans":
                         # Virtual field: recursively collected child span data
                         value = child_spans_cache.get(observation_span_id, [])
                     elif field_name == "eval_metrics":
@@ -534,6 +623,18 @@ def process_spans_chunk_task(
 
             # Bulk create all cells (DB operation)
             Cell.objects.bulk_create(cells_to_create, batch_size=1000)
+            # hook(F54): record each new row's import source with its rows.
+            from model_hub.services.row_sources import record_row_sources
+
+            record_row_sources(
+                dataset_id=dataset_id,
+                rows=[
+                    (row.id, span)
+                    for row, span in zip(created_rows, observation_spans, strict=True)
+                ],
+                source_context=source_context,
+                project_id=project_id,
+            )
 
         logger.info(
             f"dataset_chunk_processed: chunk_size={len(span_ids)}, "
@@ -543,7 +644,7 @@ def process_spans_chunk_task(
 
         # Emit storage usage event for dataset row creation
         try:
-            from model_hub.models.develop_dataset import Database
+            from model_hub.models.develop_dataset import Dataset
 
             try:
                 from ee.usage.schemas.events import UsageEvent
@@ -554,7 +655,7 @@ def process_spans_chunk_task(
             except ImportError:
                 emit = None
 
-            dataset = Database.objects.only("organization_id").get(id=dataset_id)
+            dataset = Dataset.objects.only("organization_id").get(id=dataset_id)
             data_size = sum(len(str(c.value or "").encode()) for c in cells_to_create)
             emit(
                 UsageEvent(
@@ -569,7 +670,7 @@ def process_spans_chunk_task(
                 )
             )
         except Exception:
-            logger.debug(
+            logger.warning(
                 "emit_dataset_storage_event_failed", dataset_id=str(dataset_id)
             )
 

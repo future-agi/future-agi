@@ -266,7 +266,13 @@ test('OBS-E2E-007: Users discovery selects only authorized user activity', {
       expect(emptyUI.result).toMatchObject({ query_complete: true, query_status: 'complete',
         query_exact: true, ordering_exact: true, has_more: false, next_cursor: null });
       expect(emptyUI.result.table).toEqual([]);
-      await expect(page.getByText('Setup Telemetry', { exact: true })).toBeVisible({ timeout: UI_READY });
+      // Every Users read carries the toolbar's date window, so an empty page
+      // names that range and links the setup docs; the grid stays in place.
+      await expect(page.getByRole('heading', { name: 'No users for Past 7D', exact: true }))
+        .toBeVisible({ timeout: UI_READY });
+      await expect(page.getByRole('link', { name: 'Set up user tracking' }))
+        .toHaveAttribute('href', 'https://docs.futureagi.com/docs/observe/features/users');
+      await expect(page.getByText('Set up telemetry', { exact: true })).toHaveCount(0);
       await testInfo.attach('empty-users', { body: await page.screenshot(), contentType: 'image/png' });
     });
     await context.close(); context = undefined;
@@ -294,7 +300,7 @@ test('OBS-E2E-007: Users discovery selects only authorized user activity', {
       [[a1.organizationId, p4.owner.organizationId]]);
     for (const owner of [a1, a2, p4.owner]) {
       const mintedResponse = await scopes.send<{ result: { key_id: string; api_key: string; secret_key: string } }>(owner, 'POST', MINT,
-        { key_name: `${prefix}-${owner.workspaceId.slice(0, 8)}` });
+        { key_name: `${prefix}-${owner.workspaceId.slice(0, 8)}`, workspace_id: owner.workspaceId });
       expect(mintedResponse.status).toBe(200);
       const credential = mintedResponse.body.result;
       minted.push({ owner, id: credential.key_id, enabled: true });
@@ -923,15 +929,33 @@ test('OBS-E2E-007: Users discovery selects only authorized user activity', {
       const userFacts = facts.filter(f => f.person?.label === shared && allowed.includes(f.project));
       const sessionIds = [...new Set(userFacts.map(f => f.sessionId))].sort();
       // ObserveToolbar.DATE_OPTIONS / useLLMTracingFilters: real menu gestures,
-      // no URL-filter or storage injection to hide the user-mode Today default.
+      // no URL-filter or storage injection. A fresh user page defaults to Today, but a Users
+      // row click carries the list's Past 7D window (UsersGrid.onCellClicked), so the pill
+      // may already read Past 7D; step to Today first so the Past 7D choice is a real change.
       const pastWeek = async (path: string) => {
-        await page.getByRole('button', { name: 'Today', exact: true }).click();
+        const pill = page.getByRole('button', { name: /^(Today|Past 7D)$/ });
+        await expect(pill).toBeVisible({ timeout: UI_READY });
+        // The toolbar mounts through a portal and can remount while the page settles, which closes an
+        // open menu; reopen the pill until the wanted item is really on screen, then choose it.
+        const openMenuItem = async (name: string) => {
+          const item = page.getByRole('menuitem', { name, exact: true });
+          await expect(async () => {
+            if (!(await item.isVisible())) await pill.click({ timeout: 5_000 });
+            await expect(item).toBeVisible({ timeout: 3_000 });
+          }).toPass({ timeout: UI_READY });
+          return item;
+        };
+        if ((await pill.innerText()).trim() === 'Past 7D') {
+          await (await openMenuItem('Today')).click();
+          await expect(pill).toHaveText('Today', { timeout: UI_READY });
+        }
+        const pastWeekItem = await openMenuItem('Past 7D');
         const response = await responseAfter(r => {
           if (new URL(r.url()).pathname !== path || r.request().method() === 'OPTIONS') return false;
           const date = (JSON.parse(String(requestBody(r).filters)) as Leaf[]).find(f => f.column_id === 'created_at');
           const range = date?.filter_config.filter_value;
           return Array.isArray(range) && Date.parse(range[1]) - Date.parse(range[0]) >= 6 * 86_400_000;
-        }, () => page.getByRole('menuitem', { name: 'Past 7D', exact: true }).click());
+        }, () => pastWeekItem.click());
         const date = (JSON.parse(String(JSON.parse(response.requestJSON).filters)) as Leaf[]).find(f => f.column_id === 'created_at')!;
         expect(date.filter_config.filter_type).toBe('datetime');
         expect(date.filter_config.filter_op).toBe('between');

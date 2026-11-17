@@ -18,7 +18,12 @@ from django.utils import timezone
 from rest_framework import status
 from rest_framework.exceptions import NotFound, PermissionDenied
 
-from accounts.authentication import LangfuseBasicAuthentication, is_coding_agent_key
+from accounts.authentication import (
+    LangfuseBasicAuthentication,
+    generate_encrypted_message,
+    is_coding_agent_key,
+)
+from accounts.models.auth_token import AuthToken, AuthTokenType
 from accounts.models.user import OrgApiKey
 from accounts.models.workspace import Workspace
 from simulate.authentication import CODING_AGENT_ROUTES, refuse_coding_agent_request
@@ -104,6 +109,26 @@ def _versioned(environment):
     environment.suite_version = suite
     environment.save(update_fields=["suite_version", "updated_at"])
     return environment
+
+
+@pytest.fixture
+def interactive_client(api_client, user, workspace):
+    """Use a live browser access session, not a force-authenticated identity."""
+    token = AuthToken.objects.create(
+        user=user, auth_type=AuthTokenType.ACCESS.value, last_used_at=timezone.now()
+    )
+    bearer = generate_encrypted_message(
+        {"user_id": str(user.pk), "id": str(token.pk)}
+    )
+    # Keep the real authenticator responsible for provenance and live membership.
+    # Do not call set_workspace(): that client's per-request credentials reset
+    # would replace the bearer header. Explicit headers select the live workspace.
+    api_client.credentials(
+        HTTP_AUTHORIZATION=f"Bearer {bearer}",
+        HTTP_X_ORGANIZATION_ID=str(workspace.organization_id),
+        HTTP_X_WORKSPACE_ID=str(workspace.pk),
+    )
+    return api_client
 
 
 @pytest.fixture
@@ -215,9 +240,9 @@ def _request(view_name, method, path=None, **kwargs):
 @pytest.mark.django_db
 class TestMinting:
     def test_a_coding_agent_key_names_an_environment_the_caller_sees(
-        self, auth_client, environment, workspace, user
+        self, interactive_client, environment, workspace, user
     ):
-        response = auth_client.post(
+        response = interactive_client.post(
             MINT_URL,
             {
                 "key_name": "fixer",
@@ -244,18 +269,18 @@ class TestMinting:
         ],
         ids=["no_environment", "environment_on_a_user_key", "other_type"],
     )
-    def test_invalid_pairings_are_refused(self, auth_client, body):
-        response = auth_client.post(
+    def test_invalid_pairings_are_refused(self, interactive_client, body):
+        response = interactive_client.post(
             MINT_URL, {"key_name": "fixer", **body}, format="json"
         )
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert not OrgApiKey.no_workspace_objects.filter(name="fixer").exists()
 
-    def test_an_unknown_environment_is_refused(self, auth_client, run):
+    def test_an_unknown_environment_is_refused(self, interactive_client, run):
         # A Run is a job, not an environment.
         for environment_id in (uuid.uuid4(), run.job.id):
-            response = auth_client.post(
+            response = interactive_client.post(
                 MINT_URL,
                 {
                     "key_name": "fixer",
@@ -269,14 +294,14 @@ class TestMinting:
 
     @pytest.mark.parametrize("why", ["no_suite_version", "versioning_off"])
     def test_an_environment_with_nothing_to_hold_back_is_refused(
-        self, auth_client, workspace, settings, why
+        self, interactive_client, workspace, settings, why
     ):
         environment = _job(workspace)
         if why == "versioning_off":
             _versioned(environment)
             settings.HARNESS_VERSIONING_ENABLED = False
 
-        response = auth_client.post(
+        response = interactive_client.post(
             MINT_URL,
             {
                 "key_name": "fixer",
@@ -290,8 +315,8 @@ class TestMinting:
         assert _code(response) == "coding_agent_needs_suite_version"
         assert not OrgApiKey.no_workspace_objects.filter(name="fixer").exists()
 
-    def test_a_plain_mint_still_makes_a_user_key(self, auth_client, user):
-        response = auth_client.post(MINT_URL, {"key_name": "person"}, format="json")
+    def test_a_plain_mint_still_makes_a_user_key(self, interactive_client, user):
+        response = interactive_client.post(MINT_URL, {"key_name": "person"}, format="json")
 
         assert response.status_code == status.HTTP_200_OK
         key = OrgApiKey.no_workspace_objects.get(id=response.json()["result"]["key_id"])

@@ -1,0 +1,67 @@
+# This fixed-host profile is ONLY for accounts whose MCP Endpoint URL uses
+# cloud.getdbt.com. Regional or multi-cell accounts need a different provider.
+# A PAT plus the token owner's user ID and matching prod/dev environments
+# supports execute_sql as well as metadata tools; service tokens do not.
+schema: "connector-manifest/v1#provider"
+app: dbt-cloud
+id: api-key
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://cloud.getdbt.com/api/ai/v1/mcp/
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: Personal access token
+      help: "Only for accounts whose MCP Endpoint URL uses cloud.getdbt.com. Create a PAT with the linked token guide (a Developer, Read-only or IT license can create one; the Developer permission set is not needed to connect). Tools inherit the token owner's permissions. Service tokens cannot run execute_sql."
+      helpUrl: https://docs.getdbt.com/docs/dbt-apis/user-tokens
+    - in: header
+      name: x-dbt-prod-environment-id
+      secret: false
+      label: Production environment ID
+      help: "Enter the numeric production environment ID from Orchestration > Environments, not a URL. It must belong to the same project as the development environment."
+      helpUrl: https://docs.getdbt.com/docs/dbt-ai/setup-remote-mcp
+    - in: header
+      name: x-dbt-dev-environment-id
+      secret: false
+      label: Development environment ID
+      help: "Enter the numeric development environment ID from the same project as the production environment. This header is required for execute_sql and dbt v2 tools."
+      helpUrl: https://docs.getdbt.com/docs/dbt-ai/setup-remote-mcp
+    - in: header
+      name: x-dbt-user-id
+      secret: false
+      label: Token owner's user ID
+      help: "Enter the numeric dbt user ID of the person who created the PAT. Required for execute_sql and dbt v2 tools; it must match the token owner."
+      helpUrl: https://docs.getdbt.com/docs/dbt-ai/setup-remote-mcp
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_metered
+  source: https://www.getdbt.com/pricing
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://docs.getdbt.com/docs/dbt-ai/setup-remote-mcp
+    fetchedAt: 2026-11-09
+  - fact: transport.variant
+    url: https://docs.getdbt.com/blog/building-the-remote-dbt-mcp-server
+    fetchedAt: 2026-11-09
+  - fact: auth.kind
+    url: https://docs.getdbt.com/docs/dbt-ai/setup-remote-mcp
+    fetchedAt: 2026-11-09
+  - fact: auth.credentialParts
+    url: https://docs.getdbt.com/docs/dbt-ai/setup-remote-mcp
+    fetchedAt: 2026-11-09
+x-omega: { oss: exclude }

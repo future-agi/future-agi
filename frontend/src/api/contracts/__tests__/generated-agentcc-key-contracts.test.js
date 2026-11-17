@@ -15,13 +15,27 @@ const key = {
   expires_at: null,
 };
 
+// The bulk response includes reconciliation and delegation snapshot metadata.
+const envelope = {
+  status: true,
+  snapshot: { complete: true, issued_ever: 1 },
+  retired: [],
+  config_conflicts: [],
+  delegation: {
+    complete: true,
+    fetched_at: "2026-10-06T12:00:00+00:00",
+    members: [],
+    revoked_grants: [],
+  },
+};
+
 describe("generated AgentCC bulk key contract", () => {
   it.each([
     ["a never-expiring key", null],
     ["an expiring key", "2026-10-06T12:00:00+00:00"],
   ])("accepts %s", (_name, expiresAt) => {
     const payload = {
-      status: true,
+      ...envelope,
       result: [{ ...key, expires_at: expiresAt }],
     };
 
@@ -31,7 +45,7 @@ describe("generated AgentCC bulk key contract", () => {
   it("still requires expires_at on every key", () => {
     const { expires_at: _omitted, ...withoutExpiry } = key;
     const parsed = AgentccApiKeysBulkListResponse.safeParse({
-      status: true,
+      ...envelope,
       result: [withoutExpiry],
     });
 

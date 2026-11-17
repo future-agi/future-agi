@@ -1907,3 +1907,54 @@ def test_source_owned_source_read_failure_has_no_canonical_fallback():
     with pytest.raises(PermissionError):
         run_source(client)
     assert client.writes == []
+
+
+# Columns cut 10's PG migrations add to three mirrored tables, absent from a
+# landing table PeerDB created on 1.58.0 until it replicates that table's next
+# change.
+UPGRADE_ADDED = {
+    "model_hub_dataset": (
+        ("description", "Nullable(String)"),
+        ("folder_id", "Nullable(UUID)"),
+        ("tags", "String"),
+    ),
+    "model_hub_score": (("value_updated_at", "Nullable(DateTime64(6))"),),
+    "simulate_agent_definition": (("encrypted_api_key", "Nullable(String)"),),
+}
+
+
+def upgraded_source_client():
+    client = source_client()
+    snapshot = client.inspect_source()
+    for table, columns in UPGRADE_ADDED.items():
+        original = snapshot.tables[table]
+        snapshot.tables[table] = core.SourceTable(
+            original.columns + columns, original.primary_key
+        )
+    client.inspect_source = lambda: snapshot
+    return client
+
+
+def test_source_owned_passes_with_source_columns_outside_the_contract():
+    client = upgraded_source_client()
+
+    run_source(client)
+
+    # Never added by the bootstrap: PeerDB owns these tables.
+    for table, columns in UPGRADE_ADDED.items():
+        assert not {column for column, _ in columns} & client.columns[table].keys()
+    # Once PeerDB adds them with the types their source maps to, a later run
+    # passes; a present column keeps its type check.
+    for table, columns in UPGRADE_ADDED.items():
+        for column, data_type in columns:
+            client.columns[table][column] = (data_type, "", "")
+    run_source(client)
+
+
+def test_source_owned_still_requires_a_contract_column_on_the_landing_table():
+    client = upgraded_source_client()
+    client.columns["model_hub_dataset"].pop("name")
+
+    with pytest.raises(core.BootstrapError, match="missing/unexpected columns"):
+        run_source(client)
+    assert client.writes == []

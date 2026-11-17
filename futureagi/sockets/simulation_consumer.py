@@ -7,13 +7,14 @@ import structlog
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 from django.conf import settings
 
+from sockets.member_sockets import MemberSocketMixin
 from sockets.org_scope import resolve_socket_organization
 from sockets.saml_guard import SamlSocketGuard
 
 logger = structlog.get_logger(__name__)
 
 
-class SimulationUpdateConsumer(AsyncJsonWebsocketConsumer):
+class SimulationUpdateConsumer(MemberSocketMixin, AsyncJsonWebsocketConsumer):
     """
     Dedicated WebSocket consumer for simulation grid updates.
 
@@ -54,6 +55,7 @@ class SimulationUpdateConsumer(AsyncJsonWebsocketConsumer):
             await self.close(code=4003)
             return
 
+        await self.join_member_group(self.organization_id)
         await self.accept()
         logger.info(
             "simulation_ws_connected",
@@ -71,6 +73,7 @@ class SimulationUpdateConsumer(AsyncJsonWebsocketConsumer):
             test_id=self.test_id,
             close_code=close_code,
         )
+        await self.leave_member_group()
         if self._subscriber_task:
             self._subscriber_task.cancel()
             try:

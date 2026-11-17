@@ -322,6 +322,47 @@ def test_clone_dataset_rejects_other_workspace_before_usage_charge(
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize("cell_status", ["error", "running", "pass"])
+def test_clone_preserves_input_cell_status_and_diagnostics(
+    auth_client, dataset_factory, monkeypatch, cell_status
+):
+    monkeypatch.setattr(
+        "model_hub.views.develop_dataset.log_and_deduct_cost_for_resource_request",
+        None,
+    )
+    dataset, input_column, output_column = dataset_factory("Input state source")
+    dataset.dataset_config = {"eval_recommendations": []}
+    dataset.save(update_fields=["dataset_config"])
+    row = add_row(dataset, {input_column: "", output_column: "control"}, order=4)
+    source_cell = Cell.objects.get(row=row, column=input_column)
+    source_cell.status = cell_status
+    source_cell.value_infos = '{"error":"Input could not be read"}'
+    source_cell.save(update_fields=["status", "value_infos"])
+
+    response = auth_client.post(
+        f"/model-hub/develops/clone-dataset/{dataset.id}/",
+        {"new_dataset_name": "Input state copy"},
+        format="json",
+    )
+
+    assert response.status_code == status.HTTP_200_OK, response.content
+    copied_id = response.json()["result"]["dataset_id"]
+    copied_cell = Cell.objects.get(dataset_id=copied_id, column__name="input")
+    assert copied_cell.id != source_cell.id
+    assert copied_cell.row.order == 4
+    assert copied_cell.value == ""
+    assert copied_cell.status == cell_status
+    assert copied_cell.value_infos == '{"error":"Input could not be read"}'
+    control = Cell.objects.get(dataset_id=copied_id, column__name="output")
+    assert control.value == "control"
+    assert control.status == "pass"
+    source_cell.refresh_from_db()
+    assert source_cell.value == ""
+    assert source_cell.status == cell_status
+    assert source_cell.value_infos == '{"error":"Input could not be read"}'
+
+
+@pytest.mark.django_db
 def test_add_as_new_rejects_other_workspace_before_usage_charge(
     auth_client, organization, user, dataset_factory, monkeypatch
 ):
@@ -437,3 +478,240 @@ def test_add_as_new_rejects_columns_outside_source_before_usage_or_creation(
         organization=organization,
         deleted=False,
     ).exists()
+
+
+# ---------------------------------------------------------------------------
+# PF-7 (WR-14): "Copy from another dataset" ships in the launch
+# build and posts add-as-new. Another ORGANIZATION (not only another
+# workspace of the same org) must not copy a dataset it cannot see, also
+# when it forges the owner's X-Organization-Id / X-Workspace-Id. The body
+# carries a valid columns map, so a leak would answer 200 (not a
+# MISSING_COLUMN_MAPPING 400 that would pass vacuously), and each refusal is
+# paired with the owner's own copy of the same body.
+# ---------------------------------------------------------------------------
+
+PF7_PASSWORD = "pf7-copy-test-password"
+
+
+def _copy_tenant(label):
+    """A new organization with its own owner, default workspace and a
+    two-row dataset."""
+    import uuid
+
+    from accounts.models.organization import Organization
+    from accounts.models.organization_membership import OrganizationMembership
+    from accounts.models.user import User
+    from accounts.models.workspace import WorkspaceMembership
+    from tfc.constants.levels import Level
+    from tfc.constants.roles import OrganizationRoles
+    from tfc.middleware.workspace_context import (
+        clear_workspace_context,
+        set_workspace_context,
+    )
+
+    clear_workspace_context()
+    org = Organization.objects.create(name=f"PF7 Org {label}")
+    set_workspace_context(organization=org)
+    user = User.objects.create_user(
+        email=f"pf7-{label}-{uuid.uuid4().hex[:8]}@futureagi.com",
+        password=PF7_PASSWORD,
+        name=f"PF7 {label}",
+        organization=org,
+        organization_role=OrganizationRoles.OWNER,
+    )
+    membership, _ = OrganizationMembership.no_workspace_objects.get_or_create(
+        user=user,
+        organization=org,
+        defaults={
+            "role": OrganizationRoles.OWNER,
+            "level": Level.OWNER,
+            "is_active": True,
+        },
+    )
+    workspace = Workspace.objects.create(
+        name=f"PF7 Workspace {label}",
+        organization=org,
+        is_default=True,
+        is_active=True,
+        created_by=user,
+    )
+    WorkspaceMembership.no_workspace_objects.get_or_create(
+        user=user,
+        workspace=workspace,
+        defaults={
+            "role": "Workspace Owner",
+            "level": Level.OWNER,
+            "is_active": True,
+            "organization_membership": membership,
+        },
+    )
+    set_workspace_context(workspace=workspace, organization=org, user=user)
+    dataset = Dataset.objects.create(
+        name=f"pf7-{label}-seed-{uuid.uuid4().hex[:6]}",
+        organization=org,
+        workspace=workspace,
+        user=user,
+    )
+    column = Column.objects.create(
+        name="question",
+        dataset=dataset,
+        data_type=DataTypeChoices.TEXT.value,
+        source=SourceChoices.OTHERS.value,
+    )
+    dataset.column_order = [str(column.id)]
+    dataset.save()
+    for i in range(2):
+        add_row(dataset, {column: f"{label}-secret-{i}"}, order=i)
+    clear_workspace_context()
+    return {
+        "org": org,
+        "user": user,
+        "workspace": workspace,
+        "dataset": dataset,
+        "column": column,
+    }
+
+
+@pytest.fixture
+def pf7_orgs(db, monkeypatch):
+    from tfc.middleware.workspace_context import clear_workspace_context
+
+    usage_calls = []
+
+    def record_usage(*args, **kwargs):
+        usage_calls.append((args, kwargs))
+        return _SuccessfulResourceCallLog()
+
+    monkeypatch.setattr(
+        "model_hub.views.develop_dataset.log_and_deduct_cost_for_resource_request",
+        record_usage,
+    )
+    # The copy asks the eval recommender afterwards; keep it offline.
+    monkeypatch.setattr(
+        "model_hub.views.develop_dataset.get_recommendations",
+        lambda dataset: {},
+    )
+    a = _copy_tenant("a")
+    b = _copy_tenant("b")
+    yield a, b, usage_calls
+    clear_workspace_context()
+
+
+def _copy_body(tenant, name):
+    return {
+        "dataset_id": str(tenant["dataset"].id),
+        "name": name,
+        "columns": {str(tenant["column"].id): "q"},
+    }
+
+
+def _copies_named(name):
+    # Any organization, any workspace.
+    return Dataset.no_workspace_objects.filter(name=name)
+
+
+def _seed_unchanged(tenant):
+    dataset = tenant["dataset"]
+    values = sorted(
+        Cell.no_workspace_objects.filter(dataset=dataset).values_list(
+            "value", flat=True
+        )
+    )
+    assert Row.no_workspace_objects.filter(dataset=dataset).count() == 2
+    assert values == ["a-secret-0", "a-secret-1"]
+
+
+def _workspace_client(tenant):
+    from conftest import WorkspaceAwareAPIClient
+
+    client = WorkspaceAwareAPIClient()
+    client.force_authenticate(user=tenant["user"])
+    client.set_workspace(tenant["workspace"])
+    return client
+
+
+def _jwt_client(tenant, *, organization, workspace):
+    """Log in through /accounts/token/ so the real authentication resolves
+    the organization and workspace headers."""
+    from rest_framework.test import APIClient
+
+    client = APIClient()
+    login = client.post(
+        "/accounts/token/",
+        {"email": tenant["user"].email, "password": PF7_PASSWORD},
+        format="json",
+    )
+    assert login.status_code == status.HTTP_200_OK, login.data
+    client.credentials(
+        HTTP_AUTHORIZATION=f"Bearer {login.data['access']}",
+        HTTP_X_ORGANIZATION_ID=str(organization.id),
+        HTTP_X_WORKSPACE_ID=str(workspace.id),
+    )
+    return client
+
+
+@pytest.mark.django_db
+def test_add_as_new_refuses_another_orgs_dataset(pf7_orgs):
+    a, b, usage_calls = pf7_orgs
+    client_b = _workspace_client(b)
+    client_a = _workspace_client(a)
+    try:
+        refused = client_b.post(
+            "/model-hub/develops/add-as-new/",
+            _copy_body(a, "pf7-b-steal"),
+            format="json",
+        )
+        assert refused.status_code == status.HTTP_404_NOT_FOUND, refused.content
+        assert "Dataset not found" in refused.content.decode()
+        assert not _copies_named("pf7-b-steal").exists()
+        assert usage_calls == []
+        _seed_unchanged(a)
+
+        # Positive control: the same body from the owner copies both rows.
+        own = client_a.post(
+            "/model-hub/develops/add-as-new/",
+            _copy_body(a, "pf7-a-own-copy"),
+            format="json",
+        )
+        assert own.status_code == status.HTTP_200_OK, own.content
+        copy = _copies_named("pf7-a-own-copy").get()
+        assert copy.organization_id == a["org"].id
+        assert sorted(
+            Cell.no_workspace_objects.filter(dataset=copy).values_list(
+                "value", flat=True
+            )
+        ) == ["a-secret-0", "a-secret-1"]
+    finally:
+        client_a.stop_workspace_injection()
+        client_b.stop_workspace_injection()
+
+
+@pytest.mark.django_db
+def test_add_as_new_refuses_another_orgs_dataset_with_forged_org_headers(
+    pf7_orgs,
+):
+    a, b, usage_calls = pf7_orgs
+    # B's own session, with A's organization and workspace ids forged in.
+    forged = _jwt_client(b, organization=a["org"], workspace=a["workspace"])
+    refused = forged.post(
+        "/model-hub/develops/add-as-new/",
+        _copy_body(a, "pf7-b-forged-steal"),
+        format="json",
+    )
+    # A forged organization selector is refused when the request is
+    # authenticated, before the view reads any dataset.
+    assert refused.status_code == status.HTTP_403_FORBIDDEN, refused.content
+    assert refused.json()["code"] == "organization_unavailable"
+    assert not _copies_named("pf7-b-forged-steal").exists()
+    assert usage_calls == []
+    _seed_unchanged(a)
+
+    # Positive control under the same real authentication: A copies its own.
+    owner = _jwt_client(a, organization=a["org"], workspace=a["workspace"])
+    own = owner.post(
+        "/model-hub/develops/add-as-new/",
+        _copy_body(a, "pf7-a-own-jwt-copy"),
+        format="json",
+    )
+    assert own.status_code == status.HTTP_200_OK, own.content
+    assert _copies_named("pf7-a-own-jwt-copy").get().organization_id == a["org"].id

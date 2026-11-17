@@ -80,7 +80,7 @@ def backfill(apps, schema_editor):
     EvalTemplateVersion = apps.get_model("model_hub", "EvalTemplateVersion")
 
     qs = (
-        EvalTemplateVersion.objects.select_related("eval_template")
+        EvalTemplateVersion.objects.using(schema_editor.connection.alias).select_related("eval_template")
         .filter(
             eval_template__owner="user",
             eval_template__deleted=False,
@@ -110,6 +110,7 @@ def backfill(apps, schema_editor):
 
         _apply_live_to_version(version, template)
         version.save(
+            using=schema_editor.connection.alias,
             update_fields=[
                 "prompt_messages",
                 "criteria",

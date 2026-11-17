@@ -4,7 +4,9 @@ import {
   resolveGlobalDateRange,
   buildTimeRangePayload,
   resolveInitialTimeRange,
+  readCustomDateRange,
   toTimeRangePayload,
+  withDateFilterSearch,
   DEFAULT_DATE_PRESET,
 } from "../dashboardDateRange";
 
@@ -207,6 +209,31 @@ describe("resolveInitialTimeRange", () => {
     });
   });
 
+  it("url preset 'custom' (carries no dates) → keeps the saved custom range", () => {
+    const saved = {
+      custom_start: "2026-03-26T00:00:00.000Z",
+      custom_end: "2026-04-29T00:00:00.000Z",
+    };
+    const r = resolveInitialTimeRange(saved, "custom");
+    expect(r.timePreset).toBe("custom");
+    expect(r.customDateRange[0].toISOString()).toBe(saved.custom_start);
+    expect(r.customDateRange[1].toISOString()).toBe(saved.custom_end);
+  });
+
+  it("url preset 'custom' (carries no dates) → keeps the saved preset", () => {
+    expect(resolveInitialTimeRange({ preset: "7D" }, "custom")).toEqual({
+      timePreset: "7D",
+      customDateRange: null,
+    });
+  });
+
+  it("url preset 'custom' with nothing saved → default preset, never custom without dates", () => {
+    expect(resolveInitialTimeRange(null, "custom")).toEqual({
+      timePreset: DEFAULT_DATE_PRESET,
+      customDateRange: null,
+    });
+  });
+
   it("saved preset (no custom) → preset UI state", () => {
     expect(resolveInitialTimeRange({ preset: "3M" }, null)).toEqual({
       timePreset: "3M",
@@ -247,5 +274,65 @@ describe("toTimeRangePayload", () => {
     expect(toTimeRangePayload(null)).toBeNull();
     expect(toTimeRangePayload({ start: "x" })).toBeNull();
     expect(toTimeRangePayload({ end: "x" })).toBeNull();
+  });
+});
+
+describe("dashboard date filter in the URL (OBS-SW-168)", () => {
+  const START = "2026-10-01T00:00:00.000Z";
+  const END = "2026-10-15T00:00:00.000Z";
+  const range = [new Date(START), new Date(END)];
+  const searchOf = (url) => new URL(url, "http://localhost").searchParams;
+
+  it("carries a Custom range's dates, not just the preset", () => {
+    const url = withDateFilterSearch(
+      "/dashboard/dashboards/d",
+      "custom",
+      range,
+    );
+    const search = searchOf(url);
+    expect(search.get("timePreset")).toBe("custom");
+    expect(search.get("customStart")).toBe(START);
+    expect(search.get("customEnd")).toBe(END);
+  });
+
+  it("round-trips the Custom dates", () => {
+    const url = withDateFilterSearch("/d", "custom", range);
+    expect(readCustomDateRange(searchOf(url))).toEqual(range);
+  });
+
+  it("appends after params the path already carries", () => {
+    expect(withDateFilterSearch("/new?addAfter=w-2", "7D", null)).toBe(
+      "/new?addAfter=w-2&timePreset=7D",
+    );
+  });
+
+  it("leaves the path alone without a preset", () => {
+    expect(withDateFilterSearch("/d", null, range)).toBe("/d");
+  });
+
+  it("does not attach dates to a relative preset", () => {
+    expect(withDateFilterSearch("/d", "7D", range)).toBe("/d?timePreset=7D");
+  });
+
+  it("drops an incomplete or invalid Custom pair", () => {
+    expect(withDateFilterSearch("/d", "custom", null)).toBe(
+      "/d?timePreset=custom",
+    );
+    expect(
+      withDateFilterSearch("/d", "custom", [new Date("nope"), new Date(END)]),
+    ).toBe("/d?timePreset=custom");
+  });
+
+  it("reads no Custom range from a URL without both valid dates", () => {
+    const read = (params) => readCustomDateRange(new URLSearchParams(params));
+    expect(read({ timePreset: "custom" })).toBeNull();
+    expect(read({ timePreset: "custom", customStart: START })).toBeNull();
+    expect(
+      read({ timePreset: "custom", customStart: "x", customEnd: END }),
+    ).toBeNull();
+    expect(
+      read({ timePreset: "7D", customStart: START, customEnd: END }),
+    ).toBeNull();
+    expect(readCustomDateRange(null)).toBeNull();
   });
 });

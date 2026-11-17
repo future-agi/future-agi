@@ -62,9 +62,9 @@ func TestNew_DefaultValues(t *testing.T) {
 	if p.httpClient.Timeout != 120*time.Second {
 		t.Errorf("timeout = %v, want %v", p.httpClient.Timeout, 120*time.Second)
 	}
-	// Default semaphore capacity is 100.
-	if cap(p.semaphore) != 100 {
-		t.Errorf("semaphore cap = %d, want 100", cap(p.semaphore))
+	// Default slot capacity (remote max_concurrent) is 1024.
+	if p.slots.Cap() != 1024 {
+		t.Errorf("semaphore cap = %d, want 1024", p.slots.Cap())
 	}
 }
 
@@ -104,8 +104,8 @@ func TestNew_CustomConfig(t *testing.T) {
 	if p.httpClient.Timeout != 30*time.Second {
 		t.Errorf("timeout = %v, want %v", p.httpClient.Timeout, 30*time.Second)
 	}
-	if cap(p.semaphore) != 5 {
-		t.Errorf("semaphore cap = %d, want 5", cap(p.semaphore))
+	if p.slots.Cap() != 5 {
+		t.Errorf("semaphore cap = %d, want 5", p.slots.Cap())
 	}
 	if p.headers["anthropic-version"] != "2024-10-22" {
 		t.Errorf("anthropic-version header = %q, want %q", p.headers["anthropic-version"], "2024-10-22")
@@ -195,7 +195,7 @@ func TestIntegration_NonStreamingChatCompletion(t *testing.T) {
 				{Type: "text", Text: "Hello from the mock!"},
 			},
 			StopReason: "end_turn",
-			Usage:      anthropicUsage{InputTokens: 10, OutputTokens: 8},
+			Usage:      &anthropicUsage{InputTokens: usageCount(10), OutputTokens: usageCount(8)},
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(resp)
@@ -285,7 +285,7 @@ func TestChatCompletion_BaseURLAlreadyHasVersionSegment(t *testing.T) {
 			Role:       "assistant",
 			Content:    []anthropicContentBlock{{Type: "text", Text: "ok"}},
 			StopReason: "end_turn",
-			Usage:      anthropicUsage{InputTokens: 1, OutputTokens: 1},
+			Usage:      &anthropicUsage{InputTokens: usageCount(1), OutputTokens: usageCount(1)},
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(resp)
@@ -727,7 +727,7 @@ func TestIntegration_SetHeaders_CustomAnthropicVersion(t *testing.T) {
 				{Type: "text", Text: "ok"},
 			},
 			StopReason: "end_turn",
-			Usage:      anthropicUsage{InputTokens: 1, OutputTokens: 1},
+			Usage:      &anthropicUsage{InputTokens: usageCount(1), OutputTokens: usageCount(1)},
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(resp)
@@ -810,7 +810,7 @@ func TestIntegration_NonStreamingToolUseRoundtrip(t *testing.T) {
 				},
 			},
 			StopReason: "tool_use",
-			Usage:      anthropicUsage{InputTokens: 30, OutputTokens: 20},
+			Usage:      &anthropicUsage{InputTokens: usageCount(30), OutputTokens: usageCount(20)},
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(resp)

@@ -31,6 +31,7 @@ import {
   patchConfig,
   projectMissing,
   runFailureReason,
+  runResultsRemoved,
 } from "./insightsApi";
 import {
   buildColorOrder,
@@ -254,10 +255,14 @@ function ReportCard({ config, selected, onOpen, onRerun, onDelete }) {
     return buildSegments(runTops(run), { order, mode, max: LEGEND_ITEMS });
   }, [config.taxonomy, run, mode]);
 
+  // Retired with the data it read: when it ran no longer matters.
+  const removed = runResultsRemoved(run);
   const when = run
     ? active
       ? "Running"
-      : `Last run ${relativeTime(run.finished_at || run.created_at)}`
+      : removed
+        ? "Results removed"
+        : `Last run ${relativeTime(run.finished_at || run.created_at)}`
     : "Not run yet";
   const stage = active ? STAGES[stageIndex(run.stage)] : null;
   const failed = failedRunNext(run);
@@ -353,6 +358,24 @@ function ReportCard({ config, selected, onOpen, onRerun, onDelete }) {
             aria-label="Run progress"
             sx={{ height: 3, borderRadius: 2 }}
           />
+        </Stack>
+      ) : removed ? (
+        <Stack spacing={0.5}>
+          <Typography variant="caption" color="text.secondary">
+            The data it read was deleted or has expired.
+          </Typography>
+          <Button
+            size="small"
+            color="inherit"
+            sx={{ alignSelf: "flex-start" }}
+            disabled={!canRun}
+            onClick={(event) => {
+              event.stopPropagation();
+              onRerun(config);
+            }}
+          >
+            Run again
+          </Button>
         </Stack>
       ) : run?.status === "failed" ? (
         <Stack spacing={0.5}>

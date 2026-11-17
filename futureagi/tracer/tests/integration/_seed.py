@@ -54,6 +54,13 @@ VOICE_NUM_SPEC: list[tuple] = [
     ("talk_ratio", "call.talk_ratio", lambda i: round(0.2 + i * 0.12, 4), "pct0"),
     # WPM carry a fractional .4 (rounds down) to exercise list/filter rounding.
     ("bot_wpm", "call.bot_wpm", lambda i: round(120.0 + i * 4 + 0.4, 4), "int"),
+    # Time to first token, in ms, under the key traceAI and the gateway send.
+    (
+        "time_to_first_token",
+        "gen_ai.server.time_to_first_token",
+        lambda i: float(50 + i * 5),
+        "raw",
+    ),
     ("user_wpm", "call.user_wpm", lambda i: round(110.0 + i * 5 + 0.4, 4), "int"),
     ("duration", "call.duration", lambda i: float(20 + i), "raw"),
     ("agent_latency", "avg_agent_latency_ms", lambda i: float(500 + i * 25), "int"),
@@ -95,7 +102,6 @@ VOICE_NUM_SPEC: list[tuple] = [
     # fallback path can filter them (as it will once ingestion emits them).
     ("message_count", "message_count", lambda i: float(2 + (i % 10)), "raw"),
     ("overall_score", "overall_score", lambda i: round(0.5 + (i % 6) * 0.08, 4), "raw"),
-    ("time_to_first_token", "time_to_first_token", lambda i: float(50 + i * 5), "raw"),
     ("call_count", "call_count", lambda i: float(1 + (i % 3)), "raw"),
     ("session_count", "session_count", lambda i: float(1 + (i % 4)), "raw"),
     ("span_count", "span_count", lambda i: float(1 + (i % 6)), "raw"),

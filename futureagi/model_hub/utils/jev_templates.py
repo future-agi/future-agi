@@ -12,6 +12,12 @@ from tfc.utils.api_errors import build_error_envelope
 from evaluations.decision_models import has_decision_prefix, is_decision_model
 
 
+JEV_GROUND_TRUTH_MESSAGE = (
+    "Ground truth is not supported with Jev models. Disable ground truth "
+    "or choose another evaluator model. Your uploaded examples are kept."
+)
+
+
 def validate_jev_template_save(
     config,
     *,
@@ -20,6 +26,7 @@ def validate_jev_template_save(
     mapping_provided=False,
     choice_scores=None,
     multi_choice=False,
+    template=None,
 ):
     jev_prefix = has_decision_prefix(model)
     if jev_prefix and (not is_decision_model(model) or model != previous_model):
@@ -41,6 +48,22 @@ def validate_jev_template_save(
             status=402,
         )
     try:
+        if template is not None and is_jev_model(model):
+            from model_hub.services.ground_truth_service import GroundTruthService
+
+            # GT lives on a tenant-scoped row, not in template.config. Check
+            # enabled rows even before embedding or retrieval has succeeded.
+            ground_truth = GroundTruthService.load_active_gt(
+                eval_template=template,
+                organization_id=template.organization_id,
+                workspace_id=template.workspace_id,
+            )
+            if ground_truth is not None:
+                raise JevMappingError(
+                    "JEV_FEW_SHOT_UNSUPPORTED",
+                    "ground_truth",
+                    JEV_GROUND_TRUTH_MESSAGE,
+                )
         mapping = validate_jev_mapping(
             None,
             output=config.get("output", "Pass/Fail"),
@@ -122,6 +145,7 @@ def validate_jev_binding(template, *, model, runtime_config=None):
         previous_model=effective_model,
         choice_scores=overrides.get("choice_scores", template.choice_scores),
         multi_choice=bool(template.multi_choice or config.get("multi_choice")),
+        template=template,
     )
 
 

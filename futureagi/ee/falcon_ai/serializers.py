@@ -1,10 +1,16 @@
 from rest_framework import serializers
 
 from ee.falcon_ai.models import Conversation, Message
+from ee.falcon_ai.snapshot_results import scrub_message_tool_calls
 from tracer.serializers.filters import StrictInputSerializer
 
 
 class MessageSerializer(serializers.ModelSerializer):
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data["tool_calls"] = scrub_message_tool_calls(data.get("tool_calls"))
+        return data
+
     class Meta:
         model = Message
         ref_name = "FalconMessage"

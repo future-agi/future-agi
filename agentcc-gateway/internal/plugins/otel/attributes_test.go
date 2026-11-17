@@ -305,19 +305,16 @@ func TestAttachRequestHeaders_ValuesAreRedacted(t *testing.T) {
 	}
 }
 
-// Metadata is dimensional data the caller grouped by; redacting an id that
-// merely looks like an email would silently break their grouping.
-func TestAttachMetadata_ValuesAreNotRedacted(t *testing.T) {
+// Caller grouping values now follow the selected privacy policy too.
+func TestAttachMetadata_ValuesAreRedacted(t *testing.T) {
 	p := NewWithExporter(otelpkg.NoopExporter{}, 1.0, true)
 	p.SetRedactor(privacy.New("patterns", []privacy.PatternConfig{
-		{Name: "email", Pattern: `[\w.]+@[\w.]+`},
+		{Name: "email", Pattern: `[\w.-]+@[\w.-]+`},
 	}))
 
-	span := spanFor(t, p, rcWithMetadata(map[string]string{"tenant": "ops@milestone.com"}))
+	span := spanFor(t, p, rcWithMetadata(map[string]string{"tenant": c26Marker()}))
 
-	if got := attrString(t, span, metadataAttrPrefix+"tenant"); got != "ops@milestone.com" {
-		t.Errorf("tenant = %q, want the value the caller sent", got)
-	}
+	c26Masked(t, attrString(t, span, metadataAttrPrefix+"tenant"))
 }
 
 // rcWithExtras builds a request context carrying already-snapshotted body
@@ -421,8 +418,8 @@ func TestAttachBodyExtras_CapIsDeterministicAndCounted(t *testing.T) {
 	}
 }
 
-// Unlike metadata, body extras are arbitrary payload rather than a dimension
-// the caller picked, so the privacy config applies.
+// Body extras are arbitrary payload, so both their names and values follow
+// the privacy config.
 func TestAttachBodyExtras_StringValuesAreRedacted(t *testing.T) {
 	p := NewWithExporter(otelpkg.NoopExporter{}, 1.0, true)
 	p.SetRedactor(privacy.New("patterns", []privacy.PatternConfig{
@@ -431,7 +428,7 @@ func TestAttachBodyExtras_StringValuesAreRedacted(t *testing.T) {
 
 	span := spanFor(t, p, rcWithExtras(map[string]any{"upstream_hint": "use sk-live1234abcd now"}))
 
-	if got := attrString(t, span, bodyAttrPrefix+"upstream_hint"); strings.Contains(got, "sk-live1234abcd") {
+	if got := attrString(t, span, bodyAttrPrefix+"field_0"); strings.Contains(got, "sk-live1234abcd") {
 		t.Errorf("body value exported unredacted: %q", got)
 	}
 }

@@ -1,0 +1,113 @@
+{
+  "result": {
+    "app": "acme-docs",
+    "baseline": {
+      "tool_count": 7,
+      "tools_hash": "fe6155d1f406d49abeacf926938be48a2800afe53900b78b5f911850e1043cf0"
+    },
+    "catalog_ref": "acme-docs/acme-mcp@1.2.0",
+    "credential": {
+      "connected": true,
+      "header_name": "X-Acme-Key",
+      "help": "Create a key under Settings, API keys.",
+      "help_url": "https://docs.acme-docs.example.com/keys",
+      "in": "header",
+      "kind": "api_key",
+      "label": "API key",
+      "mode": "shared",
+      "name": "X-Acme-Key"
+    },
+    "gateway_synced": true,
+    "mcp_enabled": true,
+    "mode": "agent",
+    "provider": "acme-mcp",
+    "server_id": "acme-docs",
+    "tools": [
+      {
+        "description": "The search_pages tool.",
+        "destructive": false,
+        "gateway_posture": "allow",
+        "idempotent": true,
+        "name": "search_pages",
+        "open_world": true,
+        "read_only": true,
+        "reason": null,
+        "title": "Search pages"
+      },
+      {
+        "description": "The get_page tool.",
+        "destructive": false,
+        "gateway_posture": "allow",
+        "idempotent": true,
+        "name": "get_page",
+        "open_world": true,
+        "read_only": true,
+        "reason": null,
+        "title": "Get page"
+      },
+      {
+        "description": "The list_recent tool.",
+        "destructive": false,
+        "gateway_posture": "deny",
+        "idempotent": true,
+        "name": "list_recent",
+        "open_world": true,
+        "read_only": true,
+        "reason": "approval_not_enforced",
+        "title": "List recent"
+      },
+      {
+        "description": "The create_page tool.",
+        "destructive": false,
+        "gateway_posture": "deny",
+        "idempotent": false,
+        "name": "create_page",
+        "open_world": true,
+        "read_only": false,
+        "reason": "write_tool",
+        "title": "Create page"
+      },
+      {
+        "description": "The delete_page tool.",
+        "destructive": true,
+        "gateway_posture": "deny",
+        "idempotent": false,
+        "name": "delete_page",
+        "open_world": true,
+        "read_only": false,
+        "reason": "destructive_tool",
+        "title": "Delete page"
+      },
+      {
+        "description": "The run_query tool.",
+        "destructive": false,
+        "gateway_posture": "deny",
+        "idempotent": true,
+        "name": "run_query",
+        "open_world": true,
+        "read_only": true,
+        "reason": "generic_tool",
+        "title": "Run query"
+      },
+      {
+        "description": "The archive_page tool.",
+        "destructive": false,
+        "gateway_posture": "deny",
+        "idempotent": true,
+        "name": "archive_page",
+        "open_world": true,
+        "read_only": true,
+        "reason": "posture_deny",
+        "title": "Archive page"
+      }
+    ],
+    "url": "https://mcp.acme-docs.example.com/mcp",
+    "url_variables": {},
+    "version": 2,
+    "virtual_server": {
+      "id": "vs_01M5F7JBJH5XDKQ57KQFMC2NY1",
+      "slug": "acme-docs"
+    }
+  },
+  "status": true
+}

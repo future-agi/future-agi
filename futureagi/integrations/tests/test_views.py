@@ -939,7 +939,7 @@ class TestActionOnlyConnectionCreate:
         assert resp.status_code == http_status.HTTP_400_BAD_REQUEST
 
     @patch("integrations.views.integration_connection.get_integration_service")
-    def test_400_message_points_to_edit_flow(
+    def test_400_message_points_to_disconnect(
         self, mock_get_svc, auth_client, organization, workspace
     ):
         self._mock_linear_service(mock_get_svc)
@@ -963,9 +963,9 @@ class TestActionOnlyConnectionCreate:
         body = resp.json()
         message = (body.get("result") or body.get("detail") or "").lower()
         # Don't pin the exact wording, but message must name the platform
-        # and tell the user where to rotate keys.
+        # and the step the Integrations page offers for it: Disconnect.
         assert "linear" in message
-        assert "edit" in message
+        assert "disconnect" in message
 
     @patch("integrations.views.integration_connection.get_integration_service")
     def test_soft_deleted_linear_does_not_block_create(

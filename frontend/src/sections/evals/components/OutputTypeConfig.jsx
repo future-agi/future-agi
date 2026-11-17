@@ -34,6 +34,10 @@ const OutputTypeConfig = ({
   // scores, pass threshold) remains editable. Used to prevent users from
   // switching the fundamental output shape while still letting them tune it.
   categoryLocked = false,
+  // L7c g7 (evalcreate:output-type): Create offers no Choices output: a
+  // choice label never reaches a judged cell, so the option is absent there
+  // (an eval that already is Choices still shows it).
+  hideChoices = false,
   isJevModel = false,
   modelLabel = "Jev",
 }) => {
@@ -145,6 +149,7 @@ const OutputTypeConfig = ({
                 // with no choices. Jev scores use ordered levels, and Jev
                 // rejects choice scores on a rubric, so skip the row there.
                 if (
+                  !hideChoices &&
                   (val === "deterministic" ||
                     (val === "percentage" && !isJevModel)) &&
                   Object.keys(choiceScores || {}).length === 0
@@ -167,11 +172,13 @@ const OutputTypeConfig = ({
                 control={<Radio size="small" disabled={radioDisabled} />}
                 label="Scoring"
               />
-              <FormControlLabel
-                value="deterministic"
-                control={<Radio size="small" disabled={radioDisabled} />}
-                label="Choices"
-              />
+              {hideChoices && outputType !== "deterministic" ? null : (
+                <FormControlLabel
+                  value="deterministic"
+                  control={<Radio size="small" disabled={radioDisabled} />}
+                  label="Choices"
+                />
+              )}
             </RadioGroup>
           </Box>
         </CustomTooltip>
@@ -181,7 +188,7 @@ const OutputTypeConfig = ({
       {outputType === "percentage" && (
         <>
           {/* Score mapping */}
-          {(!isJevModel || Object.keys(choiceScores || {}).length > 0) && (
+          {!hideChoices && (!isJevModel || Object.keys(choiceScores || {}).length > 0) && (
             <Box>
               <Typography
                 variant="caption"
@@ -500,6 +507,7 @@ const OutputTypeConfig = ({
 
 OutputTypeConfig.propTypes = {
   outputType: PropTypes.oneOf(["pass_fail", "percentage", "deterministic"]),
+  hideChoices: PropTypes.bool,
   onOutputTypeChange: PropTypes.func.isRequired,
   choiceScores: PropTypes.object,
   onChoiceScoresChange: PropTypes.func.isRequired,

@@ -61,8 +61,26 @@ import ResizablePanels from "src/components/resizablePanels/ResizablePanels";
 import TestPlayground from "./TestPlayground";
 import CompositeDetailPanel from "./CompositeDetailPanel";
 import { buildCompositeChildConfigs } from "../Helpers/compositeRuntimeConfig";
+import {
+  compactDefinition,
+  unsavedTestTooltip,
+} from "../utils/unsavedDefinition";
 import EvalFeedbackTab from "./EvalFeedbackTab";
+import {
+  isTypedEvalType,
+  typedEvalLabel,
+} from "src/sections/common/EvalTypes/typedEvalTypes";
+import { versionChipOf } from "./versionChip";
+import TypedEvalDetail from "../types/TypedEvalDetail";
+import { hasTypedDetail } from "../types/typedViews";
+import AgreementTab from "../alignment/AgreementTab";
+import {
+  compositeExtrasBody,
+  rowsFromDetail,
+  validateComposite,
+} from "src/sections/common/EvalTypes/compositeModel";
 import EvalGroundTruthTab from "./EvalGroundTruthTab";
+import { useGroundTruthList } from "../hooks/useGroundTruth";
 import EvalUsageTab from "./EvalUsageTab";
 import VersionBadge from "./VersionBadge";
 import BulkDeleteDialog from "./BulkDeleteDialog";
@@ -86,6 +104,9 @@ import { buildDataInjection } from "src/sections/common/EvalPicker/evalPickerCon
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import { getSafeActionErrorMessage } from "src/utils/errorUtils";
+import AllowNaSwitch from "src/sections/common/EvalPicker/AllowNaSwitch";
+import { allowNaApplies } from "src/sections/common/EvalPicker/allowNaModel";
+import { isDecisionModel as isDecisionJudgeModel } from "src/sections/common/DecisionJudges/decisionModels";
 
 const ERROR_LOCALIZER_LOCKED_TOOLTIP =
   "Error Localization isn't enabled for this workspace.";
@@ -190,6 +211,8 @@ const EvalDetailPage = () => {
   const [jevMapping, setJevMapping] = useState({});
   const [outputType, setOutputType] = useState("pass_fail");
   const [passThreshold, setPassThreshold] = useState(0.5);
+  // W1-4: a workspace judge may answer N/A (the template's allow_na).
+  const [allowNa, setAllowNa] = useState(false);
   const [choiceScores, setChoiceScores] = useState({});
   const [multiChoice, setMultiChoice] = useState(false);
   const [description, setDescription] = useState("");
@@ -244,7 +267,9 @@ const EvalDetailPage = () => {
   }, [testError]);
 
   const handleTestResult = useCallback((success, result) => {
-    setTestPassed(true);
+    // Only a run that returned a result reads "Test completed"; a failed one
+    // must not, also once its error caption above auto-dismisses.
+    setTestPassed(Boolean(success));
     setTestError(
       success
         ? null
@@ -329,14 +354,14 @@ const EvalDetailPage = () => {
   const handleVersionSelect = useCallback(
     (version) => {
       const versionToLoad = version || defaultVersion;
-      // Warn if switching versions with unsaved changes
-      if (isDirty && version !== null) {
+      // Every selection reloads config, including deselection to the default.
+      if (isDirty) {
         if (
           !window.confirm(
             "You have unsaved changes. Discard and switch version?",
           )
         )
-          return;
+          return false;
       }
 
       if (!versionToLoad) {
@@ -375,6 +400,7 @@ const EvalDetailPage = () => {
               "pass_fail",
           );
           setPassThreshold(evalData.pass_threshold ?? 0.5);
+          setAllowNa(Boolean(config.allow_na ?? evalData.config?.allow_na));
           // Derive choiceScores: use the backend's scored dict if present,
           // otherwise convert the `choices` array (used by deterministic /
           // multi-class evals like tone, customer_agent_*) into a default
@@ -436,7 +462,7 @@ const EvalDetailPage = () => {
         setTimeout(() => {
           isPopulatingRef.current = false;
         }, 0);
-        return;
+        return true;
       }
 
       // Load version config into the form
@@ -472,6 +498,7 @@ const EvalDetailPage = () => {
               child_name: c.child_name,
               order: c.order,
               weight: c.weight ?? 1.0,
+              config: c.config || {},
             })),
           );
           const weights = {};
@@ -487,7 +514,7 @@ const EvalDetailPage = () => {
         setTimeout(() => {
           isPopulatingRef.current = false;
         }, 0);
-        return;
+        return true;
       }
 
       // Type-aware split. A version snapshot's `criteria` field contains
@@ -524,6 +551,8 @@ const EvalDetailPage = () => {
         );
       }
       setPassThreshold(config.passThreshold ?? config.pass_threshold ?? 0.5);
+      // Keep the selected version N/A rule and Jev choice order.
+      setAllowNa(Boolean(config.allow_na ?? evalData?.config?.allow_na));
       setChoiceScores(
         orderChoiceScores(
           config.choiceScores || config.choice_scores || {},
@@ -548,10 +577,16 @@ const EvalDetailPage = () => {
       );
       setContextOptions(resolve_context_options(config.data_injection));
       setErrorLocalizerEnabled(config.error_localizer_enabled ?? false);
+      // Description and tags belong to the eval, not to a version snapshot.
+      // A custom eval always opens on a version, so load them here too, or
+      // the page shows them empty and Save Version clears the tags.
+      setDescription(evalData?.description || "");
+      setTags(evalData?.tags || evalData?.eval_tags || []);
       setIsDirty(false);
       setTimeout(() => {
         isPopulatingRef.current = false;
       }, 0);
+      return true;
     },
     [defaultVersion, evalData, isDirty, isComposite, setSearchParams],
   );
@@ -641,6 +676,7 @@ const EvalDetailPage = () => {
             "pass_fail",
         );
         setPassThreshold(evalData.pass_threshold ?? 0.5);
+        setAllowNa(Boolean(config.allow_na ?? evalData.config?.allow_na));
         // Derive choiceScores: use the backend's scored dict if present,
         // otherwise convert the `choices` array (used by deterministic /
         // multi-class evals like tone, customer_agent_*) into a default
@@ -711,7 +747,18 @@ const EvalDetailPage = () => {
   }, [evalData, versionsData, defaultVersion]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const evalType = evalData?.eval_type || "llm";
+  // W7: a typed eval (decision tree, remote scorer) shows its own Details.
+  const showTypedDetail = isTypedEvalType(evalType) && hasTypedDetail(evalType);
+  // W7: agreement with reviewers, for every eval type, once real.
+  const agreementTabs = AgreementTab.ready ? ["agreement"] : [];
   const isSystemEval = evalData?.owner === "system";
+  // W1-4: where the scorer honours it (the workspace's own judges).
+  const allowNaShown = allowNaApplies({
+    evalType,
+    isSystemEval,
+    decisionModel: isDecisionJudgeModel(model) ? model : null,
+    supportsNa: evalData?.supports_na,
+  });
 
   const hasDataInjection =
     evalType === "agent" &&
@@ -761,7 +808,8 @@ const EvalDetailPage = () => {
       compositeDetail.aggregation_function || "weighted_avg",
     );
     setCompositeChildAxis(compositeDetail.composite_child_axis || "");
-    setCompositeChildren(compositeDetail.children || []);
+    // W7-5: each child with its stored seat, judge and level.
+    setCompositeChildren(rowsFromDetail(compositeDetail));
     // Seed weights map from children
     const weights = {};
     (compositeDetail.children || []).forEach((c) => {
@@ -775,8 +823,8 @@ const EvalDetailPage = () => {
   }, [isComposite, compositeDetail]);
 
   const isSaving =
-    updateEval.isLoading ||
-    createVersion.isLoading ||
+    updateEval.isPending ||
+    createVersion.isPending ||
     updateComposite.isPending;
 
   // Extract variables for the test panel
@@ -823,6 +871,9 @@ const EvalDetailPage = () => {
     ? "Jev"
     : decisionGroup?.label || "This decision model";
   const decisionLocked = isJevDecisionModel(model) && jevLocked;
+  const { data: groundTruthData } = useGroundTruthList(
+    isJevModel && !isComposite && evalType !== "code" ? evalId : null,
+  );
   const effectiveConfig = useMemo(
     () =>
       viewingVersion
@@ -844,6 +895,9 @@ const EvalDetailPage = () => {
         modelLabel: decisionLabel,
         modelGroup: decisionGroup,
         mapping: jevPayload.jev_mapping,
+        groundTruthEnabled: (groundTruthData?.items || []).some(
+          (item) => item.is_active && item.enabled,
+        ),
         config: {
           ...effectiveConfig,
           // Only agent evals use agent_mode; an LLM judge drafted on the
@@ -868,6 +922,114 @@ const EvalDetailPage = () => {
     : [];
   const jevError = jevErrors[0];
   const jevTestBlocked = Boolean(jevError || decisionLocked);
+
+  // What Test runs: the definition on screen, sent with the playground
+  // request and never saved (Save Version saves it). The template update's
+  // fields, so a Test runs exactly what Save would save.
+  const unsavedDefinition = useMemo(() => {
+    if (!evalData || isSystemEval || isComposite) return null;
+    return compactDefinition({
+      ...jevPayload,
+      instructions: evalType === "code" ? undefined : instructions || undefined,
+      code: evalType === "code" ? code : undefined,
+      code_language: evalType === "code" ? codeLanguage : undefined,
+      model: evalType === "code" ? undefined : model,
+      output_type: outputType,
+      pass_threshold: passThreshold,
+      choice_scores:
+        Object.keys(choiceScores || {}).length > 0 ? choiceScores : null,
+      multi_choice: multiChoice,
+      check_internet: checkInternet,
+      mode: evalType === "agent" ? agentMode : undefined,
+      tools:
+        evalType === "agent" ? build_tools_payload(connectorIds) : undefined,
+      knowledge_bases: evalType === "agent" ? knowledgeBaseIds : undefined,
+      data_injection:
+        evalType === "agent" ? buildDataInjection(contextOptions) : undefined,
+      summary:
+        evalType === "agent"
+          ? summaryType === "custom"
+            ? { type: "custom", custom: "" }
+            : { type: summaryType }
+          : undefined,
+      error_localizer_enabled: errorLocalizerActive,
+      template_format: templateFormat,
+      messages: evalType === "llm" ? messages : undefined,
+      few_shot_examples: evalType === "llm" ? fewShotExamples : undefined,
+    });
+  }, [
+    evalData,
+    isSystemEval,
+    isComposite,
+    jevPayload,
+    evalType,
+    instructions,
+    code,
+    codeLanguage,
+    model,
+    outputType,
+    passThreshold,
+    choiceScores,
+    multiChoice,
+    checkInternet,
+    agentMode,
+    connectorIds,
+    knowledgeBaseIds,
+    contextOptions,
+    summaryType,
+    errorLocalizerActive,
+    templateFormat,
+    messages,
+    fewShotExamples,
+  ]);
+
+  // A composite with unsaved edits tests them through the execute-adhoc
+  // request (as the create page does), never by saving them. That request
+  // carries no pinned child versions, jury or checks, so a composite with
+  // any of those tests as saved until Save Changes.
+  const compositeExtras = compositeExtrasBody(
+    compositeChildren,
+    compositeChildWeights,
+  );
+  const compositeTestsSaved =
+    isComposite &&
+    (compositeChildren.some((c) => c.pinned_version_id) ||
+      Boolean(evalData?.config?.jury) ||
+      Object.keys(compositeExtras).length > 0);
+  const compositeTestConfig = useMemo(() => {
+    if (!isComposite || isSystemEval || !isDirty || compositeTestsSaved) {
+      return null;
+    }
+    const weights = {};
+    compositeChildren.forEach((c) => {
+      const w = compositeChildWeights[c.child_id];
+      if (w != null) weights[c.child_id] = w;
+    });
+    return {
+      child_template_ids: compositeChildren.map((c) => c.child_id),
+      child_configs: buildCompositeChildConfigs(compositeChildren),
+      aggregation_enabled: compositeAggEnabled,
+      aggregation_function: compositeAggFunction,
+      composite_child_axis: compositeChildAxis || "",
+      child_weights: Object.keys(weights).length > 0 ? weights : null,
+      pass_threshold: evalData?.pass_threshold ?? 0.5,
+    };
+  }, [
+    isComposite,
+    isSystemEval,
+    isDirty,
+    compositeTestsSaved,
+    compositeChildren,
+    compositeChildWeights,
+    compositeAggEnabled,
+    compositeAggFunction,
+    compositeChildAxis,
+    evalData,
+  ]);
+  // System evaluations are read-only: their Test sends only the picked model.
+  const testsUnsavedChanges = isComposite
+    ? Boolean(compositeTestConfig)
+    : isDirty && Boolean(unsavedDefinition);
 
   // Save version
   const handleSaveVersion = useCallback(async () => {
@@ -929,6 +1091,7 @@ const EvalDetailPage = () => {
         // Send [] for LLM evals so the BE can persist a user-cleared list.
         // Omitting on empty would leave the previous examples in place.
         few_shot_examples: evalType === "llm" ? fewShotExamples : undefined,
+        allow_na: allowNaShown ? allowNa : undefined,
       };
       await updateEval.mutateAsync(payload);
 
@@ -960,6 +1123,7 @@ const EvalDetailPage = () => {
         template_format: templateFormat,
         messages: evalType === "llm" ? messages : undefined,
         few_shot_examples: evalType === "llm" ? fewShotExamples : undefined,
+        allow_na: allowNaShown ? allowNa : undefined,
       };
       const newVersion = await createVersion.mutateAsync({
         config_snapshot: configSnapshot,
@@ -1022,6 +1186,8 @@ const EvalDetailPage = () => {
     errorLocalizerActive,
     messages,
     fewShotExamples,
+    allowNa,
+    allowNaShown,
     updateEval,
     createVersion,
     enqueueSnackbar,
@@ -1046,6 +1212,8 @@ const EvalDetailPage = () => {
         child_template_ids: compositeChildren.map((c) => c.child_id),
         child_configs: buildCompositeChildConfigs(compositeChildren),
         child_weights: Object.keys(weights).length > 0 ? weights : null,
+        // W7-5: jury seats, levels and checks.
+        ...compositeExtrasBody(compositeChildren, compositeChildWeights),
       };
       const result = await updateComposite.mutateAsync(payload);
       const vNum = result?.version_number;
@@ -1074,8 +1242,11 @@ const EvalDetailPage = () => {
     enqueueSnackbar,
   ]);
 
-  // Test evaluation — auto-saves current config before running
-  const handleTestEvaluation = useCallback(async () => {
+  // Test runs what is on screen and saves nothing: the playground gets the
+  // unsaved definition (unsavedDefinition / compositeTestConfig) with its
+  // request. Only Save Version / Save Changes change what the evaluation,
+  // its versions and its experiments use.
+  const handleTestEvaluation = useCallback(() => {
     if (jevTestBlocked) {
       enqueueSnackbar(jevError || "Not included in your plan", {
         variant: "error",
@@ -1091,58 +1262,6 @@ const EvalDetailPage = () => {
     setTestError(null);
     setTestPassed(false);
     try {
-      // Save current config to the template so the eval runner uses the latest
-      // state.
-      if (!isSystemEval && !isComposite) {
-        const dataInjection = buildDataInjection(contextOptions);
-        const summary =
-          summaryType === "custom"
-            ? { type: "custom", custom: "" }
-            : { type: summaryType };
-        const tools = build_tools_payload(connectorIds);
-        await updateEval.mutateAsync({
-          ...jevPayload,
-          instructions:
-            evalType === "code" ? undefined : instructions || undefined,
-          code: evalType === "code" ? code : undefined,
-          code_language: evalType === "code" ? codeLanguage : undefined,
-          model,
-          output_type: outputType,
-          pass_threshold: passThreshold,
-          choice_scores:
-            Object.keys(choiceScores || {}).length > 0 ? choiceScores : null,
-          multi_choice: multiChoice,
-          check_internet: checkInternet,
-          mode: evalType === "agent" ? agentMode : undefined,
-          tools: evalType === "agent" ? tools : undefined,
-          knowledge_bases: evalType === "agent" ? knowledgeBaseIds : undefined,
-          data_injection: evalType === "agent" ? dataInjection : undefined,
-          summary: evalType === "agent" ? summary : undefined,
-          error_localizer_enabled: errorLocalizerActive,
-          template_format: templateFormat,
-          messages: evalType === "llm" ? messages : undefined,
-          few_shot_examples: evalType === "llm" ? fewShotExamples : undefined,
-        });
-      }
-      // Composite evals: save current children/weights/aggregation config
-      // before testing so the execute endpoint picks up the latest state.
-      if (isComposite && !isSystemEval) {
-        const weights = {};
-        compositeChildren.forEach((c) => {
-          const w = compositeChildWeights[c.child_id];
-          if (w != null) weights[c.child_id] = w;
-        });
-        await updateComposite.mutateAsync({
-          name: compositeName?.trim() || undefined,
-          description: compositeDescription,
-          aggregation_enabled: compositeAggEnabled,
-          aggregation_function: compositeAggFunction,
-          composite_child_axis: compositeChildAxis || undefined,
-          child_template_ids: compositeChildren.map((c) => c.child_id),
-          child_configs: buildCompositeChildConfigs(compositeChildren),
-          child_weights: Object.keys(weights).length > 0 ? weights : null,
-        });
-      }
       testPlaygroundRef.current?.runTest?.(evalId);
     } catch (error) {
       handleTestResult(
@@ -1154,41 +1273,13 @@ const EvalDetailPage = () => {
   }, [
     jevError,
     jevTestBlocked,
-    jevPayload,
-    templateFormat,
     enqueueSnackbar,
     evalId,
     evalType,
     fagiLocked,
-    isSystemEval,
     isComposite,
-    instructions,
-    code,
-    codeLanguage,
     model,
-    outputType,
-    passThreshold,
-    choiceScores,
-    multiChoice,
-    checkInternet,
-    agentMode,
-    summaryType,
-    connectorIds,
-    knowledgeBaseIds,
-    contextOptions,
-    errorLocalizerActive,
-    messages,
-    fewShotExamples,
-    updateEval,
-    updateComposite,
     handleTestResult,
-    compositeName,
-    compositeDescription,
-    compositeAggEnabled,
-    compositeAggFunction,
-    compositeChildAxis,
-    compositeChildren,
-    compositeChildWeights,
   ]);
 
   // Delete
@@ -1285,11 +1376,7 @@ const EvalDetailPage = () => {
             </Typography>
           </Breadcrumbs>
           <VersionBadge
-            version={
-              viewingVersion
-                ? `V${viewingVersion.version_number}`
-                : evalData.current_version || "V1"
-            }
+            version={versionChipOf({ viewingVersion, evalData, evalType })}
           />
           <Box
             sx={{
@@ -1304,13 +1391,21 @@ const EvalDetailPage = () => {
           >
             {(() => {
               if (!isComposite) {
+                // W7: Decision tree / Remote scorer.
+                if (typedEvalLabel(evalType)) return typedEvalLabel(evalType);
                 return evalType === "code"
                   ? "Code"
                   : evalType === "agent"
                     ? "Agent"
                     : "LLM";
               }
-              const typeLabels = { code: "Code", agent: "Agent", llm: "LLM" };
+              const typeLabels = {
+                code: "Code",
+                agent: "Agent",
+                llm: "LLM",
+                // W7-5: a task-suite check child.
+                check: "Check",
+              };
               const kids =
                 compositeChildren?.length > 0
                   ? compositeChildren
@@ -1417,24 +1512,44 @@ const EvalDetailPage = () => {
       <SegmentedTabs
         value={activeTab}
         onChange={handleTabChange}
-        sx={{ mb: 1.5, flexShrink: 0, width: "fit-content" }}
+        sx={{
+          mb: 1.5,
+          flexShrink: 0,
+          width: "fit-content",
+          // The same readable label rule as the create page's type tabs.
+          "& .MuiTab-root:not(.Mui-selected)": { color: "text.secondary" },
+        }}
       >
-        {(evalType === "code" || isComposite
-          ? ["details", "usage"]
-          : ["details", "usage", "feedback", "ground_truth"]
+        {/* W7: a typed eval (a decision tree, a remote scorer) reads no
+            feedback or ground truth, so it has the code/composite tabs. */}
+        {(evalType === "code" || isComposite || isTypedEvalType(evalType)
+          ? ["details", "usage", ...agreementTabs]
+          : ["details", "usage", "feedback", "ground_truth", ...agreementTabs]
         ).map((tab) => {
           const labels = {
             details: "Eval Details",
             usage: "Usage",
             feedback: "Feedback",
             ground_truth: "Ground Truth",
+            agreement: "Agreement",
           };
           return <Tab key={tab} value={tab} label={labels[tab]} />;
         })}
       </SegmentedTabs>
 
+      {/* ═══ W7: a typed eval's own Details ═══ */}
+      {activeTab === "details" && showTypedDetail && (
+        <Box sx={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+          <TypedEvalDetail
+            evalType={evalType}
+            templateId={evalId}
+            evalData={evalData}
+          />
+        </Box>
+      )}
+
       {/* ═══ Eval Details Tab — playground layout ═══ */}
-      {activeTab === "details" && (
+      {activeTab === "details" && !showTypedDetail && (
         <Box sx={{ flex: 1, minHeight: 0 }}>
           <ResizablePanels
             initialLeftWidth={55}
@@ -1493,16 +1608,7 @@ const EvalDetailPage = () => {
                       <Button
                         size="small"
                         variant="text"
-                        onClick={() => {
-                          if (
-                            isDirty &&
-                            !window.confirm(
-                              "You have unsaved changes. Discard and go back to default?",
-                            )
-                          )
-                            return;
-                          handleVersionSelect(null);
-                        }}
+                        onClick={() => handleVersionSelect(null)}
                         sx={{
                           minWidth: 0,
                         }}
@@ -1524,6 +1630,7 @@ const EvalDetailPage = () => {
                     childWeights={compositeChildWeights}
                     editable={!isSystemEval}
                     disabled={isSaving}
+                    templateId={evalId}
                     onNameChange={(v) => {
                       setCompositeName(v);
                       markDirty();
@@ -1770,6 +1877,15 @@ const EvalDetailPage = () => {
                       categoryLocked={true}
                     />
                   ))}
+                {allowNaShown && !isComposite && (
+                  <AllowNaSwitch
+                    checked={allowNa}
+                    onChange={(v) => {
+                      setAllowNa(v);
+                      markDirty();
+                    }}
+                  />
+                )}
 
                 {errorLocalizerAvailable &&
                   !isComposite &&
@@ -1990,6 +2106,8 @@ const EvalDetailPage = () => {
                     onColumnsLoaded={handleColumnsLoaded}
                     onVersionSelect={handleVersionSelect}
                     isComposite={isComposite}
+                    unsavedDefinition={unsavedDefinition}
+                    compositeAdhocConfig={compositeTestConfig}
                     templateFormat={templateFormat}
                     functionParamsSchema={
                       evalData?.config?.function_params_schema ||
@@ -2062,15 +2180,32 @@ const EvalDetailPage = () => {
                     </Box>
                   )}
                   {isDirty && (
-                    <Typography
-                      variant="caption"
-                      sx={{
-                        fontSize: "12px",
-                        color: "status.warning.fg",
-                      }}
+                    <Tooltip
+                      placement="top"
+                      title={
+                        testsUnsavedChanges
+                          ? unsavedTestTooltip({
+                              isComposite,
+                              evalType,
+                              isJevModel,
+                            })
+                          : isComposite && !isSystemEval
+                            ? "Test runs the saved composite: pinned versions, jury seats and checks are tested once saved."
+                            : ""
+                      }
                     >
-                      Unsaved changes
-                    </Typography>
+                      <Typography
+                        variant="caption"
+                        sx={{
+                          fontSize: "12px",
+                          color: "status.warning.fg",
+                        }}
+                      >
+                        {testsUnsavedChanges
+                          ? "Testing unsaved changes"
+                          : "Unsaved changes"}
+                      </Typography>
+                    </Tooltip>
                   )}
 
                   <Tooltip
@@ -2168,7 +2303,15 @@ const EvalDetailPage = () => {
                             isSaving ||
                             !isDirty ||
                             compositeChildren.length === 0 ||
-                            !canEditEvals
+                            !canEditEvals ||
+                            // W7-5: seats need a judge; vote rules need weights.
+                            validateComposite({
+                              aggregation: compositeAggEnabled
+                                ? compositeAggFunction
+                                : null,
+                              children: compositeChildren,
+                              weights: compositeChildWeights,
+                            }).length > 0
                           }
                           startIcon={
                             isSaving ? (
@@ -2211,11 +2354,19 @@ const EvalDetailPage = () => {
         </Box>
       )}
 
+      {/* ═══ W7: Agreement Tab ═══ */}
+      {activeTab === "agreement" && (
+        <Box sx={{ flex: 1, minHeight: 0 }}>
+          <AgreementTab templateId={evalId} evalData={evalData} />
+        </Box>
+      )}
+
       {/* ═══ Ground Truth Tab ═══ */}
       {activeTab === "ground_truth" && (
         <Box sx={{ flex: 1, minHeight: 0 }}>
           <EvalGroundTruthTab
             templateId={evalId}
+            isJevModel={isJevModel}
             onSwitchToDetails={() => setActiveTab("details")}
           />
         </Box>

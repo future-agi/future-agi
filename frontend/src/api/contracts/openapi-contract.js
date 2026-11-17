@@ -201,6 +201,9 @@ function schemaToZod(schema, options = {}) {
   }
 
   if (schema["x-json-value"]) {
+    if (schema["x-nullable"] === false) {
+      return JSON_VALUE_SCHEMA.refine((value) => value !== null);
+    }
     return nullableIfNeeded(JSON_VALUE_SCHEMA, schema);
   }
 

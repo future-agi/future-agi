@@ -1,0 +1,16 @@
+{
+  "http": {
+    "status": 403,
+    "headers": {
+      "content-type": "application/json"
+    }
+  },
+  "body": {
+    "error": {
+      "message": "Access denied: IP address is not allowed",
+      "type": "permission_error",
+      "param": null,
+      "code": "permission_denied"
+    }
+  }
+}

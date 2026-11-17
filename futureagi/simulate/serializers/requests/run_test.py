@@ -15,6 +15,10 @@ from rest_framework import serializers
 
 from simulate.models import AgentDefinition, RunTest, Scenarios, SimulateEvalConfig
 from simulate.serializers.requests.run_test_evals import EvalConfigDefinitionSerializer
+from simulate.utils.scenario_ownership import (
+    SCENARIOS_NOT_IN_RUN_TEST,
+    all_attached_to_run_test,
+)
 from tracer.serializers.filters import StrictInputSerializer
 from tracer.utils.workspace_scope import get_request_organization
 
@@ -173,13 +177,57 @@ class RunTestComponentsUpdateSerializer(StrictInputSerializer):
 
 
 class ExecuteRunTestSerializer(StrictInputSerializer):
-    """Serializer for POST /run-tests/{run_test_id}/execute/."""
+    """Serializer for POST /run-tests/{run_test_id}/execute/.
+
+    ``scenario_ids`` may name only live scenarios of the caller's organization
+    (and, through the ``Scenarios.objects`` manager, the caller's workspace)
+    that the run test includes (T6 #7e). Any other id is refused with one fixed
+    error, see ``simulate.utils.scenario_ownership``. The check needs
+    ``request`` and ``run_test_id`` in the serializer context.
+    """
 
     scenario_ids = serializers.ListField(
         child=serializers.UUIDField(), allow_empty=True, required=False, default=list
     )
     simulator_id = serializers.UUIDField(required=False, allow_null=True)
     select_all = serializers.BooleanField(required=False, default=False)
+
+    def validate_scenario_ids(self, value):
+        if not value:
+            # Nothing named: the view runs every scenario the run test includes.
+            return value
+
+        from simulate.views.scoping import run_test_workspace_filter
+
+        request = self.context.get("request")
+        run_test_id = self.context.get("run_test_id")
+        organization = (
+            get_request_organization(request) if request is not None else None
+        )
+        if organization is None or run_test_id is None:
+            raise serializers.ValidationError(SCENARIOS_NOT_IN_RUN_TEST)
+
+        run_test_visible = (
+            RunTest.objects.filter(
+                run_test_workspace_filter(request),
+                id=run_test_id,
+                organization=organization,
+                deleted=False,
+            )
+            .values_list("id", flat=True)
+            .first()
+        )
+        if run_test_visible is None:
+            # The view looks the run test up with these same filters and answers
+            # "Run test not found" before anything runs, as it does when no
+            # scenario_ids are sent. It also re-checks the selection itself.
+            return value
+
+        if not all_attached_to_run_test(
+            value, organization=organization, run_test_id=run_test_id
+        ):
+            raise serializers.ValidationError(SCENARIOS_NOT_IN_RUN_TEST)
+        return value
 
 
 class PromptSimulationCreateFieldsSerializer(StrictInputSerializer):

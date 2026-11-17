@@ -1,13 +1,17 @@
+import ContentSkeleton from "src/components/content-skeleton";
+import PersonalKeySnippet, {
+  PersonalKeyControl,
+} from "src/sections/keys/view/PersonalKeySnippet";
 import React, { useMemo, useState } from "react";
-import { SegmentedTabs } from "src/components/tabs/tabs";
 import {
   Box,
   Typography,
+  Tab,
   CircularProgress,
   IconButton,
-  Tab,
 } from "@mui/material";
 import HelperText from "../Common/HelperText";
+import { SegmentedTabs } from "src/components/tabs/tabs";
 import { ShowComponent } from "src/components/show";
 import { FormCodeEditor } from "src/components/form-code-editor";
 import { useForm } from "react-hook-form";
@@ -17,7 +21,6 @@ import axios, { endpoints } from "src/utils/axios";
 import { copyToClipboard as copyTextToClipboard } from "src/utils/utils";
 import PropTypes from "prop-types";
 import Iconify from "src/components/iconify";
-import ContentSkeleton from "src/components/content-skeleton";
 
 const defaultValues = {
   Pcode: "",
@@ -223,73 +226,7 @@ const AddRowData = ({ dataset }) => {
               </IconButton>
             </Box>
           </Box>
-          <Box display="flex" alignItems="center">
-            <Typography
-              fontWeight={"fontWeightMedium"}
-              color="text.primary"
-              variant="s1"
-              component="span"
-              width="141px"
-            >
-              API Key:
-            </Typography>
-            <Box display="flex" alignItems="center" gap={1}>
-              <Typography
-                bgcolor="background.neutral"
-                borderRadius="8px"
-                variant="s1"
-                fontWeight={"fontWeightRegular"}
-                p="5px 12px"
-                color="black"
-              >
-                {data?.result?.apiKeys?.apiKey}
-              </Typography>
-              <IconButton
-                size="small"
-                onClick={() =>
-                  copyToClipboard(data?.result?.apiKeys?.apiKey, "API Key")
-                }
-                sx={{ color: "text.secondary" }}
-              >
-                <Iconify icon="solar:copy-linear" width={16} height={16} />
-              </IconButton>
-            </Box>
-          </Box>
-          <Box display="flex" alignItems="center">
-            <Typography
-              fontWeight={"fontWeightMedium"}
-              color="text.primary"
-              variant="s1"
-              component="span"
-              width="141px"
-            >
-              Secret Key:
-            </Typography>
-            <Box display="flex" alignItems="center" gap={1}>
-              <Typography
-                bgcolor="background.neutral"
-                borderRadius="8px"
-                variant="s1"
-                fontWeight={"fontWeightRegular"}
-                p="5px 12px"
-                color="black"
-              >
-                {data?.result?.apiKeys?.secretKey}
-              </Typography>
-              <IconButton
-                size="small"
-                onClick={() =>
-                  copyToClipboard(
-                    data?.result?.apiKeys?.secretKey,
-                    "Secret Key",
-                  )
-                }
-                sx={{ color: "text.secondary" }}
-              >
-                <Iconify icon="solar:copy-linear" width={16} height={16} />
-              </IconButton>
-            </Box>
-          </Box>
+          <PersonalKeyControl />
         </Box>
         <Box sx={{ mb: 1.5 }}>
           <SegmentedTabs
@@ -314,6 +251,7 @@ const AddRowData = ({ dataset }) => {
         >
           <ShowComponent condition={currentTab === "python"}>
             <FormCodeEditor
+              readOnly
               height="300px"
               defaultLanguage="python"
               control={control}
@@ -324,6 +262,7 @@ const AddRowData = ({ dataset }) => {
           </ShowComponent>
           <ShowComponent condition={currentTab === "typescript"}>
             <FormCodeEditor
+              readOnly
               height="300px"
               defaultLanguage="typescript"
               control={control}
@@ -334,6 +273,7 @@ const AddRowData = ({ dataset }) => {
           </ShowComponent>
           <ShowComponent condition={currentTab === "curl"}>
             <FormCodeEditor
+              readOnly
               height="300px"
               defaultLanguage="bash"
               control={control}
@@ -352,4 +292,10 @@ AddRowData.propTypes = {
   dataset: PropTypes.string,
 };
 
-export default AddRowData;
+export default function DatasetSnippet(props) {
+  return (
+    <PersonalKeySnippet>
+      <AddRowData {...props} />
+    </PersonalKeySnippet>
+  );
+}

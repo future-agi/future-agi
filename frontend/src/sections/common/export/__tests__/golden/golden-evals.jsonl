@@ -1,0 +1,2 @@
+{"input":[{"role":"system","content":"You are the Acme support agent."},{"role":"user","content":"Order A-3920 says \"delivered\", but nothing arrived, sorry"}],"ideal":"Sorry for the wait.\nA-3920 is delayed; the new estimate is Thursday."}
+{"input":[{"role":"system","content":"You are the Acme support agent."},{"role":"user","content":"Refund\r\nplease, ✓ 日本"}],"ideal":"Refunded $12.50, 5–7 business days."}

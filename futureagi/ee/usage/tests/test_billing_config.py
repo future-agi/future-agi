@@ -12,6 +12,7 @@ from unittest.mock import patch
 
 import pytest
 import yaml
+from django.test import override_settings
 
 from ee.usage.models.usage import PlanChoices
 from ee.usage.schemas.billing_config import (
@@ -24,14 +25,16 @@ from ee.usage.schemas.billing_config import (
     PricingTier,
     expand_all_shorthand,
 )
+from ee.usage.schemas.event_types import BillingEventType
 from ee.usage.services.config import BillingConfig, BillingConfigError
 
-# billing.yaml ships only with the private cloud overlay; this whole module
-# asserts against the real file. The missing-file behavior is covered by
-# test_billing_config_missing.py, which runs everywhere.
+# billing.yaml ships only with the private cloud overlay. Classes that assert
+# against the real file carry this marker; the schema and lookup tests build
+# their own config and run everywhere. The missing-file behavior is covered by
+# test_billing_config_missing.py.
 from django.conf import settings as _settings
 
-pytestmark = pytest.mark.skipif(
+requires_billing_yaml = pytest.mark.skipif(
     not os.path.exists(
         getattr(
             _settings,
@@ -47,6 +50,28 @@ pytestmark = pytest.mark.skipif(
 # ---------------------------------------------------------------------------
 
 VALID_PLAN_KEYS = {c.value for c in PlanChoices}
+
+# Every billing.yaml declares these seven dimensions. managed_spend (Gateway
+# managed models, prepaid) is declared only by a cloud overlay that ships
+# managed models; a billing.yaml without it is valid. The dimension tests
+# follow the billing.yaml that is loaded: the seven always, and managed_spend
+# only when that file declares it.
+BASE_DIMENSIONS = frozenset(
+    {
+        "storage",
+        "ai_credits",
+        "gateway_requests",
+        "gateway_cache_hits",
+        "text_sim_tokens",
+        "voice_sim_minutes",
+        "tracing_events",
+    }
+)
+
+
+def shipped_dimensions(declared):
+    """The dimensions a billing.yaml must have, given the ones it declares."""
+    return BASE_DIMENSIONS | ({"managed_spend"} & set(declared))
 
 
 def get_billing_yaml_path():
@@ -67,6 +92,7 @@ def load_raw_yaml():
 # ---------------------------------------------------------------------------
 
 
+@requires_billing_yaml
 class TestBillingYamlFile:
     def test_file_exists(self):
         assert os.path.exists(get_billing_yaml_path())
@@ -96,6 +122,7 @@ class TestBillingYamlFile:
 # ---------------------------------------------------------------------------
 
 
+@requires_billing_yaml
 class TestPlansSection:
     def test_has_all_plan_choices(self):
         raw = load_raw_yaml()
@@ -143,22 +170,15 @@ class TestPlansSection:
 # ---------------------------------------------------------------------------
 
 
+@requires_billing_yaml
 class TestDimensionsSection:
-    def test_has_seven_dimensions(self):
+    def test_has_seven_dimensions_or_eight_with_managed_spend(self):
         raw = load_raw_yaml()
-        assert len(raw["dimensions"]) == 7
+        assert len(raw["dimensions"]) == len(shipped_dimensions(raw["dimensions"]))
 
     def test_expected_dimensions(self):
         raw = load_raw_yaml()
-        expected = {
-            "storage",
-            "ai_credits",
-            "gateway_requests",
-            "gateway_cache_hits",
-            "text_sim_tokens",
-            "voice_sim_minutes",
-            "tracing_events",
-        }
+        expected = shipped_dimensions(raw["dimensions"])
         assert set(raw["dimensions"].keys()) == expected
 
     def test_every_dimension_has_required_fields(self):
@@ -193,6 +213,7 @@ class TestDimensionsSection:
 # ---------------------------------------------------------------------------
 
 
+@requires_billing_yaml
 class TestPricingTiersSection:
     def test_keys_match_dimensions(self):
         raw = load_raw_yaml()
@@ -246,6 +267,7 @@ class TestPricingTiersSection:
 # ---------------------------------------------------------------------------
 
 
+@requires_billing_yaml
 class TestEntitlementsSection:
     def test_has_monitors(self):
         raw = load_raw_yaml()
@@ -287,6 +309,7 @@ class TestEntitlementsSection:
 # ---------------------------------------------------------------------------
 
 
+@requires_billing_yaml
 class TestApiCallTypesSection:
     def test_dimensions_exist(self):
         raw = load_raw_yaml()
@@ -311,6 +334,7 @@ class TestApiCallTypesSection:
 # ---------------------------------------------------------------------------
 
 
+@requires_billing_yaml
 class TestCrossSectionConsistency:
     def test_entitlement_plans_match_enum(self):
         raw = load_raw_yaml()
@@ -327,7 +351,7 @@ class TestCrossSectionConsistency:
         raw = load_raw_yaml()
         schema = BillingConfigSchema(**raw)
         assert len(schema.plans) == len(PlanChoices)
-        assert len(schema.dimensions) == 7
+        assert len(schema.dimensions) == len(shipped_dimensions(raw["dimensions"]))
 
 
 # ---------------------------------------------------------------------------
@@ -422,6 +446,7 @@ class TestPydanticSchemas:
 # ---------------------------------------------------------------------------
 
 
+@requires_billing_yaml
 class TestBillingConfigService:
     def test_get_returns_instance(self):
         config = BillingConfig.get()
@@ -467,7 +492,7 @@ class TestBillingConfigService:
     def test_get_all_dimensions(self):
         config = BillingConfig.get()
         dims = config.get_all_dimensions()
-        assert len(dims) == 7
+        assert len(dims) == len(shipped_dimensions(dims))
 
     def test_get_pricing_tiers(self):
         config = BillingConfig.get()
@@ -544,6 +569,7 @@ class TestBillingConfigService:
 # ---------------------------------------------------------------------------
 
 
+@requires_billing_yaml
 class TestBillingConfigErrors:
     def test_missing_file_raises_error(self):
         BillingConfig._instance = None  # reset singleton
@@ -606,3 +632,147 @@ class TestBillingConfigErrors:
         """Reset singleton after error tests."""
         BillingConfig._instance = None
         BillingConfig.get()  # reload valid config
+
+
+# ---------------------------------------------------------------------------
+# Dimension settlement and event-type → dimension lookup
+#
+# These build their own config, so they run with or without billing.yaml.
+# ---------------------------------------------------------------------------
+
+
+def _dimension(**overrides):
+    fields = {
+        "display_name": "Gateway managed models",
+        "native_unit": "usd_micros",
+        "display_unit": "USD",
+        "native_to_display_divisor": 1_000_000,
+        "aggregation": "sum",
+    }
+    fields.update(overrides)
+    return fields
+
+
+def _raw_config(*, map_managed_spend):
+    api_call_types = {
+        "gateway_request": {"dimension": "gateway_requests", "per_call": 1},
+    }
+    if map_managed_spend:
+        api_call_types["gateway_managed_spend"] = {
+            "dimension": "managed_spend",
+            "amount_from": "billed_micros",
+        }
+    return {
+        "plans": {},
+        "dimensions": {
+            "gateway_requests": _dimension(
+                display_name="Gateway requests",
+                native_unit="requests",
+                display_unit="requests",
+                native_to_display_divisor=1,
+                aggregation="count",
+            ),
+            "managed_spend": _dimension(settlement="prepaid"),
+        },
+        "pricing_tiers": {},
+        "entitlements": {},
+        "api_call_types": api_call_types,
+        "ee_bands": {},
+        "ai_credit_models": {},
+    }
+
+
+def _config(*, map_managed_spend):
+    return BillingConfig(
+        BillingConfigSchema(**_raw_config(map_managed_spend=map_managed_spend))
+    )
+
+
+@pytest.fixture
+def billing_singleton():
+    """Swap the BillingConfig singleton for a test and restore it after."""
+    saved = BillingConfig._instance
+    yield
+    BillingConfig._instance = saved
+
+
+class TestDimensionSettlement:
+    def test_settlement_defaults_to_metered(self):
+        assert DimensionConfig(**_dimension()).settlement == "metered"
+
+    def test_prepaid_parses(self):
+        assert DimensionConfig(**_dimension(settlement="prepaid")).settlement == (
+            "prepaid"
+        )
+
+    @pytest.mark.parametrize("value", ["postpaid", "", "PREPAID", None])
+    def test_invalid_settlement_rejected(self, value):
+        with pytest.raises(ValueError, match="settlement"):
+            DimensionConfig(**_dimension(settlement=value))
+
+    def test_prepaid_parses_through_the_full_schema(self):
+        schema = BillingConfigSchema(**_raw_config(map_managed_spend=True))
+        assert schema.dimensions["managed_spend"].settlement == "prepaid"
+        assert schema.dimensions["gateway_requests"].settlement == "metered"
+
+    def test_dimension_settlement_reads_each_dimension(self):
+        config = _config(map_managed_spend=True)
+        assert config.dimension_settlement("managed_spend") == "prepaid"
+        assert config.dimension_settlement("gateway_requests") == "metered"
+
+    def test_dimension_settlement_unknown_dimension_raises(self):
+        with pytest.raises(KeyError, match="bandwidth"):
+            _config(map_managed_spend=True).dimension_settlement("bandwidth")
+
+
+class TestEventTypeDimension:
+    def test_returns_none_when_unmapped(self, billing_singleton):
+        BillingConfig._instance = _config(map_managed_spend=False)
+        assert BillingConfig.event_type_dimension("gateway_managed_spend") is None
+
+    def test_returns_dimension_name_when_mapped(self, billing_singleton):
+        BillingConfig._instance = _config(map_managed_spend=True)
+        assert (
+            BillingConfig.event_type_dimension("gateway_managed_spend")
+            == "managed_spend"
+        )
+
+    def test_accepts_the_enum_member(self, billing_singleton):
+        BillingConfig._instance = _config(map_managed_spend=True)
+        assert (
+            BillingConfig.event_type_dimension(BillingEventType.GATEWAY_MANAGED_SPEND)
+            == "managed_spend"
+        )
+
+    def test_returns_none_when_config_cannot_load(self, billing_singleton):
+        BillingConfig._instance = None
+        with (
+            override_settings(BILLING_CONFIG_PATH="/nonexistent/billing.yaml"),
+            patch("ee.usage.deployment.DeploymentMode.is_cloud", return_value=True),
+        ):
+            assert BillingConfig.event_type_dimension("gateway_managed_spend") is None
+        assert BillingConfig._instance is None
+
+    def test_returns_none_when_config_is_invalid(self, billing_singleton, tmp_path):
+        bad = tmp_path / "billing.yaml"
+        bad.write_text("plans:\n  free:\n    - this is invalid\n")
+        BillingConfig._instance = None
+        with override_settings(BILLING_CONFIG_PATH=str(bad)):
+            assert BillingConfig.event_type_dimension("gateway_managed_spend") is None
+
+    def test_returns_none_when_config_file_cannot_be_read(
+        self, billing_singleton, tmp_path
+    ):
+        # The path exists but is a directory, so open() raises an OSError
+        # that _load does not wrap.
+        BillingConfig._instance = None
+        with override_settings(BILLING_CONFIG_PATH=str(tmp_path)):
+            assert BillingConfig.event_type_dimension("gateway_managed_spend") is None
+
+    def test_returns_none_when_config_is_empty_on_oss(self, billing_singleton):
+        BillingConfig._instance = None
+        with (
+            override_settings(BILLING_CONFIG_PATH="/nonexistent/billing.yaml"),
+            patch("ee.usage.deployment.DeploymentMode.is_cloud", return_value=False),
+        ):
+            assert BillingConfig.event_type_dimension("gateway_managed_spend") is None

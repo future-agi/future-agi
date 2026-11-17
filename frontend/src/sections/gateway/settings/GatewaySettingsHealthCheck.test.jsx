@@ -1,4 +1,5 @@
 import React from "react";
+import { HelmetProvider } from "react-helmet-async";
 import {
   afterAll,
   afterEach,
@@ -34,6 +35,10 @@ import GatewaySettingsSection from "./GatewaySettingsSection";
 // and snackbar. Only unrelated Settings panels are omitted.
 vi.mock("./EmailAlertsCard", () => ({ default: () => null }));
 vi.mock("./OrgConfigSection", () => ({ default: () => null }));
+// Health Check is Owner or Admin only (useGatewayAdmin): an Admin runs it.
+vi.mock("src/contexts/OrganizationContext", () => ({
+  useOrganization: () => ({ orgLevel: 8 }),
+}));
 
 const server = setupServer();
 const beforeCheck = "2026-04-11T10:00:00Z";
@@ -107,23 +112,29 @@ beforeEach(() => {
 
 function renderSettings() {
   return render(
-    <QueryClientProvider client={queryClient}>
-      <SnackbarProvider>
-        <GatewayProvider>
-          <GatewaySettingsSection />
-        </GatewayProvider>
-      </SnackbarProvider>
-    </QueryClientProvider>,
+    <HelmetProvider>
+      <QueryClientProvider client={queryClient}>
+        <SnackbarProvider>
+          <GatewayProvider>
+            <GatewaySettingsSection />
+          </GatewayProvider>
+        </SnackbarProvider>
+      </QueryClientProvider>
+    </HelmetProvider>,
   );
 }
 
 async function startCheck() {
   renderSettings();
   const user = userEvent.setup();
-  await user.click(await screen.findByRole("button", { name: "Health Check" }));
+  // The page frame shows the button while the gateway list loads, disabled
+  // until the gateway is known.
+  const button = await screen.findByRole("button", { name: "Health Check" });
+  await waitFor(() => expect(button).toBeEnabled());
+  await user.click(button);
   await waitFor(() => expect(healthRequests).toBe(1));
-  expect(screen.getByRole("button", { name: "Checking..." })).toBeDisabled();
-  fireEvent.click(screen.getByRole("button", { name: "Checking..." }));
+  expect(screen.getByRole("button", { name: "Checking…" })).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "Checking…" }));
   expect(healthRequests).toBe(1);
 }
 
@@ -181,7 +192,7 @@ describe("Settings health check", () => {
     expect(
       await screen.findByText(new Date(afterCheck).toLocaleString()),
     ).toBeVisible();
-    expect(screen.getByText("unreachable")).toBeVisible();
+    expect(screen.getByText("Unreachable")).toBeVisible();
     // The global MutationCache handler must not add its raw
     // "unreachable, <timestamp>, <error>" toast next to the hook's message.
     expect(screen.getAllByText(new RegExp(message))).toHaveLength(1);

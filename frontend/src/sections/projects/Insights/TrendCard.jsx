@@ -374,12 +374,17 @@ TrendLegend.propTypes = {
   onCategory: PropTypes.func,
 };
 
-function RunPager({ runs, runId, onSelectRun }) {
-  const index = runs.findIndex((run) => run.id === runId);
-  if (index < 0) return null;
-  const older = runs[index + 1];
-  const newer = runs[index - 1];
-  const current = runs[index];
+// `runs` are the newest runs, newest first; `total` counts every run. Past
+// the listed ones, the open run's detail names its neighbours among all of
+// them, so the older runs open too.
+function RunPager({ runs, runId, run, total, onSelectRun }) {
+  const index = runs.findIndex((item) => item.id === runId);
+  const detail = run?.id === runId ? run : null;
+  const current = index >= 0 ? runs[index] : detail;
+  if (!current) return null;
+  const listed = (step) => (index >= 0 ? runs[index + step]?.id : undefined);
+  const olderId = listed(1) ?? detail?.previous_run_id;
+  const newerId = listed(-1) ?? detail?.next_run_id;
   return (
     <Stack
       direction="row"
@@ -391,8 +396,8 @@ function RunPager({ runs, runId, onSelectRun }) {
       <Button
         size="small"
         color="inherit"
-        disabled={!older}
-        onClick={() => onSelectRun(older.id)}
+        disabled={!olderId}
+        onClick={() => onSelectRun(olderId)}
         startIcon={<Iconify icon="mdi:arrow-left" width={16} />}
         sx={{ color: "text.secondary" }}
       >
@@ -405,14 +410,17 @@ function RunPager({ runs, runId, onSelectRun }) {
         {formatWhen(current.finished_at || current.created_at)}
         <Box component="span" sx={{ color: "text.secondary" }}>
           {" "}
-          · Run {formatCount(runs.length - index)} of {formatCount(runs.length)}
+          ·{" "}
+          {index >= 0
+            ? `Run ${formatCount(total - index)} of ${formatCount(total)}`
+            : `One of ${formatCount(total)} runs`}
         </Box>
       </Typography>
       <Button
         size="small"
         color="inherit"
-        disabled={!newer}
-        onClick={() => onSelectRun(newer.id)}
+        disabled={!newerId}
+        onClick={() => onSelectRun(newerId)}
         endIcon={<Iconify icon="mdi:arrow-right" width={16} />}
         sx={{ color: "text.secondary" }}
       >
@@ -425,6 +433,8 @@ function RunPager({ runs, runId, onSelectRun }) {
 RunPager.propTypes = {
   runs: PropTypes.array.isRequired,
   runId: PropTypes.string,
+  run: PropTypes.object,
+  total: PropTypes.number.isRequired,
   onSelectRun: PropTypes.func.isRequired,
 };
 
@@ -440,7 +450,9 @@ RunPager.propTypes = {
  */
 export default function TrendCard({
   runs,
+  runCount,
   runId,
+  run,
   order,
   currentSegments,
   sharedTaxonomy,
@@ -456,6 +468,8 @@ export default function TrendCard({
   );
   const current = rows.find((row) => row.runId === runId);
   const chart = rows.length >= 2;
+  // `runs` lists the newest runs only; `runCount` counts them all.
+  const total = Math.max(runCount || 0, runs.length);
   const breaks = rows.filter((row, i) => i > 0 && row.fresh).length;
   // The pager below counts every run: beside it, say why only one shows,
   // rather than that there is only one. A completed run can show none: one
@@ -578,7 +592,7 @@ export default function TrendCard({
         />
       </Box>
 
-      {runs.length > 1 && (
+      {total > 1 && (
         <Box
           sx={{
             mt: 1,
@@ -587,7 +601,13 @@ export default function TrendCard({
             borderColor: "divider",
           }}
         >
-          <RunPager runs={runs} runId={runId} onSelectRun={onSelectRun} />
+          <RunPager
+            runs={runs}
+            runId={runId}
+            run={run}
+            total={total}
+            onSelectRun={onSelectRun}
+          />
         </Box>
       )}
     </Box>
@@ -596,7 +616,9 @@ export default function TrendCard({
 
 TrendCard.propTypes = {
   runs: PropTypes.array.isRequired,
+  runCount: PropTypes.number,
   runId: PropTypes.string,
+  run: PropTypes.object,
   order: PropTypes.array.isRequired,
   currentSegments: PropTypes.array,
   sharedTaxonomy: PropTypes.bool,

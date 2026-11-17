@@ -146,15 +146,13 @@ func TestAdaptiveLegacyCompletionAttemptHealth(t *testing.T) {
 					want := http.StatusOK
 					if scenario == "upstream-error" && mode != "stream" {
 						want = http.StatusBadGateway
-					} else if scenario == "output-policy" && mode != "stream" {
-						want = models.ErrGuardrailBlocked("", "").Status
 					} else if scenario == "local-rate-limit" && i == 1 {
 						want = http.StatusTooManyRequests
-					} else if scenario == "cache-hit" && mode == "native" && i == 1 {
-						// Existing native cache response bug: no nativeResp is built on a hit.
-						// Even this local response error must not become an upstream sample.
-						want = http.StatusInternalServerError
 					}
+					// On the line a native cache hit is served (the cached answer
+					// in the native wire format), and a post-plugin's error does
+					// not refuse the answer (only an output check withholds one):
+					// both answer 200, and neither becomes an upstream sample.
 					if status != want {
 						t.Fatalf("status=%d want=%d", status, want)
 					}

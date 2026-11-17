@@ -1,0 +1,35 @@
+# Calendly's hosted MCP server with MCP OAuth: the client discovers the
+# authorization server from the server's protected-resource metadata and
+# registers itself dynamically (DCR). Calendly accepts no personal access
+# token and no console-issued client, so OAuth is the only way in. EE takes
+# only a declared oauth2 spec with a pre-registered client, so it gets none.
+# OSS is left out until omega mcp login can register a client itself (DCR);
+# Calendly admits no other client.
+schema: "connector-manifest/v1#provider"
+app: calendly
+id: mcp
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.calendly.com
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent, user]
+auth:
+  kind: mcp_oauth
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://developer.calendly.com/docs/mcp/calendly-mcp-server
+    fetchedAt: 2026-10-21
+  - fact: auth.kind
+    url: https://developer.calendly.com/docs/mcp/calendly-mcp-server
+    fetchedAt: 2026-10-21
+x-omega: { oss: exclude }

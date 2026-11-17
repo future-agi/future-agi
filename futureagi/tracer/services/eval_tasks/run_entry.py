@@ -22,9 +22,11 @@ from tracer.services.clickhouse.v2.eval_loader import EvalTelemetryReadError
 from tracer.services.eval_tasks.config_hash import resolved_config_hash
 from tracer.services.eval_tasks.entries import (
     mark_terminal,
+    persist_eval_result,
     running_entry_epoch,
     writing_onto_entry,
 )
+from tracer.services.eval_tasks.webhook import notify_eval_task_result
 
 if TYPE_CHECKING:
     pass
@@ -39,6 +41,11 @@ logger = logging.getLogger(__name__)
 RECLAIMED = "reclaimed"
 
 
+class EvalUsageRefused(Exception):
+    """The organization's usage check refused the evaluation. The message is
+    the sentence the refusal gives, which the entry records."""
+
+
 def run_entry(entry: EvalLogger) -> str:
     """Run the eval for one entry and record its terminal status; returns it.
 
@@ -46,9 +53,10 @@ def run_entry(entry: EvalLogger) -> str:
     Delete & rerun landing while it ran, or ``"reclaimed"`` if the row is no
     longer under the claim this run took: refused before the eval when the row
     has left RUNNING, and after it when the terminal write is fenced out by a
-    claim taken in the meantime. Eval/data failures converge to a terminal
-    state; infrastructure read failures propagate to the activity's bounded
-    retry policy.
+    claim taken in the meantime. An organization the usage check refuses is
+    recorded errored with the check's sentence before anything is charged.
+    Eval/data failures converge to a terminal state; infrastructure read
+    failures propagate to the activity's bounded retry policy.
     """
     fresh = EvalLogger.objects.filter(id=entry.id).first()
     if fresh is None:
@@ -91,9 +99,12 @@ def run_entry(entry: EvalLogger) -> str:
     # Infrastructure reads happen before the terminalizing evaluator boundary:
     # a transient PG failure loading task ownership must be retried by Temporal,
     # not recorded as a permanent eval-entry error on its first attempt.
-    task_project = (
-        EvalTask.objects.select_related("project").get(id=fresh.eval_task_id).project
+    task = (
+        EvalTask.objects.using("default")
+        .select_related("project")
+        .get(id=fresh.eval_task_id)
     )
+    task_project = task.project
     config_hash = resolved_config_hash(config)
 
     # Nothing here bounds how long the evaluation itself may take. The only
@@ -103,12 +114,27 @@ def run_entry(entry: EvalLogger) -> str:
     # does and does not stop.
     with running_entry_epoch(run_epoch):
         try:
-            _run_for_target(fresh, config, task_project=task_project)
+            _run_for_target(
+                fresh, config, task_project=task_project, config_hash=config_hash
+            )
         except EvalTelemetryReadError:
             # CH transport/query pressure is infrastructure, not an eval result.
             # Bubble it to the activity so its bounded retry policy can retry the
             # same still-RUNNING entry instead of freezing a transient miss.
             raise
+        except EvalUsageRefused as refusal:
+            # Refused before anything was read, evaluated or charged: the
+            # entry ends errored with the refusal's sentence, as a refused
+            # dataset run marks its cells.
+            landed = mark_terminal(
+                fresh,
+                EvalEntryStatus.ERRORED,
+                config_hash=config_hash,
+                error=True,
+                error_message=str(refusal),
+                epoch=run_epoch,
+            )
+            return EvalEntryStatus.ERRORED if landed else RECLAIMED
         except Exception as e:  # Every failure becomes a terminal state.
             skipped_reason = getattr(e, "skipped_reason", None)
             if skipped_reason:
@@ -146,8 +172,56 @@ def run_entry(entry: EvalLogger) -> str:
         # another claim's result.
         return RECLAIMED
     if status == EvalEntryStatus.COMPLETED:
+        # mark_terminal updates the database, not this instance. Only notify
+        # after its ownership-fenced write succeeds, never for a reclaimed run.
+        fresh.status = status
+        notify_eval_task_result(task, fresh, config)
         _reseed_eval_clustering(fresh, config.project_id)
     return status
+
+
+def _usage_refusal(config: CustomEvalConfig, project) -> str | None:
+    """The sentence an organization the usage check refuses is shown, or None
+    when the evaluation may run.
+
+    The same check a dataset run makes before its first row
+    (``EvaluationRunner.run_prompt``): ``check_usage`` for the organization
+    the evaluation is charged to, which is the organization of ``project``,
+    the project whose span, trace or session is evaluated, under the call
+    type the eval cores log and charge it under, imported the same guarded
+    way. The span evaluations that run outside a task (the scheduled span
+    runner, a project version's run and a feedback re-calculation) make this
+    same check before they retire any earlier result. Evaluators that call no
+    model are checked too, as dataset runs check them, because they are
+    charged too. Without the billing module there is nothing to check and the
+    evaluation runs as it always has. An error raised while answering the
+    check propagates, and ``run_entry`` records it errored with its text, as a
+    dataset run records a check that fails: nothing runs unchecked.
+
+    A composite is left to its children: each child's run makes this check
+    under its own call type before its own call and charge
+    (``model_hub.views.utils.evals.run_eval_func``), and the parent itself is
+    logged at no cost.
+    """
+    template = config.eval_template
+    if template.template_type == "composite":
+        return None
+    try:
+        from ee.usage.services.metering import check_usage
+    except ImportError:
+        return None
+
+    from sdk.utils.helpers import _get_api_call_type
+
+    api_call_type = _get_api_call_type(
+        config.model,
+        template=template,
+        runtime_config=config.config,
+    )
+    usage_check = check_usage(str(project.organization_id), api_call_type)
+    if usage_check.allowed:
+        return None
+    return usage_check.reason or "Usage limit exceeded"
 
 
 def _reseed_eval_clustering(entry: EvalLogger, project_id) -> None:
@@ -192,10 +266,23 @@ def _reseed_eval_clustering(entry: EvalLogger, project_id) -> None:
 
 
 def _run_for_target(
-    entry: EvalLogger, config: CustomEvalConfig, *, task_project
+    entry: EvalLogger,
+    config: CustomEvalConfig,
+    *,
+    task_project,
+    config_hash: str | None = None,
 ) -> None:
     """Dispatch to the per-target_type evaluation core (reused from eval.py),
-    forcing eval input to load from ClickHouse for the duration."""
+    forcing eval input to load from ClickHouse for the duration. The usage
+    event of the evaluation is keyed to the entry and ``config_hash``."""
+    # Check usage before anything that costs money, as a dataset run does
+    # before its first row: an organization paused by its own budget, unpaid
+    # or out of balance gets no evaluator call, no cost log and no charge on
+    # any target type, and its entry says why.
+    refusal = _usage_refusal(config, task_project)
+    if refusal is not None:
+        raise EvalUsageRefused(refusal)
+
     from tracer.services.clickhouse.v2.eval_loader import (
         eval_read_source,
         get_observation_span,
@@ -222,6 +309,7 @@ def _run_for_target(
         writing_onto_entry(
             entry.id,
             output_metadata=entry.output_metadata,
+            config_hash=config_hash,
         ),
     ):
         if entry.target_type == EvalTargetType.SPAN:
@@ -283,14 +371,27 @@ def _run_for_target(
             )
         elif entry.target_type == EvalTargetType.SESSION:
             session = get_trace_session(entry.trace_session_id, project=task_project)
+            source_metadata = (
+                dict(entry.output_metadata)
+                if isinstance(entry.output_metadata, dict)
+                else {}
+            )
             run_params = resolve_session_mapping_lean_first(
-                config.mapping, session, template_id
+                config.mapping, session, template_id, source_metadata=source_metadata
             )
-            _execute_evaluation_for_session(
-                trace_session=session,
-                custom_eval_config=config,
-                eval_task_id=task_id,
-                run_params=run_params,
-            )
+            with writing_onto_entry(
+                entry.id, output_metadata=source_metadata, config_hash=config_hash
+            ):
+                # Persist the exact mapped snapshot before the external call so
+                # exceptions retain its identity too. This uses the same claim
+                # fence as the result; a reclaimed worker does not call a model.
+                if persist_eval_result({"output_metadata": source_metadata}) is None:
+                    return
+                _execute_evaluation_for_session(
+                    trace_session=session,
+                    custom_eval_config=config,
+                    eval_task_id=task_id,
+                    run_params=run_params,
+                )
         else:
             raise ValueError(f"Unsupported target_type: {entry.target_type!r}")

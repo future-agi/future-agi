@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: mistral-ai
+version: 1.0.0
+name: Mistral AI
+description: "Manage workspace prompts, evaluations, knowledge bases, traces and workflows."
+vendor:
+  name: Mistral AI
+  domains: [mistral.ai]
+eeCategory: developer
+group: other
+categories: [developer, research]
+tags: [prompts, datasets, evaluations]
+docsUrl: https://docs.mistral.ai/resources/mcp
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://docs.mistral.ai/resources/mcp
+    fetchedAt: 2026-11-09

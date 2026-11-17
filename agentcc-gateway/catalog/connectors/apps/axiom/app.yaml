@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: axiom
+version: 1.0.0
+name: Axiom
+description: "Explore datasets and query logs, traces and events to investigate application behavior."
+vendor:
+  name: Axiom
+  domains: [axiom.co]
+eeCategory: developer
+group: other
+categories: [developer, observability]
+tags: [logs, tracing, datasets, analytics]
+docsUrl: https://axiom.co/docs/console/intelligence/mcp-server
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://axiom.co/docs/console/intelligence/mcp-server
+    fetchedAt: 2026-11-09

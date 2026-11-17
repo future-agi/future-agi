@@ -17,8 +17,16 @@ import {
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { SegmentedTabs } from "src/components/tabs/tabs";
+import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import { getTypeConfig } from "./spanTypeConfig";
 import { SpanTypes } from "src/utils/constant";
+
+// Shown on a control this release keeps visible but cannot run.
+const NOT_IN_RELEASE = "Not available in this release";
+
+// Span metrics the tree and the timeline do not draw yet. They stay listed,
+// switched off and disabled, so nothing the panel offered disappears.
+const UNAVAILABLE_METRICS = ["Evals", "Annotations", "Events"];
 
 // ---------------------------------------------------------------------------
 // Default config — used for "Reset view"
@@ -60,43 +68,74 @@ const SectionHeader = ({ children }) => (
 
 SectionHeader.propTypes = { children: PropTypes.node };
 
-const MetricToggle = ({ label, checked, onChange }) => (
-  <Box
-    sx={{
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "space-between",
-      px: 0.5,
-      py: 0.25,
-      borderRadius: "4px",
-      "&:hover": { bgcolor: "action.hover" },
-    }}
-  >
-    <Typography
+// With `disabledReason` the switch stays off, takes no input and explains
+// why on hover and on keyboard focus (aria-disabled keeps it focusable).
+const MetricToggle = ({ label, checked, onChange, disabledReason }) => {
+  const row = (
+    <Box
       sx={{
-        fontSize: 12,
-        fontFamily: "'IBM Plex Sans', sans-serif",
-        color: "text.primary",
-        overflow: "hidden",
-        textOverflow: "ellipsis",
-        whiteSpace: "nowrap",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        px: 0.5,
+        py: 0.25,
+        borderRadius: "4px",
+        "&:hover": { bgcolor: "action.hover" },
+        ...(disabledReason && { cursor: "not-allowed" }),
       }}
     >
-      {label}
-    </Typography>
-    <Switch
+      <Typography
+        sx={{
+          fontSize: 12,
+          fontFamily: "'IBM Plex Sans', sans-serif",
+          color: disabledReason ? "text.disabled" : "text.primary",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {label}
+      </Typography>
+      {disabledReason ? (
+        <Switch
+          size="small"
+          checked={false}
+          color="primary"
+          disableRipple
+          inputProps={{ "aria-disabled": true, "aria-label": label }}
+          sx={{ opacity: 0.5, cursor: "not-allowed" }}
+        />
+      ) : (
+        <Switch
+          size="small"
+          checked={checked}
+          onChange={onChange}
+          color="primary"
+        />
+      )}
+    </Box>
+  );
+
+  if (!disabledReason) return row;
+  return (
+    <CustomTooltip
+      show
+      describeChild
+      title={disabledReason}
+      placement="left"
+      arrow
       size="small"
-      checked={checked}
-      onChange={onChange}
-      color="primary"
-    />
-  </Box>
-);
+    >
+      {row}
+    </CustomTooltip>
+  );
+};
 
 MetricToggle.propTypes = {
   label: PropTypes.string.isRequired,
   checked: PropTypes.bool,
   onChange: PropTypes.func,
+  disabledReason: PropTypes.string,
 };
 
 // ---------------------------------------------------------------------------
@@ -297,7 +336,8 @@ const TraceDisplayPanel = ({
 
       <Divider sx={{ my: 0.75 }} />
 
-      {/* SPAN METRICS section */}
+      {/* SPAN METRICS section — only the metrics the tree and the timeline
+          draw on each span */}
       <SectionHeader>Span metrics</SectionHeader>
       <MetricToggle
         label="Latency"
@@ -314,33 +354,29 @@ const TraceDisplayPanel = ({
         checked={visibleMetrics?.cost ?? false}
         onChange={() => onToggleMetric?.("cost")}
       />
-      <MetricToggle
-        label="Evals"
-        checked={visibleMetrics?.evals ?? false}
-        onChange={() => onToggleMetric?.("evals")}
-      />
-      <MetricToggle
-        label="Annotations"
-        checked={visibleMetrics?.annotations ?? false}
-        onChange={() => onToggleMetric?.("annotations")}
-      />
-      <MetricToggle
-        label="Events"
-        checked={visibleMetrics?.events ?? false}
-        onChange={() => onToggleMetric?.("events")}
-      />
+      {UNAVAILABLE_METRICS.map((label) => (
+        <MetricToggle
+          key={label}
+          label={label}
+          disabledReason={NOT_IN_RELEASE}
+        />
+      ))}
 
       <Divider sx={{ my: 0.75 }} />
 
-      {/* AGENT GRAPH section */}
-      <SectionHeader>Agent graph</SectionHeader>
-      <MetricToggle
-        label="Show agent graph"
-        checked={showAgentGraph ?? true}
-        onChange={() => onToggleAgentGraph?.()}
-      />
+      {/* AGENT GRAPH section — the timeline layout has no agent graph */}
+      {viewMode !== "timeline" && (
+        <>
+          <SectionHeader>Agent graph</SectionHeader>
+          <MetricToggle
+            label="Show agent graph"
+            checked={showAgentGraph ?? true}
+            onChange={() => onToggleAgentGraph?.()}
+          />
 
-      <Divider sx={{ my: 0.75 }} />
+          <Divider sx={{ my: 0.75 }} />
+        </>
+      )}
 
       {/* SETTINGS section */}
       <SectionHeader>SETTINGS</SectionHeader>
@@ -367,10 +403,10 @@ const TraceDisplayPanel = ({
         >
           Reset
         </ButtonBase>
-        {!hideSetDefault && (
+        {!hideSetDefault && onSetDefaultView && (
           <ButtonBase
             onClick={() => {
-              onSetDefaultView?.();
+              onSetDefaultView();
               onClose();
             }}
             sx={{
@@ -380,8 +416,35 @@ const TraceDisplayPanel = ({
               py: 0.5,
             }}
           >
-            Set default for everyone
+            Share with project
           </ButtonBase>
+        )}
+        {/* No handler (the drawer passes none, so it never shares): kept
+            visible but disabled, with no click path, under the label the
+            Observe views use. */}
+        {!hideSetDefault && !onSetDefaultView && (
+          <CustomTooltip
+            show
+            describeChild
+            title={NOT_IN_RELEASE}
+            placement="top"
+            arrow
+            size="small"
+          >
+            <ButtonBase
+              aria-disabled
+              disableRipple
+              sx={{
+                fontSize: 13,
+                fontFamily: "'IBM Plex Sans', sans-serif",
+                color: "text.disabled",
+                py: 0.5,
+                cursor: "not-allowed",
+              }}
+            >
+              Share with project
+            </ButtonBase>
+          </CustomTooltip>
         )}
       </Box>
       <Box sx={{ pb: 0.5 }} />

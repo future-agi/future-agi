@@ -32,6 +32,7 @@ from simulate.services.harness_scenarios import (
 )
 from simulate.services.run_results_v3 import _row_dimensions
 from simulate.services.run_results_v3_expressions import (
+    LABEL_SPACE_CLASS,
     NUMERIC_JSON_PATTERN,
     NUMERIC_TEXT_PATTERN,
 )
@@ -200,8 +201,7 @@ def _errored(evals: Any, eval_id: str) -> Truth:
 
 _NUMERIC_TEXT = re.compile(NUMERIC_TEXT_PATTERN)
 _JSON_NUMBER_TEXT = re.compile(NUMERIC_JSON_PATTERN)
-# ``[[:space:]]`` under prod's en_US.UTF8 (PG 16); U+180E varies by glibc version.
-_SPACE = "[ \t\n\r\f\v\u1680\u180e\u2000-\u2006\u2008-\u200a\u2028\u2029\u205f\u3000]*"
+_SPACE = LABEL_SPACE_CLASS + "*"
 
 
 def _numeric_score(normalized: str | None, pass_fail: bool) -> float | None:
@@ -904,7 +904,9 @@ def scan_call_values(
         values = (
             _member_values(members[key])
             if key in members
-            else None if scenario is None else scenario._asdict()
+            else None
+            if scenario is None
+            else scenario._asdict()
         )
         if values is not None:
             row["result_sub_goal"] = (
@@ -935,6 +937,7 @@ def scan_call_values(
         [],
         {str(row_id) for _, row_id, _ in pending_goals if row_id},
         names=("use_case", "goal"),
+        execution=execution,
     )
     for row, row_id, fallbacks in pending_goals:
         cells = dimensions.get(str(row_id), {})

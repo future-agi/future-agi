@@ -1,0 +1,23 @@
+schema: "connector-manifest/v1#app"
+id: google-analytics
+version: 1.0.0
+name: Google Analytics
+description: "Read Analytics reports, realtime metrics and reporting metadata."
+vendor:
+  name: Google
+  domains: [google.com, googleapis.com]
+eeCategory: data
+group: google
+categories: [data, analytics]
+tags: [reports, web-analytics]
+docsUrl: https://docs.cloud.google.com/mcp/configure-mcp-ai-application
+archetype: product-analytics
+defaultProvider: mcp
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://analyticsdata.googleapis.com/.well-known/oauth-protected-resource/mcp/v1
+    fetchedAt: 2026-11-15
+  - fact: description
+    url: https://docs.cloud.google.com/mcp/configure-mcp-ai-application
+    fetchedAt: 2026-11-15

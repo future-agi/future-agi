@@ -1,3 +1,7 @@
+import {
+  GENERIC_PROVIDER_LOGO,
+  localProviderLogo,
+} from "src/utils/localProviderLogo";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Box, Typography, useTheme } from "@mui/material";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -15,14 +19,15 @@ import { ShowComponent } from "src/components/show";
 import APIKeyReadOnlyView from "src/components/custom-model-dropdown/APIKeyReadOnlyView";
 import Actions from "./Actions";
 import { LOGO_WITH_BLACK_BACKGROUND } from "src/components/custom-model-dropdown/common";
+import ProviderConfigurationNotice from "src/components/custom-model-dropdown/ProviderConfigurationNotice";
 import { decisionModelsQueryKey } from "src/api/evaluations/decision-models";
 
-// Providers without a hosted logo (e.g. TypeSafe) show their initial
-// instead of a broken image.
-const ProviderLogo = ({ data }) =>
-  data?.logoUrl ? (
+// Only bundled provider artwork is eligible; unknown identities show an initial.
+const ProviderLogo = ({ data }) => {
+  const logo = localProviderLogo(data);
+  return logo !== GENERIC_PROVIDER_LOGO ? (
     <Image
-      src={data.logoUrl}
+      src={logo}
       alt={data?.display_name}
       width={25}
       height={25}
@@ -50,6 +55,7 @@ const ProviderLogo = ({ data }) =>
       {(data?.display_name || data?.provider || "?").charAt(0).toUpperCase()}
     </Box>
   );
+};
 
 ProviderLogo.propTypes = {
   data: PropTypes.object,
@@ -57,6 +63,9 @@ ProviderLogo.propTypes = {
 
 const KeyCardComponent = ({ data, onDeleteClick, onKeySaved }) => {
   const theme = useTheme();
+  // The server's sentence when it marks the stored key as not valid: shown
+  // under the provider's name instead of the saved check.
+  const configurationError = data?.configurationError;
   const hasClearedOnceRef = useRef(false);
   const focusTimeoutRef = useRef(null);
   const queryClient = useQueryClient();
@@ -325,7 +334,7 @@ const KeyCardComponent = ({ data, onDeleteClick, onKeySaved }) => {
                 {data?.display_name}
               </Typography>
             </Box>
-            <ShowComponent condition={data?.hasKey}>
+            <ShowComponent condition={data?.hasKey && !configurationError}>
               <Icon
                 icon="gg-check-o"
                 width={16}
@@ -338,6 +347,8 @@ const KeyCardComponent = ({ data, onDeleteClick, onKeySaved }) => {
               />
             </ShowComponent>
           </Box>
+
+          <ProviderConfigurationNotice message={configurationError} />
 
           <APIKeyReadOnlyView
             isJsonKey={true}
@@ -381,7 +392,9 @@ const KeyCardComponent = ({ data, onDeleteClick, onKeySaved }) => {
                   {data?.display_name}
                 </Typography>
               </Box>
-              <ShowComponent condition={data?.maskedKey && !editMode}>
+              <ShowComponent
+                condition={data?.maskedKey && !editMode && !configurationError}
+              >
                 <Icon
                   icon="gg-check-o"
                   width={16}
@@ -394,6 +407,8 @@ const KeyCardComponent = ({ data, onDeleteClick, onKeySaved }) => {
                 />
               </ShowComponent>
             </Box>
+
+            <ProviderConfigurationNotice message={configurationError} />
 
             <Box sx={inputRowStyles}>
               <Box sx={{ flexGrow: 1 }}>

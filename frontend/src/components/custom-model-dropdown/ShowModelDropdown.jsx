@@ -1,3 +1,5 @@
+import { localProviderLogo } from "src/utils/localProviderLogo";
+import { providerDisplayName } from "src/utils/providerDisplayName";
 import {
   Box,
   Button,
@@ -30,12 +32,22 @@ import CustomModalAvatar from "./CustomModalAvatar";
 import EachCustomVoiceModel from "./EachCustomVoiceModel";
 import { MODEL_TYPES } from "src/sections/develop-detail/RunPrompt/common";
 import ChipSelector from "../chip-selector";
-import { LOGO_WITH_BLACK_BACKGROUND } from "./common";
+import { LOGO_WITH_BLACK_BACKGROUND, pickerEligibility } from "./common";
+import { omitContractFields } from "src/sections/develop-detail/Common/modelAccess";
 import {
   MODEL_DROPDOWN_STEPS,
   MODEL_DROPDOWN_MESSAGES,
   MODEL_DROPDOWN_MODES,
 } from "./constants";
+import NoUsableModelNotice from "./NoUsableModelNotice";
+import { CREDITS_ROUTE, noModelUsable } from "./noUsableModel";
+
+// "Add an API key for OpenAI": the provider as its key card names it.
+const apiKeyHint = (provider) =>
+  MODEL_DROPDOWN_MESSAGES.API_KEY_CONFIG.replace(
+    "{provider}",
+    providerDisplayName(provider),
+  );
 
 const MODEL_TYPE_OPTIONS = [
   { label: "All", value: "all" },
@@ -72,6 +84,7 @@ const ShowModelDropdown = forwardRef(
       allowSelectingVoices = false,
       onModelTypeChange,
       modelType,
+      creditsRoute = CREDITS_ROUTE.NONE,
       ...rest
     },
     ref,
@@ -131,7 +144,11 @@ const ShowModelDropdown = forwardRef(
 
     const handleOnClick = useCallback(
       (e, option) => {
-        if (!option.isAvailable && requireUserApiKey) {
+        // Rows funded by Future AGI credits never need a provider key; BYOK
+        // and pre-contract rows keep the original isAvailable gate.
+        const eligibility = pickerEligibility(option);
+        if (requireUserApiKey && !eligibility.selectable && !eligibility.needsProviderSetup) return;
+        if (requireUserApiKey && eligibility.needsProviderSetup) {
           onConfigOpen?.(option);
           if (multiple) {
             onClose();
@@ -322,6 +339,13 @@ const ShowModelDropdown = forwardRef(
         Array.isArray(displayValue) ? displayValue.map((v) => v?.value) : [],
       [displayValue],
     );
+    // Every loaded model is unusable here (for example Future AGI credits on
+    // and no provider key): one line above the list says what works. Rows
+    // stay as they are, captions included.
+    const showNoUsableModel = useMemo(
+      () => !isLoadingModelList && noModelUsable(options),
+      [isLoadingModelList, options],
+    );
 
     return (
       <Popover
@@ -434,6 +458,13 @@ const ShowModelDropdown = forwardRef(
                 </Typography>
               </MenuItem>
             )}
+            {showNoUsableModel && (
+              <NoUsableModelNotice
+                creditsRoute={creditsRoute}
+                onLinkClick={onClose}
+                sx={{ px: "6px", pt: 0.5, pb: 1 }}
+              />
+            )}
             <ScrollingWrapper
               position={position}
               width={fieldWidth - 26}
@@ -484,6 +515,9 @@ const ShowModelDropdown = forwardRef(
                       );
                     }
 
+                    const { selectable, needsProviderSetup, payerLabel } =
+                      pickerEligibility(option);
+
                     return (
                       <MenuItem
                         key={modelName + index}
@@ -495,7 +529,7 @@ const ShowModelDropdown = forwardRef(
                             handleOnClick(e, option);
                           }
                         }}
-                        {...restOption}
+                        {...omitContractFields(restOption)}
                         sx={{
                           padding: "4px 6px",
                           minWidth: "350px",
@@ -531,9 +565,9 @@ const ShowModelDropdown = forwardRef(
                             }}
                           />
                         )}
-                        <ShowComponent condition={logoUrl}>
+                        <ShowComponent condition={Boolean(logoUrl)}>
                           <Image
-                            src={logoUrl}
+                            src={localProviderLogo(option)}
                             alt=""
                             width="16px"
                             disableThemeFilter={
@@ -571,7 +605,12 @@ const ShowModelDropdown = forwardRef(
                           >
                             {modelName}
                           </Typography>
-                          {requireUserApiKey && !isAvailable && (
+                          {requireUserApiKey && !selectable && !needsProviderSetup && (
+                            <Typography fontSize="12px" color="error.main">
+                              Model access is unavailable. Refresh the list or choose another model.
+                            </Typography>
+                          )}
+                          {requireUserApiKey && needsProviderSetup && (
                             <Typography
                               sx={{
                                 lineHeight: "14px",
@@ -580,7 +619,19 @@ const ShowModelDropdown = forwardRef(
                                 fontWeight: 400,
                               }}
                             >
-                              (Configure an api key for {providers} ai)
+                              ({apiKeyHint(providers)})
+                            </Typography>
+                          )}
+                          {requireUserApiKey && payerLabel && (
+                            <Typography
+                              sx={{
+                                lineHeight: "14px",
+                                fontSize: "12px",
+                                color: "text.secondary",
+                                fontWeight: 400,
+                              }}
+                            >
+                              {payerLabel}
                             </Typography>
                           )}
                         </Box>
@@ -702,7 +753,8 @@ ShowModelDropdown.propTypes = {
   setSearchQuery: PropTypes.func,
   onChange: PropTypes.func,
   options: PropTypes.array,
-  value: PropTypes.string,
+  // A model name, or the selected models when `multiple` is set.
+  value: PropTypes.oneOfType([PropTypes.string, PropTypes.array]),
   isLoadingModelList: PropTypes.bool,
   fetchNextPage: PropTypes.func,
   isFetchingNextPage: PropTypes.bool,
@@ -719,4 +771,6 @@ ShowModelDropdown.propTypes = {
   allowSelectingVoices: PropTypes.bool,
   onModelTypeChange: PropTypes.func,
   modelType: PropTypes.string,
+  // The credits path the notice names (read by the caller).
+  creditsRoute: PropTypes.oneOf(Object.values(CREDITS_ROUTE)),
 };

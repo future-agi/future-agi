@@ -10,9 +10,54 @@ on:
       - "scripts/test_verify_platform_image_tags.py"
 permissions:
   contents: read
+env:
+  # These script tests import Django and read the app's source, so they run in
+  # app-tests below, in the backend's uv environment, one process each (each
+  # file configures Django settings itself). Every other scripts/test_*.py runs
+  # in test, with the runner's bare python3, as the release scripts do.
+  APP_SCRIPT_TESTS: >-
+    test_falcon_snapshot_results_hotfix.py
+    test_sim_snapshot_projection.py
+    test_snapshot_admin_hotfix.py
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: python3 -m unittest discover -s scripts -p 'test_*.py' -v
+      - name: Dependency-free script tests
+        run: |
+          rc=0
+          for path in scripts/test_*.py; do
+            name=${path#scripts/}
+            # python-types.yml runs this self-test with its required MYPY_BIN.
+            if [ "$name" = test_mypy_baseline.py ]; then
+              echo "Skipping $path: python-types.yml runs it with MYPY_BIN"
+              continue
+            fi
+            case " $APP_SCRIPT_TESTS " in *" $name "*) continue ;; esac
+            python3 -m unittest discover -s scripts -p "$name" -v || rc=1
+          done
+          exit $rc
+  app-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: futureagi/uv.lock
+      - name: Install backend dependencies
+        working-directory: futureagi
+        run: uv sync --frozen --no-dev
+      - name: Script tests that need the app's dependencies
+        run: |
+          rc=0
+          for name in $APP_SCRIPT_TESTS; do
+            if [ ! -f "scripts/$name" ]; then echo "missing scripts/$name"; rc=1; continue; fi
+            uv run --project futureagi --no-sync python -m unittest discover -s scripts -p "$name" -v || rc=1
+          done
+          exit $rc

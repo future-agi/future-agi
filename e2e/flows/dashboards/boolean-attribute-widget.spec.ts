@@ -27,7 +27,9 @@ type Filter = { column_id: string; property_id: string; display_name: string;
 type Metric = { id: string; name: string; property_id: string; display_name: string;
   type: string; source: string; aggregation: string; attribute_key?: string; attribute_type?: string };
 type Config = { project_ids: string[]; time_range: { preset: string }; granularity: string;
-  metrics: Metric[]; filters: Filter[]; breakdowns: Record<string, string>[] };
+  metrics: Metric[]; filters: Filter[]; breakdowns: Record<string, string>[];
+  // One trace-backed custom attribute breakdown defaults to top-5 grouping (WidgetEditorView buildWidgetGroupBy).
+  group_by?: { type: string; key: string; limit: number } };
 type Result = { query_complete: boolean; query_exact: boolean; granularity: string;
   time_range: { start: string; end: string }; metrics: { id: string; name: string;
     unit: string; aggregation: string; query_complete: boolean; query_exact: boolean;
@@ -199,7 +201,8 @@ test('DASH-E2E-005: a saved widget keeps boolean scope distinct from same-spelle
     type: 'custom_attribute', source: 'traces', attribute_type: 'boolean' };
   const expectedConfig: Config = { project_ids: [], time_range: { preset: '7D' }, granularity: 'day',
     metrics, filters: [projectFilter], breakdowns: [] };
-  const expectedSavedConfig: Config = structuredClone({ ...expectedConfig, filters: [projectFilter, booleanFilter], breakdowns: [breakdown] });
+  const groupBy = { type: 'attribute', key: booleanKey, limit: 5 };
+  const expectedSavedConfig: Config = structuredClone({ ...expectedConfig, filters: [projectFilter, booleanFilter], breakdowns: [breakdown], group_by: groupBy });
   const catalogs: CatalogReceipt[] = [];
   const values: ValueReceipt[] = [];
   const queries: QueryReceipt[] = [];
@@ -371,7 +374,7 @@ test('DASH-E2E-005: a saved widget keeps boolean scope distinct from same-spelle
               await page.locator(`p[title="${projectNames[0]}"]`).click();
               await page.getByRole('button', { name: 'Add', exact: true }).click();
             } else if (action === 'group' || action === 'true') {
-              await page.locator(action === 'group' ? '.breakdown-section-title' : '.filter-section-title').click();
+              await (action === 'group' ? page.getByRole('button', { name: 'Add breakdown', exact: true }) : page.locator('.filter-section-title')).click();
               // Cached repeats may reuse an actual settled receipt; no mandatory duplicate HTTP.
               const lanes = action === 'group' ? [
                 { category: 'Trace Attributes', wire: 'custom_attribute', source: 'traces', search: '' },
@@ -404,7 +407,7 @@ test('DASH-E2E-005: a saved widget keeps boolean scope distinct from same-spelle
                 await testInfo.attach(`${action}-boolean-lane-${lane.category}-${lane.search || 'unsearched'}`, { contentType: 'application/json', body: JSON.stringify(receipt) });
               }
               await page.getByRole('button', { name: `${booleanKey} (boolean, boolean, Traces)`, exact: true }).click();
-              if (action === 'group') expectedConfig.breakdowns = [breakdown];
+              if (action === 'group') { expectedConfig.breakdowns = [breakdown]; expectedConfig.group_by = { ...groupBy }; }
               else {
                 await uiExpect(booleanCard.getByRole('combobox')).toHaveCount(2);
                 await booleanCard.getByRole('combobox').nth(0).click();
@@ -554,7 +557,7 @@ test('DASH-E2E-005: a saved widget keeps boolean scope distinct from same-spelle
                 await uiExpect(card.getByText('Project', { exact: true })).toHaveCount(0);
               }
               await uiExpect(globalSection.getByText('Project', { exact: true }).locator('../..').locator('.filter-value-name')).toHaveText(projectNames[0]);
-              await uiExpect(page.locator('.breakdown-section-title').locator('../..').getByText(booleanKey, { exact: true })).toBeVisible();
+              await uiExpect(page.getByRole('button', { name: `Change breakdown ${booleanKey}`, exact: true })).toBeVisible();
               await uiExpect(page.getByRole('combobox').filter({ hasText: 'Day' })).toBeVisible();
               await uiExpect(page.getByText('7D', { exact: true })).toBeVisible(); // Full wire independently pins the selected preset.
             }

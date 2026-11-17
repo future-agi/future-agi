@@ -73,6 +73,7 @@ from simulate.services.harness_scenarios import GROUP_BY as SCENARIO_GROUP_BY
 from simulate.services.run_reliability_v3 import build_reliability
 from simulate.services.run_results_v3 import OUTCOME_LABELS, build_evaluation_catalog
 from simulate.services.run_results_v3_expressions import (
+    LABEL_SPACE_CLASS,
     NormalizedEvalNumber,
     PercentileCont,
     _json_text,
@@ -301,9 +302,7 @@ def _member_sub_goals() -> Subquery:
             Value([], output_field=JSONField()),
             output_field=JSONField(),
         )
-    )[
-        :1
-    ]
+    )[:1]
     return Subquery(member, output_field=JSONField())
 
 
@@ -382,7 +381,7 @@ def _choice_array_matches(
     eval_id: str, label: str, *, nested: bool, field: str | Expression = "eval_outputs"
 ) -> Q:
     keys = (eval_id, "output", "choices") if nested else (eval_id, "output")
-    pattern = f"^[[:space:]]*{re.escape(label)}[[:space:]]*$"
+    pattern = f"^{LABEL_SPACE_CLASS}*{re.escape(label)}{LABEL_SPACE_CLASS}*$"
     path = f'$[*] ? (@ like_regex {json.dumps(pattern)} flag "i")'
     return Q(
         Func(
@@ -1128,6 +1127,36 @@ def _summary_from_values(values: dict[str, Any]) -> dict[str, Any]:
         "tokens": tokens,
         "cost_cents": cost,
     }
+
+
+def run_outcome_summaries(executions: list[TestExecution]) -> dict[Any, dict[str, Any]]:
+    """Batch history outcomes for executions of one run test, using the v3 verdicts."""
+    if not executions:
+        return {}
+    rows = (
+        run_calls_queryset(executions[0], [execution.id for execution in executions])
+        .order_by()
+        .values("test_execution_id")
+        .annotate(
+            total=Count("id"),
+            measured=Count("id", filter=Q(result_outcome__in=EVALUATED_OUTCOMES)),
+            **{
+                f"outcome_{outcome}": Count("id", filter=Q(result_outcome=outcome))
+                for outcome in OUTCOMES
+            },
+        )
+    )
+    values_by_execution = {row["test_execution_id"]: row for row in rows}
+    # Empty runs have no grouped row. Preserve v3's zero measured / null rate,
+    # rather than falling back to receipts or transport completion percentages.
+    summaries = {}
+    for execution in executions:
+        summary = _summary_from_values(values_by_execution.get(execution.id, {}))
+        summaries[execution.id] = {
+            field: summary[field]
+            for field in ("total", "outcomes", "measured", "pass_rate")
+        }
+    return summaries
 
 
 def _result_sub_goals_expression(*, pinned: bool = False) -> Coalesce:

@@ -10,6 +10,7 @@ import os
 import time
 from collections import deque
 
+from django.db import close_old_connections
 from temporalio import activity
 
 from simulate.temporal.types.activities import RunBridgeInput, RunBridgeOutput
@@ -26,6 +27,46 @@ TRACK_TIMEOUT_S = 30
 FRAMES_PER_SECOND = 100
 R2P_BUFFER_MAX_SECONDS = 30
 R2P_BUFFER_MAX_FRAMES = R2P_BUFFER_MAX_SECONDS * FRAMES_PER_SECOND
+
+
+async def _connector_config(input: RunBridgeInput):
+    """The connector config for the customer's side of the bridge.
+
+    Credential values the input carries are used as they are; otherwise they
+    are read by call id. The LiveKit url, key and secret are read only for a
+    LiveKit bridge call.
+    """
+    from ee.voice.services.livekit.bridge.connector import ConnectorConfig
+    from ee.voice.temporal.activities.customer_credentials import (
+        read_customer_credentials,
+    )
+
+    api_key = input.customer_api_key
+    livekit_url = input.customer_livekit_url
+    livekit_api_key = input.customer_livekit_api_key
+    livekit_api_secret = input.customer_livekit_api_secret
+    if not (api_key or livekit_api_key or livekit_api_secret):
+        close_old_connections()
+        credentials = await read_customer_credentials(input.call_id)
+        api_key = credentials.api_key
+        if input.connection_type == "web_livekit_bridge":
+            livekit_url = livekit_url or credentials.livekit_url
+            livekit_api_key = credentials.livekit_api_key
+            livekit_api_secret = credentials.livekit_api_secret
+
+    if not livekit_url:
+        return ConnectorConfig(
+            api_key=api_key,
+            assistant_id=input.customer_assistant_id,
+        )
+    return ConnectorConfig(
+        api_key=livekit_api_key or api_key,
+        assistant_id=input.customer_assistant_id,
+        livekit_url=livekit_url,
+        livekit_api_secret=livekit_api_secret,
+        room_name=f"customer_{input.room_name}",
+        call_id=input.call_id,
+    )
 
 
 @activity.defn(name="run_bridge")
@@ -45,26 +86,12 @@ async def run_bridge(input: RunBridgeInput) -> RunBridgeOutput:
             "Missing LIVEKIT_URL, LIVEKIT_API_KEY, or LIVEKIT_API_SECRET"
         )
 
-    from ee.voice.services.livekit.bridge.connector import ConnectorConfig
-
     # --- Build provider connector ---
     connector_cls = get_connector_registry().get(input.connection_type)
     if not connector_cls:
         raise RuntimeError(f"Unsupported connection_type: {input.connection_type}")
 
-    config = ConnectorConfig(
-        api_key=input.customer_api_key,
-        assistant_id=input.customer_assistant_id,
-    )
-    if input.customer_livekit_url:
-        config = ConnectorConfig(
-            api_key=input.customer_livekit_api_key or input.customer_api_key,
-            assistant_id=input.customer_assistant_id,
-            livekit_url=input.customer_livekit_url,
-            livekit_api_secret=input.customer_livekit_api_secret,
-            room_name=f"customer_{input.room_name}",
-            call_id=input.call_id,
-        )
+    config = await _connector_config(input)
     connector = connector_cls(config)
 
     # --- Join our LiveKit room as SIP-kind participant ---

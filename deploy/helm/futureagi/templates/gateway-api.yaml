@@ -13,7 +13,7 @@ HealthCheckPolicy per routed Service (gatewayApi.gke.healthChecks).
 {{- $backend := dict "name" (include "futureagi.component" (dict "root" . "component" "backend")) "port" (int .Values.backend.service.port) -}}
 {{- $otlpHttp := dict "name" $collector "port" (int .Values.fiCollector.service.httpPort) -}}
 {{- /* fi-collector's OTLP/HTTP routes; the API does not serve them. */ -}}
-{{- $otlpMatches := list (dict "path" (dict "type" "Exact" "value" "/v1/traces")) (dict "path" (dict "type" "Exact" "value" "/tracer/v1/traces")) -}}
+{{- $otlpMatches := list (dict "path" (dict "type" "Exact" "value" "/v1/traces")) (dict "path" (dict "type" "Exact" "value" "/tracer/v1/traces")) (dict "path" (dict "type" "Exact" "value" "/api/public/otel/v1/traces")) -}}
 {{- $parentRefs := toYaml $g.parentRefs | nindent 4 -}}
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
@@ -141,9 +141,16 @@ spec:
   parentRefs: {{- $parentRefs }}
   hostnames: [{{ $g.llmGateway.host | quote }}]
   rules:
-    # The LLM gateway (agentcc-gateway): virtual keys authenticate every call.
+    # Hosted public routes must not expose the admin/control-plane /-/ surface.
+    # Backend callers retain the internal Service; generic installs keep /.
     - matches:
+        {{- if .Values.hosted.enabled }}
+        {{- range list "/v1" "/v1beta" "/a2a" "/deepgram" "/cartesia" }}
+        - path: {type: PathPrefix, value: {{ . | quote }}}
+        {{- end }}
+        {{- else }}
         - path: {type: PathPrefix, value: /}
+        {{- end }}
       backendRefs:
         - name: {{ include "futureagi.component" (dict "root" . "component" "agentcc-gateway") }}
           port: {{ .Values.agentccGateway.service.port }}
@@ -156,11 +163,11 @@ spec:
 {{- /* GKE's load balancer health-checks every endpoint itself, ignoring the
 readiness probes: by default GET / on the serving port with the endpoint's IP
 as the Host. The API answers / with a redirect and fi-collector's OTLP/HTTP
-port has no /, so each Service a route uses gets its component's health
+port has no /, so each Service a route uses gets its component's readiness
 endpoint. GKE applies a policy only to a Service a route references. */ -}}
 {{- $checks := list
       (dict "component" "frontend" "check" (dict "requestPath" "/"))
-      (dict "component" "backend" "check" (dict "requestPath" "/health/" "host" "localhost")) -}}
+      (dict "component" "backend" "check" (dict "requestPath" (ternary "/readyz/" "/health/" .Values.hosted.enabled) "host" "localhost")) -}}
 {{- if or $g.otlp.enabled $g.otlpGrpc.enabled -}}
 {{- /* The admin port serves /healthz; it is the one the readiness probe uses. */ -}}
 {{- $checks = append $checks (dict "component" "fi-collector" "check" (dict "portSpecification" "USE_FIXED_PORT" "port" 9464 "requestPath" "/healthz")) -}}

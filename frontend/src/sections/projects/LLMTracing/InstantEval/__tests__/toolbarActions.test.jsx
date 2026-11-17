@@ -1,5 +1,12 @@
+import { Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, within } from "src/utils/test-utils";
+import {
+  fireEvent,
+  render,
+  renderWithRouter,
+  screen,
+  within,
+} from "src/utils/test-utils";
 import ObserveToolbar from "../../ObserveToolbar";
 
 // Features the deployment's license or plan denies.
@@ -31,6 +38,27 @@ const renderToolbar = (props) =>
     />,
   );
 
+// Project Sessions and Users mount under an observe route (an observeId);
+// without one, Users is the standalone users page.
+const renderOnProject = (props) =>
+  renderWithRouter(
+    <Routes>
+      <Route
+        path="/dashboard/observe/:observeId/*"
+        element={
+          <ObserveToolbar
+            inline
+            isFilterOpen={false}
+            onFilterToggle={vi.fn()}
+            onApplyExtraFilters={vi.fn()}
+            {...props}
+          />
+        }
+      />
+    </Routes>,
+    { route: `/dashboard/observe/project-1/${props.mode}` },
+  );
+
 const handlers = () => ({
   onInstantEval: vi.fn(),
   onInsights: vi.fn(),
@@ -48,6 +76,7 @@ const menuTitles = () =>
 describe("ObserveToolbar Evaluate menu", () => {
   beforeEach(() => {
     capabilities.denied = new Set();
+    window.history.replaceState({}, "", "/");
   });
 
   it.each([
@@ -128,11 +157,49 @@ describe("ObserveToolbar Evaluate menu", () => {
     expect(screen.queryByText("Enterprise")).toBeNull();
   });
 
-  it("keeps only Add evaluators in compare mode", () => {
-    renderToolbar({ mode: "sessions", isCompareActive: true, ...handlers() });
+  it("keeps only Add evaluators in Traces compare mode", () => {
+    renderToolbar({ mode: "traces", isCompareActive: true, ...handlers() });
     openMenu();
     expect(menuTitles()).toEqual(["Add evaluators"]);
   });
+
+  // Project Sessions and Users compare like Traces, so a restored flag
+  // keeps only Add evaluators, as in Traces compare mode.
+  it.each(["sessions", "users"])(
+    "keeps only Add evaluators on %s with a restored compare flag",
+    (mode) => {
+      const props = handlers();
+      renderOnProject({ mode, isCompareActive: true, ...props });
+      openMenu();
+      expect(menuTitles()).toEqual(["Add evaluators"]);
+      fireEvent.click(screen.getByRole("menuitem", { name: /Add evaluators/ }));
+      expect(props.onAddEvals).toHaveBeenCalledTimes(1);
+      expect(props.onInstantEval).not.toHaveBeenCalled();
+      expect(props.onInsights).not.toHaveBeenCalled();
+    },
+  );
+
+  // Where nothing is compared (the standalone users page; Sessions on a
+  // user's page, which passes a reason), a restored flag changes nothing.
+  it.each([
+    ["the standalone users page", { mode: "users" }],
+    [
+      "a view that cannot compare",
+      { mode: "sessions", compareDisabledReason: "No graphs here." },
+    ],
+  ])(
+    "keeps every Evaluate action on %s with a restored compare flag",
+    (_, view) => {
+      const props = handlers();
+      renderToolbar({ ...view, isCompareActive: true, ...props });
+      openMenu();
+      expect(menuTitles()).toEqual([
+        "Ask a question",
+        "Find patterns",
+        "Add evaluators",
+      ]);
+    },
+  );
 
   it("keeps only Add evaluators on a simulator (voice) project", () => {
     // Ask and Find patterns read the trace list, not the calls on screen.

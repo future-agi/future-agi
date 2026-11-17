@@ -58,7 +58,15 @@ const AddEvalsComparisonChild = ({
       }}
     >
       <Box>
-        <Box sx={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+        {/* Room on the right for the close button. */}
+        <Box
+          sx={{
+            display: "flex",
+            flexDirection: "column",
+            gap: "2px",
+            paddingRight: 5,
+          }}
+        >
           <ShowComponent condition={Boolean(title)}>
             <Typography typography="m3" fontWeight={"fontWeightSemiBold"}>
               {title}
@@ -76,6 +84,7 @@ const AddEvalsComparisonChild = ({
         </Box>
         <IconButton
           onClick={onClose}
+          aria-label="Close"
           sx={{ position: "absolute", top: "10px", right: "12px" }}
         >
           <Iconify icon="solar:close-linear" color="text.primary" />
@@ -131,7 +140,7 @@ const AddEvalsComparisonChild = ({
                   }
                   checkboxMessage={
                     isDisabled
-                      ? "Compare limit is upto 2 version only, Deselect other options to select this one"
+                      ? "You can add up to 2 versions to compare. Deselect one to select this version."
                       : ""
                   }
                 />
@@ -187,6 +196,8 @@ const AddEvalsComparison = () => {
           position: "fixed",
           zIndex: 9999,
           width: "640px",
+          // Never wider than the screen.
+          maxWidth: "100vw",
           borderRadius: "8px",
           backgroundColor: "background.paper",
         },
@@ -202,7 +213,7 @@ const AddEvalsComparison = () => {
         showCheckbox={compareOpen}
         maxSelectLimit={2}
         title="Add version to compare"
-        description="You can select maximum 2 version to compare"
+        description="You can select up to 2 versions to compare."
       />
     </Drawer>
   );

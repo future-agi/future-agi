@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from '../../lib/trace-hygiene/fixture';
 import type { APIRequestContext, BrowserContext, Page, Response, TestInfo } from '@playwright/test';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
@@ -374,6 +374,11 @@ test.describe('SAML tenant isolation', () => {
       }, { timeout: UI_READY }).toMatchObject({
         origin: E2E.appUrl, pathname: expect.stringMatching(/^\/dashboard\//), search: '',
       });
+      // URL intake strips the code before redemption; await the replacement.
+      await page.waitForFunction(previous => {
+        const token = localStorage.getItem('accessToken');
+        return Boolean(token && token !== previous);
+      }, passwordActor.tokens.access, { timeout: UI_READY });
       const samlToken = await page.evaluate(() => localStorage.getItem('accessToken') ?? '');
       expect(samlToken).not.toBe('');
       expect(samlToken).not.toBe(passwordActor.tokens.access);

@@ -21,6 +21,10 @@ export async function copyToClipboard(text: unknown) {
     textarea.style.position = "fixed";
     textarea.style.top = "-9999px";
     textarea.style.opacity = "0";
+    // Copying from the textarea takes focus from the control that asked for
+    // the copy. Give it back afterwards, so a keyboard user keeps their place
+    // and the control's tooltip or message is not closed by the blur.
+    const previousFocus = document.activeElement as HTMLElement | null;
     document.body.appendChild(textarea);
     textarea.focus();
     textarea.select();
@@ -29,6 +33,9 @@ export async function copyToClipboard(text: unknown) {
       ok = document.execCommand("copy");
     } finally {
       document.body.removeChild(textarea);
+      if (previousFocus && previousFocus !== document.body) {
+        previousFocus.focus?.({ preventScroll: true });
+      }
     }
     return ok;
   } catch (err) {

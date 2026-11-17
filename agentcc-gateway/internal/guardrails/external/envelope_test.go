@@ -19,7 +19,7 @@ func TestProviderExecutionEnvelopes(t *testing.T) {
 				for k, v := range tc.cfg {
 					cfg[k] = v
 				}
-				result := New("check", cfg).adapter.parseResponse([]byte(body))
+				result := NewConfigFileRule("check", cfg).adapter.parseResponse([]byte(body))
 				if result.Err == nil || result.Pass {
 					t.Fatalf("invalid envelope became content: %+v", result)
 				}
@@ -60,7 +60,7 @@ func TestProviderCompletenessAndLegacyVerdicts(t *testing.T) {
 			for k, v := range tc.cfg {
 				cfg[k] = v
 			}
-			result := New("check", cfg).adapter.parseResponse([]byte(tc.body))
+			result := NewConfigFileRule("check", cfg).adapter.parseResponse([]byte(tc.body))
 			if (result.Err != nil) != tc.unavailable || result.Pass != tc.pass {
 				t.Fatalf("result=%+v want unavailable=%v pass=%v", result, tc.unavailable, tc.pass)
 			}

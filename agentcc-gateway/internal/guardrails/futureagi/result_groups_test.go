@@ -26,7 +26,7 @@ func TestChatCheckReadsVerdictFromAnyResultGroup(t *testing.T) {
 				}})
 			}))
 			defer srv.Close()
-			check := New("synthetic", map[string]interface{}{"base_url": srv.URL, "api_key": "synthetic", "secret_key": "synthetic", "eval_id": "tone"})
+			check := NewConfigFileRule("synthetic", map[string]interface{}{"base_url": srv.URL, "api_key": "synthetic", "secret_key": "synthetic", "eval_id": "tone"})
 			res := check.Check(context.Background(), &guardrails.CheckInput{Request: &models.ChatCompletionRequest{Messages: []models.Message{{Role: "user", Content: json.RawMessage(`"synthetic text"`)}}}})
 			if res.Err != nil || res.Pass != tc.pass {
 				t.Fatalf("err=%v pass=%v, want a %s verdict", res.Err, res.Pass, tc.name)

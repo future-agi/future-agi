@@ -303,7 +303,7 @@ class TestUpdateAgentTool:
         _assert_missing_assistant_id(result)
         assert caught.value.status_code == 400
         stored = _stored_agent(agent)
-        assert (stored.agent_name, stored.api_key) == ("Before", "test-key")
+        assert (stored.agent_name, stored.get_api_key()) == ("Before", "test-key")
         assert stored.observability_provider_id is None
         assert ProviderCredentials.no_workspace_objects.count() == credentials
         assert _created() == created
@@ -337,7 +337,7 @@ class TestUpdateAgentTool:
         assert caught.value.status_code == 500
         assert PROJECT_ERROR in str(caught.value)
         stored = _stored_agent(agent)
-        assert (stored.agent_name, stored.api_key) == ("Before", "test-key")
+        assert (stored.agent_name, stored.get_api_key()) == ("Before", "test-key")
         assert stored.observability_provider_id is None
         assert ProviderCredentials.no_workspace_objects.count() == credentials
         assert _created() == created
@@ -402,7 +402,7 @@ class TestCreateAgentVersionTool:
 
         _assert_missing_assistant_id(result)
         stored = _stored_agent(agent)
-        assert (stored.agent_name, stored.api_key) == ("Before", "test-key")
+        assert (stored.agent_name, stored.get_api_key()) == ("Before", "test-key")
         assert stored.observability_provider_id is None
         assert _versions(agent) == versions
         assert ProviderCredentials.no_workspace_objects.count() == credentials

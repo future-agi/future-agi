@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: scraperapi
+version: 1.0.0
+name: ScraperAPI
+description: "Scrape web pages and retrieve structured search and shopping results."
+vendor:
+  name: ScraperAPI
+  domains: [scraperapi.com]
+eeCategory: research
+group: other
+categories: [research, web-scraping]
+tags: [search, scraping, extraction]
+docsUrl: https://www.scraperapi.com/solutions/ai/mcp/
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://www.scraperapi.com/solutions/ai/mcp/
+    fetchedAt: 2026-11-09

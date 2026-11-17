@@ -167,6 +167,7 @@ export default function useSearchHighlight(containerRef, query) {
   const [matchCount, setMatchCount] = useState(0);
   const [activeIndex, setActiveIndex] = useState(0);
   const rangesRef = useRef([]);
+  const activeRangeRef = useRef(null);
   const activeIndexRef = useRef(0);
   const lastQueryRef = useRef("");
 
@@ -210,13 +211,22 @@ export default function useSearchHighlight(containerRef, query) {
     const highlight = getOrCreateHighlight(HIGHLIGHT_NAME);
     const activeHighlight = getOrCreateHighlight(HIGHLIGHT_NAME_ACTIVE);
 
+    // The registry and style names are document-global. Each pane owns only
+    // its ranges, so reapplying or unmounting must leave other panes intact.
+    const clearOwnedHighlights = () => {
+      rangesRef.current.forEach((range) => highlight.delete(range));
+      if (activeRangeRef.current) {
+        activeHighlight.delete(activeRangeRef.current);
+        activeRangeRef.current = null;
+      }
+      rangesRef.current = [];
+    };
+
     const apply = () => {
       // Pause observation so our own highlight changes don't re-fire it.
       observer.disconnect();
-      highlight.clear();
-      activeHighlight.clear();
+      clearOwnedHighlights();
       if (!q) {
-        rangesRef.current = [];
         setMatchCount(0);
       } else {
         const qLower = q.toLowerCase();
@@ -242,7 +252,10 @@ export default function useSearchHighlight(containerRef, query) {
         if (ranges.length) {
           const idx = Math.min(activeIndexRef.current, ranges.length - 1);
           const target = ranges[idx];
-          if (target) activeHighlight.add(target);
+          if (target) {
+            activeHighlight.add(target);
+            activeRangeRef.current = target;
+          }
         }
       }
       observer.observe(root, {
@@ -271,9 +284,7 @@ export default function useSearchHighlight(containerRef, query) {
     return () => {
       if (scheduled) cancelAnimationFrame(scheduled);
       observer.disconnect();
-      highlight.clear();
-      activeHighlight.clear();
-      rangesRef.current = [];
+      clearOwnedHighlights();
     };
   }, [containerRef, query, scrollToActive]);
 
@@ -283,11 +294,15 @@ export default function useSearchHighlight(containerRef, query) {
     const ranges = rangesRef.current;
     if (!ranges.length) return;
     const activeHighlight = getOrCreateHighlight(HIGHLIGHT_NAME_ACTIVE);
-    activeHighlight.clear();
+    if (activeRangeRef.current) {
+      activeHighlight.delete(activeRangeRef.current);
+      activeRangeRef.current = null;
+    }
     const idx = Math.min(activeIndex, ranges.length - 1);
     const target = ranges[idx];
     if (!target) return;
     activeHighlight.add(target);
+    activeRangeRef.current = target;
     scrollToActive();
   }, [activeIndex, scrollToActive]);
 

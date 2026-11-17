@@ -185,18 +185,22 @@ describe("RunsSummary", () => {
     expect(screen.queryByText("Dummy")).toBeNull();
   });
 
-  it("shows no run-compare checkboxes or compare hint with versioning off", () => {
+  it("shows a run-compare checkbox per run and the compare hint with versioning off", () => {
     renderSummary();
-    expect(screen.queryAllByRole("checkbox")).toHaveLength(0);
-    expect(screen.queryByText(/to compare/)).toBeNull();
-    expect(screen.queryByRole("button", { name: "Compare" })).toBeNull();
+    expect(screen.getAllByRole("checkbox")).toHaveLength(2);
+    expect(
+      screen.getByText("Select 2 finished runs to compare"),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Compare" })).toBeDisabled();
   });
 
-  it("defers Choose winner behind a disabled 'coming soon' control", () => {
+  it("keeps Choose winner visible but disabled, described as Not available in this release", () => {
     renderSummary();
-    expect(
-      screen.getByRole("button", { name: /Choose winner/ }),
-    ).toBeDisabled();
+    const winner = screen.getByRole("button", { name: /Choose winner/ });
+    expect(winner).toBeDisabled();
+    expect(winner).toHaveAttribute("aria-disabled", "true");
+    expect(winner).toHaveAccessibleDescription("Not available in this release");
+    expect(screen.queryByText(/coming soon/i)).toBeNull();
   });
 
   it("renders a run with no ordinal without crashing the identity chip", () => {
@@ -435,8 +439,7 @@ describe("RunsSummary", () => {
   });
 });
 
-// TODO: unskip when compare is shown again.
-describe.skip("RunsSummary compare", () => {
+describe("RunsSummary compare", () => {
   const versioned = { ...env, versioning: { enabled: true } };
   const run = (ordinal, fields = {}) => ({
     ...RUNS[0],
@@ -600,6 +603,21 @@ describe.skip("RunsSummary compare", () => {
     );
     expect(screen.queryByRole("region", { name: "Compare runs" })).toBeNull();
 
+    fireEvent.click(compare());
+
+    expect(
+      screen.getByRole("region", { name: "Compare runs" }),
+    ).toBeInTheDocument();
+    expect(useCompareRuns).toHaveBeenLastCalledWith("env-1", "ex4", "ex1", {
+      enabled: true,
+    });
+  });
+
+  it("compares two finished runs with versioning off", () => {
+    renderSummary({}, COMPARE_RUNS);
+    expect(box("Run 3")).toBeDisabled();
+    fireEvent.click(box("Run 4"));
+    fireEvent.click(box("Run 1"));
     fireEvent.click(compare());
 
     expect(

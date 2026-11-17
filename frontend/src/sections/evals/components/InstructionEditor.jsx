@@ -11,6 +11,7 @@ import {
   Typography,
   ButtonBase,
 } from "@mui/material";
+import { useSnackbar } from "notistack";
 import PropTypes from "prop-types";
 import React, {
   useCallback,
@@ -22,6 +23,7 @@ import React, {
 import Iconify from "src/components/iconify";
 import SvgColor from "src/components/svg-color";
 import axios, { endpoints } from "src/utils/axios";
+import { getThrottledMessage } from "src/utils/errorUtils";
 import PromptEditor from "src/components/PromptCards/PromptEditor";
 import { extractJinjaVariables } from "src/utils/jinjaVariables";
 import ModelSelector from "./ModelSelector";
@@ -298,6 +300,7 @@ const InstructionEditor = ({
   onActiveContextOptionsChange,
   hideDatasetContextToggle = false,
 }) => {
+  const { enqueueSnackbar } = useSnackbar();
   const modelBarDisabled = modelSelectorDisabled ?? disabled;
   const quillRef = useRef(null);
   const followUpRef = useRef(null);
@@ -504,19 +507,45 @@ const InstructionEditor = ({
     }
   }, []);
 
-  // Convert string value → blocks for PromptEditor
-  const prompt = useMemo(
-    () => (value ? [{ type: "text", text: value }] : []),
-    [value],
-  );
+  // The last text sent to or received from the parent.
+  const lastValue = useRef(value);
+  // Value set from outside (not text this editor sent), while the render
+  // that brought it commits: PromptEditor applies it in its own effect,
+  // which runs before this one, so Quill's echo arrives in that window.
+  const syncedValue = useRef(null);
 
-  // Convert blocks → string for parent onChange
+  // Convert string value → blocks for PromptEditor
+  const prompt = useMemo(() => {
+    // PromptEditor does not apply changes that differ only in trailing newlines.
+    if (
+      (value || "").replace(/\n+$/, "") !==
+      (lastValue.current || "").replace(/\n+$/, "")
+    )
+      syncedValue.current = value;
+    lastValue.current = value;
+    return value ? [{ type: "text", text: value }] : [];
+  }, [value]);
+  useEffect(() => {
+    syncedValue.current = null;
+  }, [value]);
+
+  // Convert blocks → string for parent onChange. Quill keeps a terminal
+  // "\n" in its document, so a value set from outside (a version picked)
+  // comes back once with that "\n" added; that echo is not an edit. Typed
+  // text, a line break at the end included, reports.
   const handlePromptChange = useCallback(
     (blocks) => {
       const text = blocks
         .filter((b) => b.type === "text")
         .map((b) => b.text)
         .join("");
+      const synced = syncedValue.current;
+      syncedValue.current = null;
+      const echoed =
+        text === lastValue.current ||
+        (synced !== null && text === `${synced}\n`);
+      if (echoed) return;
+      lastValue.current = text;
       onChange(text);
     },
     [onChange],
@@ -573,13 +602,18 @@ const InstructionEditor = ({
           setTimeout(() => followUpRef.current?.focus(), 100);
         }
       } catch (err) {
-        // eslint-disable-next-line no-console
-        console.warn("AI failed:", err?.message);
+        const limitMessage = getThrottledMessage(err);
+        if (limitMessage) {
+          enqueueSnackbar(limitMessage, { variant: "error" });
+        } else {
+          // eslint-disable-next-line no-console
+          console.warn("AI failed:", err?.message);
+        }
       } finally {
         setAiLoading(false);
       }
     },
-    [value, originalValue, callAI, setQuillText],
+    [value, originalValue, callAI, setQuillText, enqueueSnackbar],
   );
 
   const handleAccept = useCallback(() => {

@@ -52,6 +52,20 @@ describe("request log filter adapter", () => {
     expect(options("tags")).toEqual(["team:search"]);
   });
 
+  it("still takes typed values where the options are only suggestions", () => {
+    const fields = requestFilterFields(["gpt-4o"], {
+      application: ["checkout"],
+      service: ["api"],
+      tags: ["team:search"],
+    });
+    const field = (id) => fields.find((f) => f.id === id);
+    ["model", "application", "service", "tags"].forEach((id) =>
+      expect(field(id).allowCustomValue).toBe(true),
+    );
+    // The flags are a fixed "Yes" choice.
+    expect(field("is_error").allowCustomValue).toBeUndefined();
+  });
+
   it("round-trips application, service and tag filters", () => {
     const flat = {
       application: "checkout,search",

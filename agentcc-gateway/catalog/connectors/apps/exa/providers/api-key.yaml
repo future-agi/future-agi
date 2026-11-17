@@ -1,0 +1,43 @@
+# Exa's MCP server with an Exa API key in the x-api-key header. The same URL
+# also answers without a key at Exa's free rate limits; with a key, calls use
+# the team's plan and limits, and agent_run (usage-based) is available.
+schema: "connector-manifest/v1#provider"
+app: exa
+id: api-key
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.exa.ai/mcp
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: x-api-key
+      secret: true
+      label: API key
+      help: "An Exa API key, sent in the x-api-key header. Calls use your Exa team's plan and limits."
+      helpUrl: https://exa.ai/docs/get-started/exa-mcp
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_metered
+  source: https://exa.ai/docs/get-started/exa-mcp
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://exa.ai/docs/get-started/exa-mcp
+    fetchedAt: 2026-10-21
+  - fact: auth.kind
+    url: https://exa.ai/docs/get-started/exa-mcp
+    fetchedAt: 2026-10-21
+  - fact: auth.credentialParts
+    url: https://exa.ai/docs/get-started/exa-mcp
+    fetchedAt: 2026-10-21
+x-omega: { oss: exclude }

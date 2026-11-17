@@ -1,0 +1,46 @@
+# Opt-in only: bin/e2e selects the profile for the stack being run.
+services:
+  mock-google:
+    image: futureagi/future-agi:${FUTURE_AGI_VERSION:?FUTURE_AGI_VERSION is required}
+    entrypoint: ["python"]
+    command: ["/mock-google/server.py"]
+    environment:
+      MOCK_TLS_DIR: /tls
+    volumes:
+      - ./e2e/stack/mock-google:/mock-google:ro
+      - google-fixture-tls:/tls
+    ports:
+      - "127.0.0.1:28443:28443"
+    healthcheck:
+      test: ["CMD-SHELL", "test -s /tls/ca.pem"]
+      interval: 1s
+      timeout: 1s
+      retries: 30
+  # The other topology's application service stays inactive.
+  app:
+    profiles: [google-fixture-standalone]
+    environment:
+      REQUESTS_CA_BUNDLE: /run/google-fixture-tls/ca.pem
+    volumes:
+      - google-fixture-tls:/run/google-fixture-tls:ro
+      # Standalone does not copy the e2e backend image's browser-scoped view.
+      - ./e2e/stack/backend/e2e_google.py:/app/backend/tfc/views/e2e_google.py:ro
+    depends_on:
+      mock-google:
+        condition: service_healthy
+  backend:
+    profiles: [google-fixture-distributed]
+    environment:
+      REQUESTS_CA_BUNDLE: /run/google-fixture-tls/ca.pem
+    volumes:
+      - google-fixture-tls:/run/google-fixture-tls:ro
+    depends_on:
+      mock-google:
+        condition: service_healthy
+  # The mock must own host 127.0.0.1:28443: the spec maps the browser's mock-google to 127.0.0.1
+  # (--host-resolver-rules) and the backend uses mock-google:28443 in-network. mcp-mock keeps running on
+  # the stack network without its host port while this opt-in overlay is active.
+  mcp-mock:
+    ports: !reset []
+volumes:
+  google-fixture-tls:

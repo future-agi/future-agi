@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: mailchimp
+version: 1.0.0
+name: Mailchimp
+description: "Send transactional messages, manage email templates, and diagnose delivery failures."
+vendor:
+  name: Mailchimp
+  domains: [mailchimp.com, mandrillapp.com]
+eeCategory: communication
+group: other
+categories: [communication, email]
+tags: [email, messages]
+docsUrl: https://mailchimp.com/developer/transactional/guides/how-to-use-mailchimps-transactional-messaging-mcp
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://mailchimp.com/developer/transactional/guides/how-to-use-mailchimps-transactional-messaging-mcp
+    fetchedAt: 2026-11-09

@@ -6,6 +6,7 @@ container is started.
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import subprocess
@@ -53,6 +54,14 @@ def render(
     except ImportError:
         from compose_test_tools import compose_command
     env = host_env(extra_env)
+    # Synthetic, render-only Fernet key; never persisted or used by bin/e2e.
+    synthetic_key = base64.urlsafe_b64encode(bytes(range(32))).decode("ascii")
+    env.update(
+        {
+            "WEBHOOKS_ENCRYPTION_KEYS": synthetic_key,
+            "INTEGRATION_ENCRYPTION_KEY": synthetic_key,
+        }
+    )
     args = [*compose_command(), "--env-file", env_file]
     for name in files:
         args.extend(["-f", name])

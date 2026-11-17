@@ -1,5 +1,30 @@
 from django.db import migrations
 
+UPDATE_SAFETY = {
+    "schema_version": 1,
+    "risk_classes": ["data_migration"],
+    "tables": ["postgres:tracer_dashboardwidget"],
+    "mitigation": (
+        "Renames camelCase keys to snake_case in tracer_dashboardwidget JSON: "
+        "displayName in query_config metrics and breakdowns, and chartType, "
+        "axisConfig, the axis keys leftY, rightY, xAxis and seriesAxis, and "
+        "prefixSuffix and outOfBounds in chart_config. When both spellings exist the "
+        "snake_case value wins (two dicts are merged with the snake_case keys on "
+        "top). Reads every widget with iterator(chunk_size=500) and saves only a "
+        "widget it changed, with save(update_fields=[the changed fields]). The "
+        "migration is atomic: every saved row stays locked until the step commits, "
+        "and a failed run rolls back as a whole. Row scale: one row per dashboard "
+        "widget, soft-deleted rows included; tracer_dashboardwidget is not a "
+        "registered high-volume table. Second run: no camelCase key is left, so "
+        "widgets the first run changed are not written again; a re-run would still "
+        "rename keys in widgets written since. No schema change; the reverse is a "
+        "no-op."
+    ),
+    "reviewer": "<actual-github-login>",
+    "review": "<actual-PR-review-discussion-permalink>",
+    "large_volume_rehearsal": True,
+}
+
 
 QUERY_ITEM_KEY_ALIASES = {
     "displayName": "display_name",
@@ -96,7 +121,7 @@ def forwards(apps, schema_editor):
     DashboardWidget = apps.get_model("tracer", "DashboardWidget")
     updated = 0
 
-    for widget in DashboardWidget.objects.iterator(chunk_size=500):
+    for widget in DashboardWidget.objects.using(schema_editor.connection.alias).iterator(chunk_size=500):
         query_config, query_changed = _canonicalize_query_config(widget.query_config)
         chart_config, chart_changed = _canonicalize_chart_config(widget.chart_config)
         update_fields = []
@@ -108,7 +133,7 @@ def forwards(apps, schema_editor):
             widget.chart_config = chart_config
             update_fields.append("chart_config")
         if update_fields:
-            widget.save(update_fields=update_fields)
+            widget.save(using=schema_editor.connection.alias, update_fields=update_fields)
             updated += 1
 
     print(f"[canonicalize_dashboard_widget_configs] {updated} widgets updated")

@@ -184,6 +184,10 @@ class FalconLLMClient:
 
     async def _stream_bedrock(self, messages, tools=None):
         """Stream from AWS Bedrock using boto3, yielding OpenAI-compatible chunks."""
+        from tracer.services.background_transport import current_guard
+
+        if current_guard() is not None:
+            current_guard().abort("analysis_transport_not_allowed")
         import boto3
 
         system_content, api_messages = self._convert_messages_to_anthropic(messages)
@@ -472,7 +476,9 @@ class FalconLLMClient:
             "anthropic-version": "2023-06-01",
         }
 
-        async with httpx.AsyncClient(timeout=300.0) as client:
+        from tracer.services.background_transport import async_client_options
+
+        async with httpx.AsyncClient(timeout=300.0, **async_client_options()) as client:
             async with client.stream(
                 "POST",
                 f"{self.api_url}/v1/messages",
@@ -644,7 +650,9 @@ class FalconLLMClient:
             "x-agentcc-include-metadata": "true",
         }
 
-        async with httpx.AsyncClient(timeout=300.0) as client:
+        from tracer.services.background_transport import async_client_options
+
+        async with httpx.AsyncClient(timeout=300.0, **async_client_options()) as client:
             async with client.stream(
                 "POST",
                 f"{self.api_url}/v1/chat/completions",
@@ -714,7 +722,11 @@ class FalconLLMClient:
         Uses exponential backoff with 25% jitter to prevent thundering herd.
         Retries on status codes in RETRYABLE_STATUS_CODES and on connection/timeout errors.
         """
+        from tracer.services.background_transport import before_async_send
+
         for attempt in range(max_retries):
+            # The outer AgentLoop checkpoint does not cover retries/backoff.
+            await before_async_send()
             try:
                 yielded_any_chunk = False
                 async for chunk in self.stream_completion(messages, tools):
@@ -823,6 +835,10 @@ class FalconLLMClient:
         model = model or self.model
 
         if self.provider == "bedrock":
+            from tracer.services.background_transport import current_guard
+
+            if current_guard() is not None:
+                current_guard().abort("analysis_transport_not_allowed")
             import boto3
             from channels.db import database_sync_to_async
 
@@ -866,7 +882,11 @@ class FalconLLMClient:
                 "x-api-key": self.api_key,
                 "anthropic-version": "2023-06-01",
             }
-            async with httpx.AsyncClient(timeout=timeout) as client:
+            from tracer.services.background_transport import async_client_options
+
+            async with httpx.AsyncClient(
+                timeout=timeout, **async_client_options()
+            ) as client:
                 resp = await client.post(
                     f"{self.api_url}/v1/messages", json=payload, headers=headers
                 )
@@ -890,7 +910,11 @@ class FalconLLMClient:
                 "Content-Type": "application/json",
                 "Authorization": f"Bearer {self.api_key}",
             }
-            async with httpx.AsyncClient(timeout=timeout) as client:
+            from tracer.services.background_transport import async_client_options
+
+            async with httpx.AsyncClient(
+                timeout=timeout, **async_client_options()
+            ) as client:
                 resp = await client.post(
                     f"{self.api_url}/v1/chat/completions", json=payload, headers=headers
                 )

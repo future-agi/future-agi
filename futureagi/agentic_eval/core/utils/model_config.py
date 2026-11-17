@@ -3,7 +3,9 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from enum import Enum
-from typing import Final, Optional
+from typing import Final
+
+from tfc.utils.model_names import base_model_name
 
 
 @dataclass(frozen=True)
@@ -17,10 +19,11 @@ class ModelConfig:
     supports_pdf: bool = False
     # Vertex region for direct calls; litellm defaults to us-central1 otherwise, and some
     # models are served only from the global endpoint.
-    vertex_location: Optional[str] = None
+    vertex_location: str | None = None
 
 
-class LiteLlmProvider(str, Enum):
+# str + Enum, not StrEnum: str() and format() of a member stay as they are for callers.
+class LiteLlmProvider(str, Enum):  # noqa: UP042
     VERTEX_AI = "vertex_ai"
     OPENAI = "openai"
     PERPLEXITY = "perplexity"
@@ -262,7 +265,7 @@ class ModelConfigs:
     )
 
     @classmethod
-    def get_config(cls, model_name: str) -> Optional[ModelConfig]:
+    def get_config(cls, model_name: str) -> ModelConfig | None:
         """
         Resolves a ModelConfig given a model name string.
         Attempts exact match first, then checks without provider prefix.
@@ -278,36 +281,36 @@ class ModelConfigs:
                     return cfg
 
         # 2. Match without provider prefix (e.g. "gpt-4o" matches "gpt-4o")
-        # and handle common shorthands
-        clean_name = model_name.split("/")[-1] if "/" in model_name else model_name
+        # and handle common shorthands. Case-sensitive, as it always was.
+        clean_name = base_model_name(model_name, lower=False)
         for attr in dir(cls):
             cfg = getattr(cls, attr)
             if isinstance(cfg, ModelConfig):
-                if cfg.model_name.split("/")[-1] == clean_name:
+                if base_model_name(cfg.model_name, lower=False) == clean_name:
                     return cfg
 
         return None
 
     @classmethod
-    def get_max_tokens(cls, model_name: str) -> Optional[int]:
+    def get_max_tokens(cls, model_name: str) -> int | None:
         """Resolves max tokens for a model name."""
         cfg = cls.get_config(model_name)
         return cfg.max_tokens if cfg else None
 
     @classmethod
-    def get_temperature(cls, model_name: str) -> Optional[float]:
+    def get_temperature(cls, model_name: str) -> float | None:
         """Resolves default temperature for a model name."""
         cfg = cls.get_config(model_name)
         return cfg.temperature if cfg else None
 
     @classmethod
-    def get_provider(cls, model_name: str) -> Optional[str]:
+    def get_provider(cls, model_name: str) -> str | None:
         """Resolves provider for a model name."""
         cfg = cls.get_config(model_name)
         return cfg.provider if cfg else None
 
     @classmethod
-    def get_vertex_location(cls, model_name: str) -> Optional[str]:
+    def get_vertex_location(cls, model_name: str) -> str | None:
         """Resolves the Vertex region a model must be called in, if it needs one."""
         cfg = cls.get_config(model_name)
         return cfg.vertex_location if cfg else None

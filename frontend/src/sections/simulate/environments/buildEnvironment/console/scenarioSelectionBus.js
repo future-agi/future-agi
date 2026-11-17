@@ -6,11 +6,14 @@
  * the table and types in the chat, the chat needs to know so it can
  * treat the message as a bulk edit against those specific rows.
  *
- * State: { ids: string[], rows: object[], count: number, all: boolean }.
+ * State: { ids, rows, count, all, jobId, predicate }.
+ * `predicate` snapshots { search, filters, marked } for all-matching selections;
+ * marked contains excluded row ids. `jobId` binds that scope to its environment.
  * `rows` carries the full scenario objects so the chat can name them in its
  * reply without cross-referencing the store. `count`/`all` describe an
  * all-matching (predicate) selection, where `ids` is empty but a whole page
- * of matches is selected — the subscribers (the console chip, the header run
+ * of matches is selected. Chat resolves the predicate before sending; subscribers
+ * (the console chip, the header run
  * yield) read `count` so an all-mode selection still registers.
  */
 
@@ -40,6 +43,14 @@ export function publishScenarioSelection(next) {
     // publisher passes an explicit count (ids is empty there).
     count: Number.isFinite(next?.count) ? next.count : ids.length,
     all: !!next?.all,
+    jobId: next?.jobId,
+    predicate: next?.predicate ? {
+      search: next.predicate.search,
+      filters: Object.fromEntries(Object.entries(next.predicate.filters || {}).map(
+        ([field, values]) => [field, Array.isArray(values) ? [...values] : values],
+      )),
+      marked: [...(next.predicate.marked || [])],
+    } : null,
   };
   listeners.forEach((fn) => {
     try {

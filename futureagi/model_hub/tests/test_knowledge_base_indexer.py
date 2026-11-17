@@ -147,6 +147,9 @@ class TestProcessFileDispatch:
         [
             ("doc.pdf", "process_pdf"),
             ("doc.txt", "process_text"),
+            ("doc.md", "process_text"),
+            ("doc.MD", "process_text"),
+            ("doc.mD", "process_text"),
             ("doc.docx", "process_docx"),
             ("doc.rtf", "process_rtf"),
         ],
@@ -336,6 +339,65 @@ class TestS3Download:
 
 
 class TestProcessS3File:
+    @pytest.mark.parametrize("extension", ["md", "MD", "mD", "txt"])
+    def test_admitted_markdown_reaches_chunk_storage(
+        self, mocker, indexer, tmp_path, extension
+    ):
+        """Accepted Markdown must index just like the TXT control."""
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        from model_hub.views.develop_dataset import CreateKnowledgeBaseView
+
+        content = b"# Travel policy\n\nEmployees must retain receipts for travel.\n"
+        upload = SimpleUploadedFile(
+            f"policy.{extension}",
+            content,
+            content_type="text/plain" if extension == "txt" else "text/markdown",
+        )
+        assert CreateKnowledgeBaseView().is_file_readable(upload) == {"status": True}
+
+        # Exercise the real download, reader and chunker; replace only external
+        # storage/embedding boundaries and keep downloads under pytest's tmpdir.
+        mocker.patch(f"{MODULE}.tempfile.mkdtemp", return_value=str(tmp_path))
+
+        def download(bucket, object_key, local_path):
+            with open(local_path, "wb") as downloaded:
+                downloaded.write(content)
+
+        indexer._test_storage.fget_object.side_effect = download
+
+        result = indexer.process_s3_file(
+            f"knowledge-base/kb-1/file-1.{extension}",
+            "file-1",
+            "kb-1",
+            "org-1",
+        )
+
+        assert result == {"file_id": "file-1", "kb_id": "kb-1"}
+        indexer._test_storage.fget_object.assert_called_once_with(
+            indexer.bucket_name,
+            f"knowledge-base/kb-1/file-1.{extension}",
+            str(tmp_path / f"file-1.{extension}"),
+        )
+        assert len(indexer.chunks) == 1
+        chunk = indexer.chunks[0]
+        assert chunk.text == content.decode("utf-8").strip()
+        assert chunk.file_id == "file-1"
+        assert chunk.organization_id == "org-1"
+        indexer._test_embedding_manager.parallel_process_metadata.assert_called_once_with(
+            eval_id="kb-1",
+            metadatas=[
+                {
+                    "file_id": "file-1",
+                    "chunk_id": chunk.chunk_id,
+                    KB_INDEX_COL_NAME: chunk.text,
+                    "organization_id": "org-1",
+                }
+            ],
+            inputs_formater=[KB_INDEX_COL_NAME],
+            table_name=KB_TABLE_NAME,
+        )
+
     def test_success_returns_file_and_kb_ids(self, mocker, indexer):
         mocker.patch.object(indexer, "download_s3_file", return_value="/tmp/f.txt")
         mocker.patch.object(indexer, "process_file")

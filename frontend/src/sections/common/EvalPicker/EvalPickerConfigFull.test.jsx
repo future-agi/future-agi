@@ -203,11 +203,13 @@ const configFullTree = ({
   evalData,
   requireInputs,
   onSave = () => {},
+  source = "task",
+  sourceRowType = "traces",
 } = {}) => (
   <EvalPickerProvider
-    source="task"
+    source={source}
     sourceId="project-1"
-    sourceRowType="traces"
+    sourceRowType={sourceRowType}
     sourceColumns={[]}
     existingEvals={[]}
     onEvalAdded={() => {}}
@@ -226,6 +228,21 @@ const configFullTree = ({
 );
 
 const renderConfigFull = (options = {}) => render(configFullTree(options));
+
+it("distinguishes complete conversations from bounded session transcripts", async () => {
+  renderConfigFull({ sourceRowType: "sessions" });
+  expect(
+    await screen.findByText(
+      /conversation_complete includes every turn without shortening/i,
+    ),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByText(/transcript and transcript_full are bounded summaries/i),
+  ).toBeInTheDocument();
+  await waitFor(() =>
+    expect(capturedProps.tracing.initialRowType).toBe("sessions"),
+  );
+});
 
 it("authors a decision rubric in the attach drawer and forwards the exact route and mapping to preview and binding", async () => {
   const previous = stableEvalDetail.data;
@@ -439,7 +456,7 @@ describe("pinned decision binding hydration", () => {
 
   it("resets to an explicitly chosen version and does not reapply the saved binding on refetch", async () => {
     const evalData = savedBinding();
-    const view = renderConfigFull({ evalData });
+    const view = renderConfigFull({ evalData, source: "dataset" });
     await waitFor(() =>
       expect(screen.getByLabelText("Level 0")).toHaveValue("Authored bad"),
     );
@@ -453,7 +470,7 @@ describe("pinned decision binding hydration", () => {
         usage_count: 3,
       })),
     };
-    view.rerender(configFullTree({ evalData }));
+    view.rerender(configFullTree({ evalData, source: "dataset" }));
     await waitFor(() =>
       expect(screen.getByLabelText("Level 0")).toHaveValue("Version two bad"),
     );

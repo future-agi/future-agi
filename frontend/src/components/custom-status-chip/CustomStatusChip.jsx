@@ -7,7 +7,7 @@ import {
   STATUS_TYPES,
 } from "../../utils/statusUtils";
 
-// Drawn as the design system's status badge: tinted, no coloured outline.
+// DS v0.2.3: neutral dot + label, tinted badges for the other status roles.
 const ROLE = {
   [STATUS_TYPES.PASS]: "success",
   [STATUS_TYPES.ERROR]: "danger",
@@ -20,19 +20,17 @@ const StatusChip = ({
   label,
   status,
   disabled = false,
+  showIcon = true,
   neutralTextColor,
   sx,
   ...otherProps
 }) => {
   const { finalLabel, finalStatus } = getStatusDetails({ status, label });
-  // MUI Chip props callers used to pass through have no badge equivalent.
+  // Chip-only props have no badge equivalent; never forward them to the DOM.
   // eslint-disable-next-line no-unused-vars
-  const { size, variant, icon, onDelete, showIcon, ...rest } = otherProps;
+  const { size, variant, icon, onDelete, ...rest } = otherProps;
 
-  // Opt-in readability override for neutral (UNSET-classified) chips only. Callers
-  // whose chip background was measured too close to `text.disabled` pass a
-  // higher-contrast theme token; every other status and every disabled chip
-  // keeps the badge colours. (TH-4088, scoped to the Observe span list.)
+  // Only enabled UNSET chips opt in. All other chips keep the badge colours.
   const neutralOverride =
     neutralTextColor && !disabled && finalStatus === STATUS_TYPES.UNSET
       ? { "& .MuiTypography-root": { color: neutralTextColor } }
@@ -40,16 +38,22 @@ const StatusChip = ({
 
   return (
     <StatusBadge
+      {...rest}
       status={finalStatus}
       role={ROLE[finalStatus] || "neutral"}
       label={finalLabel}
-      sx={{
-        opacity: disabled ? 0.48 : 1,
-        pointerEvents: "none",
-        ...neutralOverride,
-        ...sx,
-      }}
-      {...rest}
+      dot={showIcon}
+      // Consume disabled here: the legacy badge disabled prop replaces colours.
+      // Dim instead, while retaining the accessible disabled state.
+      aria-disabled={disabled || undefined}
+      sx={[
+        {
+          opacity: disabled ? 0.48 : 1,
+          pointerEvents: "none",
+          ...neutralOverride,
+        },
+        ...(Array.isArray(sx) ? sx : [sx]),
+      ]}
     />
   );
 };
@@ -63,7 +67,7 @@ StatusChip.propTypes = {
     PropTypes.string,
   ]),
   disabled: PropTypes.bool,
-  sx: PropTypes.object,
+  sx: PropTypes.oneOfType([PropTypes.object, PropTypes.array, PropTypes.func]),
 };
 
 export default StatusChip;

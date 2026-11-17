@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import PropTypes from "prop-types";
 import Box from "@mui/material/Box";
+import Button from "@mui/material/Button";
 import Typography from "@mui/material/Typography";
 import IconButton from "@mui/material/IconButton";
 import Iconify from "src/components/iconify";
@@ -8,6 +9,15 @@ import useFalconStore from "../store/useFalconStore";
 import TextBlock from "./TextBlock";
 import ToolCallCard from "./ToolCallCard";
 import CompletionCard from "./CompletionCard";
+
+// The question a reply answers: the nearest user message before it.
+function questionBefore(messages, id) {
+  const index = messages.findIndex((m) => m.id === id);
+  for (let i = index - 1; i >= 0; i -= 1) {
+    if (messages[i].role === "user") return messages[i].content || null;
+  }
+  return null;
+}
 
 export default function AssistantMessage({ message, onFeedback }) {
   const [hovered, setHovered] = useState(false);
@@ -17,9 +27,23 @@ export default function AssistantMessage({ message, onFeedback }) {
   const hasBlocks = blocks.length > 0;
   const isStreaming = useFalconStore((s) => s.isStreaming);
   const streamingMessageId = useFalconStore((s) => s.streamingMessageId);
+  const setPendingPrompt = useFalconStore((s) => s.setPendingPrompt);
   const isThisStreaming = isStreaming && streamingMessageId === message.id;
   const isEmpty =
     !message.content && toolCalls.length === 0 && !hasBlocks && !message.error;
+  // A reply that ended with nothing in it: a failed answer (a reload keeps the
+  // empty reply but not its error) or one stopped before any text.
+  const noAnswer = isEmpty && !isThisStreaming && !message.completion_card;
+  const failed = !isThisStreaming && (Boolean(message.error) || noAnswer);
+
+  // Puts the question back in the message box, focused, to send again.
+  const askAgain = () => {
+    const question = questionBefore(
+      useFalconStore.getState().messages,
+      message.id,
+    );
+    if (question) setPendingPrompt(question);
+  };
 
   return (
     <Box
@@ -110,6 +134,35 @@ export default function AssistantMessage({ message, onFeedback }) {
           >
             {message.error}
           </Typography>
+        )}
+
+        {noAnswer && (
+          <Typography
+            variant="body2"
+            sx={{ mt: 0.5, color: "text.secondary", fontSize: 13 }}
+          >
+            Falcon didn&apos;t answer this message.
+          </Typography>
+        )}
+
+        {failed && (
+          <Button
+            size="small"
+            color="inherit"
+            onClick={askAgain}
+            title="Put the question back in the message box"
+            startIcon={<Iconify icon="solar:restart-linear" width={14} />}
+            sx={{
+              mt: 0.5,
+              px: 1,
+              fontSize: 13,
+              fontWeight: 500,
+              color: "text.secondary",
+              "&:hover": { color: "text.primary" },
+            }}
+          >
+            Ask again
+          </Button>
         )}
 
         {/* Completion card — only for legacy messages without blocks */}

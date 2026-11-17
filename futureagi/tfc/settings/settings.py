@@ -13,12 +13,17 @@ https://docs.djangoproject.com/en/4.2/ref/settings/
 import ipaddress
 import json
 import os
+import sys
 from datetime import timedelta
 from pathlib import Path
 from urllib.parse import urlsplit
 
 # Structured logging configuration
 from tfc.logging import configure_structlog, get_logging_config, init_sentry
+from tfc.settings import stripe_billing as _stripe_billing
+from tfc.settings.request_id_cors import (
+    request_id_cors_overrides as _request_id_cors_overrides,
+)
 from tfc.settings.runtime_setting_specs import (
     RUNTIME_NUMERIC_SETTING_SPECS as _runtime_numeric_setting_specs,
 )
@@ -70,6 +75,43 @@ EVAL_USAGE_CLICKHOUSE_ENABLED = os.getenv(
     "EVAL_USAGE_CLICKHOUSE_ENABLED",
     "true",
 ).lower() in ("true", "1", "t", "yes", "y")
+
+# Default-OFF launch switch; activation is an explicit deployment environment value.
+DSX_DATASET_STARS_ENABLED = os.getenv(
+    "DSX_DATASET_STARS_ENABLED", "false"
+).strip().lower() in ("true", "1", "yes", "on")
+
+# Default-OFF launch switch for dataset.evalVersions historical execution: a
+# dataset evaluation that pins a saved version scores with that version's saved
+# choices (choices, choice_scores, multi_choice, output type). OFF, every run
+# scores with the template's live choices, as before; a pin still selects the
+# version's prompt. Activation is an explicit deployment environment value on
+# the API and the eval workers, after the surface's walk; no rebuild.
+EVAL_PINNED_VERSION_SAVED_CHOICES_ENABLED = os.getenv(
+    "EVAL_PINNED_VERSION_SAVED_CHOICES_ENABLED", "true"
+).strip().lower() in ("true", "1", "yes", "on")
+
+# D8-PGRID (F54 row sources, F82 row read): default OFF, activation is an
+# explicit deployment environment value. OFF, the dataset row read route
+# answers as an unknown route and is left out of the generated schema,
+# get-row-data and get-dataset-table attach no row source, and the span export
+# never reads trace_session_id (model_hub/services/row_source_gate.py). Read
+# per call: set it on the API and the dataset import workers, then restart.
+DSX_DATASET_ROW_SOURCE_ENABLED = os.getenv(
+    "DSX_DATASET_ROW_SOURCE_ENABLED", "false"
+).strip().lower() in ("true", "1", "yes", "on")
+
+# Default-OFF switch for naming the model an agent evaluation ran on. OFF, the
+# eval task Usage view and the SDK eval result answer as before. ON, each run
+# there gains ran_on_label: the product name of the model the run ran on when
+# it is not the chosen one (evaluations/ran_on.py), else null. An agent run
+# shows the model its evaluator was given as the chosen one: on the Usage view
+# when the run records it, in the SDK result when no requested model is
+# recorded. Read per request by the API only: set it on the API and restart.
+# Charging is unchanged.
+EVAL_RAN_ON_LABEL_ENABLED = os.getenv(
+    "EVAL_RAN_ON_LABEL_ENABLED", "false"
+).strip().lower() in ("true", "1", "yes", "on")
 
 
 def _split_env(name: str, default: str = "") -> list[str]:
@@ -173,6 +215,13 @@ DEBUG = os.getenv("DEBUG", "False").lower() in (
     "y",
 )
 
+# F76 stays dark for direct API callers as well as the unclaimed UI. OFF
+# leaves CORS_EXPOSE_HEADERS unset; ON exposes the existing telemetry header.
+DSX_ERRORS_REQUEST_ID_EXPOSED = os.getenv(
+    "DSX_ERRORS_REQUEST_ID_EXPOSED", "false"
+).strip().lower() in ("1", "true", "yes", "on")
+globals().update(_request_id_cors_overrides(sys.modules[__name__]))
+
 # ── ALLOWED_HOSTS ─────────────────────────────────────────────────────────
 # Open by default for self-host-friendly OSS conventions —
 # production deployments should tighten this via the ALLOWED_HOSTS env var
@@ -257,12 +306,15 @@ INSTALLED_APPS = [
     "tracer",
     "simulate",
     "agent_playground.apps.AgentPlaygroundConfig",
+    "omega_hub.apps.OmegaHubConfig",
+    "omega_rollout.apps.OmegaRolloutConfig",
     "integrations",
     # AI tools shared layer (MCP + AI Assistant)
     "ai_tools",
     # MCP Server (protocol layer for external AI clients)
     "mcp_server",
     "agentcc",
+    "webhooks.apps.WebhooksConfig",
     "tfc.deployment_telemetry",
     "tfc.licensing",
     "tfc.capabilities",
@@ -291,6 +343,41 @@ if has_ee("ee.cloud.control_plane") and is_cloud_env():
 # Site ID for django.contrib.sites
 SITE_ID = 1
 
+# Independent MCP launch gates. Missing or malformed values are OFF.
+AGENTCC_MCP_UPSTREAM_OAUTH_ENABLED = os.environ.get(
+    "AGENTCC_MCP_UPSTREAM_OAUTH_ENABLED", "false"
+).strip().lower() in {"true", "1"}
+AGENTCC_MCP_CLIENT_OAUTH_ENABLED = os.environ.get(
+    "AGENTCC_MCP_CLIENT_OAUTH_ENABLED", "false"
+).strip().lower() in {"true", "1"}
+AGENTCC_MCP_K2_APPS_ENABLED = os.environ.get(
+    "AGENTCC_MCP_K2_APPS_ENABLED", "false"
+).strip().lower() in {"true", "1"}
+# Key-based MCP client installs (the Console's Connect tab). Independent of the
+# OAuth and K2 gates: it only generates client setup, it never mints a key.
+AGENTCC_MCP_CLIENT_INSTALLS_ENABLED = os.environ.get(
+    "AGENTCC_MCP_CLIENT_INSTALLS_ENABLED", "false"
+).strip().lower() in {"true", "1"}
+# NEW explorer/download surfaces only; downloads require the explorer.
+AGENTCC_MCP_TOOL_CALL_EXPLORER_ENABLED = os.environ.get(
+    "AGENTCC_MCP_TOOL_CALL_EXPLORER_ENABLED", "false"
+).strip().lower() in {"true", "1"}
+AGENTCC_MCP_TOOL_CALL_DOWNLOAD_ENABLED = os.environ.get(
+    "AGENTCC_MCP_TOOL_CALL_DOWNLOAD_ENABLED", "false"
+).strip().lower() in {"true", "1"}
+
+# Independent new MCP capabilities ship ON; explicit invalid/false values are OFF.
+# Vault management only: shared credential storage and static auth stay available.
+AGENTCC_MCP_CATALOG_ENABLED = os.environ.get(
+    "AGENTCC_MCP_CATALOG_ENABLED", "true"
+).strip().lower() in {"true", "1"}
+AGENTCC_MCP_CREDENTIAL_VAULT_ENABLED = os.environ.get(
+    "AGENTCC_MCP_CREDENTIAL_VAULT_ENABLED", "true"
+).strip().lower() in {"true", "1"}
+AGENTCC_MCP_VIRTUAL_SERVERS_ENABLED = os.environ.get(
+    "AGENTCC_MCP_VIRTUAL_SERVERS_ENABLED", "true"
+).strip().lower() in {"true", "1"}
+
 STARTUP_SCHEMA_GUARD_ENABLED = os.getenv(
     "STARTUP_SCHEMA_GUARD_ENABLED", "false"
 ).strip().lower() in ("true", "1", "yes")
@@ -301,6 +388,8 @@ MIDDLEWARE = [
     "corsheaders.middleware.CorsMiddleware",  #
     "tfc.middleware.cors_origin.OriginCheckMiddleware",
     "tfc.middleware.schema_readiness.SchemaReadinessMiddleware",
+    "tfc.logging.checkout.CheckoutLoggingMiddleware",
+    "agentcc.mcp_features.MCPSubfeatureMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -312,6 +401,8 @@ MIDDLEWARE = [
     # 'tfc.middleware.debug_middleware.DebugMiddleware',
     "tfc.middleware.auth_monitoring.AuthMonitoringMiddleware",
     "tfc.utils.audit.AuditMiddleware",  # Stores request.user in thread-local for audit logging
+    # An Omega EE agent key on any Django route: 403 key_scope_denied, audited (CN22c).
+    "agentcc.middleware_ee_agent_key.EEAgentKeyScopeMiddleware",
     # 'tfc.middleware.query_timeout.QueryTimeoutMiddleware',
     "accounts.authentication.AuthMonitoringMiddleware",
     # Workspace context and permissions are now handled in APIKeyAuthentication class
@@ -338,7 +429,35 @@ SWAGGER_SETTINGS = {
             "in": "header",
             "name": "X-Secret-Key",
         },
+        "BearerToken": {
+            "type": "apiKey",
+            "in": "header",
+            "name": "Authorization",
+            "description": "A signed-in person's access token, prefixed with Bearer.",
+        },
+        "StaffBearer": {
+            "type": "apiKey",
+            "in": "header",
+            "name": "Authorization",
+            "description": "A signed-in staff person's access token, prefixed with Bearer. API keys are not accepted.",
+        },
+        "GatewayAdminBearer": {
+            "type": "apiKey",
+            "in": "header",
+            "name": "Authorization",
+            "description": "The deployment's gateway administration credential, prefixed with Bearer. Not a personal API key.",
+        },
+        "LedgerServiceCredential": {
+            "type": "apiKey",
+            "in": "header",
+            "name": "Authorization",
+            "description": "A ledger ingestion service credential, prefixed with Bearer. Restricted to its permitted sources and organizations.",
+        },
     },
+    "SECURITY_REQUIREMENTS": [
+        {"X-Api-Key": [], "X-Secret-Key": []},
+        {"BearerToken": []},
+    ],
     "USE_SESSION_AUTH": False,
 }
 
@@ -566,17 +685,49 @@ REST_FRAMEWORK = {
     "EXCEPTION_HANDLER": "accounts.authentication.custom_exception_handler",
 }
 
+
+# Request limits of the platform AI helpers (model_hub/throttles.py): smart
+# filters, the criteria helper (which also starts an Optimize run) and the AI
+# eval writer, per organization and per user. Each is a DRF rate string such as
+# "60/min"; an unset or blank variable keeps the default.
+def _throttle_rate(name, default):
+    return (os.getenv(name) or "").strip() or default
+
+
+SMART_FILTER_ORG_THROTTLE_RATE = _throttle_rate(
+    "SMART_FILTER_ORG_THROTTLE_RATE", "60/min"
+)
+SMART_FILTER_USER_THROTTLE_RATE = _throttle_rate(
+    "SMART_FILTER_USER_THROTTLE_RATE", "30/min"
+)
+CRITERIA_HELPER_ORG_THROTTLE_RATE = _throttle_rate(
+    "CRITERIA_HELPER_ORG_THROTTLE_RATE", "60/min"
+)
+CRITERIA_HELPER_USER_THROTTLE_RATE = _throttle_rate(
+    "CRITERIA_HELPER_USER_THROTTLE_RATE", "30/min"
+)
+AI_EVAL_WRITER_ORG_THROTTLE_RATE = _throttle_rate(
+    "AI_EVAL_WRITER_ORG_THROTTLE_RATE", "60/min"
+)
+AI_EVAL_WRITER_USER_THROTTLE_RATE = _throttle_rate(
+    "AI_EVAL_WRITER_USER_THROTTLE_RATE", "30/min"
+)
+
 # SECRET_KEY — sentinel default so the app starts for first-run self-host;
-# non-local environments using the default bail out loudly.
+# non-local environments using the default bail out loudly. The compose files
+# publish their own default (tfc/tests/test_settings_env.py pins both); it is
+# as public as the sentinel, so it is refused the same way.
 _DEFAULT_SECRET_KEY = "django-insecure-<default-SECRET_KEY-replace-in-production>"
+_PUBLISHED_SECRET_KEY = "local-dev-only-not-for-production-replace-me"
 SECRET_KEY = os.getenv("SECRET_KEY") or _DEFAULT_SECRET_KEY
 
-if not _IS_LOCAL and SECRET_KEY == _DEFAULT_SECRET_KEY:
+if not _IS_LOCAL and SECRET_KEY in (_DEFAULT_SECRET_KEY, _PUBLISHED_SECRET_KEY):
     import sys as _sys
 
     _sys.stderr.write(
-        "[FATAL] SECRET_KEY is set to the default value in a non-local "
-        "environment. Generate a key and set SECRET_KEY env var. "
+        "[FATAL] SECRET_KEY is unset or a published default in a non-local "
+        "environment. Generate a key (openssl rand -hex 32) and set the "
+        "SECRET_KEY env var. "
         "See: https://docs.djangoproject.com/en/stable/ref/settings/#secret-key\n"
     )
     _sys.exit(1)
@@ -834,6 +985,40 @@ CODE_EXECUTOR_LOCAL_FALLBACK = os.getenv(
     "CODE_EXECUTOR_LOCAL_FALLBACK", "false"
 ).lower() in ("true", "1", "yes")
 
+# Pause custom code evaluations for this deployment: code a customer wrote or
+# changed is refused before any call to the code executor, with a fixed
+# sentence; built-in evaluators (a system template's own code) keep running.
+# Default OFF, so self-hosted installs are unchanged.
+CUSTOM_CODE_EVALS_PAUSED = os.getenv("CUSTOM_CODE_EVALS_PAUSED", "false").lower() in (
+    "true",
+    "1",
+    "yes",
+)
+
+
+# F06: selected-run stop, resume and run-control status. Keep OFF until this
+# feature's own final-head walk and independent qualification pass. OFF, the
+# resume and run-control routes and any stop naming run_ids answer 404; the
+# empty-body whole-experiment stop is unchanged. Read per API request; the
+# experiment workers do not read it.
+EXPERIMENT_RUN_CONTROL_ENABLED = os.getenv(
+    "EXPERIMENT_RUN_CONTROL_ENABLED", "false"
+).lower() in ("true", "1", "yes")
+
+# Run settings on a new experiment: picked rows, sampling, metadata, the error
+# policy and per-row limits. The release turns them on. An operator may set
+# EXPERIMENT_SCOPE_ENABLED=false to turn them off with no code change; it takes
+# effect when the API processes restart. Off, a create that uses one of them is
+# refused with a sentence that says so (plain creates still run), and the
+# experiment detail leaves them out. The experiment workers do not read this:
+# experiments already created keep their stored settings. Split selection
+# (split_ids) is not gated by this setting.
+EXPERIMENT_SCOPE_ENABLED = os.getenv("EXPERIMENT_SCOPE_ENABLED", "true").lower() in (
+    "true",
+    "1",
+    "yes",
+)
+
 # How Jev evaluators reach TypeSafe, always on the org's own key. "gateway"
 # (default) sends them to the AgentCC gateway's /v1/systemone on
 # AGENTCC_INTERNAL_API_KEY, carrying the org's key for that call. "direct"
@@ -845,6 +1030,16 @@ JEV_TRANSPORT = os.getenv("JEV_TRANSPORT", "gateway").strip().lower()
 # to the simulation-runner worker which executes the released SDK, instead of the
 # native in-backend simulation path. Default off — no regression.
 HOSTED_RUNNER_ENABLED = os.getenv("HOSTED_RUNNER_ENABLED", "false").lower() in (
+    "true",
+    "1",
+    "yes",
+)
+
+# Admission hold for NEW SDK children, including already queued workflows.
+# Read at worker startup, not hot-reloaded: restart/replace every runner worker
+# after changing this environment setting. Existing children are not terminated
+# by the admission check. Independent of API routing; default OFF.
+HOSTED_RUNNER_LAUNCH_HOLD = os.getenv("HOSTED_RUNNER_LAUNCH_HOLD", "false").lower() in (
     "true",
     "1",
     "yes",
@@ -1226,18 +1421,36 @@ STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY")
 BUSINESS_MONTHLY_STRIPE_PRICE_ID = os.getenv("BUSINESS_MONTHLY_STRIPE_PRICE_ID")
 BUSINESS_YEARLY_STRIPE_PRICE_ID = os.getenv("BUSINESS_YEARLY_STRIPE_PRICE_ID")
 
-STRIPE_LIVE = bool(STRIPE_SECRET_KEY and STRIPE_SECRET_KEY.startswith("sk_live"))
+STRIPE_LIVE = _stripe_billing.resolve_stripe_live(STRIPE_SECRET_KEY)
+# Unset in production (Stripe's own API). A walk stack points it at stripe-mock
+# (e2e/stack/docker-compose.stripe-mock.yml); tfc.stripe_client applies it.
+STRIPE_API_BASE = _stripe_billing.resolve_stripe_api_base(os.getenv("STRIPE_API_BASE"))
+_stripe_billing.refuse_api_base_with_live(STRIPE_API_BASE, STRIPE_LIVE)
 
 # Signing secret for the billing webhook endpoint. Keyed off the same
-# live/test signal StripeService._is_live() uses, so the secret can never
-# disagree with the API key the events were generated against.
-STRIPE_WEBHOOK_SECRET = os.getenv(
-    "WEBHOOK_SECRET_LIVE" if STRIPE_LIVE else "WEBHOOK_SECRET_TEST", ""
+# validated standard/restricted credential mode as the checkout guard; no
+# unknown key is treated as test-mode. Never empty
+# (MUST-FIX G): with a Stripe key and no secret for its mode the process
+# refuses to start; without a key it is a per-process refusal value that
+# verifies no event, and STRIPE_WEBHOOK_SECRET_CONFIGURED is False.
+STRIPE_WEBHOOK_SECRET, STRIPE_WEBHOOK_SECRET_CONFIGURED = (
+    _stripe_billing.resolve_stripe_webhook_secret(
+        os.environ,
+        stripe_live=STRIPE_LIVE,
+        stripe_enabled=bool((STRIPE_SECRET_KEY or "").strip()),
+    )
 )
 # Compatibility for EE service images that still import the pre-rename symbol.
 # Keep one resolved value so OSS and EE billing routes cannot select different
 # webhook secrets during a rolling/local mixed-version deployment.
 WEBHOOK_SECRET = STRIPE_WEBHOOK_SECRET
+
+# Real-money (live-mode) credit is accepted only on owner go: False unless
+# BILLING_LEDGER_ACCEPT_LIVE is exactly true, which then needs the owner-go
+# record in BILLING_LEDGER_ACCEPT_LIVE_OWNER_GO (tfc.settings.stripe_billing).
+BILLING_LEDGER_ACCEPT_LIVE, BILLING_LEDGER_ACCEPT_LIVE_OWNER_GO = (
+    _stripe_billing.resolve_accept_live(os.environ)
+)
 
 BUSINESS_MONTHLY_STRIPE_PRICE_IDS_ALL = [
     x
@@ -1292,6 +1505,24 @@ MINIO_URL = os.getenv(
 )
 UPLOAD_BUCKET_NAME = os.getenv(
     "UPLOAD_BUCKET_NAME", "fi-content-dev" if _is_local else "fi-content"
+)
+# F32 (New dataset > Upload a file): store a JSON or JSONL dialog upload
+# exactly as the dialog previewed it (model_hub/services/file_import_admission.py).
+# Default OFF: create-from-local-file and the file worker keep FileProcessor and
+# inferred column types for every upload, and an upload admitted while ON that
+# reaches a worker while OFF is refused, never re-read. Turn it on by env on the
+# tasks_l workers, then the API (each with a restart) once its walk receipt
+# passes; no rebuild.
+DSX_PREVIEWED_JSON_UPLOAD_ENABLED = os.getenv(
+    "DSX_PREVIEWED_JSON_UPLOAD_ENABLED", "false"
+).lower() in ("true", "1", "yes")
+
+# Exact HTTPS origins owned by the operator, never tenant-supplied patterns.
+# Empty permits only the AWS regional endpoint derived from each S3 destination.
+BULK_EXPORT_S3_ENDPOINT_ALLOWLIST = tuple(
+    origin.strip().rstrip("/").lower()
+    for origin in os.getenv("BULK_EXPORT_S3_ENDPOINT_ALLOWLIST", "").split(",")
+    if origin.strip()
 )
 
 # Storage backend: "s3" (default/US), "gcs" (EU via S3-interop HMAC keys),
@@ -1472,6 +1703,10 @@ RECAPTCHA_ENABLED = _recaptcha_enabled(
 
 # Integration encryption key (Fernet) for storing external platform credentials
 INTEGRATION_ENCRYPTION_KEY = os.getenv("INTEGRATION_ENCRYPTION_KEY", "")
+# True when the key below is made up for this process (lost on restart, and
+# different in every process): model_hub's key migration never encrypts
+# stored keys with it.
+INTEGRATION_ENCRYPTION_KEY_EPHEMERAL = False
 if not INTEGRATION_ENCRYPTION_KEY and env_type == "local":
     # Generate a throwaway key for local dev so the app starts without config.
     # Data encrypted with this key is lost on restart — production MUST set
@@ -1482,7 +1717,79 @@ if not INTEGRATION_ENCRYPTION_KEY and env_type == "local":
     INTEGRATION_ENCRYPTION_KEY = base64.urlsafe_b64encode(
         _secrets.token_bytes(32)
     ).decode()
+    INTEGRATION_ENCRYPTION_KEY_EPHEMERAL = True
 ENABLE_INTEGRATIONS = os.getenv("ENABLE_INTEGRATIONS", "false").lower() == "true"
+
+# API secrets at rest (READINESS L03; accounts/api_secrets.py). Secrets are kept
+# as HMAC-SHA256 under this pepper, which fi-collector must share. Local and test
+# installs without one derive it from SECRET_KEY; any other install must set it.
+# Retired peppers (comma-separated) still verify, and a key is re-hashed under the
+# current pepper on its next successful use.
+API_SECRET_PEPPER = os.getenv("FI_API_SECRET_PEPPER", "").strip()
+API_SECRET_PEPPERS_RETIRED = [
+    part.strip()
+    for part in os.getenv("FI_API_SECRET_PEPPERS_RETIRED", "").split(",")
+    if part.strip()
+]
+_PUBLISHED_API_SECRET_PEPPER = "local-dev-only-api-secret-pepper-replace-me"
+# accounts.api_secrets.MIN_PEPPER_LENGTH; fi-collector refuses the same.
+_MIN_API_SECRET_PEPPER_LENGTH = 32
+# System API keys are stored encrypted under the integration key; only a key
+# given in the environment counts (the local throwaway above changes per process).
+API_SECRET_ENCRYPTION_KEY = os.getenv("INTEGRATION_ENCRYPTION_KEY", "")
+
+
+def _api_secret_start_problem():
+    """Why this process may not start, or None.
+
+    Every sign-up seals the organization's system key under the pepper and the
+    encryption key, as do the Keys page and migration accounts 0027; a value the
+    first sign-up would reject refuses the start instead, so no request ever
+    leaves a half-created account behind (READINESS L03). Pinned by
+    tfc/tests/test_settings_env.py.
+    """
+    if not _IS_LOCAL and API_SECRET_PEPPER in ("", _PUBLISHED_API_SECRET_PEPPER):
+        return (
+            "FI_API_SECRET_PEPPER is unset or the published default in a non-local "
+            "environment. Set it from the secret store (32+ random characters) for "
+            "the API and fi-collector alike."
+        )
+    if API_SECRET_PEPPER and len(API_SECRET_PEPPER) < _MIN_API_SECRET_PEPPER_LENGTH:
+        return (
+            f"FI_API_SECRET_PEPPER is shorter than {_MIN_API_SECRET_PEPPER_LENGTH} "
+            "characters."
+        )
+    if not API_SECRET_ENCRYPTION_KEY and _IS_LOCAL:
+        return None  # accounts/api_secrets.py derives one from SECRET_KEY
+    if API_SECRET_ENCRYPTION_KEY:
+        from cryptography.fernet import Fernet
+
+        try:
+            Fernet(API_SECRET_ENCRYPTION_KEY.encode("utf-8"))
+            return None
+        except ValueError:
+            problem = "INTEGRATION_ENCRYPTION_KEY is not a Fernet key"
+    else:
+        problem = "INTEGRATION_ENCRYPTION_KEY is unset in a non-local environment"
+    return (
+        f"{problem} (32 random bytes, URL-safe base64). It encrypts every "
+        "organization's system API key and the stored integration credentials: set "
+        "it from the secret store, and keep it once set. Generate one with: "
+        'python3 -c "import base64, os; '
+        'print(base64.urlsafe_b64encode(os.urandom(32)).decode())"'
+    )
+
+
+if (_api_secret_problem := _api_secret_start_problem()) is not None:
+    import sys as _sys
+
+    _sys.stderr.write(f"[FATAL] {_api_secret_problem}\n")
+    _sys.exit(1)
+
+# F44 launch switch: activate via deployment env; retain the default-OFF source.
+DATASET_LIST_COLUMNS_ENABLED = os.getenv(
+    "DATASET_LIST_COLUMNS_ENABLED", "false"
+).strip().lower() in ("true", "1", "yes", "on")
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
@@ -1504,6 +1811,13 @@ USAGE_EVENTS_ENABLED = (
     else usage_event_consumer_available()
 )
 USAGE_EVENTS_MAX_LEN = env_int("USAGE_EVENTS_MAX_LEN", 1_000_000, minimum=1)
+
+# Default-OFF launch switch for copying or moving a dataset into another
+# workspace (POST model-hub/datasets/<id>/transfer/). Activation is an explicit
+# deployment environment value; unset, blank or any other spelling is OFF.
+DSX_DATASET_TRANSFER_ENABLED = os.getenv(
+    "DSX_DATASET_TRANSFER_ENABLED", "false"
+).strip().lower() in ("true", "1", "yes", "on")
 
 # Orgs created at or after this instant see only Environments in Simulate. Set it
 # to the start of the deploy that introduces the restriction, in UTC, the same
@@ -1735,3 +2049,8 @@ INSIGHTS_EVIDENCE_CACHE_MAX_BYTES = max(
 INSIGHTS_EVIDENCE_FETCH_EXTERNAL_MEDIA = os.getenv(
     "INSIGHTS_EVIDENCE_FETCH_EXTERNAL_MEDIA", ""
 ).strip().lower() in ("1", "true", "yes", "on")
+# Work and school accounts only. Sign-in resolves the account by the Entra
+# userPrincipalName, whose suffix must be a verified domain of the user's
+# tenant; Microsoft does not document that for personal accounts, which
+# /common would also admit.
+MICROSOFT_OAUTH_URL = "https://login.microsoftonline.com/organizations/oauth2/v2.0"

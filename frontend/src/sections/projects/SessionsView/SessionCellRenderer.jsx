@@ -13,6 +13,11 @@ import ObservedUsageValue from "../LLMTracing/Renderers/ObservedUsageValue";
 
 const SHOW_TOOLTIPS = ["first_message", "last_message"];
 
+// Column headers sit at the start of their 200px column, so values sit there
+// too. Pinned to the column end, a value fell past the grid's right edge
+// whenever its header was still on screen (Duration at 1024px wide).
+const VALUE_JUSTIFY = "flex-start";
+
 const formatDate = (date) => {
   if (!date) return "-";
 
@@ -54,6 +59,34 @@ const SessionCellRenderer = (params) => {
         />
       );
     }
+    // Pass/Fail eval columns (Resolution): 100 → Pass, 0 → Fail.
+    if (params.passFail && value != null && value !== "") {
+      const n = Number(value);
+      const label =
+        n >= 100 ? "Pass" : n <= 0 ? "Fail" : `${Math.round(n)}% pass`;
+      const pass = n >= 100;
+      return (
+        <Box
+          component="span"
+          sx={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 0.5,
+            typography: "s2",
+            fontWeight: 500,
+            color: pass ? "green.600" : n <= 0 ? "red.600" : "text.primary",
+          }}
+        >
+          <Iconify
+            icon={
+              pass ? "mdi:check-circle-outline" : "mdi:close-circle-outline"
+            }
+            width={14}
+          />
+          {label}
+        </Box>
+      );
+    }
     // session_id column — prefer user-defined name (TraceSession.name) over UUID
     if (colId === "session_id") {
       const displayValue = data?.session_name || value;
@@ -76,7 +109,7 @@ const SessionCellRenderer = (params) => {
     // start_time / end_time columns → formatted date
     if (colId === "start_time" || colId === "end_time") {
       return (
-        <Box display={"flex"} justifyContent={"flex-end"}>
+        <Box display={"flex"} justifyContent={VALUE_JUSTIFY}>
           {formatDate(value)}
         </Box>
       );
@@ -85,7 +118,7 @@ const SessionCellRenderer = (params) => {
     // duration column
     if (colId === "duration") {
       return (
-        <Box display="flex" alignItems="center" justifyContent={"flex-end"}>
+        <Box display="flex" alignItems="center" justifyContent={VALUE_JUSTIFY}>
           <Iconify
             icon="solar:clock-circle-linear"
             width={14}
@@ -108,7 +141,7 @@ const SessionCellRenderer = (params) => {
     // Format display only; the grid keeps the numeric value for sort/filter.
     if (colId === "total_cost") {
       return (
-        <Box display="flex" alignItems="center" justifyContent="flex-end">
+        <Box display="flex" alignItems="center" justifyContent={VALUE_JUSTIFY}>
           {formatCost(value)}
         </Box>
       );
@@ -118,7 +151,7 @@ const SessionCellRenderer = (params) => {
         <Box
           display="flex"
           alignItems="center"
-          justifyContent={"flex-end"}
+          justifyContent={VALUE_JUSTIFY}
           gap={1}
         >
           <SvgColor
@@ -136,7 +169,7 @@ const SessionCellRenderer = (params) => {
         <Box
           display="flex"
           alignItems="center"
-          justifyContent={"flex-end"}
+          justifyContent={VALUE_JUSTIFY}
           gap={1}
         >
           {value}
@@ -196,7 +229,7 @@ const SessionCellRenderer = (params) => {
           width: "100%",
           height: "100%",
           display: "flex",
-          justifyContent: "flex-end",
+          justifyContent: VALUE_JUSTIFY,
         }}
         className="session-cell-text"
       >

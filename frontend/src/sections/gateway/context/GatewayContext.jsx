@@ -3,6 +3,9 @@ import PropTypes from "prop-types";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Outlet } from "react-router-dom";
 import axiosInstance, { endpoints } from "src/utils/axios";
+import { useDeploymentMode } from "src/hooks/useDeploymentMode";
+
+import { useManagedModelsStatus } from "../models/hooks/useManagedModels";
 
 export const GatewayContext = createContext(null);
 
@@ -15,8 +18,20 @@ export function normalizeGateway(gateway) {
     modelCount: gateway.modelCount ?? gateway.model_count ?? 0,
     lastHealthCheck:
       gateway.lastHealthCheck ?? gateway.last_health_check ?? null,
+    // Whether Try it and Guardrail test can run in this release. Undefined
+    // when the server does not say; only false turns them off.
+    delegatedPlaygroundAvailable:
+      gateway.delegatedPlaygroundAvailable ??
+      gateway.delegated_playground_available,
+    // Whether Submit Batch Job can run in this release; the same rule.
+    delegatedBatchAvailable:
+      gateway.delegatedBatchAvailable ?? gateway.delegated_batch_available,
   };
 }
+
+const shouldAutoRefreshGateways = ({ state }) =>
+  state.status !== "error" ||
+  (Array.isArray(state.data?.result) && Boolean(state.data.result[0]?.id));
 
 export const GatewayProvider = ({ children }) => {
   const queryClient = useQueryClient();
@@ -24,13 +39,24 @@ export const GatewayProvider = ({ children }) => {
   const {
     data: gatewaysResponse,
     isLoading,
+    isFetching: isRefreshing,
     error,
   } = useQuery({
     queryKey: ["agentcc-gateways"],
-    queryFn: async () => {
-      const res = await axiosInstance.get(endpoints.gateway.list);
+    queryFn: async ({ signal }) => {
+      const res = await axiosInstance.get(endpoints.gateway.list, {
+        timeout: 30000,
+        signal,
+      });
       return res.data;
     },
+    retry: false,
+    // A failed boot waits for explicit Retry, including after a tab focus,
+    // reconnect or remount. A usable cached gateway keeps normal refresh
+    // behavior even when its latest background read failed.
+    retryOnMount: false,
+    refetchOnWindowFocus: shouldAutoRefreshGateways,
+    refetchOnReconnect: shouldAutoRefreshGateways,
   });
 
   const gateways = Array.isArray(gatewaysResponse?.result)
@@ -40,9 +66,25 @@ export const GatewayProvider = ({ children }) => {
   // Single gateway — always use the first (and only) one
   const gateway = gateways[0] || null;
 
-  const refreshGateways = useCallback(() => {
-    queryClient.invalidateQueries({ queryKey: ["agentcc-gateways"] });
-  }, [queryClient]);
+  // Whether this deployment offers managed models: false until the managed
+  // models status says it does, so a page leaves its managed sentences out
+  // while the status loads, cannot be read, or says none are offered.
+  const managedStatus = useManagedModelsStatus();
+  const managedOffered = managedStatus.data?.available === true;
+
+  // The hook's fallback "oss" is not confirmation of a self-hosted deployment.
+  // Keep confirmation separate so pending/failed/unknown metadata cannot turn
+  // a known public endpoint into a copyable placeholder.
+  const {
+    isCloud,
+    isConfirmed: deploymentModeConfirmed,
+    refetch: retryDeploymentMode,
+  } = useDeploymentMode();
+
+  const refreshGateways = useCallback(
+    () => queryClient.invalidateQueries({ queryKey: ["agentcc-gateways"] }),
+    [queryClient],
+  );
 
   const value = useMemo(
     () => ({
@@ -54,9 +96,25 @@ export const GatewayProvider = ({ children }) => {
       // Utilities
       refreshGateways,
       isLoading,
+      isRefreshing,
       error,
+      managedOffered,
+      hosted: isCloud,
+      deploymentModeConfirmed,
+      retryDeploymentMode,
     }),
-    [gateway, gateways, refreshGateways, isLoading, error],
+    [
+      gateway,
+      gateways,
+      refreshGateways,
+      isLoading,
+      isRefreshing,
+      error,
+      managedOffered,
+      isCloud,
+      deploymentModeConfirmed,
+      retryDeploymentMode,
+    ],
   );
 
   return (

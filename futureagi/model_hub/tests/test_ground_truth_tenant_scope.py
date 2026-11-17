@@ -67,12 +67,12 @@ def _make_gt(
     *,
     template: EvalTemplate,
     org: Organization,
-    workspace: Workspace,
+    workspace: Workspace | None,
     is_active: bool = False,
     enabled: bool = True,
     embedding_status: str = EvalGroundTruth.EmbeddingStatus.COMPLETED,
 ) -> EvalGroundTruth:
-    return EvalGroundTruth.objects.create(
+    gt = EvalGroundTruth(
         eval_template=template,
         name=f"gt-{uuid.uuid4().hex[:6]}",
         file_name="gt.csv",
@@ -87,6 +87,15 @@ def _make_gt(
         variable_mapping={"input": "input"},
         role_mapping={"output": "expected"},
     )
+    # The workspace fixture installs an ambient context. Preserve an explicit
+    # NULL workspace instead of letting BaseModel/save signals turn this into
+    # another dataset in that context's workspace (including on later saves).
+    if workspace is None:
+        gt.disable_auto_workspace_assignment = True
+    gt.save()
+    gt.refresh_from_db(fields=["workspace"])
+    assert gt.workspace_id == (workspace.id if workspace is not None else None)
+    return gt
 
 
 @pytest.mark.django_db
@@ -516,3 +525,166 @@ def test_setup_endpoint_persists_to_row_not_to_template_config(
     assert gt.variable_mapping == {"input": "input"}
     assert response.data["result"]["config"]["max_examples"] == 4
     assert response.data["result"]["config"]["enabled"] is True
+
+
+@pytest.fixture
+def replacement_vector_store(monkeypatch):
+    """Keep the real service/ORM but model CH's shared eval/tenant vectors."""
+    vectors = {}
+
+    def scope(kwargs):
+        return tuple(
+            kwargs[key]
+            for key in ("eval_id", "organization_id", "workspace_id")
+        )
+
+    class Manager:
+        fail_write = False
+
+        def soft_delete_vectors(self, **kwargs):
+            vectors[scope(kwargs)] = []
+
+        def parallel_process_metadata(self, **kwargs):
+            if self.fail_write:
+                raise RuntimeError("replacement write failed")
+            rows = [dict(row) for row in kwargs["metadatas"]]
+            vectors[scope(kwargs)] = rows
+            kwargs["progress_callback"](len(rows))
+
+        def retrieve_avg_rag_based_examples(self, **kwargs):
+            return [[dict(row)] for row in vectors.get(scope(kwargs), [])]
+
+        def decode_path(self, value):
+            return value
+
+    manager = Manager()
+    monkeypatch.setattr(
+        "agentic_eval.core.embeddings.embedding_manager.EmbeddingManager",
+        lambda: manager,
+    )
+    monkeypatch.setattr(
+        "agentic_eval.core.embeddings.serving_client.serving_available",
+        lambda: True,
+    )
+    return manager
+
+
+def _save_gt_setup(gt, *, max_examples=3):
+    return GroundTruthService.update_setup(
+        gt=gt,
+        eval_template=gt.eval_template,
+        variable_mapping=dict(gt.variable_mapping),
+        role_mapping=dict(gt.role_mapping),
+        max_examples=max_examples,
+        enabled=True,
+    )
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("without_workspace", [False, True])
+def test_restoring_replaced_gt_requires_own_vectors(
+    organization, workspace, replacement_vector_store, without_workspace,
+):
+    """W10-EVALS-L01: A -> B -> delete B -> unchanged-mapping A."""
+    template = _make_system_template()
+    workspace = None if without_workspace else workspace
+    original = _make_gt(template=template, org=organization, workspace=workspace)
+    replacement = _make_gt(template=template, org=organization, workspace=workspace)
+    for gt, label in ((original, "A LABEL"), (replacement, "B LABEL")):
+        gt.data = [{"input": "same question", "expected": label}]
+        gt.embedding_status = EvalGroundTruth.EmbeddingStatus.PENDING
+        gt.save()
+        _save_gt_setup(gt)
+        result = GroundTruthService.embed_dataset(gt=gt)
+        assert result.status == EvalGroundTruth.EmbeddingStatus.COMPLETED
+        rows, _ = GroundTruthService.retrieve_few_shot(
+            gt=gt, inputs={"input": "same question"},
+        )
+        assert rows == gt.data
+
+    replacement.deleted = True
+    replacement.is_active = False
+    replacement.save(update_fields=["deleted", "is_active", "updated_at"])
+    original.refresh_from_db()
+    result = _save_gt_setup(original, max_examples=4)
+    original.refresh_from_db()
+
+    assert original.is_active is True
+    assert result["embedding_status"] == EvalGroundTruth.EmbeddingStatus.PENDING
+    assert result["embeddings_stale"] is True
+    assert GroundTruthService.retrieve_few_shot(
+        gt=original, inputs={"input": "same question"},
+    ) == ([], {})
+
+    GroundTruthService.embed_dataset(gt=original)
+    original.refresh_from_db()
+    assert original.embedding_status == EvalGroundTruth.EmbeddingStatus.COMPLETED
+    rows, _ = GroundTruthService.retrieve_few_shot(
+        gt=original, inputs={"input": "same question"},
+    )
+    assert rows == [{"input": "same question", "expected": "A LABEL"}]
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("fail_write", [False, True])
+def test_replacing_shared_vectors_invalidates_only_matching_datasets(
+    organization, workspace, replacement_vector_store, fail_write,
+):
+    template = _make_system_template()
+    original = _make_gt(template=template, org=organization, workspace=workspace)
+    other_template = _make_gt(
+        template=_make_system_template(), org=organization, workspace=workspace,
+    )
+    other_workspace = _make_gt(template=template, org=organization, workspace=None)
+    other_org, other_ws, _ = _make_org_with_workspace("Replacement Isolation")
+    other_tenant = _make_gt(template=template, org=other_org, workspace=other_ws)
+    replacement = _make_gt(template=template, org=organization, workspace=workspace)
+    replacement_vector_store.fail_write = fail_write
+
+    result = GroundTruthService.embed_dataset(gt=replacement)
+
+    original.refresh_from_db()
+    assert original.embedding_status == EvalGroundTruth.EmbeddingStatus.PENDING
+    expected_status = (
+        EvalGroundTruth.EmbeddingStatus.FAILED
+        if fail_write else EvalGroundTruth.EmbeddingStatus.COMPLETED
+    )
+    assert result.status == expected_status
+    for untouched in (other_template, other_workspace, other_tenant):
+        untouched.refresh_from_db()
+        assert untouched.embedding_status == EvalGroundTruth.EmbeddingStatus.COMPLETED
+
+
+@pytest.mark.django_db
+def test_reactivating_legacy_completed_gt_invalidates_vectors(organization, workspace):
+    """Rows completed before invalidation was introduced must also be re-embedded."""
+    gt = _make_gt(
+        template=_make_system_template(), org=organization, workspace=workspace,
+    )
+    gt.embedded_row_count = 1
+    gt.save(update_fields=["embedded_row_count"])
+
+    result = _save_gt_setup(gt, max_examples=4)
+
+    gt.refresh_from_db()
+    assert result["embeddings_stale"] is True
+    assert gt.embedding_status == EvalGroundTruth.EmbeddingStatus.PENDING
+
+
+@pytest.mark.django_db
+def test_active_gt_runtime_knob_change_preserves_completed_vectors(
+    organization, workspace,
+):
+    gt = _make_gt(
+        template=_make_system_template(), org=organization, workspace=workspace,
+        is_active=True,
+    )
+    gt.embedded_row_count = 1
+    gt.save(update_fields=["embedded_row_count"])
+
+    result = _save_gt_setup(gt, max_examples=4)
+
+    gt.refresh_from_db()
+    assert result["embeddings_stale"] is False
+    assert gt.embedding_status == EvalGroundTruth.EmbeddingStatus.COMPLETED
+    assert gt.max_examples == 4

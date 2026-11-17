@@ -1,0 +1,46 @@
+# Telnyx's API-action MCP endpoint accepts a Telnyx API key as a bearer.
+# This is distinct from the public documentation-only MCP server.
+schema: "connector-manifest/v1#provider"
+app: telnyx
+id: api-key
+version: 1.1.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://api.telnyx.com/v2/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: Telnyx API key
+      help: "Create an API key in the Telnyx Mission Control Portal. Calls can perform billable or state-changing API actions; approve these individually. Supply the key without the Bearer prefix."
+      helpUrl: https://developers.telnyx.com/development/api-fundamentals/authentication
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_metered
+  source: https://telnyx.com/pricing
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://developers.telnyx.com/docs/mcp/remote-mcp
+    fetchedAt: 2026-11-09
+  - fact: transport.variant
+    url: https://developers.telnyx.com/docs/mcp/remote-mcp
+    fetchedAt: 2026-11-09
+  - fact: auth.kind
+    url: https://developers.telnyx.com/docs/mcp/remote-mcp
+    fetchedAt: 2026-11-09
+  - fact: auth.credentialParts
+    url: https://developers.telnyx.com/docs/mcp/remote-mcp
+    fetchedAt: 2026-11-09

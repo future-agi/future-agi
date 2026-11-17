@@ -1,0 +1,457 @@
+{
+  "schema": "connector-manifest/v1#tools-generated",
+  "spec": {
+    "url": "https://raw.githubusercontent.com/slackapi/slack-api-specs/bc08db49625630e3585bf2f1322128ea04f2a7f3/web-api/slack_web_openapi_v2_without_examples.json",
+    "sha256": "8b92da26a3c5b11d20042a9f36d81f1fa6fc9382c5ddc471babb68b91936bc3a"
+  },
+  "tools": [
+    {
+      "name": "list_conversations",
+      "title": "List channels",
+      "description": "List the channels the user can see, with ids such as C0123456789. types is a comma-separated list, for example public_channel,private_channel. Pass response_metadata.next_cursor back as cursor for the next page.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "auto",
+      "scopes": ["channels:read"],
+      "operation": {
+        "method": "GET",
+        "path": "/api/conversations.list"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "exclude_archived": {
+            "type": "boolean",
+            "description": "Set to `true` to exclude archived channels from the list"
+          },
+          "types": {
+            "type": "string",
+            "description": "Mix and match channel types by providing a comma-separated list of any combination of `public_channel`, `private_channel`, `mpim`, `im`"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "The maximum number of items to return. Fewer than the requested number of items may be returned, even if the end of the list hasn't been reached. Must be an integer no larger than 1000."
+          },
+          "cursor": {
+            "type": "string",
+            "description": "Paginate through collections of data by setting the `cursor` parameter to a `next_cursor` attribute returned by a previous request's `response_metadata`. Default value fetches the first \"page\" of the collection. See [pagination](/docs/pagination) for more detail."
+          }
+        },
+        "additionalProperties": false,
+        "x-origin": "https://slack.com"
+      },
+      "response": {
+        "fields": [
+          "channels.id",
+          "channels.name",
+          "channels.is_private",
+          "channels.is_archived",
+          "response_metadata.next_cursor"
+        ]
+      }
+    },
+    {
+      "name": "get_conversation",
+      "title": "Read a channel's details",
+      "description": "Read one channel's name, topic, purpose and member count, by its id, for example C0123456789.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "auto",
+      "scopes": ["channels:read"],
+      "operation": {
+        "method": "GET",
+        "path": "/api/conversations.info"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "channel": {
+            "type": "string",
+            "description": "Conversation ID to learn more about"
+          },
+          "include_locale": {
+            "type": "boolean",
+            "description": "Set this to `true` to receive the locale for this conversation. Defaults to `false`"
+          },
+          "include_num_members": {
+            "type": "boolean",
+            "description": "Set to `true` to include the member count for the specified conversation. Defaults to `false`"
+          }
+        },
+        "required": ["channel"],
+        "additionalProperties": false,
+        "x-origin": "https://slack.com"
+      }
+    },
+    {
+      "name": "read_channel_history",
+      "title": "Read a channel's messages",
+      "description": "Read a channel's recent messages, newest first. oldest and latest are Slack timestamps such as 1729500000.000100. Each message's ts identifies it for replies and reactions. When has_more is true, call again with latest set to the oldest ts returned.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "auto",
+      "scopes": ["channels:history"],
+      "operation": {
+        "method": "GET",
+        "path": "/api/conversations.history"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "channel": {
+            "type": "string",
+            "description": "Conversation ID to fetch history for."
+          },
+          "latest": {
+            "type": "number",
+            "description": "End of time range of messages to include in results."
+          },
+          "oldest": {
+            "type": "number",
+            "description": "Start of time range of messages to include in results."
+          },
+          "inclusive": {
+            "type": "boolean",
+            "description": "Include messages with latest or oldest timestamp in results only when either timestamp is specified."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "The maximum number of items to return. Fewer than the requested number of items may be returned, even if the end of the users list hasn't been reached."
+          },
+          "cursor": {
+            "type": "string",
+            "description": "Paginate through collections of data by setting the `cursor` parameter to a `next_cursor` attribute returned by a previous request's `response_metadata`. Default value fetches the first \"page\" of the collection. See [pagination](/docs/pagination) for more detail."
+          }
+        },
+        "required": ["channel"],
+        "additionalProperties": false,
+        "x-origin": "https://slack.com"
+      },
+      "response": {
+        "fields": [
+          "messages.ts",
+          "messages.user",
+          "messages.text",
+          "messages.thread_ts",
+          "messages.reply_count",
+          "has_more"
+        ],
+        "maxBytes": 50000
+      }
+    },
+    {
+      "name": "read_thread",
+      "title": "Read a thread",
+      "description": "Read the replies of a thread, by channel id and the parent message's ts, for example 1729500000.000100.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "auto",
+      "scopes": ["channels:history"],
+      "operation": {
+        "method": "GET",
+        "path": "/api/conversations.replies"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "channel": {
+            "type": "string",
+            "description": "Conversation ID to fetch thread from."
+          },
+          "ts": {
+            "type": "number",
+            "description": "Unique identifier of a thread's parent message. `ts` must be the timestamp of an existing message with 0 or more replies. If there are no replies then just the single message referenced by `ts` will return - it is just an ordinary, unthreaded message."
+          },
+          "latest": {
+            "type": "number",
+            "description": "End of time range of messages to include in results."
+          },
+          "oldest": {
+            "type": "number",
+            "description": "Start of time range of messages to include in results."
+          },
+          "inclusive": {
+            "type": "boolean",
+            "description": "Include messages with latest or oldest timestamp in results only when either timestamp is specified."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "The maximum number of items to return. Fewer than the requested number of items may be returned, even if the end of the users list hasn't been reached."
+          },
+          "cursor": {
+            "type": "string",
+            "description": "Paginate through collections of data by setting the `cursor` parameter to a `next_cursor` attribute returned by a previous request's `response_metadata`. Default value fetches the first \"page\" of the collection. See [pagination](/docs/pagination) for more detail."
+          }
+        },
+        "required": ["channel", "ts"],
+        "additionalProperties": false,
+        "x-origin": "https://slack.com"
+      },
+      "response": {
+        "fields": ["messages.ts", "messages.user", "messages.text", "has_more"],
+        "maxBytes": 50000
+      }
+    },
+    {
+      "name": "list_users",
+      "title": "List people",
+      "description": "List the workspace's members with their ids (for example U0123456789), names and time zones. Pass response_metadata.next_cursor back as cursor for the next page.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "auto",
+      "scopes": ["users:read"],
+      "operation": {
+        "method": "GET",
+        "path": "/api/users.list"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "description": "The maximum number of items to return. Fewer than the requested number of items may be returned, even if the end of the users list hasn't been reached. Providing no `limit` value will result in Slack attempting to deliver you the entire result set. If the collection is too large you may experience `limit_required` or HTTP 500 errors."
+          },
+          "cursor": {
+            "type": "string",
+            "description": "Paginate through collections of data by setting the `cursor` parameter to a `next_cursor` attribute returned by a previous request's `response_metadata`. Default value fetches the first \"page\" of the collection. See [pagination](/docs/pagination) for more detail."
+          }
+        },
+        "additionalProperties": false,
+        "x-origin": "https://slack.com"
+      },
+      "response": {
+        "fields": [
+          "members.id",
+          "members.name",
+          "members.real_name",
+          "members.tz",
+          "members.deleted",
+          "response_metadata.next_cursor"
+        ],
+        "maxBytes": 50000
+      }
+    },
+    {
+      "name": "get_user",
+      "title": "Read a person's profile",
+      "description": "Read one member's profile by user id, for example U0123456789.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "auto",
+      "scopes": ["users:read"],
+      "operation": {
+        "method": "GET",
+        "path": "/api/users.info"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "user": {
+            "type": "string",
+            "description": "User to get info on"
+          }
+        },
+        "required": ["user"],
+        "additionalProperties": false,
+        "x-origin": "https://slack.com"
+      }
+    },
+    {
+      "name": "find_user_by_email",
+      "title": "Find a person by email",
+      "description": "Find a member by email address, for example alice@example.com, and return their user id and profile.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "auto",
+      "scopes": ["users:read.email"],
+      "operation": {
+        "method": "GET",
+        "path": "/api/users.lookupByEmail"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "description": "An email address belonging to a user in the workspace"
+          }
+        },
+        "required": ["email"],
+        "additionalProperties": false,
+        "x-origin": "https://slack.com"
+      }
+    },
+    {
+      "name": "search_messages",
+      "title": "Search messages",
+      "description": "Search messages with Slack search syntax, for example \"invoice in:#finance from:@alice after:2026-10-01\".",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "auto",
+      "scopes": ["search:read"],
+      "operation": {
+        "method": "GET",
+        "path": "/api/search.messages"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "count": {
+            "type": "integer",
+            "description": "Pass the number of results you want per \"page\". Maximum of `100`."
+          },
+          "highlight": {
+            "type": "boolean",
+            "description": "Pass a value of `true` to enable query highlight markers (see below)."
+          },
+          "page": {
+            "type": "integer",
+            "description": "Result page number, starting at 1."
+          },
+          "query": {
+            "type": "string",
+            "description": "Search query."
+          },
+          "sort": {
+            "type": "string",
+            "description": "Return matches sorted by either `score` or `timestamp`."
+          },
+          "sort_dir": {
+            "type": "string",
+            "description": "Change sort direction to ascending (`asc`) or descending (`desc`)."
+          }
+        },
+        "required": ["query"],
+        "additionalProperties": false,
+        "x-origin": "https://slack.com"
+      },
+      "response": {
+        "maxBytes": 50000
+      }
+    },
+    {
+      "name": "post_message",
+      "title": "Post a message",
+      "description": "Post a message to a channel by its id. text is mrkdwn, for example \"Deploy *done* :rocket:\". Set thread_ts to the parent message's ts to reply in its thread.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "posture": "ask",
+      "scopes": ["chat:write"],
+      "operation": {
+        "method": "POST",
+        "path": "/api/chat.postMessage"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "body": {
+            "type": "object",
+            "properties": {
+              "channel": {
+                "type": "string",
+                "description": "Channel, private group, or IM channel to send message to. Can be an encoded ID, or a name. See [below](#channels) for more details."
+              },
+              "text": {
+                "type": "string",
+                "description": "How this field works and whether it is required depends on other fields you use in your API call. [See below](#text_usage) for more detail."
+              },
+              "thread_ts": {
+                "type": "string",
+                "description": "Provide another message's `ts` value to make this message a reply. Avoid using a reply's `ts` value; use its parent instead."
+              }
+            },
+            "required": ["channel", "text"],
+            "additionalProperties": false,
+            "description": "The message to post."
+          }
+        },
+        "required": ["body"],
+        "additionalProperties": false,
+        "x-origin": "https://slack.com"
+      },
+      "response": {
+        "fields": ["channel", "ts"]
+      }
+    },
+    {
+      "name": "add_reaction",
+      "title": "React to a message",
+      "description": "Add an emoji reaction to a message, by channel id, message ts and emoji name without colons, for example thumbsup.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "posture": "ask",
+      "scopes": ["reactions:write"],
+      "operation": {
+        "method": "POST",
+        "path": "/api/reactions.add"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "body": {
+            "type": "object",
+            "properties": {
+              "channel": {
+                "type": "string",
+                "description": "Channel where the message to add reaction to was posted."
+              },
+              "name": {
+                "type": "string",
+                "description": "Reaction (emoji) name."
+              },
+              "timestamp": {
+                "type": "string",
+                "description": "Timestamp of the message to add reaction to."
+              }
+            },
+            "required": ["channel", "name", "timestamp"],
+            "description": "The message and the reaction."
+          }
+        },
+        "required": ["body"],
+        "additionalProperties": false,
+        "x-origin": "https://slack.com"
+      }
+    }
+  ]
+}

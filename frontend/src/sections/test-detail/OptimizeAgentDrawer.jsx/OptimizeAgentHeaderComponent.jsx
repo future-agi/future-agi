@@ -1,3 +1,4 @@
+import { localProviderLogo } from "src/utils/localProviderLogo";
 /* eslint-disable react/prop-types */
 import {
   Box,
@@ -125,7 +126,7 @@ const OptimizeAgentHeaderComponent = ({ optimization, isLoading }) => {
             icon={
               <Image
                 ratio="1/1"
-                src={providerLogo}
+                src={localProviderLogo(optimization)}
                 alt={model}
                 style={{ width: "16px", height: "16px" }}
               />

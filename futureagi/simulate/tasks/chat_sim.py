@@ -13,6 +13,7 @@ from accounts.models.workspace import Workspace
 from simulate.models import (  # SimulatorAgent
     AgentDefinition,
     CallExecution,
+    CallExecutionSnapshot,
     RunTest,
     TestExecution,
 )
@@ -40,6 +41,7 @@ from simulate.services.scoring_status import (
     settleable_run_ids,
 )
 from simulate.services.test_executor import (
+    USAGE_CHECK_FAILED,
     TestExecutor,
     _run_simulate_evaluations_task,
 )
@@ -47,6 +49,7 @@ from simulate.utils.chat_simulation import (
     _aggregate_chat_metrics,
     _calculate_tokens_from_messages,
 )
+from simulate.utils.ended_reason import EndedReasonSource, set_ended_reason
 from simulate.utils.websocket_notifications import notify_simulation_update
 from tfc.temporal.drop_in import temporal_activity
 
@@ -485,6 +488,16 @@ def monitor_chat_timeout_call_executions():
     try:
         now = timezone.now()
         cutoff = now - timedelta(minutes=30)
+        # A re-run queues a prompt-based call again on its old row, so its 30
+        # minutes count from the re-run's snapshot, as a new call's count from
+        # its row.
+        requeued_since_cutoff = CallExecutionSnapshot.all_objects.filter(
+            rerun_type=CallExecutionSnapshot.RerunType.CALL_AND_EVAL,
+            created_at__gt=cutoff,
+            call_execution__test_execution__run_test__source_type=(
+                RunTest.SourceTypes.PROMPT
+            ),
+        ).values("call_execution_id")
 
         with transaction.atomic():
             # lock rows to avoid races if multiple workers run this
@@ -502,6 +515,7 @@ def monitor_chat_timeout_call_executions():
                         CallExecution.CallStatus.CANCELLED,
                     ]
                 )
+                .exclude(id__in=requeued_since_cutoff)
                 .order_by("created_at", "id")
                 .values_list("id", flat=True)[:50]
             )
@@ -731,7 +745,11 @@ def run_single_prompt_chat(call_execution_id: str):
     2. Runs the full conversation loop
     """
     # Lazy import: simulate.services.chat_sim imports from this module (circular)
-    from simulate.services.chat_sim import initiate_chat, run_prompt_based_conversation
+    from simulate.services.chat_sim import (
+        CHAT_STOPPED,
+        initiate_chat,
+        run_prompt_based_conversation,
+    )
 
     try:
         call_execution = CallExecution.objects.select_related(
@@ -761,13 +779,34 @@ def run_single_prompt_chat(call_execution_id: str):
             check_usage = None
 
         if check_usage is not None and BillingEventType is not None:
-            usage_check = check_usage(str(organization.id), BillingEventType.TEXT_CALL)
+            try:
+                usage_check = check_usage(
+                    str(organization.id), BillingEventType.TEXT_CALL
+                )
+            except Exception:
+                # The call shows the fixed sentence; the error goes to the log.
+                logger.exception(
+                    "prompt_chat_usage_check_failed",
+                    call_execution_id=call_execution_id,
+                )
+                call_execution.status = CallExecution.CallStatus.FAILED
+                set_ended_reason(
+                    call_execution, USAGE_CHECK_FAILED, EndedReasonSource.FIXED
+                )
+                call_execution.save(
+                    update_fields=["status", "ended_reason", "call_metadata"]
+                )
+                return False
             if not usage_check.allowed:
                 call_execution.status = CallExecution.CallStatus.FAILED
-                call_execution.ended_reason = (
-                    usage_check.reason or "Usage limit exceeded"
+                set_ended_reason(
+                    call_execution,
+                    usage_check.reason or "Usage limit exceeded",
+                    EndedReasonSource.USAGE,
                 )
-                call_execution.save(update_fields=["status", "ended_reason"])
+                call_execution.save(
+                    update_fields=["status", "ended_reason", "call_metadata"]
+                )
                 return False
 
         logger.info(
@@ -848,8 +887,10 @@ def run_single_prompt_chat(call_execution_id: str):
                 CallExecution.CallStatus.CANCELLED,
             ]:
                 call_execution.status = CallExecution.CallStatus.FAILED
-                call_execution.ended_reason = str(e)
-                call_execution.save(update_fields=["status", "ended_reason"])
+                set_ended_reason(call_execution, CHAT_STOPPED, EndedReasonSource.FIXED)
+                call_execution.save(
+                    update_fields=["status", "ended_reason", "call_metadata"]
+                )
         except Exception:
             pass
         return False

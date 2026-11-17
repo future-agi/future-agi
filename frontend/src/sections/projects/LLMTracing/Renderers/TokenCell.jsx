@@ -77,21 +77,23 @@ BreakdownTooltip.propTypes = {
   totalTokens: PropTypes.number,
 };
 
-const TokenCell = ({ value, data }) => {
+const TokenCell = ({ value, data, colId = "total_tokens" }) => {
+  const isTotal = colId === "total_tokens";
   const promptTokens = data?.prompt_tokens ?? 0;
   const completionTokens = data?.completion_tokens ?? 0;
-  const totalTokens = value ?? data?.total_tokens ?? 0;
+  const totalTokens = data?.total_tokens ?? value ?? 0;
+  const tokenCount = isTotal ? totalTokens : value ?? data?.[colId] ?? 0;
 
   if (data?._captureCoverage?.coverage_unknown) {
     return (
       <ObservedUsageValue
         coverage={data._captureCoverage}
-        value={`${totalTokens.toLocaleString()} tokens`}
+        value={`${tokenCount.toLocaleString()} tokens`}
       />
     );
   }
 
-  if (!totalTokens && !promptTokens && !completionTokens) {
+  if (isTotal && !totalTokens && !promptTokens && !completionTokens) {
     return (
       <Typography
         variant="body2"
@@ -108,7 +110,7 @@ const TokenCell = ({ value, data }) => {
     );
   }
 
-  const hasBreakdown = promptTokens > 0 || completionTokens > 0;
+  const hasBreakdown = isTotal && (promptTokens > 0 || completionTokens > 0);
 
   return (
     <Box
@@ -168,7 +170,7 @@ const TokenCell = ({ value, data }) => {
             whiteSpace: "nowrap",
           }}
         >
-          {totalTokens.toLocaleString()}
+          {tokenCount.toLocaleString()}
         </Typography>
       )}
       {hasBreakdown && (
@@ -210,6 +212,11 @@ const TokenCell = ({ value, data }) => {
 };
 
 TokenCell.propTypes = {
+  colId: PropTypes.oneOf([
+    "total_tokens",
+    "prompt_tokens",
+    "completion_tokens",
+  ]),
   value: PropTypes.any,
   data: PropTypes.object,
 };

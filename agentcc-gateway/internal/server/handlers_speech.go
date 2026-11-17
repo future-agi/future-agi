@@ -14,6 +14,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/futureagi/agentcc-gateway/internal/guardrails"
+	"github.com/futureagi/agentcc-gateway/internal/middleware"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/providers"
 	"github.com/futureagi/agentcc-gateway/internal/providers/speech"
@@ -65,9 +66,9 @@ func (h *Handlers) relaySpeech(w http.ResponseWriter, r *http.Request, vendor, p
 	rc.RequestHeaders = cloneRequestHeaders(r)
 	// Usage is only known when the session ends, so post-plugins run then, not after the dial.
 	rc.IsStream = true
-	rc.Metadata["client_ip"] = h.clientIP(r)
+	rc.Metadata["client_ip"] = middleware.ClientIP(r)
 	rc.Metadata["x-guardrail-policy"] = r.Header.Get("X-Guardrail-Policy")
-	if key := speechClientKey(r); key != "" {
+	if key := middleware.SpeechRequestAPIKey(r); key != "" {
 		rc.Metadata["authorization"] = "Bearer " + key
 	}
 
@@ -105,6 +106,12 @@ func (h *Handlers) relaySpeech(w http.ResponseWriter, r *http.Request, vendor, p
 		rc.Metadata["org_id"] = orgID
 	}
 	h.applyOrgRateLimitOverrides(orgCfg, rc)
+	// per_model_rpm counts a session by the model its URL names. A session that names none
+	// (the vendor's default model, or Cartesia synthesis, whose requests name it) has no model
+	// to be counted under, so per_model_rpm does not count it.
+	if rc.Model == "" {
+		delete(rc.Metadata, "org_rate_limit_per_model_rpm")
+	}
 	h.applyOrgBudgetOverrides(orgCfg, rc)
 	h.applyOrgCostTrackingOverrides(orgCfg, rc)
 	h.applyOrgIPACLOverrides(orgCfg, rc)
@@ -126,8 +133,9 @@ func (h *Handlers) relaySpeech(w http.ResponseWriter, r *http.Request, vendor, p
 		if allowed, ok := rc.Metadata["auth_allowed_providers"]; ok && !slices.Contains(splitCSV(allowed), rc.Provider) {
 			return models.ErrForbidden("API key does not have access to provider: " + rc.Provider)
 		}
-		if rc.Model != "" {
-			if err := h.speechModelAllowed(rc, rc.Model); err != nil {
+		// A session whose requests name the model is checked request by request (AdmitModel).
+		if rc.Model != "" || !session.ModelPerMessage() {
+			if err := h.speechModelAllowed(rc, vendor, rc.Model); err != nil {
 				return err
 			}
 		}
@@ -173,7 +181,7 @@ func (h *Handlers) relaySpeech(w http.ResponseWriter, r *http.Request, vendor, p
 
 	// Cartesia synthesis names its model in each request, so it is checked as it arrives.
 	session.AdmitModel = func(model string) error {
-		err := h.speechModelAllowed(rc, model)
+		err := h.speechModelAllowed(rc, vendor, model)
 		if err != nil {
 			rc.AddError(err)
 		}
@@ -220,35 +228,35 @@ func (h *Handlers) relaySpeech(w http.ResponseWriter, r *http.Request, vendor, p
 // speechModelAllowed applies the key's model restrictions (its own model list and its access
 // groups) to a speech model. The auth plugin checks only a model known when the request
 // arrives, which a Cartesia synthesis connection never has.
-func (h *Handlers) speechModelAllowed(rc *models.RequestContext, model string) error {
-	if key := h.lookupRequestKey(rc); key != nil && !key.CanAccessModel(model) {
+//
+// model "" is a session or request that names no model, which the vendor serves on a default
+// model of its own choosing. A key with a model list is refused it, since no list can name a
+// model the vendor picks; access groups admit it only when one of the key's groups admits
+// every model of the vendor ("*", or a pattern such as "deepgram/*").
+func (h *Handlers) speechModelAllowed(rc *models.RequestContext, vendor, model string) error {
+	key := h.lookupRequestKey(rc)
+	if model == "" {
+		if key != nil && len(key.AllowedModels) > 0 {
+			return models.ErrForbidden(fmt.Sprintf(
+				"API key is limited to named models; name the %s model this request should use", vendor))
+		}
+	} else if key != nil && !key.CanAccessModel(model) {
 		return models.ErrForbidden("API key does not have access to model: " + model)
 	}
 	groups := splitCSV(rc.Metadata["key_access_groups"])
 	if h.accessGroupChecker.IsEnabled() && len(groups) > 0 {
-		if _, allowed := h.accessGroupChecker.Check(model, groups); !allowed {
-			return models.ErrForbidden(fmt.Sprintf("Model %q is not available for this API key. %s",
-				model, h.accessGroupChecker.DescribeAllowed(groups)))
+		// "<vendor>/" matches "*" and every prefix pattern that covers all of the vendor's
+		// models, and no single model's name.
+		checked, shown := model, fmt.Sprintf("Model %q is", model)
+		if model == "" {
+			checked, shown = vendor+"/", fmt.Sprintf("The %s default model is", vendor)
+		}
+		if _, allowed := h.accessGroupChecker.Check(checked, groups); !allowed {
+			return models.ErrForbidden(fmt.Sprintf("%s not available for this API key. %s",
+				shown, h.accessGroupChecker.DescribeAllowed(groups)))
 		}
 	}
 	return nil
-}
-
-// speechClientKey reads the gateway key from wherever the vendor's own SDK puts its key:
-// Deepgram's "Authorization: Token", Cartesia's X-API-Key header or api_key query parameter,
-// or a Bearer token.
-func speechClientKey(r *http.Request) string {
-	if auth := r.Header.Get("Authorization"); auth != "" {
-		for _, scheme := range []string{"Token ", "Bearer "} {
-			if key, ok := strings.CutPrefix(auth, scheme); ok {
-				return strings.TrimSpace(key)
-			}
-		}
-	}
-	if key := r.Header.Get("X-API-Key"); key != "" {
-		return key
-	}
-	return r.URL.Query().Get("api_key")
 }
 
 // speechDialError reports a refused upstream handshake with the vendor's own message. A request

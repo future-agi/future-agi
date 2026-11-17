@@ -356,7 +356,7 @@ class AIFilterViewContractTests(unittest.TestCase):
         )
         force_authenticate(
             request,
-            user=SimpleNamespace(is_authenticated=True),
+            user=SimpleNamespace(is_authenticated=True, organization=None),
         )
 
         with mock.patch("agentic_eval.core.llm.llm.LLM") as llm_cls:
@@ -385,7 +385,7 @@ class AIFilterViewContractTests(unittest.TestCase):
         )
         force_authenticate(
             request,
-            user=SimpleNamespace(is_authenticated=True),
+            user=SimpleNamespace(is_authenticated=True, organization=None),
         )
 
         response = AIFilterView.as_view()(request)
@@ -420,7 +420,7 @@ class AIFilterViewContractTests(unittest.TestCase):
         request.workspace = mock.Mock()
         force_authenticate(
             request,
-            user=SimpleNamespace(is_authenticated=True),
+            user=SimpleNamespace(is_authenticated=True, organization=None),
         )
 
         with (
@@ -464,7 +464,7 @@ class AIFilterViewContractTests(unittest.TestCase):
         )
         force_authenticate(
             request,
-            user=SimpleNamespace(is_authenticated=True),
+            user=SimpleNamespace(is_authenticated=True, organization=None),
         )
 
         response = AIFilterView.as_view()(request)

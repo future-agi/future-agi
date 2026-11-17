@@ -1,3 +1,4 @@
+import { formatExactMoney } from "src/sections/common/format/money";
 import { endOfToday, sub } from "date-fns";
 import _ from "lodash";
 import { formatDate } from "src/utils/report-utils";
@@ -8,7 +9,8 @@ import { getYAxisUnit } from "../LLMTracing/GraphSection/common";
 import { apiFilterHasValue } from "src/sections/annotations/queues/utils/filter-operators";
 
 // Helper function to format y-axis values with proper precision
-const formatYAxisValue = (value) => {
+const formatYAxisValue = (value, money = false) => {
+  if (money) return formatExactMoney(value, { prefix: "" });
   if (value == null) return "0.00";
 
   const absValue = Math.abs(value);
@@ -55,6 +57,8 @@ export const normalizeAlertListRow = (row = {}) => ({
   lastTriggered: row?.lastTriggered ?? row?.last_triggered,
   noOfAlerts: row?.noOfAlerts ?? row?.no_of_alerts ?? 0,
   isMute: row?.isMute ?? row?.is_mute ?? false,
+  thresholdType: row?.thresholdType ?? row?.threshold_type,
+  thresholdRule: row?.thresholdRule ?? row?.threshold_rule,
   filters: normalizeAlertFilters(row?.filters),
 });
 
@@ -62,20 +66,27 @@ export const normalizeAlertDetail = (detail = {}) => ({
   ...detail,
   createdBy: detail?.createdBy ?? detail?.created_by?.name,
   createdAt: detail?.createdAt ?? detail?.created_at,
-  lastTriggered:
-    detail?.lastTriggered ??
-    detail?.last_triggered_at ??
-    detail?.last_checked_at,
+  // When the newest issue was raised; none for an alert that has never
+  // fired. The time the alert was last checked is a separate fact.
+  lastTriggered: detail?.lastTriggered ?? detail?.last_triggered_at,
+  lastChecked: detail?.lastChecked ?? detail?.last_checked_at,
   metricType: detail?.metricType ?? detail?.metric_type,
   metricName: detail?.metricName ?? detail?.metric_name,
   thresholdType: detail?.thresholdType ?? detail?.threshold_type,
   thresholdOperator: detail?.thresholdOperator ?? detail?.threshold_operator,
+  thresholdRule: detail?.thresholdRule ?? detail?.threshold_rule,
   thresholdMetricValue:
     detail?.thresholdMetricValue ?? detail?.threshold_metric_value,
   criticalThresholdValue:
     detail?.criticalThresholdValue ?? detail?.critical_threshold_value,
   warningThresholdValue:
     detail?.warningThresholdValue ?? detail?.warning_threshold_value,
+  // A threshold saved as infinity or not-a-number comes as a null value with
+  // its words beside it.
+  criticalThresholdLabel:
+    detail?.criticalThresholdLabel ?? detail?.critical_threshold_label,
+  warningThresholdLabel:
+    detail?.warningThresholdLabel ?? detail?.warning_threshold_label,
   alertFrequency: detail?.alertFrequency ?? detail?.alert_frequency,
   // The span across every fire, aggregated server-side before the issue grid's
   // type filter and pagination — so it stays put whichever slice is loaded.
@@ -180,6 +191,10 @@ export const notificationOptions = [
     label: "Webhook",
     value: "webhook",
   },
+  {
+    label: "PagerDuty",
+    value: "pagerduty",
+  },
 ];
 
 export const timeOptions = [
@@ -217,11 +232,17 @@ export const directionOfAnomaly = [
   },
 ];
 
+// Each choice says what the alert does with the numbers typed below it, one
+// for critical and one for warning, so it names no single value.
 export const alertDefinitionOptions = [
-  { label: "Static Value: above or below {x}", value: "static" },
   {
     label:
-      "Percentage Change: {x%} higher or lower compared to previous period",
+      "Static value: alert when the metric goes above or below a number you set",
+    value: "static",
+  },
+  {
+    label:
+      "Percentage change: alert when the metric rises or falls by more than a percentage you set, compared to the previous period",
     value: "percentage_change",
   },
   // {
@@ -341,13 +362,13 @@ Examples:
   service_provider_error_rates: {
     title: "Service provider error rates",
     markdown: `
-Service provider error rate tracks issues from your external providers.
+Service provider error rate is the share of your providers that had at least one error in the period, from 0 to 1.
 
-Includes:
+Errors include:
 - API outages.
 - Rate limit responses.
 
-> Example: "Alert if provider errors exceed 20 per 10 minutes."
+> Example: "Alert if more than 20% of providers had an error (above 0.2)."
     `,
   },
 
@@ -488,6 +509,118 @@ export const getActionButtonConfig = (type, count) => {
   };
 };
 
+// Percentage change rules compare with the previous period, as the create
+// form says: the metric rises (higher) or falls (lower) by more than a set
+// percentage.
+const PERCENTAGE_CHANGE_DIRECTION = {
+  greater_than: "higher",
+  less_than: "lower",
+};
+
+// A percentage alert saved before the update keeps its earlier rule until a
+// threshold changes: it fires past its average plus or minus stddev x
+// (1 + p/100). A server without threshold_rule judges every alert by the
+// current rule.
+export const usesEarlierRule = (alert) =>
+  (alert?.thresholdRule ?? alert?.threshold_rule) === "earlier" &&
+  (alert?.thresholdType ?? alert?.threshold_type) === "percentage_change";
+
+export const EARLIER_RULE_ROW_TEXT = "Uses the rule it was saved with";
+
+const EARLIER_RULE_SIDE = {
+  greater_than: "above",
+  less_than: "below",
+};
+
+// The earlier rule's band in standard deviations: 400 reads 5, 50 reads 1.5.
+const earlierRuleDeviations = (percent) =>
+  Number(((100 + Number(percent)) / 100).toFixed(6));
+
+// History window in minutes, as the create form offers it: 60 reads "hour",
+// 10080 reads "7 days".
+const formatHistoryWindow = (minutes) => {
+  const value = Number(minutes);
+  if (!Number.isFinite(value) || value <= 0) return "";
+  const [count, unit] =
+    value % (24 * 60) === 0
+      ? [value / (24 * 60), "day"]
+      : value % 60 === 0
+        ? [value / 60, "hour"]
+        : [value, "minute"];
+  return count === 1 ? unit : `${count} ${unit}s`;
+};
+
+// One calm line for an alert that keeps its earlier rule: why, and what the
+// current rule would be for its critical percentage.
+export const earlierRuleNote = (alert) => {
+  if (!usesEarlierRule(alert)) return "";
+  const reason =
+    "Saved before the update, so this alert keeps its earlier rule. Change a threshold and save to switch to the current rule";
+  const critical =
+    alert?.criticalThresholdValue ?? alert?.critical_threshold_value;
+  const criticalLabel =
+    alert?.criticalThresholdLabel ?? alert?.critical_threshold_label;
+  // A critical level saved as infinity or not-a-number has words, not a
+  // percentage to quote.
+  if (critical == null && criticalLabel) return `${reason}.`;
+  const percent =
+    critical ?? alert?.warningThresholdValue ?? alert?.warning_threshold_value;
+  const operator = alert?.thresholdOperator ?? alert?.threshold_operator;
+  const direction = PERCENTAGE_CHANGE_DIRECTION[operator];
+  if (percent == null || !direction) return `${reason}.`;
+  return `${reason}: more than ${percent}% ${direction} than the previous period.`;
+};
+
+// The name of an alert chart's line. For service provider error rate it says
+// which share is drawn, as the conditions do; other metrics keep their name.
+export const alertChartSeriesName = ({ metricType, earlier }) => {
+  if (metricType === "service_provider_error_rates") {
+    return earlier
+      ? "Share of providers with no errors"
+      : "Share of providers with errors";
+  }
+  return _.startCase(_.toLower(metricType));
+};
+
+// The words beside a service provider error rate threshold in the edit form:
+// which share the number is on. Other metrics get none.
+export const providerThresholdHelp = ({
+  metricType,
+  thresholdType,
+  earlier,
+}) => {
+  if (metricType !== "service_provider_error_rates") return undefined;
+  // A saved percentage row on the earlier rule scales a band of standard
+  // deviations (the note above the fields says so); name only the share.
+  if (earlier) {
+    return thresholdType === "percentage_change"
+      ? "Share of providers with no errors"
+      : "Share of providers with no errors, from 0 to 1";
+  }
+  return thresholdType === "percentage_change"
+    ? "Change in the share of providers that had an error"
+    : "Share of providers that had an error, from 0 to 1";
+};
+
+// What the other share metrics count, beside a static threshold, which is
+// typed from 0 to 1 as the provider one is.
+const SHARE_THRESHOLD_HELP = {
+  llm_api_failure_rates: "Share of LLM calls that failed, from 0 to 1",
+  error_rates_for_function_calling:
+    "Share of function calls that had an error, from 0 to 1",
+  error_free_session_rates: "Share of sessions with no errors, from 0 to 1",
+};
+
+// The words beside a threshold in the form: which share the number is on.
+// A percentage change on the other share metrics, and every metric that is
+// not a share, get none.
+export const shareThresholdHelp = ({ metricType, thresholdType, earlier }) =>
+  metricType === "service_provider_error_rates"
+    ? providerThresholdHelp({ metricType, thresholdType, earlier })
+    : thresholdType === "static"
+      ? SHARE_THRESHOLD_HELP[metricType]
+      : undefined;
+
 export const formatConditionText = (condition) => {
   if (!condition) return "";
 
@@ -495,7 +628,110 @@ export const formatConditionText = (condition) => {
   const operator = condition.operator ?? "";
   const value = condition.value ?? "";
 
+  // A level saved as infinity or not-a-number shows its words where the number
+  // would be. No percentage or standard deviations can be worked out from
+  // words, so every rule and threshold type reads this plain form.
+  if (condition.valueLabel) {
+    return `If ${metric} ${operator} ${condition.valueLabel}`;
+  }
+
+  const side = EARLIER_RULE_SIDE[condition.thresholdOperator];
+  // Service provider error rate now measures the share of providers that had
+  // an error; say so beside the number. A row still on the earlier rule reads
+  // its own metric name, the share with no errors.
+  if (
+    condition.metricType === "service_provider_error_rates" &&
+    condition.thresholdRule !== "earlier" &&
+    side
+  ) {
+    const providerDirection =
+      PERCENTAGE_CHANGE_DIRECTION[condition.thresholdOperator];
+    return condition.thresholdType === "percentage_change"
+      ? `If the share of providers with errors is more than ${value}% ${providerDirection} compared to previous period`
+      : `If the share of providers with errors is ${side} ${value}`;
+  }
+  if (usesEarlierRule(condition) && side) {
+    const deviations = earlierRuleDeviations(value);
+    const unit =
+      deviations === 1 ? "standard deviation" : "standard deviations";
+    const history = formatHistoryWindow(condition.autoThresholdTimeWindow);
+    const over = history ? ` over the last ${history}` : "";
+    return `If ${metric} is more than ${deviations} ${unit} ${side} its average${over}`;
+  }
+
+  const direction = PERCENTAGE_CHANGE_DIRECTION[condition.thresholdOperator];
+  if (condition.thresholdType === "percentage_change" && direction) {
+    return `If ${metric} is more than ${value}% ${direction} compared to previous period`;
+  }
+
   return `If ${metric} ${operator} ${value}`;
+};
+
+// A saved level as a number; an empty one is not a number.
+const levelNumber = (value) =>
+  typeof value === "string" && value.trim() !== "" ? Number(value) : value;
+
+// A static service provider error rate alert compares a share of providers,
+// from 0 to 1, on either rule, and the server compares strictly: no share is
+// above 1 or below 0. A level Above 1 or more, or Below 0 or less, can never
+// fire.
+const providerLevelCannotFire = (operator, value) => {
+  const number = levelNumber(value);
+  if (!Number.isFinite(number)) return false;
+  if (operator === "greater_than") return number >= 1;
+  if (operator === "less_than") return number <= 0;
+  return false;
+};
+
+// LLM API failure rates, error rates for function calling and the error-free
+// session rate are shares from 0 to 1 too. A level outside that range in the
+// alert's direction, Above more than 1 or Below less than 0, can never fire.
+const levelOutsideShare = (operator, value) => {
+  const number = levelNumber(value);
+  if (!Number.isFinite(number)) return false;
+  if (operator === "greater_than") return number > 1;
+  if (operator === "less_than") return number < 0;
+  return false;
+};
+
+// What each of those shares counts, as its note names it, and a share to enter
+// instead: the failure shares sit near 0 when healthy, the error-free session
+// rate near 1.
+const SHARE_CANNOT_FIRE = {
+  llm_api_failure_rates: { counts: "LLM calls", example: "0.1 for 10%" },
+  error_rates_for_function_calling: {
+    counts: "function calls",
+    example: "0.1 for 10%",
+  },
+  error_free_session_rates: { counts: "sessions", example: "0.9 for 90%" },
+};
+
+// One line for a static share alert none of whose levels can fire: the
+// critical cannot, and the warning is empty or cannot either. A level outside
+// 0 to 1 that always fires, or a level that can still fire, gets none. The
+// provider's line is unchanged; the other shares' says the levels are outside
+// 0 to 1 and how to fix them.
+export const shareCannotFireNote = (alert) => {
+  const share = SHARE_CANNOT_FIRE[alert?.metricType];
+  const isProvider = alert?.metricType === "service_provider_error_rates";
+  if ((!share && !isProvider) || alert?.thresholdType !== "static") {
+    return "";
+  }
+  const levelCannotFire = isProvider
+    ? providerLevelCannotFire
+    : levelOutsideShare;
+  const operator = alert?.thresholdOperator;
+  const warning = alert?.warningThresholdValue;
+  const noWarning = warning === null || warning === undefined || warning === "";
+  const cannotFire =
+    levelCannotFire(operator, alert?.criticalThresholdValue) &&
+    (noWarning || levelCannotFire(operator, warning));
+  if (!cannotFire) return "";
+  if (isProvider) {
+    return "This alert cannot fire: a share of providers is never above 1 or below 0.";
+  }
+  const levels = noWarning ? "its level is" : "its levels are";
+  return `This alert cannot fire: ${levels} outside 0 to 1, and a share of ${share.counts} never is. Edit the alert and enter a share, for example ${share.example}.`;
 };
 
 export const issueColumns = [
@@ -521,6 +757,20 @@ export const issueColumns = [
   },
 ];
 
+// A service provider error rate alert saved before the update and not
+// converted (a percentage alert, or a threshold outside 0 to 1) is still judged
+// on the share of providers with no errors, so its conditions name that share.
+const conditionMetricName = (alertObj) =>
+  alertObj?.metricType === "service_provider_error_rates" &&
+  alertObj?.thresholdRule === "earlier"
+    ? "Share of providers with no errors"
+    : alertObj?.metricName ?? "unknown";
+
+// A level's value: the saved number or, for a threshold saved as infinity or
+// not-a-number, the words the server sends beside its null.
+const conditionValue = (value, label) =>
+  value == null && label ? { value, valueLabel: label } : { value };
+
 export function transformAlertToConditions(alertObj) {
   if (!alertObj || typeof alertObj !== "object") return [];
 
@@ -531,35 +781,44 @@ export function transformAlertToConditions(alertObj) {
     not_equal: "≠",
   };
 
-  const metricName = alertObj?.metricName ?? "unknown";
+  const metricName = conditionMetricName(alertObj);
   const operator =
     operatorMap[alertObj?.thresholdOperator] ??
     alertObj?.thresholdOperator ??
     "=";
 
   const conditions = [];
+  const rule = {
+    metric: metricName,
+    operator,
+    thresholdOperator: alertObj?.thresholdOperator,
+    thresholdType: alertObj?.thresholdType,
+    thresholdRule: alertObj?.thresholdRule,
+    autoThresholdTimeWindow: alertObj?.autoThresholdTimeWindow,
+    metricType: alertObj?.metricType,
+  };
 
-  if (alertObj?.criticalThresholdValue != null) {
+  const critical = conditionValue(
+    alertObj?.criticalThresholdValue,
+    alertObj?.criticalThresholdLabel,
+  );
+  if (critical.value != null || critical.valueLabel) {
     conditions.push({
       id: 1,
-      condition: {
-        metric: metricName,
-        operator,
-        value: alertObj.criticalThresholdValue,
-      },
+      condition: { ...rule, ...critical },
       description: "A critical issue is created",
       action: "Then send a notification to these emails",
     });
   }
 
-  if (alertObj?.warningThresholdValue != null) {
+  const warning = conditionValue(
+    alertObj?.warningThresholdValue,
+    alertObj?.warningThresholdLabel,
+  );
+  if (warning.value != null || warning.valueLabel) {
     conditions.push({
       id: 2,
-      condition: {
-        metric: metricName,
-        operator,
-        value: alertObj.warningThresholdValue,
-      },
+      condition: { ...rule, ...warning },
       description: "A warning issue is created",
       action: "Then send a notification to these emails",
     });
@@ -582,6 +841,29 @@ export function alertThresholdBand(theme, role, fillAlpha) {
   return { fillColor: alpha(solid, fillAlpha), borderColor: solid };
 }
 
+// Error rates and the error-free session rate are shares from 0 to 1, and
+// their static thresholds are typed and compared on that scale. Their axis
+// names that scale, never a percent.
+const SHARE_METRIC_TYPES = [
+  "llm_api_failure_rates",
+  "error_rates_for_function_calling",
+  "error_free_session_rates",
+  "service_provider_error_rates",
+];
+const SHARE_AXIS_TITLE = "Share (0-1)";
+
+// The y-axis unit of an alert chart: from the metric type when the caller
+// gives it, otherwise from the line's name. An eval alert draws a mean score
+// or the share of one label, neither a percent, so its axis reads a plain
+// value, as its threshold fields do.
+const alertChartUnit = (customOptions) => {
+  const key =
+    customOptions?.unitKey ?? _.snakeCase(_.toLower(customOptions?.seriesName));
+  if (SHARE_METRIC_TYPES.includes(key)) return SHARE_AXIS_TITLE;
+  if (key === "evaluation_metrics") return "Value";
+  return getYAxisUnit(key);
+};
+
 export function getCompareChartConfig(
   apiData,
   customOptions = {},
@@ -594,15 +876,16 @@ export function getCompareChartConfig(
   const { graph_data: graphData, alert_bar_data: alertBarData } =
     apiData.result;
 
+  // Points and band edges sit at the instants the server means.
   const totalTimeSpan =
-    new Date(graphData[graphData.length - 1].timestamp).getTime() -
-    new Date(graphData[0].timestamp).getTime();
-  const startTime = new Date(graphData[0].timestamp).getTime();
+    toUtcEpochMs(graphData[graphData.length - 1].timestamp) -
+    toUtcEpochMs(graphData[0].timestamp);
+  const startTime = toUtcEpochMs(graphData[0].timestamp);
 
   const colorStops = [];
   alertBarData.forEach((period) => {
-    const periodStart = new Date(period.start_timestamp).getTime();
-    const periodEnd = new Date(period.end_timestamp).getTime();
+    const periodStart = toUtcEpochMs(period.start_timestamp);
+    const periodEnd = toUtcEpochMs(period.end_timestamp);
     const startPercent = ((periodStart - startTime) / totalTimeSpan) * 100;
     const endPercent = ((periodEnd - startTime) / totalTimeSpan) * 100;
 
@@ -626,7 +909,7 @@ export function getCompareChartConfig(
       name: "HIDDEN",
       type: "area",
       data: graphData.map((item) => ({
-        x: new Date(item.timestamp).getTime(),
+        x: toUtcEpochMs(item.timestamp),
         y: alertHeight, // only 2% height
       })),
     },
@@ -634,7 +917,7 @@ export function getCompareChartConfig(
       name: customOptions?.seriesName,
       type: "line",
       data: graphData.map((item) => ({
-        x: new Date(item.timestamp).getTime(),
+        x: toUtcEpochMs(item.timestamp),
         y: item.value,
       })),
     },
@@ -685,7 +968,8 @@ export function getCompareChartConfig(
         text: "Value",
       },
       labels: {
-        formatter: formatYAxisValue,
+        formatter: (value) =>
+          formatYAxisValue(value, alertChartUnit(customOptions) === "$"),
       },
     },
     fill: {
@@ -718,6 +1002,9 @@ export function getCompareChartConfig(
       markers: {
         fillColors: [lineColor],
       },
+      labels: {
+        colors: theme?.palette.text.primary,
+      },
     },
   };
 
@@ -738,7 +1025,9 @@ export function transformSimpleLineChart(apiData) {
   for (const item of data) {
     if (item?.timestamp != null) {
       const y = item.value ?? 0;
-      chartData.push({ x: item.timestamp, y });
+      // The point sits at the instant the server means: a bucket sent
+      // without an offset is UTC.
+      chartData.push({ x: toUtcEpochMs(item.timestamp) ?? item.timestamp, y });
 
       sum += y;
       if (y > maxValue) maxValue = y;
@@ -773,9 +1062,16 @@ export function getSimpleLineChartConfig(
   const lineColor = theme ? seriesColor(theme, 0) : undefined;
   const { lineData, metadata } = transformed;
 
-  // Determine Y-axis range based on data
-  const yAxisMax = Math.ceil(metadata.maxValue * 1.1); // Add 10% padding
-  const yAxisMin = Math.max(0, Math.floor(metadata.minValue * 0.9)); // Ensure min is not negative
+  // Determine Y-axis range based on data: the top padded by 10% and rounded
+  // up, the bottom never negative. A share is drawn on its whole 0 to 1 scale
+  // instead: rounding up would run its ticks to 2 above about 0.91, under a
+  // title that says 0 to 1, and would put the top at 0 for a share that stays
+  // at 0. A threshold band reaching past 1 is cut off at the top of the plot.
+  const isShare = alertChartUnit(customOptions) === SHARE_AXIS_TITLE;
+  const yAxisMax = isShare ? 1 : Math.ceil(metadata.maxValue * 1.1);
+  const yAxisMin = isShare
+    ? 0
+    : Math.max(0, Math.floor(metadata.minValue * 0.9));
 
   const series = [
     {
@@ -815,12 +1111,11 @@ export function getSimpleLineChartConfig(
       max: yAxisMax,
       labels: {
         style: { fontSize: "12px", colors: axisLabelColor },
-        formatter: formatYAxisValue,
+        formatter: (value) =>
+          formatYAxisValue(value, alertChartUnit(customOptions) === "$"),
       },
       title: {
-        text:
-          getYAxisUnit(_.snakeCase(_.toLower(customOptions?.seriesName))) ||
-          getYAxisUnit("default"),
+        text: alertChartUnit(customOptions) || getYAxisUnit("default"),
       },
     },
     fill: {
@@ -833,6 +1128,9 @@ export function getSimpleLineChartConfig(
       horizontalAlign: "left",
       markers: {
         fillColors: [lineColor],
+      },
+      labels: {
+        colors: theme?.palette.text.primary,
       },
     },
     tooltip: {
@@ -880,6 +1178,82 @@ export function getSimpleLineChartConfig(
   }
 
   return { series, options, metadata };
+}
+
+const toEpochMs = (value) => {
+  if (value == null || value === "") return null;
+  const ms = new Date(value).getTime();
+  return Number.isFinite(ms) ? ms : null;
+};
+
+// A date-time string that ends without a UTC offset (no Z, no +hh:mm). The
+// static graph's buckets come this way and mean UTC, but new Date() and the
+// chart read them as browser-local time. A date-only string is read as UTC,
+// so it does not count.
+const UTC_OFFSET_SUFFIX = /(?:Z|[+-]\d{2}:?\d{2})$/i;
+const isOffsetLessDateTime = (value) =>
+  typeof value === "string" &&
+  /\d{2}:\d{2}/.test(value) &&
+  !UTC_OFFSET_SUFFIX.test(value.trim());
+
+// The instant the server means by a timestamp it sends or reads: an
+// offset-less date-time is UTC.
+const toUtcEpochMs = (value) => {
+  if (!isOffsetLessDateTime(value)) return toEpochMs(value);
+  return toEpochMs(`${value.trim().replace(" ", "T")}Z`);
+};
+
+const MINUTE_MS = 60 * 1000;
+
+// End of the alert detail chart's time axis. The graph endpoint returns only
+// the buckets that hold data, so an axis fitted to the points stops at the
+// newest bucket and leaves out a firing that came after it. The axis ends at
+// the latest of: the newest point, the end of the minute of the graph read
+// (never past the selected range's end), and the last firing when it falls
+// inside the selected range.
+//
+// Every value is the instant the server means, the clock the chart's points
+// are drawn on. A point without an offset is UTC. A preset range sends
+// offset-less local text, which the server reads as UTC, and a custom range
+// sends instants with a Z. Rounding the read time up to the whole minute
+// keeps the axis end, and so the chart options, the same across polls that
+// bring no new data.
+export function getAlertChartXAxisRange(
+  apiData,
+  { dateRange, lastTriggered, readAt } = {},
+) {
+  const result = apiData?.result;
+  const points = Array.isArray(result) ? result : result?.graph_data;
+  let lastPoint = null;
+  for (const point of Array.isArray(points) ? points : []) {
+    const ms = toUtcEpochMs(point?.timestamp);
+    if (ms !== null && (lastPoint === null || ms > lastPoint)) {
+      lastPoint = ms;
+    }
+  }
+  if (lastPoint === null) return {};
+
+  const rangeStart = toUtcEpochMs(dateRange?.[0]);
+  const rangeEnd = toUtcEpochMs(dateRange?.[1]);
+  let end = lastPoint;
+
+  const read = toEpochMs(readAt);
+  const readMinuteEnd =
+    read === null ? null : Math.ceil(read / MINUTE_MS) * MINUTE_MS;
+  const readEnd =
+    readMinuteEnd !== null && rangeEnd !== null
+      ? Math.min(readMinuteEnd, rangeEnd)
+      : readMinuteEnd;
+  if (readEnd !== null) end = Math.max(end, readEnd);
+
+  const fired = toUtcEpochMs(lastTriggered);
+  const firedInRange =
+    fired !== null &&
+    (rangeStart === null || fired >= rangeStart) &&
+    (rangeEnd === null || fired <= rangeEnd);
+  if (firedInRange) end = Math.max(end, fired);
+
+  return { max: end };
 }
 
 export const convertFiltersToPayload = (filters) => {

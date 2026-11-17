@@ -159,7 +159,7 @@ const StackBarChart = ({
             datasetIndex || datasetIndex === 0
               ? datasetIndex
               : item.datasetIndex;
-          if (visibleSeries.length === 1) return <></>;
+          if (visibleSeries.length === 1) return null;
           return (
             <Box
               key={index}
@@ -179,7 +179,7 @@ const StackBarChart = ({
               <Typography typography={"s1"} fontWeight={"fontWeightMedium"}>
                 {item.name}
               </Typography>
-              <TotalRowCount value={item.totalCells} />
+              <TotalRowCount value={item.total_cells} />
             </Box>
           );
         })}
@@ -214,7 +214,7 @@ const StackBarChart = ({
             {headerData?.average} {headerData?.average && "%"}
           </Typography>
           {visibleSeries?.length === 1 && (
-            <TotalRowCount value={visibleSeries?.[0]?.totalCells} />
+            <TotalRowCount value={visibleSeries?.[0]?.total_cells} />
           )}
         </Box>
         <CustomLegend />

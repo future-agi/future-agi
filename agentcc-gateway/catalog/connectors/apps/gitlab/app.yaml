@@ -1,0 +1,20 @@
+schema: "connector-manifest/v1#app"
+id: gitlab
+version: 1.0.0
+name: GitLab
+description: "Projects, issues, merge requests, pipelines and code on GitLab.com."
+vendor:
+  name: GitLab
+  domains: [gitlab.com]
+eeCategory: developer
+group: other
+categories: [developer, code-hosting]
+tags: [git, issues, merge-requests, ci]
+docsUrl: https://docs.gitlab.com/user/model_context_protocol/mcp_server/
+archetype: code-host
+defaultProvider: pat
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://docs.gitlab.com/user/model_context_protocol/mcp_server/
+    fetchedAt: 2026-10-21

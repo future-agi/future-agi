@@ -128,11 +128,11 @@ func TestSemanticStore_SetAndSearch(t *testing.T) {
 	vec := Vectorize(text, 256)
 	resp := testResponse("paris")
 
-	s.Set("key1", vec, "gpt-4o", resp, 5*time.Minute)
+	s.Set(NoOrgScope, "key1", vec, "gpt-4o", resp, 5*time.Minute)
 
 	// Search with similar text.
 	queryVec := Vectorize("what is the capital of france?", 256)
-	result := s.Search(queryVec, "gpt-4o")
+	result := s.Search(NoOrgScope, queryVec, "gpt-4o")
 	if result == nil {
 		t.Fatal("should find similar cached response")
 	}
@@ -147,10 +147,10 @@ func TestSemanticStore_SetAndSearch(t *testing.T) {
 func TestSemanticStore_ModelMismatch(t *testing.T) {
 	s := NewSemanticStore(0.8, 256, 100)
 	vec := Vectorize("what is the capital of France", 256)
-	s.Set("key1", vec, "gpt-4o", testResponse("test"), 5*time.Minute)
+	s.Set(NoOrgScope, "key1", vec, "gpt-4o", testResponse("test"), 5*time.Minute)
 
 	// Search with different model.
-	result := s.Search(vec, "gpt-3.5-turbo")
+	result := s.Search(NoOrgScope, vec, "gpt-3.5-turbo")
 	if result != nil {
 		t.Error("different model should not match")
 	}
@@ -160,9 +160,9 @@ func TestSemanticStore_BelowThreshold(t *testing.T) {
 	s := NewSemanticStore(0.95, 256, 100) // Very high threshold.
 	vec1 := Vectorize("what is the capital of France", 256)
 	vec2 := Vectorize("explain quantum computing basics", 256)
-	s.Set("key1", vec1, "gpt-4o", testResponse("test"), 5*time.Minute)
+	s.Set(NoOrgScope, "key1", vec1, "gpt-4o", testResponse("test"), 5*time.Minute)
 
-	result := s.Search(vec2, "gpt-4o")
+	result := s.Search(NoOrgScope, vec2, "gpt-4o")
 	if result != nil {
 		t.Error("dissimilar text should not match with high threshold")
 	}
@@ -171,10 +171,10 @@ func TestSemanticStore_BelowThreshold(t *testing.T) {
 func TestSemanticStore_Expiration(t *testing.T) {
 	s := NewSemanticStore(0.8, 256, 100)
 	vec := Vectorize("test", 256)
-	s.Set("key1", vec, "gpt-4o", testResponse("test"), 1*time.Millisecond)
+	s.Set(NoOrgScope, "key1", vec, "gpt-4o", testResponse("test"), 1*time.Millisecond)
 
 	time.Sleep(5 * time.Millisecond)
-	result := s.Search(vec, "gpt-4o")
+	result := s.Search(NoOrgScope, vec, "gpt-4o")
 	if result != nil {
 		t.Error("expired entry should not match")
 	}
@@ -184,14 +184,14 @@ func TestSemanticStore_Dedup(t *testing.T) {
 	s := NewSemanticStore(0.8, 256, 100)
 	vec := Vectorize("test", 256)
 
-	s.Set("key1", vec, "gpt-4o", testResponse("first"), 5*time.Minute)
-	s.Set("key1", vec, "gpt-4o", testResponse("second"), 5*time.Minute)
+	s.Set(NoOrgScope, "key1", vec, "gpt-4o", testResponse("first"), 5*time.Minute)
+	s.Set(NoOrgScope, "key1", vec, "gpt-4o", testResponse("second"), 5*time.Minute)
 
 	if s.Len() != 1 {
 		t.Errorf("dedup should keep 1 entry, got %d", s.Len())
 	}
 
-	result := s.Search(vec, "gpt-4o")
+	result := s.Search(NoOrgScope, vec, "gpt-4o")
 	if result == nil || result.Response.ID != "resp-second" {
 		t.Error("should return updated response")
 	}
@@ -202,7 +202,7 @@ func TestSemanticStore_LRUEviction(t *testing.T) {
 
 	for i := 0; i < 5; i++ {
 		vec := Vectorize("entry "+string(rune('a'+i)), 256)
-		s.Set("key"+string(rune('0'+i)), vec, "gpt-4o", testResponse("test"), 5*time.Minute)
+		s.Set(NoOrgScope, "key"+string(rune('0'+i)), vec, "gpt-4o", testResponse("test"), 5*time.Minute)
 	}
 
 	if s.Len() > 3 {
@@ -216,7 +216,7 @@ func TestSemanticStore_Len(t *testing.T) {
 		t.Error("empty store should have length 0")
 	}
 	vec := Vectorize("test", 256)
-	s.Set("key1", vec, "gpt-4o", testResponse("test"), 5*time.Minute)
+	s.Set(NoOrgScope, "key1", vec, "gpt-4o", testResponse("test"), 5*time.Minute)
 	if s.Len() != 1 {
 		t.Errorf("length = %d", s.Len())
 	}
@@ -245,7 +245,7 @@ func TestSemanticStore_Defaults(t *testing.T) {
 func TestSemanticStore_NilResponse(t *testing.T) {
 	s := NewSemanticStore(0.8, 256, 100)
 	vec := Vectorize("test", 256)
-	s.Set("key1", vec, "gpt-4o", nil, 5*time.Minute)
+	s.Set(NoOrgScope, "key1", vec, "gpt-4o", nil, 5*time.Minute)
 	if s.Len() != 0 {
 		t.Error("nil response should not be stored")
 	}
@@ -254,7 +254,7 @@ func TestSemanticStore_NilResponse(t *testing.T) {
 func TestSemanticStore_ZeroTTL(t *testing.T) {
 	s := NewSemanticStore(0.8, 256, 100)
 	vec := Vectorize("test", 256)
-	s.Set("key1", vec, "gpt-4o", testResponse("test"), 0)
+	s.Set(NoOrgScope, "key1", vec, "gpt-4o", testResponse("test"), 0)
 	if s.Len() != 0 {
 		t.Error("zero TTL should not be stored")
 	}
@@ -269,12 +269,12 @@ func TestSemanticStore_Concurrent(t *testing.T) {
 		go func(idx int) {
 			defer wg.Done()
 			vec := Vectorize("concurrent test entry", 256)
-			s.Set("key"+string(rune(idx)), vec, "gpt-4o", testResponse("test"), 5*time.Minute)
+			s.Set(NoOrgScope, "key"+string(rune(idx)), vec, "gpt-4o", testResponse("test"), 5*time.Minute)
 		}(i)
 		go func() {
 			defer wg.Done()
 			vec := Vectorize("concurrent test entry", 256)
-			s.Search(vec, "gpt-4o")
+			s.Search(NoOrgScope, vec, "gpt-4o")
 		}()
 	}
 	wg.Wait()

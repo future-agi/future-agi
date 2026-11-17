@@ -903,50 +903,108 @@ def _row_value(row: HostedHarnessScenario, orm_path: str) -> Any:
     return getattr(value, tail, None)
 
 
-def _filter_terms(params) -> Iterator[tuple[str, str, list[str], bool]]:
-    """The filter panel's query params as (field, ORM path, values, negated)."""
+# The matchers a text field takes besides Equals and Not equals.
+_TEXT_MATCHERS = frozenset({"contains", "starts_with", "not_contains"})
+
+# A matcher rides on the key's suffix, as `_not` does: `name_contains`,
+# `name_starts_with`, `name_not_contains`. The longest suffix is tried first, so
+# `_not_contains` is never read as `_contains`.
+_MATCHER_SUFFIXES = (
+    ("_not_contains", "not_contains"),
+    ("_starts_with", "starts_with"),
+    ("_contains", "contains"),
+    ("_not", "not_in"),
+)
+
+
+def _filter_terms(params) -> Iterator[tuple[str, str, list[str], str]]:
+    """The filter panel's query params as (field, ORM path, values, mode).
+
+    The mode is `in` (equals), `not_in` (not equals) or, for a text field only,
+    `contains`, `starts_with` or `not_contains`. A key that names no field, or a
+    matcher on a field that is not text, narrows nothing.
+    """
     for key in params.keys():
-        negated = key.endswith("_not")
-        field = key[:-4] if negated else key
+        field, mode = key, "in"
+        for suffix, matcher in _MATCHER_SUFFIXES:
+            if key.endswith(suffix):
+                field, mode = key[: -len(suffix)], matcher
+                break
         if field not in _BY_VALUE:
+            continue
+        if mode in _TEXT_MATCHERS and _BY_VALUE[field]["type"] != "string":
             continue
         values = [one for one in params.getlist(key) if one not in (None, "")]
         if not values:
             continue
-        yield field, _orm_path(field), values, negated
+        yield field, _orm_path(field), values, mode
+
+
+def _text_hit(held: Any, mode: str, values: list[str]) -> bool:
+    """Whether text has what a matcher names; empty or missing text has none."""
+    if not isinstance(held, str) or not held:
+        return False
+    if mode == "starts_with":
+        return any(held.startswith(one) for one in values)
+    return any(one in held for one in values)
 
 
 def _filtered_rows(rows: ScenarioRows, params) -> ScenarioRows:
-    for field, path, values, negated in _filter_terms(params):
+    for field, path, values, mode in _filter_terms(params):
 
         def matches(
-            row: HostedHarnessScenario, path=path, field=field, values=values
+            row: HostedHarnessScenario,
+            path=path,
+            field=field,
+            values=values,
+            mode=mode,
         ) -> bool:
             held = _row_value(row, path)
+            if mode in _TEXT_MATCHERS:
+                hit = _text_hit(held, mode, values)
+                return not hit if mode == "not_contains" else hit
             if field in _LIST_FIELDS:
-                return isinstance(held, list) and any(one in held for one in values)
-            return held in values
+                found = isinstance(held, list) and any(one in held for one in values)
+            else:
+                found = held in values
+            return found != (mode == "not_in")
 
-        rows = ScenarioRows(row for row in rows if matches(row) != negated)
+        rows = ScenarioRows(row for row in rows if matches(row))
     return rows
 
 
 def apply_filters(queryset: QuerySet, params) -> QuerySet:
-    """Narrow the suite by the filter panel's query params: repeated keys OR, a `_not` suffix negates."""
+    """Narrow the suite by the filter panel's query params: repeated keys OR, a `_not` suffix negates.
+
+    A text field also takes `_contains`, `_starts_with` and `_not_contains`; like
+    Equals they match on case, and a row with no text is left out by the first two
+    and kept by the last.
+    """
     if isinstance(queryset, ScenarioRows):
         return _filtered_rows(queryset, params)
-    for field, path, values, negated in _filter_terms(params):
+    for field, path, values, mode in _filter_terms(params):
+        matches = Q()
+        if mode in _TEXT_MATCHERS:
+            lookup = "startswith" if mode == "starts_with" else "contains"
+            for value in values:
+                matches |= Q(**{f"{path}__{lookup}": value})
+            # `exclude` keeps a row whose text is null, as it keeps an empty one.
+            queryset = (
+                queryset.exclude(matches)
+                if mode == "not_contains"
+                else queryset.filter(matches)
+            )
+            continue
         lookup = (
             f"{path}__contains"
             if _BY_VALUE[field]["value"] in _LIST_FIELDS
             else f"{path}__in"
         )
-        matches = Q()
         for value in values:
-            matches |= Q(
-                **{lookup: [value] if lookup.endswith("contains") else [value]}
-            )
-        queryset = queryset.exclude(matches) if negated else queryset.filter(matches)
+            matches |= Q(**{lookup: [value]})
+        queryset = (
+            queryset.exclude(matches) if mode == "not_in" else queryset.filter(matches)
+        )
     return queryset
 
 

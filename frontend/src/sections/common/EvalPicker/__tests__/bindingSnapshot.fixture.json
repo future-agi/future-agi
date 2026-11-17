@@ -1,0 +1,111 @@
+{
+  "base": {
+    "rule_prompt": "Judge {{output}}",
+    "messages": [
+      { "role": "system", "content": "Judge {{output}}" },
+      { "role": "user", "content": "Old {{output}}" }
+    ],
+    "few_shot_examples": [
+      {
+        "dataset_id": "historical-examples",
+        "mapping": { "output": "example-output" }
+      }
+    ],
+    "output": "score",
+    "pass_threshold": 0.5,
+    "template_format": "mustache",
+    "multi_choice": false
+  },
+  "pickerRuntime": {
+    "agent_mode": "agent",
+    "summary": { "type": "concise" },
+    "tools": {},
+    "knowledge_bases": [],
+    "check_internet": false,
+    "data_injection": { "variables_only": true },
+    "error_localizer_enabled": false
+  },
+  "cases": [
+    {
+      "name": "edited User turn overrides stored runtime messages",
+      "field": "messages",
+      "value": [
+        { "role": "system", "content": "Judge {{output}}" },
+        { "role": "user", "content": "Edited {{output}}" }
+      ],
+      "storedRunConfig": {
+        "messages": [
+          { "role": "system", "content": "Judge {{output}}" },
+          { "role": "user", "content": "Old {{output}}" }
+        ],
+        "opaque_override": { "retained": true }
+      },
+      "requestConfig": {
+        "mapping": { "output": "output-column" },
+        "config": {
+          "rule_prompt": "Judge {{output}}",
+          "messages": [
+            { "role": "system", "content": "Judge {{output}}" },
+            { "role": "user", "content": "Edited {{output}}" }
+          ],
+          "few_shot_examples": [
+            {
+              "dataset_id": "historical-examples",
+              "mapping": { "output": "example-output" }
+            }
+          ],
+          "output": "score",
+          "pass_threshold": 0.5,
+          "template_format": "mustache",
+          "multi_choice": false,
+          "model": "fixture-model",
+          "agent_mode": "agent",
+          "summary": { "type": "concise" },
+          "tools": {},
+          "knowledge_bases": [],
+          "check_internet": false,
+          "data_injection": { "variables_only": true },
+          "error_localizer_enabled": false,
+          "opaque_override": { "retained": true }
+        },
+        "run_config": {
+          "messages": [
+            { "role": "system", "content": "Judge {{output}}" },
+            { "role": "user", "content": "Edited {{output}}" }
+          ],
+          "opaque_override": { "retained": true }
+        }
+      }
+    },
+    {
+      "name": "clearing the last inherited few-shot dataset",
+      "field": "few_shot_examples",
+      "value": [],
+      "storedRunConfig": {},
+      "requestConfig": {
+        "mapping": { "output": "output-column" },
+        "config": {
+          "rule_prompt": "Judge {{output}}",
+          "messages": [
+            { "role": "system", "content": "Judge {{output}}" },
+            { "role": "user", "content": "Old {{output}}" }
+          ],
+          "few_shot_examples": [],
+          "output": "score",
+          "pass_threshold": 0.5,
+          "template_format": "mustache",
+          "multi_choice": false,
+          "model": "fixture-model",
+          "agent_mode": "agent",
+          "summary": { "type": "concise" },
+          "tools": {},
+          "knowledge_bases": [],
+          "check_internet": false,
+          "data_injection": { "variables_only": true },
+          "error_localizer_enabled": false
+        },
+        "run_config": {}
+      }
+    }
+  ]
+}

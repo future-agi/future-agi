@@ -53,20 +53,21 @@ describe("NextStepsChecklist", () => {
     // so each step is identified by its unique body prose.
     renderChecklist();
     expect(screen.getByText(/is set up and ready for configuration/)).toBeInTheDocument();
-    expect(screen.getByText(/Wire your agent so it can act/)).toBeInTheDocument();
+    expect(screen.getByText(/Builds a new environment from your agent on the Build tab/)).toBeInTheDocument();
     expect(screen.getByText(/Tasks the agent has to complete/)).toBeInTheDocument();
     expect(screen.getByText(/Graders that decide whether each run passed/)).toBeInTheDocument();
     expect(screen.getByText(/Kick off a run/)).toBeInTheDocument();
   });
 
-  it("routes the live step CTAs through onGo; the deferred connect-agent step is disabled", async () => {
+  it("routes the scenario and eval CTAs through onGo; the agent step opens the Build tab instead", async () => {
     const user = userEvent.setup();
     const onGo = vi.fn();
     renderChecklist({ onGo });
 
-    // Connecting an agent is deferred (no Agents tab) — the CTA is disabled
-    // rather than a button that no-ops.
-    expect(screen.getByRole("button", { name: /connect agent/i })).toBeDisabled();
+    // An agent is set when an environment is built, so the agent step is a
+    // live button to the Build tab (nextStepsChecklist.test.jsx checks where
+    // it goes), not a tab of this environment.
+    expect(screen.getByRole("button", { name: /build from an agent/i })).toBeEnabled();
 
     await user.click(screen.getByRole("button", { name: /add scenarios/i }));
     expect(onGo).toHaveBeenCalledWith("scenarios");
@@ -74,7 +75,7 @@ describe("NextStepsChecklist", () => {
     await user.click(screen.getByRole("button", { name: /add evaluations/i }));
     expect(onGo).toHaveBeenCalledWith("evals");
 
-    // The disabled connect-agent CTA never fires onGo.
+    await user.click(screen.getByRole("button", { name: /build from an agent/i }));
     expect(onGo).not.toHaveBeenCalledWith("agent");
   });
 
@@ -82,7 +83,7 @@ describe("NextStepsChecklist", () => {
     renderChecklist({ envState: { scenarios: [{}, {}], evals: [{}] } });
     // created + scenarios + evals are done; agent + run remain.
     expect(screen.getByText("3 of 5 complete, 2 left to run your first simulation")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /connect agent/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /build from an agent/i })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /add scenarios/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /add evaluations/i })).not.toBeInTheDocument();
   });

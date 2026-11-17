@@ -26,6 +26,7 @@ from simulate.services.harness_versioning.versions import versioning_enabled
 from simulate.services.hosted_harness import HostedHarnessError, VersionPicks
 from simulate.services.hosted_harness_gateway import (
     HostedSourceAcquirer,
+    SourceSymlink,
     store_source_archive,
 )
 
@@ -47,7 +48,10 @@ class AgentKind(Protocol):
         ...
 
     def prepare_candidate(
-        self, fix_run: AgentFixRun, files: dict[str, bytes], attempt: int
+        self,
+        fix_run: AgentFixRun,
+        files: dict[str, bytes | SourceSymlink],
+        attempt: int,
     ) -> dict[str, Any]:
         """Validate and store what the candidate's version needs, before any lock is taken."""
         ...
@@ -104,11 +108,17 @@ class VersionedSourceAgent:
         return HostedSourceAcquirer().acquire(fix_run.source_run)[0]
 
     def prepare_candidate(
-        self, fix_run: AgentFixRun, files: dict[str, bytes], attempt: int
+        self,
+        fix_run: AgentFixRun,
+        files: dict[str, bytes | SourceSymlink],
+        attempt: int,
     ) -> dict[str, Any]:
         stored = store_source_archive(
             fix_run.organization,
-            [io.BytesIO(data) for data in files.values()],
+            [
+                data if isinstance(data, SourceSymlink) else io.BytesIO(data)
+                for data in files.values()
+            ],
             list(files),
             f"fix-{fix_run.id}-{attempt}",
         )

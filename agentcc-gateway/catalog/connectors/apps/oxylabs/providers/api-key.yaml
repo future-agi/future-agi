@@ -1,0 +1,44 @@
+schema: "connector-manifest/v1#provider"
+app: oxylabs
+id: api-key
+version: 1.1.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.oxylabs.io/web-api-mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: Web API key
+      help: "Create a Web API product instance in the Oxylabs dashboard and copy its API key. Supply the key without the Bearer prefix. Calls consume Web API usage; Agent Browser username/password credentials do not apply."
+      helpUrl: https://developers.oxylabs.io/ai-workflows/mcp
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_metered
+  source: https://developers.oxylabs.io/ai-workflows/mcp
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://developers.oxylabs.io/ai-workflows/mcp
+    fetchedAt: 2026-11-09
+  - fact: transport.variant
+    url: https://developers.oxylabs.io/ai-workflows/mcp
+    fetchedAt: 2026-11-09
+  - fact: auth.kind
+    url: https://developers.oxylabs.io/ai-workflows/mcp
+    fetchedAt: 2026-11-09
+  - fact: auth.credentialParts
+    url: https://developers.oxylabs.io/ai-workflows/mcp
+    fetchedAt: 2026-11-09

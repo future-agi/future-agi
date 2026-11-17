@@ -7,7 +7,8 @@
 
 export const EDITOR_COPY = {
   title: "Edit scenario",
-  subtitle: "Editable fields are saved to the suite; others are read-only because they're proved, not described.",
+  subtitle:
+    "Editable fields are saved to the suite; others are read-only because they're proved, not described.",
   cancel: "Cancel",
   save: "Save scenario",
   scenarioSection: "Scenario",
@@ -19,26 +20,71 @@ export const EDITOR_COPY = {
 // Which surfaces have a human on the other end (a caller to shape) and which of
 // those are voice, where call constraints like max turns and background noise
 // apply. A browser or coding agent has neither.
-export const CONVERSATIONAL_SURFACES = ["voice", "chat", "messaging", "email", "multi"];
+export const CONVERSATIONAL_SURFACES = [
+  "voice",
+  "chat",
+  "messaging",
+  "email",
+  "multi",
+];
 export const VOICE_ONLY_SURFACES = ["voice", "multi"];
 
 export const TONE_OPTIONS = [
-  "neutral", "polite", "urgent", "impatient", "sceptical",
-  "angry", "confused", "apologetic",
+  "neutral",
+  "polite",
+  "urgent",
+  "impatient",
+  "sceptical",
+  "angry",
+  "confused",
+  "apologetic",
 ];
-export const STYLE_OPTIONS = ["concise", "verbose", "formal", "casual", "chatty", "terse"];
+export const STYLE_OPTIONS = [
+  "concise",
+  "verbose",
+  "formal",
+  "casual",
+  "chatty",
+  "terse",
+];
 export const ACCENT_OPTIONS = ["US", "UK", "IN", "BR", "AE", "JP", "other"];
-export const LANGUAGE_OPTIONS = ["English", "Spanish", "Portuguese", "Hindi", "Japanese", "Arabic"];
+export const LANGUAGE_OPTIONS = [
+  "English",
+  "Spanish",
+  "Portuguese",
+  "Hindi",
+  "Japanese",
+  "Arabic",
+];
+// A text field (Scenario, Situation) offers Equals, Not equals, Contains, Starts with and
+// Does not contain; the server answers each with the rows that match. Each one goes out on
+// the key `<field>`, `<field>_not`, `<field>_contains`, `<field>_starts_with` or
+// `<field>_not_contains`, which `operatorKeys` tells the filter panel to write.
+const TEXT_OPERATORS = [
+  "equals",
+  "not_equals",
+  "contains",
+  "starts_with",
+  "not_contains",
+];
+
 // The server lists noise on/off as "present" and "quiet line"; a scenario stores them as true/false.
 // Fields whose values the server names in `level_labels`: noise beds, sub-goals and coverage levels.
 export const withServedLabels = (fields = [], levelLabels = {}) =>
-  fields.map((field) =>
-    field.value === "background_noise" ||
-    field.value === "sub_goals" ||
-    String(field.value).startsWith("coverage.")
+  fields.map((field) => {
+    if (field.type === "string") {
+      return {
+        ...field,
+        operators: field.operators ?? TEXT_OPERATORS,
+        operatorKeys: true,
+      };
+    }
+    return field.value === "background_noise" ||
+      field.value === "sub_goals" ||
+      String(field.value).startsWith("coverage.")
       ? { ...field, choiceLabels: levelLabels }
-      : field,
-  );
+      : field;
+  });
 
 export const noiseKey = (value) => {
   if (typeof value === "string") return value;
@@ -61,10 +107,17 @@ const parseAccent = (voice) => {
 // row ever carries these explicitly, those win at the call site.
 export const deriveCaller = (persona) => {
   const traits = (persona?.traits || []).map((t) => t.toLowerCase());
-  const tone = TONE_OPTIONS.find((o) => traits.some((t) => t.includes(o))) || "neutral";
-  const style = STYLE_OPTIONS.find((o) => traits.some((t) => t.includes(o)))
-    || (traits.includes("terse") ? "terse" : "casual");
-  return { tone, style, accent: parseAccent(persona?.voice), language: "English" };
+  const tone =
+    TONE_OPTIONS.find((o) => traits.some((t) => t.includes(o))) || "neutral";
+  const style =
+    STYLE_OPTIONS.find((o) => traits.some((t) => t.includes(o))) ||
+    (traits.includes("terse") ? "terse" : "casual");
+  return {
+    tone,
+    style,
+    accent: parseAccent(persona?.voice),
+    language: "English",
+  };
 };
 
 // Persona trait "background noise" → high, else none.
@@ -76,7 +129,7 @@ export const deriveNoise = (persona) => {
 // Sub-goals arrive as strings or {label|text|title} objects; the textarea edits
 // them as one-per-line, so flatten to labels on open and re-split on change.
 export const subTaskLabel = (s) =>
-  typeof s === "string" ? s : (s?.label || s?.text || s?.title || "");
+  typeof s === "string" ? s : s?.label || s?.text || s?.title || "";
 
 // The same sub-goals as { id, label } for display, empty ones dropped. The
 // table cell and the list view both render from this, so they can't disagree
@@ -90,4 +143,7 @@ export const subTasksToText = (subTasks) =>
   (subTasks || []).map(subTaskLabel).filter(Boolean).join("\n");
 
 export const textToSubTasks = (text) =>
-  (text || "").split("\n").map((t) => t.trim()).filter(Boolean);
+  (text || "")
+    .split("\n")
+    .map((t) => t.trim())
+    .filter(Boolean);

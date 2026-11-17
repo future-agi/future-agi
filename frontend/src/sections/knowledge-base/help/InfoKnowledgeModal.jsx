@@ -12,16 +12,7 @@ import Iconify from "src/components/iconify";
 
 const InfoKnowledgeModal = ({ open, onClose, onCreateKnowledge }) => {
   return (
-    <Dialog
-      open={open}
-      onClose={onClose}
-      fullWidth
-      maxWidth={false}
-      PaperProps={{
-        width: "720px",
-        maxWidth: "none",
-      }}
-    >
+    <Dialog open={open} onClose={onClose} fullWidth maxWidth="sm">
       <Box sx={{ padding: 2 }}>
         <DialogTitle sx={{ padding: 0, margin: 0 }}>
           <Box display="flex" justifyContent={"space-between"}>

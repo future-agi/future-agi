@@ -73,6 +73,10 @@ export const readTime = (obj, keys) => {
  *   • Observe voice — `time` as an ISO-8601 string, `duration` as a float
  *     in seconds, no end field.
  *
+ * callStartedAt accepts an ISO timestamp or Unix epoch seconds/milliseconds.
+ * Without a usable call start, absolute turns fall back to the first utterance.
+ * Already-relative timestamps are never shifted by the anchor.
+ *
  * Returns sorted, normalized turns where:
  *   start/end  → seconds from call start
  *   duration   → seconds
@@ -81,7 +85,7 @@ export const readTime = (obj, keys) => {
  */
 export const enrichTurns = (
   transcript,
-  { enableTemporalFeatures = true } = {},
+  { enableTemporalFeatures = true, callStartedAt } = {},
 ) => {
   if (!Array.isArray(transcript) || transcript.length === 0) return [];
 
@@ -142,27 +146,35 @@ export const enrichTurns = (
   //   • ms since epoch (simulate voice, ~1.7e12 in 2026)
   //   • s  since epoch (observe voice from some providers, ~1.7e9 in 2026)
   //   • s  since call start (already relative, < ~1 hour == 3600s)
-  // Detect by magnitude of the earliest start and rebase accordingly.
-  // The old >1e10 threshold only caught ms; epoch-seconds slipped through
-  // and rendered as raw numbers (e.g. "29608380:45" in the KPI strip).
-  let epochMinStart = Infinity;
-  for (const t of raw) {
-    if (t.start != null && t.start < epochMinStart) epochMinStart = t.start;
-  }
-  if (epochMinStart !== Infinity) {
-    if (epochMinStart >= 1e12) {
-      // Epoch ms — subtract base and convert to seconds.
-      raw.forEach((t) => {
-        if (t.start != null) t.start = (t.start - epochMinStart) / 1000;
-        if (t.end != null) t.end = (t.end - epochMinStart) / 1000;
-      });
-    } else if (epochMinStart >= 1e9) {
-      // Epoch seconds — subtract base only.
-      raw.forEach((t) => {
-        if (t.start != null) t.start = t.start - epochMinStart;
-        if (t.end != null) t.end = t.end - epochMinStart;
-      });
+  // Preserve initial silence by anchoring absolute times to the call start.
+  // Fall back to the earliest absolute turn only when that anchor is missing.
+  // Detect units per timestamp so relative tool calls remain unchanged even
+  // when speech rows use absolute timestamps.
+  const toEpochSeconds = (time) => {
+    if (time >= 1e12) return time / 1000;
+    return time >= 1e9 ? time : null;
+  };
+  let epochStart = toEpochSeconds(
+    readTime({ callStartedAt }, ["callStartedAt"]),
+  );
+  if (epochStart == null) {
+    for (const t of raw) {
+      const start = toEpochSeconds(t.start);
+      if (start != null && (epochStart == null || start < epochStart)) {
+        epochStart = start;
+      }
     }
+  }
+  if (epochStart != null) {
+    const toOffset = (time) => {
+      if (time >= 1e12) return (time - epochStart * 1000) / 1000;
+      if (time >= 1e9) return time - epochStart;
+      return time;
+    };
+    raw.forEach((t) => {
+      t.start = toOffset(t.start);
+      t.end = toOffset(t.end);
+    });
   }
 
   // Step 3: per-row duration unit detection. Anything > 300 is ms.

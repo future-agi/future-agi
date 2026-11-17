@@ -86,12 +86,11 @@ export const CONF_META = Object.freeze({
   [CONFIDENCE.LOW]: { label: "Low confidence", role: "neutral" },
 });
 
-// ── Token pricing — used to estimate per-trace cost in the Overview tab. ─────
-// Per-token USD rates; duplicated inline before this extraction.
-export const TOKEN_PRICE_USD = Object.freeze({
-  INPUT: 0.000003,
-  OUTPUT: 0.000015,
-});
+// ── Cluster analysis cost note ───────────────────────────────────────────────
+// A run is billed from its actual model cost (credits = cost x markup / $0.01),
+// so the buttons that start one name no fixed price. Same wording as the
+// re-run tooltips ("credits based on usage").
+export const ANALYSIS_COST_NOTE = "Uses AI credits based on usage";
 
 // ── Streaming-typewriter tunables (Analyze tab) ──────────────────────────────
 export const STREAM_CHARS_PER_TICK = 3;

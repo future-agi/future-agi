@@ -1,0 +1,43 @@
+# Rootly's classic Streamable HTTP endpoint supports API tokens as well as OAuth.
+schema: "connector-manifest/v1#provider"
+app: rootly
+id: api-key
+version: 1.1.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.rootly.com/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: Rootly API token
+      help: "Create a key under Account > Manage API keys > Generate New API Key. Personal keys inherit your permissions, Team keys are team-scoped, and Global keys provide organization-wide access. Select the narrowest access needed. Supply the token without the Bearer prefix."
+      helpUrl: https://docs.rootly.com/integrations/mcp-server
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://docs.rootly.com/integrations/mcp-server
+    fetchedAt: 2026-11-09
+  - fact: transport.variant
+    url: https://docs.rootly.com/integrations/mcp-server
+    fetchedAt: 2026-11-09
+  - fact: auth.kind
+    url: https://docs.rootly.com/integrations/mcp-server
+    fetchedAt: 2026-11-09
+  - fact: auth.credentialParts
+    url: https://docs.rootly.com/integrations/mcp-server
+    fetchedAt: 2026-11-09

@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: spider-cloud
+version: 1.0.0
+name: Spider Cloud
+description: "Crawl and scrape websites, search the web, and control browser sessions."
+vendor:
+  name: Spider Cloud
+  domains: [spider.cloud]
+eeCategory: research
+group: other
+categories: [research, web-scraping]
+tags: [search, scraping, crawling]
+docsUrl: https://spider.cloud/docs/integrations/mcp/
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://spider.cloud/docs/integrations/mcp/
+    fetchedAt: 2026-11-09

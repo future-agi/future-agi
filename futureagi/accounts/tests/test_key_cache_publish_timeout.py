@@ -16,6 +16,7 @@ from django.test import override_settings
 from django.urls import get_resolver
 
 from accounts.key_cache import publish_key_revocation
+from accounts.tests.personal_keys import session_client_for
 
 # The stand-in closes its connections this long after the first one arrives,
 # so a publisher without its own timeouts returns then rather than never.
@@ -23,6 +24,13 @@ SILENT_REDIS_HOLD_SECONDS = 8.0
 # Socket timeouts used by the tests, and the time a publish may take with them.
 TEST_SOCKET_TIMEOUT_SECONDS = 0.2
 PUBLISH_DEADLINE_SECONDS = 3.0
+
+
+@pytest.fixture
+def auth_client(user, workspace):
+    # Creating a personal key needs a proven interactive session, the line's
+    # rule, so this client signs in with an access session as test_keys.py does.
+    return session_client_for(user, user.organization, workspace)
 
 
 class SilentRedis:

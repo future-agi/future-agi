@@ -19,9 +19,12 @@ from model_hub.models.experiments import ExperimentsTable
 logger = structlog.get_logger(__name__)
 
 
-def mark_eval_cells_stopped(user_eval_metric, *, reason: str) -> int:
+def mark_eval_cells_stopped(user_eval_metric, *, reason: str, dataset_ids=None) -> int:
     """Flip RUNNING cells of an eval (and its paired EVALUATION_REASON cells)
     to ERROR with a human-readable `reason`.
+
+    With ``dataset_ids``, only cells in those datasets: an experiment's stop
+    must not touch another run's cells of the same eval.
 
     Covers:
     - Dataset evals: Column.source = EVALUATION, source_id = eval_id
@@ -38,31 +41,37 @@ def mark_eval_cells_stopped(user_eval_metric, *, reason: str) -> int:
     Returns the number of cells updated.
     """
     try:
-        if not user_eval_metric.dataset_id:
+        if dataset_ids is None and not user_eval_metric.dataset_id:
             return 0
         eval_id = str(user_eval_metric.id)
         value_infos = json.dumps({"reason": reason})
         display = reason[:500]
 
-        dataset_ids = {user_eval_metric.dataset_id}
-        if user_eval_metric.source_id:
-            # Group-applied experiment metrics retain the source dataset, while
-            # their result columns belong to the experiment's snapshot. Only
-            # include a snapshot when this metric is linked to that experiment.
-            experiments = ExperimentsTable.objects.filter(
-                user_eval_template_ids=user_eval_metric,
-                dataset_id=user_eval_metric.dataset_id,
-                dataset__organization_id=user_eval_metric.organization_id,
-                snapshot_dataset__organization_id=user_eval_metric.organization_id,
-                snapshot_dataset__deleted=False,
-                deleted=False,
-            ).values_list("id", "snapshot_dataset_id")
-            for experiment_id, snapshot_id in experiments:
-                if str(experiment_id) == str(user_eval_metric.source_id):
-                    dataset_ids.add(snapshot_id)
+        if dataset_ids is not None:
+            # The caller names its own datasets (an experiment's stop names its
+            # snapshot); each is still checked against the metric's org below.
+            stop_dataset_ids = set(dataset_ids)
+        else:
+            stop_dataset_ids = {user_eval_metric.dataset_id}
+            if user_eval_metric.source_id:
+                # Group-applied experiment metrics retain the source dataset,
+                # while their result columns belong to the experiment's
+                # snapshot. Only include a snapshot when this metric is linked
+                # to that experiment.
+                experiments = ExperimentsTable.objects.filter(
+                    user_eval_template_ids=user_eval_metric,
+                    dataset_id=user_eval_metric.dataset_id,
+                    dataset__organization_id=user_eval_metric.organization_id,
+                    snapshot_dataset__organization_id=user_eval_metric.organization_id,
+                    snapshot_dataset__deleted=False,
+                    deleted=False,
+                ).values_list("id", "snapshot_dataset_id")
+                for experiment_id, snapshot_id in experiments:
+                    if str(experiment_id) == str(user_eval_metric.source_id):
+                        stop_dataset_ids.add(snapshot_id)
 
         updated = 0
-        for dataset_id in dataset_ids:
+        for dataset_id in stop_dataset_ids:
             eval_column_ids = list(
                 Column.objects.filter(
                     Q(

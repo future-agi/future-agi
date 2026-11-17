@@ -11,7 +11,10 @@ import {
 } from "@mui/material";
 import Section from "src/components/section";
 import { LoadingScreen } from "src/components/loading-screen";
-import { useQueueAgreement } from "src/api/annotation-queues/annotation-queues";
+import {
+  useAnnotationQueueDetail,
+  useQueueAgreement,
+} from "src/api/annotation-queues/annotation-queues";
 
 function getAgreementColor(pct) {
   if (pct === null || pct === undefined) return "text.secondary";
@@ -27,6 +30,14 @@ function formatPct(val) {
 
 export default function QueueAgreementTab({ queueId }) {
   const { data: agreement, isLoading } = useQueueAgreement(queueId);
+  // Pairs carry user ids only; name them from the queue's annotators.
+  const { data: queue } = useAnnotationQueueDetail(queueId);
+  const annotatorName = (userId) => {
+    const member = queue?.annotators?.find(
+      (a) => String(a.user_id) === String(userId),
+    );
+    return member?.name || member?.email || userId;
+  };
 
   if (isLoading) {
     return <LoadingScreen variant="orbit" sx={{ minHeight: "50vh" }} />;
@@ -161,8 +172,8 @@ export default function QueueAgreementTab({ queueId }) {
               <TableBody>
                 {pairs.map((pair, i) => (
                   <TableRow key={i}>
-                    <TableCell>{pair.annotator_1_id}</TableCell>
-                    <TableCell>{pair.annotator_2_id}</TableCell>
+                    <TableCell>{annotatorName(pair.annotator_1_id)}</TableCell>
+                    <TableCell>{annotatorName(pair.annotator_2_id)}</TableCell>
                     <TableCell
                       sx={{ fontVariantNumeric: "tabular-nums" }}
                       align="right"

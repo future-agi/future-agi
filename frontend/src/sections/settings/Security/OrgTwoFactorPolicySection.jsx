@@ -131,6 +131,7 @@ const OrgTwoFactorPolicySection = ({ onStatusChange }) => {
     >
       <Typography
         variant="s1"
+        component="div"
         sx={{
           fontWeight: "fontWeightSemiBold",
           color: "text.primary",
@@ -140,6 +141,7 @@ const OrgTwoFactorPolicySection = ({ onStatusChange }) => {
       </Typography>
       <Typography
         variant="s2"
+        component="div"
         sx={{
           color: "text.secondary",
           fontWeight: "fontWeightRegular",
@@ -162,6 +164,7 @@ const OrgTwoFactorPolicySection = ({ onStatusChange }) => {
         <Box>
           <Typography
             variant="s1"
+            component="div"
             sx={{
               color: "text.primary",
               fontWeight: "fontWeightMedium",
@@ -171,10 +174,11 @@ const OrgTwoFactorPolicySection = ({ onStatusChange }) => {
           </Typography>
           <Typography
             variant="s2"
+            component="div"
             sx={{
               color: "text.secondary",
               fontWeight: "fontWeightRegular",
-              marginTop: theme.spacing(0.25),
+              marginTop: theme.spacing(0.5),
             }}
           >
             When enabled, all organization members must set up two-factor
@@ -197,6 +201,7 @@ const OrgTwoFactorPolicySection = ({ onStatusChange }) => {
           width={"max-content"}
           gap={1.5}
           sx={{
+            maxWidth: "100%",
             pl: 1.25,
             pr: 1.5,
             py: 1,

@@ -111,6 +111,8 @@ def _execute(config, typesafe=None):
 def test_a_jev_run_bills_once_with_the_metering_event(
     auth_client, user, workspace, jev_gateway, model
 ):
+    """A Jev run bills once, with the metering event whose charge is keyed to
+    its log alone."""
     from ee.jev.metering import usage_event_id
     from ee.usage.models.usage import APICallLog
     from ee.usage.services.config import BillingConfig
@@ -129,7 +131,7 @@ def test_a_jev_run_bills_once_with_the_metering_event(
     [event] = events
     assert event.event_type == "jev_evaluator"
     assert event.amount == billing.calculate_ai_credits(billing.get_eval_per_run_fee())
-    assert event.event_id == usage_event_id(str(log.log_id), 1)
+    assert event.event_id == usage_event_id(str(log.log_id))
     assert event.org_id == str(user.organization.id)
     assert event.properties["requested_model"] == "jev-latest"
     assert event.properties["mapping_revision"].startswith("jev-map-v1:")
@@ -376,13 +378,13 @@ def test_a_jev_composite_bills_only_its_children_jev_events(
     assert post.call_count == 2
     send.assert_called_once()
     # No up-front Turing Large charge for the composite: each child's Jev
-    # event, keyed to that child's own run.
+    # event, its charge keyed to that child's own run alone.
     assert [event.event_type for event in events] == ["jev_evaluator"] * 2
     config.refresh_from_db()
     children = config.eval_results["children"]
     assert [child["status"] for child in children] == ["completed"] * 2
     assert sorted(event.event_id for event in events) == sorted(
-        usage_event_id(child["log_id"], 1) for child in children
+        usage_event_id(child["log_id"]) for child in children
     )
 
 

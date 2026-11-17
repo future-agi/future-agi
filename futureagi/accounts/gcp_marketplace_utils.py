@@ -36,6 +36,8 @@ from accounts.models.organization import Organization
 from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.user import User
 from accounts.services.gcp_procurement import gcp_procurement
+from accounts.services.hard_erase_issuance_entry import issuance_entry
+from accounts.services.identity_issuance import issue_membership
 from accounts.utils import (
     generate_password,
     is_disposable_email_domain,
@@ -162,8 +164,7 @@ def verify_marketplace_token(token: str) -> tuple[str, str, str]:
         # aud is the likeliest misconfiguration and the library only says the
         # token is bad. Name what arrived, so one failure gives the answer.
         raise ValueError(
-            f"{exc} (token aud={_unverified_audience(token)!r}, "
-            f"accepted={accepted})"
+            f"{exc} (token aud={_unverified_audience(token)!r}, accepted={accepted})"
         ) from exc
 
     # verify_token checks signature, exp and aud. Issuer is not among them.
@@ -403,7 +404,9 @@ def _link_orphan_entitlements(gcp_account: GCPMarketplaceAccount) -> int:
     if live and gcp_account.organization_id:
         from accounts.gcp_marketplace_events import _apply_plan
 
-        newest = max(live, key=lambda row: (row.effective_at or row.created_at, row.created_at))
+        newest = max(
+            live, key=lambda row: (row.effective_at or row.created_at, row.created_at)
+        )
         _apply_plan(newest)
 
     if linked:
@@ -494,6 +497,8 @@ def process_signup(onboarding_token: str, email: str, full_name: str) -> User:
     Shared by the sign-up form and the Google OAuth callback, so the identity
     may come from either a submitted form or a verified Google profile.
     """
+    from accounts.services.default_workspace import provision_default_workspace
+
     session = read_onboarding_token(onboarding_token)
 
     # first_signup lowercases before anything else. Without it the duplicate
@@ -523,7 +528,7 @@ def process_signup(onboarding_token: str, email: str, full_name: str) -> User:
     if User.objects.filter(email=email).exists():
         raise ValueError("An account with this email already exists")
 
-    with transaction.atomic():
+    with issuance_entry(organizations=[gcp_account.organization_id], emails=[email]):
         generated_password = generate_password()
         user = User.objects.create_user(
             email=email,
@@ -535,7 +540,9 @@ def process_signup(onboarding_token: str, email: str, full_name: str) -> User:
         organization = gcp_account.organization
         # Without this row get_org_membership returns None and RBAC denies the
         # owner everything. The FK on User alone is not enough.
-        OrganizationMembership.objects.get_or_create(
+        org_membership, _ = issue_membership(
+            OrganizationMembership.objects,
+            "get_or_create",
             user=user,
             organization=organization,
             defaults={
@@ -543,6 +550,11 @@ def process_signup(onboarding_token: str, email: str, full_name: str) -> User:
                 "level": Level.OWNER,
                 "is_active": True,
             },
+        )
+        # The owner starts in the organization's default workspace. It commits
+        # with the account, so a sign-up that fails leaves neither behind.
+        provision_default_workspace(
+            organization, user, organization_membership=org_membership
         )
         organization.name = full_name or organization.name
         organization.display_name = full_name or organization.display_name

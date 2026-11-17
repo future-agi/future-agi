@@ -1,0 +1,44 @@
+schema: "connector-manifest/v1#provider"
+app: spider-cloud
+id: api-key
+version: 1.1.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.spider.cloud/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: API key
+      help: "Create an API key at spider.cloud/api-keys. Supply the key without the Bearer prefix. Calls consume credits and open browser sessions continue billing until closed. AI tools additionally require an AI Studio subscription."
+      helpUrl: https://spider.cloud/docs/integrations/mcp/
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_metered
+  source: https://spider.cloud/docs/integrations/mcp/
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://spider.cloud/docs/integrations/mcp/
+    fetchedAt: 2026-11-09
+  - fact: transport.variant
+    url: https://spider.cloud/docs/integrations/mcp/
+    fetchedAt: 2026-11-09
+  - fact: auth.kind
+    url: https://spider.cloud/docs/integrations/mcp/
+    fetchedAt: 2026-11-09
+  - fact: auth.credentialParts
+    url: https://spider.cloud/docs/integrations/mcp/
+    fetchedAt: 2026-11-09

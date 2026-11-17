@@ -44,6 +44,7 @@ const IncrementerButton = forwardRef(
     >
       <IconButton
         size="small"
+        aria-label="Decrease"
         onClick={onDecrease}
         disabled={disabledDecrease}
         sx={{ flex: 1 }}
@@ -71,6 +72,7 @@ const IncrementerButton = forwardRef(
 
       <IconButton
         size="small"
+        aria-label="Increase"
         onClick={onIncrease}
         disabled={disabledIncrease}
         sx={{ flex: 1 }}

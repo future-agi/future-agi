@@ -46,7 +46,7 @@ func TestStartCannotDispatchRemovedSnapshot(t *testing.T) {
 	if !s.CancelForPrincipal("job", "org:owner") {
 		t.Fatal("cancel failed")
 	}
-	if s.start("job", func() {}) {
+	if _, _, ok := s.start("job", func() {}); ok {
 		t.Fatal("removed job can still start")
 	}
 }
@@ -61,7 +61,7 @@ func TestCancelRacesWithStartAndCompletion(t *testing.T) {
 		wg.Add(2)
 		go func() {
 			defer wg.Done()
-			started = s.start("job", func() { called.Add(1); s.Count() })
+			_, _, started = s.start("job", func() { called.Add(1); s.Count() })
 			if started {
 				s.Update("job", func(job *Job) { job.Status = StatusCompleted })
 			}
@@ -86,15 +86,20 @@ func TestCancelRacesWithStartAndCompletion(t *testing.T) {
 func TestWorkerCancellationStopsProviderAndDoesNotResurrect(t *testing.T) {
 	s := NewStore()
 	entered, stopped := make(chan struct{}), make(chan struct{})
-	w := NewWorker(s, func(ctx context.Context, _ *models.ChatCompletionRequest, _ map[string]string) (*models.ChatCompletionResponse, map[string]string, error) {
+	// The job runs the executor it carries; the worker has no provider of
+	// its own.
+	exec := func(ctx context.Context) (*Execution, error) {
 		close(entered)
 		<-ctx.Done()
 		close(stopped)
-		return nil, nil, ctx.Err()
-	}, 1)
+		return nil, ctx.Err()
+	}
+	w := NewWorker(s, WorkerConfig{MaxWorkers: 1})
 	w.Start()
 	defer w.Stop()
-	w.Submit(&Job{ID: "job", Principal: "org:owner", Status: StatusQueued, Request: &models.ChatCompletionRequest{Model: "test"}})
+	if apiErr := w.Submit(&Job{ID: "job", Principal: "org:owner", Status: StatusQueued, Request: &models.ChatCompletionRequest{Model: "test"}, Exec: exec}); apiErr != nil {
+		t.Fatalf("submit refused: %v", apiErr)
+	}
 	select {
 	case <-entered:
 	case <-time.After(5 * time.Second):

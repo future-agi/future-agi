@@ -1,4 +1,5 @@
 import {
+  Alert,
   Box,
   Breadcrumbs,
   Button,
@@ -12,10 +13,11 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import { SegmentedTabs } from "src/components/tabs/tabs";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import { SegmentedTabs } from "src/components/tabs/tabs";
+import React, { useCallback, useEffect, useId, useRef, useState } from "react";
 import Iconify from "src/components/iconify";
+import { visuallyHidden } from "src/components/empty-state/useCopyCode";
 import axios, { endpoints } from "src/utils/axios";
 import { useNavigate, useParams } from "react-router";
 import { useSnackbar } from "notistack";
@@ -64,15 +66,42 @@ import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import { buildDataInjection } from "src/sections/common/EvalPicker/evalPickerConfigUtils";
 import { getSafeActionErrorMessage } from "src/utils/errorUtils";
+import {
+  EVAL_NAME_HINT,
+  createNameErrorOf,
+  evalNameFormatError,
+} from "./createNameError";
+import {
+  TYPED_EVAL_TYPES,
+  isTypedEvalType,
+} from "src/sections/common/EvalTypes/typedEvalTypes";
+import TypedEvalEditor from "../types/TypedEvalEditor";
+import { typedTabsOf } from "../types/typedViews";
+import { notOfferedLine } from "src/sections/common/Collab/notOffered";
+import {
+  compositeExtrasBody,
+  templateRowsOf,
+  validateComposite,
+} from "src/sections/common/EvalTypes/compositeModel";
 
 const ERROR_LOCALIZER_LOCKED_TOOLTIP =
   "Error Localization isn't enabled for this workspace.";
 
+// Code is always listed; where the deployment does not run code evaluations
+// it shows turned off, with the sentence the capabilities answer carries.
 const EVAL_TYPE_TABS = [
   { value: "agent", label: "Agents" },
   { value: "llm", label: "LLM-As-A-Judge" },
   { value: "code", label: "Code" },
+  // W7: a typed type's tab shows once its editor is real.
+  ...typedTabsOf(TYPED_EVAL_TYPES),
 ];
+
+// A typed type this deployment does not offer keeps its tab, turned off with
+// the shared line; its editor never mounts, so nothing is sent to its route.
+const TYPED_OFF_SURFACE = { remote: "evals.remote" };
+const evalTypeOff = (type) =>
+  TYPED_OFF_SURFACE[type] ? notOfferedLine(TYPED_OFF_SURFACE[type]) : null;
 
 const EVAL_TAGS = [
   {
@@ -214,6 +243,7 @@ const EvalCreatePage = () => {
   const canEditEvals =
     RolePermission.EVALS[PERMISSIONS.EDIT_CREATE_DELETE_EVALS][role];
   const { enqueueSnackbar } = useSnackbar();
+  const typeOffId = useId();
   // Fail closed while capabilities load (both flags true) so we never flash
   // Turing models or agent evals as available before the fetch resolves.
   const { locked: fagiLocked } = useFeatureLocked(CAPABILITY.TURING_MODELS);
@@ -222,6 +252,15 @@ const EvalCreatePage = () => {
   const jevLocked = useFeatureDenied(CAPABILITY.JEV_MODELS);
   const { locked: agentEvalLocked, isLoading: capabilitiesLoading } =
     useFeatureLocked(CAPABILITY.AGENTIC_EVAL);
+  // Code is off only on the server's confirmed answer that carries its
+  // sentence; while loading, on a failed read or on an older server it
+  // works as before (the server still refuses what it does not run).
+  const { reason: codeEvalsReason } = useFeatureLocked(
+    CAPABILITY.CUSTOM_CODE_EVALS,
+  );
+  const codeEvalsOff =
+    useFeatureDenied(CAPABILITY.CUSTOM_CODE_EVALS) && Boolean(codeEvalsReason);
+  const codeEvalsReasonId = useId();
   const errorLocalizerAvailable = useErrorLocalizationAvailable();
   // Confirmed denial (loaded AND not allowed). Seed defaults raw and only
   // strip them on confirmed denial — seeding off `locked` (which is true
@@ -239,6 +278,10 @@ const EvalCreatePage = () => {
   // --- Single eval state ---
   const [name, setName] = useState("");
   const [evalType, setEvalType] = useState("agent");
+  // The draft this page opened was a code evaluation: its Code tab stays
+  // within reach where Code is off, so a person can go back to their work.
+  const [openedAsCode, setOpenedAsCode] = useState(false);
+  const [nameError, setNameError] = useState(null);
   const [instructions, setInstructions] = useState("");
   const [code, setCode] = useState(PYTHON_CODE_TEMPLATE);
   const [codeLanguage, setCodeLanguage] = useState("python");
@@ -297,7 +340,10 @@ const EvalCreatePage = () => {
   // Union of every child template's `required_keys`. Drives the
   // TestPlayground in composite mode so the user sees one input per
   // variable across all children.
-  const compositeUnionKeys = useCompositeChildrenUnionKeys(selectedChildren);
+  // W7-5: a task-suite check child has no template (and no keys) to read.
+  const compositeUnionKeys = useCompositeChildrenUnionKeys(
+    templateRowsOf(selectedChildren),
+  );
   const [aggregationEnabled, setAggregationEnabled] = useState(true);
   const [aggregationFunction, setAggregationFunction] =
     useState("weighted_avg");
@@ -306,7 +352,11 @@ const EvalCreatePage = () => {
 
   const [testPassed, setTestPassed] = useState(false);
   const [testError, setTestError] = useState(null);
-  const [draftId, setDraftId] = useState(urlDraftId || null);
+  // A URL ID is not ready for writes until its config has loaded.
+  const [draftId, setDraftId] = useState(null);
+  const [draftError, setDraftError] = useState(null);
+  const [draftAttempt, setDraftAttempt] = useState(0);
+  const [isDraftPending, setIsDraftPending] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
   const draftCreating = useRef(false);
 
@@ -358,16 +408,19 @@ const EvalCreatePage = () => {
 
     // If URL has a draft ID, load its config
     if (urlDraftId && !draftLoaded.current) {
-      draftLoaded.current = true;
+      draftCreating.current = true;
+      setIsDraftPending(true);
       (async () => {
         try {
           const { data } = await axios.get(
             endpoints.develop.eval.getEvalDetail(urlDraftId),
           );
           const d = data?.result;
+          if (!d) throw new Error("Failed to load evaluation");
           if (d) {
             const config = d.config || {};
             setEvalType(d.eval_type || "agent");
+            setOpenedAsCode(d.eval_type === "code");
             setInstructions(d.instructions || "");
             setCode(config.code || d.code || PYTHON_CODE_TEMPLATE);
             setCodeLanguage(config.language || "python");
@@ -409,10 +462,16 @@ const EvalCreatePage = () => {
             if (config.few_shot_examples) {
               setFewShotExamples(config.few_shot_examples || []);
             }
+            draftLoaded.current = true;
+            setDraftId(urlDraftId);
+            setDraftError(null);
           }
         } catch {
-          // Draft not found — create a new one
-          setDraftId(null);
+          // Retry the read, not a replacement draft; never save blank defaults.
+          setDraftError("Failed to load evaluation");
+        } finally {
+          draftCreating.current = false;
+          setIsDraftPending(false);
         }
       })();
       return;
@@ -421,6 +480,7 @@ const EvalCreatePage = () => {
     // No URL draft — create a new one
     if (!draftId) {
       draftCreating.current = true;
+      setIsDraftPending(true);
       (async () => {
         try {
           const { data } = await axios.post(
@@ -434,21 +494,29 @@ const EvalCreatePage = () => {
             },
           );
           const id = data?.result?.id;
-          if (id) {
-            setDraftId(id);
-            navigate(`/dashboard/evaluations/create/${id}`, { replace: true });
-          }
+          if (!id) throw new Error("Draft not ready yet, please try again");
+          setDraftId(id);
+          setDraftError(null);
+          navigate(`/dashboard/evaluations/create/${id}`, { replace: true });
         } catch {
-          // ignore — user can retry
+          setDraftError("Draft not ready yet, please try again");
+        } finally {
+          draftCreating.current = false;
+          setIsDraftPending(false);
         }
       })();
     }
-  }, [capabilitiesLoading]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [capabilitiesLoading, draftAttempt]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-save config to draft (debounced, skip initial load)
   const autoSaveTimer = useRef(null);
   const autoSaveErrorRef = useRef(null);
   const autoSaveSkipFirst = useRef(!!urlDraftId); // skip first trigger when loading existing draft
+  // Where Code is off, a draft that opened as code keeps its saved type while
+  // the person only looks at another tab: autosave starts once something
+  // there changes. null: no hold; "": held, nothing seen yet; else the
+  // payload first seen on that tab.
+  const typeHeld = useRef(null);
   // The existing mapping/editor props retain their legacy names on the wire.
   const isJevModel = isDecisionModel(model);
   const decisionCatalog = useDecisionModels(isJevModel);
@@ -568,6 +636,14 @@ const EvalCreatePage = () => {
       autoSaveSkipFirst.current = false;
       return;
     }
+    if (typeHeld.current !== null) {
+      const payload = JSON.stringify(buildUpdatePayload());
+      if (typeHeld.current === "" || typeHeld.current === payload) {
+        typeHeld.current = payload;
+        return;
+      }
+      typeHeld.current = null;
+    }
     if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
     autoSaveTimer.current = setTimeout(() => {
       const payload = buildUpdatePayload();
@@ -600,8 +676,11 @@ const EvalCreatePage = () => {
   // --- Save handlers ---
   const handleSaveSingle = useCallback(async () => {
     if (agentEvalLocked && evalType === "agent") {
+      // Code is named only where code evaluations run.
       enqueueSnackbar(
-        "Agent evaluations aren't enabled for this workspace. Use LLM-as-a-Judge or Code evaluations instead.",
+        codeEvalsOff
+          ? "Agent evaluations aren't enabled for this workspace. Use LLM-as-a-Judge instead."
+          : "Agent evaluations aren't enabled for this workspace. Use LLM-as-a-Judge or Code evaluations instead.",
         { variant: "error" },
       );
       return;
@@ -638,8 +717,11 @@ const EvalCreatePage = () => {
       enqueueSnackbar("Evaluation saved successfully", { variant: "success" });
       navigate(`/dashboard/evaluations/${draftId}`);
     } catch (error) {
+      // L7c g7 (evalcreate:name): a refused name is said at the field.
+      const msg = createNameErrorOf(error);
+      setNameError(msg);
       enqueueSnackbar(
-        getSafeActionErrorMessage(error, "Failed to save evaluation"),
+        msg ?? getSafeActionErrorMessage(error, "Failed to save evaluation"),
         { variant: "error" },
       );
     }
@@ -653,6 +735,7 @@ const EvalCreatePage = () => {
     enqueueSnackbar,
     navigate,
     agentEvalLocked,
+    codeEvalsOff,
     fagiLocked,
     evalType,
     model,
@@ -685,6 +768,8 @@ const EvalCreatePage = () => {
         child_weights: Object.keys(weights).length > 0 ? weights : null,
         child_pinned_versions:
           Object.keys(pinnedVersions).length > 0 ? pinnedVersions : null,
+        // W7-5: jury seats, levels and checks.
+        ...compositeExtrasBody(selectedChildren, childWeights),
       };
       const result = await createComposite.mutateAsync(payload);
       enqueueSnackbar("Composite evaluation created successfully", {
@@ -712,6 +797,35 @@ const EvalCreatePage = () => {
     enqueueSnackbar,
     navigate,
   ]);
+
+  // W7: a typed eval saves through its own create route (its editor names
+  // the route and the definition; a 400 {errors} goes back to the editor).
+  const handleSaveTyped = useCallback(
+    async (route, body) => {
+      // FA-EVALS-02: the same naming rule as Save Evaluation; nothing is sent
+      // for a name the server refuses (the field already says what to change).
+      const formatError = evalNameFormatError(name);
+      if (formatError) throw new Error(formatError);
+      let data;
+      try {
+        ({ data } = await axios.post(route, {
+          ...body,
+          name: name.trim(),
+          description: description || "",
+        }));
+      } catch (error) {
+        // L7c g7 (evalcreate:name): a refused name is said at the field.
+        const msg = createNameErrorOf(error);
+        if (msg) setNameError(msg);
+        throw error;
+      }
+      const id = data?.result?.id;
+      enqueueSnackbar("Evaluation created", { variant: "success" });
+      if (id) navigate(`/dashboard/evaluations/${id}`);
+      return data?.result ?? null;
+    },
+    [name, description, enqueueSnackbar, navigate],
+  );
 
   // Test Evaluation: draft is always auto-saved, just run it
   const handleTestEvaluation = useCallback(async () => {
@@ -766,8 +880,10 @@ const EvalCreatePage = () => {
     enqueueSnackbar,
   ]);
 
+  // W7: a typed eval type has no model trace for the localizer either.
+  const localizerApplies = evalType !== "code" && !isTypedEvalType(evalType);
   const isLoading =
-    createEval.isLoading || createComposite.isLoading || updateDraft.isLoading;
+    createEval.isPending || createComposite.isPending || updateDraft.isPending;
 
   // Block mode switch when a test has run or is running. Save-in-flight is
   // excluded: the save button is already disabled while `isLoading`, so the
@@ -822,8 +938,11 @@ const EvalCreatePage = () => {
       ? jevErrors[0] ||
         (decisionLocked ? "Jev models aren't included in your plan." : "")
       : "";
+  // A name the server's naming rule refuses: said at the field, Save stays off.
+  const nameFormatError = evalNameFormatError(name);
   const canSaveSingle =
     !!name.trim() &&
+    !nameFormatError &&
     !jevBlockedReason &&
     (evalType === "code" ? !!code.trim() : singleHasInstructionVariables);
   const canSaveComposite = compositeName.trim() && selectedChildren.length > 0;
@@ -837,6 +956,108 @@ const EvalCreatePage = () => {
     return null;
   }
 
+  const header = (
+    <Box
+      sx={{
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "center",
+        mb: 2,
+        flexShrink: 0,
+      }}
+    >
+      <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
+        <Breadcrumbs>
+          <Link
+            underline="hover"
+            color="text.secondary"
+            sx={{ cursor: "pointer" }}
+            onClick={() =>
+              jevNotSavedReason
+                ? setConfirmLeave(true)
+                : navigate("/dashboard/evaluations")
+            }
+          >
+            Evals List
+          </Link>
+          <Typography color="text.primary" fontWeight={600}>
+            Create evaluation
+          </Typography>
+        </Breadcrumbs>
+        {draftId && (
+          <Typography
+            variant="caption"
+            sx={{
+              fontFamily: "monospace",
+              fontSize: "12px",
+              color: "text.disabled",
+              backgroundColor: "action.hover",
+              px: 0.75,
+              py: 0.25,
+              borderRadius: "4px",
+            }}
+          >
+            Draft
+          </Typography>
+        )}
+        {jevNotSavedReason && (
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            noWrap
+            title={jevNotSavedReason}
+            sx={{ maxWidth: 520 }}
+          >
+            Not saved yet: {jevNotSavedReason}
+          </Typography>
+        )}
+      </Box>
+    </Box>
+  );
+  const draftRecoveryAlert = draftError &&
+    mode === "single" &&
+    !isTypedEvalType(evalType) && (
+      <Alert
+        severity="error"
+        sx={{ mb: 2 }}
+        action={
+          <Button
+            color="inherit"
+            size="small"
+            disabled={isDraftPending}
+            onClick={() => setDraftAttempt((attempt) => attempt + 1)}
+          >
+            Retry
+          </Button>
+        }
+      >
+        {draftError}
+      </Alert>
+    );
+
+  // Do not mount editors against blank defaults for an unread URL draft.
+  // This covers the initial GET, failures, and pending retries, so hydration
+  // cannot overwrite local work. New-draft POSTs remain editable throughout.
+  if (urlDraftId && !draftId) {
+    return (
+      <Box>
+        {header}
+        {draftRecoveryAlert}
+        {(isDraftPending || !draftError) && (
+          <Box
+            role="status"
+            sx={{ display: "flex", alignItems: "center", gap: 1.5 }}
+          >
+            <CircularProgress size={20} aria-hidden="true" />
+            <Typography variant="body2" color="text.secondary">
+              Draft not ready yet, please wait
+            </Typography>
+          </Box>
+        )}
+      </Box>
+    );
+  }
+
   return (
     <Box
       sx={{
@@ -846,63 +1067,8 @@ const EvalCreatePage = () => {
         minHeight: 0,
       }}
     >
-      {/* Header — breadcrumb only */}
-      <Box
-        sx={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          mb: 2,
-          flexShrink: 0,
-        }}
-      >
-        <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
-          <Breadcrumbs>
-            <Link
-              underline="hover"
-              color="text.secondary"
-              sx={{ cursor: "pointer" }}
-              onClick={() =>
-                jevNotSavedReason
-                  ? setConfirmLeave(true)
-                  : navigate("/dashboard/evaluations")
-              }
-            >
-              Evals List
-            </Link>
-            <Typography color="text.primary" fontWeight={600}>
-              Create evaluation
-            </Typography>
-          </Breadcrumbs>
-          {draftId && (
-            <Typography
-              variant="caption"
-              sx={{
-                fontFamily: "monospace",
-                fontSize: "12px",
-                color: "text.disabled",
-                backgroundColor: "action.hover",
-                px: 0.75,
-                py: 0.25,
-                borderRadius: "4px",
-              }}
-            >
-              Draft
-            </Typography>
-          )}
-          {jevNotSavedReason && (
-            <Typography
-              variant="caption"
-              color="text.secondary"
-              noWrap
-              title={jevNotSavedReason}
-              sx={{ maxWidth: 520 }}
-            >
-              Not saved yet: {jevNotSavedReason}
-            </Typography>
-          )}
-        </Box>
-      </Box>
+      {header}
+      {draftRecoveryAlert}
 
       {/* Two-panel layout — resizable, fills remaining height */}
       <Box sx={{ flex: 1, minHeight: 0 }}>
@@ -934,7 +1100,15 @@ const EvalCreatePage = () => {
                 <Typography variant="subtitle1" fontWeight={600}>
                   Eval details
                 </Typography>
-                <SegmentedTabs value={mode} onChange={handleModeChange}>
+                <SegmentedTabs
+                  value={mode}
+                  onChange={handleModeChange}
+                  sx={{
+                    "& .MuiTab-root:not(.Mui-selected)": {
+                      color: "text.secondary",
+                    },
+                  }}
+                >
                   <Tab value="single" label="Single" />
                   <Tab value="composite" label="Composite" />
                 </SegmentedTabs>
@@ -959,18 +1133,19 @@ const EvalCreatePage = () => {
                       </Box>
                     </Typography>
                     <TextField
+                      id="eval-create-name"
                       fullWidth
                       size="small"
-                      placeholder="Eg: Hallucination detector"
+                      placeholder="e.g. hallucination_detector"
                       value={name}
-                      onChange={(e) =>
-                        setName(
-                          e.target.value
-                            .toLowerCase()
-                            .replace(/[^a-z0-9_-]/g, ""),
-                        )
+                      onChange={(e) => {
+                        setName(e.target.value);
+                        setNameError(null);
+                      }}
+                      error={Boolean(nameError || nameFormatError)}
+                      helperText={
+                        nameError || nameFormatError || EVAL_NAME_HINT
                       }
-                      helperText="Enter unique evaluation name"
                     />
                   </Box>
 
@@ -985,19 +1160,116 @@ const EvalCreatePage = () => {
                         );
                         return;
                       }
+                      if (evalTypeOff(val)) {
+                        enqueueSnackbar(evalTypeOff(val), { variant: "info" });
+                        return;
+                      }
+                      // A new code evaluation cannot be started where Code
+                      // is off; a code draft goes back to its own tab.
+                      if (codeEvalsOff && val === "code" && !openedAsCode) {
+                        enqueueSnackbar(codeEvalsReason, { variant: "info" });
+                        return;
+                      }
+                      // Leaving its Code tab holds the draft's type, and
+                      // so does a further look while nothing has changed.
+                      typeHeld.current =
+                        codeEvalsOff &&
+                        openedAsCode &&
+                        val !== "code" &&
+                        (evalType === "code" || typeHeld.current !== null)
+                          ? ""
+                          : null;
                       setEvalType(val);
                       if (val === "code") setModel("");
                     }}
-                    sx={{ width: "fit-content" }}
+                    variant="scrollable"
+                    scrollButtons="auto"
+                    sx={{
+                      width: "fit-content",
+                      "& .MuiTab-root:not(.Mui-selected)": {
+                        color: "text.secondary",
+                      },
+                    }}
                   >
                     {EVAL_TYPE_TABS.map((tab) => {
                       const locked = agentEvalLocked && tab.value === "agent";
+                      const codeOff = codeEvalsOff && tab.value === "code";
+                      const off = evalTypeOff(tab.value);
+                      if (off)
+                        return (
+                          <Tab
+                            key={tab.value}
+                            value={tab.value}
+                            aria-disabled="true"
+                            aria-label={tab.label}
+                            aria-describedby={`${typeOffId}-${tab.value}`}
+                            label={
+                              <CustomTooltip
+                                show
+                                arrow
+                                // A node, not a string: MUI then adds no
+                                // name of its own to the label.
+                                title={<>{off}</>}
+                                describeChild
+                              >
+                                <Box
+                                  sx={{
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: 0.5,
+                                  }}
+                                >
+                                  {tab.label}
+                                  <Iconify
+                                    icon="solar:lock-linear"
+                                    width={14}
+                                  />
+                                  <Box
+                                    component="span"
+                                    id={`${typeOffId}-${tab.value}`}
+                                    sx={visuallyHidden}
+                                  >
+                                    {off}
+                                  </Box>
+                                </Box>
+                              </CustomTooltip>
+                            }
+                          />
+                        );
                       return (
                         <Tab
                           key={tab.value}
                           value={tab.value}
+                          // Turned off but still focusable, so its reason
+                          // is read by keyboard and screen reader.
+                          {...(codeOff && {
+                            "aria-disabled": true,
+                            "aria-describedby": codeEvalsReasonId,
+                          })}
                           label={
-                            locked ? (
+                            codeOff ? (
+                              <CustomTooltip
+                                show
+                                type=""
+                                arrow
+                                describeChild
+                                title={codeEvalsReason}
+                              >
+                                <Box
+                                  sx={{
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: 0.5,
+                                  }}
+                                >
+                                  {tab.label}
+                                  <Iconify
+                                    icon="solar:lock-linear"
+                                    width={14}
+                                  />
+                                </Box>
+                              </CustomTooltip>
+                            ) : locked ? (
                               <CustomTooltip
                                 show
                                 type=""
@@ -1026,6 +1298,15 @@ const EvalCreatePage = () => {
                       );
                     })}
                   </SegmentedTabs>
+                  {codeEvalsOff && (
+                    <Box
+                      component="span"
+                      id={codeEvalsReasonId}
+                      sx={visuallyHidden}
+                    >
+                      {codeEvalsReason}
+                    </Box>
+                  )}
 
                   {/* ═══ Tab-specific content ═══ */}
 
@@ -1108,8 +1389,19 @@ const EvalCreatePage = () => {
                     />
                   )}
 
+                  {/* W7: a typed eval type's own editor (its definition,
+                      output type, Test and Save). */}
+                  {isTypedEvalType(evalType) && !evalTypeOff(evalType) && (
+                    <TypedEvalEditor
+                      evalType={evalType}
+                      name={name}
+                      onSave={handleSaveTyped}
+                      saving={isLoading}
+                    />
+                  )}
+
                   {/* Output Type — Code evals only have scoring (0-1) with pass threshold */}
-                  {evalType === "code" ? (
+                  {isTypedEvalType(evalType) ? null : evalType === "code" ? (
                     <Box>
                       <Typography
                         variant="body2"
@@ -1191,7 +1483,7 @@ const EvalCreatePage = () => {
 
                   {/* LLM/Agent only — code evals don't produce model traces for
                       the localizer to introspect. */}
-                  {errorLocalizerAvailable && evalType !== "code" && (
+                  {errorLocalizerAvailable && localizerApplies && (
                     <Box>
                       <CustomTooltip
                         show={agentEvalLocked}
@@ -1322,13 +1614,30 @@ const EvalCreatePage = () => {
                 flexDirection: "column",
               }}
             >
+              {/* W7: a typed eval type tests in its own editor; its graph
+                  and Test on a row show here instead of the playground. */}
+              {isTypedEvalType(evalType) && !isComposite ? (
+                <Box
+                  id="typed-eval-aside"
+                  sx={{ flex: 1, overflow: "auto", minHeight: 0 }}
+                />
+              ) : null}
               {/* Composite mode reuses the same TestPlayground as single
                   evals — the playground's own tabs let users test against
                   a dataset / tracing / simulation source. The required
                   keys are the deduplicated union of all child variables,
                   which is what the composite itself will need mapped at
                   bind time. */}
-              <Box sx={{ flex: 1, overflow: "auto", minHeight: 0 }}>
+              <Box
+                sx={{
+                  flex: 1,
+                  overflow: "auto",
+                  minHeight: 0,
+                  ...(isTypedEvalType(evalType) && !isComposite
+                    ? { display: "none" }
+                    : {}),
+                }}
+              >
                 <TestPlayground
                   key={mode}
                   ref={testPlaygroundRef}
@@ -1365,6 +1674,11 @@ const EvalCreatePage = () => {
                               ? childWeights
                               : null,
                           pass_threshold: passThreshold ?? 0.5,
+                          // W7-5: jury seats, levels and checks.
+                          ...compositeExtrasBody(
+                            selectedChildren,
+                            childWeights,
+                          ),
                         }
                       : null
                   }
@@ -1392,6 +1706,10 @@ const EvalCreatePage = () => {
                   borderColor: "divider",
                   flexShrink: 0,
                   pb: 0.5,
+                  // W7: a typed eval type has its own Test and Save.
+                  ...(isTypedEvalType(evalType) && !isComposite
+                    ? { display: "none" }
+                    : {}),
                 }}
               >
                 {/* Test status indicator */}
@@ -1535,7 +1853,18 @@ const EvalCreatePage = () => {
                   );
                 })()}
                 {(() => {
-                  const saveDisabled = isLoading || !canSave;
+                  const compositeErrors =
+                    mode === "composite"
+                      ? validateComposite({
+                          aggregation: aggregationEnabled
+                            ? aggregationFunction
+                            : null,
+                          children: selectedChildren,
+                          weights: childWeights,
+                        })
+                      : [];
+                  const saveDisabled =
+                    isLoading || !canSave || compositeErrors.length > 0;
                   let saveDisabledReason = "";
                   if (!canEditEvals) {
                     saveDisabledReason =
@@ -1549,12 +1878,17 @@ const EvalCreatePage = () => {
                     } else if (selectedChildren.length === 0) {
                       saveDisabledReason =
                         "Add at least one child evaluation before saving.";
+                    } else if (compositeErrors.length) {
+                      // W7-5: seats need a judge; vote rules need weights.
+                      saveDisabledReason = compositeErrors.join(" · ");
                     }
                   } else if (jevBlockedReason) {
                     saveDisabledReason = jevBlockedReason;
                   } else if (!name.trim()) {
                     saveDisabledReason =
                       "Give this evaluation a name before saving.";
+                  } else if (nameFormatError) {
+                    saveDisabledReason = nameFormatError;
                   } else if (evalType === "code" && !code.trim()) {
                     saveDisabledReason = "Write some code before saving.";
                   } else if (

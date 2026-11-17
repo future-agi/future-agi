@@ -1,11 +1,14 @@
 import React, {
   useCallback,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
 } from "react";
 import {
+  Alert,
+  AlertTitle,
   Box,
   Button,
   Chip,
@@ -17,14 +20,18 @@ import {
   Typography,
 } from "@mui/material";
 import PropTypes from "prop-types";
+import { format, isToday, isValid } from "date-fns";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import Iconify from "src/components/iconify";
+import { RouterLink } from "src/routes/components";
+import { paths } from "src/routes/paths";
 import { useErrorFeedStore } from "../store";
 import { useFollowUpRunner } from "../useAnalyzeRunner";
 import { useSharedIssue } from "../sharedIssueContext";
 import { useStreamingText } from "../useStreamingText";
 import {
+  ANALYSIS_COST_NOTE,
   CONF_META,
   MESSAGE_TYPE,
   RUN_STATE,
@@ -888,6 +895,59 @@ SynthesisCard.propTypes = {
   synthesis: PropTypes.object.isRequired,
 };
 
+// A run that failed (couldn't start, connection dropped, empty run, server or
+// usage-limit error) is carried as a SYNTHESIS message with category "error"
+// so it lands in the thread. It is not a result: render it as an error with
+// the reason and a way forward, never as a "Synthesis · Low confidence" card.
+function AnalysisFailedCard({ failure, showActions, disabled, onRerun }) {
+  const budgetPaused = failure.errorCode === "BUDGET_PAUSED";
+  return (
+    <Alert
+      severity="error"
+      action={
+        showActions ? (
+          <Stack direction="row" alignItems="center" gap={1}>
+            {budgetPaused && (
+              <Button
+                size="small"
+                variant="outlined"
+                color="error"
+                component={RouterLink}
+                href={paths.dashboard.settings.billing}
+                sx={{ whiteSpace: "nowrap" }}
+              >
+                Manage budget
+              </Button>
+            )}
+            <Button
+              size="small"
+              color="error"
+              disabled={disabled}
+              onClick={onRerun}
+              startIcon={<Iconify icon="solar:refresh-linear" width={12} />}
+              sx={{ whiteSpace: "nowrap" }}
+            >
+              Re-run
+            </Button>
+          </Stack>
+        ) : null
+      }
+      sx={{ "& .MuiAlert-action": { pt: 0, alignItems: "center" } }}
+    >
+      <AlertTitle>Analysis didn&apos;t finish</AlertTitle>
+      <Typography variant="body2" color="text.secondary">
+        {failure.headline || "The analysis run failed."}
+      </Typography>
+    </Alert>
+  );
+}
+AnalysisFailedCard.propTypes = {
+  failure: PropTypes.object.isRequired,
+  showActions: PropTypes.bool,
+  disabled: PropTypes.bool,
+  onRerun: PropTypes.func,
+};
+
 function RunHeader({ label, timestamp }) {
   return (
     <Stack direction="row" alignItems="center" gap={1.25} sx={{ py: 0.5 }}>
@@ -1389,6 +1449,10 @@ export default function AnalyzeTab({ error }) {
     }
     return null;
   }, [messages]);
+  // The most recent run outcome (result or failure).
+  const latestOutcomeId = [...messages]
+    .reverse()
+    .find((m) => m.type === MESSAGE_TYPE.SYNTHESIS)?.id;
   const composeSuggestions = hasFollowedUp
     ? []
     : latestSuggestionsMsg?.items ?? STARTER_SUGGESTIONS;
@@ -1433,11 +1497,14 @@ export default function AnalyzeTab({ error }) {
   // Both empty-state CTA and Re-run dispatch via the pending flag so the
   // shared runner (and therefore the headline card) sees the same trigger.
   const onTriggerRun = () => setAnalyzePendingStart(clusterId, true);
+  const costNoteId = useId();
 
-  // Format the run-started timestamp once.
+  // Format the run-started timestamp once. A run from another day (a saved
+  // analysis) also names the day, so it never reads as today's.
   const startedLabel = useMemo(() => {
     if (!thread?.startedAt) return null;
     const d = new Date(thread.startedAt);
+    if (isValid(d) && !isToday(d)) return format(d, "MMM d, HH:mm");
     return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   }, [thread?.startedAt]);
 
@@ -1493,7 +1560,10 @@ export default function AnalyzeTab({ error }) {
         )}
         <Box sx={{ flex: 1 }} />
         {!readOnly && (
-          <Tooltip title="Re-run with current cluster state (1 credit)" arrow>
+          <Tooltip
+            title="Re-run with current cluster state (credits based on usage)"
+            arrow
+          >
             <span>
               <Button
                 size="small"
@@ -1583,10 +1653,18 @@ export default function AnalyzeTab({ error }) {
                       />
                     }
                     onClick={onTriggerRun}
+                    aria-describedby={costNoteId}
                     sx={{ mt: 0.5 }}
                   >
                     Analyze this cluster
                   </Button>
+                  <Typography
+                    id={costNoteId}
+                    fontSize="12px"
+                    color="text.secondary"
+                  >
+                    {ANALYSIS_COST_NOTE}
+                  </Typography>
                 </>
               )}
             </Stack>
@@ -1630,6 +1708,17 @@ export default function AnalyzeTab({ error }) {
                   // Collapsed-by-default thinking, rendered as markdown.
                   return <ReasoningBlock text={m.text} />;
                 if (m.type === MESSAGE_TYPE.STEP) return <StepCard step={m} />;
+                if (m.type === MESSAGE_TYPE.SYNTHESIS && m.category === "error")
+                  // Only the latest outcome offers actions; earlier failed
+                  // runs stay in the history as plain errors.
+                  return (
+                    <AnalysisFailedCard
+                      failure={m}
+                      showActions={!readOnly && m.id === latestOutcomeId}
+                      disabled={isStreaming}
+                      onRerun={onTriggerRun}
+                    />
+                  );
                 if (m.type === MESSAGE_TYPE.SYNTHESIS)
                   return <SynthesisCard synthesis={m} />;
                 if (m.type === MESSAGE_TYPE.RUN_HEADER)

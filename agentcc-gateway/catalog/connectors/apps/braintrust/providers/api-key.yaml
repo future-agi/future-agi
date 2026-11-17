@@ -1,0 +1,44 @@
+# Braintrust's US hosted MCP supports API-key bearer auth for programmatic clients.
+schema: "connector-manifest/v1#provider"
+app: braintrust
+id: api-key
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://api.braintrust.dev/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: Braintrust API key
+      help: "Create a Braintrust API key in Settings > API keys. Use the US data plane for this endpoint; EU and self-hosted deployments have different URLs. Calls use the key owner's permissions. Supply the key without the Bearer prefix."
+      helpUrl: https://docs.braintrust.dev/integrations/developer-tools/mcp
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://docs.braintrust.dev/integrations/developer-tools/mcp
+    fetchedAt: 2026-11-09
+  - fact: transport.variant
+    url: https://docs.braintrust.dev/integrations/developer-tools/mcp
+    fetchedAt: 2026-11-09
+  - fact: auth.kind
+    url: https://docs.braintrust.dev/integrations/developer-tools/mcp
+    fetchedAt: 2026-11-09
+  - fact: auth.credentialParts
+    url: https://docs.braintrust.dev/integrations/developer-tools/mcp
+    fetchedAt: 2026-11-09
+x-omega: { oss: exclude }

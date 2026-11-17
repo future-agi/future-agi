@@ -1,0 +1,46 @@
+# Jam personal access tokens support headless MCP without a browser login.
+# Tokens need MCP permissions; CLI-only tokens do not authorize MCP calls.
+schema: "connector-manifest/v1#provider"
+app: jam-dev
+id: api-key
+version: 1.1.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.jam.dev/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: Personal access token
+      help: "Create a token in Jam Settings > MCP > Personal Access Tokens with MCP Read-only or Read and write permissions. It works in one workspace and cannot exceed your role. CLI-only tokens do not work. Supply the token without the Bearer prefix."
+      helpUrl: https://jam.dev/docs/personal-access-tokens.md
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: free
+  source: https://jam.dev/pricing
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://jam.dev/docs/personal-access-tokens.md
+    fetchedAt: 2026-11-09
+  - fact: transport.variant
+    url: https://jam.dev/docs/debug-a-jam/mcp
+    fetchedAt: 2026-11-09
+  - fact: auth.kind
+    url: https://jam.dev/docs/personal-access-tokens.md
+    fetchedAt: 2026-11-09
+  - fact: auth.credentialParts
+    url: https://jam.dev/docs/personal-access-tokens.md
+    fetchedAt: 2026-11-09

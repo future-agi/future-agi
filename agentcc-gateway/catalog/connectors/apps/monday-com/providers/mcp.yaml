@@ -1,0 +1,41 @@
+# monday.com's hosted Platform MCP server with MCP OAuth: the client finds
+# the authorization server from the server's own metadata at connect time.
+# A client registers dynamically, and the customer's monday.com admin then
+# approves the connection and its redirect URIs (dynamic connectors), or the
+# org brings its own monday.com OAuth app. EE takes only a declared oauth2
+# spec, so it gets none. OSS is left out until omega mcp login can register
+# a client itself (DCR): the other path is the org's own monday.com OAuth
+# app and the client credentials it issues, and OSS's sign-in takes a
+# client id only.
+schema: "connector-manifest/v1#provider"
+app: monday-com
+id: mcp
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.monday.com/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent, user]
+auth:
+  kind: mcp_oauth
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://developer.monday.com/api-reference/docs/integrate-with-monday-mcp
+    fetchedAt: 2026-10-21
+  - fact: transport.variant
+    url: https://developer.monday.com/api-reference/docs/integrate-with-monday-mcp
+    fetchedAt: 2026-10-21
+  - fact: auth.kind
+    url: https://developer.monday.com/api-reference/docs/integrate-with-monday-mcp
+    fetchedAt: 2026-10-21
+x-omega: { oss: exclude }

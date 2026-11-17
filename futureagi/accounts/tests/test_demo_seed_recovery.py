@@ -23,7 +23,6 @@ def signup(monkeypatch):
     with (
         patch("accounts.utils.is_cloud_env", return_value=False),
         patch("accounts.utils._fire_deployment_telemetry_registration"),
-        patch("accounts.utils._record_signup_api_key_event"),
         patch(
             "tfc.temporal.drop_in.start_activity",
             side_effect=TimeoutError("dispatch timed out"),
@@ -266,11 +265,14 @@ def test_recovery_continues_after_one_dispatch_fails(signup):
 def test_legacy_reseed_works_before_publication_table_exists(signup):
     from importlib import import_module
 
-    from django.db import connection
+    from django.db import connections
     from django.db.migrations.executor import MigrationExecutor
 
     from accounts.user_onboard import create_demo_traces_and_spans
 
+    # Match manage.py migrate: the executor scopes the real wrapper, not Django's
+    # convenience ConnectionProxy (which cannot match cursor connection identity).
+    connection = connections["default"]
     user = signup(seed_demo_data=False)
     old = ("accounts", "0028_merge_authtoken_scope_and_simulation_agent_key")
     new = ("accounts", "0030_queue_existing_demo_trace_publications")

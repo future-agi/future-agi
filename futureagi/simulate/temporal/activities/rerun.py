@@ -8,6 +8,7 @@ IMPORTANT: Each activity calls close_old_connections() at the start to prevent
 connection pool exhaustion when using PgBouncer.
 """
 
+from asgiref.sync import sync_to_async
 from django.db import close_old_connections
 from temporalio import activity
 
@@ -253,6 +254,7 @@ async def cancel_rerun_calls(input: CancelRerunCallsInput) -> None:
         from simulate.models.run_test import CreateCallExecution
         from simulate.models.test_execution import CallExecution, TestExecution
         from simulate.temporal.constants import RERUN_CALL_EXECUTION_WORKFLOW_ID_PREFIX
+        from simulate.utils.ended_reason import EndedReasonSource, end_calls_with_reason
 
         # Find calls that are not in a final state
         # Include ANALYZING: calls that finished voice but are still running evals
@@ -263,13 +265,16 @@ async def cancel_rerun_calls(input: CancelRerunCallsInput) -> None:
             CallExecution.CallStatus.ANALYZING,
         ]
 
-        # Update CallExecution statuses to CANCELLED
-        cancelled_count = await CallExecution.objects.filter(
-            id__in=input.call_execution_ids,
-            status__in=non_final_statuses,
-        ).aupdate(
+        # Update CallExecution statuses to CANCELLED. input.reason is one of
+        # the coordinator's fixed sentences (CancelRerunCallsInput).
+        cancelled_count = await sync_to_async(end_calls_with_reason)(
+            CallExecution.objects.filter(
+                id__in=input.call_execution_ids,
+                status__in=non_final_statuses,
+            ),
+            input.reason,
+            EndedReasonSource.FIXED,
             status=CallExecution.CallStatus.CANCELLED,
-            ended_reason=input.reason,
         )
 
         # Update corresponding CreateCallExecution records (only non-final)

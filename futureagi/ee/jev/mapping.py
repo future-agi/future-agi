@@ -33,6 +33,13 @@ def validate_jev_mapping(template_like, *, output, choice_scores, multi_choice, 
         _reject("JEV_EVAL_TYPE_UNSUPPORTED", "eval_type_id")
     if multi_choice or config.get("multi_choice"):
         _reject("JEV_MULTI_CHOICE_UNSUPPORTED", "multi_choice")
+    if config.get("ground_truth_blocks"):
+        _reject(
+            "JEV_FEW_SHOT_UNSUPPORTED",
+            "ground_truth_blocks",
+            "Ground truth is not supported with Jev models. Disable ground truth "
+            "or choose another evaluator model.",
+        )
     if config.get("few_shot_examples") or config.get("ground_truth_few_shot"):
         _reject("JEV_FEW_SHOT_UNSUPPORTED", "few_shot_examples")
     # agent_mode only drives AgentEvaluator. An LLM-judge template keeps the

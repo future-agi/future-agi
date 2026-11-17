@@ -1,0 +1,20 @@
+schema: "connector-manifest/v1#app"
+id: hubspot
+version: 1.0.0
+name: HubSpot
+description: "CRM records, activities, marketing content and analytics."
+vendor:
+  name: HubSpot
+  domains: [hubspot.com]
+eeCategory: data
+group: other
+categories: [data, crm]
+tags: [sales, crm, marketing]
+docsUrl: https://developers.hubspot.com/docs/apps/developer-platform/build-apps/integrate-with-the-remote-hubspot-mcp-server
+archetype: crm
+defaultProvider: mcp
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://developers.hubspot.com/docs/apps/developer-platform/build-apps/integrate-with-the-remote-hubspot-mcp-server
+    fetchedAt: 2026-10-21

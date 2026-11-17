@@ -1,0 +1,52 @@
+schema: "connector-manifest/v1#provider"
+# Microsoft's local MCP server uses a credential chain, including existing Azure CLI sign-in.
+# It acts with that identity's full permissions on the account; use a least-privilege
+# identity for the agent. For organizational developer use; not read-only by default.
+app: microsoft-azure
+id: local
+version: 1.0.0
+kind: vendor_local
+publisher: vendor
+vendorStatus:
+  label: ga
+  source: https://raw.githubusercontent.com/microsoft/mcp/main/servers/Azure.Mcp.Server/README.md
+transport:
+  kind: stdio
+  command: npx
+  args: ["-y", "@azure/mcp@latest", "server", "start"]
+  env:
+    AZURE_TOKEN_CREDENTIALS: Optional credential selector (e.g. AzureCliCredential). The server acts with the selected identity's full permissions on the account; use a least-privilege identity for the agent.
+    AZURE_SUBSCRIPTION_ID: Optional subscription fallback when none is supplied explicitly; the vendor also documents the Azure CLI profile default, without specifying precedence.
+hosted: false
+trusted: false
+accountModes: [agent]
+auth: { kind: local_setup }
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: kind
+    url: https://raw.githubusercontent.com/microsoft/mcp/main/docs/Authentication.md
+    fetchedAt: 2026-11-16
+  - fact: publisher
+    url: https://raw.githubusercontent.com/microsoft/mcp/main/LICENSE
+    fetchedAt: 2026-11-16
+  - fact: transport.kind
+    url: https://raw.githubusercontent.com/microsoft/mcp/main/docs/Authentication.md
+    fetchedAt: 2026-11-16
+  - fact: transport.command
+    url: https://learn.microsoft.com/en-us/azure/developer/azure-mcp-server/concepts?accept=text/markdown
+    fetchedAt: 2026-11-16
+  - fact: transport.args
+    url: https://learn.microsoft.com/en-us/azure/developer/azure-mcp-server/concepts?accept=text/markdown
+    fetchedAt: 2026-11-16
+  - fact: transport.env
+    url: https://raw.githubusercontent.com/microsoft/mcp/main/docs/Authentication.md
+    fetchedAt: 2026-11-16
+  - fact: transport.env
+    url: https://raw.githubusercontent.com/microsoft/mcp/main/servers/Azure.Mcp.Server/docs/azmcp-commands.md
+    fetchedAt: 2026-11-16
+  - fact: auth.kind
+    url: https://raw.githubusercontent.com/microsoft/mcp/main/docs/Authentication.md
+    fetchedAt: 2026-11-16

@@ -1,5 +1,6 @@
 from rest_framework import serializers
 
+from common.utils.page_limits import PageSizeIntegerField
 from simulate.models import CallExecution
 from tracer.serializers.filters import StrictInputSerializer
 
@@ -11,7 +12,7 @@ class CallExecutionFilterSerializer(StrictInputSerializer):
     status = serializers.CharField(required=False, allow_blank=True, default="")
     test_execution_id = serializers.UUIDField(required=False, allow_null=True)
     page = serializers.IntegerField(required=False, default=1, min_value=1)
-    limit = serializers.IntegerField(required=False, min_value=1)
+    limit = PageSizeIntegerField(required=False, min_value=1)
 
 
 class CallExecutionStatusUpdateSerializer(StrictInputSerializer):

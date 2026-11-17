@@ -1,17 +1,19 @@
 import structlog
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 
+from sockets.member_sockets import MemberSocketMixin
 from sockets.org_scope import resolve_socket_organization
 from sockets.saml_guard import SamlSocketGuard
 
 logger = structlog.get_logger(__name__)
 
 
-class DataConsumer(AsyncJsonWebsocketConsumer):
+class DataConsumer(MemberSocketMixin, AsyncJsonWebsocketConsumer):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.current_subscription = None
         self.user = None
+        self._organization_id = None
         self._guard = SamlSocketGuard(self)
 
     async def connect(self):
@@ -34,6 +36,7 @@ class DataConsumer(AsyncJsonWebsocketConsumer):
                 return
 
             await self.channel_layer.group_add(self.room_group_name, self.channel_name)
+            await self.join_member_group(self._organization_id)
             await self.accept()
 
         except Exception as e:
@@ -175,6 +178,7 @@ class DataConsumer(AsyncJsonWebsocketConsumer):
             await self.channel_layer.group_discard(
                 self.room_group_name, self.channel_name
             )
+        await self.leave_member_group()
 
         # Cleanup current subscription
         if self.current_subscription:
@@ -209,4 +213,5 @@ class DataConsumer(AsyncJsonWebsocketConsumer):
         org_id = await resolve_socket_organization(self.scope, self.user)
         if org_id is None:
             return None
+        self._organization_id = org_id
         return f"org_{org_id}"

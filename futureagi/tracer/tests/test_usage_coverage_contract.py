@@ -236,7 +236,10 @@ def test_shared_graph_exact_query_is_not_monetary_completeness():
     }
     serializer = ObserveGraphDataResultSerializer(data=payload)
     assert serializer.is_valid(), serializer.errors
-    assert serializer.data == payload
+    # A point with no error counts reads back with error_rate null, as every
+    # graph point does; the partial cost coverage is unchanged.
+    expected = {**payload, "data": [{**payload["data"][0], "error_rate": None}]}
+    assert serializer.data == expected
     assert serializer.data["data"][0]["cost_coverage"]["known_subtotal"] == 1.25
 
 

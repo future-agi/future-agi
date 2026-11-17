@@ -1,0 +1,9 @@
+{
+  "default-runtime": "runsc",
+  "runtimes": {
+    "runsc": { "path": "/usr/local/bin/runsc" }
+  },
+  "storage-driver": "overlay2",
+  "log-driver": "json-file",
+  "log-opts": { "max-size": "10m", "max-file": "2" }
+}

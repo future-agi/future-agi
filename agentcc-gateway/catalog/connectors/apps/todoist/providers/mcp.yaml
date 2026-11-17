@@ -1,0 +1,95 @@
+# Todoist's hosted MCP server with OAuth from Todoist's authorization server
+# (issuer https://todoist.com), which takes a client ID metadata document or
+# registers clients dynamically, and lists "none" among its token endpoint
+# auth methods. The endpoints below are the ones its metadata names,
+# recorded, not pinned: each sign-in discovers them again, and goes on only
+# where the server's protected-resource metadata names this server as its
+# resource and the issuer as its authorization server, the issuer's metadata
+# names itself, PKCE S256 is supported and every endpoint is https. No
+# metadata fetch follows a redirect, and the callback checks the iss the
+# issuer returns. Todoist's API reference names app.todoist.com for
+# authorize and api.todoist.com for the token and revocation. A connection
+# acts as the Todoist user who signs in. The record lists data:read_write,
+# which reads and changes tasks, projects, labels and filters; the sign-in
+# asks for it while the metadata still lists it. Access tokens last an hour
+# and the refresh token rotates on every refresh. EE reads a pre-registered
+# client from its environment and cannot register one, so it gets none.
+schema: "connector-manifest/v1#provider"
+app: todoist
+id: mcp
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://ai.todoist.net/mcp
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent, user]
+auth:
+  kind: oauth2
+  oauth2:
+    authorizeUrl: https://todoist.com/oauth/authorize
+    tokenUrl: https://todoist.com/oauth/access_token
+    scopes: ["data:read_write"]
+    pkce: true
+    tokenBody: form
+    clientAuth: body
+    refresh: { supported: true, rotates: true }
+    revocation:
+      url: https://todoist.com/api/v1/revoke
+      method: POST
+      tokenBody: form
+      tokenField: token
+      clientAuth: basic
+    registration: [cimd, dcr]
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://www.todoist.com/help/todoist/todoist-and-ai/connect-todoist-to-an-ai-assistant-xMSzFfHng
+    fetchedAt: 2026-11-12
+  - fact: transport.url
+    url: https://ai.todoist.net/.well-known/oauth-protected-resource/mcp
+    fetchedAt: 2026-11-12
+  - fact: auth.kind
+    url: https://www.todoist.com/help/todoist/todoist-and-ai/connect-todoist-to-an-ai-assistant-xMSzFfHng
+    fetchedAt: 2026-11-12
+  - fact: auth.oauth2.authorizeUrl
+    url: https://todoist.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-11-12
+  - fact: auth.oauth2.tokenUrl
+    url: https://todoist.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-11-12
+  - fact: auth.oauth2.scopes
+    url: https://ai.todoist.net/.well-known/oauth-protected-resource/mcp
+    fetchedAt: 2026-11-12
+  - fact: auth.oauth2.scopes
+    url: https://www.todoist.com/help/todoist/todoist-and-ai/connect-todoist-to-an-ai-assistant-xMSzFfHng
+    fetchedAt: 2026-11-12
+  - fact: auth.oauth2.pkce
+    url: https://todoist.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-11-12
+  - fact: auth.oauth2.clientAuth
+    url: https://todoist.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-11-12
+  - fact: auth.oauth2.refresh
+    url: https://developer.todoist.com/api/v1
+    fetchedAt: 2026-11-12
+  - fact: auth.oauth2.revocation.url
+    url: https://todoist.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-11-12
+  - fact: auth.oauth2.revocation.clientAuth
+    url: https://developer.todoist.com/api/v1
+    fetchedAt: 2026-11-12
+  - fact: auth.oauth2.registration
+    url: https://todoist.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-11-12
+  - fact: auth.oauth2.registration
+    url: https://developer.todoist.com/api/v1
+    fetchedAt: 2026-11-12
+x-omega: { ee: exclude }

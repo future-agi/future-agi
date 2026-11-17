@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: apify
+version: 1.0.0
+name: Apify
+description: "Discover and run web-scraping Actors, fetch pages, and retrieve extracted data and run results."
+vendor:
+  name: Apify
+  domains: [apify.com]
+eeCategory: research
+group: other
+categories: [research, web-scraping]
+tags: [scraping, crawling, extraction]
+docsUrl: https://docs.apify.com/mcp
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://docs.apify.com/mcp
+    fetchedAt: 2026-11-09

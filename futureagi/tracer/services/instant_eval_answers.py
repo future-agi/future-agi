@@ -22,6 +22,7 @@ import uuid
 
 import structlog
 from django.db import connection, transaction
+from django.db.models import F, Q
 
 from tracer.services.instant_eval_rows import ANALYZE_AFTER, analyze
 
@@ -93,6 +94,46 @@ def _lock_retained_run(task_id) -> bool:
     )
 
 
+def _invalidate_late_answers(task_id, written: int) -> None:
+    """Move stopped-run snapshots with accepted writes, while the run is locked."""
+    if not written:
+        return
+    from tracer.models.eval_task import EvalTaskStatus
+    from tracer.models.instant_eval import InstantEvalRun
+
+    # In-flight requests can finish after cancellation or pause. Their answers
+    # and the new cache version must commit (or roll back) together.
+    InstantEvalRun.objects.filter(eval_task_id=task_id).filter(
+        Q(cancelled_at__isnull=False) | Q(eval_task__status=EvalTaskStatus.PAUSED)
+    ).update(answers_version=F("answers_version") + 1)
+
+
+def _upsert_answers(cur) -> int:
+    """Keep the narrow SQL projection, but write through the guarded ORM path."""
+    from tracer.models.instant_eval import InstantEvalAnswer
+
+    answers = [
+        InstantEvalAnswer(
+            task_id=task_id,
+            row_id=row_id,
+            config_id=config_id,
+            label=label,
+            confidence=confidence,
+            time=time,
+            answered_at=answered_at,
+        )
+        for task_id, row_id, config_id, label, confidence, time, answered_at in cur.fetchall()
+    ]
+    InstantEvalAnswer.objects.bulk_create(
+        answers,
+        batch_size=BATCH,
+        update_conflicts=True,
+        update_fields=["label", "confidence", "answered_at"],
+        unique_fields=["task", "row", "config_id"],
+    )
+    return len(answers)
+
+
 @transaction.atomic
 def record_answer(entry_id) -> int:
     """Copy one entry's settled answer onto its run's row, if the entry
@@ -109,18 +150,15 @@ def record_answer(entry_id) -> int:
         if not task_id or not found[1] or not _lock_retained_run(task_id):
             return 0
         cur.execute(
-            "INSERT INTO tracer_instant_eval_answer "
-            "(task_id, row_id, config_id, label, confidence, time, answered_at) "
             f"SELECT r.task_id, r.id, l.custom_eval_config_id, {label}, {confidence}, r.time, now() "
             "FROM tracer_eval_logger l JOIN tracer_instant_eval_row r "
             "ON r.task_id = %(task)s AND r.row_id = %(rid)s "
-            f"WHERE l.id = %(id)s AND l.custom_eval_config_id IS NOT NULL AND {SETTLED} "
-            "ON CONFLICT (task_id, row_id, config_id) DO UPDATE "
-            "SET label = EXCLUDED.label, confidence = EXCLUDED.confidence, "
-            "answered_at = EXCLUDED.answered_at",
+            f"WHERE l.id = %(id)s AND l.custom_eval_config_id IS NOT NULL AND {SETTLED}",
             {"id": str(entry_id), "task": task_id, "rid": str(found[1])},
         )
-        return cur.rowcount
+        written = _upsert_answers(cur)
+        _invalidate_late_answers(task_id, written)
+        return written
 
 
 @transaction.atomic
@@ -130,20 +168,17 @@ def _copy(cur, task_id, entry_ids) -> int:
         return 0
     label, confidence = _label_sql()
     cur.execute(
-        "INSERT INTO tracer_instant_eval_answer "
-        "(task_id, row_id, config_id, label, confidence, time, answered_at) "
         f"SELECT r.task_id, r.id, l.custom_eval_config_id, {label}, {confidence}, "
         "r.time, l.updated_at "
         "FROM tracer_eval_logger l JOIN tracer_instant_eval_row r "
         f"ON r.task_id = %(task)s AND r.row_id = {_ENTRY_RID} "
         "WHERE l.id = ANY(%(ids)s::uuid[]) AND l.custom_eval_config_id IS NOT NULL "
-        f"AND {SETTLED} "
-        "ON CONFLICT (task_id, row_id, config_id) DO UPDATE "
-        "SET label = EXCLUDED.label, confidence = EXCLUDED.confidence, "
-        "answered_at = EXCLUDED.answered_at",
+        f"AND {SETTLED}",
         {"task": str(task_id), "ids": [str(i) for i in entry_ids]},
     )
-    return cur.rowcount
+    written = _upsert_answers(cur)
+    _invalidate_late_answers(task_id, written)
+    return written
 
 
 def record_answers(task_id, entry_ids) -> int:
@@ -163,6 +198,8 @@ def record_answers(task_id, entry_ids) -> int:
 
 def forget_answers(task_id, entry_ids) -> int:
     """Drop the answers of entries that are being asked again."""
+    from tracer.models.instant_eval import InstantEvalAnswer
+
     ids = [str(i) for i in entry_ids]
     if not ids:
         return 0
@@ -170,13 +207,17 @@ def forget_answers(task_id, entry_ids) -> int:
     with connection.cursor() as cur:
         for start in range(0, len(ids), BATCH):
             cur.execute(
-                "DELETE FROM tracer_instant_eval_answer a USING tracer_eval_logger l, "
+                "SELECT a.id FROM tracer_instant_eval_answer a, tracer_eval_logger l, "
                 "tracer_instant_eval_row r "
                 f"WHERE l.id = ANY(%(ids)s::uuid[]) AND r.task_id = %(task)s AND r.row_id = {_ENTRY_RID} "
                 "AND a.row_id = r.id AND a.config_id = l.custom_eval_config_id",
                 {"ids": ids[start : start + BATCH], "task": str(task_id)},
             )
-            removed += cur.rowcount
+            answer_ids = [row[0] for row in cur.fetchall()]
+            if answer_ids:
+                removed += InstantEvalAnswer.objects.filter(id__in=answer_ids).delete()[
+                    0
+                ]
     return removed
 
 
@@ -252,9 +293,10 @@ def ensure_synced(run, *, check: bool) -> bool:
     if not needed:
         return False
     sync_answers(task_id, run.row_type)
+    # Batch copies and other late writers may have advanced the version since
+    # this run was loaded; never replace their increments with a stale value.
     InstantEvalRun.objects.filter(id=run.id).update(
-        answers_synced=True, answers_version=run.answers_version + 1
+        answers_synced=True, answers_version=F("answers_version") + 1
     )
-    run.answers_synced = True
-    run.answers_version += 1
+    run.refresh_from_db(fields=["answers_synced", "answers_version"])
     return True

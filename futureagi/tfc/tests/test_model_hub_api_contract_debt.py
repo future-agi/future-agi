@@ -1050,7 +1050,7 @@ def test_model_hub_ai_writer_and_custom_model_mutations_have_request_contracts()
             "/model-hub/develops/{dataset_id}/edit_and_run_user_eval/{eval_id}/",
         ): "UserEvalUpdateRequest",
         ("PUT", "/model-hub/develops/{dataset_id}/edit_dataset_behavior/"): (
-            "DatasetBehaviorRequest"
+            "DatasetSettingsRequest"
         ),
         ("POST", "/model-hub/develops/{dataset_id}/get-row-data/"): (
             "DatasetRowDataRequest"
@@ -1158,7 +1158,7 @@ def test_model_hub_ai_writer_and_custom_model_mutations_have_request_contracts()
             "/model-hub/experiments/v2/{experiment_id}/rerun-cells/",
         ): "ExperimentRerunCells",
         ("POST", "/model-hub/experiments/v2/{experiment_id}/stop/"): (
-            "ModelHubEmptyRequest"
+            "ExperimentRunSelection"
         ),
         ("POST", "/model-hub/experiments/{experiment_id}/add-eval/"): (
             "UserEvalMutationRequest"

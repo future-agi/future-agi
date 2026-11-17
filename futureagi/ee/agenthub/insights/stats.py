@@ -119,7 +119,11 @@ def describe(units: list[dict], attributes: list[dict]) -> dict:
     latencies = [
         u["metrics"]["latency_ms"] for u in units if u["metrics"].get("latency_ms")
     ]
-    costs = [u["metrics"].get("cost") or 0 for u in units]
+    # An item whose cost is unknown (a model with no listed price, or spans
+    # that couldn't be read) is left out of the average, not counted as free.
+    costs = [
+        u["metrics"]["cost"] for u in units if u["metrics"].get("cost") is not None
+    ]
     turns = [u["metrics"].get("turns") or 0 for u in units]
     daily = Counter(u["time"][:10] for u in units if u.get("time"))
     n = len(units) or 1
@@ -140,7 +144,7 @@ def describe(units: list[dict], attributes: list[dict]) -> dict:
         "error_rate": sum(1 for u in units if (u["metrics"].get("errors") or 0) > 0)
         / n,
         "latency_ms": statistics.median(latencies) if latencies else None,
-        "cost": round(statistics.fmean(costs), 6) if costs else 0.0,
+        "cost": round(statistics.fmean(costs), 6) if costs else None,
         "attributes": _attribute_summary(units, attributes),
         "daily": dict(sorted(daily.items())),
         "top_user_share": (
@@ -273,11 +277,14 @@ def compare_runs(current: dict, previous: dict) -> dict | None:
     prev_total = (previous.get("totals") or {}).get("count") or 0
     if not total or not prev_total:
         return None
+    after = {c["id"]: c for c in current.get("categories") or []}
     before = {c["id"]: c for c in previous.get("categories") or []}
     rows, pvalues = [], []
-    for category in current.get("categories") or []:
-        old = before.get(category["id"])
-        count = category["stats"]["count"]
+    # finish prunes zero-count categories; compare prior-only IDs as zero too.
+    for category_id in after | before:
+        old = before.get(category_id)
+        category = after.get(category_id, old)
+        count = after[category_id]["stats"]["count"] if category_id in after else 0
         prev_count = old["stats"]["count"] if old else 0
         p = fisher_exact(
             [[count, total - count], [prev_count, prev_total - prev_count]]

@@ -84,7 +84,7 @@ func New(cfg config.OTelConfig) *Plugin {
 	}
 
 	if cfg.Enabled && cfg.IncludeBodies {
-		slog.Warn("otel body capture is enabled — prompts and completions will be sent to the trace collector")
+		slog.Warn("otel body capture is enabled: prompts and completions go to the collector; opted-in MCP full-content capture exports tool inputs and outputs to the organization's collector. It masks secret-named fields and recognized Bearer, sk-, AIza, AKIA/ASIA and JWT formats. Prefix-less Future AGI keys can remain in other text; other sensitive content may still be exported")
 	}
 	if cfg.Enabled && len(cfg.CaptureHeaders) > 0 {
 		slog.Warn("otel request-header capture is enabled — matching headers will be sent to the trace collector",
@@ -188,18 +188,18 @@ func (p *Plugin) ProcessRequest(_ context.Context, rc *models.RequestContext) pi
 		span.SetAttribute("gen_ai.request.max_tokens", *rc.Request.MaxTokens)
 	}
 
-	// Caller-supplied dimensions (profile, tenant, application...) and, when
-	// configured, allowlisted request headers.
-	p.attachMetadata(span, rc)
-	p.attachBodyExtras(span, rc)
-	p.attachRequestHeaders(span, rc)
+	// Retain owned, uncapped dimension inputs in case the fallback content
+	// policy changes before export. Truncated JSON cannot be safely re-filtered.
+	dimensions := p.captureDimensions(rc)
+	contentMode := p.contentMode(rc)
+	p.attachDimensions(span, dimensions, contentMode)
 
 	// Add resource attributes from config.
 	for k, v := range p.attributes {
 		span.SetAttribute("resource."+k, v)
 	}
 
-	p.spans.Store(rc.RequestID, span)
+	p.spans.Store(rc.RequestID, &pendingSpan{span: span, dimensions: dimensions, contentMode: contentMode})
 	return pipeline.ResultContinue()
 }
 
@@ -219,7 +219,14 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 		p.recordMetrics(rc)
 		return pipeline.ResultContinue()
 	}
-	span := raw.(*otelpkg.Span)
+	pending := raw.(*pendingSpan)
+	span := pending.span
+	// Resolve once for every image-bearing writer in this export. Do not set
+	// rc.Privacy: parallel observers share the request context read-only.
+	contentMode := p.contentMode(rc)
+	if contentMode != pending.contentMode {
+		p.attachDimensions(span, pending.dimensions, contentMode)
+	}
 
 	// Provider / resolved model. gen_ai.system is an accepted alias for the
 	// provider, so it must name the upstream, not this gateway — the gateway's
@@ -261,9 +268,13 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 		}
 	}
 
-	// TTFT from timings. Seconds, per the convention.
+	// TTFT from timings (a stream's, server/stream_ttft.go), in milliseconds
+	// with no unit marker: the platform reads the attribute as milliseconds,
+	// as the tracing SDKs send it. Seconds with a unit marker wait for a
+	// reader that converts on the marker. Not set for a request with no
+	// first token.
 	if ttft, ok := rc.Timings["ttft"]; ok {
-		span.SetAttribute("gen_ai.server.time_to_first_token", ttft.Seconds())
+		span.SetAttribute("gen_ai.server.time_to_first_token", float64(ttft.Microseconds())/1000)
 	}
 
 	// Total duration, in seconds per the convention.
@@ -290,12 +301,14 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 	// Dimensions for non-chat endpoints. Unlike bodies these are small and
 	// carry no user content beyond what the request already declares, so they
 	// are not gated on include_bodies.
-	p.attachEndpointAttributes(span, rc)
+	p.attachEndpointAttributes(span, rc, contentMode)
 
 	if p.includeBodies {
-		p.attachBodies(span, rc)
+		p.attachBodies(span, rc, contentMode)
 	}
 
+	// Each structured writer masks before its cap. Never reinterpret flattened
+	// text attributes as JSON here: quoted image examples are ordinary text.
 	span.End()
 
 	// Export span.

@@ -29,7 +29,7 @@ func HierarchyScopes(b *tenant.BudgetsConfig, rc *models.RequestContext) []video
 		}
 		scopes = append(scopes, video.BudgetReservation{Level: "org", Period: p, Limit: limit})
 	}
-	team, user, key, model := extractIdentity(rc)
+	team, user, key, model := videoIdentity(rc)
 	add := func(level, key string, lc *tenant.BudgetLevelConfig) {
 		if key == "" || lc == nil {
 			return
@@ -63,11 +63,20 @@ func HierarchyScopes(b *tenant.BudgetsConfig, rc *models.RequestContext) []video
 // videoScopes snapshots the same authenticated team/user/key/tag identity used
 // by CheckBudget. Global scopes have their own keys, never tenant counters.
 func (p *Plugin) videoScopes(rc *models.RequestContext) []video.BudgetReservation {
-	team, user, key, model := extractIdentity(rc)
+	team, user, key, model := videoIdentity(rc)
 	scopes := p.tracker.VideoScopes(team, user, key, model, extractTags(rc))
 	out := make([]video.BudgetReservation, 0, len(scopes))
 	for _, s := range scopes {
 		out = append(out, video.BudgetReservation{Global: true, Level: "global_" + s.Level, Key: s.Key, Period: s.Period, Limit: s.Limit, ModelLimit: s.ModelLimit})
 	}
 	return out
+}
+
+// videoIdentity is the identity video budgets reserve and settle against, as
+// the video design defines it: the key's team, the key's owner as the one
+// user, the key's name and the model. Ordinary spend is recorded for every
+// user extractIdentity names; a video reservation keeps this narrower set.
+func videoIdentity(rc *models.RequestContext) (team, user, key, model string) {
+	id := extractIdentity(rc)
+	return id.team, rc.Metadata["auth_key_owner"], id.keyName, id.model
 }

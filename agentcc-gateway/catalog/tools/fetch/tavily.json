@@ -1,0 +1,32 @@
+{
+  "vendor": "tavily",
+  "capability": "fetch",
+  "skus": [
+    {
+      "sku": "tavily.extract.basic",
+      "unit": "request",
+      "usd_per_unit": 0.0016,
+      "free_on_failure": true
+    },
+    {
+      "sku": "tavily.extract.advanced",
+      "unit": "request",
+      "usd_per_unit": 0.0032,
+      "free_on_failure": true
+    }
+  ],
+  "resale_status": "unconfirmed",
+  "resale_terms_ref": "",
+  "terms_url": "https://www.tavily.com/terms",
+  "terms_checked_at": "2026-10-15",
+  "zdr_capable": false,
+  "trains_on_input": "ai_features_only",
+  "improvement_license": true,
+  "regions": [],
+  "results_retention": "full",
+  "cacheable": "none",
+  "eval_export": "allowed",
+  "no_divert": false,
+  "no_perf_disclosure": true,
+  "no_benchmark": false
+}

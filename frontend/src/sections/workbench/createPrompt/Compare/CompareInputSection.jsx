@@ -175,6 +175,20 @@ const CompareInputSection = ({
   //   buttonTooltip = "Please fill all placeholders";
   // }
 
+  const canUpdate = Boolean(
+    RolePermission.PROMPTS[PERMISSIONS.UPDATE][userRole],
+  );
+  const canCommit =
+    canUpdate && !promptVersion?.isDraft && Boolean(promptVersion?.version);
+  let commitTooltip = "Commit this version";
+  if (!canUpdate) {
+    commitTooltip = "You can view this prompt, not commit it.";
+  } else if (promptVersion?.isDraft) {
+    commitTooltip = "Run this version first, then commit it here.";
+  } else if (!promptVersion?.version) {
+    commitTooltip = "Saving your draft…";
+  }
+
   return (
     <Box
       key={id}
@@ -247,47 +261,43 @@ const CompareInputSection = ({
           <Typography
             typography="s3"
             fontWeight={"fontWeightRegular"}
-            color="text.disabled"
+            color="text.tertiary"
           >
             {getDate(promptVersion?.lastSaved)}
           </Typography>
         </Box>
         <Box sx={{ display: "flex", alignItems: "center", gap: "12px" }}>
-          <CustomTooltip
-            title={
-              promptVersion?.isDraft
-                ? "Please run the prompt before saving and committing"
-                : "Commit Changes"
-            }
-            show={true}
-            arrow
-            size="small"
-          >
-            <IconButton
-              sx={{
-                backgroundColor: "background.paper",
-                border: "1px solid",
-                borderColor: "divider",
-              }}
-              disabled={!RolePermission.PROMPTS[PERMISSIONS.UPDATE][userRole]}
-              onClick={() => {
-                if (promptVersion?.isDraft || !promptVersion?.version) return;
-                setSaveCommitOpen({
-                  version: promptVersion?.version,
-                  isDefault: promptVersion?.isDefault,
-                  isDraft: promptVersion?.isDraft,
-                });
-              }}
-            >
-              <SvgColor
-                src="/assets/icons/ic_commit.svg"
+          {/* FA-PROMPTS-06: a draft column commits after it has run; until
+              then the icon is disabled and the hint says what to do. */}
+          <CustomTooltip title={commitTooltip} show={true} arrow size="small">
+            <span style={{ display: "inline-flex" }}>
+              <IconButton
+                aria-label="Commit this version"
                 sx={{
-                  height: "16px",
-                  width: "16px",
-                  color: "text.disabled",
+                  backgroundColor: "background.paper",
+                  border: "1px solid",
+                  borderColor: "divider",
                 }}
-              />
-            </IconButton>
+                disabled={!canCommit}
+                onClick={() => {
+                  if (!canCommit) return;
+                  setSaveCommitOpen({
+                    version: promptVersion?.version,
+                    isDefault: promptVersion?.isDefault,
+                    isDraft: promptVersion?.isDraft,
+                  });
+                }}
+              >
+                <SvgColor
+                  src="/assets/icons/ic_commit.svg"
+                  sx={{
+                    height: "16px",
+                    width: "16px",
+                    color: canCommit ? "text.primary" : "text.disabled",
+                  }}
+                />
+              </IconButton>
+            </span>
           </CustomTooltip>
           <ShowComponent condition={isGenerating}>
             <StopGeneratingButton
@@ -387,7 +397,9 @@ const CompareInputSection = ({
           </IconButton>
         </Box>
       </Box>
-      <Box sx={{ overflowY: "hidden" }}>
+      {/* The inputs scroll inside the column, so the Output
+          panel never cuts a message box off. */}
+      <Box sx={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
         <PromptSection
           prompts={prompts[index]?.prompts || []}
           setPrompts={(v) => setPromptsByIndex(index, v)}

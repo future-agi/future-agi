@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: wrike
+version: 1.0.0
+name: Wrike
+description: "Search, create and update tasks, folders and projects in Wrike."
+vendor:
+  name: Wrike
+  domains: [wrike.com]
+eeCategory: productivity
+group: other
+categories: [productivity, project-management]
+tags: [tasks, projects]
+docsUrl: https://developers.wrike.com/docs/wrike-mcp-server-overview
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://developers.wrike.com/docs/wrike-mcp-server-overview
+    fetchedAt: 2026-11-09

@@ -2755,7 +2755,7 @@ class NoUpdaterSettingsInAppConfigTests(unittest.TestCase):
 # ============================================ review round 2: trust owner --
 
 class TrustWorkflowGuardAdditions(unittest.TestCase):
-    """Finding 2: the reusable workflow signs only in future-agi/future-agi, from this repository's own code.
+    """The reusable workflow signs only in future-agi/future-agi, from this repository's own code.
 
     Fulcio names the called workflow file in the certificate whoever calls it,
     so a run called from another repository would carry the pinned identity.

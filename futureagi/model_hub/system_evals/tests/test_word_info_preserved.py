@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import builtins
+import inspect
+import json
 import random
 from functools import cache
 from pathlib import Path
@@ -10,7 +12,6 @@ from pathlib import Path
 import Levenshtein
 import pytest
 import yaml
-from django.conf import settings
 
 from agentic_eval.core_evals.fi_evals.function.functions import (
     _align_counts,
@@ -126,15 +127,69 @@ def test_none_inputs_are_treated_as_empty(name):
     assert calculate_word_info_preserved("word", None)["result"] == 0.0
 
 
-def test_yaml_bodies_run_through_the_local_code_eval_sandbox(monkeypatch):
-    """Exercise the production code-eval path, not only direct ``exec``."""
-    monkeypatch.setattr(sandbox, "_call_executor_service", lambda *args, **kwargs: None)
-    monkeypatch.setattr(settings, "CODE_EXECUTOR_LOCAL_FALLBACK", True)
-    monkeypatch.setattr(settings, "CLOUD_DEPLOYMENT", "")
+class _Response:
+    def __init__(self, body):
+        self.body = body
 
+    def read(self, limit=-1):
+        return self.body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+def _run_like_the_executor(code: str, input_data: dict) -> dict:
+    """Run ``code`` and call its evaluate() the way the code executor's Python
+    script does (code-executor/server.py, _build_python_script)."""
+    namespace: dict = {}
+    builtins.exec(compile(code, "<code-executor>", "exec"), namespace)
+    fn = namespace.get("evaluate") or namespace.get("main")
+    std = {
+        "input": None,
+        "output": None,
+        "expected": None,
+        "context": {"row": dict(input_data)},
+    }
+    call_args = {}
+    for name in inspect.signature(fn).parameters:
+        if name == "kwargs":
+            continue
+        call_args[name] = input_data.get(name, std.get(name))
+    for key, value in input_data.items():
+        if key not in call_args:
+            call_args[key] = value
+    result = fn(**call_args)
+    if "score" in result:
+        result["result"] = result.pop("score")
+    return {"status": "success", "data": result}
+
+
+@pytest.fixture
+def executor(monkeypatch):
+    """Every request the executor client sends, answered by running its code."""
+    sent = []
+
+    def urlopen(request, timeout=None):
+        payload = json.loads(request.data)
+        sent.append(payload)
+        answer = _run_like_the_executor(payload["code"], payload["input_data"])
+        return _Response(json.dumps(answer).encode())
+
+    monkeypatch.setattr(sandbox.urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(sandbox, "CODE_EXECUTOR_URL", "http://code-executor.test:8060")
+    return sent
+
+
+def test_yaml_bodies_run_through_the_code_eval_path(executor):
+    """Exercise the production code-eval path, not only direct ``exec``: each
+    body reaches the code executor as Python, with its inputs as sent."""
     for name in ("word_info_lost", "word_info_preserved"):
         path = FUNCTION_DIR / f"{name}.yaml"
         code = yaml.safe_load(path.read_text())["config"]["code"]
+        executor.clear()
         result = custom_code_eval(
             code,
             reference="the cat sat",
@@ -143,6 +198,24 @@ def test_yaml_bodies_run_through_the_local_code_eval_sandbox(monkeypatch):
         assert result["result"] == pytest.approx(0.5)
         empty_result = custom_code_eval(code, reference=None, hypothesis=None)
         assert empty_result["result"] == pytest.approx(1.0)
+        assert [
+            {key: request[key] for key in ("code", "language", "input_data")}
+            for request in executor
+        ] == [
+            {
+                "code": code,
+                "language": "python",
+                "input_data": {
+                    "reference": "the cat sat",
+                    "hypothesis": "the cat sat on the mat",
+                },
+            },
+            {
+                "code": code,
+                "language": "python",
+                "input_data": {"reference": None, "hypothesis": None},
+            },
+        ]
 
 
 def test_alignment_matches_levenshtein_opcode_contract():

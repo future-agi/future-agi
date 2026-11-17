@@ -28,13 +28,17 @@ import { useWorkspacesList, useWorkspaceFromList } from "../list";
 // Review comment 5 on PR #2000: spreading the v5 result object reads every
 // property, which marks them all tracked and defeats the render optimization.
 // Returning an explicit set keeps sidebar consumers off the re-render path for
-// transitions they never read.
+// transitions they never read. `refetch` is in the set because the role
+// guard's Retry needs it; it is bound once per observer, so reading it never
+// adds a render. `isOrgUnavailable` is computed here, not read off the query.
 const CONTRACT = [
   "data",
   "fetchNextPage",
+  "refetch",
   "isPending",
   "isFetchingNextPage",
   "isError",
+  "isOrgUnavailable",
   "isLoading",
 ];
 
@@ -65,9 +69,17 @@ describe("useWorkspacesList — returns an explicit set, not the whole query", (
 
   it("does not leak untracked query internals", () => {
     const { result } = renderHook(() => useWorkspacesList());
-    ["isFetching", "fetchStatus", "dataUpdatedAt", "refetch"].forEach((k) =>
+    ["isFetching", "fetchStatus", "dataUpdatedAt"].forEach((k) =>
       expect(result.current[k]).toBeUndefined(),
     );
+  });
+
+  it("passes the query's own refetch through, so a Retry really refetches", () => {
+    const refetch = () => {};
+    h.queryResult = { ...h.queryResult, refetch };
+    const { result } = renderHook(() => useWorkspacesList());
+    expect(result.current.refetch).toBe(refetch);
+    expect(result.current.isOrgUnavailable).toBe(false);
   });
 
   it("still carries the values consumers depend on", () => {
@@ -117,6 +129,8 @@ describe("useWorkspacesList — loading state tracks the same value as enabled",
     expect(h.lastOptions.enabled).toBe(false);
     expect(result.current.isLoading).toBe(false);
     expect(result.current.isError).toBe(true);
+    // Terminal: the role guard shows its own copy with no Retry for this.
+    expect(result.current.isOrgUnavailable).toBe(true);
     // The switcher renders skeletons on isPending, which a disabled query
     // reports forever.
     expect(result.current.isPending).toBe(false);

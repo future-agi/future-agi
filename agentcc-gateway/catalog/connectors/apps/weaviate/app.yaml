@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: weaviate
+version: 1.0.0
+name: Weaviate
+description: "Query and search Weaviate Cloud collections with the hosted Query Agent."
+vendor:
+  name: Weaviate
+  domains: [weaviate.io]
+eeCategory: data
+group: other
+categories: [data, database]
+tags: [database, search]
+docsUrl: https://docs.weaviate.io/query-agent/clients/mcp
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://docs.weaviate.io/query-agent/clients/mcp
+    fetchedAt: 2026-11-09

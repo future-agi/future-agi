@@ -4,6 +4,33 @@ import django.db.models.deletion
 import uuid
 from django.db import migrations, models
 
+UPDATE_SAFETY = {
+    "schema_version": 1,
+    "risk_classes": ["data_migration"],
+    "tables": [
+        "postgres:simulate_agent_definition",
+        "postgres:simulate_provider_credentials",
+    ],
+    "mitigation": (
+        "forward creates simulate_provider_credentials, then its data step reads every "
+        "simulate_agent_definition row on the migration's own connection and, for each "
+        "one with a non-empty api_key, inserts one simulate_provider_credentials row "
+        "with that key stored encrypted by "
+        "agentcc.services.credential_manager.encrypt_token, the definition's "
+        "assistant_id, and provider_type retell when the definition's provider is "
+        "retell, otherwise vapi. A database that applied 1.58.0 already has this "
+        "migration recorded and does not run it again. On a fresh install "
+        "simulate_agent_definition has no rows when it runs, so nothing is inserted. "
+        "Safe to run again: the migration is atomic, so a failed run rolls back whole, "
+        "including the new table. The data step's reverse is a no-op; reversing drops "
+        "the new table. Row scale: at most one insert per agent definition; neither "
+        "table is a registered high-volume table."
+    ),
+    "reviewer": "<actual-github-login>",
+    "review": "<actual-PR-review-discussion-permalink>",
+    "large_volume_rehearsal": True,
+}
+
 
 def backfill_credentials(apps, schema_editor):
     """Migrate api_key and assistant_id from AgentDefinition to ProviderCredentials.
@@ -16,7 +43,7 @@ def backfill_credentials(apps, schema_editor):
     AgentDefinition = apps.get_model("simulate", "AgentDefinition")
     ProviderCredentials = apps.get_model("simulate", "ProviderCredentials")
 
-    for agent_def in AgentDefinition.objects.all():
+    for agent_def in AgentDefinition.objects.using(schema_editor.connection.alias).all():
         api_key = getattr(agent_def, "api_key", "") or ""
         assistant_id = getattr(agent_def, "assistant_id", "") or ""
 
@@ -26,7 +53,7 @@ def backfill_credentials(apps, schema_editor):
         provider = agent_def.provider or "vapi"
         provider_type = "retell" if provider == "retell" else "vapi"
 
-        ProviderCredentials.objects.create(
+        ProviderCredentials.objects.using(schema_editor.connection.alias).create(
             agent_definition=agent_def,
             provider_type=provider_type,
             api_key=encrypt_token(api_key) if api_key else "",

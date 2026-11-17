@@ -1,0 +1,46 @@
+# Sanity documents API-token authentication as an alternative to OAuth.
+# Setting Authorization makes tool calls use the token's role and permissions.
+schema: "connector-manifest/v1#provider"
+app: sanity
+id: api-key
+version: 1.1.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.sanity.io
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: API token
+      help: "Create a Sanity API token in sanity.io/manage or with the Sanity CLI tokens command. Calls use the token's role and permissions; content API usage and AI image tools can consume quotas or credits."
+      helpUrl: https://www.sanity.io/docs/ai/mcp-server
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_metered
+  source: https://www.sanity.io/pricing
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://www.sanity.io/docs/ai/mcp-server
+    fetchedAt: 2026-11-09
+  - fact: transport.variant
+    url: https://github.com/sanity-io/sanity-mcp-server
+    fetchedAt: 2026-11-09
+  - fact: auth.kind
+    url: https://www.sanity.io/docs/ai/mcp-server
+    fetchedAt: 2026-11-09
+  - fact: auth.credentialParts
+    url: https://www.sanity.io/docs/ai/mcp-server
+    fetchedAt: 2026-11-09

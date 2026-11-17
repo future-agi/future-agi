@@ -7,6 +7,7 @@ from django.db import connection
 from django.db.migrations.loader import MigrationLoader
 from django.test import override_settings
 
+from accounts.tests.hard_erase_fixture import FixtureExecutor, migration_fixture_cursor
 from tracer.tests.test_grouping_runtime import _claimed_runtime
 
 
@@ -43,7 +44,7 @@ def test_recovery_migration_preserves_old_inserts_and_rolls_back(
         cursor.execute(f"CREATE SCHEMA {quote(schema)}")
 
     try:
-        with connection.cursor() as cursor:
+        with migration_fixture_cursor(connection) as cursor:
             for model in old_models:
                 table = quote(model._meta.db_table)
                 cursor.execute(
@@ -57,11 +58,10 @@ def test_recovery_migration_preserves_old_inserts_and_rolls_back(
 
         # --nomigrations creates the current tables. Remove only 0112 in the
         # private schema, then run its actual forward and reverse operations.
-        with connection.schema_editor() as editor:
-            migration.unapply(before, editor)
+        FixtureExecutor(connection).unapply_migration(before, migration)
 
         def insert_old_columns():
-            with connection.cursor() as cursor:
+            with migration_fixture_cursor(connection) as cursor:
                 for model in old_models:
                     table = quote(model._meta.db_table)
                     columns = ", ".join(
@@ -102,19 +102,17 @@ def test_recovery_migration_preserves_old_inserts_and_rolls_back(
                 assert actual == cursor.fetchone()
 
         insert_old_columns()
-        with connection.schema_editor() as editor:
-            migration.apply(before, editor)
+        FixtureExecutor(connection).apply_migration(before, migration)
         assert_recovery_defaults()
 
         # Simulate an old ORM that omits the newly added columns after upgrade.
-        with connection.cursor() as cursor:
+        with migration_fixture_cursor(connection) as cursor:
             cursor.execute("DELETE FROM tracer_trace_grouping_attempt")
             cursor.execute("DELETE FROM tracer_trace_grouping_work")
         insert_old_columns()
         assert_recovery_defaults()
 
-        with connection.schema_editor() as editor:
-            migration.unapply(before, editor)
+        FixtureExecutor(connection).unapply_migration(before, migration)
         with connection.cursor() as cursor:
             cursor.execute(
                 "SELECT column_name FROM information_schema.columns "

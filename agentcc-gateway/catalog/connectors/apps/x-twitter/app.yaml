@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: x-twitter
+version: 1.0.0
+name: X (Twitter)
+description: "Search posts, look up users, and read trends and news through the X API."
+vendor:
+  name: X
+  domains: [x.com]
+eeCategory: research
+group: other
+categories: [research, social]
+tags: [posts, search, trends, news]
+docsUrl: https://docs.x.com/tools/mcp
+defaultProvider: app-bearer
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://docs.x.com/tools/mcp
+    fetchedAt: 2026-10-21

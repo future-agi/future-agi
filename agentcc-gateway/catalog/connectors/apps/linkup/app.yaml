@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: linkup
+version: 1.0.0
+name: Linkup
+description: "Search the web, fetch page content, and run research tasks with sourced answers."
+vendor:
+  name: Linkup
+  domains: [linkup.so]
+eeCategory: research
+group: other
+categories: [research, web-search]
+tags: [search, extraction]
+docsUrl: https://docs.linkup.so/pages/integrations/mcp/mcp
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://docs.linkup.so/pages/integrations/mcp/mcp
+    fetchedAt: 2026-11-09

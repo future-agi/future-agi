@@ -12,6 +12,7 @@ import os
 import subprocess
 import tarfile
 import tempfile
+from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
 
@@ -48,6 +49,12 @@ from simulate.services.hosted_harness import (
     create_selected_harness_run,
     run_idempotency_key,
 )
+from simulate.services.hosted_harness_gateway import (
+    PRIVATE_GITHUB_ENVIRONMENT_MESSAGE,
+    PRIVATE_GITHUB_UNAVAILABLE_CODE,
+    SourceSymlink,
+    source_file_mode,
+)
 from simulate.temporal.client import start_hosted_harness_gateway_workflow
 from tfc.settings.settings import UPLOAD_BUCKET_NAME
 from tfc.utils.storage_client import ensure_bucket, get_storage_client
@@ -65,6 +72,12 @@ MAX_PATCH_BYTES = 2 * 1024 * 1024
 # The engine asks once more for a check run that failed on the platform's side, under its
 # label with this suffix and the same repeat: either one is the same check.
 AGAIN_SUFFIX = "-again"
+
+
+@dataclass(frozen=True)
+class _SourceFile:
+    data: bytes
+    mode: int
 
 
 def _locked_running(fix_run_id: Any) -> AgentFixRun:
@@ -109,7 +122,7 @@ def add_candidate(
     kind = agent_kind(fix_run.environment)
     candidate = fix_run.candidates.filter(attempt=attempt).first()
     if candidate is None:
-        files = archive_files(tree)
+        files = archive_files(tree, candidate=True)
         base = archive_files(source_archive(fix_run))
         _refuse_locked_changes(fix_run, base, files)
         # Made from the tree, not taken from the engine: the patch a user downloads or a
@@ -123,7 +136,14 @@ def add_candidate(
             )
         # Storage first, outside the fix's lock: an object no candidate points at is
         # harmless, a candidate without its files is not.
-        prepared = kind.prepare_candidate(fix_run, files, attempt)
+        prepared = kind.prepare_candidate(
+            fix_run,
+            {
+                path: file if isinstance(file, SourceSymlink) else file.data
+                for path, file in files.items()
+            },
+            attempt,
+        )
         patch_key = _object_key(fix_run, f"candidate-{attempt}.patch")
         _put(patch_key, patch, "text/x-diff")
         try:
@@ -152,7 +172,9 @@ def add_candidate(
 
 
 def _refuse_locked_changes(
-    fix_run: AgentFixRun, base: dict[str, bytes], files: dict[str, bytes]
+    fix_run: AgentFixRun,
+    base: dict[str, _SourceFile | SourceSymlink],
+    files: dict[str, _SourceFile | SourceSymlink],
 ) -> None:
     """Refuse a candidate whose files differ from the base on any locked path."""
     locked = fix_run.request.get("locked_paths") or []
@@ -170,8 +192,11 @@ def _refuse_locked_changes(
         )
 
 
-def _patch(base: dict[str, bytes], files: dict[str, bytes]) -> bytes:
-    """The files' change on the base as a git patch. The changed files go in as blobs of a
+def _patch(
+    base: dict[str, _SourceFile | SourceSymlink],
+    files: dict[str, _SourceFile | SourceSymlink],
+) -> bytes:
+    """The files' content and mode changes as a git patch. Changed files go in as blobs of a
     scratch repository: no path of the tree is written to disk, and none of the agent's
     attribute or ignore files changes what is compared."""
     changed = sorted(
@@ -188,12 +213,20 @@ def _patch(base: dict[str, bytes], files: dict[str, bytes]) -> bytes:
         return _git(repo, "diff-tree", "-p", "--binary", *trees)
 
 
-def _git_tree(repo: str, name: str, files: dict[str, bytes]) -> str:
+def _git_tree(
+    repo: str, name: str, files: dict[str, _SourceFile | SourceSymlink]
+) -> str:
     index = {"GIT_INDEX_FILE": f"{repo}/{name}.index"}
     entries = b""
-    for path, data in files.items():
+    for path, file in files.items():
+        if isinstance(file, SourceSymlink):
+            data = file.target.encode("utf-8", "surrogateescape")
+            mode = 0o120000
+        else:
+            data = file.data
+            mode = 0o100000 | file.mode
         blob = _git(repo, "hash-object", "-w", "--no-filters", "--stdin", stdin=data)
-        entries += b"100644 %s\t%s\0" % (blob.strip(), path.encode())
+        entries += b"%o %s\t%s\0" % (mode, blob.strip(), path.encode())
     _git(repo, "update-index", "-z", "--add", "--index-info", stdin=entries, env=index)
     return _git(repo, "write-tree", env=index).decode().strip()
 
@@ -211,29 +244,54 @@ def _git(
     ).stdout
 
 
-def archive_files(body: bytes) -> dict[str, bytes]:
-    """An agent tree's files by their path from the agent's root, refusing a tree whose
-    unpacked size or file count is over the limit before reading it."""
+def archive_files(
+    body: bytes, *, candidate: bool = False
+) -> dict[str, _SourceFile | SourceSymlink]:
+    """Read files and symlink metadata, enforcing limits before reading file data.
+
+    Base file modes come from the source as checked out. Candidates use the same canonical
+    file modes as store_source_archive, not the engine's incoming tar metadata. Symlinks
+    keep their targets without being followed, and count towards both tree limits.
+    """
     max_bytes = settings.AGENT_FIX_MAX_TREE_BYTES
     max_files = settings.AGENT_FIX_MAX_TREE_FILES
     try:
         with tarfile.open(fileobj=io.BytesIO(body), mode="r:gz") as archive:
-            members = [member for member in archive.getmembers() if member.isfile()]
+            members = [
+                member
+                for member in archive.getmembers()
+                if member.isfile() or member.issym()
+            ]
             if (
                 len(members) > max_files
-                or sum(member.size for member in members) > max_bytes
+                or sum(
+                    len(member.linkname.encode("utf-8", "surrogateescape"))
+                    if member.issym()
+                    else member.size
+                    for member in members
+                )
+                > max_bytes
             ):
                 raise HostedHarnessError(
                     "fix_tree_too_large",
                     "the candidate's tree is over the size limit",
                     status_code=413,
                 )
-            files = {}
+            files: dict[str, _SourceFile | SourceSymlink] = {}
             for member in members:
+                path = member.name.removeprefix("./").removeprefix("source/")
+                if member.issym():
+                    files[path] = SourceSymlink(member.linkname)
+                    continue
                 extracted = archive.extractfile(member)
                 if extracted is not None:
-                    path = member.name.removeprefix("./").removeprefix("source/")
-                    files[path] = extracted.read()
+                    data = extracted.read()
+                    mode = (
+                        source_file_mode(data)
+                        if candidate
+                        else (0o755 if member.mode & 0o111 else 0o644)
+                    )
+                    files[path] = _SourceFile(data, mode)
     except tarfile.TarError as exc:
         raise HostedHarnessError(
             "fix_tree_invalid", "the candidate's tree is not a tar.gz", status_code=400
@@ -508,6 +566,17 @@ def _ending_failure(
     the engine's own error text."""
     if report.ending != Ending.FAILED:
         return None
+    if (
+        report.failure is not None
+        and report.failure.code == PRIVATE_GITHUB_UNAVAILABLE_CODE
+    ):
+        # The agent's private repository can no longer be read here, which the user
+        # fixes by uploading the code: said in the environment's own words, whichever
+        # side the engine reports it on, with no alert, since nothing of ours failed.
+        return {
+            "code": PRIVATE_GITHUB_UNAVAILABLE_CODE,
+            "message": PRIVATE_GITHUB_ENVIRONMENT_MESSAGE,
+        }
     if report.failure is not None and report.failure.owner == FailureOwner.USER:
         return {"code": report.failure.code, "message": report.failure.message}
     logger.error(

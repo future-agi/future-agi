@@ -1,0 +1,68 @@
+# ClickHouse Cloud's remote MCP server with OAuth 2.0 from its own
+# authorization server, which registers public clients dynamically (token
+# endpoint auth: none). Every tool is read-only. The server must be enabled
+# per service first (the service's Connect > MCP toggle, which needs the
+# control-plane:service:manage-mcp permission). ClickHouse also takes a
+# Cloud API key as HTTP Basic credentials (key id and secret joined and
+# base64-encoded); that form is two values in one header and is not in this
+# record. The scopes are the ones the server advertises for /mcp. EE reads a
+# pre-registered client from its environment and cannot register one, so it
+# gets none.
+schema: "connector-manifest/v1#provider"
+app: clickhouse
+id: mcp
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.clickhouse.cloud/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent, user]
+auth:
+  kind: oauth2
+  oauth2:
+    authorizeUrl: https://mcp.clickhouse.cloud/authorize
+    tokenUrl: https://mcp.clickhouse.cloud/token
+    scopes: ["mcp:access", openid, profile, email]
+    pkce: true
+    tokenBody: form
+    clientAuth: body
+    registration: [dcr]
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://clickhouse.com/docs/products/cloud/features/ai-ml/remote-mcp
+    fetchedAt: 2026-11-11
+  - fact: transport.url
+    url: https://mcp.clickhouse.cloud/.well-known/oauth-protected-resource/mcp
+    fetchedAt: 2026-11-11
+  - fact: transport.variant
+    url: https://clickhouse.com/docs/products/cloud/features/ai-ml/remote-mcp
+    fetchedAt: 2026-11-11
+  - fact: auth.kind
+    url: https://clickhouse.com/docs/products/cloud/features/ai-ml/remote-mcp
+    fetchedAt: 2026-11-11
+  - fact: auth.oauth2.authorizeUrl
+    url: https://mcp.clickhouse.cloud/.well-known/oauth-authorization-server
+    fetchedAt: 2026-11-11
+  - fact: auth.oauth2.tokenUrl
+    url: https://mcp.clickhouse.cloud/.well-known/oauth-authorization-server
+    fetchedAt: 2026-11-11
+  - fact: auth.oauth2.scopes
+    url: https://mcp.clickhouse.cloud/.well-known/oauth-protected-resource/mcp
+    fetchedAt: 2026-11-11
+  - fact: auth.oauth2.pkce
+    url: https://mcp.clickhouse.cloud/.well-known/oauth-authorization-server
+    fetchedAt: 2026-11-11
+  - fact: auth.oauth2.registration
+    url: https://mcp.clickhouse.cloud/.well-known/oauth-authorization-server
+    fetchedAt: 2026-11-11
+x-omega: { ee: exclude }

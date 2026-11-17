@@ -1,0 +1,48 @@
+# The EU2 URL below is copied from Coralogix's concrete configuration example.
+# Only matching-region keys work. The server defaults to v2; costly Olly tools
+# remain hidden because this provider does not opt in via x-allow-costly-use.
+schema: "connector-manifest/v1#provider"
+app: coralogix
+id: api-key
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://api.eu2.coralogix.com/mgmt/api/v1/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: Personal API key
+      help: "Create a personal Coralogix API key, not an ingestion key, for an EU2 account. MCP inherits the key owner's permissions. This fixed endpoint serves EU2 only. Olly tools are not enabled by this provider."
+      helpUrl: https://coralogix.com/docs/user-guides/mcp-server/setup/
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_metered
+  source: https://coralogix.com/pricing/
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://coralogix.com/docs/user-guides/mcp-server/setup/
+    fetchedAt: 2026-11-09
+  - fact: transport.variant
+    url: https://coralogix.com/docs/user-guides/mcp-server/setup/
+    fetchedAt: 2026-11-09
+  - fact: auth.kind
+    url: https://coralogix.com/docs/user-guides/mcp-server/setup/
+    fetchedAt: 2026-11-09
+  - fact: auth.credentialParts
+    url: https://coralogix.com/docs/user-guides/mcp-server/setup/
+    fetchedAt: 2026-11-09
+x-omega: { oss: exclude }

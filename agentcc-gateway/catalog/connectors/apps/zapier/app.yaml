@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: zapier
+version: 1.0.0
+name: Zapier
+description: "Run actions in thousands of apps through a Zapier MCP server you configure."
+vendor:
+  name: Zapier
+  domains: [zapier.com]
+eeCategory: productivity
+group: other
+categories: [productivity, automation]
+tags: [workflows, automation, integrations]
+docsUrl: https://docs.zapier.com/mcp/home
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://docs.zapier.com/mcp/get-started/authentication
+    fetchedAt: 2026-11-11

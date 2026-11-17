@@ -8,7 +8,7 @@ import reprlib
 from dataclasses import dataclass
 from typing import Any
 
-from evaluations.engine.instance import resolve_pass_threshold
+from evaluations.engine.instance import resolve_choice_scores, resolve_pass_threshold
 from simulate.models import SimulateEvalConfig
 
 logger = logging.getLogger(__name__)
@@ -59,7 +59,7 @@ def resolve_eval_scoring_spec(config: SimulateEvalConfig) -> EvalScoringSpec:
         if str(template_config.get("output") or "").lower() == "pass/fail"
         else "percentage"
     )
-    choices = _binding_setting(config, "choice_scores", template.choice_scores or {})
+    choices = resolve_choice_scores(template, config.config) or {}
     choice_scores = {}
     if isinstance(choices, dict):
         for label, value in choices.items():

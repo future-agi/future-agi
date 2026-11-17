@@ -18,6 +18,7 @@ from simulate.temporal.types.activities import (
     FetchClientCallInput,
     FetchClientCallOutput,
 )
+from simulate.utils.ended_reason import EndedReasonSource, set_ended_reason
 
 logger = structlog.get_logger(__name__)
 
@@ -81,11 +82,20 @@ async def fetch_client_call_data(input: FetchClientCallInput) -> FetchClientCall
 
         from ee.voice.semantics import FAGICallData
         from ee.voice.services.voice_service_manager import VoiceServiceManager
+        from ee.voice.temporal.activities.customer_credentials import (
+            read_customer_credentials,
+        )
         from tfc.temporal.common.heartbeat import Heartbeater
 
         # Use heartbeat context manager to prevent timeout
         async with Heartbeater() as heartbeater:
             heartbeater.details = ("fetching_client_data", input.call_id)
+
+            # The customer's key: the input's value, or else read by call id.
+            client_api_key = (
+                input.client_api_key
+                or (await read_customer_credentials(input.call_id)).api_key
+            )
 
             # Fetch our call data
             call = await CallExecution.objects.aget(id=input.call_id)
@@ -126,7 +136,7 @@ async def fetch_client_call_data(input: FetchClientCallInput) -> FetchClientCall
 
             # Initialize VoiceServiceManager with client's API key
             voice_manager = VoiceServiceManager(
-                api_key=input.client_api_key,
+                api_key=client_api_key,
                 system_voice_provider=input.client_provider,
             )
 
@@ -144,7 +154,7 @@ async def fetch_client_call_data(input: FetchClientCallInput) -> FetchClientCall
                     voice_manager.find_client_call, thread_sensitive=False
                 )(
                     FindClientCallInput(
-                        customer_api_key=input.client_api_key,
+                        customer_api_key=client_api_key,
                         customer_assistant_id=input.client_assistant_id,
                         our_call_data=our_call_data,
                         customer_voice_service_provider=input.client_provider,
@@ -258,8 +268,20 @@ async def fetch_client_call_data(input: FetchClientCallInput) -> FetchClientCall
                 update_fields.append("stereo_recording_url")
 
             if client_call_data.ended_reason and not call.ended_reason:
-                call.ended_reason = client_call_data.ended_reason
-                update_fields.append("ended_reason")
+                # The client's provider's own reason. Bland keeps its error
+                # message in the same field, so a Bland reason is
+                # provider-error (Bland calls return before this fetch).
+                update_fields.extend(
+                    set_ended_reason(
+                        call,
+                        client_call_data.ended_reason,
+                        (
+                            EndedReasonSource.PROVIDER_ERROR
+                            if input.client_provider == ProviderChoices.BLAND.value
+                            else EndedReasonSource.PROVIDER
+                        ),
+                    )
+                )
 
             if client_call_data.recording_available and not call.recording_available:
                 call.recording_available = client_call_data.recording_available
@@ -303,7 +325,7 @@ async def fetch_client_call_data(input: FetchClientCallInput) -> FetchClientCall
                             client_log_url,
                             source=CallLogEntry.LogSource.CUSTOMER,
                             call_id=client_call_id,
-                            api_key=input.client_api_key,
+                            api_key=client_api_key,
                         )
                 except Exception as log_err:  # noqa: BLE001
                     activity.logger.warning(

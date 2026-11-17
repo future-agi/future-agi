@@ -631,9 +631,26 @@ class StripeWebhookResponseSerializer(serializers.Serializer):
 
 
 class UsagePeriodQuerySerializer(StrictInputSerializer):
+    """Usage overview is organization-wide, not workspace-filterable."""
+
     period = serializers.RegexField(regex=r"^\d{4}-\d{2}$", required=False)
     period_end = serializers.RegexField(regex=r"^\d{4}-\d{2}$", required=False)
-    workspace_id = serializers.UUIDField(required=False)
+
+    def allows_unknown_field(self, field_name):
+        # Let the serializer explain this retired parameter instead of the
+        # shared request validator overwriting its error with "Unknown field."
+        return field_name == "workspace_id"
+
+    def to_internal_value(self, data):
+        if hasattr(data, "keys") and "workspace_id" in data:
+            raise serializers.ValidationError(
+                {
+                    "workspace_id": [
+                        "Usage overview is organization-wide; workspace_id is not supported."
+                    ]
+                }
+            )
+        return super().to_internal_value(data)
 
 
 class UsageDimensionPeriodQuerySerializer(StrictInputSerializer):
@@ -777,9 +794,55 @@ class UsageInvoiceLineItemSerializer(serializers.Serializer):
 
 
 class UsageBillingOverviewResultSerializer(serializers.Serializer):
+    # A preview of the organization's next invoice, the one issued on the 1st
+    # of next month. Requesting it writes nothing.
     org_id = serializers.UUIDField(required=False)
-    period = serializers.CharField(required=False)
-    plan = serializers.CharField(required=False)
+    period = serializers.CharField(
+        required=False,
+        help_text=(
+            "This month, as YYYY-MM. It is not the previewed invoice's month; "
+            "see invoice_period."
+        ),
+    )
+    plan = serializers.CharField(
+        required=False,
+        help_text=(
+            "The plan the preview is priced at; the free plan is not invoiced. "
+            "When an add-on removal takes effect by the issue date, this is "
+            "the plan the organization moves to, Pay-as-you-go (payg), not "
+            "the add-on that is ending."
+        ),
+    )
+    invoice_period = serializers.CharField(
+        required=False,
+        help_text=(
+            "The previewed invoice's month, as YYYY-MM: next month. Sent for "
+            "paid plans only."
+        ),
+    )
+    issue_date = serializers.CharField(
+        required=False,
+        help_text=(
+            "The day the previewed invoice is issued, as YYYY-MM-DD: the 1st "
+            "of next month. Sent for paid plans only. If the preview has no "
+            "line items and a total of 0, no invoice is issued that day."
+        ),
+    )
+    fee_period = serializers.CharField(
+        required=False,
+        help_text=(
+            "The month the invoice's platform fee covers, as YYYY-MM. Sent only "
+            "when the preview has a platform fee line. A custom plan's fee is "
+            "billed separately and is never on this invoice."
+        ),
+    )
+    usage_period = serializers.CharField(
+        required=False,
+        help_text=(
+            "The month whose usage the invoice bills, as YYYY-MM: this month, "
+            "as recorded so far. Sent for paid plans only."
+        ),
+    )
     platform_fee = serializers.DecimalField(
         max_digits=20, decimal_places=8, required=False
     )

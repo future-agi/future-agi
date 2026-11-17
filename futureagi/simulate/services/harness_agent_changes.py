@@ -877,7 +877,18 @@ def change_agent_source(
         raise _unsupported(given)
 
     if archive_artifact_id is not None:
-        if kind != SourceKind.ARCHIVE:
+        from simulate.services.github_app_tenancy import platform_github_app_refused
+
+        # A private GitHub source this deployment refuses to read, by the same check
+        # the installation token mint makes, takes an upload in its place: the
+        # environment keeps its id, runs and versions. The visibility is the one its
+        # runs read. Any other GitHub source keeps its repository.
+        replaces_repository = (
+            kind == SourceKind.GITHUB
+            and access.get("visibility") == "private"
+            and platform_github_app_refused()
+        )
+        if kind != SourceKind.ARCHIVE and not replaces_repository:
             raise _unsupported("archive_artifact_id")
         if str(archive_artifact_id) == str(
             (facts.source or {}).get("archive_artifact_id") or ""
@@ -892,7 +903,7 @@ def change_agent_source(
                 status_code=422,
                 details={"piece": "agent"},
             )
-        return _made(
+        version = _made(
             parent,
             environment,
             user,
@@ -900,6 +911,29 @@ def change_agent_source(
             source={"kind": "archive", "archive_artifact_id": str(archive_artifact_id)},
             trigger=Trigger.UPLOAD,
         )
+        if replaces_repository:
+            # When the agent's source moved from the repository to an upload, and in
+            # which version; that version's parent is the repository's. How the
+            # repository was reached is never kept here.
+            _record_metadata(
+                environment,
+                "agent_source_replaced",
+                {
+                    "from": {
+                        "kind": "github",
+                        "repository": str((facts.source or {}).get("repository") or ""),
+                    },
+                    "to": {"kind": "archive", "agent_version_id": str(version.id)},
+                    "requested_default": bool(make_default),
+                    "at": timezone.now().isoformat(),
+                },
+            )
+            logger.info(
+                "harness_agent_source_replaced environment=%s version=%s",
+                environment.id,
+                version.id,
+            )
+        return version
 
     config = dict(current.get("config") or {})
     before = copy.deepcopy(config)

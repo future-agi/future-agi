@@ -704,7 +704,16 @@ class TestVersioningFlags:
         settings.HARNESS_VERSIONING_NUDGES_ENABLED = nudges
         environment = _legacy(user, workspace, f"api-flags-{enabled}-{nudges}", storage)
 
-        assert serialize_job(environment)["versioning"] == expected
+        assert serialize_job(environment)["versioning"] == {
+            **expected,
+            "state": "enabling" if enabled else "off",
+            "backfill": {
+                "state": "not_started" if enabled else "off",
+                "outcome_code": None,
+                "updated_at": None,
+                "progress": None,
+            },
+        }
 
 
 class TestErrorHandling:
@@ -996,5 +1005,12 @@ class TestSecondReviewRound:
         assert response.json()["versioning"] == {
             "enabled": True,
             "nudges_enabled": False,
+            "state": "ready",
+            "backfill": {
+                "state": "not_started",
+                "outcome_code": None,
+                "updated_at": None,
+                "progress": None,
+            },
         }
         assert serialize_job(run)["versioning"]["enabled"] is True

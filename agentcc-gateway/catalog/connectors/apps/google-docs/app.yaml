@@ -1,0 +1,22 @@
+schema: connector-manifest/v1#app
+id: google-docs
+version: 1.0.0
+name: Google Docs
+description: Read and edit app-authorized Google documents with typed text, table and formatting requests.
+vendor:
+  name: Google
+  domains:
+    - googleapis.com
+eeCategory: productivity
+group: google
+categories:
+  - productivity
+docsUrl: https://developers.google.com/workspace/docs/api/reference/rest
+archetype: workspace-docs
+defaultProvider: futureagi-rest
+lifecycle:
+  status: active
+sources:
+  - fact: vendor.domains
+    url: https://raw.githubusercontent.com/googleapis/google-api-go-client/b2487a489315d16e91d98a8d940dca2e59e0bd9d/docs/v1/docs-api.json
+    fetchedAt: "2026-10-28"

@@ -1,0 +1,55 @@
+schema: "connector-manifest/v1#provider"
+# AWS's MCP Proxy for AWS runs locally and signs requests with local AWS
+# credentials to AWS's hosted MCP server at the URL in args; execution is remote.
+# It acts with the identity's full account permissions. Give the agent a
+# least-privilege profile rather than a broadly privileged identity.
+app: aws
+id: local
+version: 1.0.0
+kind: vendor_local
+publisher: vendor
+vendorStatus:
+  label: ga
+  source: https://aws.amazon.com/about-aws/whats-new/2025/10/model-context-protocol-proxy-available/
+transport:
+  kind: stdio
+  command: uvx
+  args:
+    - mcp-proxy-for-aws-cli@latest
+    - https://aws-mcp.us-east-1.api.aws/mcp
+  env:
+    AWS_PROFILE: Optional AWS profile if --profile and AWS_MCP_PROXY_PROFILES are unset. The server acts with that identity's full account permissions; use a least-privilege profile for the agent.
+    AWS_REGION: Optional AWS Region used by the proxy when --region is absent; distinct from the endpoint Region. The default Region for upstream operations is set through AWS_REGION metadata.
+hosted: false
+trusted: false
+accountModes: [agent]
+auth: { kind: local_setup }
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: kind
+    url: https://docs.aws.amazon.com/agent-toolkit/latest/userguide/getting-started-aws-mcp-server.html
+    fetchedAt: 2026-11-16
+  - fact: publisher
+    url: https://aws.amazon.com/about-aws/whats-new/2025/10/model-context-protocol-proxy-available/
+    fetchedAt: 2026-11-16
+  - fact: transport.kind
+    url: https://docs.aws.amazon.com/agent-toolkit/latest/userguide/getting-started-aws-mcp-server.html
+    fetchedAt: 2026-11-16
+  - fact: transport.command
+    url: https://raw.githubusercontent.com/aws/mcp-proxy-for-aws/main/README.md
+    fetchedAt: 2026-11-16
+  - fact: transport.args
+    url: https://raw.githubusercontent.com/aws/mcp-proxy-for-aws/main/README.md
+    fetchedAt: 2026-11-16
+  - fact: transport.env
+    url: https://raw.githubusercontent.com/aws/mcp-proxy-for-aws/main/README.md
+    fetchedAt: 2026-11-16
+  - fact: auth.kind
+    url: https://raw.githubusercontent.com/aws/mcp-proxy-for-aws/main/README.md
+    fetchedAt: 2026-11-16
+  - fact: tools.source
+    url: https://docs.aws.amazon.com/agent-toolkit/latest/userguide/getting-started-aws-mcp-server.html
+    fetchedAt: 2026-11-16

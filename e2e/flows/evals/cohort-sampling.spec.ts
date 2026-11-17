@@ -83,6 +83,11 @@ test('EVAL-E2E-020: sample whole contacts, retain late spans, and explicitly rer
       allIds.push(...spanIds);
     }
     const idsLiteral = allIds.map(id => `'${id}'`).join(','); // harness-generated hex IDs, not request SQL
+    // Closed previews and cohort freezes both use the default 15 s arrival-settle
+    // margin. Backdated event times do not age created_at, updated_at or _version.
+    const settled = (ids: string[]) => expect.poll(async () => Number((await probe.ch<{ age: string }>(
+      `SELECT dateDiff('second', max(greatest(created_at, updated_at, fromUnixTimestamp64Nano(toInt64(_version), 'UTC'))), now()) AS age FROM spans FINAL WHERE id IN (${ids.map(id => `'${id}'`).join(',')})`))[0]?.age ?? 0),
+    { timeout: 60_000 }).toBeGreaterThan(17);
     let facts: { id: string; project_id: string; session_id: string }[] = [];
     await expect.poll(async () => {
       facts = await probe.ch<{ id: string; project_id: string; session_id: string }>(
@@ -142,6 +147,7 @@ test('EVAL-E2E-020: sample whole contacts, retain late spans, and explicitly rer
     await page.getByRole('spinbutton', { name: 'How many conversations?', exact: true }).fill('1');
     await testInfo.attach('ui-policy-editor', { contentType: 'image/png', body: await page.screenshot({ fullPage: true }) });
 
+    await settled(allIds);
     const previewResponse = page.waitForResponse(r => r.url().endsWith(PREVIEW) && r.request().method() === 'POST', { timeout: UI_READY });
     await page.getByRole('button', { name: 'Preview sample', exact: true }).click();
     const response = await previewResponse;
@@ -169,6 +175,7 @@ test('EVAL-E2E-020: sample whole contacts, retain late spans, and explicitly rer
     const config = await configResponse.json() as Created;
     await mockModel.assertReady();
     const created = page.waitForResponse(r => r.url().endsWith(TASK) && r.request().method() === 'POST', { timeout: UI_READY });
+    await settled(allIds);
     await page.getByRole('button', { name: 'Create task', exact: true }).click();
     const createResponse = await created;
     expect(createResponse.ok()).toBe(true);
@@ -209,6 +216,7 @@ test('EVAL-E2E-020: sample whole contacts, retain late spans, and explicitly rer
     const rerunDialog = page.getByRole('dialog');
     await rerunDialog.getByText('Edit & Re-run Existing Evals', { exact: true }).click();
     const appended = page.waitForResponse(r => r.url().endsWith(UPDATE) && r.request().method() === 'PATCH', { timeout: UI_READY });
+    await settled(allIds);
     await rerunDialog.getByRole('button', { name: 'Re-run', exact: true }).click();
     const appendedResponse = await appended;
     expect(appendedResponse.ok()).toBe(true);
@@ -235,10 +243,15 @@ test('EVAL-E2E-020: sample whole contacts, retain late spans, and explicitly rer
     expect((await editedResponse.json() as Preview).result.strata[0]).toMatchObject({ eligible_units: 2, selected_units: 2, selected_rows: 12 });
     await testInfo.attach('ui-edited-preview', { contentType: 'image/png', body: await page.screenshot({ fullPage: true }) });
     await page.getByRole('button', { name: 'Save', exact: true }).click();
-    await expect(page.getByText('Delete Past Data & Start Fresh', { exact: true })).toBeVisible({ timeout: UI_READY });
+    const freshRunDialog = page.getByRole('dialog');
+    const freshRun = freshRunDialog.getByRole('radio', { name: 'Delete Past Data & Start Fresh', exact: true });
+    await expect(freshRun).toBeVisible({ timeout: UI_READY });
+    await freshRun.check();
+    await expect(freshRun).toBeChecked();
     await mockModel.assertReady();
     const edited = page.waitForResponse(r => r.url().endsWith(UPDATE) && r.request().method() === 'PATCH', { timeout: UI_READY });
-    await page.getByRole('button', { name: 'Run task', exact: true }).click();
+    await settled(allIds);
+    await freshRunDialog.getByRole('button', { name: 'Update and run task', exact: true }).click();
     const editedTask = await edited;
     expect(editedTask.ok()).toBe(true);
     expect(editedTask.request().postDataJSON()).toMatchObject({ edit_type: 'fresh_run', sampling_policy: { default: { target_n: 2 } } });

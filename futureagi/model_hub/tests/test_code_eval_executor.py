@@ -2,9 +2,10 @@
 Tests for how code evals reach the code-executor service.
 
 The executor's answer is final: an HTTP error, a timeout or an unusable
-response comes back as an eval error. Code runs in the worker only when the
-executor cannot be reached at all, and only on a self-hosted install that sets
-CODE_EXECUTOR_LOCAL_FALLBACK. Cloud deployments never run it locally.
+response comes back as an eval error. When the executor cannot be reached at
+all, or none is configured, the eval is refused with the unavailable setup
+error. Code never runs in the worker, on a self-hosted install that sets
+CODE_EXECUTOR_LOCAL_FALLBACK or on a cloud deployment.
 
 urlopen is replaced at the urllib boundary; subprocess.run stands in for the
 local runner so each test can tell whether it was started.
@@ -35,6 +36,13 @@ LANGUAGES = [
 
 LOCAL_RESULT = {"status": "success", "data": {"result": 1.0, "reason": "local"}}
 EXECUTOR_RESULT = {"status": "success", "data": {"result": 1.0, "reason": "executor"}}
+# An executor that cannot be reached, or none configured: refused, never run here.
+UNAVAILABLE = {
+    "status": "error",
+    "data": sandbox.EXECUTOR_UNAVAILABLE_MESSAGE,
+    "setup_error": True,
+    "error_code": "EGRESS_POLICY_UNAVAILABLE",
+}
 
 
 @pytest.fixture
@@ -228,14 +236,12 @@ class TestExecutorUnreachable:
         result, logs = _run(execute, code)
 
         local_run.assert_not_called()
-        assert result == {
-            "status": "error",
-            "data": sandbox.EXECUTOR_UNAVAILABLE_MESSAGE,
-            "setup_error": True,
-        }
-        assert "code_executor_service_unavailable" in _events(logs, "warning")
+        assert result == UNAVAILABLE
+        warnings = _events(logs, "warning")
+        assert "code_executor_service_unavailable" in warnings
+        assert "code_executor_local_fallback_refused" in warnings
 
-    def test_with_opt_in_runs_locally(
+    def test_opt_in_does_not_run_locally(
         self, execute, code, failure, urlopen, local_run, self_hosted
     ):
         self_hosted.CODE_EXECUTOR_LOCAL_FALLBACK = True
@@ -243,11 +249,11 @@ class TestExecutorUnreachable:
 
         result, logs = _run(execute, code)
 
-        local_run.assert_called_once()
-        assert result == LOCAL_RESULT
+        local_run.assert_not_called()
+        assert result == UNAVAILABLE
         warnings = _events(logs, "warning")
         assert "code_executor_service_unavailable" in warnings
-        assert "code_executor_local_fallback" in warnings
+        assert "code_executor_local_fallback_refused" in warnings
 
     @pytest.mark.parametrize("deployment", ["US", "EU", "DEV", " us "])
     def test_cloud_deployment_refuses_opt_in(
@@ -260,11 +266,7 @@ class TestExecutorUnreachable:
         result, logs = _run(execute, code)
 
         local_run.assert_not_called()
-        assert result == {
-            "status": "error",
-            "data": sandbox.EXECUTOR_UNAVAILABLE_MESSAGE,
-            "setup_error": True,
-        }
+        assert result == UNAVAILABLE
         assert "code_executor_local_fallback_refused" in _events(logs, "warning")
 
 
@@ -278,11 +280,7 @@ def test_unset_opt_in_means_no_local_run(
     result, _ = _run(execute, code)
 
     local_run.assert_not_called()
-    assert result == {
-        "status": "error",
-        "data": sandbox.EXECUTOR_UNAVAILABLE_MESSAGE,
-        "setup_error": True,
-    }
+    assert result == UNAVAILABLE
 
 
 @pytest.mark.parametrize("execute,code", LANGUAGES)
@@ -298,21 +296,22 @@ class TestNoExecutorConfigured:
 
         urlopen.assert_not_called()
         local_run.assert_not_called()
-        assert result == {
-            "status": "error",
-            "data": sandbox.EXECUTOR_UNAVAILABLE_MESSAGE,
-            "setup_error": True,
-        }
-        assert "code_executor_service_unavailable" in _events(logs, "warning")
+        assert result == UNAVAILABLE
+        warnings = _events(logs, "warning")
+        assert "code_executor_service_unavailable" in warnings
+        assert "code_executor_local_fallback_refused" in warnings
 
-    def test_with_opt_in_runs_locally(
+    def test_opt_in_does_not_run_locally(
         self, execute, code, urlopen, local_run, self_hosted, monkeypatch
     ):
         monkeypatch.setattr(sandbox, "CODE_EXECUTOR_URL", "")
         self_hosted.CODE_EXECUTOR_LOCAL_FALLBACK = True
 
-        result, _ = _run(execute, code)
+        result, logs = _run(execute, code)
 
         urlopen.assert_not_called()
-        local_run.assert_called_once()
-        assert result == LOCAL_RESULT
+        local_run.assert_not_called()
+        assert result == UNAVAILABLE
+        warnings = _events(logs, "warning")
+        assert "code_executor_service_unavailable" in warnings
+        assert "code_executor_local_fallback_refused" in warnings

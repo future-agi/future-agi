@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: pulumi
+version: 1.0.0
+name: Pulumi
+description: "Search cloud resources, inspect stacks and policy violations, and automate infrastructure tasks."
+vendor:
+  name: Pulumi
+  domains: [pulumi.com]
+eeCategory: developer
+group: other
+categories: [developer]
+tags: [projects, automation]
+docsUrl: https://www.pulumi.com/docs/ai/guides/set-up-mcp-server/
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://www.pulumi.com/docs/ai/guides/set-up-mcp-server/
+    fetchedAt: 2026-11-09

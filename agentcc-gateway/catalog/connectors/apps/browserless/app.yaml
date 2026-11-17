@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: browserless
+version: 1.0.0
+name: Browserless
+description: "Automate cloud browsers, scrape and crawl pages, and inspect browser account usage."
+vendor:
+  name: Browserless
+  domains: [browserless.io]
+eeCategory: research
+group: other
+categories: [research, browser-automation]
+tags: [browser, automation, extraction]
+docsUrl: https://docs.browserless.io/mcp/browserless-mcp-server/setup
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://docs.browserless.io/mcp/browserless-mcp-server/setup
+    fetchedAt: 2026-11-09

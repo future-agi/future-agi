@@ -5,7 +5,7 @@ import { SharedIssueContext } from "../../sharedIssueContext";
 import { useErrorFeedStore } from "../../store";
 
 const mocks = vi.hoisted(() => ({
-  useOrgMembers: vi.fn(() => ({ data: [] })),
+  useOrgMembersInfinite: vi.fn(() => ({ data: [] })),
   useErrorFeedSidebar: vi.fn(() => ({ data: undefined, isLoading: false })),
   useLinearTeams: vi.fn(() => ({ data: undefined, isLoading: false })),
   useSharedIssueSidebar: vi.fn(() => ({ data: undefined, isLoading: false })),
@@ -13,7 +13,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("src/api/annotation-queues/annotation-queues", () => ({
-  useOrgMembers: mocks.useOrgMembers,
+  useOrgMembersInfinite: mocks.useOrgMembersInfinite,
 }));
 vi.mock("src/api/shared-links", () => ({
   useSharedIssueSidebar: mocks.useSharedIssueSidebar,
@@ -66,7 +66,7 @@ describe("ErrorMetadataPanel on a shared issue", () => {
     expect(
       screen.queryByRole("button", { name: /connect|create issue/i }),
     ).not.toBeInTheDocument();
-    for (const [orgId] of mocks.useOrgMembers.mock.calls) {
+    for (const [orgId] of mocks.useOrgMembersInfinite.mock.calls) {
       expect(orgId).toBeFalsy();
     }
     for (const [clusterId] of mocks.useErrorFeedSidebar.mock.calls) {

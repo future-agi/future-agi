@@ -1,0 +1,70 @@
+{
+  "num_rows": 3,
+  "columns": [
+    {
+      "name": "row_id",
+      "type": "BYTE_ARRAY",
+      "values": ["r-1", "r-2", "r-3"]
+    },
+    {
+      "name": "customer_message",
+      "type": "BYTE_ARRAY",
+      "values": [
+        "Order A-3920 says \"delivered\", but nothing arrived, sorry",
+        "  Où est ma commande ? — Zoë  ",
+        "Refund\r\nplease, ✓ 日本"
+      ]
+    },
+    {
+      "name": "conversation",
+      "type": "BYTE_ARRAY",
+      "values": [
+        "[]",
+        "[{\"role\":\"user\",\"content\":\"I wrote last week about A-7781.\"},{\"role\":\"assistant\",\"content\":\"Thanks for your patience.\"}]",
+        null
+      ]
+    },
+    {
+      "name": "expected_reply",
+      "type": "BYTE_ARRAY",
+      "values": [
+        "Sorry for the wait.\nA-3920 is delayed; the new estimate is Thursday.",
+        null,
+        "Refunded $12.50, 5–7 business days."
+      ]
+    },
+    {
+      "name": "expected_tool_calls",
+      "type": "BYTE_ARRAY",
+      "values": [
+        "[{\"name\":\"lookup_order\",\"args\":{\"order_id\":\"A-3920\"}}]",
+        "[]",
+        null
+      ]
+    },
+    {
+      "name": "order_total",
+      "type": "INT64",
+      "values": [64, -3, null]
+    },
+    {
+      "name": "Groundedness",
+      "type": "DOUBLE",
+      "values": [0.41, 1, null]
+    },
+    {
+      "name": "Correct?",
+      "type": "BOOLEAN",
+      "values": [true, false, null]
+    },
+    {
+      "name": "row_metadata",
+      "type": "BYTE_ARRAY",
+      "values": [
+        "{\"channel\":\"chat\",\"ticket_id\":\"T-1001\"}",
+        null,
+        "{\"nested\":{\"a\":[1,2]}}"
+      ]
+    }
+  ]
+}

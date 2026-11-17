@@ -305,7 +305,7 @@ test('DASH-E2E-011: a saved trace annotation widget retains star ratings', {
       await uiExpect(page.getByRole('button', { name: optionName(property), exact: true })).toBeVisible();
     };
     const chooseProperty = async (property: Property, breakdown = false) => {
-      await page.locator(breakdown ? '.breakdown-section-title' : '.filter-section-title').click();
+      await (breakdown ? page.getByRole('button', { name: 'Add breakdown', exact: true }) : page.locator('.filter-section-title')).click();
       await searchCatalog(property, breakdown ? 'breakdown' : 'filter', property.property_kind === 'annotation' ? 'Annotations' : 'Traces');
       await page.getByRole('button', { name: optionName(property), exact: true }).click();
     };
@@ -399,7 +399,7 @@ test('DASH-E2E-011: a saved trace annotation widget retains star ratings', {
         await uiExpect(metricCard.getByText(aggregation, { exact: true })).toBeVisible();
         await uiExpect(metricCard.locator('.filter-value-name')).toHaveCount(0);
       }
-      await uiExpect(page.locator('.breakdown-section-title').locator('../..').getByText(labelName, { exact: true })).toBeVisible();
+      await uiExpect(page.getByRole('button', { name: `Change breakdown ${labelName}`, exact: true })).toBeVisible();
       await uiExpect(page.getByRole('combobox').filter({ hasText: 'Table' })).toBeVisible();
       await uiExpect(page.getByRole('combobox').filter({ hasText: 'Day' })).toBeVisible(); await uiExpect(page.getByText('7D', { exact: true })).toBeVisible();
     };

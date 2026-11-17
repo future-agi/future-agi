@@ -1,4 +1,4 @@
-FROM futureagi/serving-base:v1.0.0
+FROM futureagi/serving-base:v1.0.1
 
 # Copy the rest of the application code into the container
 COPY . .

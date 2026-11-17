@@ -34,10 +34,12 @@ from tracer.utils.filter_operators import (
     split_comma_joined_uuid_members,
     validate_json_map_filter_value,
 )
+from tracer.utils.input_output_search import validate_input_output_search
 from tracer.utils.property_registry import (
     validate_property_filter_binding,
     validate_property_graph_binding,
 )
+from tracer.utils.trace_ids import stored_trace_id
 
 FILTER_CONFIG_SCHEMA = {
     "type": "object",
@@ -634,6 +636,13 @@ class FilterItemField(serializers.JSONField):
                 raise serializers.ValidationError(str(exc)) from exc
 
         filter_value = config.get("filter_value")
+        if column_id == "input_output" and config.get("col_type") == "SYSTEM_METRIC":
+            try:
+                validate_input_output_search(
+                    config.get("filter_type"), config.get("filter_op"), filter_value
+                )
+            except ValueError as exc:
+                raise serializers.ValidationError(str(exc)) from exc
         attribute_value_types = config.get("attribute_value_types")
         is_span_attribute = config.get("col_type") == "SPAN_ATTRIBUTE"
         filter_type = (
@@ -1197,6 +1206,20 @@ class ObserveGraphDataPointSerializer(serializers.Serializer):
     timestamp = serializers.CharField()
     value = serializers.FloatField(allow_null=True)
     primary_traffic = serializers.FloatField(required=False, allow_null=True)
+    count = serializers.IntegerField(required=False, min_value=0)
+    scored_count = serializers.IntegerField(required=False, min_value=0)
+    unscored_count = serializers.IntegerField(required=False, min_value=0)
+    completed_count = serializers.IntegerField(required=False, min_value=0)
+    error_count = serializers.IntegerField(required=False, min_value=0)
+    pending_count = serializers.IntegerField(required=False, min_value=0)
+    running_count = serializers.IntegerField(required=False, min_value=0)
+    skipped_count = serializers.IntegerField(required=False, min_value=0)
+    failed_count = serializers.IntegerField(required=False, min_value=0)
+    error_rate = serializers.FloatField(
+        required=False,
+        allow_null=True,
+        help_text="Execution errors / (errors + completed attempts), percent; excludes skipped and in-flight rows. Independent of quality failures.",
+    )
     cost_coverage = CostCoverageSerializer(required=False)
 
 
@@ -1230,7 +1253,12 @@ class ObserveGraphDataResultSerializer(serializers.Serializer):
         choices=("complete", "sampled", "degraded", "pending"), required=False
     )
     query_error_code = serializers.ChoiceField(
-        choices=("sample_limit", "read_budget_exceeded", "query_failed"),
+        choices=(
+            "sample_limit",
+            "read_budget_exceeded",
+            "query_failed",
+            "eval_lifecycle_unavailable",
+        ),
         required=False,
     )
     query_window_start = serializers.CharField(required=False)
@@ -1432,6 +1460,10 @@ class EvalTaskFiltersField(serializers.JSONField):
                 raise serializers.ValidationError(
                     f"{key} must be a list of non-empty strings."
                 )
+        if value.get("trace_id") is not None:
+            # A trace id copied from OpenTelemetry (32 hex digits) is kept in
+            # the span store's dashed form, the one trace reads match.
+            value["trace_id"] = [stored_trace_id(item) for item in value["trace_id"]]
 
         for filter_list_key in ("filters", "span_attributes_filters"):
             if filter_list_key in value:

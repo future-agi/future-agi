@@ -2,186 +2,196 @@ import { useEffect, useRef } from "react";
 import axios, { endpoints } from "src/utils/axios";
 import useImagineStore from "./useImagineStore";
 
+// A rerun clears the cache before dispatch finishes. Pollers must wait for that
+// request, otherwise an early GET can restore the previous completed result.
+const dispatches = new Map();
+const requestKey = (savedViewId, traceId, widgetId) =>
+  `${savedViewId}::${traceId}::${widgetId}`;
+const failureContent = "*Analysis failed. Click Rerun to retry.*";
+
+function cacheResults(analyses, widgets, traceId) {
+  const store = useImagineStore.getState();
+  const ids = new Set(widgets.map((w) => w.id));
+  analyses.forEach((analysis) => {
+    const id = analysis.widgetId || analysis.widget_id;
+    if (!ids.has(id)) return;
+    if (analysis.status === "completed" && analysis.content) {
+      store.setAnalysis(traceId, id, analysis.content);
+    } else if (analysis.status === "failed") {
+      store.setAnalysis(traceId, id, failureContent);
+    }
+  });
+}
+
 /**
- * Background analysis for dynamic widgets via REST API + DB polling.
- *
- * Flow:
- * 1. Detect widgets with `dynamicAnalysis` that have no cached result
- * 2. POST /tracer/imagine-analysis/ to trigger background LLM analysis
- * 3. Poll GET /tracer/imagine-analysis/ every 3s until complete
- * 4. Cache results in store (also persisted in DB for reload)
+ * Restore saved results first, then dispatch missing widgets and poll.
+ * projectId is the drawer's project; the URL has no project on Users pages.
  */
 export default function useDynamicAnalysis(
   widgets,
   traceData,
   _chatRef,
   traceId,
+  projectId,
 ) {
-  const triggeredRef = useRef(new Set());
-  const pollIntervalRef = useRef(null);
   const savedViewId = useImagineStore((s) => s._savedViewId);
+  const analysisCache = useImagineStore((s) => s.analysisCache);
+  const startedRef = useRef({ scope: null, ids: new Set() });
 
-  // Main trigger effect
   useEffect(() => {
-    if (!widgets?.length || !traceId || !traceData || !savedViewId) return;
-
-    const store = useImagineStore.getState();
-
-    const needsRun = widgets.filter((w) => {
-      if (!w.dynamicAnalysis) return false;
-      if (store.getAnalysis(traceId, w.id)) return false;
-      if (triggeredRef.current.has(`${traceId}::${w.id}`)) return false;
-      return true;
-    });
-
-    if (!needsRun.length) {
-      // Nothing to trigger — but check if there are pending results in DB to poll
-      const hasPending = widgets.some(
-        (w) => w.dynamicAnalysis && !store.getAnalysis(traceId, w.id),
-      );
-      if (hasPending && !pollIntervalRef.current) {
-        startPolling(traceId, savedViewId, pollIntervalRef);
-      }
-      return;
+    if (
+      !widgets?.length ||
+      !traceId ||
+      !traceData ||
+      !savedViewId ||
+      !projectId
+    )
+      return undefined;
+    const scope = `${savedViewId}::${traceId}`;
+    if (startedRef.current.scope !== scope) {
+      startedRef.current = { scope, ids: new Set() };
     }
+    const started = startedRef.current.ids;
+    const missing = widgets.filter(
+      (w) =>
+        w.dynamicAnalysis?.prompt &&
+        !useImagineStore.getState().getAnalysis(traceId, w.id),
+    );
+    if (!missing.length) return undefined;
 
-    // Mark as triggered
-    needsRun.forEach((w) => triggeredRef.current.add(`${traceId}::${w.id}`));
+    let active = true;
+    let timer;
+    let failures = 0;
+    const isCurrent = () =>
+      active && useImagineStore.getState()._savedViewId === savedViewId;
 
-    // Extract project_id from URL
-    const pathParts = window.location.pathname.split("/");
-    const observeIdx = pathParts.indexOf("observe");
-    const projectId = observeIdx >= 0 ? pathParts[observeIdx + 1] : null;
+    async function poll() {
+      try {
+        await Promise.all(
+          missing.map((w) => {
+            const dispatch = dispatches.get(
+              requestKey(savedViewId, traceId, w.id),
+            );
+            // An explicit rerun already supplies the POST for this widget.
+            if (dispatch) started.add(w.id);
+            return dispatch;
+          }),
+        );
+        if (!isCurrent()) return;
+        const response = await axios.get(endpoints.imagineAnalysis.poll, {
+          params: { saved_view_id: savedViewId, trace_id: traceId },
+        });
+        if (!isCurrent()) return;
+        const analyses = response.data?.result?.analyses || [];
+        cacheResults(analyses, missing, traceId);
 
-    // Trigger analysis via API
-    triggerAnalysis(needsRun, traceId, savedViewId, projectId);
-
-    // Start polling for results
-    startPolling(traceId, savedViewId, pollIntervalRef);
-
-    return () => {
-      if (pollIntervalRef.current) {
-        clearInterval(pollIntervalRef.current);
-        pollIntervalRef.current = null;
-      }
-    };
-  }, [widgets, traceData, traceId, savedViewId]);
-
-  // Reset when trace changes
-  const prevTraceRef = useRef(traceId);
-  useEffect(() => {
-    if (traceId !== prevTraceRef.current) {
-      prevTraceRef.current = traceId;
-      triggeredRef.current.clear();
-      if (pollIntervalRef.current) {
-        clearInterval(pollIntervalRef.current);
-        pollIntervalRef.current = null;
-      }
-    }
-  }, [traceId]);
-
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      if (pollIntervalRef.current) {
-        clearInterval(pollIntervalRef.current);
-        pollIntervalRef.current = null;
-      }
-    };
-  }, []);
-}
-
-async function triggerAnalysis(widgets, traceId, savedViewId, projectId) {
-  try {
-    const response = await axios.post(endpoints.imagineAnalysis.trigger, {
-      saved_view_id: savedViewId,
-      trace_id: traceId,
-      project_id: projectId,
-      widgets: widgets.map((w) => ({
-        widget_id: w.id,
-        prompt: w.dynamicAnalysis.prompt,
-      })),
-    });
-
-    // If any already completed (cached in DB from previous run), store them
-    const analyses = response.data?.result?.analyses || [];
-    const store = useImagineStore.getState();
-    analyses.forEach((a) => {
-      if (a.status === "completed" && a.content) {
-        store.setAnalysis(traceId, a.widgetId || a.widget_id, a.content);
-      }
-    });
-  } catch (err) {
-    // eslint-disable-next-line no-console
-    console.error("Failed to trigger analysis:", err);
-  }
-}
-
-function startPolling(traceId, savedViewId, intervalRef) {
-  if (intervalRef.current) return;
-
-  let failures = 0;
-
-  intervalRef.current = setInterval(async () => {
-    try {
-      const response = await axios.get(endpoints.imagineAnalysis.poll, {
-        params: { saved_view_id: savedViewId, trace_id: traceId },
-      });
-
-      const analyses = response.data?.result?.analyses || [];
-      const store = useImagineStore.getState();
-
-      let allDone = true;
-      analyses.forEach((a) => {
-        const widgetId = a.widgetId || a.widget_id;
-        if (a.status === "completed" && a.content) {
-          store.setAnalysis(traceId, widgetId, a.content);
-        } else if (a.status === "failed") {
-          store.setAnalysis(
+        const needsRun = missing.filter((w) => {
+          if (
+            useImagineStore.getState().getAnalysis(traceId, w.id) ||
+            started.has(w.id)
+          )
+            return false;
+          started.add(w.id);
+          // GET cannot distinguish stale from active running rows. POST once
+          // so the backend can restart stale work or deduplicate an active run.
+          return true;
+        });
+        if (needsRun.length) {
+          await triggerAnalysis(
+            needsRun,
             traceId,
-            widgetId,
-            `*Analysis failed: ${a.error || "Unknown error"}. Click Rerun to retry.*`,
+            savedViewId,
+            projectId,
+            false,
           );
-        } else {
-          allDone = false;
         }
-      });
-
-      if (allDone || analyses.length === 0) {
-        clearInterval(intervalRef.current);
-        intervalRef.current = null;
+        // A missing row is not a completed analysis. Keep polling, but report
+        // repeated empty responses instead of leaving a permanent skeleton.
+        failures = analyses.some((a) =>
+          missing.some((w) => w.id === (a.widgetId || a.widget_id)),
+        )
+          ? 0
+          : failures + 1;
+      } catch {
+        failures += 1;
       }
-
-      failures = 0;
-    } catch {
-      failures++;
+      if (!isCurrent()) return;
+      const unresolved = missing.filter(
+        (w) => !useImagineStore.getState().getAnalysis(traceId, w.id),
+      );
       if (failures > 10) {
-        clearInterval(intervalRef.current);
-        intervalRef.current = null;
+        unresolved.forEach((w) =>
+          useImagineStore.getState().setAnalysis(traceId, w.id, failureContent),
+        );
+      } else if (unresolved.length) {
+        timer = setTimeout(poll, 3000);
       }
     }
-  }, 3000);
+
+    poll();
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [widgets, traceData, traceId, savedViewId, projectId, analysisCache]);
 }
 
-/**
- * Trigger re-analysis for a single widget (Rerun button).
- */
-export function runAnalysis(widget, traceId) {
-  if (!widget?.dynamicAnalysis?.prompt || !traceId) return false;
+function triggerAnalysis(widgets, traceId, savedViewId, projectId, force) {
+  const pending = widgets.filter(
+    (w) => !dispatches.has(requestKey(savedViewId, traceId, w.id)),
+  );
+  if (!pending.length) {
+    return Promise.all(
+      widgets.map((w) =>
+        dispatches.get(requestKey(savedViewId, traceId, w.id)),
+      ),
+    );
+  }
+  const keys = pending.map((w) => requestKey(savedViewId, traceId, w.id));
+  const request = Promise.resolve().then(async () => {
+    try {
+      const response = await axios.post(endpoints.imagineAnalysis.trigger, {
+        saved_view_id: savedViewId,
+        trace_id: traceId,
+        project_id: projectId,
+        force,
+        widgets: pending.map((w) => ({
+          widget_id: w.id,
+          prompt: w.dynamicAnalysis.prompt,
+        })),
+      });
+      if (useImagineStore.getState()._savedViewId === savedViewId) {
+        cacheResults(response.data?.result?.analyses || [], pending, traceId);
+      }
+    } catch {
+      if (useImagineStore.getState()._savedViewId === savedViewId) {
+        pending.forEach((w) =>
+          useImagineStore.getState().setAnalysis(traceId, w.id, failureContent),
+        );
+      }
+    } finally {
+      keys.forEach((key) => dispatches.delete(key));
+    }
+  });
+  keys.forEach((key) => dispatches.set(key, request));
+  return request;
+}
 
+/** Explicit rerun only; the hook owns WidgetRenderer's initial auto-run. */
+export function runAnalysis(widget, traceId, projectId) {
+  if (
+    !widget?.dynamicAnalysis?.prompt ||
+    !traceId ||
+    !projectId ||
+    widget._needsAnalysis
+  )
+    return false;
   const store = useImagineStore.getState();
   const savedViewId = store._savedViewId;
+  if (!savedViewId) return false;
 
-  // Clear cache so skeleton shows
+  // Register dispatch before notifying cache subscribers to restart polling.
+  triggerAnalysis([widget], traceId, savedViewId, projectId, true);
   store.setAnalysis(traceId, widget.id, null);
-
-  // Extract project_id
-  const pathParts = window.location.pathname.split("/");
-  const observeIdx = pathParts.indexOf("observe");
-  const projectId = observeIdx >= 0 ? pathParts[observeIdx + 1] : null;
-
-  // Trigger via API
-  triggerAnalysis([widget], traceId, savedViewId, projectId);
-
   return true;
 }

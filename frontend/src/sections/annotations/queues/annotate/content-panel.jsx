@@ -17,6 +17,8 @@ import {
   IconButton,
   LinearProgress,
   Stack,
+  ToggleButton,
+  ToggleButtonGroup,
   Tooltip,
   Typography,
 } from "@mui/material";
@@ -41,6 +43,9 @@ import TraceDisplayPanel, {
   DEFAULT_VIEW_CONFIG,
 } from "src/components/traceDetail/TraceDisplayPanel";
 import { useGetTraceDetail } from "src/api/project/trace-detail";
+import ReviewCandidates from "./ReviewCandidates";
+// W4 C1: the expected answer with Correct (queues with corrections on).
+import CorrectExpectedField from "./CorrectExpectedField";
 import {
   useGetSavedViews,
   useDeleteSavedView,
@@ -80,11 +85,51 @@ function neutralChipSx(theme, height = 22) {
   };
 }
 
-export default function ContentPanel({ item }) {
+export default function ContentPanel({ item, reviewContext = null }) {
   if (!item) return null;
 
   const content = item.source_content;
   const sourceType = item.source_type;
+
+  if (sourceType === "pairwise") {
+    return (
+      <Box
+        sx={{
+          display: "grid",
+          gridTemplateColumns: { xs: "minmax(0, 1fr)", md: "repeat(2, minmax(0, 1fr))" },
+          height: "100%",
+          minHeight: 0,
+          overflow: "auto",
+        }}
+      >
+        {[["A", "source_a"], ["B", "source_b"]].map(([label, side]) => (
+          <Box
+            key={side}
+            component="section"
+            aria-label={label}
+            sx={{
+              display: "flex",
+              flexDirection: "column",
+              minWidth: 0,
+              minHeight: { xs: 320, md: 0 },
+              border: "1px solid",
+              borderColor: "divider",
+            }}
+          >
+            <Typography variant="subtitle1" sx={{ px: 2, py: 1, bgcolor: "background.neutral" }}>
+              {label}
+            </Typography>
+            <Box sx={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+              <ContentPanel item={{
+                ...item[side],
+                source_content: content?.[side] || { deleted: true },
+              }} />
+            </Box>
+          </Box>
+        ))}
+      </Box>
+    );
+  }
 
   if (content?.deleted) {
     return (
@@ -148,7 +193,20 @@ export default function ContentPanel({ item }) {
         sx={(theme) => ({ ...neutralChipSx(theme), mb: 2 })}
       />
 
-      {sourceType === "dataset_row" && <DatasetRowContent content={content} />}
+      {sourceType === "dataset_row" && reviewContext ? (
+        <ReviewCandidates
+          context={reviewContext}
+          datasetName={content?.dataset_name}
+        />
+      ) : null}
+      {sourceType === "dataset_row" && reviewContext ? (
+        <Box sx={{ mt: 2 }}>
+          <CorrectExpectedField context={reviewContext} />
+        </Box>
+      ) : null}
+      {sourceType === "dataset_row" && !reviewContext && (
+        <DatasetRowContent content={content} />
+      )}
       {sourceType === "trace" && <TraceContent content={content} />}
       {sourceType === "observation_span" && <SpanContent content={content} />}
       {sourceType === "prototype_run" && <PrototypeContent content={content} />}
@@ -159,6 +217,8 @@ export default function ContentPanel({ item }) {
 
 ContentPanel.propTypes = {
   item: PropTypes.object,
+  // annotate-detail `review_context` (experiment review items, §3.12)
+  reviewContext: PropTypes.object,
 };
 
 // ---------------------------------------------------------------------------
@@ -178,6 +238,52 @@ function findEntryBySpanId(entries, spanId) {
 }
 
 const READ_ONLY_TAB_TOOLTIP = "Open trace project to edit the view";
+
+const TRACE_LAYOUTS = [
+  { value: "tree", label: "Tree" },
+  { value: "timeline", label: "Timeline" },
+];
+
+// Tree | Timeline in the toolbar, beside Display, as in the trace drawer, so
+// the timeline is one click away. The Display panel keeps its own Trace
+// View / Timeline View choice; both set the same viewMode.
+function TraceLayoutSwitch({ viewMode, onChange }) {
+  return (
+    <ToggleButtonGroup
+      exclusive
+      size="small"
+      aria-label="Trace layout"
+      // The body draws the tree for any mode but "timeline".
+      value={viewMode === "timeline" ? "timeline" : "tree"}
+      // Clicking the pressed option sends null: keep one option pressed.
+      onChange={(_, next) => {
+        if (next) onChange(next);
+      }}
+      // Never squeezed or wrapped by a narrow panel.
+      sx={{ flexShrink: 0, whiteSpace: "nowrap" }}
+    >
+      {TRACE_LAYOUTS.map((layout) => (
+        <ToggleButton key={layout.value} value={layout.value}>
+          {layout.label}
+        </ToggleButton>
+      ))}
+    </ToggleButtonGroup>
+  );
+}
+
+TraceLayoutSwitch.propTypes = {
+  viewMode: PropTypes.string,
+  onChange: PropTypes.func.isRequired,
+};
+
+// The toolbar reads its own width, not the window's: the label panel beside
+// it decides the room it has (about 380 px in review mode at a 1024 px
+// window). With View session showing, one line needs about 410 px (the
+// Trace tab, Display, Tree | Timeline, View session, padding and gaps). At
+// 440 px or less, View session sits under the switch, so the row never runs
+// into the Trace tab. With no session there is one control and no change.
+const TOOLBAR_CONTAINER = "inline-trace-toolbar";
+const TOOLBAR_STACKED = `@container ${TOOLBAR_CONTAINER} (max-width: 440px)`;
 
 function InlineTraceView({ traceId, spanId, projectId: pinnedProjectId }) {
   const queryClient = useQueryClient();
@@ -426,26 +532,48 @@ function InlineTraceView({ traceId, spanId, projectId: pinnedProjectId }) {
       {/* Tabs toolbar — includes the "+ Imagine" button so users can pivot
           to an Imagine view from the annotate workspace. Saved views
           themselves stay read-only (no rename/edit here). */}
-      <DrawerToolbar
-        tabs={drawerTabs}
-        activeTabId={activeDrawerTab}
-        onTabChange={handleTabChange}
-        onCloseTab={handleCloseTab}
-        onCreateImagineTab={handleCreateImagineTab}
-        onDisplayOpen={(el) => setDisplayAnchorEl(el)}
-        readOnly
-        readOnlyTabTooltip={READ_ONLY_TAB_TOOLTIP}
-        hideFilter
-        rightSlot={
-          sessionId ? (
-            <ToolbarPill
-              icon="solar:chat-round-line-linear"
-              label="View session"
-              onClick={() => setShowSession(true)}
-            />
-          ) : null
-        }
-      />
+      <Box
+        sx={{
+          flexShrink: 0,
+          containerType: "inline-size",
+          containerName: TOOLBAR_CONTAINER,
+        }}
+      >
+        <DrawerToolbar
+          tabs={drawerTabs}
+          activeTabId={activeDrawerTab}
+          onTabChange={handleTabChange}
+          onCloseTab={handleCloseTab}
+          onCreateImagineTab={handleCreateImagineTab}
+          onDisplayOpen={(el) => setDisplayAnchorEl(el)}
+          readOnly
+          readOnlyTabTooltip={READ_ONLY_TAB_TOOLTIP}
+          hideFilter
+          rightSlot={
+            <Box
+              sx={{
+                display: "flex",
+                alignItems: "center",
+                gap: 0.5,
+                [TOOLBAR_STACKED]: {
+                  flexDirection: "column",
+                  alignItems: "flex-end",
+                  py: 0.5,
+                },
+              }}
+            >
+              <TraceLayoutSwitch viewMode={viewMode} onChange={setViewMode} />
+              {sessionId ? (
+                <ToolbarPill
+                  icon="solar:chat-round-line-linear"
+                  label="View session"
+                  onClick={() => setShowSession(true)}
+                />
+              ) : null}
+            </Box>
+          }
+        />
+      </Box>
 
       {/* Display options popover */}
       <TraceDisplayPanel

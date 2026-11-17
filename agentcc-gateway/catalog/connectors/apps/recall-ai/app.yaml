@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: recall-ai
+version: 1.0.0
+name: Recall.ai
+description: "Inspect meeting bots, recordings, calendar sync, webhook deliveries and usage in US East."
+vendor:
+  name: Recall.ai
+  domains: [recall.ai]
+eeCategory: communication
+group: other
+categories: [communication, meetings]
+tags: [meetings, recordings]
+docsUrl: https://docs.recall.ai/docs/mcp.md
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://docs.recall.ai/docs/mcp.md
+    fetchedAt: 2026-11-09

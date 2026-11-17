@@ -11,10 +11,10 @@ Reference: https://opentelemetry.io/docs/specs/semconv/gen-ai/
 """
 
 from enum import Enum
-from typing import Any, Optional
+from typing import Any
 
 
-class SemanticConvention(str, Enum):
+class SemanticConvention(str, Enum):  # noqa: UP042 - pre-existing; StrEnum changes str() output
     """Supported semantic convention sources."""
 
     FI = "fi"
@@ -40,6 +40,7 @@ class AttributeAliases:
         "gen_ai.request.model",  # OTEL GenAI (request)
         "gen_ai.response.model",  # OTEL GenAI (response - may differ)
         "llm.request.model",  # OpenLLMetry
+        "embedding.model_name",  # OpenInference (embedding fallback)
     ]
 
     PROVIDER = [
@@ -954,7 +955,7 @@ class AttributeRegistry:
     @classmethod
     def get_value_with_source(
         cls, attributes: dict[str, Any], canonical_name: str, default: Any = None
-    ) -> tuple[Any, Optional[str]]:
+    ) -> tuple[Any, str | None]:
         """
         Get attribute value and the alias that matched.
 

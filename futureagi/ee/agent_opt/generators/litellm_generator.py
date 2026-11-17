@@ -1,6 +1,10 @@
 import litellm
 from typing import Dict, List, Optional
 
+from model_hub.services import credit_ledger_port
+from model_hub.utils.model_endpoints import vertex_call_arguments
+from model_hub.utils.prompt_rendering import render_fstring_template
+
 from ..types import LLMMessage
 from ..base.base_generator import BaseGenerator
 
@@ -14,7 +18,12 @@ class LiteLLMGenerator(BaseGenerator):
     A Generator that uses LiteLLM to call any supported language model.
     """
 
-    def __init__(self, model: str, prompt_template: str):
+    def __init__(
+        self,
+        model: str,
+        prompt_template: str,
+        billing_purpose: str = credit_ledger_port.PURPOSE_OPTIMIZER_PROPOSAL,
+    ):
         """
         Initializes the LiteLLMGenerator.
 
@@ -22,9 +31,12 @@ class LiteLLMGenerator(BaseGenerator):
             model: The name of the model to use (e.g., "gpt-4o-mini").
             prompt_template: A string template for the prompt, with placeholders
                              in f-string format (e.g., "Summarize this: {text}").
+            billing_purpose: The optimizer proposal or teacher billing purpose.
         """
         self.model = model
         self.prompt_template = prompt_template
+        self.billing_purpose = billing_purpose
+        self._billing_scope = credit_ledger_port.current_billing_scope()
         # LiteLLM is stateless, so no further setup is needed here.
 
     def generate(self, prompt_vars: Dict[str, str], **litellm_kwargs) -> str:
@@ -41,7 +53,12 @@ class LiteLLMGenerator(BaseGenerator):
         Returns:
             The string content of the model's response.
         """
-        prompt = self.prompt_template.format(**prompt_vars)
+        credit_ledger_port.guard_direct_dispatch(
+            self._billing_scope,
+            purpose=self.billing_purpose,
+            model_name=self.model,
+        )
+        prompt = render_fstring_template(self.prompt_template, prompt_vars)
 
         response_format = litellm_kwargs.get("response_format")
         if (
@@ -57,18 +74,22 @@ class LiteLLMGenerator(BaseGenerator):
         # Check if user provided their own api_key
         user_provided_api_key = litellm_kwargs.get("api_key") is not None
 
-        try:
-            # Extract api_key separately to ensure it's never dropped
-            # drop_params=True will drop unsupported model params but not authentication params
-            api_key = litellm_kwargs.pop("api_key", None)
+        # Extract api_key separately to ensure it's never dropped
+        # drop_params=True will drop unsupported model params but not authentication params
+        api_key = litellm_kwargs.pop("api_key", None)
+        arguments = {
+            "model": self.model,
+            "messages": messages_for_litellm,
+            "api_key": api_key,
+            **litellm_kwargs,
+        }
+        if user_provided_api_key:
+            # A Vertex model is given its saved key as its Vertex
+            # configuration.
+            arguments = vertex_call_arguments(None, arguments, api_key)
 
-            response = litellm.completion(
-                model=self.model,
-                messages=messages_for_litellm,
-                api_key=api_key,
-                drop_params=True,
-                **litellm_kwargs
-            )
+        try:
+            response = litellm.completion(**arguments, drop_params=True)
             return response.choices[0].message.content
         except Exception as e:
             if user_provided_api_key:

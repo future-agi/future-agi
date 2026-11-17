@@ -61,6 +61,7 @@ import traceback
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import urlsplit
 
 PROJECT_ROOT = Path(os.environ.get("PROJECT_ROOT", "/app/backend"))
 DATA = Path(os.environ.get("FI_DATA_DIR", "/data"))
@@ -94,6 +95,33 @@ BOOT_STARTED_AT = "FI_BOOT_STARTED_AT"
 WAIT_FOR_API = "--wait-for-api"
 # Bind-mounted from GOOGLE_APPLICATION_CREDENTIALS (/dev/null when unset).
 VERTEX_KEY = Path("/etc/futureagi/secrets/vertex.json")
+# What this container can see of the two host settings under which the code
+# sandbox cannot start a run (it runs on the same host and Docker daemon).
+APPARMOR_USERNS = Path("/proc/sys/kernel/apparmor_restrict_unprivileged_userns")
+UID_MAP = Path("/proc/self/uid_map")
+# A container outside any remapped user namespace maps every uid to itself.
+IDENTITY_UID_MAP = ["0", "0", "4294967295"]
+# bin/lib/sandbox-host.sh's sentences for them, word for word.
+USERNS_RESTRICTED = (
+    "the host restricts unprivileged user namespaces "
+    "(kernel.apparmor_restrict_unprivileged_userns=1, the default on Ubuntu "
+    "23.10 and later), and the code executor is not set to run under the "
+    "loaded fa-code-executor AppArmor profile (CODE_EXECUTOR_APPARMOR_PROFILE)"
+)
+# The profile that lifts the restriction for the code executor; bin/install
+# stops before start-up when .env names it and the host has not loaded it.
+EXECUTOR_APPARMOR_PROFILE = "fa-code-executor"
+USERNS_REMAPPED = (
+    "Docker runs with userns-remap, so every container is already inside a "
+    "remapped user namespace"
+)
+# The summary's Code evals row. docker-compose.yml names the service
+# code-executor, with code-executor-nsjail as a second name (bin/start points
+# CODE_EXECUTOR_URL there for an .env that still sets the old sandbox profile).
+CODE_EXECUTOR_HOSTS = ("code-executor", "code-executor-nsjail")
+CODE_EXECUTOR_SERVICE = "code-executor"
+CODE_EVALS_UNTESTED = "not tested at start-up (the setup screen runs a test evaluation)"
+CODE_EVALS_WILL_FAIL = "will fail on this host: "
 
 # What the starting page and the API port say during each phase.
 PHASES = {
@@ -308,13 +336,25 @@ def telemetry_summary() -> str:
     (https://docs.futureagi.com/docs/self-hosting/configuration/telemetry)."""
     config = telemetry_config()
     if config.telemetry_is_disabled():
-        return (
-            "off: one registration ping (instance id, version, deployment type, "
-            "timestamp) only"
-        )
+        return "off: sends nothing to Future AGI"
     host = config.get_telemetry_url().split("://", 1)[-1].split("/", 1)[0]
+    if config.telemetry_shares_admin_emails():
+        registration = (
+            "for install counts and release-test planning; registration once the first owner/admin account exists "
+            "(schema_version, instance_id, version, deployment_type, timestamp, "
+            "telemetry_disabled=false, plus the emails and domains of owner, "
+            "admin and staff/superuser accounts; "
+            "FUTURE_AGI_TELEMETRY_SHARE_ADMIN_EMAILS=true)"
+        )
+    else:
+        registration = (
+            "for install counts and release-test planning; registration once the first owner/admin account exists "
+            "(schema_version, instance_id, version, deployment_type, timestamp, "
+            "telemetry_disabled=false; no emails unless "
+            "FUTURE_AGI_TELEMETRY_SHARE_ADMIN_EMAILS=true)"
+        )
     return (
-        "on: owner, admin and staff emails once, then usage counts every "
+        f"on: {registration}, then usage counts every "
         f"{config.get_telemetry_interval_hours()} h, never content, to {host}. "
         "FUTURE_AGI_TELEMETRY_DISABLED=true turns it off"
     )
@@ -367,12 +407,50 @@ def model_serving_summary() -> str:
     return "off (add `ml` to COMPOSE_PROFILES in .env and run `docker compose up -d`)"
 
 
+def read_host_file(path: Path) -> str:
+    """Empty when it cannot be read: no condition seen, never a failed boot."""
+    try:
+        return path.read_text()
+    except (OSError, ValueError):
+        return ""
+
+
+def sandbox_host_conditions() -> list[str]:
+    """The host settings visible from here that stop every code evaluation."""
+    found = []
+    profile = os.environ.get("CODE_EXECUTOR_APPARMOR_PROFILE", "").strip()
+    if (
+        read_host_file(APPARMOR_USERNS).strip() == "1"
+        and profile != EXECUTOR_APPARMOR_PROFILE
+    ):
+        found.append(USERNS_RESTRICTED)
+    uid_map = read_host_file(UID_MAP).split()
+    if uid_map and uid_map != IDENTITY_UID_MAP:
+        found.append(USERNS_REMAPPED)
+    return found
+
+
+def code_evals_summary() -> str:
+    """What runs code evals: docker-compose.yml's `code-executor` service (a
+    default service, no profile), or the operator's own executor, named by its
+    host. Nothing is run here: the setup screen sends it a test evaluation. A
+    host setting that stops every run is named instead."""
+    conditions = sandbox_host_conditions()
+    if conditions:
+        return CODE_EVALS_WILL_FAIL + "; ".join(conditions)
+    url = os.environ.get("CODE_EXECUTOR_URL") or "http://code-executor:8060"
+    try:
+        host = urlsplit(url).hostname
+    except ValueError:
+        host = None
+    if not host or host in CODE_EXECUTOR_HOSTS:
+        host = CODE_EXECUTOR_SERVICE
+    return f"{host}, {CODE_EVALS_UNTESTED}"
+
+
 def boot_summary() -> list[str]:
     """What this boot runs with, for the top of `docker compose logs app`.
     Names and URLs only, never a secret's value."""
-    profiles = {
-        p.strip() for p in (os.environ.get("COMPOSE_PROFILES") or "").split(",")
-    }
     dev = (os.environ.get("FI_DEV_RELOAD") or "").lower() in TRUE
     providers = llm_providers()
     rows = [
@@ -393,12 +471,7 @@ def boot_summary() -> list[str]:
         ("Password reset", password_reset_summary(email_delivery() is not None)),
         ("Telemetry", telemetry_summary()),
         ("Other hooks", outbound_hooks_summary()),
-        (
-            "Code evals",
-            "nsjail sandbox container (COMPOSE_PROFILES=sandbox)"
-            if "sandbox" in profiles
-            else "built-in sandbox",
-        ),
+        ("Code evals", code_evals_summary()),
         ("Model serving", model_serving_summary()),
         (
             "Edition",

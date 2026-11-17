@@ -22,7 +22,8 @@ from rest_framework import status
 from rest_framework.test import APIClient
 
 from accounts.models import Organization, User
-from accounts.models.workspace import Workspace
+from accounts.models.organization_membership import OrganizationMembership
+from accounts.models.workspace import Workspace, WorkspaceMembership
 from model_hub.models.choices import (
     CellStatus,
     DatasetSourceChoices,
@@ -37,6 +38,9 @@ from model_hub.models.evals_metric import (
     EvalTemplate,
     UserEvalMetric,
 )
+from model_hub.tests.network_isolation import no_external_lookups  # noqa: F401
+from tfc.constants.levels import Level
+from tfc.constants.roles import OrganizationRoles
 from tfc.middleware.workspace_context import set_workspace_context
 
 
@@ -47,22 +51,44 @@ def organization(db):
 
 @pytest.fixture
 def user(db, organization):
-    return User.objects.create_user(
+    user = User.objects.create_user(
         email="test@example.com",
         password="testpassword123",
         name="Test User",
         organization=organization,
     )
+    # Experiment-scoped lookups re-check live membership (scope_to_caller ->
+    # can_access_workspace), so the test user is an active owner, as a real
+    # account is.
+    OrganizationMembership.no_workspace_objects.create(
+        user=user,
+        organization=organization,
+        role=OrganizationRoles.OWNER,
+        level=Level.OWNER,
+        is_active=True,
+    )
+    return user
 
 
 @pytest.fixture
 def workspace(db, organization, user):
-    return Workspace.objects.create(
+    workspace = Workspace.objects.create(
         name="Default Workspace",
         organization=organization,
         is_default=True,
         created_by=user,
     )
+    WorkspaceMembership.no_workspace_objects.create(
+        user=user,
+        workspace=workspace,
+        role="Workspace Owner",
+        level=Level.OWNER,
+        is_active=True,
+        organization_membership=OrganizationMembership.no_workspace_objects.get(
+            user=user, organization=organization
+        ),
+    )
+    return workspace
 
 
 @pytest.fixture
@@ -229,6 +255,27 @@ class TestAddUserEvalView:
 
         assert response.status_code == status.HTTP_200_OK
 
+    def test_add_user_eval_accepts_blank_model(
+        self, auth_client, dataset, output_column, valid_eval_config, eval_template
+    ):
+        """A code eval added from the dataset eval picker sends model "" when no
+        judge model applies (OSS has no Turing models); that must not be a 400."""
+        payload = {
+            "name": "code-eval-blank-model",
+            "template_id": str(eval_template.id),
+            "config": valid_eval_config,
+            "model": "",
+            "run": False,
+        }
+
+        response = auth_client.post(
+            f"/model-hub/develops/{dataset.id}/add_user_eval/",
+            payload,
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK, response.data
+
     def test_add_user_eval_with_template(
         self, auth_client, dataset, output_column, eval_template
     ):
@@ -262,9 +309,7 @@ class TestAddUserEvalView:
             "run": True,
         }
 
-        with patch(
-            "model_hub.views.develop_dataset.run_evaluation_task.apply_async"
-        ) as mock_task:
+        with patch("model_hub.views.develop_dataset.run_evaluation_task.apply_async"):
             response = auth_client.post(
                 f"/model-hub/develops/{dataset.id}/add_user_eval/",
                 payload,
@@ -412,7 +457,9 @@ class TestAddUserEvalView:
             choice_scores=choice_scores,
             pass_threshold=pass_threshold,
             config={
-                "output": "Pass/Fail" if output_type_normalized == "pass_fail" else "choices",
+                "output": "Pass/Fail"
+                if output_type_normalized == "pass_fail"
+                else "choices",
                 "required_keys": ["output"],
                 "eval_type_id": "AgentEvaluator",
             },
@@ -452,9 +499,7 @@ class TestStartEvalsProcess:
             "user_eval_ids": [str(user_eval_metric.id)],
         }
 
-        with patch(
-            "model_hub.views.develop_dataset.run_evaluation_task.apply_async"
-        ) as mock_task:
+        with patch("model_hub.views.develop_dataset.run_evaluation_task.apply_async"):
             response = auth_client.post(
                 f"/model-hub/develops/{dataset.id}/start_evals_process/",
                 payload,
@@ -496,9 +541,7 @@ class TestStartEvalsProcess:
             "user_eval_ids": [str(eval1.id), str(eval2.id)],
         }
 
-        with patch(
-            "model_hub.views.develop_dataset.run_evaluation_task.apply_async"
-        ) as mock_task:
+        with patch("model_hub.views.develop_dataset.run_evaluation_task.apply_async"):
             response = auth_client.post(
                 f"/model-hub/develops/{dataset.id}/start_evals_process/",
                 payload,
@@ -682,9 +725,7 @@ class TestEvalConfigContracts:
             multi_choice=True,
         )
 
-        response = auth_client.get(
-            f"/model-hub/get-eval-config?eval_id={template.id}"
-        )
+        response = auth_client.get(f"/model-hub/get-eval-config?eval_id={template.id}")
 
         assert response.status_code == status.HTTP_200_OK, response.json()
         payload = response.json()["result"]["eval"]
@@ -702,13 +743,174 @@ class TestEvalConfigContracts:
             choices=["A", "B"],
         )
 
-        response = auth_client.get(
-            f"/model-hub/get-eval-config?eval_id={template.id}"
-        )
+        response = auth_client.get(f"/model-hub/get-eval-config?eval_id={template.id}")
 
         assert response.status_code == status.HTTP_200_OK, response.json()
         payload = response.json()["result"]["eval"]
         assert payload["multi_choice"] is False
+
+    def test_instance_description_create_edit_clear_round_trip(
+        self, auth_client, dataset, eval_template
+    ):
+        eval_template.description = "Shared template instructions"
+        eval_template.config = {
+            "required_keys": [],
+            "eval_type_id": "TestEval",
+            "config": {},
+        }
+        eval_template.save()
+        description = "Support dataset notes.\nEscalated cases only."
+        config = {
+            "mapping": {},
+            "config": {},
+            "reason_column": False,
+            "description": description,
+        }
+        response = auth_client.post(
+            f"/model-hub/develops/{dataset.id}/add_user_eval/",
+            {
+                "name": "described-eval",
+                "template_id": str(eval_template.id),
+                "config": config,
+                "run": False,
+            },
+            format="json",
+        )
+        assert response.status_code == status.HTTP_200_OK, response.data
+        metric = UserEvalMetric.objects.get(dataset=dataset, name="described-eval")
+        assert metric.config["description"] == description
+        structure_url = (
+            f"/model-hub/develops/{dataset.id}/get_eval_structure/{metric.id}/"
+            "?eval_type=user"
+        )
+        response = auth_client.get(structure_url)
+        assert response.status_code == status.HTTP_200_OK, response.data
+        assert response.data["result"]["eval"]["instance_description"] == description
+        assert response.data["result"]["eval"]["description"] == eval_template.description
+
+        for notes in ["Updated notes.\nSecond line.", ""]:
+            config["description"] = notes
+            response = auth_client.post(
+                f"/model-hub/develops/{dataset.id}/edit_and_run_user_eval/{metric.id}/",
+                {"config": config, "run": False},
+                format="json",
+            )
+            assert response.status_code == status.HTTP_200_OK, response.data
+            metric.refresh_from_db()
+            assert metric.config == config
+            response = auth_client.get(structure_url)
+            assert response.status_code == status.HTTP_200_OK, response.data
+            assert response.data["result"]["eval"]["instance_description"] == notes
+
+        eval_template.refresh_from_db()
+        assert eval_template.description == "Shared template instructions"
+
+    @pytest.mark.parametrize("run", [False, True], ids=["save", "save-and-run"])
+    @pytest.mark.parametrize(
+        "description",
+        ["Compare dataset notes.\nEscalated cases only.", "", None],
+        ids=["multiline", "empty", "omitted"],
+    )
+    def test_compare_instance_description_persists_and_reopens(
+        self, auth_client, dataset, output_column, eval_template, run, description
+    ):
+        eval_template.description = "Shared template instructions"
+        eval_template.config = {
+            "required_keys": ["output"],
+            "eval_type_id": "TestEval",
+            "config": {"enabled": {"type": "boolean", "default": True}},
+        }
+        eval_template.save()
+        other_dataset = Dataset.objects.create(
+            name="Compared Dataset",
+            organization=dataset.organization,
+            workspace=dataset.workspace,
+            source=DatasetSourceChoices.BUILD.value,
+            column_order=[],
+        )
+        other_output = Column.objects.create(
+            name=output_column.name,
+            dataset=other_dataset,
+            data_type=DataTypeChoices.TEXT.value,
+            source=SourceChoices.OTHERS.value,
+        )
+        other_dataset.column_order = [str(other_output.id)]
+        other_dataset.save()
+        config = {
+            "mapping": {"output": output_column.name},
+            "config": {"enabled": False},
+            "reason_column": True,
+        }
+        if description is not None:
+            config["description"] = description
+        response = auth_client.post(
+            f"/model-hub/datasets/{dataset.id}/compare-datasets/add-eval/",
+            {
+                "name": "described-compare-eval",
+                "template_id": str(eval_template.id),
+                "dataset_ids": [str(other_dataset.id)],
+                "config": config,
+                "save_as_template": False,
+                "run": run,
+            },
+            format="json",
+        )
+        assert response.status_code == status.HTTP_200_OK, response.data
+        assert UserEvalMetric.objects.filter(name="described-compare-eval").count() == 2
+        for target, output in [(dataset, output_column), (other_dataset, other_output)]:
+            metric = UserEvalMetric.objects.get(
+                dataset=target, name="described-compare-eval"
+            )
+            assert metric.config == {
+                **config,
+                "mapping": {"output": str(output.id)},
+            }
+            assert metric.status == (
+                StatusType.NOT_STARTED.value if run else StatusType.INACTIVE.value
+            )
+            response = auth_client.get(
+                f"/model-hub/develops/{target.id}/get_eval_structure/{metric.id}/"
+                "?eval_type=user"
+            )
+            assert response.status_code == status.HTTP_200_OK, response.data
+            reopened = response.data["result"]["eval"]
+            assert reopened["instance_description"] == (description or "")
+            assert reopened["description"] == "Shared template instructions"
+            assert reopened["mapping"] == {"output": str(output.id)}
+            assert reopened["config"]["enabled"]["default"] is False
+        eval_template.refresh_from_db()
+        assert eval_template.description == "Shared template instructions"
+        assert eval_template.config["config"]["enabled"]["default"] is True
+
+    def test_instance_description_is_blank_for_legacy_config(
+        self, auth_client, dataset, user_eval_metric
+    ):
+        original_config = dict(user_eval_metric.config)
+        response = auth_client.get(
+            f"/model-hub/develops/{dataset.id}/get_eval_structure/{user_eval_metric.id}/"
+            "?eval_type=user"
+        )
+        assert response.status_code == status.HTTP_200_OK, response.data
+        assert response.data["result"]["eval"]["instance_description"] == ""
+        user_eval_metric.refresh_from_db()
+        assert user_eval_metric.config == original_config
+
+    def test_instance_description_is_preserved_when_older_client_omits_it(
+        self, auth_client, dataset, user_eval_metric
+    ):
+        user_eval_metric.config = {
+            "mapping": {}, "config": {}, "reason_column": False,
+            "description": "Keep these instance notes",
+        }
+        user_eval_metric.save()
+        response = auth_client.post(
+            f"/model-hub/develops/{dataset.id}/edit_and_run_user_eval/{user_eval_metric.id}/",
+            {"config": {"mapping": {}, "config": {}, "reason_column": False}, "run": False},
+            format="json",
+        )
+        assert response.status_code == status.HTTP_200_OK, response.data
+        user_eval_metric.refresh_from_db()
+        assert user_eval_metric.config["description"] == "Keep these instance notes"
 
     def test_get_eval_structure_rejects_legacy_eval_type_alias(
         self, auth_client, dataset
@@ -812,11 +1014,12 @@ class TestDeleteEvalsView:
         user_eval_metric.status = StatusType.RUNNING.value
         user_eval_metric.save(update_fields=["status"])
 
-        with patch(
-            "tfc.utils.distributed_state.evaluation_tracker"
-        ) as mock_tracker, patch(
-            "model_hub.utils.eval_cell_status.mark_eval_cells_stopped"
-        ) as mock_mark_stopped:
+        with (
+            patch("tfc.utils.distributed_state.evaluation_tracker") as mock_tracker,
+            patch(
+                "model_hub.utils.eval_cell_status.mark_eval_cells_stopped"
+            ) as mock_mark_stopped,
+        ):
             response = auth_client.delete(
                 f"/model-hub/develops/{dataset.id}/delete_user_eval/{user_eval_metric.id}/",
                 {"delete_column": True},
@@ -950,11 +1153,12 @@ class TestDeleteEvalsView:
         dataset.column_order.append(str(eval_col.id))
         dataset.save()
 
-        with patch(
-            "tfc.utils.distributed_state.evaluation_tracker"
-        ) as mock_tracker, patch(
-            "model_hub.utils.eval_cell_status.mark_eval_cells_stopped"
-        ) as mock_mark_stopped:
+        with (
+            patch("tfc.utils.distributed_state.evaluation_tracker") as mock_tracker,
+            patch(
+                "model_hub.utils.eval_cell_status.mark_eval_cells_stopped"
+            ) as mock_mark_stopped,
+        ):
             response = auth_client.delete(
                 f"/model-hub/develops/{dataset.id}/delete_column/{eval_col.id}/",
             )
@@ -1044,16 +1248,28 @@ class TestDeleteEvalsView:
         # Create rows + cells
         row = Row.objects.create(dataset=dataset, order=0)
         eval_cell = Cell.objects.create(
-            dataset=dataset, row=row, column=eval_col, value="Pass",
+            dataset=dataset,
+            row=row,
+            column=eval_col,
+            value="Pass",
         )
         reason_cell = Cell.objects.create(
-            dataset=dataset, row=row, column=reason_col, value="Looks good",
+            dataset=dataset,
+            row=row,
+            column=reason_col,
+            value="Looks good",
         )
         input_cell = Cell.objects.create(
-            dataset=dataset, row=row, column=input_col, value="Hello world",
+            dataset=dataset,
+            row=row,
+            column=input_col,
+            value="Hello world",
         )
         other_eval_cell = Cell.objects.create(
-            dataset=dataset, row=row, column=other_eval_col, value="Fail",
+            dataset=dataset,
+            row=row,
+            column=other_eval_col,
+            value="Fail",
         )
 
         # ── Act ──
@@ -1253,7 +1469,8 @@ class TestDeleteEvalsView:
         # filter against a non-existent table would always yield an empty
         # list and the loop below would silently pass.
         cell_sql = [
-            q["sql"] for q in ctx.captured_queries
+            q["sql"]
+            for q in ctx.captured_queries
             if "model_hub_cell" in q["sql"].lower()
         ]
         # Positive assert: the cell delete must have actually run. Absence-only
@@ -1520,7 +1737,9 @@ class TestDeleteEvalsView:
         assert cell.deleted is False, "Cell must not be soft-deleted after rollback"
 
         eval_col.refresh_from_db()
-        assert eval_col.deleted is False, "Column must not be soft-deleted after rollback"
+        assert eval_col.deleted is False, (
+            "Column must not be soft-deleted after rollback"
+        )
 
         dataset.refresh_from_db()
         assert str(eval_col.id) in dataset.column_order, (
@@ -1686,9 +1905,7 @@ class TestEditAndRunUserEvalView:
             },
         }
 
-        with patch(
-            "model_hub.views.develop_dataset.run_evaluation_task.apply_async"
-        ) as mock_task:
+        with patch("model_hub.views.develop_dataset.run_evaluation_task.apply_async"):
             response = auth_client.post(
                 f"/model-hub/develops/{dataset.id}/edit_and_run_user_eval/{user_eval_metric.id}/",
                 payload,
@@ -1708,9 +1925,7 @@ class TestEditAndRunUserEvalView:
             },
         }
 
-        with patch(
-            "model_hub.views.develop_dataset.run_evaluation_task.apply_async"
-        ) as mock_task:
+        with patch("model_hub.views.develop_dataset.run_evaluation_task.apply_async"):
             response = auth_client.post(
                 f"/model-hub/develops/{dataset.id}/edit_and_run_user_eval/{user_eval_metric.id}/",
                 payload,
@@ -1852,6 +2067,7 @@ class TestPreviewRunEvalView:
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
     @pytest.mark.django_db(transaction=True)
+    @pytest.mark.usefixtures("no_external_lookups")
     def test_preview_code_eval_passes_function_params(
         self,
         auth_client,
@@ -1864,8 +2080,8 @@ class TestPreviewRunEvalView:
         settings,
     ):
         """Preview should pass function params to code eval kwargs."""
-        # No code-executor runs under pytest; let the eval use the local runner.
-        settings.CODE_EXECUTOR_LOCAL_FALLBACK = True
+        # The code executor service runs eval code; the worker never runs it
+        # locally. Model a working executor and check what it is sent.
         settings.CLOUD_DEPLOYMENT = ""
         template = EvalTemplate.objects.create(
             name="word_count_preview_test",
@@ -1905,6 +2121,13 @@ def evaluate(input, output, expected, context, **kwargs):
 
         with (
             patch(
+                "agentic_eval.core_evals.fi_utils.sandbox._call_executor_service",
+                return_value={
+                    "status": "success",
+                    "data": {"score": 1.0, "reason": "count=3, min=2"},
+                },
+            ) as executor,
+            patch(
                 "model_hub.views.utils.evals.EvaluationRunner._handle_api_call",
                 return_value=fake_api_call,
             ),
@@ -1926,6 +2149,9 @@ def evaluate(input, output, expected, context, **kwargs):
         preview = response.data["result"]["responses"][0]
         assert preview["output"] == "Passed"
         assert preview["reason"] == "count=3, min=2"
+        executor.assert_called_once()
+        assert executor.call_args.args[1]["min_words"] == 2
+        assert executor.call_args.args[2] == "python"
 
     def test_preview_run_eval_unauthenticated(self, dataset):
         """Test that unauthenticated users cannot preview evaluations."""
@@ -2174,16 +2400,19 @@ class TestSingleRowEvaluationView:
 
         usage_check = SimpleNamespace(allowed=True)
 
-        with patch(
-            "ee.usage.services.metering.check_usage", return_value=usage_check
-        ) as mock_check_usage, patch(
-            "model_hub.views.develop_dataset.get_mixpanel_properties",
-            return_value={},
-        ), patch(
-            "model_hub.views.develop_dataset.track_mixpanel_event"
-        ), patch(
-            "model_hub.views.develop_dataset.EvaluationRunner"
-        ) as mock_runner_class:
+        with (
+            patch(
+                "ee.usage.services.metering.check_usage", return_value=usage_check
+            ) as mock_check_usage,
+            patch(
+                "model_hub.views.develop_dataset.get_mixpanel_properties",
+                return_value={},
+            ),
+            patch("model_hub.views.develop_dataset.track_mixpanel_event"),
+            patch(
+                "model_hub.views.develop_dataset.EvaluationRunner"
+            ) as mock_runner_class,
+        ):
             mock_runner = MagicMock()
             mock_runner_class.return_value = mock_runner
 
@@ -2199,7 +2428,9 @@ class TestSingleRowEvaluationView:
         _, kwargs = mock_runner_class.call_args
         assert kwargs["source"] == "dataset_evaluation"
         assert kwargs["source_id"] == user_eval_metric.template.id
-        assert kwargs["source_configs"]["dataset_id"] == str(user_eval_metric.dataset_id)
+        assert kwargs["source_configs"]["dataset_id"] == str(
+            user_eval_metric.dataset_id
+        )
         assert kwargs["source_configs"]["source"] == "dataset"
         mock_runner.run_evaluation_for_row.assert_called_once_with(str(row.id))
 
@@ -2220,13 +2451,15 @@ class TestSingleRowEvaluationView:
             upgrade_cta=None,
         )
 
-        with patch(
-            "ee.usage.services.metering.check_usage", return_value=usage_check
-        ), patch(
-            "model_hub.tasks.user_evaluation._mark_cells_usage_limit_error"
-        ) as mock_mark_limit, patch(
-            "model_hub.views.develop_dataset.EvaluationRunner"
-        ) as mock_runner_class:
+        with (
+            patch("ee.usage.services.metering.check_usage", return_value=usage_check),
+            patch(
+                "model_hub.tasks.user_evaluation._mark_cells_usage_limit_error"
+            ) as mock_mark_limit,
+            patch(
+                "model_hub.views.develop_dataset.EvaluationRunner"
+            ) as mock_runner_class,
+        ):
             run_evaluation_task._original_func(
                 {
                     "metric_ids": [str(user_eval_metric.id)],
@@ -2597,3 +2830,1549 @@ class TestEvaluationOrganizationIsolation:
             status.HTTP_403_FORBIDDEN,
             status.HTTP_500_INTERNAL_SERVER_ERROR,
         ]
+
+
+@pytest.fixture
+def selected_eval_worker(monkeypatch):
+    """Keep real runner/persistence code, with deterministic external boundaries."""
+    from concurrent.futures import Future
+    from contextlib import contextmanager
+
+    from model_hub.views import develop_dataset, eval_runner
+
+    def submit(function, *args, **kwargs):
+        future = Future()
+        try:
+            future.set_result(function(*args, **kwargs))
+        except Exception as error:
+            future.set_exception(error)
+        return future
+
+    @contextmanager
+    def executor(**kwargs):
+        yield SimpleNamespace(submit=submit)
+
+    monkeypatch.setattr(develop_dataset, "ThreadPoolExecutor", executor)
+    monkeypatch.setattr(eval_runner, "close_old_connections", lambda: None)
+    usage = SimpleNamespace(allowed=True)
+    result = SimpleNamespace(
+        eval_results=[{"data": 0.25, "reason": "Selected row explanation"}]
+    )
+    evaluator = SimpleNamespace(format_result=lambda response, template: "0.25")
+    with (
+        patch("ee.usage.services.metering.check_usage", return_value=usage),
+        patch.object(develop_dataset, "get_mixpanel_properties", return_value={}),
+        patch.object(develop_dataset, "track_mixpanel_event"),
+        patch.object(
+            eval_runner.EvaluationRunner, "_handle_api_call", return_value=None
+        ),
+        patch.object(eval_runner.EvaluationRunner, "_emit_cell_usage"),
+        patch.object(
+            eval_runner.EvaluationRunner,
+            "_run_evaluation",
+            return_value=(result, [], [], {}, evaluator, None),
+        ) as evaluate,
+    ):
+        yield SimpleNamespace(
+            run=develop_dataset.run_evaluation_task._original_func,
+            usage=usage,
+            evaluate=evaluate,
+        )
+
+
+def _selected_result_columns(metric):
+    score = Column.objects.create(
+        dataset=metric.dataset,
+        name=metric.name,
+        data_type=DataTypeChoices.FLOAT.value,
+        source=SourceChoices.EVALUATION.value,
+        source_id=str(metric.id),
+    )
+    reason = Column.objects.create(
+        dataset=metric.dataset,
+        name=f"{metric.name}-reason",
+        data_type=DataTypeChoices.TEXT.value,
+        source=SourceChoices.EVALUATION_REASON.value,
+        source_id=f"{score.id}-sourceid-{metric.id}",
+    )
+    return score, reason
+
+
+def _selected_cell_snapshot(rows):
+    return list(
+        Cell.objects.filter(row__in=rows)
+        .order_by("row_id", "column_id")
+        .values_list("id", "row_id", "column_id", "value", "value_infos", "status")
+    )
+
+
+@pytest.mark.django_db
+class TestSelectedRowEvaluationPersistence:
+    def test_first_selected_run_saves_score_and_canonical_reason(
+        self,
+        auth_client,
+        dataset,
+        eval_template,
+        row,
+        selected_eval_worker,
+        output_column,
+        output_cell,
+    ):
+        eval_template.config = {"eval_type_id": "CustomPromptEvaluator"}
+        eval_template.save(update_fields=["config"])
+        other = Row.objects.create(dataset=dataset, order=1)
+        created = auth_client.post(
+            f"/model-hub/develops/{dataset.id}/add_user_eval/",
+            {
+                "name": "selected-evaluation",
+                "template_id": str(eval_template.id),
+                "config": {
+                    "mapping": {"output": str(output_column.id)},
+                    "reason_column": True,
+                },
+                "run": False,
+            },
+            format="json",
+        )
+        assert created.status_code == 200, created.data
+        metric = UserEvalMetric.objects.get(dataset=dataset, name="selected-evaluation")
+        assert metric.status == StatusType.INACTIVE.value
+        assert Column.objects.filter(source_id=str(metric.id)).count() == 0
+
+        with patch(
+            "model_hub.views.develop_dataset.run_evaluation_task.apply_async",
+            side_effect=lambda *, args: selected_eval_worker.run(*args),
+        ):
+            response = auth_client.post(
+                "/model-hub/evaluate-rows/",
+                {
+                    "row_ids": [str(row.id)],
+                    "user_eval_metric_ids": [str(metric.id)],
+                },
+                format="json",
+            )
+
+        assert response.status_code == 200, response.data
+        score = Column.objects.get(
+            dataset=dataset,
+            source=SourceChoices.EVALUATION.value,
+            source_id=str(metric.id),
+        )
+        reason = Column.objects.get(
+            dataset=dataset, source=SourceChoices.EVALUATION_REASON.value
+        )
+        assert reason.source_id == f"{score.id}-sourceid-{metric.id}"
+        score_cell = Cell.objects.get(column=score, row=row)
+        reason_cell = Cell.objects.get(column=reason, row=row)
+        assert (score_cell.value, score_cell.status) == ("0.25", CellStatus.PASS.value)
+        assert (reason_cell.value, reason_cell.status) == (
+            "Selected row explanation",
+            CellStatus.PASS.value,
+        )
+        assert _selected_cell_snapshot([other]) == []
+        metric.refresh_from_db()
+        assert metric.status == StatusType.COMPLETED.value
+        dataset.refresh_from_db()
+        assert dataset.column_order == [
+            str(output_column.id),
+            str(score.id),
+            str(reason.id),
+        ]
+        assert selected_eval_worker.evaluate.call_count == 1
+
+        for column in (score, reason):
+            Cell.objects.create(
+                dataset=dataset,
+                row=other,
+                column=column,
+                value="Unselected evidence",
+                value_infos={"kept": True},
+                status=CellStatus.ERROR.value,
+            )
+        before = _selected_cell_snapshot([other])
+        selected_eval_worker.run(
+            {"metric_ids": [str(metric.id)], "row_ids": [str(row.id)]}
+        )
+        assert _selected_cell_snapshot([other]) == before
+        assert list(
+            Column.objects.filter(
+                dataset=dataset,
+                source__in=[
+                    SourceChoices.EVALUATION.value,
+                    SourceChoices.EVALUATION_REASON.value,
+                ],
+            )
+            .order_by("created_at")
+            .values_list("id", flat=True)
+        ) == [score.id, reason.id]
+        assert Cell.objects.get(column=score, row=row).value == "0.25"
+        assert selected_eval_worker.evaluate.call_count == 2
+
+    @pytest.mark.parametrize("existing_binding", [False, True])
+    def test_selected_localization_creates_missing_score_cell(
+        self,
+        auth_client,
+        dataset,
+        eval_template,
+        row,
+        selected_eval_worker,
+        output_column,
+        output_cell,
+        existing_binding,
+    ):
+        from model_hub.models.error_localizer_model import (
+            ErrorLocalizerSource,
+            ErrorLocalizerStatus,
+            ErrorLocalizerTask,
+        )
+
+        eval_template.config = {"eval_type_id": "CustomPromptEvaluator"}
+        eval_template.error_localizer_enabled = False
+        eval_template.save(update_fields=["config", "error_localizer_enabled"])
+        created = auth_client.post(
+            f"/model-hub/develops/{dataset.id}/add_user_eval/",
+            {
+                "name": "localized-selection",
+                "template_id": str(eval_template.id),
+                "config": {
+                    "mapping": {"output": str(output_column.id)},
+                    "reason_column": True,
+                    "run_config": {
+                        "error_localizer_enabled": True,
+                        "pass_threshold": 0.7,
+                    },
+                },
+                "error_localizer": False,
+                "run": False,
+            },
+            format="json",
+        )
+        assert created.status_code == 200, created.data
+        metric = UserEvalMetric.objects.get(dataset=dataset, name="localized-selection")
+        assert metric.error_localizer is False
+        assert metric.status == StatusType.INACTIVE.value
+        assert Column.objects.filter(source_id=str(metric.id)).count() == 0
+        selected_row = row
+        untouched = Row.objects.create(dataset=dataset, order=1)
+        if existing_binding:
+            score, reason = _selected_result_columns(metric)
+            for column in (score, reason):
+                Cell.objects.create(
+                    dataset=dataset,
+                    row=row,
+                    column=column,
+                    value="Previous row evidence",
+                    value_infos={"preserved": True},
+                    status=CellStatus.PASS.value,
+                )
+            metric.status = StatusType.COMPLETED.value
+            metric.save(update_fields=["status"])
+            # This row was added after the binding's earlier result.
+            selected_row, untouched = untouched, row
+            Cell.objects.create(
+                dataset=dataset,
+                row=selected_row,
+                column=output_column,
+                value="Test output value",
+            )
+        assert (
+            Cell.objects.filter(
+                row=selected_row,
+                column__source__in=[
+                    SourceChoices.EVALUATION.value,
+                    SourceChoices.EVALUATION_REASON.value,
+                ],
+            ).count()
+            == 0
+        )
+        before = _selected_cell_snapshot([untouched])
+        result, _, _, _, evaluator, _ = selected_eval_worker.evaluate.return_value
+        selected_eval_worker.evaluate.return_value = (
+            result,
+            ["required_keys", "output"],
+            [["output"], "Test output value"],
+            {"rule_prompt": "Evaluate the selected output"},
+            evaluator,
+            None,
+        )
+
+        # Do not mock the localization trigger: it reloads cell.id and saves a task.
+        with patch(
+            "model_hub.views.develop_dataset.run_evaluation_task.apply_async",
+            side_effect=lambda *, args: selected_eval_worker.run(*args),
+        ):
+            response = auth_client.post(
+                "/model-hub/evaluate-rows/",
+                {
+                    "row_ids": [str(selected_row.id)],
+                    "user_eval_metric_ids": [str(metric.id)],
+                },
+                format="json",
+            )
+
+        assert response.status_code == 200, response.data
+        score = Column.objects.get(
+            dataset=dataset,
+            source=SourceChoices.EVALUATION.value,
+            source_id=str(metric.id),
+        )
+        reason = Column.objects.get(
+            dataset=dataset,
+            source=SourceChoices.EVALUATION_REASON.value,
+            source_id=f"{score.id}-sourceid-{metric.id}",
+        )
+        score_cell = Cell.objects.get(dataset=dataset, column=score, row=selected_row)
+        reason_cell = Cell.objects.get(dataset=dataset, column=reason, row=selected_row)
+        assert (score_cell.value, score_cell.status) == ("0.25", CellStatus.PASS.value)
+        assert (reason_cell.value, reason_cell.status) == (
+            "Selected row explanation",
+            CellStatus.PASS.value,
+        )
+        task = ErrorLocalizerTask.objects.get(eval_template=eval_template)
+        assert task.source == ErrorLocalizerSource.DATASET
+        assert task.source_id == score_cell.id
+        assert task.status == ErrorLocalizerStatus.PENDING
+        assert task.eval_result == "0.25"
+        assert task.eval_explanation == "Selected row explanation"
+        assert task.input_data == {"output": "Test output value"}
+        assert task.input_keys == ["output"]
+        assert task.input_types == {"output": "text"}
+        assert task.rule_prompt == "Evaluate the selected output"
+        assert task.error_message == ""
+        assert task.metadata == {"log_id": None, "pass_threshold": 0.7}
+        assert task.organization_id == dataset.organization_id
+        assert task.workspace_id == dataset.workspace_id
+        assert _selected_cell_snapshot([untouched]) == before
+        assert selected_eval_worker.evaluate.call_count == 1
+        metric.refresh_from_db()
+        assert metric.status == StatusType.COMPLETED.value
+
+    @pytest.mark.parametrize("action", ["stop", "delete"])
+    def test_selected_localization_skips_interrupted_first_result(
+        self,
+        auth_client,
+        user_eval_metric,
+        row,
+        selected_eval_worker,
+        output_column,
+        output_cell,
+        action,
+    ):
+        from model_hub.models.error_localizer_model import ErrorLocalizerTask
+        from model_hub.services.experiment_utils import is_user_eval_stopped
+        from model_hub.tasks import user_evaluation
+
+        metric = user_eval_metric
+        metric.template.config = {"eval_type_id": "CustomPromptEvaluator"}
+        metric.template.save(update_fields=["config"])
+        metric.error_localizer = True
+        metric.config = {
+            "mapping": {"output": str(output_column.id)},
+            "reason_column": True,
+            "run_config": {"error_localizer_enabled": True},
+        }
+        metric.save(update_fields=["config", "error_localizer"])
+        # The binding has columns, but this row has never had a result cell.
+        score, reason = _selected_result_columns(metric)
+        assert Cell.objects.filter(row=row, column__in=[score, reason]).count() == 0
+        input_before = _selected_cell_snapshot([row])
+        result, _, _, _, evaluator, _ = selected_eval_worker.evaluate.return_value
+        interruptions = []
+
+        def interrupt_during_evaluation(*args):
+            assert Cell.objects.filter(row=row, column=score).count() == 0
+            if action == "stop":
+                response = auth_client.post(
+                    f"/model-hub/develops/{metric.dataset_id}/"
+                    f"stop_user_eval/{metric.id}/",
+                    {},
+                    format="json",
+                )
+            else:
+                response = auth_client.delete(
+                    f"/model-hub/develops/{metric.dataset_id}/"
+                    f"delete_user_eval/{metric.id}/",
+                    {"delete_column": True},
+                    format="json",
+                )
+            interruptions.append(
+                (response.status_code, is_user_eval_stopped(metric.id))
+            )
+            return (
+                result,
+                ["required_keys", "output"],
+                [["output"], "Test output value"],
+                {"rule_prompt": "Evaluate the selected output"},
+                evaluator,
+                None,
+            )
+
+        selected_eval_worker.evaluate.side_effect = interrupt_during_evaluation
+        with (
+            patch("tfc.utils.distributed_state.evaluation_tracker.request_cancel"),
+            patch.object(
+                user_evaluation,
+                "trigger_error_localization_for_column",
+                wraps=user_evaluation.trigger_error_localization_for_column,
+            ) as localize,
+        ):
+            selected_eval_worker.run(
+                {"metric_ids": [str(metric.id)], "row_ids": [str(row.id)]}
+            )
+
+        assert interruptions == [(200, True)]
+        assert selected_eval_worker.evaluate.call_count == 1
+        assert Cell.all_objects.filter(row=row, column__in=[score, reason]).count() == 0
+        assert _selected_cell_snapshot([row]) == input_before
+        assert localize.call_count == 0
+        assert (
+            ErrorLocalizerTask.objects.filter(eval_template=metric.template).count()
+            == 0
+        )
+        # Completion accounting remains the worker's existing policy.
+
+    def test_selected_result_write_failure_reaches_worker(
+        self, user_eval_metric, row, selected_eval_worker
+    ):
+        user_eval_metric.template.config = {"eval_type_id": "CustomPromptEvaluator"}
+        user_eval_metric.template.save(update_fields=["config"])
+        user_eval_metric.config = {"mapping": {}}
+        user_eval_metric.save(update_fields=["config"])
+        score, _reason = _selected_result_columns(user_eval_metric)
+        with (
+            patch.object(
+                Cell.objects,
+                "update_or_create",
+                side_effect=RuntimeError("write failed"),
+            ),
+            patch("model_hub.views.develop_dataset.logger.error") as worker_error,
+        ):
+            selected_eval_worker.run(
+                {"metric_ids": [str(user_eval_metric.id)], "row_ids": [str(row.id)]}
+            )
+        user_eval_metric.refresh_from_db()
+        # A persistence exception is an execution failure, not a completed run.
+        assert user_eval_metric.status == StatusType.FAILED.value
+        worker_error.assert_called_once_with("Error in evaluation: write failed")
+        assert Cell.objects.filter(column=score, row=row).count() == 0
+        assert selected_eval_worker.evaluate.call_count == 1
+
+    @pytest.mark.parametrize("is_composite", [False, True])
+    @pytest.mark.parametrize("fail_settle", [False, True])
+    def test_selected_stop_survives_completion(
+        self,
+        user_eval_metric,
+        composite_eval_template,
+        row,
+        selected_eval_worker,
+        user,
+        output_column,
+        output_cell,
+        is_composite,
+        fail_settle,
+    ):
+        metric = user_eval_metric
+        if is_composite:
+            metric.template = composite_eval_template
+            metric.template.aggregation_enabled = True
+            metric.template.aggregation_function = "weighted_avg"
+            metric.template.save(
+                update_fields=["aggregation_enabled", "aggregation_function"]
+            )
+        else:
+            metric.template.config = {"eval_type_id": "CustomPromptEvaluator"}
+            metric.template.save(update_fields=["config"])
+        metric.user = user
+        metric.config = {
+            "mapping": {
+                "output": str(output_column.id),
+                "expected": str(output_column.id),
+            }
+        }
+        metric.save(update_fields=["template", "user", "config"])
+
+        def stop_during_evaluation(*args, **kwargs):
+            UserEvalMetric.objects.filter(id=metric.id).update(
+                status=StatusType.ERROR.value
+            )
+            if is_composite:
+                return {"output": 0.5, "reason": "Child explanation"}
+            return selected_eval_worker.evaluate.return_value
+
+        selected_eval_worker.evaluate.side_effect = stop_during_evaluation
+        with (
+            patch(
+                "model_hub.views.utils.evals.run_eval_func",
+                side_effect=stop_during_evaluation,
+            ) as child,
+            patch(
+                "model_hub.utils.composite_execution._log_composite_usage",
+                return_value=None,
+            ),
+            patch(
+                "model_hub.views.develop_dataset.track_mixpanel_event",
+                side_effect=(
+                    [None, RuntimeError("completion tracking failed")]
+                    if fail_settle
+                    else None
+                ),
+            ) as track,
+            patch("model_hub.views.develop_dataset.logger.error") as worker_error,
+        ):
+            selected_eval_worker.run(
+                {"metric_ids": [str(metric.id)], "row_ids": [str(row.id)]}
+            )
+        metric.refresh_from_db()
+        assert metric.status == StatusType.ERROR.value
+        assert selected_eval_worker.evaluate.call_count == (0 if is_composite else 1)
+        assert child.call_count == (2 if is_composite else 0)
+        assert track.call_count == 2
+        if fail_settle:
+            worker_error.assert_called_once_with(
+                "Error in evaluation task: completion tracking failed"
+            )
+        else:
+            worker_error.assert_not_called()
+
+    @pytest.mark.parametrize("is_composite", [False, True])
+    def test_selected_initialization_failure_stays_failed(
+        self,
+        user_eval_metric,
+        composite_eval_template,
+        row,
+        selected_eval_worker,
+        is_composite,
+    ):
+        metric = user_eval_metric
+        if is_composite:
+            metric.template = composite_eval_template
+            metric.save(update_fields=["template"])
+        target = (
+            "model_hub.tasks.composite_runner.CompositeEvaluationRunner"
+            if is_composite
+            else "model_hub.views.develop_dataset.EvaluationRunner"
+        )
+        with (
+            patch(target, side_effect=RuntimeError("initialization failed")) as init,
+            patch("model_hub.views.develop_dataset.logger.error") as worker_error,
+        ):
+            selected_eval_worker.run(
+                {"metric_ids": [str(metric.id)], "row_ids": [str(row.id)]}
+            )
+        metric.refresh_from_db()
+        assert metric.status == StatusType.FAILED.value
+        init.assert_called_once()
+        selected_eval_worker.evaluate.assert_not_called()
+        worker_error.assert_called_once_with(
+            f"Error initializing evaluation for metric {metric.id}: "
+            "initialization failed"
+        )
+
+    def test_selected_row_failure_is_scoped_to_its_metric(
+        self, user_eval_metric, row, selected_eval_worker
+    ):
+        from model_hub.views.eval_runner import EvaluationRunner
+
+        metric = user_eval_metric
+        metric.template.config = {"eval_type_id": "CustomPromptEvaluator"}
+        metric.template.save(update_fields=["config"])
+        metric.config = {"mapping": {}}
+        metric.save(update_fields=["config"])
+        other = UserEvalMetric.objects.create(
+            name="Successful evaluation",
+            dataset=metric.dataset,
+            organization=metric.organization,
+            workspace=metric.workspace,
+            template=metric.template,
+            config={"mapping": {}},
+        )
+        second_row = Row.objects.create(dataset=metric.dataset, order=1)
+        persist = EvaluationRunner._create_cell
+
+        def persist_or_fail(runner, dataset, column, target, response, value, status):
+            if runner.user_eval_metric_id == str(metric.id) and target.id == row.id:
+                raise RuntimeError("write failed")
+            return persist(runner, dataset, column, target, response, value, status)
+
+        with (
+            patch.object(
+                EvaluationRunner,
+                "_create_cell",
+                autospec=True,
+                side_effect=persist_or_fail,
+            ),
+            patch("model_hub.views.develop_dataset.logger.error") as worker_error,
+        ):
+            selected_eval_worker.run(
+                {
+                    "metric_ids": [str(metric.id), str(other.id)],
+                    "row_ids": [str(row.id), str(second_row.id)],
+                }
+            )
+        metric.refresh_from_db()
+        other.refresh_from_db()
+        assert (metric.status, other.status) == (
+            StatusType.FAILED.value,
+            StatusType.COMPLETED.value,
+        )
+        assert selected_eval_worker.evaluate.call_count == 4
+        assert Cell.objects.filter(column__source_id=str(metric.id)).count() == 1
+        assert Cell.objects.filter(column__source_id=str(other.id)).count() == 2
+        worker_error.assert_called_once_with("Error in evaluation: write failed")
+
+    def test_selected_composite_persists_only_requested_rows(
+        self,
+        user_eval_metric,
+        composite_eval_template,
+        row,
+        selected_eval_worker,
+        user,
+        output_column,
+        output_cell,
+    ):
+        from model_hub.models.evaluation import Evaluation
+
+        metric = user_eval_metric
+        metric.template = composite_eval_template
+        metric.user = user
+        metric.config = {
+            "mapping": {
+                "output": str(output_column.id),
+                "expected": str(output_column.id),
+            },
+            "reason_column": True,
+        }
+        metric.save(update_fields=["template", "user", "config"])
+        composite_eval_template.aggregation_enabled = True
+        composite_eval_template.aggregation_function = "weighted_avg"
+        composite_eval_template.save(
+            update_fields=["aggregation_enabled", "aggregation_function"]
+        )
+        score, reason = _selected_result_columns(metric)
+        untouched = Row.objects.create(dataset=metric.dataset, order=1)
+        for target in (row, untouched):
+            for column in (score, reason):
+                Cell.objects.create(
+                    dataset=metric.dataset,
+                    row=target,
+                    column=column,
+                    value="previous evidence",
+                    value_infos={"kept": True},
+                    status=CellStatus.RUNNING.value,
+                )
+        before = _selected_cell_snapshot([untouched])
+        with (
+            patch(
+                "model_hub.views.utils.evals.run_eval_func",
+                return_value={"output": 0.5, "reason": "Child explanation"},
+            ) as child,
+            patch(
+                "model_hub.utils.composite_execution._log_composite_usage",
+                return_value=None,
+            ),
+        ):
+            selected_eval_worker.run(
+                {"metric_ids": [str(metric.id)], "row_ids": [str(row.id)]}
+            )
+        score_cell = Cell.objects.get(column=score, row=row)
+        reason_cell = Cell.objects.get(column=reason, row=row)
+        metric.refresh_from_db()
+        assert _selected_cell_snapshot([untouched]) == before
+        assert child.call_count == 2
+        assert child.call_args.args[1] == {
+            "output": "Test output value",
+            "expected": "Test output value",
+        }
+        assert score_cell.value == "0.5000"
+        assert score_cell.status == CellStatus.PASS.value
+        assert reason_cell.status == CellStatus.PASS.value
+        assert reason_cell.value == (
+            "[composite-child-output] (score: 0.50, weight: 1.0)\n"
+            "Child explanation\n\n"
+            "[composite-child-expected] (score: 0.50, weight: 1.0)\n"
+            "Child explanation"
+        )
+        assert metric.status == StatusType.COMPLETED.value
+        assert (
+            Evaluation.objects.filter(
+                parent_evaluation__eval_template=composite_eval_template
+            ).count()
+            == 2
+        )
+
+    @pytest.mark.parametrize("is_composite", [False, True])
+    def test_selected_completion_counts_rows(
+        self,
+        user_eval_metric,
+        composite_eval_template,
+        row,
+        selected_eval_worker,
+        user,
+        output_column,
+        output_cell,
+        is_composite,
+    ):
+        metric = user_eval_metric
+        if is_composite:
+            metric.template = composite_eval_template
+            metric.template.aggregation_enabled = True
+            metric.template.aggregation_function = "weighted_avg"
+            metric.template.save(
+                update_fields=["aggregation_enabled", "aggregation_function"]
+            )
+        else:
+            metric.template.config = {"eval_type_id": "CustomPromptEvaluator"}
+            metric.template.save(update_fields=["config"])
+        metric.user = user
+        metric.config = {
+            "mapping": {"output": str(output_column.id)},
+            "reason_column": True,
+        }
+        if is_composite:
+            metric.config["mapping"]["expected"] = str(output_column.id)
+        metric.save(update_fields=["template", "user", "config"])
+        score, _reason = _selected_result_columns(metric)
+        selected = [row] + [
+            Row.objects.create(dataset=metric.dataset, order=order)
+            for order in range(1, 5)
+        ]
+        for selected_row in selected[1:]:
+            Cell.objects.create(
+                dataset=metric.dataset,
+                row=selected_row,
+                column=output_column,
+                value="Test output value",
+            )
+        row_ids = [str(selected_row.id) for selected_row in selected]
+        with (
+            patch(
+                "model_hub.views.utils.evals.run_eval_func",
+                return_value={"output": 0.5, "reason": "Child explanation"},
+            ) as child,
+            patch(
+                "model_hub.utils.composite_execution._log_composite_usage",
+                return_value=None,
+            ),
+            patch(
+                "model_hub.views.develop_dataset.get_mixpanel_properties",
+                return_value={},
+            ) as properties,
+        ):
+            selected_eval_worker.run(
+                {"metric_ids": [str(metric.id)], "row_ids": row_ids}
+            )
+
+        assert len(row_ids) == 5
+        assert properties.call_count == 2
+        properties.assert_called_with(
+            eval=metric,
+            org=metric.organization,
+            source=None,
+            dataset=metric.dataset,
+            count=5,
+            failed=0,
+        )
+        assert (
+            list(
+                Cell.objects.filter(column=score, row__in=selected)
+                .order_by("row__order")
+                .values_list("value", "status")
+            )
+            == [("0.5000" if is_composite else "0.25", CellStatus.PASS.value)] * 5
+        )
+        assert child.call_count == (10 if is_composite else 0)
+        assert selected_eval_worker.evaluate.call_count == (0 if is_composite else 5)
+
+    def test_first_selected_composite_prepares_reason_before_priming(
+        self,
+        auth_client,
+        dataset,
+        composite_eval_template,
+        row,
+        selected_eval_worker,
+        output_column,
+        output_cell,
+    ):
+        from model_hub.views import eval_runner
+
+        composite_eval_template.aggregation_enabled = True
+        composite_eval_template.aggregation_function = "weighted_avg"
+        composite_eval_template.save(
+            update_fields=["aggregation_enabled", "aggregation_function"]
+        )
+        untouched = Row.objects.create(dataset=dataset, order=1)
+        created = auth_client.post(
+            f"/model-hub/develops/{dataset.id}/add_user_eval/",
+            {
+                "name": "selected-composite",
+                "template_id": str(composite_eval_template.id),
+                "config": {
+                    "mapping": {
+                        "output": str(output_column.id),
+                        "expected": str(output_column.id),
+                    },
+                    "reason_column": True,
+                },
+                "run": False,
+            },
+            format="json",
+        )
+        assert created.status_code == 200, created.data
+        metric = UserEvalMetric.objects.get(dataset=dataset, name="selected-composite")
+        assert metric.status == StatusType.INACTIVE.value
+        results = Column.objects.filter(
+            dataset=dataset,
+            source__in=[
+                SourceChoices.EVALUATION.value,
+                SourceChoices.EVALUATION_REASON.value,
+            ],
+        )
+        assert results.count() == 0
+        primed = []
+        bulk_write = eval_runner.bulk_update_or_create_cells
+
+        def prime(row_ids, column_id, dataset_id, defaults, **kwargs):
+            primed.append(
+                (
+                    list(row_ids),
+                    column_id,
+                    list(results.order_by("created_at").values_list("id", flat=True)),
+                    Dataset.objects.get(id=dataset_id).column_order,
+                )
+            )
+            return bulk_write(row_ids, column_id, dataset_id, defaults, **kwargs)
+
+        with (
+            patch(
+                "model_hub.views.develop_dataset.run_evaluation_task.apply_async",
+                side_effect=lambda *, args: selected_eval_worker.run(*args),
+            ),
+            patch.object(eval_runner, "bulk_update_or_create_cells", side_effect=prime),
+            patch(
+                "model_hub.views.utils.evals.run_eval_func",
+                return_value={"output": 0.5, "reason": "Child explanation"},
+            ) as child,
+            patch(
+                "model_hub.utils.composite_execution._log_composite_usage",
+                return_value=None,
+            ),
+        ):
+            for attempt in range(2):
+                before = _selected_cell_snapshot([untouched])
+                response = auth_client.post(
+                    "/model-hub/evaluate-rows/",
+                    {
+                        "row_ids": [str(row.id)],
+                        "user_eval_metric_ids": [str(metric.id)],
+                    },
+                    format="json",
+                )
+                assert response.status_code == 200, response.data
+                score = results.get(source=SourceChoices.EVALUATION.value)
+                reason = results.get(source=SourceChoices.EVALUATION_REASON.value)
+                assert reason.source_id == f"{score.id}-sourceid-{metric.id}"
+                expected_order = [str(output_column.id), str(score.id), str(reason.id)]
+                assert primed[attempt * 2 : attempt * 2 + 2] == [
+                    ([row.id], score.id, [score.id, reason.id], expected_order),
+                    ([row.id], reason.id, [score.id, reason.id], expected_order),
+                ]
+                assert list(
+                    Cell.objects.filter(row=row, column__in=[score, reason])
+                    .order_by("column__created_at")
+                    .values_list("value", "status")
+                ) == [
+                    ("0.5000", CellStatus.PASS.value),
+                    (
+                        "[composite-child-output] (score: 0.50, weight: 1.0)\n"
+                        "Child explanation\n\n"
+                        "[composite-child-expected] (score: 0.50, weight: 1.0)\n"
+                        "Child explanation",
+                        CellStatus.PASS.value,
+                    ),
+                ]
+                assert _selected_cell_snapshot([untouched]) == before
+                metric.refresh_from_db()
+                assert metric.status == StatusType.COMPLETED.value
+                dataset.refresh_from_db()
+                assert dataset.column_order == expected_order
+                if attempt == 0:
+                    identities = [score.id, reason.id]
+                    for column in (score, reason):
+                        Cell.objects.create(
+                            dataset=dataset,
+                            row=untouched,
+                            column=column,
+                            value="Unselected evidence",
+                            value_infos={"kept": True},
+                            status=CellStatus.ERROR.value,
+                        )
+                    # Identity, not the display name or grid order, pairs reasons.
+                    reason.name = "Renamed explanation"
+                    reason.save(update_fields=["name"])
+                    dataset.column_order = expected_order[:-1]
+                    dataset.save(update_fields=["column_order"])
+                else:
+                    assert [score.id, reason.id] == identities
+                    assert reason.name == "Renamed explanation"
+            assert child.call_count == 4
+        assert results.count() == 2
+
+    @pytest.mark.parametrize("existing_twin", [False, True])
+    def test_selected_composite_reuses_reason_after_rename_and_save(
+        self,
+        auth_client,
+        user_eval_metric,
+        composite_eval_template,
+        row,
+        user,
+        output_column,
+        output_cell,
+        selected_eval_worker,
+        existing_twin,
+    ):
+        from model_hub.views import eval_runner
+
+        metric = user_eval_metric
+        dataset = metric.dataset
+        metric.template = composite_eval_template
+        metric.user = user
+        metric.config = {
+            "mapping": {
+                "output": str(output_column.id),
+                "expected": str(output_column.id),
+            },
+            "reason_column": True,
+        }
+        metric.save(update_fields=["template", "user", "config"])
+        composite_eval_template.aggregation_enabled = True
+        composite_eval_template.aggregation_function = "weighted_avg"
+        composite_eval_template.save(
+            update_fields=["aggregation_enabled", "aggregation_function"]
+        )
+        score, reason = _selected_result_columns(metric)
+        columns = [score, reason]
+        if existing_twin:
+            twin = Column.objects.create(
+                id=uuid.UUID("ffffffff-ffff-ffff-ffff-ffffffffffff"),
+                dataset=dataset,
+                name="Existing explanation twin",
+                data_type=DataTypeChoices.TEXT.value,
+                source=reason.source,
+                source_id=reason.source_id,
+            )
+            # Equal timestamps must still select the same identity every time.
+            Column.objects.filter(id=twin.id).update(created_at=reason.created_at)
+            columns.append(twin)
+        dataset.column_order = [str(output_column.id)] + [
+            str(column.id) for column in columns
+        ]
+        dataset.save(update_fields=["column_order"])
+        untouched = Row.objects.create(dataset=dataset, order=1)
+        for target in (row, untouched):
+            for column in columns:
+                Cell.objects.create(
+                    dataset=dataset,
+                    row=target,
+                    column=column,
+                    value="Original evidence",
+                    value_infos={"kept": True},
+                    status=CellStatus.ERROR.value,
+                )
+        before = _selected_cell_snapshot([untouched])
+        renamed = auth_client.put(
+            f"/model-hub/develops/{dataset.id}/update_column_name/{reason.id}/",
+            {"new_column_name": "Renamed explanation"},
+            format="json",
+        )
+        assert renamed.status_code == 200, renamed.data
+        saved = auth_client.post(
+            f"/model-hub/develops/{dataset.id}/edit_and_run_user_eval/{metric.id}/",
+            {"config": metric.config, "run": False},
+            format="json",
+        )
+        assert saved.status_code == 200, saved.data
+        reasons = Column.objects.filter(
+            dataset=dataset, source=reason.source, source_id=reason.source_id
+        )
+        saved_twin = reasons.get(name=f"{metric.name}-reason")
+        assert saved_twin.id != reason.id
+        assert reasons.count() == (3 if existing_twin else 2)
+        assert _selected_cell_snapshot([untouched]) == before
+        for target in (row, untouched):
+            Cell.objects.create(
+                dataset=dataset,
+                row=target,
+                column=saved_twin,
+                value="Saved twin evidence",
+                value_infos={"kept": "twin"},
+                status=CellStatus.ERROR.value,
+            )
+        before = _selected_cell_snapshot([untouched])
+        other_cells = Cell.objects.filter(column__in=reasons.exclude(id=reason.id))
+        other_before = list(other_cells.order_by("id").values())
+        identities = list(
+            reasons.order_by("created_at", "id").values_list("id", flat=True)
+        )
+        assert identities[0] == reason.id
+        dataset.refresh_from_db()
+        dataset.column_order.remove(str(reason.id))
+        dataset.save(update_fields=["column_order"])
+        expected_order = dataset.column_order + [str(reason.id)]
+        primed = []
+        bulk_write = eval_runner.bulk_update_or_create_cells
+
+        def prime(row_ids, column_id, dataset_id, defaults, **kwargs):
+            primed.append((list(row_ids), column_id))
+            return bulk_write(row_ids, column_id, dataset_id, defaults, **kwargs)
+
+        with (
+            patch(
+                "model_hub.views.develop_dataset.run_evaluation_task.apply_async",
+                side_effect=lambda *, args: selected_eval_worker.run(*args),
+            ),
+            patch.object(eval_runner, "bulk_update_or_create_cells", side_effect=prime),
+            patch(
+                "model_hub.views.utils.evals.run_eval_func",
+                return_value={"output": 0.5, "reason": "Renamed column explanation"},
+            ) as child,
+            patch(
+                "model_hub.utils.composite_execution._log_composite_usage",
+                return_value=None,
+            ),
+        ):
+            for _ in range(2):
+                response = auth_client.post(
+                    "/model-hub/evaluate-rows/",
+                    {
+                        "row_ids": [str(row.id)],
+                        "user_eval_metric_ids": [str(metric.id)],
+                    },
+                    format="json",
+                )
+                assert response.status_code == 200, response.data
+                assert list(
+                    Cell.objects.filter(row=row, column__in=[score, reason])
+                    .order_by("column__created_at")
+                    .values_list("value", "status")
+                ) == [
+                    ("0.5000", CellStatus.PASS.value),
+                    (
+                        "[composite-child-output] (score: 0.50, weight: 1.0)\n"
+                        "Renamed column explanation\n\n"
+                        "[composite-child-expected] (score: 0.50, weight: 1.0)\n"
+                        "Renamed column explanation",
+                        CellStatus.PASS.value,
+                    ),
+                ]
+                assert _selected_cell_snapshot([untouched]) == before
+                assert list(other_cells.order_by("id").values()) == other_before
+                assert (
+                    list(
+                        reasons.order_by("created_at", "id").values_list(
+                            "id", flat=True
+                        )
+                    )
+                    == identities
+                )
+                metric.refresh_from_db()
+                assert metric.status == StatusType.COMPLETED.value
+                dataset.refresh_from_db()
+                assert dataset.column_order == expected_order
+                reason.refresh_from_db()
+                assert reason.name == "Renamed explanation"
+        assert child.call_count == 4
+        assert primed == [([row.id], score.id), ([row.id], reason.id)] * 2
+
+    def test_selected_usage_refusal_preserves_unselected_evidence(
+        self, user_eval_metric, row, selected_eval_worker
+    ):
+        metric = user_eval_metric
+        score, reason = _selected_result_columns(metric)
+        untouched = [
+            Row.objects.create(dataset=metric.dataset, order=order)
+            for order in (1, 2, 3)
+        ]
+        for target, cell_status in (
+            (row, CellStatus.PASS.value),
+            (untouched[0], CellStatus.ERROR.value),
+            (untouched[2], CellStatus.PASS.value),
+        ):
+            for column in (score, reason):
+                Cell.objects.create(
+                    dataset=metric.dataset,
+                    row=target,
+                    column=column,
+                    value="original diagnostic",
+                    value_infos={"original": True},
+                    status=cell_status,
+                )
+        before = _selected_cell_snapshot(untouched)
+        selected_eval_worker.usage.__dict__.update(
+            allowed=False,
+            reason="Selection refused",
+            error_code="USAGE_LIMIT_EXCEEDED",
+            dimension="evaluations",
+            current_usage=10,
+            limit=10,
+            upgrade_cta=None,
+        )
+        selected_eval_worker.run(
+            {"metric_ids": [str(metric.id)], "row_ids": [str(row.id)]}
+        )
+        assert _selected_cell_snapshot(untouched) == before
+        selected = Cell.objects.get(column=score, row=row)
+        assert (selected.value, selected.status) == (
+            "Selection refused",
+            CellStatus.ERROR.value,
+        )
+        selected_reason = Cell.objects.get(column=reason, row=row)
+        assert (selected_reason.value, selected_reason.status) == (
+            "Selection refused",
+            CellStatus.ERROR.value,
+        )
+        assert selected.value_infos == {
+            "error_code": "USAGE_LIMIT_EXCEEDED",
+            "reason": "Selection refused",
+            "dimension": "evaluations",
+            "current_usage": 10,
+            "limit": 10,
+            "upgrade_cta": None,
+        }
+        metric.refresh_from_db()
+        assert metric.status == StatusType.FAILED.value
+        assert selected_eval_worker.evaluate.call_count == 0
+
+    @pytest.mark.parametrize("is_composite", [False, True])
+    @pytest.mark.parametrize("existing_score", [False, True])
+    def test_selected_usage_refusal_prepares_missing_result_columns(
+        self,
+        user_eval_metric,
+        composite_eval_template,
+        row,
+        selected_eval_worker,
+        existing_score,
+        is_composite,
+    ):
+        metric = user_eval_metric
+        if is_composite:
+            metric.template = composite_eval_template
+            metric.template.aggregation_enabled = True
+            metric.template.save(update_fields=["aggregation_enabled"])
+        else:
+            metric.template.config = {
+                "eval_type_id": "CustomPromptEvaluator",
+                "output": "score",
+            }
+            metric.template.save(update_fields=["config"])
+        metric.config = {"mapping": {}, "reason_column": True}
+        metric.save(update_fields=["template", "config"])
+        dataset = metric.dataset
+        untouched = Row.objects.create(dataset=dataset, order=1)
+        if existing_score:
+            score = Column.objects.create(
+                dataset=dataset,
+                source=SourceChoices.EVALUATION.value,
+                source_id=str(metric.id),
+                name=metric.name,
+                data_type=DataTypeChoices.FLOAT.value,
+            )
+            Cell.objects.create(
+                dataset=dataset,
+                column=score,
+                row=untouched,
+                value="Earlier result",
+                value_infos={"preserved": True},
+                status=CellStatus.PASS.value,
+            )
+        assert Cell.objects.filter(row=row).count() == 0
+        assert (
+            Column.objects.filter(
+                dataset=dataset, source=SourceChoices.EVALUATION_REASON.value
+            ).count()
+            == 0
+        )
+        before = _selected_cell_snapshot([untouched])
+        selected_eval_worker.usage.__dict__.update(
+            allowed=False,
+            reason="Selection refused",
+            error_code="USAGE_LIMIT_EXCEEDED",
+            dimension="evaluations",
+            current_usage=10,
+            limit=10,
+            upgrade_cta=None,
+        )
+        selected_eval_worker.run(
+            {"metric_ids": [str(metric.id)], "row_ids": [str(row.id)]}
+        )
+
+        score = Column.objects.get(
+            dataset=dataset,
+            source=SourceChoices.EVALUATION.value,
+            source_id=str(metric.id),
+        )
+        assert score.data_type == DataTypeChoices.FLOAT.value
+        reason = Column.objects.get(
+            dataset=dataset,
+            source=SourceChoices.EVALUATION_REASON.value,
+            source_id=f"{score.id}-sourceid-{metric.id}",
+        )
+        for column in (score, reason):
+            cell = Cell.objects.get(dataset=dataset, column=column, row=row)
+            assert (cell.value, cell.status) == (
+                "Selection refused",
+                CellStatus.ERROR.value,
+            )
+            assert cell.value_infos == {
+                "error_code": "USAGE_LIMIT_EXCEEDED",
+                "reason": "Selection refused",
+                "dimension": "evaluations",
+                "current_usage": 10,
+                "limit": 10,
+                "upgrade_cta": None,
+            }
+        dataset.refresh_from_db()
+        assert dataset.column_order == [str(score.id), str(reason.id)]
+        assert _selected_cell_snapshot([untouched]) == before
+        metric.refresh_from_db()
+        assert metric.status == StatusType.FAILED.value
+        assert selected_eval_worker.evaluate.call_count == 0
+
+    @pytest.mark.parametrize("existing_ordinary_results", [False, True])
+    def test_optimization_feedback_refusal_keeps_result_column_identity(
+        self,
+        user_eval_metric,
+        row,
+        output_column,
+        output_cell,
+        selected_eval_worker,
+        existing_ordinary_results,
+    ):
+        from model_hub.models.develop_optimisation import OptimizationDataset
+
+        metric = user_eval_metric
+        dataset = metric.dataset
+        metric.config = {
+            "mapping": {"output": str(output_column.id)},
+            "reason_column": True,
+        }
+        metric.save(update_fields=["config"])
+        optimize = OptimizationDataset.objects.create(
+            name="Feedback optimization",
+            optimize_type="PROMPT_TEMPLATE",
+            dataset=dataset,
+            column=output_column,
+        )
+        score = Column.objects.create(
+            dataset=dataset,
+            name="Optimized evaluation",
+            data_type=DataTypeChoices.FLOAT.value,
+            source=SourceChoices.OPTIMISATION_EVALUATION.value,
+            source_id=f"{optimize.id}-sourceid-{metric.id}",
+        )
+        sibling = Column.objects.create(
+            dataset=dataset,
+            name="Other optimization result",
+            data_type=DataTypeChoices.FLOAT.value,
+            source=SourceChoices.OPTIMISATION_EVALUATION.value,
+            source_id=f"{uuid.uuid4()}-sourceid-{metric.id}",
+        )
+        result_columns = [score, sibling]
+        if existing_ordinary_results:
+            result_columns.extend(_selected_result_columns(metric))
+        untouched = Row.objects.create(dataset=dataset, order=1)
+        for target in (row, untouched):
+            for column in result_columns:
+                Cell.objects.create(
+                    dataset=dataset,
+                    row=target,
+                    column=column,
+                    value="Earlier result",
+                    value_infos={"preserved": True},
+                    status=CellStatus.PASS.value,
+                )
+        selected = Cell.objects.get(row=row, column=score)
+        other_cells = Cell.objects.filter(dataset=dataset).exclude(id=selected.id)
+        other_before = list(other_cells.order_by("id").values())
+        columns = Column.objects.filter(dataset=dataset).order_by("id")
+        columns_before = list(columns.values())
+        expected_order = [str(output_column.id)] + [
+            str(column.id) for column in result_columns
+        ]
+        dataset.column_order = expected_order
+        dataset.save(update_fields=["column_order"])
+        selected_eval_worker.usage.__dict__.update(
+            allowed=False,
+            reason="Selection refused",
+            error_code="USAGE_LIMIT_EXCEEDED",
+            dimension="evaluations",
+            current_usage=10,
+            limit=10,
+            upgrade_cta=None,
+        )
+
+        # Match the existing feedback recalculate_row caller's worker payload.
+        selected_eval_worker.run(
+            {
+                "metric_ids": [str(metric.id)],
+                "row_ids": [str(row.id)],
+                "source": "feedback",
+                "source_id": metric.template.id,
+                "source_config": {"reference_id": str(metric.id)},
+                "column_source_id": score.source_id,
+                "column_source": score.source,
+                "column": score.id,
+                "feedback_id": uuid.uuid4(),
+            }
+        )
+
+        assert list(columns.values()) == columns_before
+        assert Column.objects.filter(
+            dataset=dataset,
+            source__in=[
+                SourceChoices.EVALUATION.value,
+                SourceChoices.EVALUATION_REASON.value,
+            ],
+        ).count() == (2 if existing_ordinary_results else 0)
+        dataset.refresh_from_db()
+        assert dataset.column_order == expected_order
+        assert list(other_cells.order_by("id").values()) == other_before
+        selected.refresh_from_db()
+        assert (selected.column_id, selected.value, selected.status) == (
+            score.id,
+            "Selection refused",
+            CellStatus.ERROR.value,
+        )
+        assert selected.value_infos == {
+            "error_code": "USAGE_LIMIT_EXCEEDED",
+            "reason": "Selection refused",
+            "dimension": "evaluations",
+            "current_usage": 10,
+            "limit": 10,
+            "upgrade_cta": None,
+        }
+        metric.refresh_from_db()
+        assert metric.status == StatusType.FAILED.value
+        assert selected_eval_worker.evaluate.call_count == 0
+
+    def test_usage_refusal_row_scope_does_not_imply_column_preparation(
+        self, user_eval_metric, row
+    ):
+        from model_hub.tasks.user_evaluation import _mark_cells_usage_limit_error
+
+        metric = user_eval_metric
+        metric.config = {"reason_column": True}
+        metric.save(update_fields=["config"])
+        usage = SimpleNamespace(
+            reason="Selection refused",
+            error_code="USAGE_LIMIT_EXCEEDED",
+            dimension="evaluations",
+            current_usage=10,
+            limit=10,
+            upgrade_cta=None,
+        )
+        _mark_cells_usage_limit_error(metric, usage, row_ids=[str(row.id)])
+
+        assert Column.objects.filter(dataset=metric.dataset).count() == 0
+        assert _selected_cell_snapshot([row]) == []
+        metric.dataset.refresh_from_db()
+        assert metric.dataset.column_order == []
+
+    @pytest.mark.parametrize("scope", ["empty", "foreign", "omitted"])
+    def test_usage_refusal_does_not_prepare_columns_without_selected_rows(
+        self, user_eval_metric, row, scope
+    ):
+        from model_hub.tasks.user_evaluation import _mark_cells_usage_limit_error
+
+        metric = user_eval_metric
+        metric.config = {"reason_column": True}
+        metric.save(update_fields=["config"])
+        other_dataset = Dataset.objects.create(
+            name="Other selection",
+            organization=metric.organization,
+            workspace=metric.workspace,
+        )
+        other_row = Row.objects.create(dataset=other_dataset, order=0)
+        usage = SimpleNamespace(
+            reason="Selection refused",
+            error_code="USAGE_LIMIT_EXCEEDED",
+            dimension="evaluations",
+            current_usage=10,
+            limit=10,
+            upgrade_cta=None,
+        )
+        kwargs = (
+            {}
+            if scope == "omitted"
+            else {"row_ids": [] if scope == "empty" else [str(other_row.id)]}
+        )
+        _mark_cells_usage_limit_error(metric, usage, **kwargs)
+
+        assert Column.objects.filter(dataset=metric.dataset).count() == 0
+        assert _selected_cell_snapshot([row, other_row]) == []
+        metric.dataset.refresh_from_db()
+        assert metric.dataset.column_order == []
+
+    @pytest.mark.parametrize(
+        "template_enabled, override, expected_calls",
+        [(True, False, 0), (True, True, 1), (True, None, 1), (False, True, 1)],
+    )
+    def test_saved_localization_setting_controls_selected_run(
+        self,
+        auth_client,
+        user_eval_metric,
+        row,
+        selected_eval_worker,
+        template_enabled,
+        override,
+        expected_calls,
+        output_column,
+        output_cell,
+    ):
+        metric = user_eval_metric
+        metric.template.config = {"eval_type_id": "CustomPromptEvaluator"}
+        metric.template.error_localizer_enabled = template_enabled
+        metric.template.save(update_fields=["config", "error_localizer_enabled"])
+        config = {
+            "mapping": {"output": str(output_column.id)},
+            "run_config": {},
+        }
+        if override is not None:
+            config["run_config"]["error_localizer_enabled"] = override
+        saved = auth_client.post(
+            f"/model-hub/develops/{metric.dataset_id}/"
+            f"edit_and_run_user_eval/{metric.id}/",
+            {"config": config, "error_localizer": bool(override), "run": False},
+            format="json",
+        )
+        assert saved.status_code == 200, saved.data
+        metric.refresh_from_db()
+        assert metric.error_localizer is bool(override)
+        assert metric.config["run_config"] == config["run_config"]
+        score, _reason = _selected_result_columns(metric)
+        Cell.objects.create(
+            dataset=metric.dataset,
+            row=row,
+            column=score,
+            value="previous result",
+            status=CellStatus.PASS.value,
+        )
+        with patch(
+            "model_hub.tasks.user_evaluation.trigger_error_localization_for_column"
+        ) as localize:
+            selected_eval_worker.run(
+                {"metric_ids": [str(metric.id)], "row_ids": [str(row.id)]}
+            )
+        assert localize.call_count == expected_calls
+        selected = Cell.objects.get(column=score, row=row)
+        assert (selected.value, selected.status) == ("0.25", CellStatus.PASS.value)
+        assert selected_eval_worker.evaluate.call_count == 1
+
+    @pytest.mark.parametrize("template_enabled", [False, True])
+    def test_selected_localization_override_preserves_saved_binding_flag(
+        self,
+        auth_client,
+        user_eval_metric,
+        row,
+        selected_eval_worker,
+        output_column,
+        output_cell,
+        template_enabled,
+    ):
+        from model_hub.utils.eval_list import build_run_config_view
+        from model_hub.views.eval_runner import EvaluationRunner
+
+        metric = user_eval_metric
+        metric.template.config = {"eval_type_id": "CustomPromptEvaluator"}
+        metric.template.error_localizer_enabled = template_enabled
+        metric.template.save(update_fields=["config", "error_localizer_enabled"])
+        config = {
+            "mapping": {"output": str(output_column.id)},
+            "run_config": {"error_localizer_enabled": False},
+        }
+        saved = auth_client.post(
+            f"/model-hub/develops/{metric.dataset_id}/"
+            f"edit_and_run_user_eval/{metric.id}/",
+            {"config": config, "error_localizer": True, "run": False},
+            format="json",
+        )
+        assert saved.status_code == 200, saved.data
+        metric.refresh_from_db()
+        assert metric.error_localizer is True
+        assert metric.config["run_config"] == {"error_localizer_enabled": False}
+        assert build_run_config_view(metric)["error_localizer_enabled"] is True
+        score, _reason = _selected_result_columns(metric)
+        Cell.objects.create(
+            dataset=metric.dataset,
+            row=row,
+            column=score,
+            value="previous result",
+            status=CellStatus.PASS.value,
+        )
+
+        with patch(
+            "model_hub.tasks.user_evaluation.trigger_error_localization_for_column"
+        ) as localize:
+            # Full dataset runs also use is_only_eval, without selected-row scope.
+            runner = EvaluationRunner(metric.id, is_only_eval=True)
+            runner.load_user_eval_metric()
+            _response, result_status, value = runner._process_eval_result(
+                row, config["mapping"]
+            )
+            assert (value, result_status) == ("0.25", CellStatus.PASS.value)
+            assert localize.call_count == 1
+            localize.reset_mock()
+
+            selected_eval_worker.run(
+                {"metric_ids": [str(metric.id)], "row_ids": [str(row.id)]}
+            )
+            assert localize.call_count == 0
+
+        metric.refresh_from_db()
+        assert metric.error_localizer is True
+        assert metric.config["run_config"] == {"error_localizer_enabled": False}
+        assert build_run_config_view(metric)["error_localizer_enabled"] is True
+        selected = Cell.objects.get(column=score, row=row)
+        assert (selected.value, selected.status) == ("0.25", CellStatus.PASS.value)
+        assert selected_eval_worker.evaluate.call_count == 2
+
+    @pytest.mark.parametrize("explicit_empty", [False, True])
+    def test_usage_refusal_distinguishes_empty_scope_from_omitted_scope(
+        self, user_eval_metric, row, explicit_empty
+    ):
+        from model_hub.tasks.user_evaluation import _mark_cells_usage_limit_error
+
+        metric = user_eval_metric
+        score, reason = _selected_result_columns(metric)
+        untouched = Row.objects.create(dataset=metric.dataset, order=1)
+        for column in (score, reason):
+            Cell.objects.create(
+                dataset=metric.dataset,
+                column=column,
+                row=untouched,
+                value="Previous result",
+                status=CellStatus.PASS.value,
+                value_infos={"preserved": True},
+            )
+        before = _selected_cell_snapshot([untouched])
+        usage = SimpleNamespace(
+            reason="Selection refused",
+            error_code="USAGE_LIMIT_EXCEEDED",
+            dimension="evaluations",
+            current_usage=10,
+            limit=10,
+            upgrade_cta=None,
+        )
+        if explicit_empty:
+            _mark_cells_usage_limit_error(metric, usage, row_ids=[])
+            assert _selected_cell_snapshot([row]) == []
+        else:
+            _mark_cells_usage_limit_error(metric, usage)
+            assert (
+                list(
+                    Cell.objects.filter(row=row, column__in=[score, reason])
+                    .order_by("column__created_at")
+                    .values_list("value", "status")
+                )
+                == [("Selection refused", CellStatus.ERROR.value)] * 2
+            )
+        assert _selected_cell_snapshot([untouched]) == before

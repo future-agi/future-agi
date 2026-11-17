@@ -34,8 +34,8 @@ func newRefreshAuth(t *testing.T, r *refreshResolver) *Authenticator {
 	return a
 }
 
-// The stale age and publication barrier are explicit: no sleeps or scheduler
-// race decide whether Authenticate takes its actual warm-refresh branch.
+// ICU05 retains the expired seed and held persistence scenario, but the
+// accepted fresh-only contract requires foreground revalidation, not stale use.
 func TestReauthenticateAfterActualWarmRefresh(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -50,28 +50,40 @@ func TestReauthenticateAfterActualWarmRefresh(t *testing.T) {
 	ck := CacheKey("k", "s")
 	old := refreshResult()
 	a.cache.m.Store(ck, &cacheEntry{result: old, fetchedAt: time.Now().Add(-2 * time.Minute)})
-	warm, err := a.Authenticate(ctx, "k", "s")
-	if err != nil || warm != old {
-		t.Fatalf("warm authentication: %v", err)
-	}
+	done := make(chan composeAuthOutcome, 1)
+	go func() {
+		got, err := a.Authenticate(ctx, "k", "s")
+		done <- composeAuthOutcome{got, err}
+	}()
 	select {
 	case <-entered:
 	case <-ctx.Done():
-		t.Fatal("refresh never reached resolver")
+		t.Fatal("revalidation never reached resolver")
+	}
+	select {
+	case <-done:
+		close(release)
+		t.Fatal("expired authentication returned before validation release")
+	default:
 	}
 	close(release)
-	// Join the already-started refresh. Returning from Do means publication
-	// finished (not just that ValidateKey returned).
-	a.sfKey.Do(ck+":refresh", func() (any, error) { return nil, nil })
+	select {
+	case outcome := <-done:
+		if outcome.err != nil || outcome.result != fresh {
+			t.Fatalf("foreground revalidation: %v", outcome.err)
+		}
+	case <-ctx.Done():
+		t.Fatal("foreground revalidation did not settle")
+	}
 	entry, _ := a.cache.peek(ck)
 	if entry == nil || entry.result != fresh {
 		t.Fatal("refresh did not publish new generation")
 	}
 	var changed *ProjectAuthChangedError
-	if err := a.ResolveProjectsForKey(ctx, ck, warm, []string{"known"}); !errors.As(err, &changed) {
+	if err := a.ResolveProjectsForKey(ctx, ck, old, []string{"known"}); !errors.As(err, &changed) {
 		t.Fatalf("exact generation check weakened: %v", err)
 	}
-	ctx = WithResolvedContext(withRequestCredentials(ctx, "k", "s"), warm, ck)
+	ctx = WithResolvedContext(withRequestCredentials(ctx, "k", "s"), old, ck)
 	next, err := a.Reauthenticate(ctx)
 	if err != nil || FromContext(next) != fresh {
 		t.Fatalf("reauthentication: %v", err)

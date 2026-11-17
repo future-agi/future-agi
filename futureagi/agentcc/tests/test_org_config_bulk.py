@@ -1,5 +1,6 @@
 """Bulk org-config sync endpoint: admin-token gating and envelope shape."""
 
+import secrets
 from unittest.mock import patch
 
 import pytest
@@ -9,7 +10,8 @@ from rest_framework.test import APIClient
 from accounts.models import Organization
 from agentcc.models.org_config import AgentccOrgConfig
 
-ADMIN_TOKEN = "agentcc-admin-secret"
+# Generated per run: a published literal would now be refused (agentcc/admin_token.py).
+ADMIN_TOKEN = secrets.token_hex(32)
 
 
 @pytest.fixture(autouse=True)
@@ -113,8 +115,10 @@ class TestOrgConfigBulk:
         with patch(
             "agentcc.views.org_config_bulk._build_payload",
             side_effect=_fail_for_first_org,
-        ):
+        ) as build_payload:
             response = admin_client.get("/agentcc/org-configs/bulk/")
+
+        assert build_payload.call_count == 2
 
         assert response.status_code == status.HTTP_200_OK
         body = response.json()

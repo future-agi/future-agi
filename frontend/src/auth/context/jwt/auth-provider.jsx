@@ -1,10 +1,16 @@
 import React from "react";
 import PropTypes from "prop-types";
-import { useMemo, useEffect, useReducer, useCallback } from "react";
+import { useMemo, useEffect, useReducer, useCallback, useRef } from "react";
 
 import axios, { endpoints } from "src/utils/axios";
-import axiosPackage from "axios";
-import { HOST_API } from "src/config-global";
+import {
+  createOrganizationRecovery,
+  isOrganizationUnavailable,
+} from "src/contexts/useOrganizationUnavailableRecovery";
+import {
+  clearOnboardingRecovery,
+  readAuthRedirectParams,
+} from "src/auth/auth-url-intake";
 
 import { AuthContext } from "./auth-context";
 import {
@@ -18,6 +24,8 @@ import { identifyPostHogUser, resetPostHogUser } from "src/utils/PostHog";
 import { useQueryClient } from "@tanstack/react-query";
 import { setUser } from "@sentry/react";
 import logger from "src/utils/logger";
+import useFalconStore from "src/sections/falcon-ai/store/useFalconStore";
+import { forgetKey as forgetCodePanelKey } from "src/sections/omega/code/keyStore";
 import { resetAllUserStores } from "src/utils/auth/clearStores";
 import {
   SS_KEY_ORG_DISPLAY_NAME,
@@ -84,12 +92,16 @@ const initialState = {
 const reducer = (state, action) => {
   switch (action.type) {
     case "INITIAL":
-      return { ...state, loading: false, user: action.payload.user };
+      return { ...state, loading: false, recoveringOrganization: false, user: action.payload.user };
     case "LOGIN":
     case "REGISTER":
       return { ...state, user: action.payload.user };
     case "LOGOUT":
-      return { ...state, user: null };
+      return { ...state, user: null, recoveringOrganization: false };
+    case "RECOVER_ORGANIZATION":
+      return { ...state, recoveringOrganization: true };
+    case "END_ORGANIZATION_RECOVERY":
+      return { ...state, recoveringOrganization: false };
     case "UPDATE":
       return { ...state, user: { ...state.user, ...action.payload.user } };
     default:
@@ -104,23 +116,71 @@ const STORAGE_KEY = "accessToken";
 export function AuthProvider({ children }) {
   const [state, dispatch] = useReducer(reducer, initialState);
   const queryClient = useQueryClient();
+  const organizationRecovery = useRef(null);
+  if (!organizationRecovery.current) organizationRecovery.current = createOrganizationRecovery();
+  const notifyRecoveredOrganization = useCallback(() => {
+    organizationRecovery.current.notifyRecoveredOrganization();
+  }, []);
+  const startOrganizationRecovery = useCallback(() => {
+    queryClient.clear();
+    useFalconStore.getState().resetAll();
+    dispatch({ type: "RECOVER_ORGANIZATION" });
+  }, [queryClient]);
+
+  const recoverOrganization = useCallback(async (error) => {
+    const accessToken = localStorage.getItem(STORAGE_KEY);
+    if (!accessToken) return null;
+    try {
+      const response = await organizationRecovery.current.recover(error, accessToken, startOrganizationRecovery);
+      if (response) {
+        const user = response.data;
+        setSession(accessToken, user?.requires_org_setup ? null : pinResolvedOrganization(user));
+        dispatch({ type: "INITIAL", payload: { user: { ...user, accessToken } } });
+      }
+      return response;
+    } catch (error) {
+      // Failed recovery is not permission to keep rendering the former tenant.
+      // Keep credentials for an explicit sign-in retry; never replay the write.
+      dispatch({ type: "INITIAL", payload: { user: null } });
+      throw error;
+    } finally {
+      dispatch({ type: "END_ORGANIZATION_RECOVERY" });
+    }
+  }, [startOrganizationRecovery]);
 
   const initialize = useCallback(async () => {
     try {
-      const accessToken = localStorage.getItem(STORAGE_KEY);
+      const redirectParams = readAuthRedirectParams();
+      if (redirectParams.get("code") && redirectParams.get("kind") === "saml") {
+        // Intake may already have scrubbed the URL. Leave its captured code
+        // for AuthGuard, but settle loading so it can redeem before hydration.
+        dispatch({ type: "INITIAL", payload: { user: null } });
+        return;
+      }
+      const initialAccessToken = localStorage.getItem(STORAGE_KEY);
 
-      if (accessToken) {
-        // Without this the backend answers for whichever org was last switched
-        // to in any tab.
-        const storedOrgId = sessionStorage.getItem(SS_KEY_ORG_ID);
-        const response = await axios.get(endpoints.auth.me, {
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-            ...(storedOrgId ? { "X-Organization-Id": storedOrgId } : {}),
-          },
-        });
+      if (initialAccessToken) {
+        const response = await organizationRecovery.current.loadUser(
+          initialAccessToken, startOrganizationRecovery,
+        );
+
+        // HTTP refresh may have replaced the bearer while loading this user.
+        const authorization = response.config?.headers?.get?.("Authorization") ??
+          response.config?.headers?.Authorization;
+        const accessToken = typeof authorization === "string" && authorization.startsWith("Bearer ")
+          ? authorization.slice(7)
+          : initialAccessToken;
+        // A late response must not revive logout or hydrate a replacement session.
+        // Without response metadata, only the unchanged initial session is safe.
+        if (!accessToken || localStorage.getItem(STORAGE_KEY) !== accessToken) {
+          dispatch({ type: "INITIAL", payload: { user: null } });
+          return;
+        }
 
         const user = response.data;
+
+        // Org-less sessions need the same per-tab isolation marker as org users.
+        sessionStorage.setItem(SS_KEY_USER_ID, user?.id);
 
         // Org-less user (removed from org) — still authenticated but flagged
         if (user?.requires_org_setup) {
@@ -133,9 +193,6 @@ export function AuthProvider({ children }) {
           });
           return;
         }
-
-        // Store user ID in sessionStorage for cross-tab user detection
-        sessionStorage.setItem(SS_KEY_USER_ID, user?.id);
 
         setSession(accessToken, pinResolvedOrganization(user));
         if (user?.remember_me) {
@@ -169,10 +226,12 @@ export function AuthProvider({ children }) {
       // Only clear session for authentication errors (401, 403) or specific user_not_found error
       // Don't clear session for network errors (no response) or server errors (5xx)
       if (
-        error?.code === "user_not_found" ||
-        error?.statusCode === 401 ||
-        (error?.statusCode === 403 &&
-          error?.config?.url?.includes("/accounts/user-info/"))
+        !isOrganizationUnavailable(error) && (
+          error?.code === "user_not_found" ||
+          (error?.response?.status || error?.statusCode) === 401 ||
+          ((error?.response?.status || error?.statusCode) === 403 &&
+            error?.config?.url?.includes("/accounts/user-info/"))
+        )
       ) {
         setSession(null);
       }
@@ -184,7 +243,7 @@ export function AuthProvider({ children }) {
         },
       });
     }
-  }, []);
+  }, [startOrganizationRecovery]);
 
   useEffect(() => {
     initialize();
@@ -195,6 +254,7 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     const handleStorageChange = (event) => {
       if (event.key === SAML_AUTH_GENERATION_KEY) {
+        clearOnboardingRecovery();
         queryClient.clear();
         SESSION_KEYS_TO_CLEAR.forEach((key) => sessionStorage.removeItem(key));
         dispatch({ type: "LOGOUT" });
@@ -210,6 +270,7 @@ export function AuthProvider({ children }) {
 
       // Token was cleared (logout in another tab)
       if (!newToken) {
+        clearOnboardingRecovery();
         logger.info("Token cleared in another tab, logging out this tab");
         queryClient.clear();
         sessionStorage.removeItem(SS_KEY_USER_ID);
@@ -222,6 +283,7 @@ export function AuthProvider({ children }) {
       const newUserId = decodeTokenUserId(newToken);
 
       if (currentUserId && newUserId && currentUserId !== newUserId) {
+        clearOnboardingRecovery();
         // Different user logged in from another tab
         logger.warn(
           "Different user detected in another tab. Forcing logout to prevent data leakage.",
@@ -248,18 +310,17 @@ export function AuthProvider({ children }) {
   const login = useCallback(async (response) => {
     if (response.status !== 200) return;
     const { access: accessToken, refresh: refreshToken } = response.data;
-    const userResponse = await axiosPackage.get(
-      `${HOST_API}${endpoints.auth.me}`,
-      {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
-      },
-    );
+    organizationRecovery.current.reset();
+    let userResponse;
+    try {
+      userResponse = await organizationRecovery.current.loadUser(accessToken, startOrganizationRecovery, true);
+    } finally {
+      dispatch({ type: "END_ORGANIZATION_RECOVERY" });
+    }
 
     const user = userResponse.data;
 
-    setSession(accessToken, pinResolvedOrganization(user));
+    setSession(accessToken, user?.requires_org_setup ? null : pinResolvedOrganization(user));
     if (refreshToken) {
       setRefreshToken(refreshToken);
     }
@@ -286,7 +347,7 @@ export function AuthProvider({ children }) {
         },
       },
     });
-  }, []);
+  }, [startOrganizationRecovery]);
 
   const register = useCallback(async (payload) => {
     try {
@@ -331,6 +392,8 @@ export function AuthProvider({ children }) {
   // LOGOUT
   const logout = useCallback(async () => {
     try {
+      organizationRecovery.current.reset();
+      clearOnboardingRecovery();
       const accessToken = localStorage.getItem(STORAGE_KEY);
       setSession(null);
       clearTokens();
@@ -340,6 +403,9 @@ export function AuthProvider({ children }) {
       sessionStorage.removeItem(SS_KEY_USER_ID);
       localStorage.removeItem("initial-render"); // Clear flag so next login triggers redirect logic
       resetAllUserStores();
+      // The personal API key an Omega code panel holds in this tab's memory
+      // is the signed-out person's: the next one to sign in here never gets it.
+      forgetCodePanelKey();
       dispatch({
         type: "LOGOUT",
       });
@@ -401,6 +467,9 @@ export function AuthProvider({ children }) {
       register,
       logout,
       initialize,
+      recoverOrganization,
+      notifyRecoveredOrganization,
+      recoveringOrganization: !!state.recoveringOrganization,
       updateUserData,
       marketplaceRegister,
     }),
@@ -411,6 +480,9 @@ export function AuthProvider({ children }) {
       register,
       logout,
       initialize,
+      recoverOrganization,
+      notifyRecoveredOrganization,
+      state.recoveringOrganization,
       updateUserData,
       marketplaceRegister,
     ],

@@ -95,7 +95,7 @@ The [EvalTask reference fixture](../../scripts/update_rehearsal_eval_task_refere
 | Service, mount, volume, profile, restart or storage-format change | Update runtime/observer/backup/restore support and contract tests together | Whether the rendered model agrees with the declared layout |
 | New app, changed app label, migration module, squash or replacement | Coordinate fixed mapping/classifier changes and tests before support | Unknown/unsupported layouts fail closed |
 
-**History is immutable.** Add a new migration to change behavior. Do not delete, rename or modify an old migration's operations, dependencies or helpers. The only existing-file exemption is a first `UPDATE_SAFETY` assignment whose removal leaves the same module AST as the merge-base version. Existing declarations cannot be rewritten under that exemption.
+**History is immutable.** Add a new migration to change behavior. Do not delete, rename or modify an old migration's operations, dependencies or helpers, including `_`/`~` helper modules in a migrations package. There are two existing-file exemptions: a first `UPDATE_SAFETY` assignment whose removal leaves the same module AST as the merge-base version, and an exact reviewed edit listed in `deploy/update/migration-edit-reviews.json` (merge-base and new sha256 and a reason; see UPDATE_SAFETY.md). Existing declarations cannot be rewritten under either.
 
 **Small does not mean exempt from opaque-code review.** Every non-noop `RunPython`/`RunSQL` needs a declaration, even on small tables or for read-only payloads. Only exact Django forward-and-reverse noop pairs are exempt; a user-defined noop or missing reverse is not.
 

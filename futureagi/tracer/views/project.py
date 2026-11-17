@@ -1,5 +1,7 @@
+import ipaddress
 from datetime import timedelta
 from functools import wraps
+from urllib.parse import urlsplit
 
 import structlog
 from django.conf import settings
@@ -8,11 +10,12 @@ from django.db.models import Count
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.decorators import action
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import APIException, ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
 
 from accounts.utils import get_request_organization
+from common.utils.page_limits import enforce_page_size, page_bounds
 from tfc.ee_loader import is_cloud_env
 from tfc.middleware.db_health_check import db_connection_required
 from tfc.middleware.query_timeout import monitor_query_performance
@@ -29,6 +32,7 @@ from tracer.models.project import Project
 from tracer.models.trace_scan import TraceScanConfig
 from tracer.queries.projects import apply_project_list_filters
 from tracer.serializers.filters import (
+    ObserveGraphDataErrorResponseSerializer,
     ObserveGraphDataQuerySerializer,
     ObserveGraphDataResponseSerializer,
 )
@@ -41,6 +45,7 @@ from tracer.serializers.project import (
     ProjectListResponseSerializer,
     ProjectNameUpdateSerializer,
     ProjectSerializer,
+    ProjectTableApiResponseSerializer,
     ProjectUserGraphDataQuerySerializer,
     ProjectUserGraphDataRequestSerializer,
     ProjectUserGraphDataResponseSerializer,
@@ -113,18 +118,76 @@ from tracer.utils.property_registry import validate_property_graph_namespace
 logger = structlog.get_logger(__name__)
 
 
+COLLECTOR_URL_PLACEHOLDER = "YOUR_FI_COLLECTOR_URL"
+
+
+def _host_of(value):
+    """The lowercase host of a URL or of a bare host[:port].
+
+    settings.APP_URL is always a bare host[:port] (settings strip any scheme;
+    compose writes localhost:3000), and urlsplit only finds a host after "//",
+    so a value without a scheme is parsed as "//value", as settings does."""
+    value = (value or "").strip()
+    if not value:
+        return ""
+    try:
+        parsed = urlsplit(value if "://" in value else f"//{value}")
+        return (parsed.hostname or "").lower()
+    except ValueError:
+        return ""
+
+
+def _is_loopback_host(host):
+    if not host:
+        return False
+    if host == "localhost" or host.endswith(".localhost"):
+        return True
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return address.is_loopback or address.is_unspecified
+
+
+def collector_url_missing():
+    """Whether this self-hosted deployment has no collector address to print.
+
+    FI_COLLECTOR_PUBLIC_URL falls back to http://localhost:<port> when it is
+    not set. That is right for an install used on the same machine, but on a
+    deployment people reach through a public APP_URL a copied snippet would
+    send the reader's spans to their own laptop and the setup page would wait
+    forever. Unset counts as missing too."""
+    url = getattr(settings, "FI_COLLECTOR_PUBLIC_URL", "") or ""
+    if not url.strip():
+        return True
+    app_host = _host_of(getattr(settings, "APP_URL", "") or "")
+    return (
+        _is_loopback_host(_host_of(url))
+        and bool(app_host)
+        and not _is_loopback_host(app_host)
+    )
+
+
 def sdk_key_snippets():
     """The keys block of the in-app SDK snippet, per language, with placeholder
     keys. Off Future AGI Cloud it also sets FI_BASE_URL to this install's
     collector: the SDKs default to Cloud, and without it the spans (prompts and
-    completions included) would leave for api.futureagi.com."""
+    completions included) would leave for api.futureagi.com. When the
+    deployment has not published a collector address (collector_url_missing),
+    the line keeps a placeholder instead: never a localhost address the reader
+    cannot reach, and never no line, which would send the spans to Cloud."""
     snippets = {
         lang: code.format("YOUR_FI_API_KEY", "YOUR_FI_SECRET_KEY")
         for lang, code in ORG_KEYS.items()
     }
     if not is_cloud_env(settings.CLOUD_DEPLOYMENT):
+        url = (
+            COLLECTOR_URL_PLACEHOLDER
+            if collector_url_missing()
+            else settings.FI_COLLECTOR_PUBLIC_URL
+        )
         for lang, line in ORG_BASE_URL.items():
-            snippets[lang] += line.format(settings.FI_COLLECTOR_PUBLIC_URL)
+            snippets[lang] += line.format(url)
     return snippets
 
 
@@ -215,7 +278,9 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
     def _workspace_scope_q(self):
         workspace = getattr(self.request, "workspace", None)
         if not workspace:
-            return models.Q()
+            from tfc.utils.workspace_scope import empty_workspace_filter
+
+            return empty_workspace_filter()
 
         if getattr(workspace, "is_default", False):
             return (
@@ -284,19 +349,21 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
         try:
             from tracer.utils.pii_settings import invalidate_pii_cache
 
-            invalidate_pii_cache(str(instance.organization_id), instance.name)
+            invalidate_pii_cache(str(instance.organization_id), str(instance.id))
         except Exception:
             logger.warning("pii_cache_invalidation_failed", exc_info=True)
 
     @validated_request(
         query_serializer=ProjectViewSetListQuerySerializer,
         auto_schema=ExplicitQueryAutoSchema,
+        responses={200: ProjectTableApiResponseSerializer},
     )
     def list(self, request, *args, **kwargs):
         """
         Get a paginated list of all projects for the organization.
         """
         try:
+            enforce_page_size(request.query_params.get("page_size"))
             # Get base queryset
             queryset = self.get_queryset()
 
@@ -306,8 +373,7 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             # Apply pagination
             page_number = request.validated_query_data["page_number"]
             page_size = request.validated_query_data["page_size"]
-            start = page_number * page_size
-            end = start + page_size
+            start, end = page_bounds(page_number, page_size, total_count)
 
             # Get paginated queryset with trace counts and run counts
             # Use distinct=True to avoid cartesian join between traces and versions
@@ -340,6 +406,8 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                 {"projects": serializer.data, "total_count": total_count}
             )
 
+        except APIException:
+            raise
         except Exception as e:
             logger.exception(f"Error in fetching the project list: {str(e)}")
 
@@ -489,15 +557,33 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                 if not project:
                     return self._gm.bad_request(get_error_message("PROJECT_NOT_FOUND"))
 
-                # Update project name
+                # Privacy settings share the existing project update operation.
+                privacy = {
+                    key: validated_data[key]
+                    for key in ("pii_redaction_enabled", "pii_redaction_mode")
+                    if key in validated_data
+                }
                 project.name = new_name
                 update_fields = ["name"]
+                if privacy:
+                    # Non-object metadata on older projects is treated as unconfigured.
+                    base = project.metadata if isinstance(project.metadata, dict) else {}
+                    project.metadata = {**base, **privacy}
+                    update_fields.append("metadata")
                 if "sampling_contact_attribute" in validated_data:
                     project.sampling_contact_attribute = validated_data[
                         "sampling_contact_attribute"
                     ]
                     update_fields.append("sampling_contact_attribute")
                 project.save(update_fields=update_fields)
+                try:
+                    from tracer.utils.pii_settings import invalidate_pii_cache
+
+                    invalidate_pii_cache(str(project.organization_id), str(project.id))
+                except Exception:
+                    # Lookups use freshly resolved metadata even if cache eviction
+                    # fails, so a cache outage does not undo a successful update.
+                    logger.warning("pii_cache_invalidation_failed", exc_info=True)
 
                 response_message = "Project name updated successfully"
                 response_data = {
@@ -999,7 +1085,13 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
         log_event="project_user_metrics_action_deadline_exceeded",
         unavailable_message="User metrics are temporarily unavailable. Please retry.",
     )
-    @validated_request(request_serializer=ProjectUserMetricsRequestSerializer)
+    # success_envelope: the static envelope analysis cannot follow the nested
+    # finish() closure, so declare the success_response() envelope (HTTP 200)
+    # this action answers. Schema only; runtime validation is unchanged.
+    @validated_request(
+        request_serializer=ProjectUserMetricsRequestSerializer,
+        success_envelope=True,
+    )
     @action(detail=False, methods=["post"])
     def get_user_metrics(self, request, *args, **kwargs):
         deadline = kwargs.pop("_graph_action_deadline", None)
@@ -1117,7 +1209,7 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             200: ObserveGraphDataResponseSerializer,
             400: ApiErrorResponseSerializer,
             500: ApiErrorResponseSerializer,
-            503: ApiErrorResponseSerializer,
+            503: ObserveGraphDataErrorResponseSerializer,
         },
     )
     @action(detail=False, methods=["post"])
@@ -1202,10 +1294,24 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                         graph_data,
                         allow_sampled=False,
                     ):
+                        logger.warning(
+                            "project_users_graph_degraded",
+                            query_error_code=graph_data.get("query_error_code"),
+                            project_id=project_id,
+                            eval_config_id=None,
+                        )
+                        graph_data = {
+                            **graph_data,
+                            "data": [],
+                            "query_complete": False,
+                            "query_status": "degraded",
+                            "query_sampled": False,
+                            "message": "User graph data is temporarily unavailable. Please retry.",
+                        }
                         return finish(
                             self._gm.custom_error_response(
                                 status.HTTP_503_SERVICE_UNAVAILABLE,
-                                "User graph data is temporarily unavailable. Please retry.",
+                                graph_data,
                                 code="service_unavailable",
                             )
                         )
@@ -1275,10 +1381,24 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                     graph_data,
                     allow_sampled=False,
                 ):
+                    logger.warning(
+                        "project_users_graph_degraded",
+                        query_error_code=graph_data.get("query_error_code"),
+                        project_id=project_id,
+                        eval_config_id=metric_id if metric_type == "EVAL" else None,
+                    )
+                    graph_data = {
+                        **graph_data,
+                        "data": [],
+                        "query_complete": False,
+                        "query_status": "degraded",
+                        "query_sampled": False,
+                        "message": "User graph data is temporarily unavailable. Please retry.",
+                    }
                     return finish(
                         self._gm.custom_error_response(
                             status.HTTP_503_SERVICE_UNAVAILABLE,
-                            "User graph data is temporarily unavailable. Please retry.",
+                            graph_data,
                             code="service_unavailable",
                         )
                     )
@@ -1501,6 +1621,11 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             "project_add_code": sdk_code,
             "keys": sdk_key_snippets(),
             "instruments": INSTRUMENTORS,
+            # The setup page says so in one line when the keys snippet keeps
+            # the collector placeholder (see sdk_key_snippets).
+            "collector_url_missing": (
+                not is_cloud_env(settings.CLOUD_DEPLOYMENT) and collector_url_missing()
+            ),
         }
         return self._gm.success_response(response)
 

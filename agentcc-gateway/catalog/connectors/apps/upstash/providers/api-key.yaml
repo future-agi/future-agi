@@ -1,0 +1,46 @@
+# Upstash's headless mode requires email:API_KEY as one bearer credential,
+# not an API key alone. Read-only Developer API keys disable mutating tools.
+schema: "connector-manifest/v1#provider"
+app: upstash
+id: api-key
+version: 1.1.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.upstash.com/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: Email and Developer API key
+      help: "Create a Developer API key in the Upstash console and supply your account email followed by a colon and the key, without Bearer. Developer API access requires a native Upstash account. Read-only keys disable state-changing tools."
+      helpUrl: https://upstash.com/docs/agent-resources/mcp
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_metered
+  source: https://upstash.com/pricing
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://upstash.com/docs/agent-resources/mcp
+    fetchedAt: 2026-11-09
+  - fact: transport.variant
+    url: https://upstash.com/docs/agent-resources/mcp
+    fetchedAt: 2026-11-09
+  - fact: auth.kind
+    url: https://upstash.com/docs/agent-resources/mcp
+    fetchedAt: 2026-11-09
+  - fact: auth.credentialParts
+    url: https://upstash.com/docs/agent-resources/mcp
+    fetchedAt: 2026-11-09

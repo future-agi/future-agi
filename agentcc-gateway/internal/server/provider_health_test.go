@@ -113,9 +113,9 @@ func TestAdaptiveHealthExcludesPipelineOutcomes(t *testing.T) {
 				if scenario == "local-rate-limit" && i == 1 {
 					want = http.StatusTooManyRequests
 				}
-				if scenario == "output-policy" {
-					want = models.ErrGuardrailBlocked("", "").Status
-				}
+				// On the line a post-plugin's error does not refuse the answer
+				// (only an output check withholds one): the answer is served,
+				// and the refusal-free call is still one upstream success.
 				if status != want {
 					t.Fatalf("status=%d want=%d", status, want)
 				}
@@ -161,7 +161,10 @@ func TestAdaptiveGlobalHealthExcludesOrgInstances(t *testing.T) {
 			}
 			srv, gateway := adaptiveServer(t, cfg)
 			orgModels := []string{"different-model"}
-			if path == "org-first" {
+			// On the line a customer key's failover runs over its org's own
+			// providers that list the model, never as overrides of the
+			// operator's: failover-override gives the org both hops.
+			if path == "org-first" || path == "failover-override" {
 				orgModels = []string{"adaptive-sample"}
 			}
 			store := tenant.NewStore()
@@ -175,7 +178,16 @@ func TestAdaptiveGlobalHealthExcludesOrgInstances(t *testing.T) {
 				orgProviders["backup"] = orgProviders["fast"]
 				orgBases["backup"] = orgBases["fast"]
 			}
-			store.Set("synthetic-org", &tenant.OrgConfig{Providers: orgProviders})
+			var orgRouting *tenant.RoutingConfig
+			if path == "failover-override" {
+				// The org's own failover with the org's own breaker (threshold
+				// 1), not the operator's.
+				orgRouting = &tenant.RoutingConfig{
+					Failover:       &tenant.FailoverConfig{Enabled: true, MaxAttempts: 1},
+					CircuitBreaker: &tenant.CircuitBreakerConfig{Enabled: true, FailureThreshold: 1, Cooldown: "1h"},
+				}
+			}
+			store.Set("synthetic-org", &tenant.OrgConfig{Providers: orgProviders, Routing: orgRouting})
 			// Operator-supplied synthetic base URLs avoid bypassing tenant URL validation.
 			orgCache := providers.NewOrgProviderCache(orgBases, false)
 			t.Cleanup(orgCache.EvictAll)
@@ -187,7 +199,9 @@ func TestAdaptiveGlobalHealthExcludesOrgInstances(t *testing.T) {
 			}
 			before := srv.handlers.healthMonitor.GetHealth("fast")
 			headers := http.Header{}
-			if path != "org-first" {
+			// A provider lock pins a customer key to that one provider, so the
+			// failover path sends none.
+			if path == "override" {
 				headers.Set("x-agentcc-provider-lock", "fast")
 			}
 			wantOrgCalls := int64(3)
@@ -233,6 +247,10 @@ func TestAdaptiveHealthRecordsEachFailoverAttempt(t *testing.T) {
 		"slow": {BaseURL: slow.URL, APIFormat: "openai", Models: []string{"adaptive-sample"}},
 	}
 	cfg.Routing = adaptiveRoutingConfig()
+	// While learning, the adaptive strategy round-robins from the first
+	// target: slow is listed first so the request's first attempt fails and
+	// fails over to fast.
+	cfg.Routing.Targets = map[string][]config.RoutingTargetConfig{"adaptive-sample": {{Provider: "slow"}, {Provider: "fast"}}}
 	cfg.Routing.Adaptive.UpdateInterval = time.Hour
 	cfg.Routing.Failover = config.FailoverConfig{Enabled: true, MaxAttempts: 2}
 	srv, gateway := adaptiveServer(t, cfg)

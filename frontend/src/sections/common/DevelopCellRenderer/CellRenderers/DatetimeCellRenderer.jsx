@@ -1,6 +1,6 @@
 import React from "react";
 import { Box } from "@mui/material";
-import { format, parseISO } from "date-fns";
+import { format, formatDistanceToNowStrict, parseISO } from "date-fns";
 import CustomTooltip from "src/components/tooltip";
 import RenderMeta from "../RenderMeta";
 import GenerateDiffText from "../../GenerateDiffText";
@@ -20,7 +20,20 @@ const DatetimeCellRenderer = ({
     typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value);
   const hasTimeComponent =
     typeof value !== "string" || /(?:T|\s)\d{1,2}:\d{2}/.test(value);
-  const parsedDate = isISODateOnly ? parseISO(value) : new Date(value);
+  const parsedDate =
+    value instanceof Date
+      ? value
+      : isISODateOnly
+        ? parseISO(value)
+        : new Date(value);
+  // R2 (P6): relative time in the cell, the ISO timestamp in the tooltip.
+  const absolute = isValidDate
+    ? format(parsedDate, hasTimeComponent ? "dd/MM/yyyy HH:mm" : "dd/MM/yyyy")
+    : "";
+  const relative =
+    isValidDate && hasTimeComponent
+      ? formatDistanceToNowStrict(parsedDate, { addSuffix: true })
+      : absolute;
 
   return (
     <CustomTooltip
@@ -36,7 +49,15 @@ const DatetimeCellRenderer = ({
         {isValueArray ? (
           <GenerateDiffText cellText={value} />
         ) : isValidDate ? (
-          format(parsedDate, hasTimeComponent ? "dd/MM/yyyy HH:mm" : "dd/MM/yyyy")
+          <CustomTooltip
+            show
+            size="small"
+            placement="top"
+            arrow
+            title={`${parsedDate.toISOString()} · ${absolute}`}
+          >
+            <span aria-label={absolute}>{relative}</span>
+          </CustomTooltip>
         ) : isBlankValue ? (
           ""
         ) : (

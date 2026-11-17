@@ -1,16 +1,21 @@
 from decimal import Decimal
 
 import structlog
-from django.db.models import Avg, Count, Max, Min, Sum
-from django.db.models import Q
+from django.db.models import Avg, Count, Q, Sum
 from django.utils import timezone
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
 
 from agentcc.models import AgentccRequestLog
 from agentcc.models.session import AgentccSession
+from agentcc.serializers.request_log import (
+    AgentccSessionRequestsApiResponseSerializer,
+)
 from agentcc.serializers.session import AgentccSessionSerializer
+from agentcc.services import session_activity
+from agentcc.services.analytics import unpriced_requests
 from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
 from tfc.utils.general_methods import GeneralMethods
 
@@ -26,10 +31,12 @@ class AgentccSessionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
     _gm = GeneralMethods()
 
     def get_queryset(self):
-        qs = super().get_queryset()
+        # Status as read: a session idle past its timeout reads closed, so the
+        # filter (and the page count) follow it, not the stored column.
+        qs = session_activity.with_activity(super().get_queryset())
         status = self.request.query_params.get("status")
         if status:
-            qs = qs.filter(status=status)
+            qs = session_activity.filter_status(qs, status)
         search = self.request.query_params.get("search")
         if search:
             qs = qs.filter(Q(session_id__icontains=search) | Q(name__icontains=search))
@@ -42,12 +49,12 @@ class AgentccSessionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             if page is not None:
                 serializer = AgentccSessionSerializer(page, many=True)
                 data = serializer.data
-                for row, session in zip(data, page):
+                for row, session in zip(data, page, strict=True):
                     row["stats"] = self._get_session_stats(session)
                 return self.get_paginated_response(data)
             serializer = AgentccSessionSerializer(queryset, many=True)
             data = serializer.data
-            for row, session in zip(data, queryset):
+            for row, session in zip(data, queryset, strict=True):
                 row["stats"] = self._get_session_stats(session)
             return self._gm.success_response(data)
         except Exception as e:
@@ -60,6 +67,7 @@ class AgentccSessionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             "request_count": 0,
             "total_tokens": 0,
             "total_cost": Decimal("0"),
+            "unpriced_requests": 0,
             "avg_latency_ms": 0,
         }
 
@@ -83,12 +91,16 @@ class AgentccSessionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             request_count=Count("id"),
             total_tokens=Sum("total_tokens"),
             total_cost=Sum("cost"),
+            unpriced_requests=unpriced_requests(),
             avg_latency_ms=Avg("latency_ms"),
         )
         return {
             "request_count": aggregates["request_count"] or 0,
             "total_tokens": aggregates["total_tokens"] or 0,
             "total_cost": aggregates["total_cost"] or Decimal("0"),
+            # Requests the gateway found no price for: the console reads the
+            # cost as unknown (all) or a floor (some), never free.
+            "unpriced_requests": aggregates["unpriced_requests"],
             "avg_latency_ms": float(aggregates["avg_latency_ms"] or 0),
         }
 
@@ -160,6 +172,7 @@ class AgentccSessionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             logger.exception("session_close_error", error=str(e))
             return self._gm.bad_request(str(e))
 
+    @swagger_auto_schema(responses={200: AgentccSessionRequestsApiResponseSerializer})
     @action(detail=True, methods=["get"])
     def requests(self, request, pk=None):
         """List all request logs for this session."""

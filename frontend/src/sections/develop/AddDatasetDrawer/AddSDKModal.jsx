@@ -1,3 +1,7 @@
+import ContentSkeleton from "src/components/content-skeleton";
+import PersonalKeySnippet, {
+  PersonalKeyControl,
+} from "src/sections/keys/view/PersonalKeySnippet";
 import {
   Box,
   Button,
@@ -10,7 +14,6 @@ import {
   Typography,
   Tab,
 } from "@mui/material";
-import { SegmentedTabs } from "src/components/tabs/tabs";
 import PropTypes from "prop-types";
 import React, { useState } from "react";
 import { useForm } from "react-hook-form";
@@ -23,12 +26,12 @@ import { useMutation } from "@tanstack/react-query";
 import { enqueueSnackbar } from "src/components/snackbar";
 import { LoadingButton } from "@mui/lab";
 import { useNavigate } from "react-router";
+import { SegmentedTabs } from "src/components/tabs/tabs";
 import { ShowComponent } from "src/components/show";
 import { FormCodeEditor } from "src/components/form-code-editor";
 import { trackEvent, Events, PropertyName } from "src/utils/Mixpanel";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import { getRequestErrorMessage } from "src/utils/errorUtils";
-import ContentSkeleton from "src/components/content-skeleton";
 
 const defaultValues = {
   name: "",
@@ -141,7 +144,7 @@ const AddSDKModal = ({ open, onClose, refreshGrid }) => {
   };
 
   return (
-    <>
+    <PersonalKeySnippet active={isNext}>
       <Dialog
         open={open}
         onClose={onCloseClick}
@@ -189,7 +192,7 @@ const AddSDKModal = ({ open, onClose, refreshGrid }) => {
               <Button
                 onClick={onCloseClick}
                 variant="outlined"
-                // sx={{ borderColor: "divider" }}
+                // sx={{ padding: "6px 24px", borderColor: "divider" }}
               >
                 {/* <Typography variant="s2" fontWeight={"fontWeightSemiBold"} color="text.secondary">
                   </Typography> */}
@@ -201,7 +204,7 @@ const AddSDKModal = ({ open, onClose, refreshGrid }) => {
                 autoFocus
                 color="primary"
                 loading={isPending1}
-                //
+                // sx={{ padding: "6px 24px" }}
               >
                 {/* <Typography variant="s2" fontWeight={"fontWeightSemiBold"}> */}
                 Next
@@ -361,76 +364,7 @@ const AddSDKModal = ({ open, onClose, refreshGrid }) => {
                   </IconButton>
                 </Box>
               </Box>
-              <Box display="flex" alignItems="center">
-                <Typography
-                  fontWeight={"fontWeightMedium"}
-                  color="text.primary"
-                  variant="s1"
-                  component="span"
-                  width="141px"
-                >
-                  API Key:
-                </Typography>
-                <Box display="flex" alignItems="center" gap={1}>
-                  <Typography
-                    bgcolor="background.neutral"
-                    borderRadius="8px"
-                    variant="s1"
-                    fontWeight={"fontWeightRegular"}
-                    p="5px 12px"
-                    color="black"
-                  >
-                    {data?.data?.result?.api_keys?.api_key}
-                  </Typography>
-                  <IconButton
-                    size="small"
-                    onClick={() =>
-                      copyToClipboard(
-                        data?.data?.result?.api_keys?.api_key,
-                        "API Key",
-                      )
-                    }
-                    sx={{ color: "text.secondary" }}
-                  >
-                    <Iconify icon="solar:copy-linear" width={16} height={16} />
-                  </IconButton>
-                </Box>
-              </Box>
-              <Box display="flex" alignItems="center">
-                <Typography
-                  fontWeight={"fontWeightMedium"}
-                  color="text.primary"
-                  variant="s1"
-                  component="span"
-                  width="141px"
-                >
-                  Secret Key:
-                </Typography>
-                <Box display="flex" alignItems="center" gap={1}>
-                  <Typography
-                    bgcolor="background.neutral"
-                    borderRadius="8px"
-                    variant="s1"
-                    fontWeight={"fontWeightRegular"}
-                    p="5px 12px"
-                    color="black"
-                  >
-                    {data?.data?.result?.api_keys?.secret_key}
-                  </Typography>
-                  <IconButton
-                    size="small"
-                    onClick={() =>
-                      copyToClipboard(
-                        data?.data?.result?.api_keys?.secret_key,
-                        "Secret Key",
-                      )
-                    }
-                    sx={{ color: "text.secondary" }}
-                  >
-                    <Iconify icon="solar:copy-linear" width={16} height={16} />
-                  </IconButton>
-                </Box>
-              </Box>
+              <PersonalKeyControl />
             </Box>
           )}
           {!isPending && (
@@ -523,7 +457,7 @@ const AddSDKModal = ({ open, onClose, refreshGrid }) => {
           </Box>
         </Box>
       </Modal>
-    </>
+    </PersonalKeySnippet>
   );
 };
 

@@ -2645,6 +2645,7 @@ class TestQueueItemSourcePreviewCapture:
         self,
         organization,
         workspace,
+        user,
         observe_project,
         root_conversation_span,
     ):
@@ -2670,12 +2671,25 @@ class TestQueueItemSourcePreviewCapture:
         assert source_obj is not None, "span source did not resolve from CH"
         captured = preview_payload_for_source(span_type, source_obj)
 
+        queue = _queue(
+            "span capture parity",
+            organization,
+            workspace,
+            user,
+            project=observe_project,
+        )
         item = QueueItem(
+            queue_id=queue.pk,
+            organization=organization,
+            workspace=workspace,
             source_type=span_type,
             observation_span_id=str(root_conversation_span.id),
             project=observe_project,
         )
-        live = resolve_source_preview(item)
+        request = SimpleNamespace(
+            user=user, organization=organization, workspace=workspace
+        )
+        live = resolve_source_preview(item, request=request)
 
         assert captured == live, (
             "add-time capture and live render disagree for observation_span; "

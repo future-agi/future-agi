@@ -1,0 +1,9 @@
+{
+  "http": {
+    "status": 404,
+    "headers": {
+      "content-length": "0"
+    }
+  },
+  "body": null
+}

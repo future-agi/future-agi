@@ -1,0 +1,47 @@
+# Fixed US East regional endpoint, documented with --transport http.
+# Use a scoped MCP API key, not a Recall REST API key, from a US East workspace.
+schema: "connector-manifest/v1#provider"
+app: recall-ai
+id: api-key
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://us-east-1.recall.ai/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: Recall MCP API key
+      help: "In a US East workspace, create a key under Dashboard > Developers > MCP API Keys. Use an MCP key, not a REST API key; grant only needed read or write scopes. Other regions need their own endpoint. Supply the key without the Bearer prefix."
+      helpUrl: https://docs.recall.ai/docs/mcp.md
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_metered
+  source: https://www.recall.ai/pricing
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://docs.recall.ai/docs/mcp.md
+    fetchedAt: 2026-11-09
+  - fact: transport.variant
+    url: https://docs.recall.ai/docs/mcp.md
+    fetchedAt: 2026-11-09
+  - fact: auth.kind
+    url: https://docs.recall.ai/docs/mcp.md
+    fetchedAt: 2026-11-09
+  - fact: auth.credentialParts
+    url: https://docs.recall.ai/docs/mcp.md
+    fetchedAt: 2026-11-09
+x-omega: { oss: exclude }

@@ -6,7 +6,6 @@ import {
   Typography,
   Stack,
   Button,
-  Tabs,
   Tab,
   Table,
   TableBody,
@@ -20,6 +19,7 @@ import {
 import Section from "src/components/section";
 import PageHeader from "src/components/page-header";
 import MetricStrip from "src/components/metric-strip";
+import { CustomTabs } from "src/components/tabs/tabs";
 import { enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
 import PageErrorState from "../components/PageErrorState";
@@ -35,6 +35,9 @@ import {
   useDeleteExperiment,
 } from "./hooks/useExperiments";
 import SideBySideViewer from "./SideBySideViewer";
+import GatewayAdminOnly from "../components/GatewayAdminOnly";
+import { useGatewayAdmin } from "../hooks/useGatewayAdmin";
+import { GATEWAY_MONO } from "../utils/fonts";
 import StatusBadge from "src/components/status-badge/StatusBadge";
 import { statusColors } from "src/utils/runStatus";
 
@@ -53,6 +56,8 @@ const ExperimentDetailSection = ({ experimentId, onBack }) => {
   const resumeMutation = useResumeExperiment();
   const completeMutation = useCompleteExperiment();
   const deleteMutation = useDeleteExperiment();
+  // Every shadow-experiment write is Owner or Admin only (useGatewayAdmin).
+  const { canEdit } = useGatewayAdmin();
 
   const handlePause = () => {
     pauseMutation.mutate(experimentId, {
@@ -161,46 +166,69 @@ const ExperimentDetailSection = ({ experimentId, onBack }) => {
           <>
             {status === "active" && (
               <>
-                <Button size="small" variant="outlined" onClick={handlePause}>
-                  Pause
-                </Button>
-                <Button
-                  size="small"
-                  variant="outlined"
-                  onClick={handleComplete}
-                >
-                  Complete
-                </Button>
+                <GatewayAdminOnly allowed={canEdit}>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    onClick={handlePause}
+                    disabled={!canEdit}
+                  >
+                    Pause
+                  </Button>
+                </GatewayAdminOnly>
+                <GatewayAdminOnly allowed={canEdit}>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    onClick={handleComplete}
+                    disabled={!canEdit}
+                  >
+                    Complete
+                  </Button>
+                </GatewayAdminOnly>
               </>
             )}
             {status === "paused" && (
               <>
-                <Button size="small" variant="outlined" onClick={handleResume}>
-                  Resume
-                </Button>
-                <Button
-                  size="small"
-                  variant="outlined"
-                  onClick={handleComplete}
-                >
-                  Complete
-                </Button>
+                <GatewayAdminOnly allowed={canEdit}>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    onClick={handleResume}
+                    disabled={!canEdit}
+                  >
+                    Resume
+                  </Button>
+                </GatewayAdminOnly>
+                <GatewayAdminOnly allowed={canEdit}>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    onClick={handleComplete}
+                    disabled={!canEdit}
+                  >
+                    Complete
+                  </Button>
+                </GatewayAdminOnly>
               </>
             )}
-            <Button
-              size="small"
-              variant="outlined"
-              color="error"
-              onClick={handleDelete}
-            >
-              Delete
-            </Button>
+            <GatewayAdminOnly allowed={canEdit}>
+              <Button
+                size="small"
+                variant="outlined"
+                color="error"
+                onClick={handleDelete}
+                disabled={!canEdit}
+              >
+                Delete
+              </Button>
+            </GatewayAdminOnly>
           </>
         }
       />
 
       {/* Tabs */}
-      <Tabs
+      <CustomTabs
         value={activeTab}
         onChange={(_, val) => setActiveTab(val)}
         sx={{
@@ -213,7 +241,7 @@ const ExperimentDetailSection = ({ experimentId, onBack }) => {
         {TAB_LABELS.map((label) => (
           <Tab key={label} label={label} />
         ))}
-      </Tabs>
+      </CustomTabs>
 
       {activeTab === 0 && (
         <OverviewTab experimentId={experimentId} experiment={experiment} />
@@ -456,7 +484,7 @@ const ResultsTab = ({ experimentId, experiment }) => {
                     <TableCell>
                       <Typography
                         variant="body2"
-                        sx={{ fontFamily: "monospace", fontSize: "12px" }}
+                        sx={{ fontFamily: GATEWAY_MONO, fontSize: "12px" }}
                       >
                         {formatDateTime(r.created_at)}
                       </Typography>

@@ -1,3 +1,4 @@
+import { useRef } from "react";
 import PropTypes from "prop-types";
 import {
   Box,
@@ -12,6 +13,7 @@ import {
 import Section from "src/components/section";
 import Iconify from "src/components/iconify";
 import { enqueueSnackbar } from "notistack";
+import { copyToClipboard } from "src/utils/utils";
 
 ConnectionInfo.propTypes = {
   config: PropTypes.object,
@@ -19,13 +21,24 @@ ConnectionInfo.propTypes = {
 
 export default function ConnectionInfo({ config }) {
   const theme = useTheme();
+  const urlInputRef = useRef(null);
 
   const mcpUrl = config?.mcp_url || "";
 
-  const handleCopy = (text, label) => {
-    navigator.clipboard.writeText(text).then(() => {
+  // Call straight from the click handler: the fallback copy only works while
+  // the browser still treats the click as the user's action.
+  const handleCopy = async (text, label) => {
+    if (await copyToClipboard(text)) {
       enqueueSnackbar(`${label} copied to clipboard`, { variant: "success" });
-    });
+      return;
+    }
+    // Select the URL so copying it by hand is one keystroke.
+    urlInputRef.current?.focus();
+    urlInputRef.current?.select();
+    enqueueSnackbar(
+      "Could not copy. Press Ctrl+C (Cmd+C on Mac) to copy the selected text.",
+      { variant: "error" },
+    );
   };
 
   return (
@@ -62,6 +75,7 @@ export default function ConnectionInfo({ config }) {
           value={mcpUrl}
           fullWidth
           size="small"
+          inputRef={urlInputRef}
           InputProps={{
             readOnly: true,
             endAdornment: (

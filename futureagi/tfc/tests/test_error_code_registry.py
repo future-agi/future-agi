@@ -49,6 +49,13 @@ UNKNOWN = "An unknown error occurred."
             "Too many values to browse exactly. Enter a more specific search.",
         ),
         (
+            ApiErrorCode.KEY_LIMIT_NOT_ENFORCED,
+            "key_limit_not_enforced",
+            "KEY_LIMIT_NOT_ENFORCED",
+            "These API key settings are not enforced by the gateway yet, so "
+            "they cannot be set: {}.",
+        ),
+        (
             ApiErrorCode.API_KEY_EXPIRED,
             "api_key_expired",
             "API_KEY_EXPIRED",

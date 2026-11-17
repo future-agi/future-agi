@@ -1,14 +1,14 @@
 """Dashboard API endpoints for MCP configuration."""
 
-from django.conf import settings
 from drf_yasg.utils import swagger_auto_schema
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from mcp_server.constants import DEFAULT_TOOL_GROUPS, TOOL_GROUPS
-from mcp_server.models.connection import MCPConnection
 from mcp_server.models.tool_config import MCPToolGroupConfig
+from mcp_server.public_url import mcp_public_url
 from mcp_server.serializers.connection import (
     MCPConnectionSerializer,
     MCPConnectionUpdateSerializer,
@@ -19,6 +19,11 @@ from mcp_server.serializers.contracts import (
     MCPToolGroupsResponseSerializer,
 )
 from mcp_server.serializers.tool_config import MCPToolGroupConfigUpdateSerializer
+from mcp_server.usage_helpers import (
+    get_connection,
+    get_or_create_connection,
+    require_connection_scope,
+)
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_errors import build_error_envelope
 
@@ -29,22 +34,21 @@ class MCPConfigView(APIView):
     permission_classes = [IsAuthenticated]
 
     def _get_mcp_url(self):
-        """Build the public MCP endpoint URL."""
-        host = getattr(settings, "MCP_SERVER_HOST", None) or getattr(
-            settings, "BASE_URL", ""
-        )
-        return f"{host}/mcp" if host else None
+        """The public MCP endpoint URL, the same base the MCP server's OAuth
+        metadata and 401 advertise (mcp_server.public_url)."""
+        return mcp_public_url()
 
     @swagger_auto_schema(
         responses={
             200: MCPConnectionResponseSerializer,
             403: MCPErrorResponseSerializer,
+            404: MCPErrorResponseSerializer,
         },
     )
     def get(self, request):
         user = request.user
-        organization = request.organization
-        workspace = request.workspace
+        organization = getattr(request, "organization", None)
+        workspace = getattr(request, "workspace", None)
 
         if not organization:
             return Response(
@@ -52,20 +56,20 @@ class MCPConfigView(APIView):
                 status=403,
             )
 
-        try:
-            connection = MCPConnection.no_workspace_objects.get(
-                user=user,
-                workspace=workspace,
-                deleted=False,
-            )
-        except MCPConnection.DoesNotExist:
-            connection = MCPConnection(
-                user=user,
-                organization=organization,
-                workspace=workspace,
-            )
-            connection.save()
-            MCPToolGroupConfig(connection=connection).save()
+        require_connection_scope(user, organization, workspace)
+        connection = get_connection(user, organization, workspace)
+        if connection is None:
+            # Dashboard configuration initializes an owner's default, unlike tool
+            # discovery. The scoped writer must still refuse conflicting rows.
+            try:
+                connection = get_or_create_connection(
+                    user, organization, workspace, connection_mode="remote"
+                )
+            except PermissionDenied:
+                return Response(
+                    build_error_envelope("No MCP connection found", status_code=404),
+                    status=404,
+                )
 
         serializer = MCPConnectionSerializer(connection)
         result = serializer.data
@@ -84,8 +88,8 @@ class MCPConfigView(APIView):
     )
     def put(self, request):
         user = request.user
-        organization = request.organization
-        workspace = request.workspace
+        organization = getattr(request, "organization", None)
+        workspace = getattr(request, "workspace", None)
 
         if not organization:
             return Response(
@@ -93,17 +97,9 @@ class MCPConfigView(APIView):
                 status=403,
             )
 
-        try:
-            connection = MCPConnection.no_workspace_objects.get(
-                user=user,
-                workspace=workspace,
-                deleted=False,
-            )
-        except MCPConnection.DoesNotExist:
-            return Response(
-                build_error_envelope("No MCP connection found", status_code=404),
-                status=404,
-            )
+        connection = get_or_create_connection(
+            user, organization, workspace, connection_mode="remote"
+        )
 
         serializer = MCPConnectionUpdateSerializer(
             connection, data=request.validated_data, partial=True
@@ -130,16 +126,23 @@ class MCPToolGroupsView(APIView):
     )
     def get(self, request):
         user = request.user
-        workspace = request.workspace
+        organization = getattr(request, "organization", None)
+        workspace = getattr(request, "workspace", None)
 
-        try:
-            connection = MCPConnection.no_workspace_objects.get(
-                user=user,
-                workspace=workspace,
-                deleted=False,
+        if not organization:
+            return Response(
+                build_error_envelope("No organization context", status_code=403),
+                status=403,
             )
-            config = connection.tool_config
-        except (MCPConnection.DoesNotExist, MCPToolGroupConfig.DoesNotExist):
+
+        connection = get_connection(user, organization, workspace)
+        config = None
+        if connection is not None:
+            try:
+                config = connection.tool_config
+            except MCPToolGroupConfig.DoesNotExist:
+                pass
+        if config is None:
             return Response(
                 {
                     "status": True,
@@ -174,8 +177,8 @@ class MCPToolGroupsView(APIView):
     )
     def put(self, request):
         user = request.user
-        organization = request.organization
-        workspace = request.workspace
+        organization = getattr(request, "organization", None)
+        workspace = getattr(request, "workspace", None)
 
         if not organization:
             return Response(
@@ -183,19 +186,9 @@ class MCPToolGroupsView(APIView):
                 status=403,
             )
 
-        try:
-            connection = MCPConnection.no_workspace_objects.get(
-                user=user,
-                workspace=workspace,
-                deleted=False,
-            )
-        except MCPConnection.DoesNotExist:
-            connection = MCPConnection(
-                user=user,
-                organization=organization,
-                workspace=workspace,
-            )
-            connection.save()
+        connection = get_or_create_connection(
+            user, organization, workspace, connection_mode="remote"
+        )
 
         config, _ = MCPToolGroupConfig.no_workspace_objects.get_or_create(
             connection=connection,

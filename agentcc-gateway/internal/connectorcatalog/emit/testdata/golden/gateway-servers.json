@@ -1,0 +1,180 @@
+{
+  "schema": "connector-gateway-servers/v1",
+  "bundle": {
+    "version": "2026.10.20.0",
+    "sha256": "df9961425af464b41490fceb4b4ddc51f987d1fc2f7cdec8e6921dd42613e7d0"
+  },
+  "servers": [
+    {
+      "catalogRef": "close/close-mcp@1.0.0",
+      "app": "close",
+      "provider": "close-mcp",
+      "default": true,
+      "kind": "vendor_mcp",
+      "auth": "api_key",
+      "credentialModes": ["shared"],
+      "credentialParts": [
+        {
+          "in": "header",
+          "name": "Close-API-Key",
+          "secret": true,
+          "from": "customer"
+        },
+        {
+          "in": "header",
+          "name": "Close-Scope",
+          "secret": false,
+          "from": "customer"
+        }
+      ],
+      "server": {
+        "url": "https://mcp.close.com/mcp",
+        "transport": "http",
+        "catalog_ref": "close/close-mcp@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "github/remote@1.0.0",
+      "app": "github",
+      "provider": "remote",
+      "default": true,
+      "kind": "vendor_mcp",
+      "auth": "oauth2",
+      "credentialModes": ["shared", "per_user"],
+      "server": {
+        "url": "https://api.githubcopilot.com/mcp/",
+        "transport": "http",
+        "catalog_ref": "github/remote@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "gmail/futureagi-rest@1.0.0",
+      "app": "gmail",
+      "provider": "futureagi-rest",
+      "default": true,
+      "kind": "rest",
+      "auth": "oauth2",
+      "credentialModes": ["shared", "per_user"],
+      "server": {
+        "url": "https://{connectorsHost}/gmail/mcp",
+        "transport": "http",
+        "catalog_ref": "gmail/futureagi-rest@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "gmail/relay@1.0.0",
+      "app": "gmail",
+      "provider": "relay",
+      "default": false,
+      "kind": "partner",
+      "auth": "partner",
+      "credentialModes": ["vendor_end_user"],
+      "partner": {
+        "platform": "relay",
+        "toolkit": "gmail",
+        "version": "2026-10-01",
+        "binding": "header",
+        "toolMode": "fixed"
+      },
+      "urlVariables": {
+        "serverId": {
+          "description": "The org's Relay server id.",
+          "pattern": "^[A-Za-z0-9-]{8,64}$",
+          "scope": "org"
+        }
+      },
+      "server": {
+        "url": "https://mcp.relay.example/servers/{serverId}",
+        "transport": "http",
+        "catalog_ref": "gmail/relay@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "linear/linear-mcp@1.0.0",
+      "app": "linear",
+      "provider": "linear-mcp",
+      "default": true,
+      "kind": "vendor_mcp",
+      "auth": "oauth2",
+      "credentialModes": ["shared", "per_user"],
+      "server": {
+        "url": "https://mcp.linear.app/mcp",
+        "transport": "http",
+        "timeout_ms": 30000,
+        "catalog_ref": "linear/linear-mcp@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "slack/slack-mcp@1.0.0",
+      "app": "slack",
+      "provider": "slack-mcp",
+      "default": true,
+      "kind": "vendor_mcp",
+      "auth": "oauth2",
+      "credentialModes": ["shared", "per_user"],
+      "server": {
+        "url": "https://mcp.slack.com/mcp",
+        "transport": "http",
+        "catalog_ref": "slack/slack-mcp@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "snowflake/cortex-mcp@1.0.0",
+      "app": "snowflake",
+      "provider": "cortex-mcp",
+      "default": true,
+      "kind": "vendor_mcp",
+      "auth": "oauth2",
+      "credentialModes": ["per_user"],
+      "urlVariables": {
+        "accountUrl": {
+          "description": "The account host, such as myorg-myaccount.snowflakecomputing.com.",
+          "pattern": "^[a-z0-9-]+([.][a-z0-9-]+)*[.]snowflakecomputing[.]com$",
+          "scope": "org"
+        },
+        "database": {
+          "description": "The database that holds the MCP server object.",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,254}$",
+          "scope": "org"
+        },
+        "schema": {
+          "description": "The schema that holds the MCP server object.",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,254}$",
+          "scope": "org"
+        },
+        "serverName": {
+          "description": "The MCP server object's name.",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,254}$",
+          "scope": "org"
+        }
+      },
+      "server": {
+        "url": "https://{accountUrl}/api/v2/databases/{database}/schemas/{schema}/mcp-servers/{serverName}",
+        "transport": "http",
+        "catalog_ref": "snowflake/cortex-mcp@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "stripe/stripe-mcp@1.0.0",
+      "app": "stripe",
+      "provider": "stripe-mcp",
+      "default": true,
+      "kind": "vendor_mcp",
+      "auth": "api_key",
+      "credentialModes": ["shared"],
+      "credentialParts": [
+        {
+          "in": "header",
+          "name": "Authorization",
+          "secret": true,
+          "from": "customer"
+        }
+      ],
+      "server": {
+        "url": "https://mcp.stripe.com",
+        "transport": "http",
+        "catalog_ref": "stripe/stripe-mcp@1.0.0"
+      }
+    }
+  ]
+}

@@ -10,12 +10,13 @@ so aggregation semantics stay consistent across surfaces.
 
 from __future__ import annotations
 
-import json
 import logging
 import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from evaluations.engine.instance import resolve_pass_threshold
+from evaluations.usage_step import UsageStep, log_unreadable_step
 from model_hub.models.evals_metric import CompositeEvalChild, EvalTemplate
 from model_hub.types import CompositeChildResult
 from model_hub.utils.composite_aggregation import (
@@ -23,7 +24,6 @@ from model_hub.utils.composite_aggregation import (
     aggregate_scores,
     aggregate_summaries,
 )
-from evaluations.engine.instance import resolve_pass_threshold
 from model_hub.utils.scoring import determine_pass_fail, score_eval_output
 
 logger = logging.getLogger(__name__)
@@ -41,6 +41,7 @@ class CompositeRunOutcome:
     summary: str | None
     error_localizer_results: dict | None
     log_id: str | None = field(default=None)
+    jury_report: dict | None = field(default=None)
 
 
 def resolve_child_weights(
@@ -67,6 +68,15 @@ def _link_run_config(link: CompositeEvalChild) -> dict[str, Any]:
     return run_config if isinstance(run_config, dict) else {}
 
 
+def live_pinned_version(link: CompositeEvalChild):
+    """The link's pinned version, or None when it pins nothing or the
+    pinned version was deleted (a deleted pin runs the live template)."""
+    version = link.pinned_version
+    if version is None or getattr(version, "deleted", False):
+        return None
+    return version
+
+
 def resolve_child_binding(
     link: CompositeEvalChild, config: dict[str, Any], model: str | None
 ) -> tuple[dict[str, Any], str | None]:
@@ -79,9 +89,10 @@ def resolve_child_binding(
     runtime_config = dict(config) if config else {}
 
     # Version pinning: if this child is pinned, snapshot overrides the
-    # template's live config/criteria/model for this run only.
-    if link.pinned_version:
-        version = link.pinned_version
+    # template's live config/criteria/model for this run only. A pin whose
+    # version was deleted is no pin: the live template runs.
+    version = live_pinned_version(link)
+    if version is not None:
         if version.config_snapshot:
             runtime_config.update(version.config_snapshot)
         if version.criteria:
@@ -100,7 +111,7 @@ def resolve_child_binding(
                 **link_params,
             }
 
-    pinned_model = link.pinned_version.model if link.pinned_version else None
+    pinned_model = version.model if version is not None else None
     effective_model = (
         _link_run_config(link).get("model")
         or link_config.get("model")
@@ -110,6 +121,24 @@ def resolve_child_binding(
         or None
     )
     return runtime_config, effective_model
+
+
+def _child_usage_step(
+    usage_step: UsageStep | None, link: CompositeEvalChild
+) -> UsageStep | None:
+    """The step one child of a composite evaluates, as its usage events are
+    keyed: the composite's step, evaluated by the child. None when the
+    composite's step or the child is not known or cannot be read."""
+    try:
+        child_id = getattr(link, "child_id", None)
+        if not usage_step or child_id is None:
+            return None
+        evaluator = usage_step.get("evaluator")
+        parts = evaluator if isinstance(evaluator, tuple | list) else (evaluator,)
+        return {**usage_step, "evaluator": (*parts, str(child_id))}
+    except Exception:
+        log_unreadable_step()
+        return None
 
 
 def _execute_child(
@@ -130,16 +159,25 @@ def _execute_child(
     call_context: dict | None,
     error_localizer: bool,
     source: str,
+    usage_step: UsageStep | None = None,
 ) -> CompositeChildResult:
     """Run a single child eval and return a normalized result row.
 
     Any per-child failure is caught and returned as a `failed` result so
     the composite as a whole keeps running across the remaining children.
+    `usage_step` is the step this child evaluates; its usage events are keyed
+    to it, so a child a worker runs again is billed once.
     """
     from model_hub.views.utils.evals import run_eval_func
 
     try:
         runtime_config, effective_model = resolve_child_binding(link, config, model)
+        pinned = live_pinned_version(link)
+        pinned_number = pinned.version_number if pinned is not None else None
+        # A link (or jury seat) that names its own model keeps it.
+        link_chose_model = bool(
+            _link_run_config(link).get("model") or (link.config or {}).get("model")
+        )
         effective_error_localizer = bool(
             error_localizer
             or (
@@ -166,7 +204,13 @@ def _execute_child(
             # A pinned child ran the snapshot above, so its usage log must be
             # stamped with the pinned version — not the template default that
             # run_eval_func would otherwise resolve.
-            resolved_version=link.pinned_version if link.pinned_version else None,
+            resolved_version=pinned,
+            # The engine runs the pinned version's prompt and criteria. A
+            # link's own model stays, so a jury seat keeps its judge;
+            # otherwise the pinned version's model runs.
+            version_number=pinned_number,
+            keep_selected_model=pinned_number is not None and link_chose_model,
+            usage_step=usage_step,
         )
 
         # None: unscoreable children fall through to the exclusion branch below.
@@ -224,6 +268,7 @@ def _log_composite_usage(
     try:
         from sdk.utils.helpers import _get_api_call_type
         from tfc.constants.api_calls import APICallStatusChoices
+
         try:
             from ee.usage.models.usage import APICallLog, APICallType
         except ImportError:
@@ -339,6 +384,7 @@ def execute_composite_children_sync(
     error_localizer: bool = False,
     source: str = "composite_eval",
     weight_overrides: dict[str, float] | None = None,
+    usage_step: UsageStep | None = None,
 ) -> CompositeRunOutcome:
     """Run every child of a composite against shared inputs and aggregate.
 
@@ -357,6 +403,10 @@ def execute_composite_children_sync(
       raw child results with a null aggregate. The per-child summary is
       built either way.
     - Defer pass/fail until a numeric aggregate is actually available.
+    - Key each child's usage events to `usage_step`, the step the composite
+      evaluates (``evaluated``, ``run`` and ``evaluator``), and the child, so a
+      composite a worker runs again bills each child once. Without it, or for
+      a jury, every child run is its own event.
 
     The caller is responsible for:
     - Filtering / validating children against `composite_child_axis` if the
@@ -364,6 +414,29 @@ def execute_composite_children_sync(
     - Providing resolved (non-template) mapping values. For dataset-row
       callers that means inputs already pulled from cells.
     """
+    if (parent.config or {}).get("jury"):
+        from model_hub.services.composite_jury import execute_jury
+
+        # A jury runs a seat's child once per step, and seats can share a
+        # child, so every one of those runs stays its own usage event.
+        return execute_jury(
+            parent=parent,
+            child_links=child_links,
+            mapping=mapping,
+            org=org,
+            workspace=workspace,
+            config=config or {},
+            model=model,
+            input_data_types=input_data_types or {},
+            row_context=row_context,
+            span_context=span_context,
+            trace_context=trace_context,
+            session_context=session_context,
+            call_context=call_context,
+            error_localizer=error_localizer,
+            source=source,
+        )
+
     _start_time = time.time()
     weights = resolve_child_weights(child_links, weight_overrides)
 
@@ -387,6 +460,7 @@ def execute_composite_children_sync(
                 call_context=call_context,
                 error_localizer=error_localizer,
                 source=source,
+                usage_step=_child_usage_step(usage_step, link),
             )
         )
 
@@ -399,7 +473,7 @@ def execute_composite_children_sync(
             str(link.child_id): resolve_pass_threshold(
                 eval_template=link.child,
                 runtime_config=link.config or {},
-                resolved_version=link.pinned_version,
+                resolved_version=live_pinned_version(link),
             )
             for link in child_links
         }

@@ -126,6 +126,16 @@ describe("the rows table of a user question", () => {
     expect(onExport).toHaveBeenLastCalledWith({ sessions: true });
   });
 
+  it("shows an export under way and takes no other export meanwhile", () => {
+    const { onExport } = renderTable({ exporting: "sessions" });
+    const busy = screen.getByRole("button", { name: "Exporting sessions…" });
+    expect(busy).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Export CSV" })).toBeDisabled();
+    fireEvent.click(busy);
+    fireEvent.click(screen.getByRole("button", { name: "Export CSV" }));
+    expect(onExport).not.toHaveBeenCalled();
+  });
+
   it("offers no session export for other questions", () => {
     render(
       <ThemeProvider theme={theme}>

@@ -18,6 +18,12 @@ import { useNavigate } from "react-router";
 import { useParams } from "src/routes/hooks";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import RightSectionAuth from "./RightSectionAuth";
+import {
+  authSplitSx,
+  authFormPanelSx,
+  authAsideSx,
+  authFormGutterSx,
+} from "src/layouts/auth/responsive-styles";
 
 export default function ResetPasswordView() {
   const [showPassword, setShowPassword] = useState({
@@ -239,11 +245,10 @@ export default function ResetPasswordView() {
   );
 
   return (
-    <Box sx={{ width: "100%", height: "100vh", display: "flex" }}>
+    <Box sx={authSplitSx}>
       <Box
         sx={{
-          width: "50%",
-          height: "100vh",
+          ...authFormPanelSx,
           display: "flex",
           justifyContent: "center",
           bgcolor: "background.paper",
@@ -251,7 +256,13 @@ export default function ResetPasswordView() {
           overflowY: "auto",
         }}
       >
-        <Box sx={{ width: "640px", px: 10, height: "fit-content" }}>
+        <Box
+          sx={{
+            width: { xs: "100%", lg: "640px" },
+            ...authFormGutterSx,
+            height: "fit-content",
+          }}
+        >
           <form onSubmit={onSubmit}>
             {renderHead}
             {renderForm}
@@ -259,13 +270,7 @@ export default function ResetPasswordView() {
         </Box>
       </Box>
 
-      <Box
-        sx={{
-          width: "50%",
-          height: "100%",
-          backgroundColor: "background.neutral",
-        }}
-      >
+      <Box sx={authAsideSx}>
         <RightSectionAuth />
       </Box>
     </Box>

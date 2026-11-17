@@ -1,0 +1,11 @@
+services:
+  generation-standin:
+    image: python:3.12-alpine
+    network_mode: service:backend
+    depends_on:
+      backend:
+        condition: service_healthy
+    volumes:
+      - ./e2e/flows/datasets/generation-standin.py:/standin/server.py:ro
+    command: ["python", "-I", "/standin/server.py"]
+    restart: "no"

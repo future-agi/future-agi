@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: sonarcloud
+version: 1.0.0
+name: SonarCloud
+description: "Inspect code quality, coverage, security hotspots, issues and quality gates in SonarQube Cloud."
+vendor:
+  name: Sonar
+  domains: [sonarcloud.io, sonarsource.com]
+eeCategory: developer
+group: other
+categories: [developer]
+tags: [security, issues, projects]
+docsUrl: https://docs.sonarsource.com/sonarqube-mcp-server/setup/sonarqube-cloud-hosted
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://docs.sonarsource.com/sonarqube-mcp-server/setup/sonarqube-cloud-hosted
+    fetchedAt: 2026-11-09

@@ -2,7 +2,6 @@ import uuid
 from collections import defaultdict
 
 import structlog
-from drf_yasg.utils import swagger_auto_schema
 from rest_framework.parsers import JSONParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -10,15 +9,19 @@ from rest_framework.views import APIView
 
 from accounts.authentication import APIKeyAuthentication, LangfuseBasicAuthentication
 from integrations.transformers.langfuse_transformer import LangfuseTransformer
-from tfc.utils.api_errors import build_error_envelope
 from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_errors import build_error_envelope
 from tfc.utils.api_serializers import ApiDetailErrorResponseSerializer
 from tracer.models.project import Project
 from tracer.serializers.langfuse_ingestion import (
     LangfuseIngestionRequestSerializer,
     LangfuseIngestionResponseSerializer,
 )
-from tracer.utils.langfuse_upsert import parse_langfuse_timestamp, upsert_langfuse_trace
+from tracer.utils.langfuse_upsert import (
+    SpanIdCheckUnavailable,
+    merge_langfuse_observation,
+    upsert_langfuse_trace,
+)
 from tracer.utils.otel import get_or_create_project
 
 logger = structlog.get_logger(__name__)
@@ -34,53 +37,65 @@ _EVENT_TYPE_TO_OBS_TYPE = {
     "event-create": "EVENT",
 }
 
+# The answer for an event whose observation or score id is already stored in
+# another project: that row is not written, the rest of the batch is.
+REFUSED_EVENT_STATUS = 409
+REFUSED_EVENT_MESSAGE = "Not stored: the id is already used in another project."
+REFUSED_ROOT_MESSAGE = (
+    "Stored without its root span: the trace id is already used in another project."
+)
 
-def _compute_latency_seconds(start_time_str, end_time_str):
-    """Compute latency in seconds from ISO 8601 start/end time strings."""
-    start = parse_langfuse_timestamp(start_time_str)
-    end = parse_langfuse_timestamp(end_time_str)
-    if start and end:
-        return (end - start).total_seconds()
-    return 0
+# The answer when a trace's span ids could not be checked against the ids
+# other projects hold (ClickHouse could not be read): nothing of that trace is
+# stored, and the whole request is answered 503, on which the Langfuse SDKs
+# send the batch again. No per-event status can ask for that: the SDKs send a
+# batch again whenever its 207 answer lists any error, a 409 included.
+UNCHECKED_STATUS = 503
+UNCHECKED_MESSAGE = (
+    "The batch was not fully stored: its span ids could not be checked. Send it again."
+)
+
+
+def _refused_event_messages(refused, trace_events, observation_events, score_events):
+    """Map each row the upsert refused back to the events that sent it.
+
+    Returns ``{event id: message}``. A refused synthetic root is answered on
+    the trace's ``trace-create`` events; it has no event when the batch sent
+    none.
+    """
+    messages = {}
+    for langfuse_trace_id, rows in refused.items():
+        if rows.root:
+            for event_id in trace_events.get(langfuse_trace_id, ()):
+                messages[event_id] = REFUSED_ROOT_MESSAGE
+        for obs_id in rows.observation_ids:
+            for event_id in observation_events.get((langfuse_trace_id, obs_id), ()):
+                messages[event_id] = REFUSED_EVENT_MESSAGE
+        for score_id in rows.score_ids:
+            for event_id in score_events.get((langfuse_trace_id, score_id), ()):
+                messages[event_id] = REFUSED_EVENT_MESSAGE
+    return messages
 
 
 def _merge_observation_events(obs_list):
-    """Merge create + update events that share the same observation ID.
+    """Coalesce one batch, retaining absent vs explicitly supplied fields.
 
-    The Langfuse SDK sends ``generation-create`` with initial data (name,
-    model, input, startTime) followed by ``generation-update`` with
-    completion data (output, endTime, usage).  If we process them as
-    separate observations the update overwrites the create's fields with
-    empty values.  Merging preserves all non-None fields from both events.
+    The upsert merges these patches with persisted state and recalculates timing
+    there; the start and end may have arrived in entirely different requests.
     """
-    merged = {}  # obs_id → merged body dict
-    order = []  # preserve insertion order
-
+    merged = {}
+    order = []
     for obs in obs_list:
         obs_id = obs.get("id")
         if not obs_id:
-            order.append(obs)
+            order.append(dict(obs))
             continue
-
-        if obs_id in merged:
-            existing = merged[obs_id]
-            for key, value in obs.items():
-                if value is not None:
-                    existing[key] = value
-        else:
-            merged[obs_id] = dict(obs)  # copy to avoid mutating original
+        if obs_id not in merged:
+            merged[obs_id] = {}
             order.append(merged[obs_id])
-
-    # Recompute latency on merged observations (startTime and endTime
-    # may have come from different events).
-    for obs in order:
-        obs["latency"] = _compute_latency_seconds(
-            obs.get("startTime"), obs.get("endTime")
-        )
-        # Normalise usage → usageDetails after merge
-        if obs.get("usage") and not obs.get("usageDetails"):
-            obs["usageDetails"] = obs["usage"]
-
+        combined = merge_langfuse_observation(merged[obs_id], obs)
+        merged[obs_id].clear()
+        merged[obs_id].update(combined)
     return order
 
 
@@ -122,7 +137,8 @@ class LangfuseIngestionView(APIView):
     and ingests them as traces, observation spans, and scores.
 
     Returns ``207 Multi-Status`` with per-event success/error reporting,
-    matching the Langfuse ingestion API contract.
+    matching the Langfuse ingestion API contract. A batch whose span ids could
+    not be checked is answered ``503`` as a whole, to be sent again.
     """
 
     # Use plain JSONParser — the Langfuse SDK sends camelCase keys (traceId,
@@ -162,6 +178,11 @@ class LangfuseIngestionView(APIView):
         trace_bodies = {}  # langfuse_trace_id → body dict
         observation_bodies = defaultdict(list)  # langfuse_trace_id → [body dicts]
         score_bodies = defaultdict(list)  # langfuse_trace_id → [body dicts]
+        # The events behind each row, so a row the upsert refuses is answered
+        # on the events that sent it.
+        trace_events = defaultdict(list)  # langfuse_trace_id → [event ids]
+        observation_events = defaultdict(list)  # (trace id, obs id) → [event ids]
+        score_events = defaultdict(list)  # (trace id, score id) → [event ids]
 
         for event in batch:
             event_id = event.get("id", str(uuid.uuid4()))
@@ -177,6 +198,7 @@ class LangfuseIngestionView(APIView):
                         trace_bodies[trace_id].update(body)
                     else:
                         trace_bodies[trace_id] = body
+                    trace_events[trace_id].append(event_id)
                     successes.append({"id": event_id, "status": 201})
 
                 elif event_type in _EVENT_TYPE_TO_OBS_TYPE:
@@ -194,6 +216,9 @@ class LangfuseIngestionView(APIView):
                         trace_bodies[trace_id] = {"id": trace_id}
 
                     observation_bodies[trace_id].append(body)
+                    # Keyed by the id as text: the upsert reports ids as text,
+                    # and a batch may send a number.
+                    observation_events[(trace_id, str(body["id"]))].append(event_id)
                     successes.append({"id": event_id, "status": 201})
 
                 elif event_type == "score-create":
@@ -202,6 +227,8 @@ class LangfuseIngestionView(APIView):
                         score_bodies[trace_id].append(body)
                         if trace_id not in trace_bodies:
                             trace_bodies[trace_id] = {"id": trace_id}
+                        if body.get("id") not in (None, ""):
+                            score_events[(trace_id, str(body["id"]))].append(event_id)
                     successes.append({"id": event_id, "status": 201})
 
                 elif event_type == "sdk-log":
@@ -220,9 +247,10 @@ class LangfuseIngestionView(APIView):
                 errors.append({"id": event_id, "status": 400, "message": str(e)})
 
         # ---- Process all traces ----
+        refused = {}
         if trace_bodies:
             try:
-                _process_traces(
+                refused = _process_traces(
                     trace_bodies=trace_bodies,
                     observation_bodies=observation_bodies,
                     score_bodies=score_bodies,
@@ -231,8 +259,39 @@ class LangfuseIngestionView(APIView):
                     workspace_id=workspace_id,
                     user=user,
                 )
+            except SpanIdCheckUnavailable:
+                # The upsert logged the failure. The answer is a fixed
+                # sentence, without the error's text.
+                return Response(
+                    build_error_envelope(
+                        UNCHECKED_MESSAGE, status_code=UNCHECKED_STATUS
+                    ),
+                    status=UNCHECKED_STATUS,
+                )
             except Exception as e:
                 logger.exception("langfuse_ingestion_processing_failed", error=str(e))
+
+        # An event whose id another project already holds was not stored: it
+        # moves from successes to errors. The batch keeps its 207 and the
+        # rest of it is stored.
+        refused_events = _refused_event_messages(
+            refused, trace_events, observation_events, score_events
+        )
+        if refused_events:
+            stored = []
+            for success in successes:
+                message = refused_events.get(success["id"])
+                if message is None:
+                    stored.append(success)
+                else:
+                    errors.append(
+                        {
+                            "id": success["id"],
+                            "status": REFUSED_EVENT_STATUS,
+                            "message": message,
+                        }
+                    )
+            successes = stored
 
         return Response({"successes": successes, "errors": errors}, status=207)
 
@@ -246,11 +305,20 @@ def _process_traces(
     workspace_id,
     user,
 ):
-    """Persist grouped trace events into the database."""
+    """Persist grouped trace events into the database.
+
+    Returns ``{langfuse trace id: RefusedRows}`` for every trace with rows the
+    upsert did not store because their ids are already in another project.
+
+    Raises ``SpanIdCheckUnavailable`` at the first trace whose span ids could
+    not be checked: nothing of that trace or of the traces after it is stored,
+    and the traces before it are.
+    """
+    refused = {}
     project = _resolve_project(org, workspace, workspace_id, user)
     if not project:
         logger.error("langfuse_ingestion_no_project", org_id=str(org.id))
-        return
+        return refused
 
     project_id = str(project.id)
 
@@ -270,27 +338,28 @@ def _process_traces(
             )
 
             assembled = {
-                "id": trace_body["id"],
-                "name": trace_body.get("name"),
-                "input": trace_body.get("input"),
-                "output": trace_body.get("output"),
-                "metadata": trace_body.get("metadata"),
-                "tags": trace_body.get("tags"),
-                "userId": trace_body.get("userId"),
-                "sessionId": trace_body.get("sessionId"),
+                **trace_body,
                 "observations": merged_obs,
                 "scores": score_bodies.get(langfuse_trace_id, []),
             }
-            upsert_langfuse_trace(
+            *_, rows = upsert_langfuse_trace(
                 assembled_trace=assembled,
                 transformer=_transformer,
                 project_id=project_id,
                 org=org,
                 workspace=workspace,
                 org_id=org.id,
+                patch_mode=True,
             )
+            if rows.count:
+                refused[langfuse_trace_id] = rows
+        except SpanIdCheckUnavailable:
+            # The whole request is answered 503 and sent again, so the traces
+            # after this one are not tried: each would wait on the same read.
+            raise
         except Exception:
             logger.exception(
                 "langfuse_ingestion_trace_failed",
                 trace_id=langfuse_trace_id,
             )
+    return refused

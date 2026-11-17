@@ -968,7 +968,7 @@ def test_filter_mode_assignment_materialization_observes_shared_deadline(monkeyp
     monkeypatch.setattr(queue_models, "QueueItemAssignment", Assignment)
     monkeypatch.setattr(queue_models, "annotation_queue_role_q", lambda *_: object())
 
-    queue = SimpleNamespace(queue_annotators=Annotators())
+    queue = SimpleNamespace(mode="standard", queue_annotators=Annotators())
     with pytest.raises(ReadDeadlineExceeded, match="shared request wall"):
         assign_items_to_all_annotators(
             queue,

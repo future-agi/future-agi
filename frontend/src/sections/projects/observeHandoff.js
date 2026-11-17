@@ -77,6 +77,9 @@ export function readHandoff(key) {
  *   window?: [isoStart, isoEnd], the window those filters carry,
  *   label?: human scope label ("Past 7D · 2 filters"),
  *   population?: [{id, time, user_id}]  // exact rows, e.g. every "No" answer
+ *   sourceWindow?: [isoStart, isoEnd]    // the window a report read those rows
+ *                                        // in: the new report reads each row
+ *                                        // (a user's activity) within it too
  *   question?: string                    // a starting question for the report
  *   source?: string                      // "Instant eval: <question>"
  * }

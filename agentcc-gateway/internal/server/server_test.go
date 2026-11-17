@@ -16,6 +16,7 @@ import (
 	agentcca2a "github.com/futureagi/agentcc-gateway/internal/a2a"
 	"github.com/futureagi/agentcc-gateway/internal/config"
 	"github.com/futureagi/agentcc-gateway/internal/mcp"
+	"github.com/futureagi/agentcc-gateway/internal/middleware"
 	"github.com/futureagi/agentcc-gateway/internal/modeldb"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/pipeline"
@@ -432,6 +433,7 @@ func createTestServer(t *testing.T, mockURL string) *Server {
 
 	engine := pipeline.NewEngine()
 	srv := New(cfg, "", registry, engine, nil, nil, nil, nil, testModelDBPtr(), nil, nil)
+	releaseTestServer(t, srv)
 	srv.ready.Store(true) // Mark ready for tests (normally set by Start).
 	return srv
 }
@@ -496,6 +498,7 @@ func createAnthropicAuthTestServer(t *testing.T, mockURL string) *Server {
 
 	engine := pipeline.NewEngine()
 	srv := New(cfg, "", registry, engine, nil, nil, nil, nil, testModelDBPtr(), nil, nil)
+	releaseTestServer(t, srv)
 	srv.ready.Store(true)
 	return srv
 }
@@ -542,6 +545,7 @@ func createOrgScopedAnthropicTestServer(t *testing.T, mockURL string) *Server {
 
 	engine := pipeline.NewEngine()
 	srv := New(cfg, "", registry, engine, nil, nil, nil, nil, testModelDBPtr(), tenantStore, nil)
+	releaseTestServer(t, srv)
 	srv.ready.Store(true)
 	return srv
 }
@@ -563,6 +567,7 @@ func createTestServerWithPlugins(t *testing.T, mockURL string, plugins ...pipeli
 
 	engine := pipeline.NewEngine(plugins...)
 	srv := New(cfg, "", registry, engine, nil, nil, nil, nil, testModelDBPtr(), nil, nil)
+	releaseTestServer(t, srv)
 	srv.ready.Store(true) // Mark ready for tests (normally set by Start).
 	return srv
 }
@@ -591,6 +596,7 @@ func createAuthRequiredTestServerWithPlugins(t *testing.T, mockURL string, plugi
 
 	engine := pipeline.NewEngine(plugins...)
 	srv := New(cfg, "", registry, engine, nil, nil, nil, nil, testModelDBPtr(), nil, nil)
+	releaseTestServer(t, srv)
 	srv.ready.Store(true)
 	return srv
 }
@@ -621,6 +627,7 @@ func createAuthRequiredTestServer(t *testing.T, mockURL string) *Server {
 	// Intentionally pass nil keyStore to verify the server wires auth defensively
 	// from cfg.Auth when auth is enabled.
 	srv := New(cfg, "", registry, engine, nil, nil, nil, nil, testModelDBPtr(), nil, nil)
+	releaseTestServer(t, srv)
 	srv.ready.Store(true)
 	return srv
 }
@@ -655,6 +662,7 @@ func createAuthRequiredA2ATestServer(t *testing.T, mockURL string) *Server {
 
 	engine := pipeline.NewEngine()
 	srv := New(cfg, "", registry, engine, nil, nil, nil, nil, testModelDBPtr(), nil, nil)
+	releaseTestServer(t, srv)
 	srv.ready.Store(true)
 	return srv
 }
@@ -683,6 +691,7 @@ func createByokAuthTestServer(t *testing.T, mockURL string) *Server {
 
 	engine := pipeline.NewEngine()
 	srv := New(cfg, "", registry, engine, nil, nil, nil, nil, testModelDBPtr(), nil, nil)
+	releaseTestServer(t, srv)
 	srv.ready.Store(true)
 	return srv
 }
@@ -748,6 +757,7 @@ func createOrgScopedModelsTestServer(t *testing.T, mockURL string) *Server {
 
 	engine := pipeline.NewEngine()
 	srv := New(cfg, "", registry, engine, nil, nil, nil, nil, testModelDBPtr(), tenantStore, nil)
+	releaseTestServer(t, srv)
 	srv.ready.Store(true)
 	return srv
 }
@@ -782,6 +792,7 @@ func createByokA2ATestServer(t *testing.T, mockURL string) *Server {
 
 	engine := pipeline.NewEngine()
 	srv := New(cfg, "", registry, engine, nil, nil, nil, nil, testModelDBPtr(), nil, nil)
+	releaseTestServer(t, srv)
 	srv.ready.Store(true)
 	return srv
 }
@@ -791,6 +802,7 @@ func TestHealthEndpoints(t *testing.T) {
 	defer mock.Close()
 
 	srv := createTestServer(t, mock.URL)
+	readyEpoch733(srv)
 
 	tests := []struct {
 		path       string
@@ -879,8 +891,8 @@ func TestChatCompletionMissingAPIKeyReturnsUnauthorized(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("parsing error response: %v", err)
 	}
-	if resp.Error.Message != "Invalid or missing API key" {
-		t.Fatalf("error.message = %q, want %q", resp.Error.Message, "Invalid or missing API key")
+	if want := middleware.ErrUnauthorizedKey("").Message; resp.Error.Message != want {
+		t.Fatalf("error.message = %q, want %q", resp.Error.Message, want)
 	}
 	if resp.Error.Type != models.ErrTypeAuthentication {
 		t.Fatalf("error.type = %q, want %q", resp.Error.Type, models.ErrTypeAuthentication)
@@ -912,8 +924,8 @@ func TestChatCompletionInvalidAPIKeyReturnsUnauthorized(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("parsing error response: %v", err)
 	}
-	if resp.Error.Message != "Invalid or missing API key" {
-		t.Fatalf("error.message = %q, want %q", resp.Error.Message, "Invalid or missing API key")
+	if want := middleware.ErrUnauthorizedKey("NOTAKEY").Message; resp.Error.Message != want {
+		t.Fatalf("error.message = %q, want %q", resp.Error.Message, want)
 	}
 	if resp.Error.Type != models.ErrTypeAuthentication {
 		t.Fatalf("error.type = %q, want %q", resp.Error.Type, models.ErrTypeAuthentication)
@@ -1408,7 +1420,10 @@ func TestChatCompletionStreaming_WritesFinalMetadataChunkBeforeDone(t *testing.T
 
 	srv := createAuthRequiredTestServerWithPlugins(t, mock.URL, &metadataPostPlugin{})
 
-	reqBody := `{"model":"gpt-4o","messages":[{"role":"user","content":"Hello"}],"stream":true}`
+	// The spec case: a client that asked for usage (stream_options) and for
+	// the gateway's metadata gets one final chunk with empty choices that
+	// carries both, right before [DONE] (OpenAI's include_usage contract).
+	reqBody := `{"model":"gpt-4o","messages":[{"role":"user","content":"Hello"}],"stream":true,"stream_options":{"include_usage":true}}`
 	req := httptest.NewRequest("POST", "/v1/chat/completions", bytes.NewBufferString(reqBody))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer sk-test-key-001")
@@ -1476,7 +1491,9 @@ func TestChatCompletionStreaming_OmitsFinalMetadataByDefault(t *testing.T) {
 
 	srv := createAuthRequiredTestServerWithPlugins(t, mock.URL, &metadataPostPlugin{})
 
-	reqBody := `{"model":"gpt-4o","messages":[{"role":"user","content":"Hello"}],"stream":true}`
+	// The client asks for usage, so the stream has its final chunk; without
+	// x-agentcc-include-metadata that chunk carries no agentcc_metadata.
+	reqBody := `{"model":"gpt-4o","messages":[{"role":"user","content":"Hello"}],"stream":true,"stream_options":{"include_usage":true}}`
 	req := httptest.NewRequest("POST", "/v1/chat/completions", bytes.NewBufferString(reqBody))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer sk-test-key-001")
@@ -1499,6 +1516,9 @@ func TestChatCompletionStreaming_OmitsFinalMetadataByDefault(t *testing.T) {
 
 	if len(dataLines) < 3 {
 		t.Fatalf("expected at least 3 data lines, got %d: %s", len(dataLines), body)
+	}
+	if !strings.Contains(dataLines[len(dataLines)-2], `"usage"`) {
+		t.Fatalf("the line before [DONE] is not the final usage chunk: %s", dataLines[len(dataLines)-2])
 	}
 	if strings.Contains(dataLines[len(dataLines)-2], `"agentcc_metadata"`) {
 		t.Fatalf("final chunk unexpectedly included agentcc_metadata: %s", dataLines[len(dataLines)-2])
@@ -1631,6 +1651,88 @@ func TestShouldApplyOrgProviderOverride(t *testing.T) {
 	}
 }
 
+// An org's customer key lists only what it can call: its org's own
+// provider models and "auto". The operator's gpt-4o-mini is not listed:
+// chat refuses it to this key.
+func TestListModels_ListsOnlyTheRequestingOrgsModels(t *testing.T) {
+	mock := startMockOpenAI(t)
+	defer mock.Close()
+
+	srv := createOrgScopedModelsTestServer(t, mock.URL)
+
+	req := httptest.NewRequest("GET", "/v1/models", nil)
+	req.Header.Set("Authorization", "Bearer sk-agentcc-org-test")
+	w := httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+
+	var resp models.ModelListResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("parsing response: %v", err)
+	}
+
+	// The org's two models plus "auto", which the gateway routes itself.
+	if len(resp.Data) != 3 {
+		t.Fatalf("model count = %d, want 3; body=%s", len(resp.Data), w.Body.String())
+	}
+	ids := map[string]bool{}
+	for _, m := range resp.Data {
+		ids[m.ID] = true
+	}
+	if !ids["gpt-4o"] || !ids["claude-sonnet-4-6"] || ids["gpt-4o-mini"] || !ids["auto"] {
+		t.Fatalf("returned model ids = %#v, want gpt-4o, claude-sonnet-4-6 and auto, and not the operator's gpt-4o-mini", ids)
+	}
+}
+
+// A customer key without an org can call none of the operator's models, so
+// it lists only "auto".
+func TestListModels_KeyWithoutOrgListsNoOperatorModels(t *testing.T) {
+	mock := startMockOpenAI(t)
+	defer mock.Close()
+
+	srv := createOrgScopedModelsTestServer(t, mock.URL)
+
+	req := httptest.NewRequest("GET", "/v1/models", nil)
+	req.Header.Set("Authorization", "Bearer sk-agentcc-no-org-test")
+	w := httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+
+	var resp models.ModelListResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("parsing response: %v", err)
+	}
+	if len(resp.Data) != 1 || resp.Data[0].ID != "auto" {
+		t.Fatalf("models = %s, want only auto", w.Body.String())
+	}
+}
+
+// GET /v1/models/{id} answers an org key only for a model it can call:
+// the operator's gpt-4o-mini is 404, the org's gpt-4o is 200.
+func TestGetModel_OrgRequestGetsOnlyItsOrgsModels(t *testing.T) {
+	mock := startMockOpenAI(t)
+	defer mock.Close()
+
+	srv := createOrgScopedModelsTestServer(t, mock.URL)
+
+	for model, want := range map[string]int{"gpt-4o-mini": http.StatusNotFound, "gpt-4o": http.StatusOK} {
+		req := httptest.NewRequest("GET", "/v1/models/"+model, nil)
+		req.Header.Set("Authorization", "Bearer sk-agentcc-org-test")
+		w := httptest.NewRecorder()
+		srv.httpServer.Handler.ServeHTTP(w, req)
+
+		if w.Code != want {
+			t.Fatalf("GET %s: status = %d, want %d; body=%s", model, w.Code, want, w.Body.String())
+		}
+	}
+}
+
 func listModelIDs(t *testing.T, srv *Server, path, key string) (int, map[string]bool) {
 	t.Helper()
 	req := httptest.NewRequest("GET", path, nil)
@@ -1652,6 +1754,18 @@ func listModelIDs(t *testing.T, srv *Server, path, key string) (int, map[string]
 	return w.Code, ids
 }
 
+// providerModelIDs is ids without "auto", which the gateway routes itself
+// and lists to every key: what is left are provider models.
+func providerModelIDs(ids map[string]bool) map[string]bool {
+	out := make(map[string]bool, len(ids))
+	for id := range ids {
+		if id != "auto" {
+			out[id] = true
+		}
+	}
+	return out
+}
+
 func TestListModels_TenantKeyListsOnlyOrgModels(t *testing.T) {
 	mock := startMockOpenAI(t)
 	defer mock.Close()
@@ -1661,7 +1775,7 @@ func TestListModels_TenantKeyListsOnlyOrgModels(t *testing.T) {
 	if code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", code)
 	}
-	if len(ids) != 2 || !ids["gpt-4o"] || !ids["claude-sonnet-4-6"] {
+	if ids := providerModelIDs(ids); len(ids) != 2 || !ids["gpt-4o"] || !ids["claude-sonnet-4-6"] {
 		t.Fatalf("ids = %#v, want only the org models gpt-4o and claude-sonnet-4-6", ids)
 	}
 	if ids["gpt-4o-mini"] {
@@ -1678,8 +1792,8 @@ func TestListModels_TenantKeyWithoutOrgListsNothing(t *testing.T) {
 	if code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", code)
 	}
-	if len(ids) != 0 {
-		t.Fatalf("ids = %#v, want none for a tenant key with no org models", ids)
+	if ids := providerModelIDs(ids); len(ids) != 0 {
+		t.Fatalf("ids = %#v, want no provider model for a tenant key with no org models", ids)
 	}
 }
 
@@ -1689,7 +1803,7 @@ func TestListModels_InternalKeyListsGlobalAndOrgModels(t *testing.T) {
 	srv := createOrgScopedModelsTestServer(t, mock.URL)
 
 	_, ids := listModelIDs(t, srv, "/v1/models", "sk-agentcc-org-internal-test")
-	if len(ids) != 3 || !ids["gpt-4o"] || !ids["gpt-4o-mini"] || !ids["claude-sonnet-4-6"] {
+	if ids := providerModelIDs(ids); len(ids) != 3 || !ids["gpt-4o"] || !ids["gpt-4o-mini"] || !ids["claude-sonnet-4-6"] {
 		t.Fatalf("ids = %#v, want gpt-4o, gpt-4o-mini and claude-sonnet-4-6", ids)
 	}
 }

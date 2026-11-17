@@ -4,6 +4,19 @@ import re
 from cryptography.fernet import Fernet, InvalidToken
 from django.conf import settings
 
+# What a connection whose saved credentials cannot be read says, on its reads
+# and on each request that needs those credentials.
+UNREADABLE_CREDENTIALS = (
+    "This connection's saved credentials can't be read. Reconnect it to use it again."
+)
+
+
+class UnreadableCredentials(ValueError):
+    """Saved credentials that do not open with the configured key.
+
+    A ValueError, so every caller that handles a failed decrypt keeps doing so.
+    """
+
 
 class CredentialManager:
     """Manages encryption, decryption, and masking of integration credentials."""
@@ -27,15 +40,34 @@ class CredentialManager:
 
     @classmethod
     def decrypt(cls, encrypted_blob: bytes) -> dict:
-        """Decrypt a Fernet-encrypted blob into a credentials dict."""
+        """Decrypt a Fernet-encrypted blob into a credentials dict.
+
+        Raises UnreadableCredentials when the blob does not open with the
+        configured key.
+        """
         fernet = cls._get_fernet()
         try:
             plaintext = fernet.decrypt(encrypted_blob)
             return json.loads(plaintext.decode("utf-8"))
-        except InvalidToken:
-            raise ValueError(
+        except InvalidToken as exc:
+            raise UnreadableCredentials(
                 "Failed to decrypt credentials. The encryption key may have changed."
-            )
+            ) from exc
+
+    @classmethod
+    def unreadable(cls, encrypted_blob) -> bool:
+        """Whether saved credentials do not open with the configured key.
+
+        Only that outcome counts: any other failure (no key configured, or
+        contents that are not JSON) reads as False.
+        """
+        try:
+            cls.decrypt(bytes(encrypted_blob))
+        except UnreadableCredentials:
+            return True
+        except Exception:
+            return False
+        return False
 
     @staticmethod
     def mask_key(key_str: str) -> str:

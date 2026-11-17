@@ -1,0 +1,52 @@
+# Plane's hosted PAT endpoint requires both bearer authorization and a workspace slug.
+schema: "connector-manifest/v1#provider"
+app: plane
+id: api-key
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.plane.so/http/api-key/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: Plane access token
+      help: "Create a personal token in Profile Settings > Personal Access Tokens, or a workspace token in Workspace Settings > Access Tokens. Supply the token without the Bearer prefix. Use the hosted endpoint for Plane Cloud."
+      helpUrl: https://developers.plane.so/dev-tools/mcp-server
+    - in: header
+      name: x-workspace-slug
+      secret: false
+      label: Workspace slug
+      help: "Enter the workspace's URL slug, the path segment after app.plane.so/. Every request requires this header and is scoped to that workspace."
+      helpUrl: https://developers.plane.so/dev-tools/mcp-server
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_plan
+  source: https://developers.plane.so/dev-tools/mcp-server
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://developers.plane.so/dev-tools/mcp-server
+    fetchedAt: 2026-11-09
+  - fact: transport.variant
+    url: https://developers.plane.so/dev-tools/mcp-server
+    fetchedAt: 2026-11-09
+  - fact: auth.kind
+    url: https://developers.plane.so/dev-tools/mcp-server
+    fetchedAt: 2026-11-09
+  - fact: auth.credentialParts
+    url: https://developers.plane.so/dev-tools/mcp-server
+    fetchedAt: 2026-11-09
+x-omega: { oss: exclude }

@@ -17,6 +17,7 @@ from simulate.models import AgentFixCandidate, HarnessAgentVersionRuntime
 from simulate.selectors.agent_fix import limited_validation, overridable_regressions
 from simulate.services.agent_fix_engine import load_object
 from simulate.services.agent_fix_runs import record_override, require_shippable
+from simulate.services.github_app_tenancy import platform_github_app_refused
 from simulate.services.harness_github import safe_repository, short_ref
 from simulate.services.hosted_harness import HostedHarnessError
 from simulate.services.hosted_harness_gateway import (
@@ -58,6 +59,17 @@ def open_pull_request(
             "fix_github_not_connected",
             "A pull request needs the agent's repository connected through the Future AGI"
             " GitHub App; download the patch instead",
+            status_code=422,
+        )
+    if platform_github_app_refused():
+        # Nothing yet ties an installation to the organization that names it, so where
+        # the platform App serves several organizations it pushes through none: before
+        # the override is recorded. The not-connected code is the one the fix page
+        # answers with its patch download.
+        raise HostedHarnessError(
+            "fix_github_not_connected",
+            "Pull requests through the Future AGI GitHub App are not available on"
+            " Future AGI cloud. Download the patch and apply it yourself.",
             status_code=422,
         )
     source = runtime.source or {}

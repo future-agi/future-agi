@@ -40,7 +40,13 @@ class OpenAIEmbeddingModel(ModelServing):
             embeddings = [item.embedding for item in response.data]
             return embeddings
         except Exception as e:
-            logger.error(f"Error during OpenAI inference: {e}")
+            # Type and status only: the text of an HTTP-stack error can quote
+            # the request's Authorization header, and OpenAI's own error text
+            # repeats part of the key.
+            logger.error(
+                f"Error during OpenAI inference: {type(e).__name__}",
+                status_code=getattr(e, "status_code", None),
+            )
             raise
 
     def postprocess(self, output: Any) -> Any:
@@ -59,7 +65,9 @@ class HuggingFaceEmbeddingModel(ModelServing):
         super().__init__()  # type: ignore[safe-super]
         self.model_name = model
         try:
-            self.model = SentenceTransformer(self.model_name, trust_remote_code=True)
+            # The model is customer-selected (allowlisted in app.v1.endpoints);
+            # never execute code shipped inside a model repo.
+            self.model = SentenceTransformer(self.model_name, trust_remote_code=False)
             logger.info(f"Loaded HuggingFace model: {self.model_name}")
         except Exception as e:
             logger.error(f"Failed to load HuggingFace model {self.model_name}: {e}")

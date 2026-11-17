@@ -7,13 +7,14 @@ import os
 from typing import Any, TypedDict
 
 import structlog
-from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import ReadableSpan
 from opentelemetry.sdk.trace.export import SpanExportResult
 from opentelemetry.sdk.util.instrumentation import InstrumentationScope
 from opentelemetry.trace import SpanContext, SpanKind, TraceFlags
 from opentelemetry.trace.status import Status, StatusCode
+
+from tfc.telemetry.checkout_output import span_exporter
 
 logger = structlog.get_logger(__name__)
 
@@ -124,8 +125,9 @@ def export_sim_spans(
     *,
     project_name: str,
     project_type: str,
-    api_key: str,
-    secret_key: str,
+    api_key: str = "",
+    secret_key: str = "",
+    grant: str | None = None,
     eval_tags: list[dict[str, Any]] | None = None,
     service_name: str = "fi-simulation",
 ) -> int:
@@ -142,10 +144,13 @@ def export_sim_spans(
             "service.name": service_name,
         }
     )
-    exporter = OTLPSpanExporter(
+    exporter = span_exporter(
+        "grpc",
         endpoint=_collector_endpoint(),
         insecure=True,
-        headers=(("x-api-key", api_key), ("x-secret-key", secret_key)),
+        headers=(("x-fa-grant", grant),)
+        if grant
+        else (("x-api-key", api_key), ("x-secret-key", secret_key)),
     )
     try:
         # Build inside the try so a malformed span is caught here, not the worker.

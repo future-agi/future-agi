@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: firecrawl
+version: 1.0.0
+name: Firecrawl
+description: "Web search, page scraping and document parsing for agents."
+vendor:
+  name: Firecrawl
+  domains: [firecrawl.dev]
+eeCategory: research
+group: other
+categories: [research, web-scraping]
+tags: [search, scraping, parsing]
+docsUrl: https://docs.firecrawl.dev/mcp-server
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://docs.firecrawl.dev/mcp-server
+    fetchedAt: 2026-10-21

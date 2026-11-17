@@ -1,0 +1,62 @@
+// Saved filters for the Logs page, kept in this browser only (like the grid's
+// column widths): a name and the URL query of the filters. Storage can be
+// missing or throw (private windows, blocked site data), so every read and
+// write is guarded and the page works without it.
+
+export const SAVED_VIEWS_KEY = "gateway-logs:saved-filters";
+const MAX_VIEWS = 30;
+// Where a page of results is, or which request is open: not what the
+// filters are.
+const NOT_A_FILTER = new Set(["page", "pageSize", "page_size", "log"]);
+
+export function cleanQuery(query) {
+  const params = new URLSearchParams(query || "");
+  for (const key of [...params.keys()]) {
+    if (NOT_A_FILTER.has(key)) params.delete(key);
+  }
+  return params.toString();
+}
+
+export function loadSavedViews() {
+  try {
+    const raw = window.localStorage.getItem(SAVED_VIEWS_KEY);
+    const views = raw ? JSON.parse(raw) : [];
+    return Array.isArray(views)
+      ? views.filter(
+          (v) => v && typeof v.name === "string" && typeof v.query === "string",
+        )
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function write(views) {
+  try {
+    window.localStorage.setItem(SAVED_VIEWS_KEY, JSON.stringify(views));
+    return { views, persisted: true, error: null };
+  } catch (error) {
+    return { views, persisted: false, error };
+  }
+}
+
+export function saveView(name, query, currentViews = loadSavedViews()) {
+  const trimmed = String(name || "").trim();
+  if (!trimmed)
+    return {
+      views: currentViews,
+      persisted: false,
+      error: new Error("A name is required"),
+    };
+  const views = [...currentViews];
+  const entry = { name: trimmed, query: cleanQuery(query) };
+  const at = views.findIndex((v) => v.name === trimmed);
+  if (at >= 0) views[at] = entry;
+  else views.push(entry);
+  const next = views.slice(-MAX_VIEWS);
+  return write(next);
+}
+
+export function deleteSavedView(name, currentViews = loadSavedViews()) {
+  return write(currentViews.filter((v) => v.name !== name));
+}

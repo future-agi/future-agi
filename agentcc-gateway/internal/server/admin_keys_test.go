@@ -463,7 +463,7 @@ func TestUpdateKey_Success(t *testing.T) {
 	keyID := created["id"].(string)
 
 	// Update the name and add models
-	updatePayload := `{"name":"updated-name","models":["gpt-4","claude-3"],"metadata":{"team":"backend"}}`
+	updatePayload := `{"name":"updated-name","models":["gpt-4","claude-3"],"metadata":{"service":"backend"}}`
 	updateReq := httptest.NewRequest(http.MethodPut, "/-/keys/"+keyID, strings.NewReader(updatePayload))
 	updateReq.URL.RawQuery = "key_id=" + keyID
 	updateReq.Header.Set("Content-Type", "application/json")
@@ -516,8 +516,8 @@ func TestUpdateKey_Success(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected metadata to be a map, got %T", getBody["metadata"])
 	}
-	if meta["team"] != "backend" {
-		t.Errorf("expected metadata.team=backend, got %v", meta["team"])
+	if meta["service"] != "backend" {
+		t.Errorf("expected metadata.service=backend, got %v", meta["service"])
 	}
 }
 

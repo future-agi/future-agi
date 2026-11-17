@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: plane
+version: 1.0.0
+name: Plane
+description: "Search and manage projects, work items, cycles and initiatives in Plane."
+vendor:
+  name: Plane
+  domains: [plane.so]
+eeCategory: productivity
+group: other
+categories: [productivity, project-management]
+tags: [issues, projects]
+docsUrl: https://developers.plane.so/dev-tools/mcp-server
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://developers.plane.so/dev-tools/mcp-server
+    fetchedAt: 2026-11-09

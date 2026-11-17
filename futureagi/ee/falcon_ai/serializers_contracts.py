@@ -104,7 +104,16 @@ class MCPConnectorUpdateRequestSerializer(StrictInputSerializer):
     auth_header_name = serializers.CharField(
         required=False, allow_blank=True, max_length=100
     )
-    auth_header_value = serializers.CharField(required=False, allow_blank=True)
+    auth_header_value = serializers.CharField(
+        required=False, allow_blank=True, write_only=True
+    )
+    oauth_client_id = serializers.CharField(
+        required=False, allow_blank=True, max_length=500
+    )
+    # Blank or missing keeps the saved secret; null removes it.
+    oauth_client_secret = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True, write_only=True
+    )
     is_active = serializers.BooleanField(required=False)
 
 

@@ -54,22 +54,41 @@ class AnalyzeProjectTracesTool(BaseTool):
         self, params: AnalyzeProjectTracesInput, context: ToolContext
     ) -> ToolResult:
         import structlog
+        from rest_framework.exceptions import PermissionDenied
 
-        from tracer.models.project import Project
         from tracer.models.trace_error_analysis import TraceErrorAnalysis
         from tracer.queries import deep_analysis_state
         from tracer.services.clickhouse.v2 import get_reader
+        from tracer.services.falcon_analysis_scope import resolve_analysis_scope
 
         logger = structlog.get_logger(__name__)
 
-        # Verify project access
+        principal = {
+            "requesting_user_id": str(context.user.pk) if context.user else None,
+            "organization_id": str(context.organization.pk)
+            if context.organization
+            else None,
+            "workspace_id": str(context.workspace.pk) if context.workspace else None,
+        }
+        # Verify the same explicit scope now and again in each worker. No queued
+        # analysis may choose an arbitrary org user or a fallback workspace.
         try:
-            project = Project.objects.get(
-                id=params.project_id,
-                organization=context.organization,
+            project, _ = resolve_analysis_scope(params.project_id, **principal)
+        except PermissionDenied:
+            return ToolResult.permission_denied(
+                "The requested analysis workspace is unavailable."
             )
-        except Project.DoesNotExist:
-            return ToolResult.not_found("Project", str(params.project_id))
+
+        from tfc.capabilities.background_analysis import (
+            BACKGROUND_ANALYSIS_UNAVAILABLE_MESSAGE,
+            background_analysis_enabled,
+        )
+
+        if not background_analysis_enabled():
+            return ToolResult.error(
+                BACKGROUND_ANALYSIS_UNAVAILABLE_MESSAGE,
+                error_code="TEMPORARILY_UNAVAILABLE",
+            )
 
         # Determine which traces to analyze. Traces live only in CH post-cutover,
         # so listing/validating goes through the CH root spans.
@@ -131,7 +150,7 @@ class AnalyzeProjectTracesTool(BaseTool):
             batches_dispatched = 0
             for i in range(0, len(trace_ids), batch_size):
                 batch = trace_ids[i : i + batch_size]
-                analyze_traces_on_demand.delay(str(project.id), batch)
+                analyze_traces_on_demand.delay(str(project.id), batch, **principal)
                 batches_dispatched += 1
 
             logger.info(

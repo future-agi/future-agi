@@ -160,7 +160,7 @@ test('PROMPT-E2E-001: a mock-run prompt exposes its current evaluation configura
     await route.continue();
   });
   // Safety veto only: never rewrite a request or manufacture an API response.
-  // Checking the model in a response would be too late to prevent paid dispatch.
+  // Checking the model in a response would be too late to prevent unsafe dispatch.
   await page.route('**/update-evaluation-configs/', async route => {
     const body = route.request().postDataJSON() as UpdateBody;
     const runtime = body.config?.run_config;
@@ -195,12 +195,29 @@ test('PROMPT-E2E-001: a mock-run prompt exposes its current evaluation configura
     });
 
     await test.step('UI: create, name and configure the prompt from scratch', async () => {
+      // frontend/src/routes/sections/dashboard.jsx:1646-1657 routes every folder to the current prompt directory.
+      // frontend/src/sections/workbench-v2/components/FolderListView.jsx:49-71 fetches its prompt list.
+      const listed = page.waitForResponse(r => new URL(r.url()).pathname === '/model-hub/prompt-executions/' &&
+        r.request().method() === 'GET', { timeout: UI_READY });
       await page.goto('/dashboard/workbench/all', { waitUntil: 'domcontentloaded' });
+      const listResponse = await listed;
+      expect(listResponse.status()).toBe(200);
+      // frontend/src/sections/workbench-v2/FolderView.jsx:61-65,145-151 renders the toolbar opener first.
+      // frontend/src/sections/workbench-v2/components/FolderListView.jsx:218-237 adds the same opener to an empty list.
       await page.getByRole('button', { name: 'Create prompt', exact: true }).first().click();
-      const draft = page.waitForResponse(r => new URL(r.url()).pathname === `${PROMPTS}create-draft/` &&
-        r.request().method() === 'POST', { timeout: UI_READY });
-      await page.getByText('Start from scratch', { exact: true }).click();
-      const response = await draft;
+      // frontend/src/sections/workbench-v2/components/CreateNewPrompt.jsx:143-164 names the creation dialog.
+      const createDialog = page.getByRole('dialog', { name: 'Create a new prompt', exact: true });
+      await expect(createDialog).toBeVisible({ timeout: UI_READY });
+      // frontend/src/sections/workbench-v2/common.js:16-20 names the scratch option.
+      // frontend/src/sections/workbench-v2/components/CreateNewPrompt.jsx:26-28,45-51 renders it as text in a clickable div.
+      const startFromScratch = createDialog.getByText('Start from scratch', { exact: true });
+      // frontend/src/sections/workbench-v2/components/CreateNewPrompt.jsx:87-89,110-130 sends the draft POST on selection.
+      // frontend/src/utils/axios.js:1163 supplies its endpoint; opening the dialog alone sends no draft request.
+      const [response] = await Promise.all([
+        page.waitForResponse(r => new URL(r.url()).pathname === `${PROMPTS}create-draft/` &&
+          r.request().method() === 'POST', { timeout: UI_READY }),
+        startFromScratch.click(),
+      ]);
       expect(response.status()).toBe(200);
       ids.promptId = (await response.json()).result.root_template;
       await expect(page).toHaveURL(new RegExp(`/dashboard/workbench/create/${ids.promptId}`), { timeout: UI_READY });
@@ -278,9 +295,9 @@ test('PROMPT-E2E-001: a mock-run prompt exposes its current evaluation configura
       await testInfo.attach('real-prompt-output', { contentType: 'application/json', body: JSON.stringify({ ids, version, status }) });
       await page.getByRole('tab', { name: 'Evaluation', exact: true }).click();
       await page.getByRole('button', { name: 'Add Evaluations', exact: true }).click();
-      // Wait for the actual drawer button: .last() can bind to the covered
-      // page button while the saved-eval list is still loading.
-      await page.getByText('All Evaluations', { exact: true }).locator('../..')
+      // frontend/src/sections/common/EvaluationDrawer/EvaluationDrawer.jsx:418-426,482-497 scopes the drawer action.
+      // Wait for its list section, not the covered page button while saved evaluations load.
+      await page.getByText('All evaluations', { exact: true }).locator('../..')
         .getByRole('button', { name: 'Add Evaluations', exact: true }).click();
       await page.getByPlaceholder('Search evaluations...').fill(evaluatorName);
       // EvalPickerList.jsx:800: row click expands details; its Add button

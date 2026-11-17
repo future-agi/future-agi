@@ -1,0 +1,46 @@
+# Pulumi documents a bearer-token path for headless clients on its hosted MCP server.
+# X-Pulumi-Org is optional; without it the server selects the first accessible organization.
+schema: "connector-manifest/v1#provider"
+app: pulumi
+id: api-key
+version: 1.1.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.ai.pulumi.com/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: Pulumi access token
+      help: "Use a dedicated Pulumi access token, preferably an organization token. Without an organization header, the server selects the first organization the token can access. Neo usage is billed to that organization. Supply the token without the Bearer prefix."
+      helpUrl: https://www.pulumi.com/docs/ai/guides/set-up-mcp-server/
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_metered
+  source: https://www.pulumi.com/docs/ai/guides/set-up-mcp-server/
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://www.pulumi.com/docs/ai/guides/set-up-mcp-server/
+    fetchedAt: 2026-11-09
+  - fact: transport.variant
+    url: https://www.pulumi.com/docs/ai/guides/set-up-mcp-server/
+    fetchedAt: 2026-11-09
+  - fact: auth.kind
+    url: https://www.pulumi.com/docs/ai/guides/set-up-mcp-server/
+    fetchedAt: 2026-11-09
+  - fact: auth.credentialParts
+    url: https://www.pulumi.com/docs/ai/guides/set-up-mcp-server/
+    fetchedAt: 2026-11-09

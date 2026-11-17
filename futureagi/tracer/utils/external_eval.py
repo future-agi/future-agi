@@ -2,6 +2,7 @@ import structlog
 
 from agentic_eval.core_evals.fi_evals import *  # noqa: F403
 from evaluations.constants import FUTUREAGI_EVAL_TYPES
+from evaluations.run_settings import usage_record_settings
 from model_hub.views.eval_runner import EvaluationRunner
 from sdk.utils.helpers import _emit_jev_usage, _get_api_call_type, _is_jev_evaluator
 from tfc.constants.api_calls import APICallStatusChoices
@@ -50,7 +51,9 @@ def _run_external_platform_evaluation(
 def _log_and_deduct_cost_for_external_eval(
     config: ExternalEvalConfig, is_futureagi_eval: bool, emit_usage: bool = True
 ):
-    log_config = config.config if config.config else {}
+    # The usage record holds the run settings, on a copy: the stored settings
+    # are left as they are.
+    log_config = usage_record_settings(config.config or {})
     log_config["is_futureagi_eval"] = is_futureagi_eval
 
     api_call_type = _get_api_call_type(
@@ -151,6 +154,16 @@ def _execute_composite_on_external_platform(config: ExternalEvalConfig):
             f"Composite {parent.id} has no children — cannot run externally."
         )
 
+    from agentic_eval.core_evals.fi_utils.custom_code_pause import (
+        refuse_paused_custom_code_template,
+    )
+
+    # While custom code evaluations are paused, a composite with any customer
+    # custom code child fails before anything is logged, billed or run: the
+    # composite's own config is empty, so its children are what is checked.
+    for link in child_links:
+        refuse_paused_custom_code_template(link.child)
+
     from evaluations.engine.instance import reject_unknown_jev_model
     from model_hub.utils.composite_execution import resolve_child_binding
     from model_hub.utils.jev_templates import binding_model
@@ -208,6 +221,15 @@ def _execute_evaluation_on_external_platform(config: ExternalEvalConfig):
 
     eval_template = config.eval_template
 
+    from agentic_eval.core_evals.fi_utils.custom_code_pause import (
+        refuse_paused_custom_code_template,
+    )
+
+    # While custom code evaluations are paused, a customer's custom code
+    # template fails here, before anything is logged, billed or run. A
+    # composite's children are checked in _execute_composite_on_external_platform.
+    refuse_paused_custom_code_template(eval_template)
+
     # Composite templates don't have an eval_type_id — fan them out via
     # the shared helper and persist the aggregate result on the config.
     if eval_template.template_type == "composite":
@@ -235,8 +257,10 @@ def _execute_evaluation_on_external_platform(config: ExternalEvalConfig):
         config, futureagi_eval, emit_usage=False
     )
 
+    # This is a standalone evaluator type, not a persisted dataset metric.
     runner = EvaluationRunner(
-        eval_type_id,
+        user_eval_metric_id=None,
+        standalone_eval_type_id=eval_type_id,
         format_output=True,
         futureagi_eval=futureagi_eval,
         source="external",
@@ -246,6 +270,7 @@ def _execute_evaluation_on_external_platform(config: ExternalEvalConfig):
     )
     runner.eval_template = eval_template
     from evaluations.engine.registry import get_eval_class
+    from sdk.utils.evaluations import external_platform_runtime_config
 
     eval_class = get_eval_class(eval_type_id)
 
@@ -254,7 +279,9 @@ def _execute_evaluation_on_external_platform(config: ExternalEvalConfig):
             config=config.config or {},
             eval_class=eval_class,
             model=config.model,
-            runtime_config=config.config,
+            # With the Choices score override SDK configure-evaluations validated,
+            # also when it is nested in "params".
+            runtime_config=external_platform_runtime_config(config.config),
         )
     except Exception as exc:
         from tfc.ee_gates import jev_error_message
@@ -388,5 +415,10 @@ def _process_results_langfuse(value):
             return 0
     elif isinstance(value, int | float):
         return float(value)
+    elif isinstance(value, dict):
+        score = value.get("score")
+        if isinstance(score, int | float) and not isinstance(score, bool):
+            return float(value["score"])
+        raise ValueError("Choices result must contain a numeric score.")
     else:
         raise ValueError(f"Invalid value type: {type(value)}")

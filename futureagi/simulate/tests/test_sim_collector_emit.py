@@ -73,7 +73,8 @@ def test_export_sim_spans_passes_auth_and_resource(monkeypatch):
     captured = {}
 
     class _FakeExporter:
-        def __init__(self, *, endpoint, insecure, headers):
+        def __init__(self, protocol, *, endpoint, insecure, headers):
+            captured["protocol"] = protocol
             captured["endpoint"] = endpoint
             captured["headers"] = headers
 
@@ -87,7 +88,7 @@ def test_export_sim_spans_passes_auth_and_resource(monkeypatch):
         def shutdown(self):
             captured["shutdown"] = True
 
-    monkeypatch.setattr(sce, "OTLPSpanExporter", _FakeExporter)
+    monkeypatch.setattr(sce, "span_exporter", _FakeExporter)
 
     spans = [
         {
@@ -108,6 +109,7 @@ def test_export_sim_spans_passes_auth_and_resource(monkeypatch):
         secret_key="sk_456",
     )
     assert n == 1
+    assert captured["protocol"] == "grpc"
     assert dict(captured["headers"])["x-api-key"] == "ak_123"
     assert dict(captured["headers"])["x-secret-key"] == "sk_456"
     res_attrs = captured["resource"].attributes
@@ -119,8 +121,8 @@ def test_export_sim_spans_passes_auth_and_resource(monkeypatch):
 @pytest.mark.unit
 def test_export_sim_spans_returns_zero_on_failure(monkeypatch):
     class _FailExporter:
-        def __init__(self, **kwargs):
-            pass
+        def __init__(self, protocol, **kwargs):
+            assert protocol == "grpc"
 
         def export(self, spans):
             from opentelemetry.sdk.trace.export import SpanExportResult
@@ -130,7 +132,7 @@ def test_export_sim_spans_returns_zero_on_failure(monkeypatch):
         def shutdown(self):
             pass
 
-    monkeypatch.setattr(sce, "OTLPSpanExporter", _FailExporter)
+    monkeypatch.setattr(sce, "span_exporter", _FailExporter)
     n = sce.export_sim_spans(
         [
             {

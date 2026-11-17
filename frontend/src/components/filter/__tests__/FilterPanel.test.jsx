@@ -60,6 +60,34 @@ describe("fieldSchema", () => {
     expect(property.type).toBe("string");
   });
 
+  it("keeps fixed choices to their own options unless the field opts in", () => {
+    const [single, several, suggested, empty, text] = fieldsToProperties([
+      { id: "a", label: "A", type: "enum", options: ["x", "y"] },
+      {
+        id: "b",
+        label: "B",
+        type: "enum",
+        multiple: true,
+        options: [{ value: "x", label: "X" }],
+      },
+      {
+        id: "c",
+        label: "C",
+        type: "enum",
+        multiple: true,
+        options: ["x"],
+        allowCustomValue: true,
+      },
+      { id: "d", label: "D", type: "enum", options: [] },
+      { id: "e", label: "E", type: "text" },
+    ]);
+    expect(single.allowCustomValue).toBe(false);
+    expect(several.allowCustomValue).toBe(false);
+    expect(suggested.allowCustomValue).toBe(true);
+    expect(empty.allowCustomValue).toBeUndefined();
+    expect(text.allowCustomValue).toBeUndefined();
+  });
+
   it("adds a category sidebar only when fields come from several groups", () => {
     expect(fieldsToCategories(fields)).toEqual([]);
     const grouped = fieldsToCategories(

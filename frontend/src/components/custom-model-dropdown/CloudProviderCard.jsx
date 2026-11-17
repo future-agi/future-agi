@@ -1,3 +1,4 @@
+import { localProviderLogo } from "src/utils/localProviderLogo";
 import { Box, Button, Stack, Typography, useTheme } from "@mui/material";
 import PropTypes from "prop-types";
 import React, { useMemo, useState } from "react";
@@ -10,6 +11,7 @@ import axios, { endpoints } from "src/utils/axios";
 import Actions from "src/sections/develop-detail/Common/ConfigureKeys/Actions";
 import { ShowComponent } from "../show";
 import { LOGO_WITH_BLACK_BACKGROUND } from "./common";
+import ProviderConfigurationNotice from "./ProviderConfigurationNotice";
 
 const CloudProviderCardComponent = ({
   provider,
@@ -116,7 +118,7 @@ const CloudProviderCardComponent = ({
             }}
           >
             <Image
-              src={provider.logoUrl}
+              src={localProviderLogo(provider)}
               alt={provider.display_name}
               width={25}
               height={25}
@@ -144,16 +146,20 @@ const CloudProviderCardComponent = ({
                   onDeleteClick={onDeleteClick}
                 />
               </ShowComponent>
-              <Icon
-                icon="gg-check-o"
-                width={16}
-                height={16}
-                style={{
-                  color: theme.palette.green[400],
-                  marginRight: "2px",
-                  marginLeft: "0px",
-                }}
-              />
+              {/* A stored configuration the server marks as not valid shows
+                  its sentence below instead of the saved check. */}
+              <ShowComponent condition={!provider.configurationError}>
+                <Icon
+                  icon="gg-check-o"
+                  width={16}
+                  height={16}
+                  style={{
+                    color: theme.palette.green[400],
+                    marginRight: "2px",
+                    marginLeft: "0px",
+                  }}
+                />
+              </ShowComponent>
             </Stack>
           ) : (
             <Button
@@ -167,6 +173,8 @@ const CloudProviderCardComponent = ({
             </Button>
           )}
         </Box>
+
+        <ProviderConfigurationNotice message={provider.configurationError} />
 
         {/* API Key Form (if key exists) */}
         <APIKeyReadOnlyView

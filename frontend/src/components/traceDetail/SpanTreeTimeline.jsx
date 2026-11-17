@@ -17,7 +17,20 @@ import {
   formatCost,
 } from "src/sections/projects/LLMTracing/formatters";
 import { getTypeConfig } from "./spanTypeConfig";
-import { getOwnEvalScores } from "./evalScores";
+// SW5-31: the same verdict rules as the Trace view (TraceTreeV2): an eval
+// with no verdict (a choice result, pending, skipped, a score error) is
+// neither a pass nor a failure.
+import {
+  collectSubtreeEvals,
+  evalPassOf,
+  evalStatusWord,
+  getOwnEvalScores,
+} from "./evalScores";
+import {
+  ROW_FOCUS_SX,
+  onSpanRowKeyDown,
+  tabStopRowId,
+} from "./spanTreeKeyboard";
 
 // ---------------------------------------------------------------------------
 // Helpers (same logic as TraceTreeV2)
@@ -58,29 +71,6 @@ function countErrors(entry) {
     for (const child of entry.children) count += countErrors(child);
   }
   return count;
-}
-
-function collectSubtreeEvals(entry) {
-  const evals = getOwnEvalScores(entry);
-  let pass = 0;
-  let fail = 0;
-  let total = evals.length;
-  for (const e of evals) {
-    const score =
-      e?.score ?? (e?.result === true ? 100 : e?.result === false ? 0 : null);
-    if (score === null || score === undefined) continue;
-    if (score >= 50 || score === true || score === 100) pass++;
-    else fail++;
-  }
-  if (entry.children?.length) {
-    for (const child of entry.children) {
-      const childEvals = collectSubtreeEvals(child);
-      pass += childEvals.pass;
-      fail += childEvals.fail;
-      total += childEvals.total;
-    }
-  }
-  return { pass, fail, total };
 }
 
 function getRootLatency(spans) {
@@ -236,11 +226,13 @@ const TimelineRow = ({
   traceDuration,
   showMetrics,
   visibleMetrics,
+  neutralLatency = false,
   rootLatency,
   searchQuery,
   expandedSet,
   onToggleExpand,
   leftWidth,
+  tabStopId,
 }) => {
   const span = getSpan(entry);
   const hasChildren = entry.children?.length > 0;
@@ -289,8 +281,23 @@ const TimelineRow = ({
 
   return (
     <>
+      {/* SW5-32: a tree row the keyboard can reach and select. */}
       <Box
+        role="treeitem"
+        aria-level={depth + 1}
+        aria-selected={isSelected}
+        aria-expanded={hasChildren ? isExpanded : undefined}
+        tabIndex={span.id === tabStopId ? 0 : -1}
         onClick={() => onSelect(span.id)}
+        onKeyDown={(e) =>
+          onSpanRowKeyDown(e, {
+            spanId: span.id,
+            hasChildren,
+            isExpanded,
+            onSelect,
+            onToggleExpand,
+          })
+        }
         sx={{
           display: "flex",
           alignItems: "center",
@@ -304,6 +311,7 @@ const TimelineRow = ({
           },
           borderBottom: "1px solid",
           borderColor: "divider",
+          ...ROW_FOCUS_SX,
         }}
       >
         {/* Left: span info with indentation — horizontally scrollable */}
@@ -338,6 +346,7 @@ const TimelineRow = ({
             {hasChildren ? (
               <IconButton
                 size="small"
+                aria-label={isExpanded ? "Collapse" : "Expand"}
                 onClick={(e) => {
                   e.stopPropagation();
                   onToggleExpand(span.id);
@@ -403,7 +412,11 @@ const TimelineRow = ({
                       component="span"
                       sx={{
                         fontSize: 12,
-                        color: getLatencyColor(durationMs, rootLatency),
+                        // Additive (IT-R5 G4 P3): `neutralLatency` keeps the clock grey;
+                        // red is for errors only.
+                        color: neutralLatency
+                          ? "text.disabled"
+                          : getLatencyColor(durationMs, rootLatency),
                         display: "inline-flex",
                         alignItems: "center",
                         gap: "2px",
@@ -498,17 +511,13 @@ const TimelineRow = ({
                   {!isRoot &&
                     ownEvals.length > 0 &&
                     (() => {
-                      const ownPass = ownEvals.filter((e) => {
-                        const s =
-                          e?.score ??
-                          (e?.result === true
-                            ? 100
-                            : e?.result === false
-                              ? 0
-                              : null);
-                        return s != null && s >= 50;
-                      }).length;
-                      const ownFail = ownEvals.length - ownPass;
+                      // SW5-31: an eval with no verdict is neither.
+                      const ownPass = ownEvals.filter(
+                        (e) => evalPassOf(e) === true,
+                      ).length;
+                      const ownFail = ownEvals.filter(
+                        (e) => evalPassOf(e) === false,
+                      ).length;
                       return (
                         <CustomTooltip
                           card
@@ -535,7 +544,15 @@ const TimelineRow = ({
                                     : e?.result === false
                                       ? 0
                                       : null);
-                                const p = s != null && s >= 50;
+                                const verdict = evalPassOf(e);
+                                const p = verdict === true;
+                                // SW5-31: no verdict reads its reason word, grey.
+                                const tone =
+                                  verdict === null
+                                    ? "text.secondary"
+                                    : p
+                                      ? "status.success.solid"
+                                      : "status.danger.solid";
                                 return (
                                   <Box
                                     key={i}
@@ -548,16 +565,14 @@ const TimelineRow = ({
                                   >
                                     <Iconify
                                       icon={
-                                        p
-                                          ? "solar:check-circle-linear"
-                                          : "solar:danger-circle-linear"
+                                        verdict === null
+                                          ? "mdi:minus-circle-outline"
+                                          : p
+                                            ? "solar:check-circle-linear"
+                                            : "solar:danger-circle-linear"
                                       }
                                       width={12}
-                                      sx={{
-                                        color: p
-                                          ? "status.success.solid"
-                                          : "status.danger.solid",
-                                      }}
+                                      sx={{ color: tone }}
                                     />
                                     <Typography
                                       sx={{
@@ -571,13 +586,15 @@ const TimelineRow = ({
                                     <Typography
                                       sx={{
                                         fontSize: 12,
-                                        color: p
-                                          ? "status.success.solid"
-                                          : "status.danger.solid",
+                                        color: tone,
                                         fontWeight: 600,
                                       }}
                                     >
-                                      {s != null ? `${s}%` : "\u2014"}
+                                      {verdict === null
+                                        ? evalStatusWord(e)
+                                        : s != null
+                                          ? `${s}%`
+                                          : "\u2014"}
                                     </Typography>
                                   </Box>
                                 );
@@ -590,8 +607,13 @@ const TimelineRow = ({
                             sx={{
                               fontSize: 12,
                               fontWeight: 600,
+                              // SW5-31: verdicts that never ran are neither.
                               color:
-                                ownFail > 0 ? "accent.fail" : "accent.pass",
+                                ownFail > 0
+                                  ? "accent.fail"
+                                  : ownPass > 0
+                                    ? "accent.pass"
+                                    : "text.disabled",
                               display: "inline-flex",
                               alignItems: "center",
                               gap: "2px",
@@ -602,7 +624,9 @@ const TimelineRow = ({
                               icon={
                                 ownFail > 0
                                   ? "solar:shield-warning-linear"
-                                  : "solar:shield-check-linear"
+                                  : ownPass > 0
+                                    ? "solar:shield-check-linear"
+                                    : "mdi:shield-outline"
                               }
                               width={12}
                             />
@@ -706,11 +730,13 @@ const TimelineRow = ({
               traceDuration={traceDuration}
               showMetrics={showMetrics}
               visibleMetrics={visibleMetrics}
+              neutralLatency={neutralLatency}
               rootLatency={rootLatency}
               searchQuery={searchQuery}
               expandedSet={expandedSet}
               onToggleExpand={onToggleExpand}
               leftWidth={leftWidth}
+              tabStopId={tabStopId}
             />
           ))}
         </Collapse>
@@ -728,11 +754,13 @@ TimelineRow.propTypes = {
   traceDuration: PropTypes.number.isRequired,
   showMetrics: PropTypes.bool,
   visibleMetrics: PropTypes.object,
+  neutralLatency: PropTypes.bool,
   rootLatency: PropTypes.number,
   searchQuery: PropTypes.string,
   expandedSet: PropTypes.instanceOf(Set).isRequired,
   onToggleExpand: PropTypes.func.isRequired,
   leftWidth: PropTypes.number.isRequired,
+  tabStopId: PropTypes.string,
 };
 
 // ---------------------------------------------------------------------------
@@ -744,7 +772,9 @@ const SpanTreeTimeline = ({
   onSelectSpan,
   showMetrics: showMetricsProp,
   visibleMetrics: visibleMetricsProp,
+  neutralLatency = false,
   onToggleMetrics: onToggleMetricsProp,
+  axisRangeMs,
 }) => {
   const [searchQuery, setSearchQuery] = useState("");
   const [showMetricsLocal, setShowMetricsLocal] = useState(true);
@@ -822,6 +852,12 @@ const SpanTreeTimeline = ({
     });
   }, []);
 
+  // SW5-32: the one row Tab lands on (roving tabindex).
+  const tabStopId = useMemo(
+    () => tabStopRowId(spans, expandedSet, searchQuery, selectedSpanId),
+    [spans, expandedSet, searchQuery, selectedSpanId],
+  );
+
   const { traceStart, traceDuration, timeLabels } = useMemo(() => {
     if (!spans?.length)
       return { traceStart: 0, traceDuration: 1, timeLabels: [] };
@@ -838,9 +874,17 @@ const SpanTreeTimeline = ({
 
     if (!starts.length || !ends.length)
       return { traceStart: 0, traceDuration: 1, timeLabels: [] };
-    const minT = Math.min(...starts);
+    const ownStart = Math.min(...starts);
     const maxT = Math.max(...ends);
-    const dur = maxT - minT || 1;
+    // Additive: a shared axis so side-by-side lanes read on one
+    // time scale (`axisRangeMs = {start?, duration}`); absent → own range.
+    const shared =
+      Number.isFinite(axisRangeMs?.duration) && axisRangeMs.duration > 0;
+    const minT =
+      shared && Number.isFinite(axisRangeMs.start)
+        ? axisRangeMs.start
+        : ownStart;
+    const dur = shared ? axisRangeMs.duration : maxT - ownStart || 1;
 
     const labels = [0, 0.25, 0.5, 0.75, 1].map((pct) => ({
       pct: pct * 100,
@@ -848,7 +892,7 @@ const SpanTreeTimeline = ({
     }));
 
     return { traceStart: minT, traceDuration: dur, timeLabels: labels };
-  }, [spans]);
+  }, [spans, axisRangeMs?.start, axisRangeMs?.duration]);
 
   if (!spans?.length) {
     return (
@@ -996,7 +1040,11 @@ const SpanTreeTimeline = ({
           </Box>
 
           {/* Rows */}
-          <Box sx={{ position: "relative", zIndex: 1 }}>
+          <Box
+            role="tree"
+            aria-label="Span timeline"
+            sx={{ position: "relative", zIndex: 1 }}
+          >
             {spans.map((entry) => (
               <TimelineRow
                 key={getSpan(entry).id}
@@ -1008,11 +1056,13 @@ const SpanTreeTimeline = ({
                 traceDuration={traceDuration}
                 showMetrics={showMetrics}
                 visibleMetrics={visibleMetrics}
+                neutralLatency={neutralLatency}
                 rootLatency={rootLatency}
                 searchQuery={searchQuery}
                 expandedSet={expandedSet}
                 onToggleExpand={handleToggleExpand}
                 leftWidth={leftWidth}
+                tabStopId={tabStopId}
               />
             ))}
           </Box>
@@ -1028,7 +1078,14 @@ SpanTreeTimeline.propTypes = {
   onSelectSpan: PropTypes.func.isRequired,
   showMetrics: PropTypes.bool,
   visibleMetrics: PropTypes.object,
+  neutralLatency: PropTypes.bool,
   onToggleMetrics: PropTypes.func,
+  // Additive, inert when absent: shared time axis in ms;
+  // `start` (epoch ms) is optional, each lane then starts at its own 0.
+  axisRangeMs: PropTypes.shape({
+    start: PropTypes.number,
+    duration: PropTypes.number,
+  }),
 };
 
 export default React.memo(SpanTreeTimeline);

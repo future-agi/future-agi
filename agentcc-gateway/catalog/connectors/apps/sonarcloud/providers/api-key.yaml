@@ -1,0 +1,48 @@
+# SonarQube Cloud's default-region hosted endpoint accepts a user token as bearer.
+# Organization can be passed in tool arguments; no extra organization header is required.
+# The MCP server is free; underlying Cloud features retain their plan entitlements.
+schema: "connector-manifest/v1#provider"
+app: sonarcloud
+id: api-key
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://api.sonarcloud.io/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: SonarQube user token
+      help: "Create a user personal access token in SonarQube Cloud under My account > Access tokens. Use a user token, not a project or organization token. This endpoint serves default-region organizations; pass organization in tool calls. Supply the token without the Bearer prefix."
+      helpUrl: https://docs.sonarsource.com/sonarqube-cloud/managing-your-account/managing-tokens
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: free
+  source: https://www.sonarsource.com/plans-and-pricing/sonarqube-cloud/
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://docs.sonarsource.com/sonarqube-mcp-server/setup/sonarqube-cloud-hosted
+    fetchedAt: 2026-11-09
+  - fact: transport.variant
+    url: https://docs.sonarsource.com/sonarqube-mcp-server/setup/sonarqube-cloud-hosted
+    fetchedAt: 2026-11-09
+  - fact: auth.kind
+    url: https://docs.sonarsource.com/sonarqube-mcp-server/setup/sonarqube-cloud-hosted
+    fetchedAt: 2026-11-09
+  - fact: auth.credentialParts
+    url: https://docs.sonarsource.com/sonarqube-mcp-server/setup/sonarqube-cloud-hosted
+    fetchedAt: 2026-11-09
+x-omega: { oss: exclude }

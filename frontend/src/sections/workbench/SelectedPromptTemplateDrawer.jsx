@@ -195,6 +195,12 @@ export const SelectedPromptTemplateDrawer = ({
     };
   }, []);
 
+  // FA-PROMPTS-02: the template's own description, or nothing; never a
+  // fixed line that belongs to another template.
+  const templateDescription = [data?.desc, data?.promptConfig?.description]
+    .find((text) => typeof text === "string" && text.trim())
+    ?.trim();
+
   const covered = useDrawerCovered(open);
   return (
     <>
@@ -242,7 +248,9 @@ export const SelectedPromptTemplateDrawer = ({
             onClick={onClose}
             disabled={isCreatingDraft}
             sx={{
-              color: "text.disabled",
+              // Readable while enabled; MUI's disabled
+              // colour still applies while the draft is being created.
+              color: "text.secondary",
               typography: "s1",
               "& .MuiButton-startIcon": {
                 marginRight: "10px",
@@ -252,7 +260,11 @@ export const SelectedPromptTemplateDrawer = ({
             Back
           </Button>
 
-          <IconButton disabled={isCreatingDraft} onClick={onClose}>
+          <IconButton
+            disabled={isCreatingDraft}
+            onClick={onClose}
+            aria-label="Close"
+          >
             <Iconify
               color={isCreatingDraft ? "text.disabled" : "text.primary"}
               icon="solar:close-linear"
@@ -277,14 +289,15 @@ export const SelectedPromptTemplateDrawer = ({
               >
                 {data?.promptConfig?.name}
               </Typography>
-              <Typography
-                typography="s2"
-                color="text.secondary"
-                fontWeight={"fontWeightRegular"}
-              >
-                Generate engaging blog posts on any topic with SEO optimization
-                and clear structure.
-              </Typography>
+              {templateDescription ? (
+                <Typography
+                  typography="s2"
+                  color="text.secondary"
+                  fontWeight={"fontWeightRegular"}
+                >
+                  {templateDescription}
+                </Typography>
+              ) : null}
             </Box>
 
             <LoadingButton

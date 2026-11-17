@@ -57,7 +57,7 @@ def test_stopping_group_eval_updates_snapshot_cells_only(
         group, {"experiment_id": experiment.id}, {}, user, [], workspace, {}
     )
     metric = experiment.user_eval_template_ids.get()
-    assert metric.dataset_id == dataset.id
+    assert metric.dataset_id == snapshot.id
     assert str(metric.source_id) == str(experiment.id)
 
     cells = []

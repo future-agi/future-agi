@@ -323,7 +323,12 @@ func TestGenericRealtimeRemainsUnsupported(t *testing.T) {
 	handler := NewRealtimeHandler(realtime.NewSessionTracker(1), registry, nil, realtimeHandlerConfig{})
 	response := httptest.NewRecorder()
 	handler.HandleRealtime(response, httptest.NewRequest("GET", "/v1/realtime?model=synthetic", nil))
-	if response.Code != 501 || !strings.Contains(response.Body.String(), "realtime_not_supported") {
+	// DEV CHANGE NOT KEPT: dev answers every generic realtime session 501
+	// realtime_not_supported and removes the relay. The line keeps the relay
+	// for a provider that implements realtime; the openai adapter does not,
+	// so this session is refused 501 with the line's "does not support
+	// realtime".
+	if response.Code != 501 || !strings.Contains(response.Body.String(), "does not support realtime") {
 		t.Fatalf("generic route=%d %s", response.Code, response.Body.String())
 	}
 }

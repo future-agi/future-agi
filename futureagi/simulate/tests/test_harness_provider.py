@@ -17,6 +17,7 @@ from simulate.models import (
     HostedHarnessExecution,
     HostedHarnessJob,
     HostedHarnessReceipt,
+    SandboxHarnessJob,
 )
 from simulate.models.run_test import RunTest
 from simulate.models.test_execution import TestExecution as SimulationTestExecution
@@ -351,12 +352,13 @@ def test_selected_run_creates_independent_scenario_trials_and_preserves_history(
         "scenario-b",
     ]
     assert detail.json()["overview"]["runs_count"] == 2
-    latest_run = environment.simulation_runs.filter(deleted=False).order_by(
-        "-created_at", "-id"
-    ).first()
-    assert (
-        detail.json()["overview"]["run"]["test_execution_id"]
-        == str(latest_run.test_execution_id)
+    latest_run = (
+        environment.simulation_runs.filter(deleted=False)
+        .order_by("-created_at", "-id")
+        .first()
+    )
+    assert detail.json()["overview"]["run"]["test_execution_id"] == str(
+        latest_run.test_execution_id
     )
     assert detail.json()["overview"]["run"]["simulation_url"].endswith(
         f"/runs/{environment.run_test_id}/{latest_run.test_execution_id}"
@@ -382,7 +384,10 @@ def test_selected_run_creates_independent_scenario_trials_and_preserves_history(
         assert failed_dispatch.status_code == 503
         child = environment.simulation_runs.get(scenario_count=2)
         assert child.state == HostedHarnessJob.State.FAILED
-        assert child.test_execution.status == SimulationTestExecution.ExecutionStatus.FAILED
+        assert (
+            child.test_execution.status
+            == SimulationTestExecution.ExecutionStatus.FAILED
+        )
 
         start.side_effect = None
         response = client.post(
@@ -402,7 +407,10 @@ def test_selected_run_creates_independent_scenario_trials_and_preserves_history(
         child.refresh_from_db()
         child.test_execution.refresh_from_db()
         assert child.state == HostedHarnessJob.State.QUEUED
-        assert child.test_execution.status == SimulationTestExecution.ExecutionStatus.PENDING
+        assert (
+            child.test_execution.status
+            == SimulationTestExecution.ExecutionStatus.PENDING
+        )
 
         duplicate = client.post(
             f"/simulate/api/harness-environments/{environment.id}/run/",
@@ -413,7 +421,10 @@ def test_selected_run_creates_independent_scenario_trials_and_preserves_history(
         )
         assert duplicate.status_code == 202
         assert duplicate.json()["job_id"] == response.json()["job_id"]
-        assert duplicate.json()["test_execution_id"] == response.json()["test_execution_id"]
+        assert (
+            duplicate.json()["test_execution_id"]
+            == response.json()["test_execution_id"]
+        )
         assert start.call_count == 2
     for payload in (
         {"scenario_ids": [], "trials": 1},
@@ -1119,6 +1130,9 @@ def test_sandbox_create_forwards_mapped_flat_payload(user):
 
     assert response.status_code == 202
     assert response.json() == expected
+    binding = SandboxHarnessJob.objects.get(job_id="job-1")
+    assert binding.organization_id == user.organization_id
+    assert binding.workspace_id is None
     forwarded = submit.call_args.args[0]
     assert forwarded["github_repository"] == "acme/agent"
     assert forwarded["connector"] == "auto"
@@ -1437,6 +1451,18 @@ def test_harness_job_adjustment_is_validated_and_forwarded(user):
         "instruction": "Add 10 more scenarios covering payment failures",
         "client_request_id": "browser-1",
     }
+
+    # A legacy/unregistered ID is not authority. Submit through the real create
+    # route so the same caller owns the job before attempting an adjustment.
+    with patch(
+        "simulate.services.harness_sandbox.HarnessSandboxClient.submit",
+        return_value={"job": {"job_id": "job-1"}},
+    ) as submit:
+        created = client.post(
+            "/simulate/api/harness-jobs/", _v1_payload(), format="json"
+        )
+    assert created.status_code == 202, created.content
+    submit.assert_called_once()
 
     with patch(
         "simulate.services.harness_sandbox.HarnessSandboxClient.adjust",

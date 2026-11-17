@@ -134,9 +134,49 @@ beforeEach(() => {
 });
 
 describe("AgentVersionsPanel", () => {
-  it("renders nothing while versioning is off", () => {
-    const { container } = render(<AgentVersionsPanel env={{ id: "env-1" }} />);
-    expect(container).toBeEmptyDOMElement();
+  it("says versioning is off for this install while it is off", () => {
+    render(<AgentVersionsPanel env={{ id: "env-1" }} />);
+    expect(
+      screen.getByText("Versioning is off for this install."),
+    ).toBeInTheDocument();
+  });
+
+  it("says versioning is being enabled above the agent versions while it is", () => {
+    render(
+      <AgentVersionsPanel
+        env={{ ...ENV, versioning: { ...ENV.versioning, state: "enabling" } }}
+      />,
+    );
+    expect(screen.getByText("Versioning is being enabled.")).toBeInTheDocument();
+  });
+
+  it("says versioning couldn't finish being enabled when this environment's backfill failed", () => {
+    render(
+      <AgentVersionsPanel
+        env={{ ...ENV, versioning: { ...ENV.versioning, state: "enabling",
+          backfill: { state: "failed", outcome_code: "interrupted", updated_at: null, progress: null } } }}
+      />,
+    );
+    expect(screen.getByText("Versioning couldn't finish being enabled for this environment. The team that runs Future AGI here can run it again.")).toBeInTheDocument();
+    expect(screen.queryByText("Versioning is being enabled.")).toBeNull();
+  });
+
+  it("sends no versions read while versioning is off", async () => {
+    const { useEnvironmentVersions } = await import(
+      "src/api/simulate-environments/versions"
+    );
+    useEnvironmentVersions.mockClear();
+    render(
+      <AgentVersionsPanel
+        env={{ id: "env-1", versioning: { enabled: false, state: "off" } }}
+      />,
+    );
+    expect(
+      screen.getByText("Versioning is off for this install."),
+    ).toBeInTheDocument();
+    expect(
+      useEnvironmentVersions.mock.calls.every(([, options]) => !options?.enabled),
+    ).toBe(true);
   });
 
   it("says when the versions could not be loaded or versioning was switched off", () => {
@@ -152,7 +192,7 @@ describe("AgentVersionsPanel", () => {
     state.loadError = { statusCode: 404, error: "versioning_disabled" };
     rerender(<AgentVersionsPanel env={ENV} />);
     expect(
-      screen.getByText("Versioning is switched off for this environment."),
+      screen.getByText("Versioning is off for this install."),
     ).toBeInTheDocument();
   });
 

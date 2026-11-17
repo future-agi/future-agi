@@ -81,7 +81,7 @@ const PromptRightSidebar = () => {
       enqueueSnackbar("Prompt created successfully.", {
         variant: "success",
       });
-      navigate(`/dashboard/prompt/add/${data?.data?.result?.rootTemplate}`, {
+      navigate(`/dashboard/prompt/add/${data?.data?.result?.root_template}`, {
         state: { title: "Untitled" },
       });
     },

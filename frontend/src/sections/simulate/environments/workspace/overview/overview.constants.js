@@ -18,8 +18,9 @@ export const OVERVIEW_COPY = {
   toolsConnected: (n) => `${n} actions your agent declared, with the arguments it really takes`,
   toolsDisconnected: "Read from your agent once it connects",
   noToolsTitle: "No tools yet",
-  noToolsBody: "Tool definitions come from the agent.",
-  connectAgent: "Connect agent",
+  noToolsBody:
+    "Tool definitions come from the agent. Building from an agent makes a new environment; this one stays as it is.",
+  buildFromAgent: "Build from an agent",
   noArguments: "no arguments",
   hardRulesTitle: "Hard rules",
   hardRulesSubtitle: "Told to the agent, graded afterwards. Hover a badge for where it was found",
@@ -187,9 +188,9 @@ export const CHECKLIST_COPY = {
     body: (name) => `${name} is set up and ready for configuration.`,
   },
   agent: {
-    title: "Connect an agent",
-    body: "Wire your agent so it can act against the environment. This flow lets you connect one after the fact.",
-    cta: "Connect agent",
+    title: "Build from your agent",
+    body: "Builds a new environment from your agent on the Build tab; this one stays as it is.",
+    cta: "Build from an agent",
   },
   scenarios: {
     title: "Add scenarios",

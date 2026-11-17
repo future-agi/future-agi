@@ -84,6 +84,12 @@ class FunctionEvaluator(BaseEvaluator):
         else:
             return self._function_arguments
 
+    def _call_function(self, operator, inputs: dict):
+        """Call the function with the run's inputs and this evaluator's own
+        arguments. The inputs come as one dict, so no input name can clash
+        with a parameter of this method."""
+        return operator(**inputs, **self._function_arguments)
+
     def _evaluate(self, **kwargs) -> EvalResult:
         """
         Run the Function evaluator.
@@ -98,7 +104,7 @@ class FunctionEvaluator(BaseEvaluator):
             operator = operations.get(self._function_name)
             if (operator is None) or (not callable(operator)):
                 raise ValueError(f"Unsupported function: {self._function_name}")
-            eval_response = operator(**kwargs, **self._function_arguments)
+            eval_response = self._call_function(operator, kwargs)
             result_value = eval_response["result"]
             if result_value is None:
                 reason = eval_response.get("reason", "Unknown error")

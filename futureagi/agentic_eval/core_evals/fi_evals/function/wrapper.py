@@ -534,12 +534,20 @@ class OneLine(FunctionEvaluator):
         )
 
 class CustomCodeEval(FunctionEvaluator):
-    def __init__(self, code: str, display_name: str | None = None):
+    def __init__(
+        self,
+        code: str,
+        display_name: str | None = None,
+        stored_language: str | None = None,
+    ):
         """
         Initialize the Custom code evaluator.
 
         Args:
             code (str): The custom code to be executed.
+            stored_language (str, optional): The language the eval was saved
+                with. The code runs in the language it is written in; this
+                decides only code that shows neither language.
         """
         super().__init__(
             function_name=FunctionEvalTypeId.CUSTOM_CODE_EVAL.value,
@@ -547,6 +555,17 @@ class CustomCodeEval(FunctionEvaluator):
                 "code": code,
             },
             display_name=display_name,
+        )
+        self._stored_language = stored_language
+
+    def _call_function(self, operator, inputs: dict):
+        # The code and the stored language go in by position (custom_code_eval
+        # takes them, and its language, positional-only), so every input
+        # reaches the eval's code under its own name, code and language
+        # included. The language is detected from the code, with the stored
+        # one only for code that shows neither.
+        return operator(
+            self._function_arguments["code"], None, self._stored_language, **inputs
         )
 
 class JsonSchema(FunctionEvaluator):

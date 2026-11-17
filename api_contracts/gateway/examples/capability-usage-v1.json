@@ -1,0 +1,20 @@
+{
+  "usage": {
+    "provider": "exa",
+    "units": [
+      {
+        "sku": "exa.search.standard",
+        "count": 1
+      }
+    ],
+    "upstream_cost_usd": 0.005,
+    "charged_usd": 0.00525,
+    "billing_mode": "managed",
+    "cost_source": "rate_card",
+    "estimated": false
+  },
+  "headers": {
+    "x-agentcc-capability-provider": "exa",
+    "x-agentcc-billing-mode": "managed"
+  }
+}

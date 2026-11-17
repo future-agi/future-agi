@@ -314,7 +314,7 @@ def test_safe_fetch_strips_authorization_on_cross_origin_redirect(monkeypatch):
         lambda host, port: [(None, None, None, None, ("8.8.8.8", 0))],
     )
     redirect_response = _fake_urllib3_response(
-        302, {"Location": "http://other.example.com/final"}
+        302, {"Location": "https://other.example.com/final"}
     )
     final_response = _fake_urllib3_response(200, {"Content-Type": "text/plain"})
     captured_headers = []
@@ -323,10 +323,12 @@ def test_safe_fetch_strips_authorization_on_cross_origin_redirect(monkeypatch):
         captured_headers.append(dict(headers))
         return redirect_response if len(captured_headers) == 1 else final_response
 
-    with patch("tfc.utils.ssrf_guard.urllib3.HTTPConnectionPool") as pool_cls:
+    # HTTPS origin: credentials are never sent over a cleartext hop at all
+    # (tfc/utils/tests/test_ssrf_guard_https.py covers that).
+    with patch("tfc.utils.ssrf_guard.urllib3.HTTPSConnectionPool") as pool_cls:
         pool_cls.return_value.request.side_effect = fake_request
         safe_fetch(
-            "http://origin.example.com/x",
+            "https://origin.example.com/x",
             headers={"Authorization": "Bearer secret", "Cookie": "session=abc"},
         )
     assert captured_headers[0].get("Authorization") == "Bearer secret"

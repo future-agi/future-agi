@@ -1,0 +1,49 @@
+# Meta's ads MCP server with an access token as the bearer
+# ("Authorization: Bearer <token>"): a user access token, or a system user
+# access token with the Employee role (Meta's page says Admin-role system
+# user tokens cannot reach the server). The token needs ads_mcp_management
+# and ads_read or ads_management. The server also signs in with Facebook
+# Login for Business through the customer's own Meta app; Meta's page does
+# not name that sign-in's endpoints, so it is not in this record yet.
+schema: "connector-manifest/v1#provider"
+app: meta-ads
+id: access-token
+version: 1.1.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.facebook.com/ads
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: Access token
+      help: "A Meta user access token, or an Employee-role system user token (Admin-role ones are refused), with ads_mcp_management and ads_read or ads_management."
+      helpUrl: https://developers.facebook.com/documentation/ads-commerce/ads-ai-connectors/ads-mcp-server/ads-mcp-server-get-started
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://developers.facebook.com/documentation/ads-commerce/ads-ai-connectors/ads-mcp-server/ads-mcp-server-get-started
+    fetchedAt: 2026-11-12
+  - fact: transport.variant
+    url: https://developers.facebook.com/documentation/ads-commerce/ads-ai-connectors/ads-mcp-server/ads-mcp-server-get-started
+    fetchedAt: 2026-11-12
+  - fact: auth.kind
+    url: https://developers.facebook.com/documentation/ads-commerce/ads-ai-connectors/ads-mcp-server/ads-mcp-server-get-started
+    fetchedAt: 2026-11-12
+  - fact: auth.credentialParts
+    url: https://developers.facebook.com/documentation/ads-commerce/ads-ai-connectors/ads-mcp-server/ads-mcp-server-get-started
+    fetchedAt: 2026-11-12

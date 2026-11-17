@@ -135,7 +135,7 @@ export default function SavePromptTemplate({ open, onClose, data }) {
           </Typography>
           {data?.created_by && (
             <Typography
-              color={"text.disabled"}
+              color={"text.tertiary"}
               typography={"s2"}
               fontWeight={"fontWeightRegular"}
             >

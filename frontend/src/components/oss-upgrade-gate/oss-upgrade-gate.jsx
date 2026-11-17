@@ -1,19 +1,25 @@
 import React from "react";
 import PropTypes from "prop-types";
+import Box from "@mui/material/Box";
+import Button from "@mui/material/Button";
 import FeatureGateOverlay from "src/components/feature-gate/FeatureGateOverlay";
 import { useRouter } from "src/routes/hooks";
 import { paths } from "src/routes/paths";
 import { logger } from "src/utils/logger";
 import {
   CONTACT_URL,
+  DEFAULT_EYEBROW,
+  DEFAULT_REASON,
   DOCS_URL,
   DOCS_CTA,
-  UPGRADE_CTA,
   FEATURES,
   REASONS,
   UNLOCK,
 } from "./constants";
 
+// A card for a feature this deployment cannot run: what the feature does and
+// what it needs, over the team's blurred preview where the feature has one,
+// and on a neutral surface where it has none.
 export default function OSSUpgradeGate({
   feature,
   image,
@@ -26,29 +32,75 @@ export default function OSSUpgradeGate({
     logger.warn(`OSSUpgradeGate: unknown feature "${feature}"`);
     return null;
   }
-  const reason = REASONS[reasonCode];
-  const unlock = config.name ? UNLOCK[reasonCode] : undefined;
-  // The card keeps three steps: how to unlock, then what the feature does
-  // (or that past work is kept, for someone who had it).
-  const steps = unlock
-    ? [
-        ...unlock.steps(config.name),
-        ...(unlock.kept ? [config.kept] : config.steps.slice(1)),
-      ].slice(0, 3)
-    : config.steps;
-  const toLicense = !unlock && reason?.toLicense;
-  return (
+  const reason = REASONS[reasonCode] || DEFAULT_REASON;
+  const guided =
+    Array.isArray(config.steps) &&
+    (!reasonCode ||
+      reasonCode === "LICENSE_MISSING" ||
+      Object.hasOwn(UNLOCK, reasonCode));
+  const unlock = guided ? UNLOCK[reasonCode] : undefined;
+  const steps = !guided
+    ? []
+    : unlock
+      ? [
+          ...unlock.steps(config.name),
+          ...(unlock.kept ? [config.kept] : config.steps.slice(1)),
+        ].slice(0, 3)
+      : config.steps;
+  const toLicense = !guided && reason.toLicense;
+  const preview = image || config.image;
+  const gate = (
     <FeatureGateOverlay
-      image={image || config.image}
+      image={preview}
       imageDark={imageDark || config.imageDark}
-      eyebrow={unlock && "eyebrow" in unlock ? unlock.eyebrow : config.eyebrow}
-      title={unlock ? unlock.title(config.name) : config.title}
-      description={config.description}
-      steps={steps}
       blurFrom={config.blurFrom}
       blur={config.blur}
-      footnote={reason?.note || config.footnote}
-      primaryLabel={unlock?.label || reason?.label || UPGRADE_CTA}
+      plain={!preview}
+      eyebrow={
+        unlock && "eyebrow" in unlock
+          ? unlock.eyebrow
+          : reason.eyebrow || config.eyebrow || DEFAULT_EYEBROW
+      }
+      title={
+        guided
+          ? unlock
+            ? unlock.title(config.name)
+            : config.title
+          : `${config.name} is not available on this deployment`
+      }
+      description={
+        <>
+          {config.description}
+          <Box
+            component="span"
+            data-testid="oss-gate-needs"
+            sx={{
+              display: "block",
+              mt: 1.5,
+              color: "text.primary",
+              fontWeight: "fontWeightMedium",
+            }}
+          >
+            {reason.needs}
+          </Box>
+          {guided && reason.toLicense && (
+            <Box component="span" sx={{ display: "block", mt: 1.5 }}>
+              <Button
+                variant="outlined"
+                size="small"
+                onClick={() => router.push(paths.dashboard.settings.eeLicenses)}
+              >
+                Manage license
+              </Button>
+            </Box>
+          )}
+        </>
+      }
+      steps={steps}
+      footnote={reason.note || config.footnote}
+      primaryLabel={
+        unlock?.label || (guided ? "Upgrade to EE license key" : reason.label)
+      }
       primaryHref={toLicense ? undefined : CONTACT_URL}
       onPrimary={
         toLicense
@@ -58,6 +110,14 @@ export default function OSSUpgradeGate({
       secondaryLabel={DOCS_CTA}
       secondaryHref={config.docsUrl || DOCS_URL}
     />
+  );
+  if (!config.observeTab) return gate;
+  // ObservePage pads its header and tab bar 16 px each side but not the tab
+  // body, where each tab pads itself. Without this inset the panel ran from
+  // the sidebar border to the viewport edge under a toolbar inset 16 px, and
+  // its bottom corners sat on the window edge.
+  return (
+    <Box sx={{ height: 1, boxSizing: "border-box", px: 2, pb: 2 }}>{gate}</Box>
   );
 }
 

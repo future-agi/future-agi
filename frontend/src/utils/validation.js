@@ -25,6 +25,10 @@ export const getNumberValidation = (
   const zeroAndPositive =
     options?.zeroAndPositive !== undefined ? options?.zeroAndPositive : false;
   const positive = options?.positive !== undefined ? options?.positive : false;
+  // A form may refuse a sign in its own words; every other form keeps these.
+  const positiveMessage = options?.positiveMessage ?? "Value must be positive";
+  const zeroAndPositiveMessage =
+    options?.zeroAndPositiveMessage ?? "Value must be positive or zero";
 
   let schema = z
     .number({
@@ -46,13 +50,13 @@ export const getNumberValidation = (
 
   if (positive) {
     schema = schema.refine((num) => num > 0, {
-      message: "Value must be positive",
+      message: positiveMessage,
     });
   }
 
   if (zeroAndPositive) {
     schema = schema.refine((num) => num >= 0, {
-      message: "Value must be positive or zero",
+      message: zeroAndPositiveMessage,
     });
   }
 

@@ -21,7 +21,9 @@ def project_workspace_scope_q(organization_id, workspace) -> Q:
     workspace narrows nothing — the organization filter is the caller's.
     """
     if not workspace:
-        return Q()
+        from tfc.utils.workspace_scope import empty_workspace_filter
+
+        return empty_workspace_filter()
     if getattr(workspace, "is_default", False):
         return (
             Q(project__workspace=workspace)

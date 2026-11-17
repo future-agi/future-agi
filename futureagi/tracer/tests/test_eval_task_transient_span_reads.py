@@ -345,7 +345,9 @@ def test_run_entry_does_not_terminalize_transient_span_read(monkeypatch):
         run_entry_module,
         "EvalTask",
         SimpleNamespace(
-            objects=SimpleNamespace(select_related=lambda *_args: task_query)
+            objects=SimpleNamespace(
+                using=lambda _alias: SimpleNamespace(select_related=lambda *_args: task_query)
+            )
         ),
     )
     monkeypatch.setattr(
@@ -401,7 +403,9 @@ def test_run_entry_does_not_terminalize_transient_task_project_lookup(monkeypatc
         run_entry_module,
         "EvalTask",
         SimpleNamespace(
-            objects=SimpleNamespace(select_related=lambda *_args: task_query)
+            objects=SimpleNamespace(
+                using=lambda _alias: SimpleNamespace(select_related=lambda *_args: task_query)
+            )
         ),
     )
     terminal_writes = []

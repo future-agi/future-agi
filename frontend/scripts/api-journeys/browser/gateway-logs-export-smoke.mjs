@@ -271,7 +271,7 @@ async function main() {
       previousPath: csvPath,
     });
     const ndjsonText = await fs.readFile(jsonPath, "utf8");
-    assertDownloadedNdjson(ndjsonText, { targetRequestId, otherRequestId });
+    assertDownloadedJson(ndjsonText, { targetRequestId, otherRequestId });
 
     await page.screenshot({ path: SCREENSHOT_PATH, fullPage: true });
     evidence.screenshots = [
@@ -283,7 +283,7 @@ async function main() {
       csv: csvPath,
       json: jsonPath,
       csv_bytes: Buffer.byteLength(csvText),
-      json_lines: ndjsonText.trim().split(/\n/).filter(Boolean).length,
+      json_lines: JSON.parse(ndjsonText).length,
     };
 
     assert(apiFailures.length === 0, `API failures: ${apiFailures.join("; ")}`);
@@ -413,14 +413,14 @@ async function preflightRequestLogApis(
     search: targetRequestId,
     export_format: "json",
   });
-  assertDownloadedNdjson(ndjsonText, { targetRequestId, otherRequestId });
+  assertDownloadedJson(ndjsonText, { targetRequestId, otherRequestId });
 
   return {
     list_count: listRows.length,
     search_count: searchRows.length,
     first_session: sessionRows[0]?.session_id,
     csv_bytes: Buffer.byteLength(csvText),
-    ndjson_rows: ndjsonText.trim().split(/\n/).filter(Boolean).length,
+    ndjson_rows: JSON.parse(ndjsonText).length,
   };
 }
 
@@ -756,12 +756,17 @@ function assertDownloadedCsv(text, { targetRequestId, otherRequestId }) {
   );
 }
 
-function assertDownloadedNdjson(text, { targetRequestId, otherRequestId }) {
-  const lines = text.trim().split(/\n/).filter(Boolean);
-  assert(lines.length === 1, `Expected one NDJSON row, saw ${lines.length}.`);
-  const row = JSON.parse(lines[0]);
-  assert(row.request_id === targetRequestId, "NDJSON target request mismatch.");
-  assert(!text.includes(otherRequestId), "NDJSON included non-searched row.");
+function assertDownloadedJson(text, { targetRequestId, otherRequestId }) {
+  const rows = JSON.parse(text);
+  assert(
+    Array.isArray(rows) && rows.length === 1,
+    "Expected one JSON request log row.",
+  );
+  assert(
+    rows[0].request_id === targetRequestId,
+    "JSON target request mismatch.",
+  );
+  assert(!text.includes(otherRequestId), "JSON included non-searched row.");
 }
 
 async function allowDownloads(page, downloadDir) {

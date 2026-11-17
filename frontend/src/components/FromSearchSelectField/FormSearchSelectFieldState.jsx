@@ -231,10 +231,12 @@ const FormSearchSelectFieldState = React.forwardRef(
           InputLabelProps={{
             ...rest.InputLabelProps,
             shrink: true,
+            // The theme sets the label above the field, outside the border, so
+            // it needs no background. A painted one showed as a dark bar in
+            // dialogs and drawers, whose surface is not --bg-paper.
             style: {
               paddingLeft: 1,
               paddingRight: 2,
-              background: "var(--bg-paper)",
             },
           }}
           InputProps={{

@@ -19,6 +19,11 @@ import {
   PARALLELISM_COPY,
   degradeReasonCopy,
 } from "../../parallelism.constants";
+import {
+  VERSIONING_STATE,
+  versioningState,
+} from "src/api/simulate-environments/versions";
+import { VERSIONING_STATE_COPY } from "../workspace.constants";
 import SideDrawer from "../../components/SideDrawer";
 import AgentVersionsPanel from "../agents/AgentVersionsPanel";
 import { GroupHeading, Fact } from "./OverviewPrimitives";
@@ -64,10 +69,18 @@ export default function OverviewPanel({
   counts,
   latestRun,
   backedWorld,
+  onStartRun,
+  canRun = false,
+  runBlockedReason,
 }) {
   const [agentDrawerOpen, setAgentDrawerOpen] = useState(false);
-  // Agent versions are managed on real data, so only while versioning is on.
-  const canManageVersions = !locked && Boolean(env.versioning?.enabled);
+  // Agent versions are managed on real data, so not while versioning is off:
+  // then the action stays, disabled, with the reason. A locked template has no
+  // agent versions to manage, so it offers none.
+  const versioningOff = versioningState(env) === VERSIONING_STATE.OFF;
+  const canManageVersions = !locked && !versioningOff;
+  const manageBlockedReason =
+    !locked && versioningOff ? VERSIONING_STATE_COPY.offAction : undefined;
   const surface = getSurface(env.surface);
   const contract = contractFor(env);
   // The real connector for a backed env (envState.agent.typeId = the job poll's
@@ -191,6 +204,7 @@ export default function OverviewPanel({
         onManageVersions={
           canManageVersions ? () => setAgentDrawerOpen(true) : undefined
         }
+        manageBlockedReason={manageBlockedReason}
       />
 
       {/* State-of-the-env summary tiles + latest run — the "how's this env doing
@@ -208,7 +222,15 @@ export default function OverviewPanel({
           scratch env arrives carrying a derived world, so the same checklist
           would render every step pre-complete — skip it there. */}
       {!agentConnected && !hasDerivedWorld && (
-        <NextStepsChecklist env={env} envState={envState} onGo={onGo} scenarioCount={counts?.scenarios} />
+        <NextStepsChecklist
+          env={env}
+          envState={envState}
+          onGo={onGo}
+          scenarioCount={counts?.scenarios}
+          onStartRun={onStartRun}
+          canRun={canRun}
+          runBlockedReason={runBlockedReason}
+        />
       )}
 
       {/* CapabilityGraph moved to the Contract tab — that's where the shape of
@@ -334,4 +356,8 @@ OverviewPanel.propTypes = {
     amendments: PropTypes.array,
     dependencies: PropTypes.array,
   }),
+  // The workspace's Run, for the checklist's Run step (same as the header's).
+  onStartRun: PropTypes.func,
+  canRun: PropTypes.bool,
+  runBlockedReason: PropTypes.string,
 };

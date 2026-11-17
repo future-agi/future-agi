@@ -10,6 +10,7 @@ import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import SvgColor from "src/components/svg-color";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import { DataTable, DataTablePagination } from "src/components/data-table";
+import OverflowCellText from "src/components/data-table/OverflowCellText";
 import { useDebounce } from "src/hooks/use-debounce";
 import axios, { endpoints } from "src/utils/axios";
 import { useAgentPlaygroundStoreShallow } from "../store";
@@ -21,6 +22,12 @@ import {
 } from "../../../api/agent-playground/agent-playground";
 import ListToolbar from "src/components/list-toolbar";
 import PageHeader from "src/components/page-header";
+
+import { isPrototypeMode } from "src/utils/prototype";
+
+// L7c merge (walk sv2-run-cd d02): Create Agent posts an unmocked
+// /agent-playground/graphs/ and opens a builder with no version, so the
+// prototype build offers no Create Agent (the seeded Support Agent stays).
 
 const PAGE_SIZE_DEFAULT = 25;
 
@@ -53,6 +60,7 @@ export default function AgentListView({ embedded = false }) {
   const [pageSize, setPageSize] = useState(PAGE_SIZE_DEFAULT);
   const [rowSelection, setRowSelection] = useState({});
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleteTargets, setDeleteTargets] = useState([]);
 
   const debouncedSearch = useDebounce(searchQuery.trim(), 500);
 
@@ -78,11 +86,7 @@ export default function AgentListView({ embedded = false }) {
   const total = data?.metadata?.total_count ?? 0;
 
   const selectedItems = useMemo(
-    () =>
-      Object.keys(rowSelection)
-        .filter((k) => rowSelection[k])
-        .map((k) => items[parseInt(k, 10)])
-        .filter(Boolean),
+    () => items.filter((item) => rowSelection[item.id]),
     [rowSelection, items],
   );
 
@@ -99,7 +103,8 @@ export default function AgentListView({ embedded = false }) {
   });
 
   const handleDeleteConfirm = () => {
-    const ids = selectedItems.map((item) => item.id);
+    const ids = deleteTargets.map((item) => item.id);
+    if (!ids.length) return;
     deleteMutation.mutate({ ids });
   };
 
@@ -131,19 +136,24 @@ export default function AgentListView({ embedded = false }) {
         accessorKey: "name",
         header: "Agent Name",
         meta: { flex: 2 },
-        minSize: 280,
+        // Every column's minimum, the checkbox's 50 included (764 px), fits
+        // the 776 px table a 1024 px window leaves (1024 - 200 menu -
+        // 2 x 24 padding), even after the grid takes its 8 px bar out of
+        // that width when rows scroll, so nothing hides past the right edge.
+        // Wider windows give the room to the name and Created by: about
+        // 120 px at 1024, 319 at 1280, 425 at 1440. A longer name ends in an
+        // ellipsis and shows whole on hover or when its cell takes focus.
+        minSize: 116,
         enableSorting: false,
         cell: ({ getValue }) => (
-          <Typography variant="body2" noWrap sx={{ fontWeight: 500 }}>
-            {getValue()}
-          </Typography>
+          <OverflowCellText text={getValue()} sx={{ fontWeight: 500 }} />
         ),
       },
       {
         id: "noOfNodes",
         accessorKey: "noOfNodes",
         header: "No. of nodes",
-        size: 120,
+        size: 90,
         enableSorting: false,
         cell: ({ getValue }) => (
           <Typography variant="body2" sx={{ fontSize: 12 }}>
@@ -156,6 +166,8 @@ export default function AgentListView({ embedded = false }) {
         accessorKey: "createdBy",
         header: "Created by",
         meta: { flex: 1 },
+        // Room for the whole header; at 72 px it read "Created...".
+        minSize: 100,
         enableSorting: false,
         cell: ({ getValue }) => (
           <Typography variant="body2" noWrap sx={{ fontSize: 12 }}>
@@ -167,7 +179,8 @@ export default function AgentListView({ embedded = false }) {
         id: "collaborators",
         accessorKey: "collaborators",
         header: "Collaborators",
-        size: 150,
+        // Two avatars and "+N" (or three) fit, and the whole header.
+        size: 100,
         enableSorting: false,
         cell: ({ getValue }) => {
           const collabs = getValue();
@@ -184,6 +197,7 @@ export default function AgentListView({ embedded = false }) {
           }
           return (
             <AvatarGroup
+              max={3}
               sx={{
                 justifyContent: "flex-start",
                 "& .MuiAvatar-root": {
@@ -208,7 +222,10 @@ export default function AgentListView({ embedded = false }) {
         id: "created",
         accessorKey: "created",
         header: "Created at",
-        size: 180,
+        // Every "dd-MM-yyyy, h:mm a" value whole at 12 px/400 Inter: the
+        // widest from 2026 to 2030, "04-04-2030, 10:44 AM", is 132.3 px,
+        // plus the cell's 2 x 10 px padding and 1 px for rounding.
+        size: 154,
         enableSorting: false,
         cell: ({ getValue }) => {
           const val = getValue();
@@ -219,9 +236,15 @@ export default function AgentListView({ embedded = false }) {
               </Typography>
             );
           try {
+            const at = format(new Date(val), "dd-MM-yyyy, h:mm a");
             return (
-              <Typography variant="body2" sx={{ fontSize: 12 }}>
-                {format(new Date(val), "dd-MM-yyyy, h:mm a")}
+              <Typography
+                variant="body2"
+                noWrap
+                title={at}
+                sx={{ fontSize: 12 }}
+              >
+                {at}
               </Typography>
             );
           } catch {
@@ -237,7 +260,8 @@ export default function AgentListView({ embedded = false }) {
         id: "updated",
         accessorKey: "updated",
         header: "Updated at",
-        size: 180,
+        // As Created at.
+        size: 154,
         enableSorting: false,
         cell: ({ getValue }) => {
           const val = getValue();
@@ -248,9 +272,15 @@ export default function AgentListView({ embedded = false }) {
               </Typography>
             );
           try {
+            const at = format(new Date(val), "dd-MM-yyyy, h:mm a");
             return (
-              <Typography variant="body2" sx={{ fontSize: 12 }}>
-                {format(new Date(val), "dd-MM-yyyy, h:mm a")}
+              <Typography
+                variant="body2"
+                noWrap
+                title={at}
+                sx={{ fontSize: 12 }}
+              >
+                {at}
               </Typography>
             );
           } catch {
@@ -325,7 +355,10 @@ export default function AgentListView({ embedded = false }) {
               {
                 label: "Delete",
                 icon: "solar:trash-bin-trash-linear",
-                onClick: () => setDeleteDialogOpen(true),
+                onClick: () => {
+                  setDeleteTargets(selectedItems.map((item) => ({ ...item })));
+                  setDeleteDialogOpen(true);
+                },
                 disabled: !canDeleteAgent,
                 tooltip: canDeleteAgent
                   ? undefined
@@ -347,29 +380,31 @@ export default function AgentListView({ embedded = false }) {
             >
               View Docs
             </Button>
-            <CustomTooltip
-              show={!canCreateAgent}
-              type=""
-              size="small"
-              title="You don't have permission to create agents."
-              arrow
-            >
-              <span>
-                <LoadingButton
-                  variant="contained"
-                  color="primary"
-                  size="small"
-                  loading={isCreatingAgent}
-                  onClick={() => createAgent()}
-                  disabled={!canCreateAgent}
-                  startIcon={
-                    <SvgColor src="/assets/icons/ic_add.svg" width={20} />
-                  }
-                >
-                  Create Agent
-                </LoadingButton>
-              </span>
-            </CustomTooltip>
+            {isPrototypeMode() ? null : (
+              <CustomTooltip
+                show={!canCreateAgent}
+                type=""
+                size="small"
+                title="You don't have permission to create agents."
+                arrow
+              >
+                <span>
+                  <LoadingButton
+                    variant="contained"
+                    color="primary"
+                    size="small"
+                    loading={isCreatingAgent}
+                    onClick={() => createAgent()}
+                    disabled={!canCreateAgent}
+                    startIcon={
+                      <SvgColor src="/assets/icons/ic_add.svg" width={20} />
+                    }
+                  >
+                    Create Agent
+                  </LoadingButton>
+                </span>
+              </CustomTooltip>
+            )}
           </Box>
         )}
       </ListToolbar>
@@ -381,10 +416,12 @@ export default function AgentListView({ embedded = false }) {
         isLoading={isLoading}
         rowCount={total}
         rowSelection={rowSelection}
+        selectionScope={[page, pageSize, searchQuery, debouncedSearch]}
         onRowSelectionChange={setRowSelection}
         onRowClick={handleRowClick}
         getRowId={(row) => row.id}
         enableSelection
+        showScrollbar
         emptyMessage="No agents found"
       />
 
@@ -406,7 +443,7 @@ export default function AgentListView({ embedded = false }) {
           if (!deleteMutation.isPending) setDeleteDialogOpen(false);
         }}
         onConfirm={handleDeleteConfirm}
-        agentCount={selectedCount}
+        agentCount={deleteTargets.length}
         isLoading={deleteMutation.isPending}
       />
     </Box>

@@ -1,0 +1,17 @@
+[
+  {
+    "name": "a_search_issues",
+    "description": "Org A's issue search (65_m9_tenancy.sh).",
+    "inputSchema": {
+      "type": "object",
+      "properties": { "q": { "type": "string" } }
+    },
+    "annotations": { "readOnlyHint": true },
+    "result": { "content": [{ "type": "text", "text": "org-a mock" }] }
+  },
+  {
+    "name": "a_open_issue",
+    "description": "Org A's issue opener.",
+    "inputSchema": { "type": "object" }
+  }
+]

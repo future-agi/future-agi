@@ -128,7 +128,7 @@ func TestSpeechGuardrailsExactWebhookVerdict(t *testing.T) {
 				}
 			}))
 			defer dependency.Close()
-			check := webhook.New("speech-test", map[string]interface{}{"url": dependency.URL})
+			check := webhook.NewConfigFileRule("speech-test", map[string]interface{}{"url": dependency.URL})
 			f := newSpeechFixture(t, "cartesia", "pre", "static", "block", nil, speechRule(check, 0))
 			client, _, err := f.dial(t, "/cartesia/tts/websocket", nil)
 			if err != nil {

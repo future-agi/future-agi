@@ -1,15 +1,9 @@
 import { Box, Stack, Typography } from "@mui/material";
 import PropTypes from "prop-types";
-import React, { useMemo } from "react";
-import {
-  RocketMascot,
-  LOADING_MESSAGES,
-  pickRandom,
-} from "../../components/rocket-mascot";
+import React from "react";
+import { RocketMascot } from "../../components/rocket-mascot";
 
 export default function LoadingTemplate({ sx }) {
-  const message = useMemo(() => pickRandom(LOADING_MESSAGES), []);
-
   return (
     <Box
       sx={{
@@ -32,18 +26,7 @@ export default function LoadingTemplate({ sx }) {
           fontWeight="fontWeightMedium"
           fontFamily="IBM Plex Sans"
         >
-          Just a moment
-        </Typography>
-        <Typography
-          typography="s2"
-          color="text.secondary"
-          fontWeight="fontWeightRegular"
-          fontFamily="IBM Plex Sans"
-          fontStyle="italic"
-          textAlign="center"
-          maxWidth={360}
-        >
-          {message}
+          Loading{"\u2026"}
         </Typography>
       </Stack>
     </Box>

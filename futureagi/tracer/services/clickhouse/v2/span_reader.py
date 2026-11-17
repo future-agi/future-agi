@@ -10,7 +10,7 @@ Drop-in for the existing Django ORM access in tracer/utils/eval.py:
     CH path (target post-cutover):
         reader = CHSpanReader(host=..., port=...)
         observation_span = reader.get(span_id)
-        spans = reader.list_by_trace(trace_id)
+        spans = reader.list_by_trace(trace_id, project_id=authorized_project_id)
 
 The shapes match the Django model fields the eval runner actually touches
 (see grep -n "observation_span[.]" tracer/utils/eval.py for the surface).
@@ -38,6 +38,7 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from tracer.constants.provider_icons import provider_icon_path
 from tracer.services.clickhouse.v2.id_remap_sql import (
     remap_left_join,
     resolved_id_expr,
@@ -46,6 +47,19 @@ from tracer.services.clickhouse.v2.query_settings import (
     application_read_settings,
     current_settings,
 )
+
+
+@dataclass(frozen=True)
+class SessionExportRoot:
+    """Only identities and a byte count cross the wire during export preflight."""
+
+    id: str
+    project_id: str
+    trace_id: str
+    trace_session_id: str
+    end_user_id: str | None
+    start_time: datetime
+    payload_bytes: int
 
 
 # Field list that the eval runner actually reads off of an ObservationSpan.
@@ -437,6 +451,8 @@ _EXPORT_COLUMN_SQL: dict[str, str] = {
     "attributes_extra": "attributes_extra",
     "eval_status": "eval_status",
     "semconv_source": "semconv_source",
+    # shared-edit(F54): a row's session id, read only when a caller asks for it.
+    "trace_session_id": "toString(trace_session_id)",
 }
 
 _EXPORT_FIELD_COLUMNS: dict[str, set[str]] = {
@@ -482,11 +498,21 @@ _EXPORT_FIELD_COLUMNS: dict[str, set[str]] = {
 }
 
 
+# shared-edit(F54): export columns only the row-source feature reads. While its
+# server switch is OFF the export selects exactly the columns it did before.
+_ROW_SOURCE_EXPORT_COLUMNS = frozenset({"trace_session_id"})
+
+
 def _export_columns_for_fields(field_names: set[str]) -> set[str]:
+    from model_hub.services.row_source_gate import row_source_enabled
+
     columns: set[str] = set()
     for field_name in field_names:
         columns.update(_EXPORT_FIELD_COLUMNS.get(field_name, {field_name}))
-    return {column for column in columns if column in _EXPORT_COLUMN_SQL}
+    exported = {column for column in columns if column in _EXPORT_COLUMN_SQL}
+    if not row_source_enabled():
+        exported -= _ROW_SOURCE_EXPORT_COLUMNS
+    return exported
 
 
 # CH returns the toString() forms with literal 'NULL' for missing UUIDs in some
@@ -692,7 +718,8 @@ class CHSpanReader:
         project_id: str,
         since: datetime | None = None,
         until: datetime | None = None,
-    ) -> list[CHSpan]:
+        export_limits: tuple[int, int, bool] | None = None,
+    ) -> list[CHSpan] | list[SessionExportRoot]:
         """Lean root spans whose ``column`` resolves through ``remap_table`` to
         the survivor of an id in ``ids``, ordered by that id, then oldest first.
         The ids sort as text: the FINAL statements this replaced sorted them
@@ -749,23 +776,43 @@ class CHSpanReader:
             include_heavy=False,
             latest_where=" AND ".join(exact),
         )
-        out: list[CHSpan] = []
+        out = []
+        payload_bytes = 0
         for start in range(0, len(raw_ids), _REMAP_ID_BATCH):
             batch = raw_ids[start : start + _REMAP_ID_BATCH]
+            query = sql
+            if export_limits is not None:
+                max_turns, max_bytes, include_turns = export_limits
+                size = "length(input) + length(output)" if include_turns else "0"
+                # Bound the result on the server, before reading any text payload.
+                # Membership is tested AFTER dedup, preserving remap/tombstone semantics.
+                query = (
+                    "SELECT id, project_id_str, trace_id, trace_session_id_str, end_user_id_str, "
+                    f"start_time, {size} AS payload_bytes FROM ({sql}) "
+                    f"WHERE {column}_str IN %(raw)s LIMIT {max_turns - len(out) + 1}"
+                )
             rows = self._client.query(
-                sql, parameters={**params, "raw": tuple(batch)}, settings={}
+                query, parameters={**params, "raw": tuple(batch)}, settings={}
             ).result_rows
             # A root counts in the batch holding its latest id, so one whose id
             # moved between two batches' ids is read once.
             in_batch = set(batch)
             for row in rows:
-                span = _row_to_chspan(row)
+                span = SessionExportRoot(*row) if export_limits is not None else _row_to_chspan(row)
                 raw = getattr(span, column)
                 if raw in in_batch:
-                    out.extend(
-                        replace(span, **{column: caller})
-                        for caller in askers[aliases[raw]]
-                    )
+                    for caller in askers[aliases[raw]]:
+                        out.append(replace(span, **{column: caller}))
+                        if export_limits is not None:
+                            payload_bytes += span.payload_bytes
+                            if len(out) > max_turns:
+                                raise ValueError(
+                                    f"Session export limit: {max_turns} turns; use narrower filters."
+                                )
+                            if payload_bytes > max_bytes:
+                                raise ValueError(
+                                    f"Session export limit: {max_bytes} payload bytes; use narrower filters."
+                                )
         out.sort(key=lambda s: (getattr(s, column), s.start_time, s.id))
         return out
 
@@ -996,13 +1043,14 @@ class CHSpanReader:
         trace_id: str,
         *,
         include_heavy: bool = True,
-        project_id: str | None = None,
+        project_id: str,
     ) -> list[CHSpan]:
         """Equivalent to ObservationSpan.objects.filter(trace=trace, deleted=False).
 
         Returned in start_time, id order so the eval runner's trace-walking
         logic sees spans in a deterministic chronological order. ``project_id``
-        (optional) scopes the read to one tenant; omit for prior behavior.
+        must be the caller's authorized, non-empty project: trace ids can be
+        reused across projects, so a trace-only read is never safe.
 
         With ``include_heavy=False`` the fat JSON columns (attributes_extra /
         span_events / resource_attrs) come back as '' — opt out when only
@@ -1013,13 +1061,12 @@ class CHSpanReader:
         leaving a full merge that OOMs on a fat (voice) trace's spans. Re-enable
         skip indexes (``trace_id`` is a stable sorting-key column, so safe).
         """
+        if not project_id:
+            raise ValueError("project_id is required for a trace span read")
         select = _SELECT_SQL if include_heavy else _LEAN_SELECT_SQL
         # No is_deleted predicate — see _FINAL_SKIP_INDEX_SETTINGS.
-        where = ["trace_id = %(trace_id)s"]
-        params: dict[str, Any] = {"trace_id": trace_id}
-        if project_id:
-            where.append("project_id = %(pid)s")
-            params["pid"] = str(project_id)
+        where = ["trace_id = %(trace_id)s", "project_id = %(pid)s"]
+        params: dict[str, Any] = {"trace_id": trace_id, "pid": str(project_id)}
         rows = self._client.query(
             f"SELECT {select} FROM spans FINAL "
             f"WHERE {' AND '.join(where)} "
@@ -1203,6 +1250,25 @@ class CHSpanReader:
             )
         rows = self._client.query(sql, parameters=params, settings=settings).result_rows
         return [_row_to_chspan(r) for r in rows]
+
+    def session_export_roots(
+        self,
+        session_ids: list[str],
+        *,
+        project_id: str,
+        max_turns: int,
+        max_payload_bytes: int,
+        include_turns: bool,
+    ) -> list[SessionExportRoot]:
+        """Bounded, remap-aware preflight; never return input/output to Python."""
+        roots = self._roots_resolved(
+            column="trace_session_id",
+            remap_table="trace_session_id_remap",
+            ids=session_ids,
+            project_id=project_id,
+            export_limits=(max_turns, max_payload_bytes, include_turns),
+        )
+        return self._resolve_other(roots, "end_user_id", "end_user_id_remap")
 
     def roots_by_session_ids(
         self, session_ids: list[str], *, project_id: str
@@ -1510,6 +1576,7 @@ class CHSpanReader:
         *,
         project_id: str | None = None,
         org_id: str | None = None,
+        max_payload_bytes: int | None = None,
     ) -> dict[str, dict[str, Any]]:
         """Fetch only the span columns needed for dataset export cells.
 
@@ -1541,20 +1608,42 @@ class CHSpanReader:
             where.append("org_id = %(oid)s")
             params["oid"] = str(org_id)
 
-        rows = self._client.query(
+        sql = (
             "SELECT "
             f"{', '.join(select_exprs)} "
             "FROM spans "
             f"PREWHERE {' AND '.join(where)} "
             "GROUP BY id "
-            "HAVING argMax(is_deleted, _version) = 0",
+            "HAVING argMax(is_deleted, _version) = 0"
+        )
+        if max_payload_bytes is not None:
+            if columns != {"input", "output"}:
+                raise ValueError("Payload budgets require input/output fields only.")
+            params["export_max_bytes"] = max_payload_bytes
+            # Recheck at hydration time: spans can grow after the identity/size
+            # preflight. An over-budget batch returns NULL sentinels, never its
+            # oversized text. The window sees only the requested bounded IDs.
+            sql = (
+                "SELECT id, "
+                "if(export_bytes <= %(export_max_bytes)s, input, NULL) AS input, "
+                "if(export_bytes <= %(export_max_bytes)s, output, NULL) AS output "
+                "FROM (SELECT *, sum(length(input) + length(output)) OVER () AS export_bytes "
+                f"FROM ({sql}))"
+            )
+        rows = self._client.query(
+            sql,
             parameters=params,
             settings={
                 "max_threads": 1,
                 "max_bytes_before_external_group_by": 256 * 1024 * 1024,
             },
         ).result_rows
-
+        if max_payload_bytes is not None and any(
+            row[1] is None or row[2] is None for row in rows
+        ):
+            raise ValueError(
+                f"Session export limit: {max_payload_bytes} payload bytes; use narrower filters."
+            )
         return {str(row[0]): dict(zip(aliases, row, strict=False)) for row in rows}
 
     # ─── Batch helpers for dataset child-tree export ─────────────────────────
@@ -3634,27 +3723,13 @@ def chspan_to_annotation_source_dict(span: CHSpan) -> dict[str, Any]:
     }
 
 
-# Provider → logo URL map. Mirrors what the serializer's get_provider_logo() does
-# in tracer/serializers/observation_span.py. Cached as a module constant.
-_PROVIDER_LOGOS: dict[str, str] = {
-    "openai": "https://app.futureagi.com/static/providers/openai.svg",
-    "anthropic": "https://app.futureagi.com/static/providers/anthropic.svg",
-    "google": "https://app.futureagi.com/static/providers/google.svg",
-    "gcp.vertex.agent": "https://app.futureagi.com/static/providers/google.svg",
-    "vapi": "https://app.futureagi.com/static/providers/vapi.svg",
-    "retell": "https://app.futureagi.com/static/providers/retell.svg",
-}
-
-
 def _provider_logo_url(provider: str | None) -> str | None:
-    """Return the provider logo URL, or None if the provider isn't mapped.
-
-    Kept simple — the serializer has more elaborate fallback logic but
-    most callers just render the URL or fall back to a generic icon.
+    """Return the provider's icon as a root-relative path the install's own UI
+    serves, or None if the provider isn't mapped (the UI then draws its
+    generic model icon). Never an absolute URL on another host: see
+    tracer/constants/provider_icons.py.
     """
-    if not provider:
-        return None
-    return _PROVIDER_LOGOS.get(provider.lower())
+    return provider_icon_path(provider)
 
 
 def _maybe_json(s: str) -> Any:

@@ -16,9 +16,10 @@ const headerData = [
   {
     id: "1",
     icon: "/assets/icons/summary/database.svg",
-    title: "Avg, token size",
+    title: "Avg. token size",
     value: 0,
-    valueKey: "avgTokens",
+    valueKey: "avg_tokens",
+    legacyValueKey: "avgTokens",
     unit: "",
     backgroundColor: "status.warning.bg",
     color: "status.warning.fg",
@@ -26,10 +27,10 @@ const headerData = [
   {
     id: "2",
     icon: "/assets/icons/summary/timmer.svg",
-    title: "Avg. Response time",
+    title: "Avg. response time",
     value: 0,
-    valueKey: "avgTime",
-    unit: "ms",
+    valueKey: "avg_time",
+    unit: "s",
     backgroundColor: "status.info.bg",
     color: "status.info.fg",
   },
@@ -38,7 +39,8 @@ const headerData = [
     icon: "/assets/icons/summary/dollar.svg",
     title: "Average cost",
     value: 0,
-    valueKey: "avgCost",
+    valueKey: "avg_cost",
+    legacyValueKey: "avgCost",
     unit: "$",
     backgroundColor: "status.success.bg",
     color: "status.success.fg",
@@ -91,6 +93,13 @@ const PromptCard = ({
           sx={{ display: "flex", gap: "16px", justifyContent: "space-between" }}
         >
           {headerData.map((item) => {
+            const value =
+              data?.[item.valueKey] ??
+              (item.valueKey === "avg_time"
+                ? data?.avgTime == null
+                  ? null
+                  : data.avgTime / 1000
+                : data?.[item.legacyValueKey]);
             return (
               <Box
                 key={item.id}
@@ -133,8 +142,11 @@ const PromptCard = ({
                     typography={"l1"}
                     fontWeight={"fontWeightSemiBold"}
                   >
-                    {data?.[item?.valueKey]}
-                    {item.unit}
+                    {value == null
+                      ? "—"
+                      : item.unit === "$"
+                        ? `$${value}`
+                        : `${value}${item.unit}`}
                   </Typography>
                 </Box>
               </Box>

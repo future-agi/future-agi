@@ -1,7 +1,11 @@
 import { z } from "zod";
 import { transformLabelObject } from "src/sections/develop-detail/Annotations/CreateEditLabel/common";
 
-export const createTextFieldSchema = (settings, isAlreadyAnnotated = false) => {
+export const createTextFieldSchema = (
+  settings,
+  isAlreadyAnnotated = false,
+  existingValue = undefined,
+) => {
   const minLength = settings?.minLength ? parseInt(settings.minLength, 10) : 0;
   const maxLength = settings?.maxLength
     ? parseInt(settings.maxLength, 10)
@@ -18,7 +22,14 @@ export const createTextFieldSchema = (settings, isAlreadyAnnotated = false) => {
   }
 
   if (isAlreadyAnnotated) {
-    return schema.min(1, "Value cannot be empty once annotated");
+    const filled = schema.min(1, "Value cannot be empty once annotated");
+    // The saved answer, left as it is, is accepted even when the label's
+    // limits changed since it was saved. The limits come first so a changed
+    // answer is refused with their words.
+    if (typeof existingValue === "string") {
+      return z.union([filled, z.literal(existingValue)]);
+    }
+    return filled;
   }
 
   return z.union([z.null(), z.undefined(), z.literal(""), schema]);
@@ -36,6 +47,7 @@ export const createFormSchema = (labels, defaultValues = {}) => {
       schemaObject[transformedItem.id] = createTextFieldSchema(
         transformedItem.settings,
         isAlreadyAnnotated,
+        existingValue,
       );
     } else {
       // For non-text fields, use a more permissive schema

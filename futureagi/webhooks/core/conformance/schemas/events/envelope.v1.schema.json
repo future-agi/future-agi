@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:futureagi:webhooks:v1:envelope",
+  "title": "Future AGI webhook envelope, api_version v1 (DESIGN.md section 14.1)",
+  "description": "Every event body. Receivers MUST ignore fields they do not know and accept enum values they do not know; fields are only added within v1.",
+  "type": "object",
+  "required": ["id", "type", "api_version", "timestamp", "organization_id", "workspace_id", "data"],
+  "properties": {
+    "id": {"type": "string", "pattern": "^evt_(test_)?[0-9A-HJKMNP-TV-Z]{26}$"},
+    "type": {"type": "string", "pattern": "^[a-z0-9_]+(\\.[a-z0-9_]+)+$"},
+    "api_version": {"const": "v1"},
+    "timestamp": {"$ref": "#/$defs/ts"},
+    "organization_id": {"$ref": "#/$defs/uuid"},
+    "workspace_id": {"$ref": "#/$defs/uuid"},
+    "test": {"const": true},
+    "data": {"type": "object"}
+  },
+  "additionalProperties": true,
+  "$defs": {
+    "ts": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"},
+    "uuid": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"},
+    "url": {"type": "string", "maxLength": 2048, "pattern": "^https?://[^\\s]+$"},
+    "person": {
+      "description": "A person as {id, name} (name is the display name or null, never an email), {id} when the endpoint has include_people_names=false, or null when no person acted.",
+      "oneOf": [
+        {"type": "null"},
+        {"type": "object", "required": ["id", "name"], "properties": {"id": {"$ref": "#/$defs/uuid"}, "name": {"type": ["string", "null"], "maxLength": 255}}, "additionalProperties": false},
+        {"type": "object", "required": ["id"], "properties": {"id": {"$ref": "#/$defs/uuid"}}, "additionalProperties": false}
+      ]
+    },
+    "prompt": {
+      "type": "object",
+      "required": ["id", "name"],
+      "properties": {"id": {"$ref": "#/$defs/uuid"}, "name": {"type": "string"}}
+    },
+    "label": {
+      "type": "object",
+      "required": ["id", "name", "type"],
+      "properties": {"id": {"$ref": "#/$defs/uuid"}, "name": {"type": "string"}, "type": {"enum": ["system", "custom"]}}
+    },
+    "versionRef": {
+      "type": "object",
+      "required": ["id", "version"],
+      "properties": {"id": {"$ref": "#/$defs/uuid"}, "version": {"type": "string", "minLength": 1}}
+    },
+    "content": {
+      "description": "Full payload mode only (DESIGN.md section 14.1, P3): an explicit allowlist and nothing else.",
+      "type": "object",
+      "properties": {
+        "messages": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["role", "text"],
+            "properties": {"role": {"type": "string"}, "text": {"type": "string"}},
+            "additionalProperties": false
+          }
+        },
+        "template": {"type": "string"},
+        "variables": {"type": "array", "items": {"type": "string"}},
+        "model": {"type": ["string", "null"]}
+      },
+      "additionalProperties": false
+    },
+    "promptLinks": {
+      "type": "object",
+      "required": ["app", "api"],
+      "properties": {"app": {"$ref": "#/$defs/url"}, "api": {"$ref": "#/$defs/url"}, "version_api": {"$ref": "#/$defs/url"}}
+    }
+  }
+}

@@ -4,9 +4,22 @@ import TraceDetailDrawerV2 from "src/components/traceDetail/TraceDetailDrawerV2"
 import { useParams } from "react-router";
 import { useLLMTracingStoreShallow } from "./states";
 import { useUrlState } from "src/routes/hooks/use-url-state";
+import { useAnnotationGridRefresh } from "./useAnnotationGridRefresh";
 
 const LLMTracingSpanDetailDrawer = ({ refreshGrid }) => {
   const { observeId } = useParams();
+  // The drawer reports a saved annotation through refreshParentGrid. Refresh
+  // now (SpanGrid's default purge), then re-read without purging so the rows
+  // stay on screen while the score's CDC copy lands.
+  const refreshGridNow = useCallback(() => refreshGrid?.(), [refreshGrid]);
+  const refreshGridKeepingRows = useCallback(
+    () => refreshGrid?.(false),
+    [refreshGrid],
+  );
+  const refreshGridAfterAnnotation = useAnnotationGridRefresh(
+    refreshGridNow,
+    refreshGridKeepingRows,
+  );
   const [evalFocus, , removeEvalFocus] = useUrlState("evalFocus", false);
   const { spanDetailDrawerOpen, setSpanDetailDrawerOpen, visibleTraces } =
     useLLMTracingStoreShallow((state) => ({
@@ -71,6 +84,7 @@ const LLMTracingSpanDetailDrawer = ({ refreshGrid }) => {
       hasPrev={hasPrev}
       hasNext={hasNext}
       initialEvalFocus={evalFocus === true}
+      refreshParentGrid={refreshGridAfterAnnotation}
     />
   );
 };

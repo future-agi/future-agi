@@ -71,7 +71,11 @@ function Show-Summary {
     if ($profiles -contains 'all' -or $profiles -contains 'full' -or $profiles -contains 'peerdb') {
       $peerdbUiPort = Get-EnvValue 'PEERDB_UI_PORT'
       if (-not $peerdbUiPort) { $peerdbUiPort = 3001 }
-      Say "     PeerDB UI    http://localhost:$peerdbUiPort  (peerdb / peerdb)"
+      if (Get-EnvValue 'PEERDB_UI_PASSWORD') {
+        Say "     PeerDB UI    http://localhost:$peerdbUiPort  (password: PEERDB_UI_PASSWORD in .env)"
+      } else {
+        Say "     PeerDB UI    http://localhost:$peerdbUiPort"
+      }
     }
   }
   Say ""
@@ -83,6 +87,9 @@ function Show-Summary {
   Say "     Uninstall    $DcText down -v  (deletes all data)"
   Say "     Settings     .env  (every variable: https://docs.futureagi.com/docs/self-hosting/configuration/reference)"
   Say "     Install log  $LogFile"
+  Say ""
+  Say "  The integration encryption key is kept in .env; back it up with the database,"
+  Say "  because a database backup cannot be read without its key."
   if ($IsDistributed) {
     Say ""
     Say "  Existing-data catalog backfill: restarts do not scan historical data."

@@ -10,21 +10,35 @@ keeps these tests about reporting rather than about socket behaviour.
 The view caches a snapshot for a few seconds, so every test clears the cache
 first — otherwise a second request in the same test returns the first one's
 verdict and the assertions pass for the wrong reason.
+
+The code sandbox's probe is the exception that is tested end to end: it sends
+a test evaluation through the client real runs use, so those tests run it
+against a loopback executor and hand the verdict it returns to the view.
 """
 
+import ast
+import errno
+import json
 import re
 import socket
 import threading
+import urllib.error
+import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 import pytest
 from botocore.exceptions import ClientError, EndpointConnectionError
 from django.core.cache import cache
+from redis.exceptions import ConnectionError as RedisConnectionError
 from rest_framework import status
+from rest_framework.test import APIClient
 
 from agentic_eval.core.embeddings import serving_client
+from agentic_eval.core_evals.fi_utils import sandbox as code_sandbox
 from tfc.views import setup_checks
 from tfc.views.setup_checks import (
     ABSENT,
@@ -36,6 +50,7 @@ from tfc.views.setup_checks import (
     LIMITED,
     LIVE,
     PASSED,
+    PROBE_TIMEOUT_SECONDS,
     SKIPPED,
     STANDALONE,
     WARNING,
@@ -48,7 +63,34 @@ from tfc.views.setup_checks import (
     _tls_up,
 )
 
-INSTALLATION = Path(__file__).resolve().parents[3] / "INSTALLATION.md"
+REPO = Path(__file__).resolve().parents[3]
+INSTALLATION = REPO / "INSTALLATION.md"
+# The setup screen's client for this endpoint, and its request timeout.
+SETUP_SCREEN_CLIENT = REPO / "frontend" / "src" / "api" / "ossSetup" / "oss-setup.js"
+EXECUTOR_SOURCE = REPO / "futureagi" / "code-executor" / "server.py"
+
+
+def _executor_constant(name):
+    """A string constant of code-executor/server.py, read without importing it."""
+    tree = ast.parse(EXECUTOR_SOURCE.read_text(encoding="utf-8"))
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == name
+            for target in node.targets
+        ):
+            return ast.literal_eval(node.value)
+    raise AssertionError(f"{name} is not in {EXECUTOR_SOURCE}")
+
+
+# What the executor answers when nsjail cannot build a run's jail.
+SANDBOX_CANNOT_START = _executor_constant("SANDBOX_UNAVAILABLE_MESSAGE")
+TEST_EVALUATION = "def evaluate():\n    return True\n"
+NO_ANSWER = "The test evaluation got no answer from the sandbox."
+EXECUTOR_SUCCESS = {
+    "status": "success",
+    "data": {"result": 1.0, "reason": "bool"},
+    "execution_time": 0.02,
+}
 
 # Bound at import, before the conftest fixture swaps in its stand-in.
 REAL_SERVING_PROBE = serving_client._probe
@@ -370,8 +412,10 @@ class TestSkipped:
 
     @pytest.mark.parametrize("mode", [LIVE, EXPERIMENT])
     def test_absent_code_executor_on_helm_is_optional(self, api_client, mode):
-        """The chart runs no sandbox by default (it needs privileged pods), and
-        leaves CODE_EXECUTOR_URL empty: that is a choice, not an outage."""
+        """The chart runs no sandbox by default and leaves CODE_EXECUTOR_URL
+        empty: that is a choice, not an outage. Eval code never runs in the
+        worker pods (codeExecutor.localFallback has no effect), so the fix
+        offers only the sandbox."""
         probes = all_up()
         probes["code_executor"] = ABSENT
         result = get_checks(api_client, mode=mode, probe_results=probes, setup=HELM)
@@ -380,7 +424,7 @@ class TestSkipped:
         assert check["status"] == SKIPPED
         assert check["required"] is False
         assert "codeExecutor.enabled=true" in check["fix"]
-        assert "codeExecutor.localFallback=true" in check["fix"]
+        assert "localFallback" not in check["fix"]
         assert result["status"] == "ok"
 
     def test_an_empty_code_executor_url_is_absent_without_a_probe(self, monkeypatch):
@@ -554,12 +598,82 @@ def _closed_port_url():
         return f"http://127.0.0.1:{sock.getsockname()[1]}"
 
 
+@pytest.fixture
+def executor(monkeypatch):
+    """A loopback code executor serving ``GET /health`` and ``POST /execute``
+    as code-executor/server.py does. Set ``health`` (the /health body) and
+    ``answer`` (the /execute status code, body and delay in seconds) before
+    probing; every /execute request body lands in ``received``.
+
+    CODE_EXECUTOR_URL points at it both where the probe reads it (the
+    environment) and where the run client bound it at import."""
+    state = SimpleNamespace(
+        health={"status": "ok", "nsjail": True, "node": "/usr/bin/node"},
+        answer=(200, EXECUTOR_SUCCESS, 0),
+        received=[],
+        # Ends a slow answer's wait at teardown, so no request outlives the test.
+        released=threading.Event(),
+    )
+
+    class Executor(BaseHTTPRequestHandler):
+        def _reply(self, code, body):
+            payload = body if isinstance(body, bytes) else json.dumps(body).encode()
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def do_GET(self):
+            if self.path == "/health":
+                self._reply(200, state.health)
+            else:
+                self._reply(404, {"status": "error"})
+
+        def do_POST(self):
+            body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
+            if self.path != "/execute":
+                self._reply(404, {"status": "error"})
+                return
+            state.received.append(json.loads(body))
+            code, answer, delay = state.answer
+            state.released.wait(delay)
+            try:
+                self._reply(code, answer)
+            except (BrokenPipeError, ConnectionResetError):
+                pass  # the probe stopped waiting
+
+        def log_message(self, *args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Executor)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    state.url = f"http://127.0.0.1:{server.server_address[1]}"
+    monkeypatch.setenv("CODE_EXECUTOR_URL", state.url)
+    monkeypatch.setattr(code_sandbox, "CODE_EXECUTOR_URL", state.url)
+    yield state
+    state.released.set()
+    server.shutdown()
+    server.server_close()
+
+
+def _failed_run(executor, sentence):
+    """The verdict the real probe returns for a run the executor refuses with
+    ``sentence``."""
+    executor.answer = (200, {"status": "error", "data": sentence}, 0)
+    return _safe(_code_executor_up)
+
+
 @pytest.mark.integration
 @pytest.mark.api
 class TestCodeExecutorProbe:
-    def test_passes_against_the_in_container_executor(self, monkeypatch, health_server):
-        """The standalone install serves the executor on loopback inside `app`."""
-        monkeypatch.setenv("CODE_EXECUTOR_URL", f"{health_server}/")
+    def test_passes_when_the_executor_runs_the_test_evaluation(
+        self, monkeypatch, executor
+    ):
+        """The executor answers /health and runs the test evaluation; a trailing
+        slash on CODE_EXECUTOR_URL changes nothing."""
+        monkeypatch.setenv("CODE_EXECUTOR_URL", f"{executor.url}/")
 
         assert _code_executor_up() is True
 
@@ -568,21 +682,13 @@ class TestCodeExecutorProbe:
 
         assert _safe(_code_executor_up) is False
 
-    def test_an_executor_without_node_is_limited(self, monkeypatch, health_server):
-        """The in-container executor answers ``"node": null``."""
-        monkeypatch.setenv("CODE_EXECUTOR_URL", health_server)
-        with patch.object(
-            setup_checks.requests.Response,
-            "json",
-            return_value={"status": "ok", "nsjail": False, "node": None},
-        ):
-            assert _safe(_code_executor_up) == LIMITED
-        with patch.object(
-            setup_checks.requests.Response,
-            "json",
-            return_value={"status": "ok", "node": "/usr/bin/node"},
-        ):
-            assert _safe(_code_executor_up) is True
+    def test_an_executor_without_node_is_limited(self, executor):
+        """An executor without Node.js answers ``"node": null`` on /health."""
+        executor.health = {"status": "ok", "nsjail": False, "node": None}
+        assert _safe(_code_executor_up) == LIMITED
+
+        executor.health = {"status": "ok", "node": "/usr/bin/node"}
+        assert _safe(_code_executor_up) is True
 
     @pytest.mark.parametrize("mode", [LIVE, EXPERIMENT])
     def test_limited_passes_and_says_how_to_run_javascript(self, api_client, mode):
@@ -597,10 +703,269 @@ class TestCodeExecutorProbe:
         check = by_id(standalone, "code_executor")
         assert check["status"] == PASSED
         assert "JavaScript" in check["detail"]
-        assert "COMPOSE_PROFILES=sandbox" in check["detail"]
+        # The shipped code-executor service has Node.js; no profile adds it.
+        assert "code-executor" in check["detail"]
+        assert "COMPOSE_PROFILES" not in check["detail"]
         assert check["fix"] == ""
         assert standalone["status"] == "ok"
         assert "Node.js" in by_id(distributed, "code_executor")["detail"]
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestCodeExecutorTestRun:
+    """A sandbox can answer /health on a host where it cannot start a single
+    run, so the probe also sends it one test evaluation through the client
+    real runs use, and the row says what that run said."""
+
+    def test_the_probe_sends_one_test_evaluation_through_the_run_client(
+        self, monkeypatch, executor
+    ):
+        waits = []
+        real_urlopen = urllib.request.urlopen
+
+        def urlopen(request, *args, **kwargs):
+            waits.append(kwargs.get("timeout"))
+            return real_urlopen(request, *args, **kwargs)
+
+        monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+
+        assert _safe(_code_executor_up) is True
+
+        assert len(executor.received) == 1
+        sent = executor.received[0]
+        assert sent["code"] == TEST_EVALUATION
+        assert sent["language"] == "python"
+        assert sent["input_data"] == {}
+        assert sent["timeout"] == getattr(setup_checks, "TEST_RUN_LIMIT_SECONDS", None)
+        assert waits == [getattr(setup_checks, "TEST_RUN_ANSWER_SECONDS", None)]
+
+    def test_a_run_the_sandbox_cannot_start_carries_the_run_s_own_sentence(
+        self, executor
+    ):
+        verdict = _failed_run(executor, SANDBOX_CANNOT_START)
+
+        assert not verdict
+        assert getattr(verdict, "reason", None) == SANDBOX_CANNOT_START
+
+    @pytest.mark.parametrize(
+        "answer",
+        [
+            pytest.param((500, {"status": "error"}, 0), id="http-error"),
+            pytest.param((200, b"<html>not json</html>", 0), id="not-json"),
+            pytest.param((200, EXECUTOR_SUCCESS, 1.5), id="too-slow"),
+        ],
+    )
+    def test_no_usable_answer_is_one_plain_sentence(
+        self, monkeypatch, executor, answer
+    ):
+        monkeypatch.setattr(setup_checks, "TEST_RUN_ANSWER_SECONDS", 0.3, raising=False)
+        executor.answer = answer
+
+        verdict = _safe(_code_executor_up)
+
+        assert not verdict
+        assert getattr(verdict, "reason", None) == NO_ANSWER
+
+    def test_a_run_client_that_raises_is_no_answer_not_a_down_sandbox(
+        self, monkeypatch, executor
+    ):
+        """A raise would otherwise read as down, which blocks Production."""
+
+        def broken(*args, **kwargs):
+            raise RuntimeError("unexpected")
+
+        monkeypatch.setattr(code_sandbox, "execute_sandboxed_python", broken)
+        logger = Mock()
+        monkeypatch.setattr(setup_checks, "logger", logger, raising=False)
+
+        assert getattr(_safe(_code_executor_up), "reason", None) == NO_ANSWER
+        # The raise is a fault in the probe, not an answer: it is logged.
+        logger.exception.assert_called_once()
+
+    def test_limited_only_when_the_test_run_succeeds(self, executor):
+        executor.health = {"status": "ok", "nsjail": False, "node": None}
+
+        verdict = _failed_run(executor, SANDBOX_CANNOT_START)
+
+        assert verdict != LIMITED
+        assert getattr(verdict, "reason", None) == SANDBOX_CANNOT_START
+
+    @pytest.mark.parametrize("mode", [LIVE, EXPERIMENT])
+    @pytest.mark.parametrize("setup", [STANDALONE, DISTRIBUTED, HELM])
+    def test_a_run_that_cannot_start_warns_in_both_modes_and_never_blocks(
+        self, api_client, executor, mode, setup
+    ):
+        probes = all_up()
+        probes["code_executor"] = _failed_run(executor, SANDBOX_CANNOT_START)
+
+        result = get_checks(api_client, mode=mode, probe_results=probes, setup=setup)
+
+        check = by_id(result, "code_executor")
+        assert check["status"] == WARNING
+        assert check["required"] is False
+        assert result["status"] == "ok"
+        assert check["detail"] == (
+            f"Custom code evaluations will not run: {SANDBOX_CANNOT_START}"
+        )
+        assert "kernel.apparmor_restrict_unprivileged_userns=1" in check["fix"]
+        assert check["docs_url"].startswith("https://")
+
+    @pytest.mark.parametrize("setup", [STANDALONE, DISTRIBUTED])
+    def test_the_fix_names_both_host_settings_and_where_they_are_changed(
+        self, api_client, executor, setup
+    ):
+        probes = all_up()
+        probes["code_executor"] = _failed_run(executor, SANDBOX_CANNOT_START)
+
+        result = get_checks(api_client, probe_results=probes, setup=setup)
+        fix = by_id(result, "code_executor")["fix"]
+
+        # The install page's sentence for the two settings, then where each
+        # one is changed.
+        assert (
+            "Ubuntu 23.10 and later restrict unprivileged user namespaces by "
+            "default (`kernel.apparmor_restrict_unprivileged_userns=1`), and a "
+            "Docker daemon configured with `userns-remap` puts every container "
+            "inside a remapped user namespace."
+        ) in fix
+        assert "sysctl on the Docker host" in fix
+        assert "Docker daemon's config" in fix
+
+    def test_no_answer_reads_as_a_warning_too(self, api_client, monkeypatch, executor):
+        monkeypatch.setattr(setup_checks, "TEST_RUN_ANSWER_SECONDS", 0.3, raising=False)
+        executor.answer = (502, b"", 0)
+        probes = all_up()
+        probes["code_executor"] = _safe(_code_executor_up)
+
+        check = by_id(get_checks(api_client, probe_results=probes), "code_executor")
+
+        assert check["status"] == WARNING
+        assert check["detail"] == f"Custom code evaluations will not run: {NO_ANSWER}"
+
+    def test_the_warning_status_is_set_in_one_place(
+        self, api_client, monkeypatch, executor
+    ):
+        """Making it block is a one-line change, and it then blocks for real."""
+        check = next(c for c in CHECKS if c["id"] == "code_executor")
+        assert check["cannot_run"]["status"] == WARNING
+
+        monkeypatch.setitem(check["cannot_run"], "status", FAILED)
+        probes = all_up()
+        probes["code_executor"] = _failed_run(executor, SANDBOX_CANNOT_START)
+        result = get_checks(api_client, mode=EXPERIMENT, probe_results=probes)
+
+        assert by_id(result, "code_executor")["status"] == FAILED
+        assert by_id(result, "code_executor")["required"] is True
+        assert result["status"] == "issues"
+
+    def test_the_test_run_fits_inside_the_setup_screen_s_request(self):
+        """Probes run side by side, so the code sandbox's /health and its test
+        run must answer well inside the screen's request timeout."""
+        client = SETUP_SCREEN_CLIENT.read_text(encoding="utf-8")
+        match = re.search(r"axios\.create\(\{[^}]*\btimeout:\s*(\d+)", client)
+        assert match, f"no request timeout in {SETUP_SCREEN_CLIENT}"
+        screen_seconds = int(match.group(1)) / 1000
+        limit = getattr(setup_checks, "TEST_RUN_LIMIT_SECONDS", None)
+        answer = getattr(setup_checks, "TEST_RUN_ANSWER_SECONDS", None)
+
+        assert limit is not None and answer is not None
+        # The executor stops the run before the probe stops waiting for it.
+        assert limit < answer
+        assert PROBE_TIMEOUT_SECONDS + answer <= screen_seconds - 2
+
+    def test_real_runs_keep_their_own_wait(self, monkeypatch):
+        """Only the probe passes a shorter wait; a real run still waits for
+        its own limit plus 10 s."""
+        waits = []
+
+        def refused(request, timeout=None):
+            waits.append(timeout)
+            raise urllib.error.URLError(
+                ConnectionRefusedError(errno.ECONNREFUSED, "refused")
+            )
+
+        monkeypatch.setattr(urllib.request, "urlopen", refused)
+        monkeypatch.setattr(code_sandbox, "CODE_EXECUTOR_URL", "http://127.0.0.1:9")
+
+        code_sandbox.execute_sandboxed_python(TEST_EVALUATION, {}, timeout=30)
+
+        assert waits == [40]
+
+
+COMPOSE_FILES = (REPO / "docker-compose.yml", REPO / "docker-compose.distributed.yml")
+
+
+def _compose_service(path, name):
+    """The lines of one service in a compose file, comments included."""
+    lines = path.read_text(encoding="utf-8").splitlines()
+    block = []
+    for line in lines[lines.index(f"  {name}:") + 1 :]:
+        stripped = line.strip()
+        indent = len(line) - len(line.lstrip())
+        if stripped and not stripped.startswith("#") and indent < 4:
+            break
+        block.append(line)
+    return "\n".join(block)
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestCodeExecutorTextsMatchTheShippedSetup:
+    """Both compose files run `code-executor` with the stack, not privileged,
+    from an image with Node.js; on Helm it is opt-in and the cluster must
+    allow unprivileged user namespaces. The row's texts say that, not the
+    profile, the in-app sandbox and the privileged container they named."""
+
+    STALE = (
+        "privileged: true",
+        "COMPOSE_PROFILES=sandbox",
+        "restart app",
+        "built-in sandbox",
+        "localFallback",
+    )
+
+    def test_the_facts_the_texts_rest_on(self):
+        for path in COMPOSE_FILES:
+            service = _compose_service(path, "code-executor")
+            assert "profiles:" not in service, path.name
+            assert "privileged: true" not in service, path.name
+        base = REPO / "futureagi" / "code-executor" / "Dockerfile.base"
+        assert "nodejs" in base.read_text(encoding="utf-8")
+
+    @pytest.mark.parametrize("setup", [STANDALONE, DISTRIBUTED, HELM])
+    def test_no_code_executor_text_names_the_old_setup(self, api_client, setup):
+        for verdict in (False, LIMITED, ABSENT):
+            probes = all_up()
+            probes["code_executor"] = verdict
+            result = get_checks(api_client, probe_results=probes, setup=setup)
+            row = by_id(result, "code_executor")
+            for stale in self.STALE:
+                assert stale not in row["detail"] + row["fix"], (verdict, stale)
+
+    @pytest.mark.parametrize("setup", [STANDALONE, DISTRIBUTED])
+    def test_a_down_sandbox_on_compose_is_the_code_executor_service(
+        self, api_client, setup
+    ):
+        probes = down_only("code_executor")
+        result = get_checks(api_client, probe_results=probes, setup=setup)
+        fix = by_id(result, "code_executor")["fix"]
+
+        assert "docker compose up -d code-executor" in fix
+        # The install page's one line on the host it needs.
+        assert "`code-executor` is not privileged" in fix
+        assert "Ubuntu 23.10+" in fix
+        assert "`userns-remap`" in fix
+
+    def test_a_down_sandbox_on_helm_names_its_value_and_what_the_cluster_needs(
+        self, api_client
+    ):
+        probes = down_only("code_executor")
+        result = get_checks(api_client, probe_results=probes, setup=HELM)
+        fix = by_id(result, "code_executor")["fix"]
+
+        assert "codeExecutor.enabled=true" in fix
+        assert "unprivileged user namespaces" in fix
 
 
 @pytest.mark.integration
@@ -698,6 +1063,189 @@ class TestSnapshotCache:
         assert experiment["status"] == "ok"
 
 
+# How long a test thread waits on another before the test fails.
+WAIT_SECONDS = 5
+
+
+def held_first_run(first, later, hold):
+    """A ``_run_probes`` stand-in. The first call sets ``started``, stays in
+    progress until ``hold()`` returns, then answers ``first``; later calls
+    answer ``later`` at once. ``calls`` gets one entry per call."""
+    started = threading.Event()
+    calls = []
+
+    def run_probes(request_host=None):
+        calls.append(request_host)
+        if len(calls) > 1:
+            return later
+        started.set()
+        hold()
+        return first
+
+    return run_probes, started, calls
+
+
+class CacheDown:
+    """The view's cache with Redis down: every call raises as django-redis
+    does. ``calls`` names each call made."""
+
+    def __init__(self):
+        self.calls = []
+
+    def __getattr__(self, method):
+        def unavailable(*args, **kwargs):
+            self.calls.append(method)
+            raise RedisConnectionError("Connection refused")
+
+        return unavailable
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestOneProbeRunAtATime:
+    """A miss runs every probe, a jailed test evaluation among them, so requests
+    that miss together share one run."""
+
+    def test_two_concurrent_misses_start_one_run(self, api_client):
+        both_missed = threading.Barrier(2, timeout=WAIT_SECONDS)
+        run_probes, started, calls = held_first_run(
+            down_only("storage"), all_up(), both_missed.wait
+        )
+        real_cached_snapshot = setup_checks._cached_snapshot
+        second_lookup = []
+
+        def cached_snapshot(cache_key):
+            found = real_cached_snapshot(cache_key)
+            if started.is_set() and not second_lookup:
+                # The first request is inside its run, so this lookup is the
+                # second request's, made before the run has stored anything.
+                second_lookup.append(found)
+                both_missed.wait()
+            return found
+
+        with (
+            patch("tfc.views.setup_checks._run_probes", side_effect=run_probes),
+            patch("tfc.views.setup_checks._cached_snapshot", cached_snapshot),
+            patch("tfc.views.setup_checks._account_exists", return_value=False),
+            ThreadPoolExecutor(max_workers=1) as pool,
+        ):
+            first = pool.submit(APIClient().get, SETUP_CHECKS_URL)
+            assert started.wait(WAIT_SECONDS)
+            second = api_client.get(SETUP_CHECKS_URL)
+            first_response = first.result(timeout=WAIT_SECONDS)
+
+        assert second_lookup == [None]
+        assert len(calls) == 1
+        assert second.status_code == status.HTTP_200_OK
+        assert second.json()["result"] == first_response.json()["result"]
+
+    def test_a_request_that_loses_the_lock_serves_the_last_snapshot(self, api_client):
+        # Expired at once, so the next request misses and starts a run.
+        with (
+            patch("tfc.views.setup_checks.SNAPSHOT_TTL_SECONDS", 0),
+            patch(
+                "tfc.views.setup_checks._run_probes",
+                return_value=down_only("storage"),
+            ),
+        ):
+            last = api_client.get(SETUP_CHECKS_URL).json()["result"]
+        assert last["status"] == "issues"
+
+        finish = threading.Event()
+        run_probes, started, calls = held_first_run(
+            all_up(), all_up(), lambda: finish.wait(WAIT_SECONDS)
+        )
+        with (
+            patch("tfc.views.setup_checks._run_probes", side_effect=run_probes),
+            patch("tfc.views.setup_checks._account_exists", return_value=False),
+            ThreadPoolExecutor(max_workers=1) as pool,
+        ):
+            first = pool.submit(APIClient().get, SETUP_CHECKS_URL)
+            try:
+                assert started.wait(WAIT_SECONDS)
+                second = api_client.get(SETUP_CHECKS_URL)
+            finally:
+                finish.set()
+            first_result = first.result(timeout=WAIT_SECONDS).json()["result"]
+
+        assert len(calls) == 1
+        assert second.json()["result"] == last
+        assert first_result["status"] == "ok"
+
+    def test_a_request_that_loses_the_lock_before_any_snapshot_waits_for_the_run(
+        self, api_client
+    ):
+        finish = threading.Event()
+        run_probes, started, calls = held_first_run(
+            down_only("storage"), all_up(), lambda: finish.wait(WAIT_SECONDS)
+        )
+        with (
+            patch("tfc.views.setup_checks._run_probes", side_effect=run_probes),
+            patch("tfc.views.setup_checks._account_exists", return_value=False),
+            ThreadPoolExecutor(max_workers=1) as pool,
+        ):
+            first = pool.submit(APIClient().get, SETUP_CHECKS_URL)
+
+            def end_the_run(_seconds):
+                finish.set()
+                first.result(timeout=WAIT_SECONDS)
+
+            try:
+                assert started.wait(WAIT_SECONDS)
+                with patch("time.sleep", side_effect=end_the_run):
+                    second = api_client.get(SETUP_CHECKS_URL)
+            finally:
+                finish.set()
+            first_response = first.result(timeout=WAIT_SECONDS)
+
+        assert len(calls) == 1
+        assert second.json()["result"] == first_response.json()["result"]
+
+    def test_a_run_that_raises_releases_the_lock(self, api_client):
+        with (
+            patch(
+                "tfc.views.setup_checks._run_probes",
+                side_effect=RuntimeError("probe run failed"),
+            ),
+            pytest.raises(RuntimeError),
+        ):
+            api_client.get(SETUP_CHECKS_URL)
+
+        with (
+            patch(
+                "tfc.views.setup_checks._run_probes", return_value=all_up()
+            ) as probes,
+            patch(
+                "time.sleep",
+                side_effect=AssertionError("waited for a run that had failed"),
+            ),
+        ):
+            response = api_client.get(SETUP_CHECKS_URL)
+
+        assert response.status_code == status.HTTP_200_OK
+        probes.assert_called_once()
+
+    def test_a_cache_that_raises_still_answers_without_waiting(self, api_client):
+        cache_down = CacheDown()
+        with (
+            patch("tfc.views.setup_checks.cache", cache_down),
+            patch(
+                "tfc.views.setup_checks._run_probes", return_value=down_only("cache")
+            ) as probes,
+            patch(
+                "time.sleep",
+                side_effect=AssertionError("waited on a cache that is down"),
+            ),
+        ):
+            response = api_client.get(SETUP_CHECKS_URL)
+
+        assert response.status_code == status.HTTP_200_OK
+        assert by_id(response.json()["result"], "cache")["status"] == FAILED
+        probes.assert_called_once()
+        # Each call to an unreachable Redis can take its socket timeout.
+        assert len(cache_down.calls) <= 2
+
+
 @pytest.mark.integration
 @pytest.mark.api
 class TestCheckInventory:
@@ -739,7 +1287,11 @@ class TestCheckInventory:
     def test_a_fix_written_per_setup_covers_every_setup(self):
         """A per-setup fix with a setup missing would render an empty remedy."""
         for check in CHECKS:
-            for fix in (check["fix"], check.get("absent", {}).get("fix", "")):
+            for fix in (
+                check["fix"],
+                check.get("absent", {}).get("fix", ""),
+                check.get("cannot_run", {}).get("fix", ""),
+            ):
                 if isinstance(fix, dict):
                     assert set(fix) == {STANDALONE, DISTRIBUTED, HELM}, check["id"]
                     assert all(isinstance(v, str) and v for v in fix.values())
@@ -754,11 +1306,15 @@ class TestCheckInventory:
         }
 
         for check in CHECKS:
-            page, _, anchor = check["docs_url"].partition("#")
-            assert page.endswith("/INSTALLATION.md"), (
-                f"{check['id']} links to {page}, where no test can see the anchor"
-            )
-            assert anchor in headings, f"{check['id']} links to a missing #{anchor}"
+            urls = [check["docs_url"]]
+            if "cannot_run" in check:
+                urls.append(check["cannot_run"]["docs_url"])
+            for url in urls:
+                page, _, anchor = url.partition("#")
+                assert page.endswith("/INSTALLATION.md"), (
+                    f"{check['id']} links to {page}, where no test can see the anchor"
+                )
+                assert anchor in headings, f"{check['id']} links to a missing #{anchor}"
 
     def test_down_detail_lives_on_the_check_not_the_mode(self):
         """Hoisted so the two modes cannot drift into describing one outage

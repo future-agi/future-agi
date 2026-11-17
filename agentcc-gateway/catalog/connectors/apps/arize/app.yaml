@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: arize
+version: 1.0.0
+name: Arize
+description: "Inspect traces and manage projects, datasets, experiments, evaluators, monitors and prompts."
+vendor:
+  name: Arize
+  domains: [arize.com]
+eeCategory: developer
+group: other
+categories: [developer, observability]
+tags: [tracing, prompts, datasets, evaluations]
+docsUrl: https://arize.com/docs/api-clients/mcp/overview
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://arize.com/docs/api-clients/mcp/overview
+    fetchedAt: 2026-11-09

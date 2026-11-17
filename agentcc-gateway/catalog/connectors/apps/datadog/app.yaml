@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: datadog
+version: 1.0.0
+name: Datadog
+description: "Observability data: APM, logs, metrics, monitors and dashboards."
+vendor:
+  name: Datadog
+  domains: [datadoghq.com]
+eeCategory: developer
+group: other
+categories: [developer, observability]
+tags: [apm, logs, metrics, monitors, dashboards]
+docsUrl: https://docs.datadoghq.com/mcp_server/
+defaultProvider: access-token
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://docs.datadoghq.com/mcp_server/
+    fetchedAt: 2026-10-21

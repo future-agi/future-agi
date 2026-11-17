@@ -1,0 +1,18 @@
+# Fixture for credtemplate's catalogparts tests, not catalog data. Facts are
+# illustrative; the catalog itself lives in agentcc-gateway/catalog/connectors.
+schema: "connector-manifest/v1#app"
+id: close
+version: 1.0.0
+name: Close
+description: "Sales CRM: leads, contacts and opportunities."
+vendor: { name: Close, domains: [close.com] }
+eeCategory: data
+group: other
+categories: [crm]
+docsUrl: https://developer.close.com/mcp
+defaultProvider: close-mcp
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://developer.close.com/mcp
+    fetchedAt: 2026-10-19

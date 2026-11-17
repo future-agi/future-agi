@@ -1,3 +1,4 @@
+import { localProviderLogo } from "src/utils/localProviderLogo";
 import {
   Box,
   Button,
@@ -232,7 +233,9 @@ const DatasetOptimizationHeaderComponent = ({ optimization, isLoading }) => {
 
           <Chip
             sx={{
-              backgroundColor: modelDeprecated ? "warning.lighter" : "status.info.bg",
+              backgroundColor: modelDeprecated
+                ? "warning.lighter"
+                : "status.info.bg",
               color: modelDeprecated ? "warning.dark" : "status.info.fg",
               ":hover": {
                 backgroundColor: modelDeprecated
@@ -249,7 +252,7 @@ const DatasetOptimizationHeaderComponent = ({ optimization, isLoading }) => {
               ) : providerLogo ? (
                 <Image
                   ratio="1/1"
-                  src={providerLogo}
+                  src={localProviderLogo(optimization)}
                   alt={model}
                   style={{ width: "16px", height: "16px" }}
                 />

@@ -55,8 +55,11 @@ from deploy.update.trust import Verification, VerificationError  # noqa: E402
 cli = importlib.import_module("deploy.update.__main__")
 
 COMPOSE = ["docker", "compose"]
-COMPOSE_FILES = (STANDALONE_FILE, DISTRIBUTED_FILE, PRODUCTION_OVERLAY)
-DIGEST = "sha256:" + "a" * 64
+# Every compose file a release ships, including the production Hub file (used after the
+# production overlay when COMPOSE_PROFILES enables the hub profile).
+COMPOSE_FILES = (STANDALONE_FILE, DISTRIBUTED_FILE, PRODUCTION_OVERLAY,
+                 "deploy/docker-compose.production.hub.yml")
+DIGEST ="sha256:" + "a" * 64
 
 
 # ----------------------------------------------------------------- fakes --
@@ -4699,8 +4702,10 @@ class FullStackProductionTests(unittest.TestCase):
         (self.root / DISTRIBUTED_FILE).write_text("services: {}\n")
         (self.root / PRODUCTION_OVERLAY).write_text("services: {}\n")
         self.env_file = self.root / PRODUCTION_ENV
+        # A production env has an API secret pepper of its own (bin/update --production refuses one without it).
         self.env_file.write_text(f"FUTURE_AGI_VERSION={self.OLD}\nFRONTEND_VERSION={self.OLD}\n"
-                                 "PG_PASSWORD=prod-password-value\n")
+                                 "PG_PASSWORD=prod-password-value\n"
+                                 "FI_API_SECRET_PEPPER=operator-test-pepper-0123456789abcdef0123456789\n")
         self.backup_log = base / "backups.log"
         hook = base / "backup hook.py"
         hook.write_text(f"open({str(self.backup_log)!r}, 'a').write('backup\\n')\n")
@@ -6146,6 +6151,8 @@ class InstallRound4ComposeMatrixTests(unittest.TestCase):
                 elif match and re.search(r"(SECRET|PASSWORD|TOKEN|_KEY)$", match.group(1)):
                     line += f"dummy-{match.group(1).lower()}-0123456789abcdef"
                 lines.append(line)
+            # A production env has an API secret pepper of its own; the last line of a name wins, as in Compose.
+            lines.append("FI_API_SECRET_PEPPER=operator-test-pepper-0123456789abcdef0123456789")
             (root / PRODUCTION_ENV).write_text("\n".join([*lines, *env_lines]) + "\n", encoding="utf-8")
         else:
             text = (ROOT / ".env.example").read_text(encoding="utf-8")
@@ -6267,9 +6274,10 @@ class InstallRound4ComposeMatrixTests(unittest.TestCase):
         def check(inst, commands, version):
             services, components = self.check(inst, commands)
             self.assertEqual(sorted(components), ["app", "code-executor", "serving"])
+            # code-executor is a default service (no profile); serving stays behind --profile ml.
             self.assertEqual([services[name]["active"] for name in ("app", "code-executor", "serving")],
-                             [True, False, False])
-            self.assertEqual([entry["service"] for entry in inst.futureagi_services()], ["app"])
+                             [True, True, False])
+            self.assertEqual([entry["service"] for entry in inst.futureagi_services()], ["app", "code-executor"])
         self.each_release("standalone", self.checkout("standalone"), check)
 
     def test_distributed(self):

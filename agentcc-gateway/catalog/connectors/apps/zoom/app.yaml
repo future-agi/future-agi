@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: zoom
+version: 1.0.0
+name: Zoom
+description: "Meetings, recordings, summaries, Team Chat and docs across Zoom Workplace."
+vendor:
+  name: Zoom
+  domains: [zoom.us]
+eeCategory: communication
+group: other
+categories: [communication, meetings]
+tags: [meetings, chat, recordings]
+docsUrl: https://developers.zoom.us/docs/mcp/servers/connect-to-zoom-mcp-servers/
+defaultProvider: mcp
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://developers.zoom.us/docs/mcp/zoom/
+    fetchedAt: 2026-10-21

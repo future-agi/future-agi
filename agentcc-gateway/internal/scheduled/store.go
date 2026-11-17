@@ -18,6 +18,7 @@ var (
 type Store interface {
 	Create(job *ScheduledJob) error
 	Get(id string) (*ScheduledJob, error)
+	GetForOrg(id, orgID string) (*ScheduledJob, error)
 	Update(job *ScheduledJob) error
 	Delete(id string) error
 	ListByOrg(orgID string, status string, limit int) ([]*ScheduledJob, error)
@@ -70,6 +71,20 @@ func (s *MemoryStore) Get(id string) (*ScheduledJob, error) {
 	defer s.mu.RUnlock()
 	j, ok := s.jobs[id]
 	if !ok {
+		return nil, ErrJobNotFound
+	}
+	return j, nil
+}
+
+// GetForOrg returns the job only when it belongs to orgID, and ErrJobNotFound
+// otherwise so a job id from another org reveals nothing. An orgID of "" is the
+// no-org tenant (single-tenant or org-less keys), not a wildcard.
+func (s *MemoryStore) GetForOrg(id, orgID string) (*ScheduledJob, error) {
+	j, err := s.Get(id)
+	if err != nil {
+		return nil, err
+	}
+	if j.OrgID != orgID {
 		return nil, ErrJobNotFound
 	}
 	return j, nil

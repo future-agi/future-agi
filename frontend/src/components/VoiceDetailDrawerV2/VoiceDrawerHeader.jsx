@@ -78,6 +78,12 @@ const VoiceDrawerHeader = ({
   // Arrows (not j/k) because TranscriptView owns j/k for turn-level nav inside a call.
   const handleKeyDown = useCallback(
     (e) => {
+      // Arrows a focused widget already handled (the Actions menu, a Select)
+      // or pressed inside an open menu/listbox move within that widget. They
+      // must not swap the call under it: the open menu would then act on
+      // the new call.
+      if (e.defaultPrevented) return;
+      if (e.target?.closest?.('[role="menu"], [role="listbox"]')) return;
       if (
         e.target.tagName === "INPUT" ||
         e.target.tagName === "TEXTAREA" ||

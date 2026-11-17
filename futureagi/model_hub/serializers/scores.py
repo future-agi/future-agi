@@ -1,3 +1,6 @@
+import json
+import math
+
 from rest_framework import serializers
 
 from model_hub.models.choices import ScoreSource
@@ -85,6 +88,64 @@ class CreateScoreSerializer(StrictInputSerializer):
     queue_item_id = serializers.UUIDField(required=False, allow_null=True, default=None)
 
 
+class FeedbackTokenSerializer(StrictInputSerializer):
+    source_type = serializers.ChoiceField(choices=["trace", "span"])
+    source_id = serializers.CharField(max_length=255)
+    key = serializers.CharField(max_length=255)
+    expires_in = serializers.IntegerField(default=86400, min_value=1, max_value=604800)
+
+    def validate(self, attrs):
+        if attrs["source_type"] == "trace":
+            attrs["source_id"] = str(
+                serializers.UUIDField().run_validation(attrs["source_id"])
+            )
+        return attrs
+
+
+class SubmitFeedbackSerializer(StrictInputSerializer):
+    token = serializers.CharField(max_length=8192, trim_whitespace=False)
+    score = serializers.FloatField(required=False)
+    value = serializers.JSONField(required=False)
+    comment = serializers.CharField(required=False, allow_blank=True, max_length=10000)
+
+    def validate_score(self, value):
+        if not math.isfinite(value):
+            raise serializers.ValidationError("Score must be finite.")
+        return value
+
+    def validate_value(self, value):
+        try:
+            json.dumps(value, allow_nan=False)
+        except (ValueError, TypeError):
+            raise serializers.ValidationError("Value must be valid JSON.")
+        return value
+
+    def validate(self, attrs):
+        if "score" not in attrs and "value" not in attrs:
+            raise serializers.ValidationError("A score or value is required.")
+        return attrs
+
+
+class FeedbackTokenResultSerializer(serializers.Serializer):
+    token = serializers.CharField()
+    url_path = serializers.CharField()
+    expires_at = serializers.DateTimeField()
+
+
+class FeedbackTokenResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = FeedbackTokenResultSerializer()
+
+
+class FeedbackAcceptedResultSerializer(serializers.Serializer):
+    accepted = serializers.BooleanField()
+
+
+class FeedbackAcceptedResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = FeedbackAcceptedResultSerializer()
+
+
 class UpdateScoreSerializer(StrictInputSerializer):
     """Strict write serializer for generated score PUT/PATCH routes."""
 
@@ -126,6 +187,15 @@ class ScoreForSourceQuerySerializer(StrictInputSerializer):
             "scores are listed."
         ),
     )
+
+    def to_internal_value(self, data):
+        if hasattr(data, "keys"):
+            data = data.copy()
+            # This action returns every score, not a page. Released clients
+            # expose paging arguments even though this endpoint never paginates.
+            data.pop("page", None)
+            data.pop("limit", None)
+        return super().to_internal_value(data)
 
 
 class ScoreResponseSerializer(serializers.Serializer):

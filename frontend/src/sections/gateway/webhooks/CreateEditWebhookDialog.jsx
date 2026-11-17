@@ -1,28 +1,36 @@
-import React, { useState, useEffect } from "react";
-import {
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogActions,
-  Button,
-  TextField,
-  Stack,
-  FormControlLabel,
-  Checkbox,
-  Typography,
-  IconButton,
-  Box,
-} from "@mui/material";
+import React, { useEffect, useRef, useState } from "react";
 import PropTypes from "prop-types";
-import Iconify from "src/components/iconify";
+import Box from "@mui/material/Box";
+import Button from "@mui/material/Button";
+import Checkbox from "@mui/material/Checkbox";
+import Dialog from "@mui/material/Dialog";
+import DialogActions from "@mui/material/DialogActions";
+import DialogContent from "@mui/material/DialogContent";
+import DialogTitle from "@mui/material/DialogTitle";
+import FormControlLabel from "@mui/material/FormControlLabel";
+import IconButton from "@mui/material/IconButton";
+import Stack from "@mui/material/Stack";
+import Switch from "@mui/material/Switch";
+import TextField from "@mui/material/TextField";
+import Typography from "@mui/material/Typography";
 
-const EVENT_TYPES = [
-  { value: "request.completed", label: "Request Completed" },
-  { value: "guardrail.triggered", label: "Guardrail Triggered" },
-  { value: "budget.exceeded", label: "Budget Exceeded" },
-  { value: "error.occurred", label: "Error Occurred" },
-  { value: "batch.completed", label: "Batch Completed" },
-];
+import SvgColor from "src/components/svg-color";
+import { Glyph } from "../settings/ui";
+
+import RecordedOnly from "../settings/ui/RecordedOnly";
+import {
+  WEBHOOK_EVENTS,
+  offeredWebhookEvents,
+  onlyUnproduced,
+} from "./webhookEvents";
+
+const HTTP_WARNING =
+  "This URL uses HTTP, so deliveries are not encrypted. Webhook payloads can include event data from your organization. Use an HTTPS URL to protect payloads in transit.";
+
+// The server's rule for a webhook name (futureagi/agentcc/validators.py),
+// checked on the trimmed name: it refuses any other name with a 400.
+const NAME_PATTERN = /^[A-Za-z0-9_-]+$/;
+const NAME_RULE = "Letters, digits, _ and - only.";
 
 const EMPTY_FORM = {
   name: "",
@@ -30,8 +38,24 @@ const EMPTY_FORM = {
   secret: "",
   events: [],
   description: "",
-  headers: {},
+  is_active: true,
 };
+
+// A new webhook offers every event the gateway produces, including guardrail
+// events while the node pipeline is off. Their description states when they
+// fire. Opening or saving a webhook never changes its existing subscriptions.
+
+function urlError(url) {
+  const value = url.trim();
+  if (!value) return "";
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol === "https:" || parsed.protocol === "http:") return "";
+  } catch {
+    // fall through
+  }
+  return "Start with https:// (or http://) and a host name.";
+}
 
 const CreateEditWebhookDialog = ({
   open,
@@ -39,10 +63,15 @@ const CreateEditWebhookDialog = ({
   onSubmit,
   webhook,
   isPending,
+  nameRefusal,
 }) => {
+  const offered = offeredWebhookEvents();
   const [form, setForm] = useState(EMPTY_FORM);
   const [headerEntries, setHeaderEntries] = useState([{ key: "", value: "" }]);
-
+  // The server's refusal of the name, shown from the moment it arrives until
+  // the Name field is next edited.
+  const [refusal, setRefusal] = useState(null);
+  const nameInput = useRef(null);
   const isEdit = Boolean(webhook);
 
   useEffect(() => {
@@ -53,11 +82,11 @@ const CreateEditWebhookDialog = ({
         secret: "",
         events: webhook.events || [],
         description: webhook.description || "",
-        headers: webhook.headers || {},
+        is_active: webhook.is_active !== false,
       });
       const entries = Object.entries(webhook.headers || {});
       setHeaderEntries(
-        entries.length > 0
+        entries.length
           ? entries.map(([key, value]) => ({ key, value }))
           : [{ key: "", value: "" }],
       );
@@ -67,42 +96,68 @@ const CreateEditWebhookDialog = ({
     }
   }, [webhook, open]);
 
-  const handleField = (field) => (e) =>
-    setForm((f) => ({ ...f, [field]: e.target.value }));
+  useEffect(() => {
+    setRefusal(nameRefusal || null);
+  }, [nameRefusal]);
 
-  const handleEventToggle = (eventValue) => {
+  // A refusal takes focus to the Name field once it shows, so the field
+  // scrolls into view and a screen reader reads its label, its error state
+  // and the server's words.
+  useEffect(() => {
+    if (refusal) nameInput.current?.focus();
+  }, [refusal]);
+
+  const field = (name) => (event) =>
+    setForm((f) => ({ ...f, [name]: event.target.value }));
+
+  const editName = (event) => {
+    setRefusal(null);
+    field("name")(event);
+  };
+
+  const toggleEvent = (value) =>
     setForm((f) => ({
       ...f,
-      events: f.events.includes(eventValue)
-        ? f.events.filter((e) => e !== eventValue)
-        : [...f.events, eventValue],
+      events: f.events.includes(value)
+        ? f.events.filter((e) => e !== value)
+        : [...f.events, value],
     }));
-  };
 
-  const handleHeaderChange = (idx, field, value) => {
+  const setHeader = (idx, key, value) =>
     setHeaderEntries((entries) =>
-      entries.map((e, i) => (i === idx ? { ...e, [field]: value } : e)),
+      entries.map((e, i) => (i === idx ? { ...e, [key]: value } : e)),
     );
-  };
 
-  const addHeaderRow = () =>
-    setHeaderEntries((entries) => [...entries, { key: "", value: "" }]);
-
-  const removeHeaderRow = (idx) =>
-    setHeaderEntries((entries) => entries.filter((_, i) => i !== idx));
-
-  const handleSubmit = () => {
+  const submit = () => {
     const headers = {};
     headerEntries.forEach(({ key, value }) => {
       if (key.trim()) headers[key.trim()] = value;
     });
-    const payload = { ...form, headers };
+    const payload = {
+      ...form,
+      name: form.name.trim(),
+      url: form.url.trim(),
+      headers,
+    };
     if (isEdit) payload.id = webhook.id;
     if (!payload.secret) delete payload.secret;
     onSubmit(payload);
   };
 
-  const isValid = form.name.trim() && form.url.trim() && form.events.length > 0;
+  const storedUnsent = WEBHOOK_EVENTS.filter(
+    (e) => !e.produced && form.events.includes(e.value),
+  );
+  const badUrl = urlError(form.url);
+  const httpWarning = !badUrl && /^http:/i.test(form.url.trim());
+  const neverCalled = onlyUnproduced(form.events);
+  const trimmedName = form.name.trim();
+  const nameOk = NAME_PATTERN.test(trimmedName);
+  // A name that breaks the rule is in error before submit; an empty name is
+  // only missing.
+  const nameError =
+    refusal?.message || (trimmedName && !nameOk ? NAME_RULE : "");
+  const isValid =
+    nameOk && form.url.trim() && !badUrl && form.events.length > 0;
 
   return (
     <Dialog
@@ -112,60 +167,114 @@ const CreateEditWebhookDialog = ({
       PaperProps={{ sx: { maxWidth: 720 } }}
       fullWidth
     >
-      <DialogTitle>{isEdit ? "Edit Webhook" : "Create Webhook"}</DialogTitle>
+      <DialogTitle>{isEdit ? "Edit webhook" : "Create webhook"}</DialogTitle>
       <DialogContent dividers>
         <Stack spacing={2.5} sx={{ mt: 1 }}>
           <TextField
             label="Name"
             value={form.name}
-            onChange={handleField("name")}
+            onChange={editName}
+            inputRef={nameInput}
             fullWidth
             required
+            size="small"
+            error={Boolean(nameError)}
+            helperText={nameError || NAME_RULE}
           />
           <TextField
             label="URL"
             value={form.url}
-            onChange={handleField("url")}
+            onChange={field("url")}
             fullWidth
             required
-            placeholder="https://example.com/webhook"
+            size="small"
+            placeholder="https://example.com/webhooks/gateway"
+            error={Boolean(badUrl)}
+            helperText={
+              badUrl ||
+              (httpWarning
+                ? HTTP_WARNING
+                : "The gateway POSTs each event here as JSON.")
+            }
+            FormHelperTextProps={
+              httpWarning ? { sx: { color: "warning.main" } } : undefined
+            }
           />
           <TextField
             label="Secret"
             value={form.secret}
-            onChange={handleField("secret")}
+            onChange={field("secret")}
             fullWidth
-            placeholder={
-              isEdit ? "Leave blank to keep existing" : "Optional HMAC secret"
-            }
+            size="small"
             type="password"
+            autoComplete="new-password"
+            placeholder={isEdit ? "Leave blank to keep the current secret" : ""}
+            helperText="With a secret, every delivery carries X-Agentcc-Signature: sha256=<HMAC-SHA256 of the body>, so your endpoint can check it came from this gateway."
           />
           <TextField
             label="Description"
             value={form.description}
-            onChange={handleField("description")}
+            onChange={field("description")}
             fullWidth
+            size="small"
             multiline
             rows={2}
           />
 
           <Box>
-            <Typography variant="subtitle2" sx={{ mb: 1 }}>
-              Event Subscriptions
+            <Typography typography="s1" fontWeight={500} sx={{ mb: 0.5 }}>
+              Events
             </Typography>
-            {EVENT_TYPES.map((evt) => (
-              <FormControlLabel
-                key={evt.value}
-                control={
-                  <Checkbox
-                    checked={form.events.includes(evt.value)}
-                    onChange={() => handleEventToggle(evt.value)}
-                    size="small"
-                  />
-                }
-                label={evt.label}
-              />
-            ))}
+            <Stack>
+              {offered.map((event) => (
+                <FormControlLabel
+                  key={event.value}
+                  control={
+                    <Checkbox
+                      size="small"
+                      checked={form.events.includes(event.value)}
+                      onChange={() => toggleEvent(event.value)}
+                    />
+                  }
+                  label={
+                    <Typography typography="s1" component="span">
+                      {event.label}{" "}
+                      <Typography
+                        component="span"
+                        typography="s2"
+                        color="text.secondary"
+                      >
+                        {event.value} · {event.description}
+                      </Typography>
+                    </Typography>
+                  }
+                />
+              ))}
+            </Stack>
+            <RecordedOnly
+              ids={storedUnsent.map((e) => e.note)}
+              rows={storedUnsent.map((e) => ({
+                key: e.value,
+                label: e.label,
+                value: e.value,
+                mono: true,
+              }))}
+              title="Also subscribed"
+              description="Stored on this webhook. The gateway never sends these events."
+              testId="webhook-unsent-events"
+              sx={{ mt: 1 }}
+            />
+            {neverCalled && (
+              <Typography
+                typography="s2"
+                color="warning.main"
+                sx={{ mt: 1 }}
+                role="status"
+              >
+                With only these events this webhook is never called: add an
+                event the gateway sends.
+              </Typography>
+            )}
           </Box>
 
           <Box>
@@ -175,13 +284,27 @@ const CreateEditWebhookDialog = ({
               alignItems="center"
               sx={{ mb: 1 }}
             >
-              <Typography variant="subtitle2">Custom Headers</Typography>
+              <Box>
+                <Typography typography="s1" fontWeight={500}>
+                  Headers
+                </Typography>
+                <Typography typography="s2" color="text.secondary">
+                  Sent with every delivery, for example an authorization header
+                  your endpoint expects.
+                </Typography>
+              </Box>
               <Button
                 size="small"
-                startIcon={<Iconify icon="solar:add-linear" width={16} />}
-                onClick={addHeaderRow}
+                startIcon={<Glyph name="add" />}
+                sx={{ flexShrink: 0, whiteSpace: "nowrap" }}
+                onClick={() =>
+                  setHeaderEntries((entries) => [
+                    ...entries,
+                    { key: "", value: "" },
+                  ])
+                }
               >
-                Add
+                Add header
               </Button>
             </Stack>
             {headerEntries.map((entry, idx) => (
@@ -190,40 +313,66 @@ const CreateEditWebhookDialog = ({
                   size="small"
                   placeholder="Header name"
                   value={entry.key}
-                  onChange={(e) =>
-                    handleHeaderChange(idx, "key", e.target.value)
-                  }
+                  onChange={(e) => setHeader(idx, "key", e.target.value)}
+                  inputProps={{ "aria-label": `Header ${idx + 1} name` }}
                   sx={{ flex: 1 }}
                 />
                 <TextField
                   size="small"
-                  placeholder="Header value"
+                  placeholder="Value"
                   value={entry.value}
-                  onChange={(e) =>
-                    handleHeaderChange(idx, "value", e.target.value)
-                  }
+                  onChange={(e) => setHeader(idx, "value", e.target.value)}
+                  inputProps={{ "aria-label": `Header ${idx + 1} value` }}
                   sx={{ flex: 1 }}
                 />
                 <IconButton
                   size="small"
-                  onClick={() => removeHeaderRow(idx)}
+                  aria-label={`Remove header ${idx + 1}`}
+                  onClick={() =>
+                    setHeaderEntries((entries) =>
+                      entries.filter((_, i) => i !== idx),
+                    )
+                  }
                   disabled={headerEntries.length === 1}
                 >
-                  <Iconify icon="solar:close-linear" width={20} />
+                  <SvgColor
+                    src="/assets/icons/ic_delete.svg"
+                    aria-hidden
+                    sx={{ width: 16, height: 16 }}
+                  />
                 </IconButton>
               </Stack>
             ))}
           </Box>
+
+          {isEdit && (
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={form.is_active}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, is_active: e.target.checked }))
+                  }
+                />
+              }
+              label={
+                <Typography typography="s1" component="span">
+                  Active
+                </Typography>
+              }
+            />
+          )}
         </Stack>
       </DialogContent>
       <DialogActions>
         <Button onClick={onClose}>Cancel</Button>
         <Button
           variant="contained"
-          onClick={handleSubmit}
+          color="primary"
+          onClick={submit}
           disabled={!isValid || isPending}
         >
-          {isPending ? "Saving..." : isEdit ? "Update" : "Create"}
+          {isPending ? "Saving…" : isEdit ? "Save" : "Create"}
         </Button>
       </DialogActions>
     </Dialog>
@@ -236,6 +385,10 @@ CreateEditWebhookDialog.propTypes = {
   onSubmit: PropTypes.func.isRequired,
   webhook: PropTypes.object,
   isPending: PropTypes.bool,
+  // The server's refusal of the name on the last save: its first message. A
+  // new object for every refusal, so a second one in the same words moves
+  // focus to the field again.
+  nameRefusal: PropTypes.shape({ message: PropTypes.string }),
 };
 
 export default CreateEditWebhookDialog;

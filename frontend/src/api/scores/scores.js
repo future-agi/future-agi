@@ -9,6 +9,7 @@ import {
   modelHubScoresForSource,
 } from "src/generated/api-contracts/api";
 import { ModelHubScoresForSourceResponse } from "src/generated/api-contracts/api.zod";
+import { partialSaveMessage } from "src/components/traceDetailDrawer/partialSaveMessage";
 
 export const SCORE_ITEM_CONSUMED_FIELDS = [
   "id",
@@ -158,8 +159,11 @@ export const useCreateScore = () => {
 
 /**
  * Create multiple scores on a single source (inline annotator).
+ *
+ * `labels` ([{ id, name }]): when given, a save the server answered with some
+ * labels not saved names them by these names.
  */
-export const useBulkCreateScores = () => {
+export const useBulkCreateScores = ({ labels } = {}) => {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({
@@ -213,8 +217,17 @@ export const useBulkCreateScores = () => {
       const result = data?.data?.result || data?.result || data || {};
       const errors = result.errors || [];
       const savedCount = (result.scores || []).length;
+      const failedLabels = result.failed_labels || [];
 
-      if (errors.length > 0) {
+      if (failedLabels.length > 0 && labels) {
+        // The labels the server did not save, by the names the caller shows.
+        // None saved is an error; some saved is a warning.
+        const savedLabels = result.success_labels || [];
+        enqueueSnackbar(
+          partialSaveMessage({ savedLabels, failedLabels, labels }),
+          { variant: savedLabels.length === 0 ? "error" : "warning" },
+        );
+      } else if (errors.length > 0) {
         enqueueSnackbar(
           `Saved ${savedCount} annotation${savedCount === 1 ? "" : "s"}; ` +
             `${errors.length} failed: ${errors.slice(0, 3).join("; ")}` +

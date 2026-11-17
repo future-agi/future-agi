@@ -82,6 +82,8 @@ export const requestFilterFields = (
     type: "date",
     operators: DATE_OPERATORS,
   },
+  // Models and metadata values are suggestions (older logs can hold others),
+  // so a typed value is still accepted.
   {
     id: "model",
     label: "Model",
@@ -89,6 +91,7 @@ export const requestFilterFields = (
     multiple: true,
     options: availableModels,
     operators: ["in"],
+    allowCustomValue: true,
   },
   { id: "provider", label: "Provider", type: "text", operators: ["in"] },
   ...METADATA.map(({ id, label }) => ({
@@ -101,6 +104,7 @@ export const requestFilterFields = (
         ? (metadataValues?.tags ?? []).filter(isCustomTag)
         : metadataValues?.[id] ?? [],
     operators: ["in"],
+    allowCustomValue: true,
   })),
   ...RANGES.map(({ id, label }) => ({
     id,

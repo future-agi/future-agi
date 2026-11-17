@@ -272,7 +272,11 @@ class ClickHouseVectorDB:
     def __init__(
         self,
     ):
-        self.client = clickhouse_driver.Client(**get_clickhouse_client_kwargs())
+        from tracer.services.background_transport import guard_native_client
+
+        self.client = guard_native_client(
+            clickhouse_driver.Client(**get_clickhouse_client_kwargs())
+        )
 
     @staticmethod
     def _execute_native_read_with_deadline(
@@ -962,6 +966,8 @@ class ClickHouseVectorDB:
         metadata_list: list[dict[str, str]],
         unique_keys: list[str],
         exclude_keys: list[str] | None = None,
+        *,
+        before_write=None,
     ) -> list[str]:
         """
         Bulk upserts multiple vectors into the specified table in a single query.
@@ -1027,6 +1033,8 @@ class ClickHouseVectorDB:
 
         # Execute the update query
         start_time = datetime.now()
+        if before_write is not None:
+            before_write()
         self.client.execute(update_query)
         end_time = datetime.now()
         elapsed_time = (end_time - start_time).total_seconds()
@@ -1048,6 +1056,8 @@ class ClickHouseVectorDB:
 
         # Execute the bulk insert
         start_time = datetime.now()
+        if before_write is not None:
+            before_write()
         self.client.execute(insert_query, insert_data, types_check=True)
         end_time = datetime.now()
         elapsed_time = (end_time - start_time).total_seconds()

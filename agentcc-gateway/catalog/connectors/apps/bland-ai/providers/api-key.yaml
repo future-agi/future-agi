@@ -1,0 +1,46 @@
+# Bland's hosted MCP endpoint requires a full-access API key for key auth.
+# Restricted API keys cannot connect; OAuth is a separate alternative.
+schema: "connector-manifest/v1#provider"
+app: bland-ai
+id: api-key
+version: 1.1.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://api.bland.ai/v1/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: Bland full-access API key
+      help: "Create a full-access Bland API key in dashboard settings; restricted keys cannot connect. Calls act within one organization and may place billable calls or publish agents. Supply the key without the Bearer prefix."
+      helpUrl: https://docs.bland.ai/integrations/mcp/overview
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_metered
+  source: https://www.bland.ai/pricing
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://docs.bland.ai/integrations/mcp/overview
+    fetchedAt: 2026-11-09
+  - fact: transport.variant
+    url: https://docs.bland.ai/integrations/mcp/overview
+    fetchedAt: 2026-11-09
+  - fact: auth.kind
+    url: https://docs.bland.ai/integrations/mcp/overview
+    fetchedAt: 2026-11-09
+  - fact: auth.credentialParts
+    url: https://docs.bland.ai/integrations/mcp/other-clients
+    fetchedAt: 2026-11-09

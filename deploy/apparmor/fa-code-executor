@@ -1,0 +1,20 @@
+# AppArmor profile for the Future AGI code-executor container.
+#
+# The code executor isolates each code evaluation with nsjail, which creates a
+# Linux user namespace inside the container. A host that restricts
+# unprivileged user namespaces (kernel.apparmor_restrict_unprivileged_userns=1,
+# the default on Ubuntu 23.10 and later) allows that only to a program whose
+# AppArmor profile has the userns rule. This profile leaves the executor
+# unconfined, as the default apparmor:unconfined does, and adds only that rule.
+#
+# Use it as INSTALLATION.md, "Code evals and the sandbox", describes: load it
+# on the Docker host, then set CODE_EXECUTOR_APPARMOR_PROFILE=fa-code-executor.
+# It does not help when Docker runs with userns-remap.
+
+abi <abi/4.0>,
+
+include <tunables/global>
+
+profile fa-code-executor flags=(unconfined) {
+  userns,
+}

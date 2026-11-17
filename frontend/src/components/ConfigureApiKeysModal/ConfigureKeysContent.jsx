@@ -1,6 +1,7 @@
 import { Box, Stack, Typography } from "@mui/material";
 import React, { useMemo, useState } from "react";
 import { useApiKeysStatus } from "src/api/model/api-keys";
+import { providerMatchesSearch } from "src/components/custom-model-dropdown/KeysHelper";
 import PropTypes from "prop-types";
 import KeyCard from "src/sections/develop-detail/Common/ConfigureKeys/KeyCard";
 import FormSearchField from "../FormSearchField/FormSearchField";
@@ -39,13 +40,12 @@ export default function ConfigureKeysContent({
   //   );
   // }, [data, searchQuery]);
 
-  // Function to filter keys based on displayName
+  // Cards whose name or provider id matches the search
   const filteredData = useMemo(() => {
-    const search = searchQuery.toLowerCase();
     const selectedProvider = selectedModel?.providers?.toLowerCase();
 
     return (data || [])
-      .filter((d) => d.display_name.toLowerCase().includes(search))
+      .filter((d) => providerMatchesSearch(d, searchQuery))
       .sort((a, b) => {
         if (!selectedProvider) return 0;
         const aMatch = a.provider.toLowerCase() === selectedProvider;

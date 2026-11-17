@@ -22,7 +22,7 @@ from .docker_host import (bounded_installation, checked_daemon, docker_json, fix
 from .envfile import read_env, render_changes
 from .install import VERSION_VARIABLES
 from .manifest import hash_path, manifest_hash, parse_image_ref, parse_version
-from .orchestrator import GuardRefused, check_binding, fingerprints, require
+from .orchestrator import GuardRefused, NotCovered, check_binding, fingerprints, require
 from .host_facts import safe_path
 MOUNTS = {"app": ("/data", "app-data"), "postgres": ("/var/lib/postgresql/data", "postgres-data"),
           "clickhouse": ("/var/lib/clickhouse", "clickhouse-data")}
@@ -171,14 +171,32 @@ def _automatic_layout(inst, config):
     require(contract.get("schema_version") == 1
             and contract.get("runtime_activation_contract") == "standalone-compose-direct-v1"
             and contract.get("automatic_profiles") == [], ReasonCode.UNSUPPORTED_INSTALLATION)
-    active = {name: row for name, row in contract["services"].items() if not row["profiles"]}
+    unsupported = contract.get("automatic_unsupported")
+    require(isinstance(unsupported, dict) and isinstance(unsupported.get("services"), dict)
+            and isinstance(unsupported.get("volumes"), dict), ReasonCode.UNSUPPORTED_INSTALLATION)
+    # A known service that automatic updates do not cover yet (named, with its reason, in the
+    # layout) refuses the install outright; any service the layout does not know refuses below.
+    not_covered = set(unsupported["services"]) & set(config.get("services", {}))
+    if not_covered:
+        raise NotCovered(not_covered)
+    active = {name: row for name, row in contract["services"].items()
+              if not row["profiles"] and name not in unsupported["services"]}
+    # Volumes of uncovered services may be declared but unused; no covered service mounts
+    # them (each covered service's mounts are compared exactly below).
+    declared = set(config.get("volumes", {}))
     require(set(config.get("services", {})) == set(active)
-            and set(config.get("volumes", {})) == set(contract["volumes"])
+            and declared <= set(contract["volumes"])
+            and declared - set(unsupported["volumes"]) == set(contract["volumes"]) - set(unsupported["volumes"])
             and set(contract["backup_coverage"]) == set(VOLUME_ROLES), ReasonCode.UNSUPPORTED_INSTALLATION)
     for name, definition in config["services"].items():
         require(not definition.get("build") and not definition.get("profiles")
                 and definition.get("restart", "no") in ("unless-stopped", "no")
                 and definition.get("network_mode") in (None, ""), ReasonCode.UNSUPPORTED_INSTALLATION)
+        tmpfs = definition.get("tmpfs") or []
+        tmpfs = [tmpfs] if isinstance(tmpfs, str) else tmpfs
+        require(isinstance(tmpfs, list) and all(isinstance(t, str) for t in tmpfs)
+                and sorted(t.split(":", 1)[0] for t in tmpfs) == active[name].get("tmpfs", []),
+                ReasonCode.UNSUPPORTED_INSTALLATION)
         actual = definition.get("volumes", [])
         expected = active[name]["mounts"]
         require(len(actual) == len(expected), ReasonCode.UNSUPPORTED_INSTALLATION)

@@ -10,9 +10,9 @@ from tfc.ee_gating import EEResource, check_ee_can_create
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_errors import build_error_envelope
 from tracer.models.feed_alert import FeedAlertTrigger
-from tracer.models.monitor import UserAlertMonitor
+from tracer.models.monitor import ThresholdRuleChoices, UserAlertMonitor
 from tracer.models.project import Project
-from tracer.serializers.monitor import UserAlertMonitorSerializer
+from tracer.serializers.monitor import FiniteThresholdField, UserAlertMonitorSerializer
 from tracer.services.feed_alerts.rules import (
     FeedAlertError,
     create_rule,
@@ -101,7 +101,7 @@ def _metric_write(request, organization, workspace, monitor=None):
         data["workspace"] = workspace.id
         data["created_by"] = request.user.id
     serializer = UserAlertMonitorSerializer(
-        monitor, data=data, partial=monitor is not None
+        monitor, data=data, partial=monitor is not None, context={"request": request}
     )
     if not serializer.is_valid():
         raise FeedAlertError(serializer.errors)
@@ -140,8 +140,11 @@ class AlertWriteRequestSerializer(serializers.Serializer):
     threshold_metric_value = serializers.CharField(
         required=False, allow_null=True, allow_blank=True
     )
-    critical_threshold_value = serializers.FloatField(required=False)
-    warning_threshold_value = serializers.FloatField(required=False)
+    # Refused here, before the view runs, so the answer has the sentence on the
+    # field: a refusal from the monitor serializer in _metric_write comes back
+    # as one line of text.
+    critical_threshold_value = FiniteThresholdField(required=False)
+    warning_threshold_value = FiniteThresholdField(required=False)
     alert_frequency = serializers.IntegerField(required=False)
     auto_threshold_time_window = serializers.IntegerField(required=False)
     slack_webhook_url = serializers.URLField(
@@ -209,6 +212,11 @@ class AlertItemSerializer(serializers.Serializer):
     warning_threshold_value = serializers.FloatField(required=False, allow_null=True)
     alert_frequency = serializers.IntegerField(required=False)
     auto_threshold_time_window = serializers.IntegerField(required=False)
+    threshold_rule = serializers.ChoiceField(
+        choices=ThresholdRuleChoices.choices,
+        required=False,
+        help_text="How the saved thresholds are judged: earlier for monitors saved before the threshold update and not edited since, current otherwise.",
+    )
     last_checked_at = serializers.DateTimeField(required=False, allow_null=True)
     slack_webhook_url = serializers.URLField(
         required=False, allow_null=True, allow_blank=True

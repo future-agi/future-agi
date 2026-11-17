@@ -4,14 +4,15 @@ import PropTypes from "prop-types";
 import React from "react";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 
-const TextLabelForm = ({ control }) => {
+// Placeholder Text is required unless the label was stored without one.
+const TextLabelForm = ({ control, placeholderRequired = true }) => {
   return (
     <>
       <FormTextFieldV2
         label="Placeholder Text"
         size="small"
         control={control}
-        required
+        required={placeholderRequired}
         fieldName="settings.placeholder"
         placeholder="Type here"
       />
@@ -47,6 +48,7 @@ const TextLabelForm = ({ control }) => {
 
 TextLabelForm.propTypes = {
   control: PropTypes.any,
+  placeholderRequired: PropTypes.bool,
 };
 
 export default TextLabelForm;

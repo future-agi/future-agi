@@ -1,0 +1,46 @@
+# CircleCI documents personal API tokens for headless and automated remote MCP use.
+# Starting or rerunning pipelines can consume CircleCI compute credits.
+schema: "connector-manifest/v1#provider"
+app: circleci
+id: api-key
+version: 1.1.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.circleci.com/v1/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: Personal API token
+      help: "Create a CircleCI personal API token in User Settings. The hosted MCP server uses your account's project access for pipeline inspection and operations. Running builds can consume credits. Supply the token without the Bearer prefix."
+      helpUrl: https://circleci.com/docs/guides/toolkit/managing-api-tokens/
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_metered
+  source: https://circleci.com/pricing/
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://circleci.com/docs/guides/toolkit/connecting-to-the-circleci-mcp-server/
+    fetchedAt: 2026-11-09
+  - fact: transport.variant
+    url: https://circleci.com/docs/guides/toolkit/connecting-to-the-circleci-mcp-server/
+    fetchedAt: 2026-11-09
+  - fact: auth.kind
+    url: https://circleci.com/docs/guides/toolkit/connecting-to-the-circleci-mcp-server/
+    fetchedAt: 2026-11-09
+  - fact: auth.credentialParts
+    url: https://circleci.com/docs/guides/toolkit/connecting-to-the-circleci-mcp-server/
+    fetchedAt: 2026-11-09

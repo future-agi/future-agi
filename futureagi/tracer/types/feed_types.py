@@ -227,6 +227,8 @@ class TraceSummary:
     model: str | None = None
     input_tokens: int | None = None
     output_tokens: int | None = None
+    # Recorded trace cost (USD); None when unknown, never a token estimate.
+    cost: float | None = None
 
 
 @dataclass
@@ -473,6 +475,7 @@ class DeepAnalysisResponse:
     root_causes: list[RootCause] = field(default_factory=list)
     recommendations: list[Recommendation] = field(default_factory=list)
     immediate_fix: str | None = None
+    code: str | None = None
 
 
 @dataclass

@@ -1,0 +1,14 @@
+{
+  "code": "permission_denied",
+  "detail": "Only an organization Owner or Admin can change the gateway's configuration.",
+  "details": {
+    "detail": [
+      "Only an organization Owner or Admin can change the gateway's configuration."
+    ]
+  },
+  "error": "Only an organization Owner or Admin can change the gateway's configuration.",
+  "message": "Only an organization Owner or Admin can change the gateway's configuration.",
+  "result": "Only an organization Owner or Admin can change the gateway's configuration.",
+  "status": false,
+  "type": "permission_error"
+}

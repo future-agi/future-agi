@@ -33,7 +33,8 @@ export function PreflightReport({ report }) {
           key={check.id || check.label}
           sx={{
             typography: "s3",
-            color: check.status === "failed" ? "status.danger.fg" : "text.secondary",
+            color:
+              check.status === "failed" ? "status.danger.fg" : "text.secondary",
           }}
         >
           {`${check.label}: ${COPY.checks[check.status] || check.status}`}
@@ -42,7 +43,13 @@ export function PreflightReport({ report }) {
       ))}
       {missing.length > 0 && line(COPY.missing(missing), "status.danger.fg")}
       {invalid.length > 0 && line(COPY.invalid(invalid), "status.danger.fg")}
-      {report.error && line(COPY.checkError(report.error), "status.danger.fg")}
+      {report.error &&
+        line(
+          Object.hasOwn(COPY.checkErrors, report.error)
+            ? COPY.checkErrors[report.error]
+            : COPY.checkError(report.error),
+          "status.danger.fg",
+        )}
     </Stack>
   );
 }

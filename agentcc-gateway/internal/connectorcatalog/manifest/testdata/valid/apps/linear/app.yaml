@@ -1,0 +1,23 @@
+# Fixture for the manifest validator tests, not catalog data. Facts are
+# illustrative; the catalog itself lives in agentcc-gateway/catalog/connectors.
+schema: "connector-manifest/v1#app"
+id: linear
+version: 1.0.0
+name: Linear
+description: "Issues, projects and cycles."
+vendor: { name: Linear, domains: [linear.app], githubOrgs: [linear] }
+eeCategory: developer
+group: other
+categories: [developer, issue-tracking]
+tags: [issues]
+docsUrl: https://linear.app/docs/mcp
+archetype: issue-tracker
+defaultProvider: linear-mcp
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://linear.app/docs/mcp
+    fetchedAt: 2026-10-19
+  - fact: vendor.githubOrgs
+    url: https://github.com/linear
+    fetchedAt: 2026-10-19

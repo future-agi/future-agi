@@ -112,7 +112,7 @@ function Header({
             disabled={disabled}
           />
         )}
-        <IconButton onClick={onClose}>
+        <IconButton aria-label="Close" onClick={onClose}>
           <SvgColor
             // @ts-ignore
             src="/assets/icons/ic_close.svg"
@@ -242,7 +242,10 @@ export default function GlobalVariableDrawer({ open, onClose }) {
   };
 
   const handleClose = () => {
-    if (isDirty && activeView === VIEW.MANUAL_FORM) {
+    // Every view except an uploaded JSON shows the editable form (closing
+    // leaves the view on ACTIONS, which falls through to the same form), so
+    // ask before discarding typed values in all of them.
+    if (isDirty && activeView !== VIEW.UPLOADED_JSON) {
       setShowConfirmDialog(true);
     } else {
       confirmClose();

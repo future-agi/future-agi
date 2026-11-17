@@ -1,10 +1,56 @@
+from urllib.parse import urlsplit
+
+from drf_yasg.utils import swagger_serializer_method
 from rest_framework import serializers
 
 from integrations.models import IntegrationConnection, IntegrationPlatform
-from integrations.services.credentials import CredentialManager
+from integrations.services.credentials import UNREADABLE_CREDENTIALS, CredentialManager
+from integrations.services.diagnostic_projection import (
+    public_host,
+    public_status_message,
+)
 
 
-class ValidateCredentialsSerializer(serializers.Serializer):
+class HostInputMixin:
+    def validate_host_url(self, value):
+        try:
+            parts = urlsplit(value)
+            parts.port  # noqa: B018
+            invalid = (
+                parts.scheme not in ("http", "https")
+                or not parts.hostname
+                or "@" in parts.netloc
+                or "?" in value
+                or "#" in value
+                or any(c.isspace() or ord(c) < 32 or ord(c) == 127 for c in value)
+            )
+        except ValueError:
+            invalid = True
+        if value and invalid:
+            raise serializers.ValidationError(
+                "Use an HTTP(S) host URL without credentials, query, fragment or whitespace."
+            )
+        return value
+
+
+class PublicConnectionMixin:
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data["host_url"] = public_host(instance.host_url)
+        data["status_message"] = public_status_message(instance)
+        # Saved credentials that cannot be read: the connection says so, and
+        # how to use it again, in place of any earlier diagnostic. Reading it
+        # changes nothing stored.
+        if data.get("credentials_unreadable"):
+            data["status_message"] = UNREADABLE_CREDENTIALS
+        return data
+
+    @swagger_serializer_method(serializer_or_field=serializers.BooleanField())
+    def get_credentials_unreadable(self, obj) -> bool:
+        return CredentialManager.unreadable(obj.encrypted_credentials)
+
+
+class ValidateCredentialsSerializer(HostInputMixin, serializers.Serializer):
     """Serializer for the credential validation endpoint.
 
     Supports two credential modes:
@@ -25,7 +71,7 @@ class ValidateCredentialsSerializer(serializers.Serializer):
         return value
 
 
-class IntegrationConnectionCreateSerializer(serializers.Serializer):
+class IntegrationConnectionCreateSerializer(HostInputMixin, serializers.Serializer):
     """Serializer for creating a new integration connection.
 
     Supports two credential modes:
@@ -85,7 +131,7 @@ class IntegrationConnectionCreateSerializer(serializers.Serializer):
         return value
 
 
-class IntegrationConnectionUpdateSerializer(serializers.Serializer):
+class IntegrationConnectionUpdateSerializer(HostInputMixin, serializers.Serializer):
     """Serializer for updating an existing integration connection."""
 
     display_name = serializers.CharField(max_length=255, required=False)
@@ -96,10 +142,22 @@ class IntegrationConnectionUpdateSerializer(serializers.Serializer):
     sync_interval_seconds = serializers.IntegerField(
         required=False, min_value=60, max_value=3600
     )
+    # An export's new credentials, by the key its wizard step stores them
+    # under; only the keys the platform lets Edit replace
+    # (views/integration_connection.py EDITABLE_CREDENTIALS).
+    credentials = serializers.DictField(
+        child=serializers.CharField(max_length=500, trim_whitespace=True),
+        required=False,
+        write_only=True,
+    )
 
 
-class IntegrationConnectionListSerializer(serializers.ModelSerializer):
+class IntegrationConnectionListSerializer(
+    PublicConnectionMixin, serializers.ModelSerializer
+):
     """Serializer for listing connections (summary view)."""
+
+    credentials_unreadable = serializers.SerializerMethodField()
 
     class Meta:
         model = IntegrationConnection
@@ -110,6 +168,7 @@ class IntegrationConnectionListSerializer(serializers.ModelSerializer):
             "host_url",
             "status",
             "status_message",
+            "credentials_unreadable",
             "external_project_name",
             "last_synced_at",
             "total_traces_synced",
@@ -122,9 +181,12 @@ class IntegrationConnectionListSerializer(serializers.ModelSerializer):
         ]
 
 
-class IntegrationConnectionDetailSerializer(serializers.ModelSerializer):
+class IntegrationConnectionDetailSerializer(
+    PublicConnectionMixin, serializers.ModelSerializer
+):
     """Serializer for connection detail (includes masked credentials)."""
 
+    credentials_unreadable = serializers.SerializerMethodField()
     public_key_display = serializers.SerializerMethodField()
     secret_key_display = serializers.SerializerMethodField()
     project_name = serializers.SerializerMethodField()
@@ -138,6 +200,7 @@ class IntegrationConnectionDetailSerializer(serializers.ModelSerializer):
             "host_url",
             "status",
             "status_message",
+            "credentials_unreadable",
             "external_project_name",
             "project",
             "project_name",

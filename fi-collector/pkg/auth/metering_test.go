@@ -22,21 +22,23 @@ func newTestRedis(t *testing.T) *redis.Client {
 
 func newTestMetering(t *testing.T) *Metering {
 	t.Helper()
+	t.Setenv("CLOUD_DEPLOYMENT", "DEV")
 	return NewMetering(newTestRedis(t), nil, slog.Default())
 }
 
 func TestNewMeteringNilRedis(t *testing.T) {
+	t.Setenv("CLOUD_DEPLOYMENT", "DEV")
 	m := NewMetering(nil, nil, slog.Default())
-	if m != nil {
-		t.Fatal("expected nil for nil redis")
+	if m == nil {
+		t.Fatal("billable deployment must retain admission without Redis")
 	}
 }
 
 func TestCheckUsageNilMetering(t *testing.T) {
 	var m *Metering
 	r := m.CheckUsage(context.Background(), "org-1", "tracing_event", 1)
-	if !r.Allowed {
-		t.Fatal("nil metering must allow")
+	if r.Allowed || r.ErrorCode != "BUDGET_CHECK_UNAVAILABLE" {
+		t.Fatal("nil metering is not an explicit nonbillable deployment")
 	}
 }
 
@@ -290,6 +292,7 @@ func TestHardCapPlans(t *testing.T) {
 // A restarted Redis has lost the loaded script and answers EVALSHA with
 // NOSCRIPT. Quota checks keep enforcing, without a warning per span.
 func TestCheckUsageSurvivesARedisThatLostTheScript(t *testing.T) {
+	t.Setenv("CLOUD_DEPLOYMENT", "DEV")
 	var logs bytes.Buffer
 	rdb := newTestRedis(t)
 	m := NewMetering(rdb, nil, slog.New(slog.NewTextHandler(&logs, nil)))
@@ -314,6 +317,7 @@ func TestCheckUsageSurvivesARedisThatLostTheScript(t *testing.T) {
 
 // Redis down when the collector starts: quota checks load the script later.
 func TestCheckUsageLoadsTheScriptWhenStartedWithoutRedis(t *testing.T) {
+	t.Setenv("CLOUD_DEPLOYMENT", "DEV")
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { rdb.Close() })

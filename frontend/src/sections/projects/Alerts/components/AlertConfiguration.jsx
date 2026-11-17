@@ -21,22 +21,24 @@ import PropTypes from "prop-types";
 import SvgColor from "src/components/svg-color";
 import AlertsChart from "./AlertsChart";
 import {
-  alertThresholdBand,
+  alertChartSeriesName,
   getCompareChartConfig,
   getSimpleLineChartConfig,
 } from "../common";
+import { staticThresholdBands } from "../alertThresholdBands";
 import { useQuery } from "@tanstack/react-query";
 import axiosInstance, { endpoints } from "src/utils/axios";
 import { getDefaultAlertConfigValues } from "./validation";
 import { useAlertSheetView } from "../store/useAlertSheetView";
 import { useAlertStore } from "../store/useAlertStore";
-import _ from "lodash";
 import {
   keepPreviousMonitorGraphData,
   MONITOR_GRAPH_ERROR_MESSAGE,
   monitorGraphDisplayState,
   monitorGraphRequestConfig,
 } from "../../monitor_graph_read";
+import { errorStatus } from "../../requestErrors";
+import { getSafeActionErrorMessage } from "src/utils/errorUtils";
 const AlertSettingsForm = lazy(() => import("./AlertSettingsForm"));
 
 export default function AlertConfiguration({ dateFilter, setDateFilter }) {
@@ -57,6 +59,8 @@ export default function AlertConfiguration({ dateFilter, setDateFilter }) {
   const [previewAwaitingLabel, setPreviewAwaitingLabel] = useState(false);
   const thresholdTimeoutRef = useRef(null);
   const retainedGraphDataRef = useRef();
+  // Whether the retained data is the saved graph or a preview.
+  const retainedFromSavedGraphRef = useRef(false);
 
   const handlePayloadChange = useCallback((payload, enabled, awaitingLabel) => {
     setQueryPayload(payload);
@@ -98,8 +102,9 @@ export default function AlertConfiguration({ dateFilter, setDateFilter }) {
   useEffect(() => {
     if (latestFetchedData !== undefined) {
       retainedGraphDataRef.current = latestFetchedData;
+      retainedFromSavedGraphRef.current = useSavedGraph;
     }
-  }, [latestFetchedData]);
+  }, [latestFetchedData, useSavedGraph]);
 
   const graphState = monitorGraphDisplayState({
     latestData: latestFetchedData,
@@ -107,6 +112,16 @@ export default function AlertConfiguration({ dateFilter, setDateFilter }) {
     isError: activeGraphQuery.isError,
   });
   const fetchedData = graphState.data;
+  // A graph the server refuses (400), such as the preview of an alert whose
+  // level is outside its metric's range, says what to fix. A failure on the
+  // server's side keeps the generic line.
+  const graphErrorMessage =
+    errorStatus(activeGraphQuery.error) === 400
+      ? getSafeActionErrorMessage(
+          activeGraphQuery.error,
+          MONITOR_GRAPH_ERROR_MESSAGE,
+        )
+      : MONITOR_GRAPH_ERROR_MESSAGE;
 
   // Handle threshold type change with proper cleanup
   const handleThresholdTypeChange = useCallback(
@@ -126,6 +141,28 @@ export default function AlertConfiguration({ dateFilter, setDateFilter }) {
     [selectedThresHoldType],
   );
 
+  // The saved graph keeps the alert's own rule; an edited preview is computed
+  // on the current rule. Until a preview arrives, or while an invalid edit runs
+  // none, the chart still draws the data it read last, so the name follows it.
+  const showsSavedGraph =
+    latestFetchedData !== undefined
+      ? useSavedGraph
+      : retainedFromSavedGraphRef.current;
+  const seriesName = alertChartSeriesName({
+    metricType: alertType,
+    earlier: showsSavedGraph && alertRuleDetails?.thresholdRule === "earlier",
+  });
+
+  // A level saved as infinity or not-a-number has words in the saved alert,
+  // and the form keeps its field empty until a number is typed there. While
+  // it has no number it draws no line.
+  const criticalWords = openSheetView
+    ? alertRuleDetails?.criticalThresholdLabel
+    : undefined;
+  const warningWords = openSheetView
+    ? alertRuleDetails?.warningThresholdLabel
+    : undefined;
+
   const { series, options } = useMemo(() => {
     if (!selectedThresHoldType || !fetchedData?.data) {
       return { series: [], options: {} };
@@ -144,48 +181,20 @@ export default function AlertConfiguration({ dateFilter, setDateFilter }) {
         let min = values.length ? Math.min(...values) : 0;
         min = Math.max(0, Math.floor(min * 0.9));
 
-        const isLessThan = thresholdOperator === "less_than";
-
-        const thresholds = isLessThan
-          ? [
-              {
-                value: max,
-                y2: warningValue,
-                ...alertThresholdBand(theme, "success", 0.03),
-              },
-              {
-                value: warningValue,
-                y2: criticalValue,
-                ...alertThresholdBand(theme, "warning", 0.03),
-              },
-              {
-                value: criticalValue,
-                y2: min,
-                ...alertThresholdBand(theme, "danger", 0.2),
-              },
-            ]
-          : [
-              {
-                value: max,
-                y2: criticalValue,
-                ...alertThresholdBand(theme, "danger", 0.2),
-              },
-              {
-                value: criticalValue,
-                y2: warningValue,
-                ...alertThresholdBand(theme, "warning", 0.03),
-              },
-              {
-                value: warningValue,
-                y2: min,
-                ...alertThresholdBand(theme, "success", 0.03),
-              },
-            ];
+        const thresholds = staticThresholdBands(theme, {
+          thresholdOperator,
+          critical: { value: criticalValue, words: criticalWords },
+          warning: { value: warningValue, words: warningWords },
+          max,
+          min,
+          dangerAlpha: 0.2,
+        });
 
         chartConfig = getSimpleLineChartConfig(
           fetchedData?.data,
           {
-            seriesName: _.startCase(_.toLower(alertType)),
+            seriesName,
+            unitKey: alertType,
             thresholds,
           },
           { isDark, theme },
@@ -193,7 +202,7 @@ export default function AlertConfiguration({ dateFilter, setDateFilter }) {
       } else if (selectedThresHoldType === "percentage_change") {
         chartConfig = getCompareChartConfig(
           fetchedData?.data,
-          { seriesName: _.startCase(_.toLower(alertType)) },
+          { seriesName, unitKey: alertType },
           { isDark, theme },
         );
       }
@@ -222,13 +231,18 @@ export default function AlertConfiguration({ dateFilter, setDateFilter }) {
     selectedThresHoldType,
     fetchedData,
     alertType,
+    seriesName,
     thresholdOperator,
     warningValue,
     criticalValue,
+    criticalWords,
+    warningWords,
     isDark,
   ]);
 
-  // Render chart with proper loading states
+  // Render chart with proper loading states. The points sit at their true
+  // instants; the axis labels and the tooltip's time print the browser's
+  // local time, where ApexCharts would print UTC.
   const renderChart = useCallback(() => {
     return (
       <AlertsChart
@@ -240,9 +254,11 @@ export default function AlertConfiguration({ dateFilter, setDateFilter }) {
             type: "datetime",
             convertedCatToNumeric: false, // include this explicitly
             labels: {
+              datetimeUTC: false,
               style: { fontSize: "12px", colors: theme.palette.text.tertiary },
             },
           },
+          tooltip: { ...options.tooltip, x: { format: "dd MMM HH:mm" } },
         }}
       />
     );
@@ -309,7 +325,11 @@ export default function AlertConfiguration({ dateFilter, setDateFilter }) {
         </Button>
       </Stack>
       {showAwaitingLabel && (
-        <Alert severity="info" sx={{ mb: 2 }} data-testid="preview-awaiting-label">
+        <Alert
+          severity="info"
+          sx={{ mb: 2 }}
+          data-testid="preview-awaiting-label"
+        >
           Pick a label to preview this alert.
         </Alert>
       )}
@@ -328,7 +348,7 @@ export default function AlertConfiguration({ dateFilter, setDateFilter }) {
             </Button>
           }
         >
-          {MONITOR_GRAPH_ERROR_MESSAGE}
+          {graphErrorMessage}
         </Alert>
       )}
       {!showAwaitingLabel && graphState.showGraph && renderChart()}

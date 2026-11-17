@@ -1,7 +1,9 @@
 """Turn traces, sessions and users into readable text plus metrics.
 
 A trace reads as one exchange, a session as its turns in order, and a user as
-their recent sessions. Each exchange shows what the agent did as well as what
+their recent sessions. Empty orchestration roots use the first LLM span
+for their conversation, or readable tool activity when no conversation exists.
+Each exchange shows what the agent did as well as what
 it said: its tool calls with their arguments and results, any step that
 failed, and a note where the user or a step sent an image or audio, which this
 text can't show. Text is clipped on turn boundaries (the first and last
@@ -28,6 +30,10 @@ import structlog
 # Attribute keys known to hold a recording or image URL.
 from ee.agenthub.insights.evidence import _MEDIA_ATTRIBUTES
 from tracer.services.analysis_retention import retained_spans
+from tracer.services.clickhouse.query_builders.trace_usage import (
+    USAGE_COLUMNS,
+    repeated_usage_summary_ids,
+)
 
 # A span's text is read as Instant eval reads it: one parser for both.
 from tracer.services.instant_eval_rows import message_text as _message_text
@@ -88,7 +94,7 @@ class UnitText:
     # Earliest copied source, independent of the user unit's displayed last activity.
     source_created_at: datetime | None = None
     metrics: dict = field(default_factory=dict)
-    # The unit's last answer: its (last) trace's root output.
+    # The unit's last answer: its (last) trace's root or fallback LLM output.
     output: str = ""
 
 
@@ -141,7 +147,7 @@ def _scrub(text: str) -> str:
 
 
 def _readable(value) -> str:
-    """A root's input or output as text, read with Instant eval's parser;
+    """A span's input or output as text, read with Instant eval's parser;
     content parts and inline media become notes."""
     text = _message_text(value)
     return _scrub(_parts_text(text) or text)
@@ -273,6 +279,30 @@ def _io(span) -> tuple[str, str]:
     return text_in, text_out
 
 
+def _llm_fallbacks(reader, project_id: str, roots, read: bool = True) -> dict:
+    """Observe's first-LLM fallback, only for roots with neither input nor output.
+
+    Read one span rather than the entire graph, scoped to the retained roots'
+    project. A v2 run reads descendants itself and leaves this path untouched.
+    Keep roots intact: their identity, metrics and status still describe the turn.
+    """
+    if not read:
+        return {}
+    # Match the loaders' choice when several roots represent the same trace.
+    latest = {str(root.trace_id): root for root in roots}
+    empty = {
+        trace_id
+        for trace_id, root in latest.items()
+        if not any(text.strip() for text in _io(root))
+    }
+    sources = {}
+    for trace_id in sorted(empty):
+        span = reader.first_span_by_type(trace_id, "llm", project_id=str(project_id))
+        if span is not None:
+            sources[trace_id] = span
+    return sources
+
+
 def _is_error(span) -> bool:
     return str(span.status or "").upper() == "ERROR"
 
@@ -339,6 +369,24 @@ def _field(step: dict, key: str, chars: int) -> str:
     return text
 
 
+def _readable_exchange(text_in: str, text_out: str, steps) -> bool:
+    """A turn has conversation text or data in a step the transcript actually shows."""
+    return bool(
+        text_in.strip()
+        or text_out.strip()
+        or any(
+            _field(step, "output", STEP_CHARS)
+            or (
+                step.get("observation_type") == "tool"
+                and _field(step, "input", STEP_CHARS)
+            )
+            or (_step_failed(step) and str(step.get("status_message") or "").strip())
+            for step in (steps or [])
+            if _is_shown(step)
+        )
+    )
+
+
 def _step_line(step: dict, chars: int) -> str:
     """``Tool name {args} -> result``, or ``Step name (kind) -> ERROR ...``,
     with what it returned below it when ``_call`` says so."""
@@ -390,17 +438,19 @@ def _exchange(
     text_chars: int,
     step_chars: int,
     step_budget: int,
+    content_span=None,
     indent: str = "",
     head: str = "",
 ) -> _Turn:
     """One trace as ``User:``, its steps, then ``Assistant:``. ``seen`` holds
     the most images and audio parts any earlier turn's input carried: a chat
     input repeats the history, so only a turn bringing more gets the note."""
-    text_in, text_out = _io(root)
+    source = root if content_span is None else content_span
+    text_in, text_out = _io(source)
     user, answer = _clip(text_in, text_chars), _clip(text_out, text_chars)
     steps = steps or []
-    raw_in = str((root.attrs_string or {}).get("input.value") or root.input or "")
-    attrs = root.attrs_string or {}
+    raw_in = str((source.attrs_string or {}).get("input.value") or source.input or "")
+    attrs = source.attrs_string or {}
     media = {
         "images": max(
             [len(re.findall(IMAGE_PART, raw_in)), *(s["images"] or 0 for s in steps)]
@@ -493,13 +543,85 @@ def _first_arrival(spans, arrivals, activity=None) -> datetime | None:
     return min(source_time(value) for value in stamps)
 
 
-def _span_metrics(spans) -> dict:
+def _trace_costs(reader, project_id: str, roots) -> dict[str, float | None]:
+    """Full retained trace spend, independent of which turns or steps are shown."""
+    trace_ids = sorted({str(span.trace_id) for span in roots})
+    if not trace_ids:
+        return {}
+    try:
+        spans = retained_spans(
+            project_id,
+            reader.list_by_trace_ids(
+                trace_ids, project_id=str(project_id), include_heavy=False
+            ),
+        )
+    except Exception:
+        logger.warning(
+            "insight_unit_cost_unreadable", traces=len(trace_ids), exc_info=True
+        )
+        return {}
+    # The shared proof needs identity, ancestry and the GenAI operation marker.
+    # Resolve each retained trace separately; equal independent calls stay additive.
+    usage_spans = [
+        (
+            span,
+            {
+                column: getattr(span, column)
+                for column in (
+                    "id",
+                    "parent_span_id",
+                    "name",
+                    "observation_type",
+                    "attrs_string",
+                    *USAGE_COLUMNS,
+                )
+            },
+        )
+        for span in spans
+    ]
+    by_trace = defaultdict(list)
+    for span, usage in usage_spans:
+        by_trace[str(span.trace_id)].append(usage)
+    repeated_ids = {
+        trace_id: repeated_usage_summary_ids(rows)
+        for trace_id, rows in by_trace.items()
+    }
+
+    costs: dict[str, float | None] = {}
+    for span, usage in usage_spans:
+        trace_id = str(span.trace_id)
+        total = costs.setdefault(trace_id, 0.0)
+        attrs = span.attrs_string or {}
+        if attrs.get("fi.usage.contribution") == "none" or (
+            span.observation_type != "llm" and span.id in repeated_ids[trace_id]
+        ):
+            continue
+        cost = span.cost
+        if attrs.get("fi.cost.kind") == "unknown":
+            # The reader maps every unknown marker to None. Only billable
+            # work makes the sum incomplete, not tokenless TOOL/CHAIN activity.
+            billable = (
+                any((usage[column] or 0) > 0 for column in USAGE_COLUMNS[1:])
+                or span.observation_type == "llm"
+                or attrs.get("fi.usage.scope") == "turn"
+            )
+            cost = None if billable else 0.0
+        costs[trace_id] = (
+            total + float(cost) if total is not None and cost is not None else None
+        )
+    return costs
+
+
+def _span_metrics(spans, trace_costs: dict[str, float | None]) -> dict:
     latencies = [s.latency_ms for s in spans if s.latency_ms]
+    costs = [trace_costs.get(str(span.trace_id)) for span in spans]
     return {
         "traces": len(spans),
         "errors": sum(1 for s in spans if _is_error(s)),
         "latency_ms": statistics.median(latencies) if latencies else None,
-        "cost": round(sum(float(s.cost or 0) for s in spans), 6),
+        "cost": round(sum(costs), 6)
+        if costs and all(cost is not None for cost in costs)
+        else None,
         "tokens": sum(int(s.total_tokens or 0) for s in spans),
     }
 
@@ -523,25 +645,30 @@ def load_traces(
             [str(t) for t in trace_ids], project_id=str(project_id)
         )
         roots = retained_spans(project_id, roots)
+        trace_costs = _trace_costs(reader, project_id, roots)
         arrivals = reader.source_arrivals_by_trace_ids(
             [str(span.trace_id) for span in roots],
             project_id=str(project_id),
             version_cutoff=version_cutoff,
         )
         activity = _activity(reader, project_id, roots, read_steps)
+        sources = _llm_fallbacks(reader, project_id, roots, read_steps)
     latest = {str(s.trace_id): s for s in roots}
     labels = _user_labels(s.end_user_id for s in latest.values())
     units = {}
     for trace_id, span in latest.items():
-        text_in, text_out = _io(span)
-        readable = text_in.strip() or text_out.strip()
+        source = sources.get(trace_id, span)
+        text_in, text_out = _io(source)
+        steps = (activity or {}).get(trace_id)
+        readable = _readable_exchange(text_in, text_out, steps)
         if not (keep_empty or readable):
             continue
         user = labels.get(str(span.end_user_id or ""), "")
         turn = _exchange(
             span,
-            (activity or {}).get(trace_id),
+            steps,
             {},
+            content_span=source,
             text_chars=TRACE_CHARS,
             step_chars=STEP_CHARS,
             step_budget=STEP_BUDGET,
@@ -556,7 +683,7 @@ def load_traces(
             time=span.start_time,
             source_created_at=_first_arrival([span], arrivals, activity),
             metrics={
-                **_span_metrics([span]),
+                **_span_metrics([span], trace_costs),
                 "turns": 1,
                 "source_created_at": _first_arrival(
                     [span], arrivals, activity
@@ -588,12 +715,14 @@ def load_sessions(
             [str(s) for s in session_ids], project_id=str(project_id)
         )
         roots = retained_spans(project_id, roots)
+        trace_costs = _trace_costs(reader, project_id, roots)
         arrivals = reader.source_arrivals_by_trace_ids(
             [str(span.trace_id) for span in roots],
             project_id=str(project_id),
             version_cutoff=version_cutoff,
         )
         activity = _activity(reader, project_id, roots, read_steps)
+        sources = _llm_fallbacks(reader, project_id, roots, read_steps)
     by_session: dict[str, dict[str, object]] = defaultdict(dict)
     for span in roots:
         # Ordered oldest first; a later version of the same root wins.
@@ -604,8 +733,11 @@ def load_sessions(
     units = {}
     for session_id, traces in by_session.items():
         spans = sorted(traces.values(), key=lambda s: s.start_time)
-        texts = [_io(s) for s in spans]
-        readable = any(u.strip() or a.strip() for u, a in texts)
+        texts = [_io(sources.get(str(s.trace_id), s)) for s in spans]
+        readable = any(
+            _readable_exchange(*text, (activity or {}).get(str(span.trace_id)))
+            for span, text in zip(spans, texts, strict=True)
+        )
         if not (keep_empty or readable):
             continue
         seen: dict[str, int] = {}
@@ -614,6 +746,7 @@ def load_sessions(
                 span,
                 (activity or {}).get(str(span.trace_id)),
                 seen,
+                content_span=sources.get(str(span.trace_id)),
                 text_chars=TURN_CHARS,
                 step_chars=STEP_CHARS,
                 step_budget=STEP_BUDGET,
@@ -640,7 +773,7 @@ def load_sessions(
             time=first.start_time,
             source_created_at=_first_arrival(spans, arrivals, activity),
             metrics={
-                **_span_metrics(spans),
+                **_span_metrics(spans, trace_costs),
                 "source_created_at": _first_arrival(
                     spans, arrivals, activity
                 ).isoformat()
@@ -683,6 +816,7 @@ def load_users(
             until=until,
         )
         roots = retained_spans(project_id, roots)
+        trace_costs = _trace_costs(reader, project_id, roots)
         arrivals = reader.source_arrivals_by_trace_ids(
             [str(span.trace_id) for span in roots],
             project_id=str(project_id),
@@ -692,18 +826,15 @@ def load_users(
         for span in roots:
             by_user[str(span.end_user_id)][str(span.trace_id)] = span
         grouped = {user: _sessions_of(traces) for user, traces in by_user.items()}
-        # Steps are read only for the turns a user's text shows.
-        activity = _activity(
-            reader,
-            project_id,
-            [
-                span
-                for ordered in grouped.values()
-                for group in ordered[-USER_SESSIONS:]
-                for span in group[:USER_TURNS_PER_SESSION]
-            ],
-            read_steps,
-        )
+        # Descendants are read only for the turns a user's text shows.
+        shown_spans = [
+            span
+            for ordered in grouped.values()
+            for group in ordered[-USER_SESSIONS:]
+            for span in group[:USER_TURNS_PER_SESSION]
+        ]
+        activity = _activity(reader, project_id, shown_spans, read_steps)
+        sources = _llm_fallbacks(reader, project_id, shown_spans, read_steps)
     labels = _user_labels(by_user.keys())
     units = {}
     for end_user_id, ordered in grouped.items():
@@ -717,6 +848,7 @@ def load_users(
                     span,
                     (activity or {}).get(str(span.trace_id)),
                     seen,
+                    content_span=sources.get(str(span.trace_id)),
                     text_chars=300,
                     step_chars=USER_STEP_CHARS,
                     step_budget=USER_STEP_BUDGET,
@@ -746,7 +878,8 @@ def load_users(
             )
         active_days = {s.start_time.date() for s in spans}
         label = labels.get(end_user_id, "") or end_user_id
-        first_input = _io(ordered[0][0])[0]
+        first = ordered[0][0]
+        first_input = _io(sources.get(str(first.trace_id), first))[0]
         units[end_user_id] = UnitText(
             unit_id=end_user_id,
             content=_unread(activity) + content,
@@ -756,7 +889,7 @@ def load_users(
             time=spans[-1].start_time,
             source_created_at=_first_arrival(spans, arrivals, activity),
             metrics={
-                **_span_metrics(spans),
+                **_span_metrics(spans, trace_costs),
                 "source_created_at": _first_arrival(
                     spans, arrivals, activity
                 ).isoformat()
@@ -776,7 +909,7 @@ def load_users(
                 "first_seen": spans[0].start_time.isoformat(),
                 "last_seen": spans[-1].start_time.isoformat(),
             },
-            output=_io(spans[-1])[1],
+            output=_io(sources.get(str(spans[-1].trace_id), spans[-1]))[1],
         )
     return units
 
@@ -792,9 +925,9 @@ def load_units(
     read_steps: bool = True,
     version_cutoff: int | None = None,
 ) -> dict[str, UnitText]:
-    """Each unit's text and metrics. ``keep_empty`` keeps units whose roots
-    hold no input or output (users always are); ``read_steps=False`` leaves
-    out their steps (a v2 run reads them itself)."""
+    """Each unit's text and metrics. ``keep_empty`` keeps units even without
+    readable root or descendant content (users always are); ``read_steps=False``
+    leaves out descendants, including the LLM fallback (a v2 run reads them itself)."""
     if unit == "sessions":
         return load_sessions(
             project_id,

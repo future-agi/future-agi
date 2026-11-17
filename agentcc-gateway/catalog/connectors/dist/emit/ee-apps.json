@@ -1,0 +1,250 @@
+{
+  "schema": "connector-ee-apps/v1",
+  "bundle": {
+    "version": "2026.11.16.3",
+    "sha256": "ce19e459c21aebba02f17d4d3a764ee612d75d33764152efa5e225f95da031b5"
+  },
+  "apps": [
+    {
+      "id": "airtable",
+      "name": "Airtable",
+      "description": "Bases, tables and records.",
+      "category": "data",
+      "group": "other",
+      "oauth": {
+        "authorizeUrl": "https://airtable.com/oauth2/v1/authorize",
+        "tokenUrl": "https://airtable.com/oauth2/v1/token",
+        "scopes": "data.records:read data.records:write schema.bases:read schema.bases:write data.recordComments:read data.recordComments:write workspacesAndBases:read",
+        "pkce": true,
+        "tokenBody": "form",
+        "clientAuth": "basic"
+      },
+      "mcpUrl": "https://mcp.airtable.com/mcp",
+      "envPrefix": "OMEGA_INTEGRATION_AIRTABLE",
+      "source": "built-in"
+    },
+    {
+      "id": "asana",
+      "name": "Asana",
+      "description": "Tasks, projects and work in Asana.",
+      "category": "productivity",
+      "group": "other",
+      "oauth": {
+        "authorizeUrl": "https://app.asana.com/-/oauth_authorize",
+        "tokenUrl": "https://app.asana.com/-/oauth_token",
+        "scopes": "",
+        "pkce": true,
+        "tokenBody": "form",
+        "clientAuth": "body"
+      },
+      "mcpUrl": "https://mcp.asana.com/v2/mcp",
+      "envPrefix": "OMEGA_INTEGRATION_ASANA",
+      "source": "built-in"
+    },
+    {
+      "id": "box",
+      "name": "Box",
+      "description": "Search and manage files, folders and enterprise content in Box.",
+      "category": "productivity",
+      "group": "other",
+      "oauth": {
+        "authorizeUrl": "https://account.box.com/api/oauth2/authorize",
+        "tokenUrl": "https://api.box.com/oauth2/token",
+        "scopes": "",
+        "pkce": true,
+        "tokenBody": "form",
+        "clientAuth": "body"
+      },
+      "mcpUrl": "https://mcp.box.com/",
+      "envPrefix": "OMEGA_INTEGRATION_BOX",
+      "source": "built-in"
+    },
+    {
+      "id": "canva",
+      "name": "Canva",
+      "description": "Create, find, edit and export Canva designs and manage assets.",
+      "category": "productivity",
+      "group": "other",
+      "oauth": {
+        "authorizeUrl": "https://www.canva.com/api/oauth/authorize",
+        "tokenUrl": "https://api.canva.com/auth/v1/oauth/token",
+        "scopes": "profile:read design:meta:read design:content:write design:content:read folder:read folder:write brandtemplate:content:read brandtemplate:meta:read brandtemplate:content:write comment:write comment:read asset:read asset:write brandkit:read help:answers:read help:answers:write",
+        "pkce": true,
+        "tokenBody": "form",
+        "clientAuth": "basic"
+      },
+      "mcpUrl": "https://api.canva.com/connect/v1/mcp",
+      "envPrefix": "OMEGA_INTEGRATION_CANVA",
+      "source": "built-in"
+    },
+    {
+      "id": "close",
+      "name": "Close",
+      "description": "Sales CRM: leads, contacts, opportunities and activities.",
+      "category": "data",
+      "group": "other",
+      "oauth": {
+        "authorizeUrl": "https://app.close.com/oauth2/authorize/",
+        "tokenUrl": "https://api.close.com/oauth2/token/",
+        "scopes": "mcp.read mcp.write_safe mcp.write_destructive offline_access",
+        "pkce": true,
+        "tokenBody": "form",
+        "clientAuth": "body"
+      },
+      "mcpUrl": "https://mcp.close.com/mcp",
+      "envPrefix": "OMEGA_INTEGRATION_CLOSE",
+      "source": "built-in"
+    },
+    {
+      "id": "dropbox",
+      "name": "Dropbox",
+      "description": "Search, read, organize and share files and folders in Dropbox.",
+      "category": "productivity",
+      "group": "other",
+      "oauth": {
+        "authorizeUrl": "https://www.dropbox.com/oauth2/authorize",
+        "tokenUrl": "https://api.dropboxapi.com/oauth2/token",
+        "scopes": "account_info.read file_requests.read file_requests.write files.content.read files.content.write files.metadata.read sharing.read sharing.write",
+        "pkce": true,
+        "tokenBody": "form",
+        "clientAuth": "body",
+        "extraAuthorizeParams": {
+          "token_access_type": "offline"
+        }
+      },
+      "mcpUrl": "https://mcp.dropbox.com/mcp",
+      "envPrefix": "OMEGA_INTEGRATION_DROPBOX",
+      "source": "built-in"
+    },
+    {
+      "id": "github",
+      "name": "GitHub",
+      "description": "Issues, pull requests and code in your repositories.",
+      "category": "developer",
+      "group": "other",
+      "oauth": {
+        "authorizeUrl": "https://github.com/login/oauth/authorize",
+        "tokenUrl": "https://github.com/login/oauth/access_token",
+        "scopes": "offline_access",
+        "pkce": true,
+        "tokenBody": "form",
+        "clientAuth": "body"
+      },
+      "mcpUrl": "https://api.githubcopilot.com/mcp/",
+      "envPrefix": "OMEGA_INTEGRATION_GITHUB",
+      "source": "built-in"
+    },
+    {
+      "id": "google-analytics",
+      "name": "Google Analytics",
+      "description": "Read Analytics reports, realtime metrics and reporting metadata.",
+      "category": "data",
+      "group": "google",
+      "oauth": {
+        "authorizeUrl": "https://accounts.google.com/o/oauth2/v2/auth",
+        "tokenUrl": "https://oauth2.googleapis.com/token",
+        "scopes": "https://www.googleapis.com/auth/analytics.readonly",
+        "pkce": true,
+        "tokenBody": "form",
+        "clientAuth": "body",
+        "extraAuthorizeParams": {
+          "access_type": "offline",
+          "prompt": "consent"
+        }
+      },
+      "mcpUrl": "https://analyticsdata.googleapis.com/mcp/v1",
+      "envPrefix": "OMEGA_INTEGRATION_GOOGLE_ANALYTICS",
+      "source": "built-in"
+    },
+    {
+      "id": "hubspot",
+      "name": "HubSpot",
+      "description": "CRM records, activities, marketing content and analytics.",
+      "category": "data",
+      "group": "other",
+      "oauth": {
+        "authorizeUrl": "https://mcp.hubspot.com/oauth/authorize/user",
+        "tokenUrl": "https://mcp.hubspot.com/oauth/v3/token",
+        "scopes": "",
+        "pkce": true,
+        "tokenBody": "form",
+        "clientAuth": "body"
+      },
+      "mcpUrl": "https://mcp.hubspot.com",
+      "envPrefix": "OMEGA_INTEGRATION_HUBSPOT",
+      "source": "built-in"
+    },
+    {
+      "id": "linear",
+      "name": "Linear",
+      "description": "Issues, projects and cycles.",
+      "category": "developer",
+      "group": "other",
+      "oauth": {
+        "authorizeUrl": "https://linear.app/oauth/authorize",
+        "tokenUrl": "https://api.linear.app/oauth/token",
+        "scopes": "read write",
+        "pkce": true,
+        "tokenBody": "form",
+        "clientAuth": "body"
+      },
+      "mcpUrl": "https://mcp.linear.app/mcp",
+      "envPrefix": "OMEGA_INTEGRATION_LINEAR",
+      "source": "built-in"
+    },
+    {
+      "id": "slack",
+      "name": "Slack",
+      "description": "Read channels and post messages.",
+      "category": "communication",
+      "group": "other",
+      "oauth": {
+        "authorizeUrl": "https://slack.com/oauth/v2_user/authorize",
+        "tokenUrl": "https://slack.com/api/oauth.v2.user.access",
+        "scopes": "search:read.public channels:history channels:read chat:write users:read",
+        "pkce": true,
+        "tokenBody": "form",
+        "clientAuth": "body"
+      },
+      "mcpUrl": "https://mcp.slack.com/mcp",
+      "envPrefix": "OMEGA_INTEGRATION_SLACK",
+      "source": "built-in"
+    },
+    {
+      "id": "supabase",
+      "name": "Supabase",
+      "description": "Projects, databases, SQL, edge functions and branches.",
+      "category": "developer",
+      "group": "other",
+      "oauth": {
+        "authorizeUrl": "https://api.supabase.com/v1/oauth/authorize",
+        "tokenUrl": "https://api.supabase.com/v1/oauth/token",
+        "scopes": "organizations:read projects:read projects:write database:write database:read analytics:read secrets:read edge_functions:read edge_functions:write environment:read environment:write storage:read storage:write",
+        "pkce": true,
+        "tokenBody": "form",
+        "clientAuth": "body"
+      },
+      "mcpUrl": "https://mcp.supabase.com/mcp",
+      "envPrefix": "OMEGA_INTEGRATION_SUPABASE",
+      "source": "built-in"
+    },
+    {
+      "id": "zendesk",
+      "name": "Zendesk",
+      "description": "Tickets, users, organizations and knowledge through Zendesk Bridge.",
+      "category": "productivity",
+      "group": "other",
+      "oauth": {
+        "authorizeUrl": "https://mcp.zendesk.com/integrations/mcp/oauth/authorize",
+        "tokenUrl": "https://mcp.zendesk.com/integrations/mcp/oauth/token",
+        "scopes": "read write",
+        "pkce": true,
+        "tokenBody": "form",
+        "clientAuth": "body"
+      },
+      "mcpUrl": "https://mcp.zendesk.com/integrations/mcp",
+      "envPrefix": "OMEGA_INTEGRATION_ZENDESK",
+      "source": "built-in"
+    }
+  ]
+}

@@ -1,0 +1,48 @@
+# Agent Context MCP is a self-service Public Preview for eligible accounts
+# with a configured Context Layer. Its system-key bearer is NOT the legacy
+# REST API key/secret pair. Vendor-metered describes underlying Fivetran
+# services; the pricing page does not state a separate Context Layer charge.
+schema: "connector-manifest/v1#provider"
+app: fivetran
+id: api-key
+version: 1.1.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://api.fivetran.ai/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: Context Layer system key
+      help: "An admin creates a system key under Context > MCP Access > System keys. Supply the bearer token from Playground > Connect, without Bearer. Requires a configured Context Layer on an eligible plan and destination; this is not a REST API key/secret pair."
+      helpUrl: https://fivetran.com/docs/context-layer/agent-context-mcp/setup-guide
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_metered
+  source: https://fivetran.com/pricing
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://fivetran.com/docs/context-layer/agent-context-mcp/setup-guide
+    fetchedAt: 2026-11-09
+  - fact: transport.variant
+    url: https://fivetran.com/docs/context-layer/agent-context-mcp/setup-guide
+    fetchedAt: 2026-11-09
+  - fact: auth.kind
+    url: https://fivetran.com/docs/context-layer/agent-context-mcp/setup-guide
+    fetchedAt: 2026-11-09
+  - fact: auth.credentialParts
+    url: https://fivetran.com/docs/context-layer/agent-context-mcp/setup-guide
+    fetchedAt: 2026-11-09

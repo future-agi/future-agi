@@ -9,20 +9,25 @@ import React, {
   useState,
 } from "react";
 import PropTypes from "prop-types";
-import { Box, Typography } from "@mui/material";
+import { Box, Typography, useTheme } from "@mui/material";
 import { useParams, useLocation, useNavigate } from "react-router";
 import { Helmet } from "react-helmet-async";
 import { useUrlState } from "src/routes/hooks/use-url-state";
-import { endpoints } from "src/utils/axios";
+import { endpoints, readQuery } from "src/utils/axios";
 import { useObserveHeader } from "src/sections/project/context/ObserveHeaderContext";
 import { hydrateStoredFilterList } from "src/api/contracts/filter-contract";
 import {
+  useSetProjectDefaultView,
   useUpdateSavedView,
   useUpdateWorkspaceSavedView,
 } from "src/api/project/saved-views";
 import { enqueueSnackbar } from "notistack";
 
 const USERS_TAB_TYPE = "users";
+// The standalone Users page saves workspace views only: there is no project
+// to share with.
+const STANDALONE_SET_DEFAULT_REASON =
+  "Shared views need a project. Open Users from a project.";
 
 // Shared observe components
 import ObserveToolbar from "../LLMTracing/ObserveToolbar";
@@ -44,7 +49,7 @@ const PrimaryGraph = lazy(
 // Instant eval / Insights
 import { askLink, insightsReportLink } from "../observeHandoff";
 import { USER_FILTER_FIELDS } from "../observeFilterConfig";
-import { dateLabel, viewSeed } from "../observeScope";
+import { dateLabel, isWindowItem, viewSeed } from "../observeScope";
 
 // User-specific
 import useUsersStore from "./Store/usersStore";
@@ -53,7 +58,7 @@ import UsersGrid from "./UsersGrid";
 import { sanitizeUserColumnState } from "./userSortContract";
 import UsersEmptyScreen from "./UsersEmptyScreen";
 import { useShallow } from "zustand/react/shallow";
-import { filtersContentEqual } from "../saved-view-utils";
+import { dateFilterEqual, filtersContentEqual } from "../saved-view-utils";
 import { useCursorAttributeInventory } from "../LLMTracing/useCursorAttributeInventory";
 import { useWorkspace } from "src/contexts/WorkspaceContext";
 import {
@@ -196,8 +201,29 @@ const UsersView = ({
       noopExtraProperties,
     );
 
+  // Compare graph: its own date window, kept like Traces' compare window
+  // (same default, own URL keys). Nothing sets its column filters, so
+  // userCompareFilter is only read; the graph's Filter pill edits
+  // compareExtraFilters below (as Sessions does).
+  const {
+    validatedFilters: compareValidatedFilters,
+    setDateFilter: setCompareDateFilter,
+    dateFilter: compareDateFilter,
+  } = useLLMTracingFilters(
+    defaultFilterBase,
+    defaultDateFilter,
+    "userCompareFilter",
+    "userCompareDateFilter",
+    [],
+    noopExtraProperties,
+  );
+
   // --- Extra filters from TraceFilterPanel (popover) ---
   const [extraFilters, setExtraFilters] = useState([]);
+  // The compare graph's own filters, and which graph the filter panel edits
+  // while Compare is on: "primary" | "compare" (as on the Trace tab).
+  const [compareExtraFilters, setCompareExtraFilters] = useState([]);
+  const [filterTarget, setFilterTarget] = useState("primary");
   const [isFilterOpen, setIsFilterOpen] = useUrlState("userFilterOpen", false);
   // Anchor for the filter popover when opened via the chip-row `+` or
   // by clicking an existing chip. Null falls back to the toolbar Filter
@@ -217,12 +243,40 @@ const UsersView = ({
     false,
   );
   const [showCompare, setShowCompare] = useUrlState("userShowCompare", false);
+  // The panel edits the compare graph's filters only while that graph shows.
+  const panelTarget = showCompare && observeId ? filterTarget : "primary";
+
+  // In compare mode the toolbar hides its Filter button and each graph has
+  // its own: a graph's button opens the panel on that graph's filters.
+  const handleGraphFilterToggle = useCallback(
+    (e, target) => {
+      if (isFilterOpen) {
+        setIsFilterOpen(false);
+        setExternalFilterAnchor(null);
+      } else {
+        setFilterTarget(target);
+        setExternalFilterAnchor(e?.currentTarget || null);
+        setIsFilterOpen(true);
+      }
+    },
+    [isFilterOpen, setIsFilterOpen],
+  );
 
   // Combine canonical filter arrays. Both sources already use the API shape.
   const finalFilters = useMemo(() => {
     if (!extraFilters.length) return validatedFilters;
     return [...validatedFilters, ...extraFilters];
   }, [validatedFilters, extraFilters]);
+
+  // The compare graph: its own filters over its own window (the hook's
+  // filters end with that window). The grid, export and Ask stay on the
+  // primary's finalFilters.
+  const compareFilters = useMemo(
+    () => [...compareValidatedFilters, ...compareExtraFilters],
+    [compareValidatedFilters, compareExtraFilters],
+  );
+  const usersGraphEndpoint = endpoints.project.getUsersAggregateGraphData();
+  const theme = useTheme();
 
   // --- Instant eval / Insights ---
   // Both ask about exactly the users the grid lists (UsersGrid sends
@@ -592,7 +646,6 @@ const UsersView = ({
     const baselineExtraFilters = hydrateStoredFilterList(
       activeViewConfig.extra_filters,
     );
-    const baselineDateOption = baselineDisplay.dateFilter?.dateOption ?? null;
 
     // The `actions` column is an always-present UI column (not user data); its
     // visibility/position must not count toward "modified" (TH-6119).
@@ -601,7 +654,7 @@ const UsersView = ({
     );
 
     if (!filtersContentEqual(extraFilters, baselineExtraFilters)) return true;
-    if ((dateFilter?.dateOption ?? null) !== baselineDateOption) return true;
+    if (!dateFilterEqual(dateFilter, baselineDisplay.dateFilter)) return true;
     if (
       baselineDisplay.cellHeight !== undefined &&
       baselineDisplay.cellHeight !== cellHeight
@@ -685,6 +738,7 @@ const UsersView = ({
   const { mutate: updateSavedView } = useUpdateSavedView(observeId);
   const { mutate: updateWorkspaceSavedView } =
     useUpdateWorkspaceSavedView(USERS_TAB_TYPE);
+  const setProjectDefaultView = useSetProjectDefaultView(observeId);
 
   const activeViewTabId = useMemo(() => {
     const params = new URLSearchParams(window.location.search);
@@ -719,6 +773,37 @@ const UsersView = ({
     setActiveViewConfig,
   ]);
 
+  // "Share with project" (inside a project only): shares this view with the
+  // project as its "Default users view" tab. A new one opens as the active
+  // tab, as on Traces; a shared open view takes this config as its baseline.
+  const handleSetDefaultView = useCallback(() => {
+    const config = getConfig();
+    setProjectDefaultView({
+      tabType: USERS_TAB_TYPE,
+      config,
+      activeViewId: activeViewTabId,
+      onSaved: (view, { created }) => {
+        if (created) {
+          if (view?.id) {
+            navigate(
+              `/dashboard/observe/${observeId}/users?tab=view-${view.id}`,
+              { replace: true },
+            );
+          }
+          return;
+        }
+        if (activeViewTabId) setActiveViewConfig(view?.config ?? config);
+      },
+    });
+  }, [
+    activeViewTabId,
+    getConfig,
+    navigate,
+    observeId,
+    setActiveViewConfig,
+    setProjectDefaultView,
+  ]);
+
   // ObserveTabBar's "+" save flow needs this — without it the save POSTs
   // `config: {}` (TH-4578).
   useEffect(() => {
@@ -731,7 +816,18 @@ const UsersView = ({
   // wasOnSavedViewRef gates the null-branch reset to genuine saved-view →
   // default transitions (not initial mount with no view selected).
   const wasOnSavedViewRef = useRef(false);
+  // The open view the compare state belongs to: "default", or the saved
+  // view's tab id. Users saves no compare state, so opening another view (or
+  // going back to the default) starts the compare graph clean, while the same
+  // view's refreshed baseline (Save view, Share with project) keeps it.
+  const compareViewKeyRef = useRef("default");
   useEffect(() => {
+    const viewKey = activeViewConfig ? `view-${activeViewTabId}` : "default";
+    if (viewKey !== compareViewKeyRef.current) {
+      compareViewKeyRef.current = viewKey;
+      setCompareExtraFilters([]);
+      setFilterTarget("primary");
+    }
     if (!activeViewConfig) {
       const wasOnSavedView = wasOnSavedViewRef.current;
       wasOnSavedViewRef.current = false;
@@ -753,11 +849,113 @@ const UsersView = ({
     };
   }, [clearSelection, resetStore]);
 
-  const shouldShowEmptyLayout =
+  const handleResetView = useCallback(() => {
+    // Do not call applyConfig(null): that restores local preferences instead
+    // of canonical defaults, and can reapply the very settings being reset.
+    pendingColumnStateRef.current = null;
+    pendingVisibilityRef.current = null;
+    pendingDefaultReorderRef.current = false;
+    setFilters(defaultFilterBase);
+    setExtraFilters([]);
+    setDateFilter(getDefaultDateRange());
+    setCellHeight("Short");
+    setShowErrors(false);
+    setShowNonAnnotated(false);
+    setHasEvalFilter(false);
+    setShowCompare(false);
+    setCompareDateFilter(getDefaultDateRange());
+    setCompareExtraFilters([]);
+    setFilterTarget("primary");
+    setAutoSizeAllCols(false);
+    useUsersStore.setState({ searchQuery: "", sortParams: [] });
+    const defaults = getUsersColumnConfig({ includeProject });
+    const visibility = Object.fromEntries(
+      defaults.map((col) => [col.field, !col.hide]),
+    );
+    setColumns(
+      reorderColumns(
+        (columns || [])
+          .filter((col) => col.groupBy !== "Custom Columns")
+          .map((col) => ({
+            ...col,
+            isVisible: visibility[col.id] ?? col.isVisible,
+          })),
+        defaults.map((col) => col.field),
+      ),
+    );
+    gridApi?.resetColumnState?.();
+    try {
+      localStorage.removeItem(displayStorageKey);
+    } catch {
+      /* storage is optional */
+    }
+  }, [
+    columns,
+    includeProject,
+    setColumns,
+    gridApi,
+    displayStorageKey,
+    setFilters,
+    setDateFilter,
+    setCellHeight,
+    setShowErrors,
+    setShowNonAnnotated,
+    setHasEvalFilter,
+    setShowCompare,
+    setCompareDateFilter,
+  ]);
+
+  // The setup screen says user IDs were never sent. The toolbar's date window
+  // rides in the filters (created_at between), so an empty first page alone
+  // only says that range was quiet. Inside a project, an empty windowed page
+  // asks the project's end-user list (all time) for one user: none at all
+  // shows the setup screen; any keeps the grid, which names the range and
+  // offers a wider one. The standalone page keeps the grid.
+  const readIsWindowed = finalFilters.some(isWindowItem);
+
+  const firstPageEmpty =
     hasData === false &&
     !isLoading &&
     searchState === "empty" &&
     !hasActiveFilter;
+  const checkProjectUsers =
+    Boolean(observeId) && firstPageEmpty && readIsWindowed;
+
+  // The last answer, as { projectId, hasUsers }; null until one arrives.
+  const [projectUsersCheck, setProjectUsersCheck] = useState(null);
+  useEffect(() => {
+    if (!checkProjectUsers) return undefined;
+    const controller = new AbortController();
+    readQuery(endpoints.dashboard.filterValues, {
+      signal: controller.signal,
+      params: {
+        metric_name: "user_id",
+        metric_type: "system_metric",
+        project_ids: observeId,
+        source: "traces",
+        page_size: 1,
+      },
+    })
+      .then((response) => {
+        const values = response?.data?.result?.values;
+        if (controller.signal.aborted || !Array.isArray(values)) return;
+        setProjectUsersCheck({
+          projectId: observeId,
+          hasUsers: values.length > 0,
+        });
+      })
+      .catch(() => {
+        // Unknown: keep the grid, whose empty state links the setup docs.
+      });
+    return () => controller.abort();
+  }, [checkProjectUsers, observeId]);
+  const projectHasNoUsers =
+    projectUsersCheck?.projectId === observeId &&
+    projectUsersCheck?.hasUsers === false;
+
+  const shouldShowEmptyLayout =
+    firstPageEmpty &&
+    (!readIsWindowed || (checkProjectUsers && projectHasNoUsers));
 
   // Every state shows either the confirmed empty screen or the grid. A reload
   // of a confirmed-empty page, or a first page paused at the continuation
@@ -786,12 +984,23 @@ const UsersView = ({
         hasActiveFilter={hasActiveFilter}
         canSaveView={canSaveViewDeferred}
         onSaveView={handleSaveView}
-        graphFilters={extraFilters}
+        onResetView={handleResetView}
+        onSetDefaultView={observeId ? handleSetDefaultView : undefined}
+        setDefaultDisabledReason={
+          observeId ? undefined : STANDALONE_SET_DEFAULT_REASON
+        }
+        graphFilters={
+          panelTarget === "compare" ? compareExtraFilters : extraFilters
+        }
+        filterTarget={panelTarget}
+        onApplyCompareExtraFilters={setCompareExtraFilters}
         isFilterOpen={isFilterOpen}
         externalFilterAnchor={externalFilterAnchor}
         onFilterToggle={() => {
           // Clear any chip-row anchor so the popover re-anchors to the
-          // toolbar Filter button on the next open.
+          // toolbar Filter button on the next open. The toolbar edits the
+          // primary filters, whichever graph opened the panel last.
+          setFilterTarget("primary");
           setExternalFilterAnchor(null);
           setIsFilterOpen(!isFilterOpen);
         }}
@@ -825,6 +1034,9 @@ const UsersView = ({
         onGroupByChange={
           observeId
             ? (key) => {
+                if (!["none", "trace", "span", "sessions"].includes(key))
+                  return;
+                setActiveViewConfig(null);
                 switch (key) {
                   case "none":
                   case "trace":
@@ -853,87 +1065,133 @@ const UsersView = ({
         onInsights={observeId ? openInsights : undefined}
       />
 
-      {/* Filter chips. Inject `display_name` so chips render the column's
-          human-readable label instead of the raw snake_case / UUID id. */}
-      <FilterChips
-        extraFilters={extraFilters.map((f) => ({
-          ...f,
-          display_name:
-            f.display_name ||
-            USER_FILTER_FIELDS.find((c) => c.id === f.column_id)?.name,
-        }))}
-        onRemoveFilter={(idx) => {
-          // Chips are keyed by array index, so any removal re-mounts the
-          // later chips and invalidates a chip-anchored popover ref.
-          setExternalFilterAnchor(null);
-          setExtraFilters((prev) => prev.filter((_, i) => i !== idx));
-        }}
-        onClearAll={() => {
-          setExternalFilterAnchor(null);
-          setExtraFilters([]);
-        }}
-        onAddFilter={(anchorEl) => {
-          setExternalFilterAnchor(anchorEl || null);
-          setIsFilterOpen(true);
-        }}
-        onChipClick={(_idx, anchorEl) => {
-          setExternalFilterAnchor(anchorEl || null);
-          setIsFilterOpen(true);
-        }}
-      />
-
-      {/* Graph — hidden in cross-project mode (no project context to
-          aggregate metrics over) */}
-      {observeId && (
-        <Box sx={{ px: 2 }}>
-          <Suspense fallback={null}>
-            <PrimaryGraph
-              filters={finalFilters}
-              dateFilter={dateFilter}
-              graphEndpoint={endpoints.project.getUsersAggregateGraphData()}
-              defaultMetric="latency"
-              graphLabel="User Metrics"
-              trafficLabel="users"
-            />
-          </Suspense>
-        </Box>
-      )}
-
-      {/* Content */}
-      <Box
-        sx={{
-          backgroundColor: "background.paper",
-          height: "100%",
-          display: "flex",
-          flexDirection: "column",
-          px: 2,
-          pt: 1,
-        }}
-      >
-        <Box
-          sx={{
-            flex: 1,
-            display: shouldShowEmptyLayout ? "flex" : "none",
-            justifyContent: "center",
+      {/* Chips, graph and grid share the tab's height: the grid takes what
+          the chips and graph leave, so its pagination stays on screen (as on
+          the Trace tab). A grid sized to the whole tab sat below the graph
+          and pushed the pagination under the fold. */}
+      <Box sx={{ display: "flex", flexDirection: "column", height: "100%" }}>
+        {/* Filter chips. Inject `display_name` so chips render the column's
+            human-readable label instead of the raw snake_case / UUID id. */}
+        <FilterChips
+          extraFilters={extraFilters.map((f) => ({
+            ...f,
+            display_name:
+              f.display_name ||
+              USER_FILTER_FIELDS.find((c) => c.id === f.column_id)?.name,
+          }))}
+          onRemoveFilter={(idx) => {
+            // Chips are keyed by array index, so any removal re-mounts the
+            // later chips and invalidates a chip-anchored popover ref.
+            setExternalFilterAnchor(null);
+            setExtraFilters((prev) => prev.filter((_, i) => i !== idx));
           }}
-        >
-          {shouldShowEmptyLayout && <UsersEmptyScreen />}
-        </Box>
+          onClearAll={() => {
+            setExternalFilterAnchor(null);
+            setExtraFilters([]);
+          }}
+          onAddFilter={(anchorEl) => {
+            setFilterTarget("primary");
+            setExternalFilterAnchor(anchorEl || null);
+            setIsFilterOpen(true);
+          }}
+          onChipClick={(_idx, anchorEl) => {
+            setFilterTarget("primary");
+            setExternalFilterAnchor(anchorEl || null);
+            setIsFilterOpen(true);
+          }}
+        />
 
+        {/* Graph — hidden in cross-project mode (no project context to
+            aggregate metrics over). Compare adds a second graph with its own
+            filters and date window, as on the Trace tab. */}
+        {observeId && (
+          <Box sx={{ px: 2, flexShrink: 0 }}>
+            <Suspense fallback={null}>
+              <PrimaryGraph
+                filters={finalFilters}
+                dateFilter={dateFilter}
+                // Only with compare on: given a setter, the chart's
+                // drag-to-zoom also rewrites the date window.
+                setDateFilter={showCompare ? setDateFilter : undefined}
+                showDateFilter={showCompare}
+                onFilterToggle={
+                  showCompare
+                    ? (e) => handleGraphFilterToggle(e, "primary")
+                    : undefined
+                }
+                hasActiveFilter={showCompare && hasActiveFilter}
+                graphEndpoint={usersGraphEndpoint}
+                defaultMetric="latency"
+                graphLabel="User Metrics"
+                trafficLabel="users"
+              />
+              {showCompare && (
+                <PrimaryGraph
+                  filters={compareFilters}
+                  dateFilter={compareDateFilter}
+                  setDateFilter={setCompareDateFilter}
+                  showDateFilter
+                  onFilterToggle={(e) => handleGraphFilterToggle(e, "compare")}
+                  hasActiveFilter={compareExtraFilters.length > 0}
+                  graphEndpoint={usersGraphEndpoint}
+                  defaultMetric="latency"
+                  graphLabel="Compare Graph"
+                  trafficLabel="users"
+                  lineColorOverride={
+                    theme.palette.mode === "dark"
+                      ? "rgba(245, 166, 147, 0.85)"
+                      : "rgba(230, 120, 100, 0.70)"
+                  }
+                  barColorOverride={
+                    theme.palette.mode === "dark"
+                      ? "rgba(220, 160, 130, 0.30)"
+                      : "rgba(230, 170, 147, 0.25)"
+                  }
+                />
+              )}
+            </Suspense>
+          </Box>
+        )}
+
+        {/* Content */}
         <Box
           sx={{
+            backgroundColor: "background.paper",
             flex: 1,
-            display: shouldShowGrid ? "flex" : "none",
+            minHeight: 0,
+            display: "flex",
             flexDirection: "column",
+            px: 2,
+            pt: 1,
           }}
         >
-          <UsersGrid
-            setHasData={setHasData}
-            setIsLoading={setIsLoading}
-            setSearchState={setSearchState}
-            hasActiveFilter={hasActiveFilter}
-            cellHeight={cellHeight}
-          />
+          <Box
+            sx={{
+              flex: 1,
+              display: shouldShowEmptyLayout ? "flex" : "none",
+              justifyContent: "center",
+            }}
+          >
+            {shouldShowEmptyLayout && <UsersEmptyScreen />}
+          </Box>
+
+          <Box
+            sx={{
+              flex: 1,
+              minHeight: 0,
+              display: shouldShowGrid ? "flex" : "none",
+              flexDirection: "column",
+            }}
+          >
+            <UsersGrid
+              setHasData={setHasData}
+              setIsLoading={setIsLoading}
+              setSearchState={setSearchState}
+              hasActiveFilter={hasActiveFilter}
+              cellHeight={cellHeight}
+              dateLabel={getDateLabel(dateFilter)}
+            />
+          </Box>
         </Box>
       </Box>
 

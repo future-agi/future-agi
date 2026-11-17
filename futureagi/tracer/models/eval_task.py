@@ -64,6 +64,8 @@ class EvalTask(BaseModel):
     filters = models.JSONField(default=dict, blank=True, null=True)
     sampling_rate = models.FloatField(default=100.0, blank=True, null=True)
     sampling_policy = models.JSONField(default=None, blank=True, null=True)
+    webhook_url = models.URLField(max_length=2048, blank=True, default="")
+    webhook_condition = models.JSONField(default=None, blank=True, null=True)
     last_run = models.DateTimeField(blank=True, null=True)
     spans_limit = models.IntegerField(default=1000, blank=True, null=True)
     run_type = models.CharField(

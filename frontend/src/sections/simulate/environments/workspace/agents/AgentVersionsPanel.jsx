@@ -9,18 +9,22 @@ import {
 } from "@mui/material";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import {
+  VERSIONING_STATE,
   canMakeDefault,
   isStuck,
-  isVersioningDisabled,
   useDiscardAgentVersion,
   useEnvironmentVersions,
   useMoveDefault,
   useNudges,
   useRetryAgentVersion,
+  versioningBackfillFailed,
+  versioningReadable,
+  versioningState,
 } from "src/api/simulate-environments/versions";
 import { useNudgeActions } from "src/api/simulate-environments/nudgeActions";
 import {
   AGENT_VERSIONS_COPY as COPY,
+  VERSIONING_STATE_COPY,
   VERSIONS_COPY,
 } from "../workspace.constants";
 import { NudgeStateLine } from "../../buildEnvironment/console/NudgeCard";
@@ -224,10 +228,12 @@ DiscardConfirm.propTypes = {
 // environment nudge on the version that raised it.
 export default function AgentVersionsPanel({ env }) {
   const envId = env?.id;
-  const enabled = Boolean(env?.versioning?.enabled);
+  // No versioning read while versioning is off; the panel says so instead.
+  const enabled = versioningReadable(env);
   const { data, isLoading, error } = useEnvironmentVersions(envId, {
     enabled,
   });
+  const state = versioningState(env, error);
   const move = useMoveDefault(envId);
   const discard = useDiscardAgentVersion(envId);
   const retry = useRetryAgentVersion(envId);
@@ -236,19 +242,23 @@ export default function AgentVersionsPanel({ env }) {
   const [confirming, setConfirming] = useState(null);
   const announcement = useCheckAnnouncement(data?.agent);
 
-  if (!enabled) return null;
   const note = (text, color = "text.secondary") => (
-    <Typography sx={{ typography: "s2", color }}>{text}</Typography>
+    <Typography
+      data-testid={
+        text === COPY.disabled ? "versioning-state-line" : undefined
+      }
+      sx={{ typography: "s2", color }}
+    >
+      {text}
+    </Typography>
   );
+  // Off (the install's flag, or a 404 that says so): the panel says so.
+  if (state === VERSIONING_STATE.OFF) {
+    return <Box sx={{ p: 2.5 }}>{note(COPY.disabled)}</Box>;
+  }
   if (isLoading) return <CircularProgress size={22} sx={{ m: 2.5 }} />;
   if (!data) {
-    return (
-      <Box sx={{ p: 2.5 }}>
-        {isVersioningDisabled(error)
-          ? note(COPY.disabled)
-          : note(COPY.loadError, "error.main")}
-      </Box>
-    );
+    return <Box sx={{ p: 2.5 }}>{note(COPY.loadError, "error.main")}</Box>;
   }
 
   const versions = data.agent;
@@ -288,6 +298,16 @@ export default function AgentVersionsPanel({ env }) {
       <Box role="status" aria-live="polite" sx={HIDDEN}>
         {announcement}
       </Box>
+      {state === VERSIONING_STATE.ENABLING && (
+        <Typography
+          data-testid="versioning-state-line"
+          sx={{ typography: "s2", color: "text.secondary" }}
+        >
+          {versioningBackfillFailed(env)
+            ? VERSIONING_STATE_COPY.enablingFailed
+            : VERSIONING_STATE_COPY.enabling}
+        </Typography>
+      )}
       <AgentSourceChange
         envId={envId}
         defaultVersion={defaultVersion}
@@ -398,6 +418,7 @@ AgentVersionsPanel.propTypes = {
     versioning: PropTypes.shape({
       enabled: PropTypes.bool,
       nudges_enabled: PropTypes.bool,
+      state: PropTypes.oneOf(["off", "enabling", "ready"]),
     }),
   }).isRequired,
 };

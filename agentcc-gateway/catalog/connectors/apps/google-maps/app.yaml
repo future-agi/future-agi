@@ -1,0 +1,25 @@
+schema: "connector-manifest/v1#app"
+id: google-maps
+version: 1.0.1
+name: Google Maps
+description: "Places, weather and routes from Google Maps, through Maps Experience agent tools."
+vendor:
+  name: Google
+  domains: [google.com]
+eeCategory: data
+group: google
+categories: [data, maps]
+tags: [places, weather, routes]
+docsUrl: https://developers.google.com/maps/ai/maps-experience-agent-tools
+defaultProvider: grounding-lite
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://developers.google.com/maps/ai/grounding-lite
+    fetchedAt: 2026-10-21
+  - fact: description
+    url: https://developers.google.com/maps/ai/maps-experience-agent-tools
+    fetchedAt: 2026-11-09
+  - fact: docsUrl
+    url: https://developers.google.com/maps/ai
+    fetchedAt: 2026-11-09

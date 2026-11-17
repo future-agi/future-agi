@@ -1,0 +1,32 @@
+# e2e only, Distributed stack (bin/e2e adds it): the mail sink serves a certificate from a per-stack test CA
+# (e2e/stack/smtp-ca/generate.sh, made at `bin/e2e up` into $E2E_SMTP_CA_DIR; nothing committed), and the app-side
+# containers trust that CA. Since 57b89c77 the product verifies the SMTP server's STARTTLS certificate
+# (futureagi/agentcc/services/email_sender.py: starttls(context=ssl.create_default_context())).
+# SSL_CERT_DIR adds the CA's directory to OpenSSL's default trust; the image's own CA file stays loaded.
+services:
+  smtp-sink:
+    environment:
+      MP_SMTP_TLS_CERT: /e2e-smtp-ca/mailpit.pem
+      MP_SMTP_TLS_KEY: /e2e-smtp-ca/mailpit.key
+    volumes:
+      - ${E2E_SMTP_CA_DIR:?bin/e2e sets E2E_SMTP_CA_DIR}:/e2e-smtp-ca:ro
+  backend:
+    environment:
+      SSL_CERT_DIR: /e2e-smtp-ca-trust
+    volumes:
+      - ${E2E_SMTP_CA_DIR:?bin/e2e sets E2E_SMTP_CA_DIR}/trust:/e2e-smtp-ca-trust:ro
+  worker:
+    environment:
+      SSL_CERT_DIR: /e2e-smtp-ca-trust
+    volumes:
+      - ${E2E_SMTP_CA_DIR:?bin/e2e sets E2E_SMTP_CA_DIR}/trust:/e2e-smtp-ca-trust:ro
+  worker-exact-aggregation:
+    environment:
+      SSL_CERT_DIR: /e2e-smtp-ca-trust
+    volumes:
+      - ${E2E_SMTP_CA_DIR:?bin/e2e sets E2E_SMTP_CA_DIR}/trust:/e2e-smtp-ca-trust:ro
+  worker-sql-workbench:
+    environment:
+      SSL_CERT_DIR: /e2e-smtp-ca-trust
+    volumes:
+      - ${E2E_SMTP_CA_DIR:?bin/e2e sets E2E_SMTP_CA_DIR}/trust:/e2e-smtp-ca-trust:ro

@@ -1426,7 +1426,9 @@ def _report(
         secret_texts,
         [
             len(text) >= cap + CREDENTIAL_VALUE_MAX_CHARS
-            for text, (_part, _at, _text, cap) in zip(secret_texts, secret_parts)
+            for text, (_part, _at, _text, cap) in zip(
+                secret_texts, secret_parts, strict=False
+            )
         ],
     )
     report: dict[str, Any] = {
@@ -1805,6 +1807,35 @@ def _close_if_open(
                 error=error or {"code": code},
                 turn_event=turn_event,
             )
+
+
+def end_refused_rebuild(
+    environment: HostedHarnessJob,
+    conversation: HostedHarnessConversation,
+    *,
+    error: dict,
+) -> None:
+    """A rebuild handed to this chat whose own sandbox was refused for good fails now,
+    with ``error``, instead of waiting to be closed as not started. Only one still
+    queued whose builder message is the chat's next command, so the refused start ran
+    for it: a start for a message ahead of it ran as another agent, and a running or
+    landing rebuild needs no new sandbox."""
+    if nudge_composition(environment, conversation) is None:
+        return
+    nudge = (
+        HarnessNudge.no_workspace_objects.filter(
+            job_id=conversation.job_id,
+            state=State.QUEUED,
+            command_message__conversation_id=conversation.id,
+        )
+        .only("id")
+        .first()
+    )
+    if nudge is None:
+        return
+    _close_if_open(
+        conversation.job_id, nudge.id, error=dict(error), states=(State.QUEUED,)
+    )
 
 
 def _no_runtime(conversation: HostedHarnessConversation | None, now: Any) -> bool:

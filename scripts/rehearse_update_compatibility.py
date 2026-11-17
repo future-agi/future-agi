@@ -1568,7 +1568,7 @@ def measured_policy(bindings, target):
 def _validate_context(context, workspace):
     if sys.platform == 'darwin':
         need(context == 'colima-fagi-update', 'dedicated Docker context required')
-        need(Path(workspace).resolve().is_relative_to(Path('/Users/nikhilpareek')), 'home-only workspace required')
+        need(Path(workspace).resolve().is_relative_to(Path.home().resolve()), 'home-only workspace required')
     else:
         # Only an isolated native Actions daemon may use its default context.
         need(context == 'colima-fagi-update' or (context == 'default'

@@ -1,0 +1,178 @@
+schema: connector-gen/rest-overlay/v1
+spec: fixtures/spec/graph-v1.0-openapi.yaml.gz
+tools:
+  - name: get_site
+    title: Get site
+    description: Read get site in the tenant-authorized SharePoint site. Use site-id from the site URL or discovery.
+    operation:
+      method: GET
+      path: /sites/{site-id}
+    scopes:
+      - Sites.Read.All
+    annotations:
+      openWorldHint: false
+    posture: auto
+    scopeSource: https://learn.microsoft.com/en-us/graph/api/site-get?view=graph-rest-1.0
+    params:
+      rename:
+        $select: select
+      exclude:
+        - $expand
+      describe: {}
+  - name: list_drives
+    title: List drives
+    description: Read list drives in the tenant-authorized SharePoint site. Use site-id from the site URL or discovery.
+    operation:
+      method: GET
+      path: /sites/{site-id}/drives
+    scopes:
+      - Sites.Read.All
+    annotations:
+      openWorldHint: false
+    posture: auto
+    scopeSource: https://learn.microsoft.com/en-us/graph/api/drive-list?view=graph-rest-1.0
+    params:
+      rename:
+        $top: top
+        $skip: skip
+        $filter: filter
+        $orderby: orderby
+        $select: select
+      exclude:
+        - $search
+        - $count
+        - $expand
+      describe: {}
+  - name: list_lists
+    title: List lists
+    description: Read list lists in the tenant-authorized SharePoint site. Use site-id from the site URL or discovery.
+    operation:
+      method: GET
+      path: /sites/{site-id}/lists
+    scopes:
+      - Sites.Read.All
+    annotations:
+      openWorldHint: false
+    posture: auto
+    scopeSource: https://learn.microsoft.com/en-us/graph/api/list-list?view=graph-rest-1.0
+    params:
+      rename:
+        $top: top
+        $skip: skip
+        $filter: filter
+        $orderby: orderby
+        $select: select
+      exclude:
+        - $search
+        - $count
+        - $expand
+      describe: {}
+  - name: get_list
+    title: Get list
+    description: Read get list in the tenant-authorized SharePoint site. Use site-id from the site URL or discovery.
+    operation:
+      method: GET
+      path: /sites/{site-id}/lists/{list-id}
+    scopes:
+      - Sites.Read.All
+    annotations:
+      openWorldHint: false
+    posture: auto
+    scopeSource: https://learn.microsoft.com/en-us/graph/api/list-get?view=graph-rest-1.0
+    params:
+      rename:
+        $select: select
+      exclude:
+        - $expand
+      describe: {}
+  - name: list_items
+    title: List items
+    description: Read list items in the tenant-authorized SharePoint site. Use site-id from the site URL or discovery.
+    operation:
+      method: GET
+      path: /sites/{site-id}/lists/{list-id}/items
+    scopes:
+      - Sites.Read.All
+    annotations:
+      openWorldHint: false
+    posture: auto
+    scopeSource: https://learn.microsoft.com/en-us/graph/api/listitem-list?view=graph-rest-1.0
+    params:
+      rename:
+        $top: top
+        $skip: skip
+        $filter: filter
+        $orderby: orderby
+        $select: select
+      exclude:
+        - $search
+        - $count
+        - $expand
+      describe: {}
+  - name: get_item
+    title: Get item
+    description: Read get item in the tenant-authorized SharePoint site. Use site-id from the site URL or discovery.
+    operation:
+      method: GET
+      path: /sites/{site-id}/lists/{list-id}/items/{listItem-id}
+    scopes:
+      - Sites.Read.All
+    annotations:
+      openWorldHint: false
+    posture: auto
+    scopeSource: https://learn.microsoft.com/en-us/graph/api/listitem-get?view=graph-rest-1.0
+    params:
+      rename:
+        $select: select
+      exclude:
+        - $expand
+      describe: {}
+  - name: list_columns
+    title: List columns
+    description: Read list columns in the tenant-authorized SharePoint site. Use site-id from the site URL or discovery.
+    operation:
+      method: GET
+      path: /sites/{site-id}/columns
+    scopes:
+      - Sites.Read.All
+    annotations:
+      openWorldHint: false
+    posture: auto
+    scopeSource: https://learn.microsoft.com/en-us/graph/api/site-list-columns?view=graph-rest-1.0
+    params:
+      rename:
+        $top: top
+        $skip: skip
+        $filter: filter
+        $orderby: orderby
+        $select: select
+      exclude:
+        - $search
+        - $count
+        - $expand
+      describe: {}
+  - name: list_content_types
+    title: List content types
+    description: Read list content types in the tenant-authorized SharePoint site. Use site-id from the site URL or discovery.
+    operation:
+      method: GET
+      path: /sites/{site-id}/contentTypes
+    scopes:
+      - Sites.Read.All
+    annotations:
+      openWorldHint: false
+    posture: auto
+    scopeSource: https://learn.microsoft.com/en-us/graph/api/site-list-contenttypes?view=graph-rest-1.0
+    params:
+      rename:
+        $top: top
+        $skip: skip
+        $filter: filter
+        $orderby: orderby
+        $select: select
+      exclude:
+        - $search
+        - $count
+        - $expand
+      describe: {}
+server: https://graph.microsoft.com/v1.0

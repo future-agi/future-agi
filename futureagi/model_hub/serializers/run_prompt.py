@@ -48,6 +48,10 @@ class ApiKeySerializer(serializers.ModelSerializer):
         write_only=True,
     )
     masked_actual_key = serializers.SerializerMethodField()
+    # The refusal's sentence when the stored key or configuration holds a
+    # reference (such as os.environ/... or oidc/...) instead of a literal
+    # value; null otherwise.
+    configuration_error = serializers.SerializerMethodField()
     config_json = serializers.JSONField(
         required=False,
         allow_null=True,
@@ -57,6 +61,9 @@ class ApiKeySerializer(serializers.ModelSerializer):
     def get_masked_actual_key(self, obj):
         return obj.masked_actual_key
 
+    def get_configuration_error(self, obj):
+        return obj.configuration_error
+
     class Meta:
         model = ApiKey
         fields = [
@@ -65,6 +72,7 @@ class ApiKeySerializer(serializers.ModelSerializer):
             "key",
             "organization",
             "masked_actual_key",
+            "configuration_error",
             "config_json",
         ]
         read_only_fields = ["organization"]
@@ -393,3 +401,7 @@ class EditRunPromptColumnSerializer(serializers.Serializer):
     column_id = serializers.UUIDField(required=True)
     name = serializers.CharField(required=False, allow_null=True)
     config = PromptConfigSerializer(required=False, allow_null=True)
+
+    scope = serializers.ChoiceField(
+        choices=["all", "changed", "failed"], required=False, default="all"
+    )

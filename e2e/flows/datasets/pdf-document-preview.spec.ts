@@ -1,54 +1,43 @@
 import { createHash } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
 import { test, expect } from '../../lib/fixtures';
-import type { Locator } from '@playwright/test';
-import { JPX_SWATCH_RGB, PDF_EXTERNAL_LINK, PDF_LINK_IDS, pdfNotes, uploadPdfFixture } from '../../lib/pdf-fixture';
+import { uploadPdfFixture } from '../../lib/pdf-fixture';
 import { POLL } from '../../lib/state-probe';
 import { flowAnnotation } from '../../lib/flow-meta';
 
 // develop_dataset_contracts.py and frontend/src/utils/axios.js.
 const CREATE_DATASET = '/model-hub/develops/create-dataset-manually/';
-// ExperimentsTableSerializer: empty prompt_config snapshots existing data without provider calls.
-const CREATE_EXPERIMENT = '/model-hub/experiments/';
-// FileCellRenderer.jsx uses the existing .icon-actions button for both entry points.
-const PREVIEW_BUTTON = '.icon-actions button';
+// futureagi/model_hub/views/experiments.py:4582-4602 creates the experiment and its source snapshot.
+const CREATE_EXPERIMENT = '/model-hub/experiments/v2/';
+const CREATE_PROMPT = '/model-hub/prompt-templates/create-draft/';
+const CREATE_EVALUATION = '/model-hub/eval-templates/create-v2/';
 const UI_READY = 60_000;
 const digest = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
-// PdfDocumentPreview.jsx scrolls the box directly around react-pdf's Document.
-const pdfLink = (preview: Locator, id: string) => preview.locator(`.annotationLayer [data-annotation-id="${id}"] a`);
-const scrollTop = (preview: Locator) => preview.locator('.react-pdf__Document')
-  .evaluate(element => (element.parentElement as HTMLElement).scrollTop);
-const setScrollTop = (preview: Locator, top: number) => preview.locator('.react-pdf__Document')
-  .evaluate((element, value) => { (element.parentElement as HTMLElement).scrollTop = value; }, top);
-// Pixels from the top of the visible preview to the top of a text-layer line.
-const belowViewTop = (preview: Locator, text: string) => preview.locator('.textLayer')
-  .getByText(text, { exact: true }).evaluate(element => {
-    const box = element.closest('.react-pdf__Document')!.parentElement!;
-    return { offset: element.getBoundingClientRect().top - box.getBoundingClientRect().top, view: box.clientHeight };
-  });
+// Requests a PDF.js worker or its CDN would make; the native document preview needs none.
+const PDF_RUNTIME = /pdf\.worker|pdfjs-dist|unpkg\.com/;
 
 for (const [entry, id] of [['dataset', 'DATA-E2E-003'], ['experiment', 'DATA-E2E-004']] as const) {
   test(`${id}: ${entry} PDFs render without a runtime CDN worker`, {
     tag: ['@flow'],
     annotation: flowAnnotation({
       id, area: 'datasets',
-      userGoal: `Read a stored PDF from a ${entry} cell without a CDN dependency and recognize an unreadable document`,
+      userGoal: `Open a stored PDF from a ${entry} cell in the document preview without a CDN dependency,`
+        + ' an unreadable one included',
       steps: ['create a document dataset and upload a synthetic PDF through the product input',
-        `open the ${entry} document preview with external runtime requests denied`,
-        'read both pages and the JPEG 2000 image, navigate back, follow the in-document link to page 2,'
-          + ' follow section links to a position on the same page and on page 2,'
-          + ' close and reopen, then download the PDF',
-        'upload an unreadable PDF and verify the error state with no rendered page'],
+        `open the ${entry} cell's document preview from its named document control with external runtime requests denied`,
+        'close the preview and reopen it from the same control',
+        'upload an unreadable PDF and open it in the same preview'],
       backendChecks: ['the stored dataset and document cell belong to the actor scope',
-        'the storage URL and browser download return exactly the uploaded PDF bytes',
-        'the document cell opens the correct PDF through a same-origin worker without a CDN request',
-        'the JPEG 2000 image is decoded with same-origin decoder files and painted on the page',
-        'the in-document link moves the preview to its page and the external link opens in a new tab',
-        'a section link scrolls its destination position to the top of the preview, on its own page or another'],
+        "the storage URL and the preview's document address return exactly the uploaded PDF bytes",
+        ...(entry === 'experiment'
+          ? ['the experiment snapshot belongs to the actor scope and copies the document column with its stored URL']
+          : [])],
+      browserChecks: ['the preview embeds the stored document URL as a native object named by the document',
+        'the object declares the PDF type only when the document reference supplies it',
+        'opening the preview requests no PDF worker or CDN script'],
     }),
   }, async ({ page, context, actor, probe }, testInfo) => {
-    // 2 * (ASYNC_JOB 60s + 15 UI_READY 60s) + 120s setup headroom.
-    test.setTimeout(2_040_000);
+    // 2 * (ASYNC_JOB 60s + 14 UI_READY 60s + 8 expects 10s) + 120s setup headroom.
+    test.setTimeout(2_080_000);
     page.setDefaultTimeout(UI_READY);
     const blocked: string[] = [];
     const workers: string[] = [];
@@ -93,7 +82,8 @@ for (const [entry, id] of [['dataset', 'DATA-E2E-003'], ['experiment', 'DATA-E2E
         // Exclude the experiment grid's pinned Average footer; this is the seeded data row.
         const cell = page.locator(`.ag-center-cols-container .ag-row [col-id="${columnId}"]`);
         await expect(cell).toHaveCount(1, { timeout: UI_READY });
-        await cell.getByText('Click here', { exact: true }).click();
+        // frontend/src/sections/common/DevelopCellRenderer/CellRenderers/FileCellRenderer.jsx:398-409 renders a clickable label.
+        await cell.getByText('Upload file', { exact: true }).click();
         const upload = page.getByRole('dialog').filter({ has: page.getByText('Upload File', { exact: true }) });
         const bytes = await uploadPdfFixture(upload.locator('input[type="file"]'), name, unreadable);
         await upload.getByRole('button', { name: 'Upload', exact: true }).click();
@@ -116,100 +106,102 @@ for (const [entry, id] of [['dataset', 'DATA-E2E-003'], ['experiment', 'DATA-E2E
 
         let path = `/dashboard/develop/${datasetId}`;
         if (entry === 'experiment') {
-          await actor.api.post(CREATE_EXPERIMENT, { name, dataset_id: datasetId,
-            column_id: columnId, prompt_config: [], user_eval_template_ids: [] });
-          const experiments = await probe.pg<{ id: string }>(
-            'SELECT id FROM model_hub_experimentstable WHERE dataset_id = $1 AND name = $2 AND NOT deleted',
+          // futureagi/model_hub/services/dataset_snapshot.py:102-104 requires a non-empty source.
+          const sourceRows = await probe.pg<{ id: string }>(
+            'SELECT id FROM model_hub_row WHERE dataset_id = $1 AND NOT deleted', [datasetId]);
+          expect(sourceRows).toHaveLength(1);
+          // futureagi/model_hub/serializers/experiments.py:1331-1343 requires a metric and a prompt.
+          const template = await actor.api.post<{ result: { id: string } }>(CREATE_EVALUATION, {
+            name: `${name}-evaluation`, eval_type: 'code', code_language: 'python', output_type: 'pass_fail',
+            code: 'def evaluate(output, **kwargs):\n    return bool(output)\n', pass_threshold: 0.5,
+            check_internet: false, error_localizer_enabled: false,
+          });
+          const prompt = await actor.api.post<{ result: { id: string } }>(CREATE_PROMPT, {
+            name: `${name}-prompt`, is_draft: false, variable_names: {}, prompt_config: [{
+              messages: [{ role: 'user', content: [{ type: 'text', text: `${name} input` }] }],
+              configuration: { model: 'gpt-4o-mini', model_detail: { value: 'gpt-4o-mini' }, temperature: 0, max_tokens: 16 },
+            }],
+          });
+          const versions = await probe.pg<{ id: string }>(
+            `SELECT v.id FROM model_hub_promptversion v JOIN model_hub_prompttemplate p ON p.id=v.original_template_id
+             WHERE p.id=$1 AND p.organization_id=$2 AND v.template_version='v1' AND NOT v.deleted`,
+            [prompt.result.id, actor.organizationId]);
+          expect(versions).toHaveLength(1);
+          await actor.api.post(CREATE_EXPERIMENT, {
+            name, dataset_id: datasetId, experiment_type: 'llm',
+            prompt_config: [{ name: `${name}-run`, prompt_id: prompt.result.id, prompt_version: versions[0].id,
+              model: 'gpt-4o-mini', model_params: { temperature: 0, max_tokens: 16 } }],
+            user_eval_metrics: [{ template_id: template.result.id, name: `${name}-metric`,
+              config: { mapping: { output: columnId } } }],
+          });
+          const experiments = await probe.pg<{ id: string; snapshot_dataset_id: string }>(
+            'SELECT id, snapshot_dataset_id FROM model_hub_experimentstable WHERE dataset_id = $1 AND name = $2 AND NOT deleted',
             [datasetId, name]);
           expect(experiments).toHaveLength(1);
+          const snapshotId = experiments[0].snapshot_dataset_id;
+          expect(snapshotId).toBeTruthy();
+          const snapshotScope = await probe.pg<{ organization_id: string; workspace_id: string }>(
+            'SELECT organization_id, workspace_id FROM model_hub_dataset WHERE id = $1 AND NOT deleted', [snapshotId]);
+          expect(snapshotScope).toEqual([{ organization_id: actor.organizationId, workspace_id: actor.workspaceId }]);
+          // futureagi/model_hub/services/dataset_snapshot.py:142-150,205-208 copies the column with new ids and retains its PDF.
+          const documents = await probe.pg<{ column_id: string; value: string; value_infos: string | { document_url?: string } }>(
+            `SELECT c.column_id, c.value, c.value_infos FROM model_hub_cell c
+             JOIN model_hub_column col ON col.id=c.column_id
+             WHERE c.dataset_id=$1 AND col.source_id=$2 AND NOT c.deleted AND NOT col.deleted`,
+            [snapshotId, columnId]);
+          expect(documents).toHaveLength(1);
+          expect(documents[0].column_id).not.toBe(columnId);
+          expect(documents[0].value).toBe(storedUrl);
+          const documentInfo = typeof documents[0].value_infos === 'string'
+            ? JSON.parse(documents[0].value_infos) : documents[0].value_infos;
+          expect(documentInfo.document_url).toBe(storedUrl);
           path = `/dashboard/develop/experiment/${experiments[0].id}/data`;
           await testInfo.attach(`experiment-${name}`, { body: JSON.stringify(experiments), contentType: 'application/json' });
+          await testInfo.attach(`experiment-source-${name}`, { body: JSON.stringify({ datasetId, columnId,
+            sourceRows, snapshotId, documents, promptId: prompt.result.id, versionId: versions[0].id,
+            templateId: template.result.id }), contentType: 'application/json' });
         }
         await page.goto(path, { waitUntil: 'domcontentloaded' });
-        await expect(cell).toHaveCount(1, { timeout: UI_READY });
-        await cell.hover();
-        await cell.locator(PREVIEW_BUTTON).first().click();
-        // PdfPreviewDrawer.jsx exposes Download file and Close in both renderer versions.
-        const preview = page.locator('.MuiDrawer-paper').filter({
-          has: page.getByRole('button', { name: 'Download file', exact: true }),
+        // frontend/src/sections/common/Media/mediaRef.js:88-132 names the document by the stored URL's last
+        // segment and gives it the PDF type only by a .pdf extension (else application/octet-stream).
+        const documentName = decodeURIComponent(new URL(storedUrl).pathname.split('/').pop()!);
+        const pdfType = /\.pdf$/i.test(documentName) ? 'application/pdf' : null;
+        // The dataset cell (CustomCellRender.jsx media cells) and the experiment Input cell (ExampleCells.jsx,
+        // typed by its dataset column) both render DocChip.jsx, a button named Open <document name>.
+        const previewButton = page.getByRole('button', { name: `Open ${documentName}`, exact: true });
+        await expect(previewButton).toHaveCount(1, { timeout: UI_READY });
+        // frontend/src/sections/common/Media/MediaLightbox.jsx:94-108,166-183 is the dialog with Open in new tab and Close.
+        const preview = page.getByRole('dialog').filter({
+          has: page.getByRole('link', { name: 'Open in new tab', exact: true }),
         });
+        // MediaLightbox.jsx:212-229 embeds the document as a native object.
+        const embedded = preview.locator('object');
+        const expectEmbedded = async () => {
+          await expect(preview.getByRole('link', { name: 'Open in new tab', exact: true })).toHaveAttribute('href', storedUrl);
+          await expect(embedded).toHaveCount(1);
+          await expect(embedded).toHaveAttribute('data', storedUrl);
+          await expect(embedded).toHaveAttribute('aria-label', documentName);
+          expect(await embedded.getAttribute('type')).toBe(pdfType);
+        };
+        await expect(preview).toHaveCount(0);
+        await previewButton.click();
         await expect(preview).toBeVisible({ timeout: UI_READY });
-        if (unreadable) {
-          await expect(preview.getByText('Unable to preview this document', { exact: true })).toBeVisible({ timeout: UI_READY });
-          await expect(preview.locator('canvas')).toHaveCount(0);
-        } else {
-          // Renderer-neutral regression anchor: public dev must fail here for its missing CDN worker.
-          await expect(preview.getByText(`PDF 1 ${name}`, { exact: true })).toBeVisible({ timeout: UI_READY });
-          const canvas = preview.locator('canvas');
-          await expect(canvas).toBeVisible({ timeout: UI_READY });
-          expect(await canvas.evaluate((element: HTMLCanvasElement) => {
-            const pixels = element.getContext('2d')!.getImageData(0, 0, element.width, element.height).data;
-            let ink = 0;
-            for (let i = 0; i < pixels.length; i += 4) {
-              if (pixels[i + 3] > 0 && pixels[i] + pixels[i + 1] + pixels[i + 2] < 600) ink++;
-            }
-            return ink;
-          })).toBeGreaterThan(20);
-          // Page 1 paints a 200x100 pt JPEG 2000 swatch; without a working decoder that area stays blank.
-          await expect.poll(() => canvas.evaluate((element: HTMLCanvasElement, [r, g, b]) => {
-            const pixels = element.getContext('2d')!.getImageData(0, 0, element.width, element.height).data;
-            let swatch = 0;
-            for (let i = 0; i < pixels.length; i += 4) {
-              if (Math.abs(pixels[i] - r) <= 8 && Math.abs(pixels[i + 1] - g) <= 8 && Math.abs(pixels[i + 2] - b) <= 8) swatch++;
-            }
-            return swatch;
-          }, JPX_SWATCH_RGB), { timeout: UI_READY }).toBeGreaterThan(5_000);
-          expect(workers.length).toBeGreaterThan(0);
-          for (const worker of workers) expect(new URL(worker).origin).toBe(new URL(page.url()).origin);
-          expect(blocked.filter(url => /pdf\.worker|pdfjs-dist|unpkg\.com/.test(url))).toEqual([]);
-          await preview.getByRole('button', { name: 'Next page', exact: true }).click();
-          await expect(preview.getByText(`PDF 2 ${name}`, { exact: true })).toBeVisible({ timeout: UI_READY });
-          await preview.getByRole('button', { name: 'Previous page', exact: true }).click();
-          await expect(preview.getByText(`PDF 1 ${name}`, { exact: true })).toBeVisible({ timeout: UI_READY });
-          // Page 1's link annotations: the external one opens a new tab and is not followed here.
-          const external = preview.locator(`.annotationLayer a[href="${PDF_EXTERNAL_LINK}"]`);
-          await expect(external).toHaveAttribute('target', '_blank', { timeout: UI_READY });
-          expect((await external.getAttribute('rel'))?.split(' ')).toEqual(expect.arrayContaining(['noopener', 'noreferrer']));
-          // The /Fit link opens page 2 from the top, with the page buttons in view.
-          await setScrollTop(preview, 100);
-          await pdfLink(preview, PDF_LINK_IDS.internal).click();
-          await expect(preview.getByText(`PDF 2 ${name}`, { exact: true })).toBeVisible({ timeout: UI_READY });
-          await expect(preview.getByText('Page 2 of 2', { exact: true })).toBeVisible();
-          await expect.poll(() => scrollTop(preview), { timeout: UI_READY }).toBe(0);
-          await preview.getByRole('button', { name: 'Previous page', exact: true }).click();
-          await expect(preview.getByText(`PDF 1 ${name}`, { exact: true })).toBeVisible({ timeout: UI_READY });
-          // /XYZ links: each note starts below the visible preview and its link brings it to the top.
-          const notes = pdfNotes(1, name);
-          await expect(preview.locator('.textLayer').getByText(notes, { exact: true })).toBeAttached({ timeout: UI_READY });
-          const start = await belowViewTop(preview, notes);
-          expect(start.offset).toBeGreaterThan(start.view);
-          await pdfLink(preview, PDF_LINK_IDS.notes).click();
-          await expect.poll(async () => (await belowViewTop(preview, notes)).offset, { timeout: UI_READY })
-            .toBeLessThan(24);
-          expect((await belowViewTop(preview, notes)).offset).toBeGreaterThanOrEqual(0);
-          await expect(preview.getByText('Page 1 of 2', { exact: true })).toBeAttached();
-          await pdfLink(preview, PDF_LINK_IDS.otherNotes).click();
-          await expect(preview.getByText('Page 2 of 2', { exact: true })).toBeAttached({ timeout: UI_READY });
-          const otherNotes = pdfNotes(2, name);
-          await expect(preview.locator('.textLayer').getByText(otherNotes, { exact: true })).toBeAttached({ timeout: UI_READY });
-          await expect.poll(async () => (await belowViewTop(preview, otherNotes)).offset, { timeout: UI_READY })
-            .toBeLessThan(24);
-          expect((await belowViewTop(preview, otherNotes)).offset).toBeGreaterThanOrEqual(0);
-          await setScrollTop(preview, 0);
-          await preview.getByRole('button', { name: 'Previous page', exact: true }).click();
-          await expect(preview.getByText(`PDF 1 ${name}`, { exact: true })).toBeVisible({ timeout: UI_READY });
-          await preview.getByRole('button', { name: 'Close', exact: true }).click();
-          await cell.hover();
-          await cell.locator(PREVIEW_BUTTON).first().click();
-          await expect(preview.getByText(`PDF 1 ${name}`, { exact: true })).toBeVisible({ timeout: UI_READY });
-          const [download] = await Promise.all([page.waitForEvent('download'),
-            preview.getByRole('button', { name: 'Download file', exact: true }).click()]);
-          expect(digest(await readFile((await download.path())!))).toBe(digest(bytes));
-        }
+        await expectEmbedded();
+        // The preview's own document address serves exactly the uploaded bytes.
+        const shown = await context.request.get((await embedded.getAttribute('data'))!);
+        expect(shown.status()).toBe(200);
+        expect(digest(await shown.body())).toBe(digest(bytes));
+        await preview.getByRole('button', { name: 'Close', exact: true }).click();
+        await expect(preview).toHaveCount(0, { timeout: UI_READY });
+        await previewButton.click();
+        await expect(preview).toBeVisible({ timeout: UI_READY });
+        await expectEmbedded();
+        expect(blocked.filter(url => PDF_RUNTIME.test(url))).toEqual([]);
         expect(dialogs).toEqual([]);
         expect(new URL(page.url()).pathname).toBe(path);
         await testInfo.attach(`preview-${name}`, { body: await page.screenshot(), contentType: 'image/png' });
         await preview.getByRole('button', { name: 'Close', exact: true }).click();
+        await expect(preview).toHaveCount(0, { timeout: UI_READY });
       }
       expect(errors.filter(error => /useLocation|Router|staticContext/.test(error))).toEqual([]);
     } finally {

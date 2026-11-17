@@ -1,0 +1,22 @@
+{
+  "about": "The operations Omega EE's customer contract marks x-omega-human-only (a signed-in person only), copied from the contract file at the commit below. test/session-only.test.mjs checks that the gateway's session-only list covers every one the gateway routes, and, when OMEGA_EE_CUSTOMER_CONTRACT names EE's file, that this copy still matches it.",
+  "contract": "packages/server/src/contracts/customer-openapi.v1.json",
+  "commit": "2b1b8926574f6a421e4d7989a86fe0e3460a8488",
+  "sha256": "484a55e4f4b2f082c3299f6a643cec78a01690c4cc4dd1ea4e2efa072db29149",
+  "operations": [
+    "GET /workspace/tool-policy/workspace",
+    "PUT /workspace/tool-policy/workspace",
+    "GET /workspace/tool-policy/organization",
+    "PUT /workspace/tool-policy/organization",
+    "PUT /workspace/observe/settings",
+    "POST /workspace/learning/agents/{agentId}/lessons/{lessonId}/revert",
+    "POST /workspace/learning/agents/{agentId}/pause",
+    "PUT /workspace/otlp",
+    "POST /workspace/otlp/test",
+    "POST /workspace/credentials",
+    "DELETE /workspace/credentials/{credentialId}",
+    "POST /workspace/credentials/{credentialId}/rotate",
+    "POST /workspace/approvals/{approvalId}",
+    "PUT /workspace/sandboxes/settings"
+  ]
+}

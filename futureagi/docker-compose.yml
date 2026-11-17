@@ -374,6 +374,15 @@ services:
       FI_PG_WRITE: postgres://${PG_USER:-user}:${PG_PASSWORD:-password}@db:5432/${PG_DB:-tfc}
       FI_PG_READ: postgres://${PG_USER:-user}:${PG_PASSWORD:-password}@db:5432/${PG_DB:-tfc}
       FI_AUTH_REDIS_ADDR: redis:6379
+      # API secrets are stored as a keyed hash (READINESS L03). The collector
+      # resolves the pepper from the same .env, by the backend's rule:
+      # FI_API_SECRET_PEPPER when set, else (local ENV_TYPE) one derived from
+      # SECRET_KEY, whose empty default is Django's (tfc/settings/settings.py
+      # _DEFAULT_SECRET_KEY; deploy/tests/test_api_secret_pepper_compose.py pins it).
+      FI_API_SECRET_PEPPER: ${FI_API_SECRET_PEPPER:-}
+      FI_API_SECRET_PEPPERS_RETIRED: ${FI_API_SECRET_PEPPERS_RETIRED:-}
+      ENV_TYPE: ${ENV_TYPE:-local}
+      SECRET_KEY: "${SECRET_KEY:-django-insecure-<default-SECRET_KEY-replace-in-production>}"
     ports:
       - "${FI_COLLECTOR_GRPC_PORT:-4317}:4317"
       - "${FI_COLLECTOR_HTTP_PORT:-4318}:4318"

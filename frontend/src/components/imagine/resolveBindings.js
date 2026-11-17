@@ -12,8 +12,11 @@
 // Context builder — flattens trace data into a queryable shape
 // ---------------------------------------------------------------------------
 
+// Trace trees wrap each span as { observation_span, children }. Voice and chat
+// call detail sends the span objects themselves as a flat list.
 function getSpan(entry) {
-  return entry?.observation_span || entry?.observation_span || {};
+  if (entry?.observation_span) return entry.observation_span;
+  return entry?.id ? entry : {};
 }
 
 function flattenSpans(entries, result = []) {
@@ -143,11 +146,17 @@ function evaluateCompute(expr, ctx) {
   if (!expr) return undefined;
 
   // Replace aggregate functions: max(spans.field, filter) → number
+  let noMatchingSpans = false;
   let resolved = expr.replace(
     /(max|min|sum|avg|count)\(spans\.(\w+)(?:\s*,\s*([^)]+))?\)/g,
-    (_, func, field, filter) =>
-      String(evalAggregate(func, ctx.spans, field, filter)),
+    (_, func, field, filter) => {
+      if (!filterSpans(ctx.spans, filter).length) noMatchingSpans = true;
+      return String(evalAggregate(func, ctx.spans, field, filter));
+    },
   );
+  // An aggregate over no spans has no value: show "—" (formatValue), not a
+  // made-up 0 such as "0ms" or "0 turns".
+  if (noMatchingSpans) return undefined;
 
   // Replace path references: summary.totalDurationMs → number
   resolved = resolved.replace(/([a-zA-Z][\w.]+)/g, (match) => {

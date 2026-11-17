@@ -1,0 +1,45 @@
+# Buffer's generic HTTP MCP setup accepts a Buffer API key as a bearer token.
+schema: "connector-manifest/v1#provider"
+app: buffer
+id: api-key
+version: 1.1.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.buffer.com/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: Buffer API key
+      help: "Generate a Buffer API key in Settings > API. Supply the key without the Bearer prefix. The key reaches every organization and channel on your account; enable posting permission only when needed. MCP shares your plan's API limits."
+      helpUrl: https://developers.buffer.com/guides/integrations/other-ai-tools.html
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_plan
+  source: https://developers.buffer.com/guides/integrations/mcp
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://developers.buffer.com/guides/integrations/other-ai-tools.html
+    fetchedAt: 2026-11-09
+  - fact: transport.variant
+    url: https://buffer.com/integrations/n8n
+    fetchedAt: 2026-11-09
+  - fact: auth.kind
+    url: https://developers.buffer.com/guides/integrations/other-ai-tools.html
+    fetchedAt: 2026-11-09
+  - fact: auth.credentialParts
+    url: https://developers.buffer.com/guides/integrations/other-ai-tools.html
+    fetchedAt: 2026-11-09

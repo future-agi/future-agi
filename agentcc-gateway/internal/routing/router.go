@@ -28,13 +28,9 @@ type RoutingResult struct {
 // providerIDs is the set of valid provider IDs for validation.
 // modelProviders maps model name → list of provider IDs that serve it.
 func NewRouter(cfg config.RoutingConfig, providerIDs map[string]bool, modelProviders map[string][]string, existingHealth ...*HealthMonitor) (*Router, error) {
-	var strategy Strategy
-	if cfg.DefaultStrategy != "adaptive" {
-		var err error
-		strategy, err = NewStrategy(cfg.DefaultStrategy)
-		if err != nil {
-			return nil, fmt.Errorf("creating default strategy: %w", err)
-		}
+	strategy, err := NewStrategy(cfg.DefaultStrategy)
+	if err != nil {
+		return nil, fmt.Errorf("creating default strategy: %w", err)
 	}
 
 	tracker := NewLatencyTracker(0.3)
@@ -45,6 +41,13 @@ func NewRouter(cfg config.RoutingConfig, providerIDs map[string]bool, modelProvi
 			return nil, fmt.Errorf("existing health monitor has no latency tracker")
 		}
 		tracker = health.tracker
+	}
+	if _, ok := strategy.(*AdaptiveStrategy); ok {
+		// Tuned by routing.adaptive; its deps are bound after startup
+		// (BindStrategyDeps), and a strategy with deps fixed here would never
+		// take them. It keeps no state of its own: a router rebuilt on the same
+		// health monitor ranks from what the monitor already holds.
+		strategy = NewAdaptiveStrategy(cfg.Adaptive, nil)
 	}
 
 	r := &Router{
@@ -91,19 +94,23 @@ func NewRouter(cfg config.RoutingConfig, providerIDs map[string]bool, modelProvi
 		}
 	}
 
-	// Initialize adaptive routing only after all target validation has passed:
-	// its constructor starts a background weight-update loop.
-	if cfg.DefaultStrategy == "adaptive" {
-		strategy = NewAdaptiveStrategy(cfg.Adaptive, tracker, health)
-		r.defaultStrategy = strategy
-	}
-
 	slog.Info("router initialized",
 		"strategy", strategy.Name(),
 		"models_with_routing", len(r.modelTargets),
 	)
 
 	return r, nil
+}
+
+// NewTargetRouter returns a router over targets (model -> its targets, in
+// the order given) that selects with s and reads latencies from tracker: a
+// router over an org's own provider instances, whose targets are no
+// config.yaml provider. targets is the router's own from then on.
+func NewTargetRouter(targets map[string][]RoutingTarget, s Strategy, tracker *LatencyTracker) *Router {
+	if tracker == nil {
+		tracker = NewLatencyTracker(0.3)
+	}
+	return &Router{modelTargets: targets, defaultStrategy: s, latencyTracker: tracker}
 }
 
 // HasTargets returns true if the model has routing targets configured.
@@ -158,15 +165,27 @@ func (r *Router) selectMatching(model string, exclude map[string]bool, requireEx
 		return nil, fmt.Errorf("all providers for model %q are unavailable", model)
 	}
 
-	// Single healthy target — no strategy needed.
-	if len(healthy) == 1 {
+	// Single healthy target — no strategy needed, unless the strategy
+	// refuses open circuits (SkipOpenCircuits): a lone target whose circuit
+	// is open is then refused with its 503 rather than returned, so a
+	// failover over one target (an org's single provider for a customer
+	// key) ends with that 503, not with "no targets" after it is excluded.
+	if len(healthy) == 1 && !refusesOpenCircuits(r.defaultStrategy) {
 		return &RoutingResult{
 			Target:       healthy[0],
 			StrategyName: r.defaultStrategy.Name(),
 		}, nil
 	}
 
-	idx, err := r.defaultStrategy.Select(healthy, r.latencyTracker)
+	// A model-aware strategy (cost-optimized, adaptive, circuit-aware) prices
+	// and checks each target for the model it serves.
+	var idx int
+	var err error
+	if ms, ok := r.defaultStrategy.(ModelStrategy); ok {
+		idx, err = ms.SelectModel(model, healthy, r.latencyTracker)
+	} else {
+		idx, err = r.defaultStrategy.Select(healthy, r.latencyTracker)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -174,6 +193,12 @@ func (r *Router) selectMatching(model string, exclude map[string]bool, requireEx
 		Target:       healthy[idx],
 		StrategyName: r.defaultStrategy.Name(),
 	}, nil
+}
+
+// refusesOpenCircuits reports whether s is SkipOpenCircuits' strategy.
+func refusesOpenCircuits(s Strategy) bool {
+	_, ok := s.(*circuitAwareStrategy)
+	return ok
 }
 
 func anyTargetKeepsModel(targets []RoutingTarget, model string) bool {
@@ -231,30 +256,12 @@ func (r *Router) GetHealthMonitor() *HealthMonitor {
 	return r.healthMonitor
 }
 
-// InheritAdaptiveState keeps what adaptive routing learned across a reload:
-// weights for providers in providerIDs and the learning phase. It does nothing
-// unless both routers use the adaptive strategy.
-func (r *Router) InheritAdaptiveState(old *Router, providerIDs map[string]bool) {
-	if r == nil || old == nil {
-		return
-	}
-	next, ok := r.defaultStrategy.(*AdaptiveStrategy)
-	if !ok {
-		return
-	}
-	prev, ok := old.defaultStrategy.(*AdaptiveStrategy)
-	if !ok {
-		return
-	}
-	next.inheritFrom(prev, providerIDs)
-}
+// InheritAdaptiveState is kept for callers that rebuild a router: adaptive
+// routing reads the shared health monitor at every selection and holds no
+// weights of its own, so a router rebuilt on the old one's monitor (NewRouter's
+// existingHealth) already has what the old one learned and nothing is copied.
+func (r *Router) InheritAdaptiveState(old *Router, providerIDs map[string]bool) {}
 
-// Close stops strategy-owned background workers. It is safe to call repeatedly.
-func (r *Router) Close() {
-	if r == nil {
-		return
-	}
-	if adaptive, ok := r.defaultStrategy.(*AdaptiveStrategy); ok {
-		adaptive.Stop()
-	}
-}
+// Close is safe to call repeatedly. No strategy owns a background worker, so
+// there is nothing to stop.
+func (r *Router) Close() {}

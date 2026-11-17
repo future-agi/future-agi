@@ -1,9 +1,8 @@
 """Service layer for ``MemberRoleUpdateAPIView``."""
 
-from typing import Any, Optional
+from typing import Any
 from uuid import UUID
 
-from django.db import transaction
 from django.utils import timezone
 
 from accounts.models.organization import Organization
@@ -11,6 +10,8 @@ from accounts.models.organization_invite import InviteStatus, OrganizationInvite
 from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.user import User
 from accounts.models.workspace import Workspace, WorkspaceMembership
+from accounts.services.hard_erase_issuance_entry import issuance_entry
+from accounts.services.identity_issuance import issue_membership
 from tfc.constants.levels import Level
 from tfc.permissions.utils import can_invite_at_level, get_org_membership
 
@@ -34,10 +35,10 @@ def update_member_role(
     organization: Organization,
     actor: User,
     target_user_id: UUID,
-    org_level: Optional[int] = None,
-    ws_level: Optional[int] = None,
-    workspace_id: Optional[UUID] = None,
-    workspace_access: Optional[list[dict]] = None,
+    org_level: int | None = None,
+    ws_level: int | None = None,
+    workspace_id: UUID | None = None,
+    workspace_access: list[dict] | None = None,
     workspace_access_provided: bool = False,
 ) -> dict[str, Any]:
     """Apply an org-level and/or workspace-level role update for a target user.
@@ -66,7 +67,9 @@ def update_member_role(
 
     changes: dict[str, Any] = {}
 
-    with transaction.atomic():
+    with issuance_entry(
+        organizations=[organization.pk], people=[actor.pk, target_user_id]
+    ):
         if org_level is not None:
             _apply_org_level_change(
                 organization=organization,
@@ -106,7 +109,7 @@ def _has_pending_invite(organization: Organization, target_user_id: UUID) -> boo
 
 
 def _validate_workspace_access_in_org(
-    workspace_access: Optional[list[dict]], organization: Organization
+    workspace_access: list[dict] | None, organization: Organization
 ) -> None:
     """Reject cross-org workspace_ids; without this the writes below silently
     create a row pointing at a foreign workspace."""
@@ -144,7 +147,7 @@ def _invite_workspace_access(
     new_level: int,
     workspace_access: list[dict],
     workspace_access_provided: bool,
-) -> Optional[list[dict]]:
+) -> list[dict] | None:
     """The ``workspace_access`` to persist onto a pending invite, mirroring the
     access applied to an active membership for the same ``new_level``.
 
@@ -178,9 +181,9 @@ def _invite_workspace_access(
 
 def _merge_invite_workspace_access(
     *,
-    existing: Optional[list[dict]],
+    existing: list[dict] | None,
     desired: list[dict],
-    revoke_scope: Optional[set[UUID]],
+    revoke_scope: set[UUID] | None,
 ) -> list[dict]:
     """The ``workspace_access`` to write onto a pending invite, honoring the
     actor's revoke scope (the same rule the active-membership revoke uses).
@@ -213,8 +216,8 @@ def _apply_org_level_change(
     new_level: int,
     workspace_access: list[dict],
     workspace_access_provided: bool,
-    ws_level: Optional[int],
-    workspace_id: Optional[UUID],
+    ws_level: int | None,
+    workspace_id: UUID | None,
     changes: dict[str, Any],
 ) -> None:
     old_level = target_membership.level_or_legacy
@@ -339,7 +342,9 @@ def _promote_to_workspace_admin_everywhere(
     target_membership: OrganizationMembership,
 ) -> None:
     for ws in Workspace.objects.filter(organization=organization):
-        WorkspaceMembership._base_manager.update_or_create(
+        issue_membership(
+            WorkspaceMembership._base_manager,
+            "update_or_create",
             workspace=ws,
             user_id=target_user_id,
             defaults=_active_ws_membership_defaults(
@@ -357,7 +362,7 @@ def _apply_workspace_access(
     new_level: int,
     workspace_access: list[dict],
     workspace_access_provided: bool,
-    also_keep_ws_id: Optional[UUID],
+    also_keep_ws_id: UUID | None,
     changes: dict[str, Any],
 ) -> None:
     default_ws_level = (
@@ -367,7 +372,9 @@ def _apply_workspace_access(
         ws_id = ws_entry.get("workspace_id")
         ws_level = ws_entry.get("level", default_ws_level)
         if ws_id:
-            WorkspaceMembership._base_manager.update_or_create(
+            issue_membership(
+                WorkspaceMembership._base_manager,
+                "update_or_create",
                 workspace_id=ws_id,
                 user_id=target_user_id,
                 defaults=_active_ws_membership_defaults(
@@ -409,7 +416,7 @@ def _apply_workspace_access(
 
 def _revocable_workspace_ids(
     organization: Organization, actor: User
-) -> Optional[set[UUID]]:
+) -> set[UUID] | None:
     """Workspace ids the ``actor`` is authorized to revoke access within.
 
     - Org admins/owners (``level >= ADMIN``) may revoke org-wide → ``None``
@@ -455,7 +462,9 @@ def _apply_ws_level_change(
     ).first()
     old_ws = existing_ws.level_or_legacy if existing_ws else None
 
-    WorkspaceMembership._base_manager.update_or_create(
+    issue_membership(
+        WorkspaceMembership._base_manager,
+        "update_or_create",
         workspace_id=workspace_id,
         user_id=target_user_id,
         defaults=_active_ws_membership_defaults(ws_level, target_membership, actor),

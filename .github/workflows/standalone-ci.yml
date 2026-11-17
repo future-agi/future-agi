@@ -2,11 +2,13 @@
 # slim backend variant, frontend, fi-collector and agentcc-gateway images
 # first, then deploy/standalone/Dockerfile on top of them, as a release does),
 # checks the compressed size of all five and of the whole standalone install
-# against scripts/image_size_budget.json (the same check a release runs), then
-# runs ./bin/install on a fresh runner and drives the standalone stack end to
-# end: health, UI, first-run setup checks, supervised programs, sign-in, API
-# keys, an OTLP/HTTP trace through fi-collector on :4318 read back through the
-# Observe API, and a workflow completed by the in-process Temporal worker.
+# against scripts/image_size_budget.json (the same check a release runs),
+# builds the code executor as ./bin/install --from-source does
+# (futureagi/code-executor:local), then runs ./bin/install on a fresh runner
+# with those images and drives the standalone stack end to end: health, UI,
+# first-run setup checks, supervised programs, sign-in, API keys, an OTLP/HTTP
+# trace through fi-collector on :4318 read back through the Observe API, and a
+# workflow completed by the in-process Temporal worker.
 #
 # linux/amd64 runs whenever the standalone install can change. linux/arm64
 # (native runner: build, binary check and size budget, no install) runs when
@@ -15,8 +17,9 @@
 #
 # Size budget: every image must fit its budget in
 # scripts/image_size_budget.json, and so must what a fresh standalone install
-# downloads (standalone + postgres + clickhouse, distinct layers); a PR that
-# needs more changes that file, where review sees it. On top of that,
+# downloads (standalone + code-executor, as Docker Hub's :latest serves it, +
+# postgres + clickhouse, distinct layers); a PR that needs more changes that
+# file, where review sees it. On top of that,
 # futureagi/standalone may grow at most STANDALONE_SIZE_BUDGET_PERCENT
 # (repository variable, default 10; 0 turns it off) over :latest; a PR that
 # grows it on purpose takes the `image-size-approved` label (re-run the failed
@@ -153,9 +156,10 @@ jobs:
           fi
 
   # The Standalone first boot (deploy/standalone/bin/bootstrap.py and its
-  # starting page), the production overlay's checks and the install smoke
-  # checks, with fakes for the backend, the datastores and docker: standard
-  # library only, seconds to run.
+  # starting page), the production overlay's checks, the secrets the installers
+  # write to .env (install.ps1's cases skip where pwsh is absent) and the
+  # install smoke checks, with fakes for the backend, the datastores and
+  # docker: standard library only, seconds to run.
   standalone-unit:
     name: standalone bootstrap unit tests
     needs: changes
@@ -167,10 +171,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: deploy/tests (standalone bootstrap, first run, production setup) and install-smoke.sh
+      - name: deploy/tests (standalone bootstrap, first run, production setup, install secrets) and install-smoke.sh
         run: |
           python -m unittest discover -s deploy/tests -p 'test_standalone_*.py' -v
           python -m unittest discover -s deploy/tests -p 'test_production_setup.py' -v
+          python -m unittest discover -s deploy/tests -p 'test_install_secrets.py' -v
           python -m unittest discover -s scripts -p 'test_install_smoke.py' -v
 
   standalone-install:
@@ -197,6 +202,10 @@ jobs:
       # ./bin/install then uses the image this job built (docker compose
       # resolves futureagi/standalone:local) instead of pulling a release.
       FUTURE_AGI_VERSION: local
+      # The same for the code executor, a default service: the one this job
+      # builds from the checkout (futureagi/code-executor:local), as
+      # --from-source writes it to .env, not Docker Hub's :latest.
+      CODE_EXECUTOR_VERSION: local
       FAGI_ADMIN_EMAIL: ci-admin@example.com
       FAGI_ADMIN_NAME: CI Admin
       FAGI_ADMIN_PASSWORD: Ci-Smoke-2026!x
@@ -418,12 +427,36 @@ jobs:
 
       # ---- linux/amd64 only: install and drive the standalone stack ----------
 
+      - name: Build the code executor from this checkout
+        # Code evals run in this default service, and Docker Hub's
+        # futureagi/code-executor:latest may not start under this checkout's
+        # non-root, read-only settings. ./bin/install --from-source's own
+        # recipe (bin/lib/build-local.sh, with bin/e2e's output helpers), tagged
+        # `local`: CODE_EXECUTOR_VERSION above points the install at it, and
+        # bin/install never pulls a `local` image. The docker driver's builder
+        # loads it into the daemon, where Compose finds it; the buildx
+        # container builder would keep it in its cache only.
+        if: matrix.arch == 'amd64'
+        env:
+          BUILDX_BUILDER: default
+        run: |
+          set -euo pipefail
+          DIM=""; RESET=""
+          say() { printf '%s\n' "$*"; }
+          ok() { printf '  %s\n' "$*"; }
+          log_only() { :; }
+          die() { echo "::error::$*"; exit 1; }
+          . bin/lib/build-local.sh
+          build_local_code_executor
+
       - name: Tag the image for the installer and drop the build cache
         # The install needs the disk more than a finished build does.
         if: matrix.arch == 'amd64'
         run: |
           docker tag "$REGISTRY/futureagi/standalone:ci" futureagi/standalone:local
           docker buildx prune -af || true
+          # The code executor was built with the docker driver's builder.
+          docker buildx prune --builder default -af || true
           df -h / /mnt
 
       - name: ./bin/install (standalone stack, fresh runner)
@@ -462,19 +495,47 @@ jobs:
           pass "setup checks: $(jq -r '[.result.checks[] | "\(.id)=\(.status)"] | join(", ")' "$RUNNER_TEMP/setup-checks.json")"
 
           # A program that went FATAL leaves /health/ green; only one-shot
-          # programs (the bootstrap) may have exited.
+          # programs (the bootstrap) may have exited. STOPPED is allowed only
+          # for programs explicitly configured not to autostart in this image.
+          stopped_ok=$(docker compose exec -T app awk '
+            /^[[:space:]]*\[/ {
+              program = ""
+              if ($0 ~ /^[[:space:]]*\[program:[^]]+\]/) {
+                program = $0
+                sub(/^[[:space:]]*\[program:/, "", program)
+                sub(/\].*$/, "", program)
+              }
+            }
+            program != "" && /^[[:space:]]*autostart[[:space:]]*=[[:space:]]*false[[:space:]]*([;#].*)?$/ { print program }
+          ' /etc/futureagi/supervisord.conf)
           programs=$(docker compose exec -T app supervisorctl -c /etc/futureagi/supervisord.conf status || true)
           printf '%s\n' "$programs"
-          down=$(awk '$2 != "RUNNING" && $2 != "EXITED"' <<<"$programs")
+          down=$(awk -v stopped_ok="$stopped_ok" '
+            BEGIN { n = split(stopped_ok, names); for (i = 1; i <= n; i++) allowed[names[i]] = 1 }
+            $2 == "STOPPED" && ($1 in allowed) {
+              print "Accepted STOPPED (autostart=false): " $1 > "/dev/stderr"
+              next
+            }
+            $2 != "RUNNING" && $2 != "EXITED"
+          ' <<<"$programs")
           if [ -z "$programs" ] || [ -n "$down" ]; then
             fail "supervised programs not running: ${down:-no status}"
           fi
           pass "every supervised program is running"
 
+          # Code evals run in the code-executor service: it must be the image
+          # this job built, running, and not restarting.
+          cid=$(docker compose ps -q code-executor)
+          [ -n "$cid" ] || fail "no code-executor container"
+          read -r image status restarts < <(docker inspect -f '{{.Config.Image}} {{.State.Status}} {{.RestartCount}}' "$cid")
+          [ "$image" = futureagi/code-executor:local ] || fail "code-executor runs $image, not the image this job built"
+          [ "$status" = running ] && [ "$restarts" = 0 ] || fail "code-executor is $status after $restarts restarts"
+          pass "code-executor running this checkout's image, no restarts"
+
           token=$(smoke_sign_in) || fail "sign-in as $FAGI_ADMIN_EMAIL (POST /accounts/token/)"
           pass "sign-in with the account ./bin/install created"
 
-          keys=$(smoke_keys "$token") || fail "no API key pair from GET /accounts/keys/"
+          keys=$(smoke_keys "$token") || fail "personal key creation through the signed-in session failed"
           { read -r api_key; read -r secret_key; } <<<"$keys"
           echo "::add-mask::$secret_key"
           pass "API key pair issued"
@@ -513,7 +574,7 @@ jobs:
           docker compose ps -a > "$out/ps.txt" 2>&1 || true
           docker compose exec -T app supervisorctl -c /etc/futureagi/supervisord.conf status \
             > "$out/supervisorctl.txt" 2>&1 || true
-          docker compose logs --no-color --tail 3000 app postgres clickhouse > "$out/compose.log" 2>&1 || true
+          docker compose logs --no-color --tail 3000 app postgres clickhouse code-executor > "$out/compose.log" 2>&1 || true
           tail -n 150 "$out/compose.log"
 
       - uses: actions/upload-artifact@v4
@@ -628,9 +689,26 @@ jobs:
           tags: futureagi/agentcc-gateway:local
           cache-from: type=registry,ref=${{ env.CACHE_REPO }}:gateway
 
+      - name: Build the code executor from this checkout
+        # A default service of the Distributed stack too: the install at this
+        # commit runs this checkout's executor, as --from-source builds it,
+        # not Docker Hub's :latest.
+        env:
+          BUILDX_BUILDER: default
+        run: |
+          set -euo pipefail
+          DIM=""; RESET=""
+          say() { printf '%s\n' "$*"; }
+          ok() { printf '  %s\n' "$*"; }
+          log_only() { :; }
+          die() { echo "::error::$*"; exit 1; }
+          . bin/lib/build-local.sh
+          build_local_code_executor
+
       - name: Drop the build cache
         run: |
           docker buildx prune -af || true
+          docker buildx prune --builder default -af || true
           df -h / /mnt
 
       - name: ./bin/install at this commit
@@ -640,6 +718,7 @@ jobs:
           FRONTEND_VERSION: local
           FI_COLLECTOR_VERSION: local
           AGENTCC_GATEWAY_VERSION: local
+          CODE_EXECUTOR_VERSION: local
         run: ./bin/install -y
 
       - name: The install stayed Distributed, on this commit's images, with its account and trace

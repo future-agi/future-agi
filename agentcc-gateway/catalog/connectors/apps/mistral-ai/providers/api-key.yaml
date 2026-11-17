@@ -1,0 +1,45 @@
+# Mistral's hosted workspace MCP accepts a workspace-scoped API key as a bearer.
+schema: "connector-manifest/v1#provider"
+app: mistral-ai
+id: api-key
+version: 1.1.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://api.mistral.ai/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: Mistral API key
+      help: "Create a workspace-scoped API key in the Mistral admin console. Calls use that key's permissions; some tools require workspace features to be enabled. Supply the key without the Bearer prefix."
+      helpUrl: https://docs.mistral.ai/resources/mcp
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_metered
+  source: https://mistral.ai/pricing
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://docs.mistral.ai/resources/mcp
+    fetchedAt: 2026-11-09
+  - fact: transport.variant
+    url: https://docs.mistral.ai/resources/mcp
+    fetchedAt: 2026-11-09
+  - fact: auth.kind
+    url: https://docs.mistral.ai/resources/mcp
+    fetchedAt: 2026-11-09
+  - fact: auth.credentialParts
+    url: https://docs.mistral.ai/resources/mcp
+    fetchedAt: 2026-11-09

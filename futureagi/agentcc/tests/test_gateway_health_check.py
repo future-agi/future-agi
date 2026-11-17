@@ -12,13 +12,12 @@ from rest_framework.test import APIRequestFactory, force_authenticate
 
 from accounts.models.organization import Organization
 from accounts.models.user import User
-from agentcc.services import config_push
 from agentcc.services.gateway_client import GatewayClient
 from agentcc.views import gateway
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("action", ["list", "retrieve", "health_check"])
+@pytest.mark.parametrize("action", ["health_check"])
 @pytest.mark.parametrize("outcome", ["healthy", "connection_error", "timeout"])
 def test_gateway_reports_probe_completion_time(monkeypatch, action, outcome):
     started = datetime.datetime(2026, 1, 2, 3, 4, 5, tzinfo=datetime.timezone.utc)
@@ -58,6 +57,9 @@ def test_gateway_reports_probe_completion_time(monkeypatch, action, outcome):
         gateway.AgentccProviderCredential.no_workspace_objects, "filter", provider_rows
     )
     monkeypatch.setattr(gateway.cache, "get", lambda key: True)
+    # The role lookup reads the database, which this unit test has none of. A
+    # member's check pushes no config, so only the probe and its record run.
+    monkeypatch.setattr(gateway, "is_gateway_admin", lambda request: False)
 
     factory = APIRequestFactory()
     method = "post" if action == "health_check" else "get"
@@ -185,9 +187,17 @@ def test_failed_health_check_returns_a_sanitized_error(monkeypatch, failure, exp
         assert raw not in body
     events = [event for event, _ in logged]
     assert "gateway_health_check_failed" in events
-    diagnostic = dict(logged)["gateway_health_check_failed"]["error"]
+    fields = dict(logged)["gateway_health_check_failed"]
+    # This transport raises the connect error alone, without the OS error a
+    # real lookup carries, so it logs the general connection class.
+    cause = {
+        "connect": "connection_failed",
+        "timeout": "timeout",
+        "http_503": "http_status",
+    }
+    assert fields["cause"] == cause[failure]
     raw_marker = {"connect": "Errno", "timeout": "timed out", "http_503": "agentcc-7"}
-    assert raw_marker[failure] in diagnostic
+    assert raw_marker[failure] not in repr(fields)
 
 
 @pytest.mark.unit
@@ -206,81 +216,105 @@ def test_unexpected_health_check_error_is_not_echoed(monkeypatch):
     assert "hunter2" not in body and "db.internal" not in body
 
 
-@pytest.mark.unit
-def test_cold_sync_cache_dispatches_resync_off_the_request_path(monkeypatch):
-    """TH-3947 F1: the all-org config push never holds the health-check response."""
+def _admin_repush_seams(monkeypatch, push):
+    """An Owner's or Admin's healthy check of one organization: the cache is a
+    dict, and the caller's re-push is push(org_id)."""
     _use_gateway_transport(
         monkeypatch, lambda request: httpx.Response(200, json={"status": "ok"})
     )
     _stub_providers(monkeypatch)
     store = {}
-
-    def add(key, value, timeout):
-        if key in store:
-            return False
-        store[key] = value
-        return True
-
-    monkeypatch.setattr(gateway.cache, "get", store.get)
-    monkeypatch.setattr(gateway.cache, "add", add)
-    monkeypatch.setattr(gateway.cache, "delete", lambda key: store.pop(key, None))
-    dispatched = []
-    monkeypatch.setattr(
-        gateway.push_all_org_configs_activity,
-        "apply_async",
-        lambda **kwargs: dispatched.append(kwargs),
+    cache = MagicMock()
+    cache.get.side_effect = store.get
+    cache.set.side_effect = lambda key, value, timeout=None: store.__setitem__(
+        key, value
     )
+    monkeypatch.setattr(gateway, "cache", cache)
+    monkeypatch.setattr(gateway, "is_gateway_admin", lambda request: True)
+    monkeypatch.setattr(
+        gateway.AgentccGatewayViewSet,
+        "_ensure_org_config_pushed",
+        lambda view, client, org_id: push(org_id),
+    )
+    return store
 
-    def inline_sync(*args, **kwargs):
-        raise AssertionError("config push must not run inside the request")
 
-    monkeypatch.setattr(config_push, "push_all_org_configs", inline_sync)
+def _post_health_check_for(org):
+    request = APIRequestFactory().post(
+        "/agentcc/gateways/default/health_check/", {}, format="json"
+    )
+    request.organization = org
+    force_authenticate(request, user=User(email="health-check@example.test"))
+    response = gateway.AgentccGatewayViewSet.as_view({"post": "health_check"})(
+        request, pk="default"
+    )
+    response.render()
+    return response, json.loads(response.content)
 
-    first, first_payload = _post_health_check()
-    second, _ = _post_health_check()
+
+@pytest.mark.unit
+def test_cold_sync_cache_dispatches_resync_off_the_request_path(monkeypatch):
+    """An Owner's or Admin's check re-pushes only the caller's organization, at
+    most once per window: the second check in the window pushes nothing, and no
+    other organization is pushed or throttled."""
+    pushed = []
+    store = _admin_repush_seams(
+        monkeypatch, lambda org_id: pushed.append(org_id) or True
+    )
+    org = Organization(name="Health check test")
+
+    first, first_payload = _post_health_check_for(org)
+    second, second_payload = _post_health_check_for(org)
 
     assert first.status_code == second.status_code == 200
     assert first_payload["result"]["status"] == "healthy"
-    assert len(dispatched) == 1
-    assert dispatched[0]["dispatch_timeout_seconds"] <= 5
-    assert store == {"agentcc:gateway_config_synced": True}
+    assert first_payload["result"]["org_configs_pushed"] is True
+    assert second_payload["result"]["org_configs_pushed"] is False
+    assert pushed == [str(org.id)]
+    throttles = [
+        key for key in store if key.startswith("agentcc:gateway_config_synced")
+    ]
+    assert throttles == [f"agentcc:gateway_config_synced:{org.id}"]
 
 
 @pytest.mark.unit
 def test_failed_resync_dispatch_keeps_the_probe_result_and_releases_the_claim(
     monkeypatch,
 ):
-    _use_gateway_transport(
-        monkeypatch, lambda request: httpx.Response(200, json={"status": "ok"})
-    )
-    _stub_providers(monkeypatch)
-    store = {}
-    monkeypatch.setattr(gateway.cache, "get", store.get)
-    monkeypatch.setattr(
-        gateway.cache, "add", lambda key, value, timeout: store.setdefault(key, value)
-    )
-    monkeypatch.setattr(gateway.cache, "delete", lambda key: store.pop(key, None))
+    """A failed re-push keeps the probe's healthy result and sets no throttle,
+    so the organization's next check tries again."""
+    attempts = []
 
-    def unavailable(**kwargs):
-        raise RuntimeError("temporal unavailable")
+    def unavailable(org_id):
+        attempts.append(org_id)
+        raise RuntimeError("config push unavailable")
 
-    monkeypatch.setattr(
-        gateway.push_all_org_configs_activity, "apply_async", unavailable
-    )
+    store = _admin_repush_seams(monkeypatch, unavailable)
     monkeypatch.setattr(gateway.logger, "warning", lambda *a, **kw: None)
+    org = Organization(name="Health check test")
 
-    response, payload = _post_health_check()
+    response, payload = _post_health_check_for(org)
 
     assert response.status_code == 200
     assert payload["result"]["status"] == "healthy"
-    assert store == {}
+    assert payload["result"]["org_configs_pushed"] is False
+    assert not [key for key in store if key.startswith("agentcc:gateway_config_synced")]
+
+    _post_health_check_for(org)
+    assert attempts == [str(org.id), str(org.id)]
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("operation", ["get", "add", "delete"])
-def test_sync_cache_failure_preserves_healthy_probe_and_timestamp(monkeypatch, operation):
-    """TH-3947 FX1-1: optional re-sync cache failures cannot invalidate a probe."""
-    completed = datetime.datetime(2026, 1, 2, 3, 4, 5, tzinfo=datetime.timezone.utc)
+@pytest.mark.parametrize(
+    "role, operation",
+    [("member", "get"), ("member", "set"), ("admin", "get"), ("admin", "set")],
+)
+def test_sync_cache_failure_preserves_healthy_probe_and_timestamp(
+    monkeypatch, role, operation
+):
+    """A cache failure, in the re-push throttle or the health record, cannot
+    turn a healthy probe into an error or change the time it reports."""
+    completed = datetime.datetime(2026, 1, 2, 3, 4, 5, tzinfo=datetime.UTC)
     clock = {"now": completed}
     monkeypatch.setattr(timezone, "now", lambda: clock["now"])
     _use_gateway_transport(
@@ -289,7 +323,6 @@ def test_sync_cache_failure_preserves_healthy_probe_and_timestamp(monkeypatch, o
     _stub_providers(monkeypatch)
     cache = MagicMock()
     cache.get.return_value = None
-    cache.add.return_value = True
 
     def unavailable(*args, **kwargs):
         clock["now"] = completed + datetime.timedelta(seconds=20)
@@ -297,23 +330,26 @@ def test_sync_cache_failure_preserves_healthy_probe_and_timestamp(monkeypatch, o
 
     getattr(cache, operation).side_effect = unavailable
     monkeypatch.setattr(gateway, "cache", cache)
-    dispatch = MagicMock()
-    if operation == "delete":
-        dispatch.side_effect = RuntimeError("temporal unavailable")
-    monkeypatch.setattr(gateway.push_all_org_configs_activity, "apply_async", dispatch)
+    monkeypatch.setattr(gateway, "is_gateway_admin", lambda request: role == "admin")
+    pushed = MagicMock(return_value=True)
+    monkeypatch.setattr(
+        gateway.AgentccGatewayViewSet,
+        "_ensure_org_config_pushed",
+        lambda view, client, org_id: pushed(org_id),
+    )
 
     response, payload = _post_health_check()
 
     assert response.status_code == 200
     assert payload["result"]["status"] == "healthy"
     assert (
-        datetime.datetime.fromisoformat(payload["result"]["last_health_check"]) == completed
+        datetime.datetime.fromisoformat(payload["result"]["last_health_check"])
+        == completed
     )
     assert f"cache.{operation}" not in response.content.decode()
-    getattr(cache, operation).assert_called_once()
-    if operation == "delete":
-        dispatch.assert_called_once_with(dispatch_timeout_seconds=5)
-        cache.delete.assert_called_once_with("agentcc:gateway_config_synced")
-    else:
-        dispatch.assert_not_called()
-        cache.delete.assert_not_called()
+    getattr(cache, operation).assert_called()
+    # The admin's re-push runs when the throttle can be read; a throttle that
+    # cannot be read skips it, and one that cannot be stored keeps the push.
+    repushed = role == "admin" and operation == "set"
+    assert payload["result"]["org_configs_pushed"] is repushed
+    assert pushed.call_count == (1 if repushed else 0)

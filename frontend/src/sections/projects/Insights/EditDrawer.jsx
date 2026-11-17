@@ -13,17 +13,18 @@ import {
 } from "@mui/material";
 import { useQueryClient } from "@tanstack/react-query";
 import Iconify from "src/components/iconify";
+import ConfirmDialog from "src/sections/common/ux/ConfirmDialog";
 import ScopeFilterBar from "src/sections/projects/ScopeFilterBar";
 import { insightsKeys, patchConfig } from "./insightsApi";
 import { formatCount } from "./insightsFormat";
 import { useCancellable } from "./insightsHooks";
 import { LENSES, attributeError, unitTitle } from "./insightsLenses";
 import {
-  SAMPLE_SIZES,
   cleanAttributes,
   editableScope,
   isFixedScope,
   lastScope,
+  sampleSizeOptions,
   scopeDateLabel,
   storedScope,
 } from "./insightsScope";
@@ -58,6 +59,11 @@ const toBody = (draft) => ({
     : {}),
 });
 
+// The same settings, however often the scope was touched.
+const sameDraft = (a, b) =>
+  JSON.stringify({ ...a, scopeChanged: false }) ===
+  JSON.stringify({ ...b, scopeChanged: false });
+
 // Fields the server kept as sent. An older server saves only the name.
 function unsaved(sent, saved) {
   if (!saved) return [];
@@ -88,6 +94,9 @@ export default function EditDrawer({
 }) {
   const queryClient = useQueryClient();
   const [draft, setDraft] = useState(() => fromConfig(config));
+  // The settings as opened or last saved: closing on anything else asks first.
+  const [savedDraft, setSavedDraft] = useState(draft);
+  const [confirmClose, setConfirmClose] = useState(false);
   const [result, setResult] = useState(null); // {missed: [...]}
   const saving = useCancellable("The report could not be saved.");
   const update = (patch) => {
@@ -116,6 +125,7 @@ export default function EditDrawer({
         queryKey: insightsKeys.config(config.id),
       });
       queryClient.invalidateQueries({ queryKey: ["insights", "configs"] });
+      setSavedDraft(draft);
       setResult({
         missed: unsaved(body, saved),
         // The server forgets the categories when the question or lens moves.
@@ -126,11 +136,13 @@ export default function EditDrawer({
     });
 
   const busy = saving.state.status === "busy";
+  const requestClose = () =>
+    sameDraft(draft, savedDraft) ? onClose() : setConfirmClose(true);
   return (
     <Drawer
       anchor="right"
       open={open}
-      onClose={onClose}
+      onClose={requestClose}
       PaperProps={{ sx: { width: 600, maxWidth: "100vw" } }}
     >
       <Stack sx={{ height: "100%" }}>
@@ -152,7 +164,7 @@ export default function EditDrawer({
               Changes apply from the next run
             </Typography>
           </Box>
-          <IconButton aria-label="Close" onClick={onClose} size="small">
+          <IconButton aria-label="Close" onClick={requestClose} size="small">
             <Iconify icon="mdi:close" width={18} />
           </IconButton>
         </Stack>
@@ -209,7 +221,7 @@ export default function EditDrawer({
                 disabled={busy}
                 sx={{ width: 140 }}
               >
-                {SAMPLE_SIZES.map((size) => (
+                {sampleSizeOptions(draft.sampleSize).map((size) => (
                   <MenuItem key={size} value={size}>
                     {formatCount(size)}
                   </MenuItem>
@@ -353,7 +365,7 @@ export default function EditDrawer({
           <Typography variant="caption" color="text.secondary" sx={{ flex: 1 }}>
             {problem}
           </Typography>
-          <Button color="inherit" onClick={onClose}>
+          <Button color="inherit" onClick={requestClose}>
             Close
           </Button>
           <Button
@@ -365,6 +377,18 @@ export default function EditDrawer({
           </Button>
         </Stack>
       </Stack>
+      <ConfirmDialog
+        open={confirmClose}
+        title="Discard unsaved changes to this report?"
+        body="Changes you haven't saved will be lost."
+        confirmLabel="Discard"
+        cancelLabel="Keep editing"
+        onConfirm={() => {
+          setConfirmClose(false);
+          onClose();
+        }}
+        onClose={() => setConfirmClose(false)}
+      />
     </Drawer>
   );
 }

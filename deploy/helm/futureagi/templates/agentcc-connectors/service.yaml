@@ -1,0 +1,26 @@
+{{- if include "futureagi.agentccConnectors.enabled" . }}
+{{- $c := .Values.agentccConnectors -}}
+{{- $ctx := dict "root" . "component" "agentcc-connectors" -}}
+# Inside the cluster only: no Ingress, route, NodePort or LoadBalancer reaches
+# the runtime, and its NetworkPolicy admits only the gateway pods.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "futureagi.component" $ctx }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "futureagi.componentLabels" $ctx | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "futureagi.selectorLabels" $ctx | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ include "futureagi.agentccConnectors.port" . }}
+      targetPort: http
+      protocol: TCP
+{{- if dig "pdb" "enabled" false $c }}
+---
+{{ include "futureagi.pdb" (dict "root" . "component" "agentcc-connectors" "name" (include "futureagi.component" $ctx) "pdb" $c.pdb) }}
+{{- end }}
+{{- end }}

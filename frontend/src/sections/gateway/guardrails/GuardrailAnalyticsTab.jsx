@@ -1,348 +1,331 @@
-import React, { useState, useMemo } from "react";
-import { Box, Typography, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, ToggleButton, ToggleButtonGroup, Skeleton, LinearProgress } from "@mui/material";
-import Section from "src/components/section";
-import MetricStrip from "src/components/metric-strip";
-import { useTheme } from "@mui/material/styles";
+import React, { useMemo, useState } from "react";
 import PropTypes from "prop-types";
+import Box from "@mui/material/Box";
+import Alert from "@mui/material/Alert";
+import Button from "@mui/material/Button";
+import Skeleton from "@mui/material/Skeleton";
+import Typography from "@mui/material/Typography";
+import { useTheme } from "@mui/material/styles";
+import Chart from "react-apexcharts";
+
+import { GatewayEmptyState, GatewayGrid } from "../components/frame";
+import { catalogEntry } from "./catalog";
 import {
   useGuardrailOverview,
   useGuardrailRules,
   useGuardrailTrends,
 } from "./hooks/useGuardrailAnalytics";
-import Chart from "react-apexcharts";
+import StatStrip from "./rules/StatStrip";
+import RangeToggle from "../analytics/RangeToggle";
+import { EMPTY } from "../utils/formatters";
+import { GUARDRAILS_OFF_TITLE } from "../utils/guardrailPipeline";
+import { useGuardrailsOff } from "./hooks/useGuardrailsOff";
+import {
+  bucketTime,
+  localTimeAxis,
+  localTimeTooltip,
+  zoneNote,
+} from "../utils/timeZone";
 
-const RANGE_FILTERS = [
-  { value: "24h", label: "24h" },
-  { value: "7d", label: "7d" },
-  { value: "30d", label: "30d" },
+const RANGES = [
+  // Labelled as the Analytics page's ranges (analytics/analyticsRange.js).
+  { value: "24h", label: "24H", title: "Last 24 hours", hours: 24 },
+  { value: "7d", label: "7D", title: "Last 7 days", hours: 24 * 7 },
+  { value: "30d", label: "30D", title: "Last 30 days", hours: 24 * 30 },
 ];
 
-function getDateRange(range) {
-  const end = new Date().toISOString();
-  const start = new Date();
-  if (range === "24h") start.setHours(start.getHours() - 24);
-  else if (range === "7d") start.setDate(start.getDate() - 7);
-  else start.setDate(start.getDate() - 30);
-  return { start: start.toISOString(), end };
+function windowFor(range) {
+  const end = new Date();
+  end.setSeconds(0, 0);
+  const start = new Date(end.getTime() - range.hours * 3600 * 1000);
+  return { start: start.toISOString(), end: end.toISOString() };
 }
 
-function formatPct(val) {
-  if (val == null) return "0%";
-  return `${(Number(val) * 100).toFixed(1)}%`;
-}
+const count = (value) =>
+  value === undefined || value === null
+    ? EMPTY
+    : Number(value).toLocaleString();
+const rate = (value) =>
+  value === undefined || value === null ? null : `${Number(value).toFixed(1)}%`;
 
-function formatPctDirect(val) {
-  if (val == null) return "0%";
-  // Value is already a percentage (e.g. 21.09 means 21.09%)
-  return `${Number(val).toFixed(1)}%`;
-}
+const RULE_COLUMNS = [
+  {
+    field: "label",
+    headerName: "Rule",
+    minWidth: 200,
+    flex: 2,
+  },
+  {
+    field: "triggers",
+    headerName: "Matches",
+    minWidth: 110,
+    flex: 0,
+    width: 120,
+    type: "rightAligned",
+  },
+  {
+    field: "blocked",
+    headerName: "Blocked",
+    minWidth: 110,
+    flex: 0,
+    width: 120,
+    type: "rightAligned",
+  },
+  {
+    field: "warned",
+    headerName: "Warned",
+    minWidth: 110,
+    flex: 0,
+    width: 120,
+    type: "rightAligned",
+  },
+  {
+    field: "share",
+    headerName: "Share of matches",
+    valueFormatter: ({ value }) => `${value.toFixed(1)}%`,
+    minWidth: 160,
+    flex: 0,
+    width: 190,
+    type: "rightAligned",
+  },
+];
 
-function getOverviewValue(overview, camelKey, snakeKey) {
-  return overview?.[camelKey] ?? overview?.[snakeKey];
-}
-
-function getRuleCount(rule, camelKey, snakeKey) {
-  return rule?.[camelKey] ?? rule?.[snakeKey] ?? 0;
-}
-
+/**
+ * What the org's guardrails matched over a window: a strip of totals, matches
+ * over time and the rules ranked. The gateway does not time a check, so there
+ * is no latency here; the trends endpoint returns matches per bucket only, so
+ * that is the one series charted.
+ */
 const GuardrailAnalyticsTab = ({ gatewayId }) => {
-  const [range, setRange] = useState("7d");
+  // No check runs on a gateway with guardrails off, so nothing is matched.
+  const off = useGuardrailsOff(gatewayId);
   const theme = useTheme();
-  const dateRange = useMemo(() => getDateRange(range), [range]);
-  const granularity = range === "24h" ? "hour" : "day";
+  const [rangeId, setRangeId] = useState("7d");
+  const range = RANGES.find((item) => item.value === rangeId);
+  const params = useMemo(() => windowFor(range), [range]);
+  const overview = useGuardrailOverview(params);
+  const rules = useGuardrailRules(params);
+  const granularity = range.hours <= 24 ? "hour" : "day";
+  const trends = useGuardrailTrends({ ...params, granularity });
 
-  const params = { gateway_id: gatewayId, ...dateRange };
-  const { data: overview, isLoading: ovLoading } = useGuardrailOverview(params);
-  const { data: rules, isLoading: rulesLoading } = useGuardrailRules(params);
-  const { data: trends, isLoading: trendsLoading } = useGuardrailTrends({
-    ...params,
-    granularity,
-  });
+  const rows = useMemo(() => {
+    const list = Array.isArray(rules.data) ? rules.data : [];
+    const total = list.reduce(
+      (sum, r) => sum + Number(r.trigger_count || 0),
+      0,
+    );
+    return list.map((r) => {
+      const name = r.rule || r.name;
+      const triggers = Number(r.trigger_count || 0);
+      return {
+        id: name,
+        label: catalogEntry(name)?.label || name,
+        triggers,
+        blocked: Number(r.block_count || 0),
+        warned: Number(r.warn_count || 0),
+        share: total > 0 ? (triggers / total) * 100 : 0,
+      };
+    });
+  }, [rules.data]);
 
-  const trendList = Array.isArray(trends) ? trends : [];
-  const avgLatency =
-    overview?.avg_guardrail_latency_ms ??
-    overview?.avgGuardrailLatencyMs ??
-    overview?.avg_latency;
-
+  const series = useMemo(
+    () => (Array.isArray(trends.data?.series) ? trends.data.series : []),
+    [trends.data],
+  );
+  // Day buckets read in the zone the API cut them in.
+  const { day, utc } = bucketTime(granularity, trends.data);
   const chartOptions = useMemo(
     () => ({
       chart: {
-        id: "guardrail-trends",
+        id: "guardrail-matches",
         toolbar: { show: false },
         zoom: { enabled: false },
         fontFamily: theme.typography.fontFamily,
         background: "transparent",
       },
       theme: { mode: theme.palette.mode },
-      xaxis: {
-        type: "datetime",
-        categories: trendList.map((t) => t.timestamp || t.bucket),
-        labels: {
-          style: { colors: theme.palette.text.secondary, fontSize: "12px" },
-        },
-      },
+      xaxis: localTimeAxis({
+        color: theme.palette.text.secondary,
+        fontSize: "12px",
+        utc,
+        categories: series.map((point) => point.timestamp || point.bucket),
+      }),
       yaxis: {
+        min: 0,
+        forceNiceScale: true,
         labels: {
           style: { colors: theme.palette.text.secondary, fontSize: "12px" },
         },
       },
-      stroke: { curve: "smooth", width: 2 },
+      stroke: { curve: "straight", width: 2 },
+      fill: { type: "solid", opacity: 0.08 },
       dataLabels: { enabled: false },
-      colors: [
-        theme.palette.error.main,
-        theme.palette.warning.main,
-        theme.palette.info.main,
-      ],
+      colors: [theme.palette.primary.main],
       tooltip: {
         theme: theme.palette.mode,
-        x: { format: "MMM dd HH:mm" },
+        x: localTimeTooltip({ day, utc }),
       },
-      grid: {
-        borderColor: theme.palette.divider,
-        strokeDashArray: 3,
-      },
-      legend: {
-        position: "top",
-        labels: { colors: theme.palette.text.secondary },
-      },
+      grid: { borderColor: theme.palette.divider, strokeDashArray: 3 },
+      legend: { show: false },
     }),
-    [trendList, theme],
+    [series, theme, day, utc],
   );
 
-  const chartSeries = useMemo(
-    () => [
-      {
-        name: "Blocked",
-        data: trendList.map(
-          (t) => t.blockCount ?? t.block_count ?? t.blocked ?? 0,
-        ),
-      },
-      {
-        name: "Warned",
-        data: trendList.map(
-          (t) => t.warnCount ?? t.warn_count ?? t.warned ?? 0,
-        ),
-      },
-      {
-        name: "Total Triggered",
-        data: trendList.map((t) => t.trigger_count || t.total || 0),
-      },
-    ],
-    [trendList],
+  const hasHistory =
+    Number(overview.data?.total_requests || 0) > 0 ||
+    rows.some((row) => row.triggers > 0) ||
+    series.some((point) => Number(point.trigger_count || 0) > 0);
+  const allLoaded = [overview, rules, trends].every(
+    (query) => !query.isLoading && !query.isError && query.data != null,
   );
-
-  if (ovLoading) {
+  if (off && !hasHistory && allLoaded) {
     return (
-      <Stack spacing={2}>
-        <Stack direction="row" spacing={2}>
-          {[...Array(4)].map((_, i) => (
-            <Skeleton key={i} variant="rounded" width="25%" height={100} />
-          ))}
-        </Stack>
-        <Skeleton variant="rounded" width="100%" height={300} />
-      </Stack>
+      <Box>
+        <RangeToggle value={rangeId} options={RANGES} onChange={setRangeId} />
+        <GatewayEmptyState
+          icon="analytics"
+          title={GUARDRAILS_OFF_TITLE}
+          description="No check runs now. No historical matches are recorded in this window."
+        />
+      </Box>
     );
   }
 
-  return (
-    <Stack spacing={3}>
-      <Stack direction="row" justifyContent="flex-end">
-        <ToggleButtonGroup
-          value={range}
-          exclusive
-          onChange={(_, v) => v && setRange(v)}
-          size="small"
-        >
-          {RANGE_FILTERS.map((f) => (
-            <ToggleButton key={f.value} value={f.value}>
-              {f.label}
-            </ToggleButton>
-          ))}
-        </ToggleButtonGroup>
-      </Stack>
+  if (overview.isError && rules.isError && trends.isError) {
+    return (
+      <GatewayEmptyState
+        icon="analytics"
+        title="Guardrail analytics could not be loaded"
+        description="The analytics service did not answer. Your rules are unaffected."
+        actionLabel="Retry"
+        onAction={() => {
+          overview.refetch();
+          rules.refetch();
+          trends.refetch();
+        }}
+      />
+    );
+  }
 
-      <MetricStrip
+  const o = overview.data || {};
+  const quiet = allLoaded && !hasHistory && o.total_requests != null && Number(o.total_requests) === 0;
+
+  return (
+    <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
+      {off && (
+        <Typography typography="s2">
+          {GUARDRAILS_OFF_TITLE}. No check runs now; recorded history remains
+          available.
+        </Typography>
+      )}
+      <RangeToggle value={rangeId} options={RANGES} onChange={setRangeId} />
+
+      {overview.isError && (
+        <Alert severity="warning" action={
+          <Button color="inherit" size="small" onClick={() => overview.refetch()}>Retry overview</Button>
+        }>
+          The overview could not be loaded. Other results remain available.
+        </Alert>
+      )}
+      <StatStrip
+        label={range.title}
+        loading={overview.isLoading}
+        error={overview.isError}
         items={[
+          { label: "Requests", value: count(o.total_requests) },
           {
-            label: "Trigger rate",
-            value: formatPctDirect(
-              getOverviewValue(overview, "triggerRate", "trigger_rate"),
-            ),
+            label: "Matched",
+            value: count(o.guardrail_triggered),
+            detail: rate(o.trigger_rate),
           },
           {
             label: "Blocked",
-            value: getOverviewValue(overview, "blockCount", "block_count") ?? 0,
+            value: count(o.block_count),
+            detail: rate(o.block_rate),
           },
           {
             label: "Warned",
-            value: getOverviewValue(overview, "warnCount", "warn_count") ?? 0,
-          },
-          {
-            label: "Avg latency",
-            value:
-              avgLatency != null
-                ? `${Number(avgLatency).toFixed(0)}ms`
-                : "\u2014",
+            value: count(o.warn_count),
+            detail: rate(o.warn_rate),
           },
         ]}
       />
 
-      {/* Trends chart */}
-      <Section variant="panel">
-        <Typography variant="subtitle1" mb={2}>
-          Guardrail Triggers Over Time
-        </Typography>
-        {trendsLoading ? (
-          <Skeleton variant="rounded" width="100%" height={280} />
-        ) : trendList.length > 0 ? (
-          <Chart
-            options={chartOptions}
-            series={chartSeries}
-            type="area"
-            height={280}
-          />
-        ) : (
+      {quiet ? (
+        <GatewayEmptyState
+          icon="analytics"
+          title="No requests in this window"
+          description="Matches appear here once requests go through the gateway."
+        />
+      ) : (
+        <>
           <Box
-            display="flex"
-            justifyContent="center"
-            alignItems="center"
-            height={200}
+            component="section"
+            aria-label="Matches over time"
+            sx={{
+              p: 2,
+              border: "1px solid",
+              borderColor: "divider",
+              borderRadius: 1,
+              backgroundColor: "background.paper",
+            }}
           >
-            <Typography color="text.secondary">
-              No trend data available
+            <Typography typography="s1" fontWeight="fontWeightMedium">
+              Matches over time
             </Typography>
+            <Typography typography="s2" color="text.secondary">
+              {zoneNote({ utcDays: utc })}
+            </Typography>
+            {trends.isLoading ? (
+              <Skeleton variant="rounded" height={240} sx={{ mt: 1 }} />
+            ) : trends.isError ? (
+              <Alert severity="warning" action={
+                <Button color="inherit" size="small" onClick={() => trends.refetch()}>Retry trend</Button>
+              }>
+                The trend could not be loaded.
+              </Alert>
+            ) : (
+              <Chart
+                options={chartOptions}
+                series={[
+                  {
+                    name: "Matches",
+                    data: series.map((point) =>
+                      Number(point.trigger_count || 0),
+                    ),
+                  },
+                ]}
+                type="area"
+                height={240}
+              />
+            )}
           </Box>
-        )}
-      </Section>
 
-      {/* Rule leaderboard */}
-      <Section variant="panel">
-        <Typography variant="subtitle1" mb={2}>
-          Top Triggered Rules
-        </Typography>
-        {rulesLoading ? (
-          <Stack spacing={1}>
-            {[...Array(5)].map((_, i) => (
-              <Skeleton key={i} width="100%" height={36} />
-            ))}
-          </Stack>
-        ) : !rules?.length ? (
-          <Typography color="text.secondary" textAlign="center" py={3}>
-            No rule data available
+          <Typography typography="s1" fontWeight="fontWeightMedium">
+            Rules by matches
           </Typography>
-        ) : (
-          <TableContainer>
-            <Table size="small">
-              <TableHead>
-                <TableRow>
-                  <TableCell>Rule</TableCell>
-                  <TableCell
-                    sx={{ fontVariantNumeric: "tabular-nums" }}
-                    align="right"
-                  >
-                    Triggers
-                  </TableCell>
-                  <TableCell
-                    sx={{ fontVariantNumeric: "tabular-nums" }}
-                    align="right"
-                  >
-                    Block
-                  </TableCell>
-                  <TableCell
-                    sx={{ fontVariantNumeric: "tabular-nums" }}
-                    align="right"
-                  >
-                    Warn
-                  </TableCell>
-                  <TableCell>Share</TableCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {rules.map((rule) => {
-                  const totalTriggers = rules.reduce(
-                    (acc, r) => acc + (r.trigger_count || r.count || 0),
-                    0,
-                  );
-                  const count = rule.trigger_count || rule.count || 0;
-                  const blockCount = getRuleCount(
-                    rule,
-                    "blockCount",
-                    "block_count",
-                  );
-                  const warnCount = getRuleCount(
-                    rule,
-                    "warnCount",
-                    "warn_count",
-                  );
-                  const share = totalTriggers > 0 ? count / totalTriggers : 0;
-                  const ruleName = rule.rule || rule.name;
-                  return (
-                    <TableRow key={ruleName} hover>
-                      <TableCell>
-                        <Typography variant="body2" fontWeight={500}>
-                          {ruleName}
-                        </Typography>
-                      </TableCell>
-                      <TableCell
-                        sx={{ fontVariantNumeric: "tabular-nums" }}
-                        align="right"
-                      >
-                        <Typography variant="body2">{count}</Typography>
-                      </TableCell>
-                      <TableCell
-                        sx={{ fontVariantNumeric: "tabular-nums" }}
-                        align="right"
-                      >
-                        <Typography
-                          variant="body2"
-                          sx={{
-                            fontVariantNumeric: "tabular-nums",
-                            color: "status.danger.fg",
-                          }}
-                        >
-                          {blockCount}
-                        </Typography>
-                      </TableCell>
-                      <TableCell
-                        sx={{ fontVariantNumeric: "tabular-nums" }}
-                        align="right"
-                      >
-                        <Typography
-                          variant="body2"
-                          sx={{
-                            fontVariantNumeric: "tabular-nums",
-                            color: "status.warning.fg",
-                          }}
-                        >
-                          {warnCount}
-                        </Typography>
-                      </TableCell>
-                      <TableCell sx={{ width: 150 }}>
-                        <Stack direction="row" alignItems="center" spacing={1}>
-                          <LinearProgress
-                            variant="determinate"
-                            value={share * 100}
-                            sx={{ flex: 1, height: 6, borderRadius: 3 }}
-                          />
-                          <Typography
-                            variant="caption"
-                            color="text.secondary"
-                            sx={{ minWidth: 36 }}
-                          >
-                            {formatPct(share)}
-                          </Typography>
-                        </Stack>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          </TableContainer>
-        )}
-      </Section>
-    </Stack>
+          {rules.isError ? (
+            <Alert severity="warning" action={
+              <Button color="inherit" size="small" onClick={() => rules.refetch()}>Retry rules</Button>
+            }>
+              Rule matches could not be loaded.
+            </Alert>
+          ) : <GatewayGrid
+            rowData={rules.isLoading ? undefined : rows}
+            loading={rules.isLoading}
+            columnDefs={RULE_COLUMNS}
+            getRowId={(p) => p.data.id}
+            stateKey="gateway-guardrail-analytics-rules"
+            height="auto"
+            domLayout="autoHeight"
+            emptyState={{
+              icon: "guardrails",
+              title: "No rule matched in this window",
+            }}
+          />}
+        </>
+      )}
+    </Box>
   );
 };
 

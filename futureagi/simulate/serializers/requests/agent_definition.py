@@ -2,6 +2,7 @@ import re
 
 from rest_framework import serializers
 
+from common.utils.page_limits import PageSizeIntegerField
 from simulate.models.agent_definition import (
     AgentDefinition,
     AgentDefinitionAuthenticationChoices,
@@ -34,7 +35,7 @@ class AgentDefinitionCreateRequestSerializer(serializers.Serializer):
         required=False, allow_blank=True, allow_null=True, default=None
     )
     api_key = serializers.CharField(
-        required=False, allow_blank=True, allow_null=True, default=None
+        required=False, allow_blank=True, allow_null=True, default=None, max_length=255
     )
     assistant_id = serializers.CharField(
         required=False, allow_blank=True, allow_null=True, default=None
@@ -110,6 +111,10 @@ class AgentDefinitionCreateRequestSerializer(serializers.Serializer):
         default=None,
         min_value=1,
         max_value=DEFAULT_ORG_LIMIT,
+    )
+    # Write-only Vapi public key; saved encrypted, never returned.
+    vapi_public_key = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True, max_length=500
     )
 
     # -- Field-level validators --
@@ -300,7 +305,9 @@ class AgentDefinitionEditRequestSerializer(serializers.Serializer):
         required=False, allow_blank=True, allow_null=True
     )
     provider = serializers.CharField(required=False, allow_blank=True, allow_null=True)
-    api_key = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    api_key = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True, max_length=255
+    )
     assistant_id = serializers.CharField(
         required=False, allow_blank=True, allow_null=True
     )
@@ -348,6 +355,11 @@ class AgentDefinitionEditRequestSerializer(serializers.Serializer):
     livekit_config_json = serializers.JSONField(required=False, allow_null=True)
     livekit_max_concurrency = serializers.IntegerField(
         required=False, allow_null=True, min_value=1, max_value=DEFAULT_ORG_LIMIT
+    )
+    # Write-only Vapi public key: absent or blank keeps the saved key, null
+    # removes it. Never returned.
+    vapi_public_key = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True, max_length=500
     )
 
     def validate_agent_name(self, value):
@@ -425,7 +437,7 @@ class AgentDefinitionFilterSerializer(serializers.Serializer):
     )
     agent_definition_id = serializers.UUIDField(required=False, allow_null=True)
     page = serializers.IntegerField(required=False, default=1, min_value=1)
-    limit = serializers.IntegerField(required=False, min_value=1)
+    limit = PageSizeIntegerField(required=False, min_value=1)
 
 
 class AgentRunsQuerySerializer(serializers.Serializer):

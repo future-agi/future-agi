@@ -1,0 +1,23 @@
+schema: "connector-manifest/v1#app"
+id: zendesk
+version: 1.0.0
+name: Zendesk
+description: "Tickets, users, organizations and knowledge through Zendesk Bridge."
+vendor:
+  name: Zendesk
+  domains: [zendesk.com]
+eeCategory: productivity
+group: other
+categories: [productivity, customer-support]
+tags: [tickets, support, knowledge]
+docsUrl: https://support.zendesk.com/hc/en-us/articles/11400026079130
+archetype: support-desk
+defaultProvider: mcp
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://www.zendesk.com/blog/product-news/zendesk-bridge/
+    fetchedAt: 2026-11-15
+  - fact: description
+    url: https://support.zendesk.com/api/v2/help_center/en-us/articles/11398710406554.json
+    fetchedAt: 2026-11-15

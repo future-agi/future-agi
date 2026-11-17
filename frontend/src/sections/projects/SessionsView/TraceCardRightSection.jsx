@@ -8,6 +8,7 @@ import SvgColor from "src/components/svg-color";
 import { ShowComponent } from "src/components/show";
 import EvaluationsContent from "./EvaluationsContent";
 import MetadataContent from "./MetadataContent";
+import { normalizeSessionTurnFields } from "./sessionTurnFields";
 import { formatMs, formatStartTimeByRequiredFormat } from "src/utils/utils";
 
 const tabsConfig = [
@@ -25,6 +26,7 @@ const TraceCardRightSection = ({
   traceId,
   systemMetrics = {},
   evaluationMetrics = {},
+  turnFields,
 }) => {
   const { observeId } = useParams();
   const [value, setValue] = React.useState(0);
@@ -34,12 +36,17 @@ const TraceCardRightSection = ({
 
   // Ensure systemMetrics is valid
   const safeSystemMetrics = {
-    total_latency_ms: formatMs(systemMetrics?.total_latency_ms) || "N/A",
-    ...(systemMetrics?.user_id ? { user_id: systemMetrics.user_id } : {}),
-    total_cost: systemMetrics?.total_cost || "N/A",
-    total_token_count: systemMetrics?.total_tokens || "N/A",
-    input_tokens: systemMetrics?.input_tokens || "N/A", //DUMMY
-    output_tokens: systemMetrics?.output_tokens || "N/A", // DUMMY
+    total_latency_ms:
+      systemMetrics?.total_latency_ms == null
+        ? "N/A"
+        : formatMs(systemMetrics.total_latency_ms),
+    ...(systemMetrics?.user_id != null
+      ? { user_id: systemMetrics.user_id }
+      : {}),
+    total_cost: systemMetrics?.total_cost ?? "N/A",
+    total_token_count: systemMetrics?.total_tokens ?? "N/A",
+    input_tokens: systemMetrics?.input_tokens ?? "N/A",
+    output_tokens: systemMetrics?.output_tokens ?? "N/A",
     start_time:
       formatStartTimeByRequiredFormat(
         systemMetrics?.start_time,
@@ -47,13 +54,27 @@ const TraceCardRightSection = ({
       ) || "N/A",
   };
 
+  const selectedMetrics =
+    turnFields === undefined
+      ? safeSystemMetrics
+      : Object.fromEntries(
+          normalizeSessionTurnFields(turnFields)
+            .filter((field) => field.kind === "metric")
+            .map(({ metric }) => {
+              const key =
+                metric === "total_tokens" ? "total_token_count" : metric;
+              return [key, safeSystemMetrics[key] ?? "N/A"];
+            }),
+        );
+
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  const sessionProjectId = systemMetrics?.project_id || observeId;
 
   const { data: traceDetail } = useGetTraceDetail(
     isDrawerOpen ? traceId : null,
-    { projectId: observeId },
+    { projectId: sessionProjectId },
   );
-  const projectId = observeId || traceDetail?.trace?.project;
+  const projectId = sessionProjectId || traceDetail?.trace?.project;
 
   return (
     <Box
@@ -93,6 +114,7 @@ const TraceCardRightSection = ({
             fontWeight={"fontWeightMedium"}
             typography={"s1"}
             color={"text.primary"}
+            sx={{ whiteSpace: "nowrap", flexShrink: 0 }}
           >
             Trace ID:
           </Typography>
@@ -106,7 +128,8 @@ const TraceCardRightSection = ({
         </Stack>
       </Stack>
       <Box sx={{ borderBottom: 1, borderColor: "divider" }}>
-        <Tabs sx={{ boxShadow: "none" }}
+        <Tabs
+          sx={{ boxShadow: "none" }}
           value={value}
           onChange={handleChange}
           aria-label="trace detail tabs"
@@ -138,7 +161,7 @@ const TraceCardRightSection = ({
         </Box>
       </ShowComponent>
       <ShowComponent condition={value === 1}>
-        <MetadataContent metadata={safeSystemMetrics} />
+        <MetadataContent metadata={selectedMetrics} />
       </ShowComponent>
 
       {/* View Trace Button */}
@@ -194,6 +217,7 @@ const TraceCardRightSection = ({
 TraceCardRightSection.propTypes = {
   traceId: PropTypes.string.isRequired,
   rowData: PropTypes.object,
+  turnFields: PropTypes.array,
   systemMetrics: PropTypes.object,
   evaluationMetrics: PropTypes.object,
 };

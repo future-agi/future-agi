@@ -76,7 +76,7 @@ const VideoContent = ({
         <Box display={"flex"} sx={{ alignItems: "center", gap: "12px" }}>
           <Button
             color="primary"
-            variant="contained"
+            variant="outlined"
             onClick={checkNowAction}
             size="small"
           >

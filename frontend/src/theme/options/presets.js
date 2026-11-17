@@ -1,5 +1,3 @@
-import { alpha } from "@mui/material/styles";
-
 import { grey, primary } from "../palette";
 
 // ----------------------------------------------------------------------
@@ -12,7 +10,7 @@ export function createPresets(preset) {
       primary: primaryColor,
     },
     customShadows: {
-      primary: `0 8px 16px 0 ${alpha(`${primaryColor?.main}`, 0.24)}`,
+      primary: "none",
     },
   };
 

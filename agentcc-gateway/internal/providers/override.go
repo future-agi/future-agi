@@ -33,6 +33,10 @@ type OrgProviderCache struct {
 	// allowPrivateBaseURLs lets an org base_url point at private and LAN
 	// addresses; see validateBaseURL.
 	allowPrivateBaseURLs bool
+
+	// queueTimeout is provider_defaults.queue_timeout, the queue wait of an
+	// instance whose config leaves its own unset.
+	queueTimeout time.Duration
 }
 
 // NewOrgProviderCache creates a cache pre-loaded with base provider configs.
@@ -41,8 +45,16 @@ func NewOrgProviderCache(baseCfgs map[string]config.ProviderConfig, allowPrivate
 	return &OrgProviderCache{
 		providers:            make(map[string]Provider),
 		baseCfgs:             baseCfgs,
-		allowPrivateBaseURLs: allowPrivateBaseURLs,
+		allowPrivateBaseURLs: allowPrivateBaseURLs && !config.IsCloudDeployment(),
 	}
+}
+
+// SetDefaultQueueTimeout sets the queue wait (provider_defaults.queue_timeout)
+// of the instances built from now on whose config leaves queue_timeout unset.
+func (c *OrgProviderCache) SetDefaultQueueTimeout(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.queueTimeout = d
 }
 
 // Get returns a cached provider for the org+provider combo, or nil if not cached.
@@ -94,6 +106,14 @@ func (c *OrgProviderCache) GetOrCreateWithTenantConfig(orgID, providerID, apiKey
 	}
 
 	orgCfg := resolveOrgConfig(baseCfg, apiKey, tenantCfg)
+	if orgCfg.BaseURL == "" && !hasDefaultUpstream(providerID, orgCfg) {
+		return nil, &ConfigurationError{
+			ProviderID: providerID,
+			Problem:    "base_url is required because no upstream endpoint is configured for this provider",
+		}
+	}
+	// After the org's own values, which win, as the config.yaml entry's do.
+	applyConcurrencyDefaults(&orgCfg, c.queueTimeout)
 	if tenantCfg != nil && tenantCfg.BaseURL != "" {
 		if IsSystemOneFormat(orgCfg.APIFormat) {
 			// Decision calls go through the operator's proxy, whose dial sees
@@ -108,7 +128,7 @@ func (c *OrgProviderCache) GetOrCreateWithTenantConfig(orgID, providerID, apiKey
 		}
 	}
 
-	p, err := createProvider(providerID+"_org_"+orgID, orgCfg)
+	p, err := createProvider(orgInstanceID(providerID, orgID), orgCfg)
 	if err != nil {
 		return nil, fmt.Errorf("creating org provider %s/%s: %w", orgID, providerID, err)
 	}
@@ -124,6 +144,26 @@ func (c *OrgProviderCache) GetOrCreateWithTenantConfig(orgID, providerID, apiKey
 	return p, nil
 }
 
+// orgInstanceID is the ID of the instance GetOrCreateWithTenantConfig builds
+// from an org's own config for providerID. The gateway's own instances (the
+// registry's) carry the provider ID alone.
+func orgInstanceID(providerID, orgID string) string {
+	return providerID + "_org_" + orgID
+}
+
+// IsOrgInstance reports whether p is an instance built from orgID's own
+// provider config, and so calls its upstream with the org's credentials
+// rather than the gateway's.
+func IsOrgInstance(p Provider, orgID string) bool {
+	if p == nil || orgID == "" {
+		return false
+	}
+	// orgInstanceID's suffix, matched without building it: this runs on
+	// every upstream attempt.
+	id := p.ID()
+	return strings.HasSuffix(id, orgID) && strings.HasSuffix(id[:len(id)-len(orgID)], "_org_")
+}
+
 // baseConfig returns the config an org provider is layered onto: the org's own
 // upstream when it names one (or a service account), or when config.yaml has
 // no entry for providerID; otherwise that entry. An org that names its own
@@ -136,7 +176,8 @@ func (c *OrgProviderCache) baseConfig(providerID string, tenantCfg *tenant.Provi
 		return baseCfg, ok
 	}
 	// Managed mode: the org's upstream, with defaults for what it leaves
-	// unset. resolveOrgConfig applies the rest of the org's config.
+	// unset. resolveOrgConfig applies the rest of the org's config, and
+	// applyConcurrencyDefaults the registry's concurrency defaults.
 	apiFormat := tenantCfg.APIFormat
 	if apiFormat == "" {
 		apiFormat = inferAPIFormat(providerID)
@@ -145,8 +186,6 @@ func (c *OrgProviderCache) baseConfig(providerID string, tenantCfg *tenant.Provi
 		BaseURL:        tenantCfg.BaseURL,
 		APIFormat:      apiFormat,
 		DefaultTimeout: 60 * time.Second,
-		MaxConcurrent:  100,
-		ConnPoolSize:   100,
 	}, true
 }
 
@@ -154,8 +193,9 @@ func (c *OrgProviderCache) baseConfig(providerID string, tenantCfg *tenant.Provi
 // org's provider with, without building it: no DNS lookup, no transport.
 // False when there is nothing to build it from, or when the build is refused
 // for what the config alone shows: a base_url refused without resolving its
-// host, or a System One provider with no endpoint. A host that resolves only
-// to refused addresses is refused when the provider is built.
+// host, a config that leaves the upstream's base_url empty, or a System One
+// provider with no endpoint. A host that resolves only to refused addresses
+// is refused when the provider is built.
 func (c *OrgProviderCache) APIFormat(providerID string, tenantCfg *tenant.ProviderConfig) (string, bool) {
 	baseCfg, ok := c.baseConfig(providerID, tenantCfg)
 	if !ok {
@@ -164,10 +204,22 @@ func (c *OrgProviderCache) APIFormat(providerID string, tenantCfg *tenant.Provid
 	if tenantCfg != nil && checkBaseURL(tenantCfg.BaseURL, c.allowPrivateBaseURLs, false) != nil {
 		return "", false
 	}
-	if IsSystemOneFormat(baseCfg.APIFormat) && systemone.Check(providerID, resolveOrgConfig(baseCfg, "", tenantCfg)) != nil {
+	orgCfg := resolveOrgConfig(baseCfg, "", tenantCfg)
+	if IsSystemOneFormat(baseCfg.APIFormat) && systemone.Check(providerID, orgCfg) != nil {
 		return "", false
 	}
+	if orgCfg.BaseURL == "" && !hasDefaultUpstream(providerID, orgCfg) {
+		return "", false // GetOrCreateWithTenantConfig's ConfigurationError
+	}
 	return baseCfg.APIFormat, true
+}
+
+// hasDefaultUpstream reports whether cfg, which may name no base_url, still
+// names an upstream endpoint: a System One vendor's own default
+// (systemone.Check), as TypeSafe and Perplexity Decider have. Any other
+// provider with no base_url has no endpoint (ConfigurationError).
+func hasDefaultUpstream(providerID string, cfg config.ProviderConfig) bool {
+	return IsSystemOneFormat(cfg.APIFormat) && systemone.Check(providerID, cfg) == nil
 }
 
 // resolveOrgConfig clones a base provider config for one org. The upstream it
@@ -326,7 +378,8 @@ func checkBaseURL(baseURL string, allowPrivate, resolve bool) error {
 	if host == "" {
 		return &BaseURLError{BaseURL: baseURL, Reason: BaseURLInvalid, Err: fmt.Errorf("no hostname")}
 	}
-	if netguard.IsMetadataHost(host) {
+	if netguard.IsMetadataHost(host) || (config.IsCloudDeployment() &&
+		(host == "host.docker.internal" || host == "localhost" || strings.HasSuffix(host, ".localhost"))) {
 		return &BaseURLError{BaseURL: baseURL, Host: host, Reason: BaseURLForbidden}
 	}
 

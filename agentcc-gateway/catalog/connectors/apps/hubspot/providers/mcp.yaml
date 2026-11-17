@@ -1,0 +1,93 @@
+# The remote HubSpot MCP server with OAuth 2.1 and PKCE from its own
+# authorization server, which takes no dynamic registration: a client is an
+# MCP connector (earlier "MCP auth app") created under Development in a
+# HubSpot account, which gives its client id and secret. A connector
+# declares no scopes; HubSpot derives them from the server's tools and what
+# the person grants at install, so the request carries none. HubSpot's
+# pages do not say whether a connector created in one HubSpot account can
+# be installed by others, so until that is known each org connects its own
+# connector, and FutureAGI's own is one FutureAGI creates in its own
+# HubSpot account.
+schema: "connector-manifest/v1#provider"
+app: hubspot
+id: mcp
+version: 1.0.1
+kind: vendor_mcp
+publisher: vendor
+vendorStatus:
+  label: ga
+  source: https://developers.hubspot.com/changelog/remote-hubspot-mcp-server-is-now-generally-available
+transport:
+  kind: http
+  url: https://mcp.hubspot.com
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent, user]
+auth:
+  kind: oauth2
+  oauth2:
+    authorizeUrl: https://mcp.hubspot.com/oauth/authorize/user
+    tokenUrl: https://mcp.hubspot.com/oauth/v3/token
+    scopes: []
+    pkce: true
+    tokenBody: form
+    clientAuth: body
+    registration: [preregistered]
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://developers.hubspot.com/docs/apps/developer-platform/build-apps/integrate-with-the-remote-hubspot-mcp-server
+    fetchedAt: 2026-10-21
+  - fact: transport.url
+    url: https://developers.hubspot.com/docs/build-with-ai/remote-mcp-server
+    fetchedAt: 2026-10-21
+  - fact: transport.variant
+    url: https://developers.hubspot.com/docs/apps/developer-platform/build-apps/integrate-with-the-remote-hubspot-mcp-server
+    fetchedAt: 2026-10-21
+  - fact: auth.kind
+    url: https://developers.hubspot.com/changelog/remote-hubspot-mcp-server-is-now-generally-available
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.authorizeUrl
+    url: https://mcp.hubspot.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.tokenUrl
+    url: https://mcp.hubspot.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.scopes
+    url: https://developers.hubspot.com/docs/apps/developer-platform/build-apps/integrate-with-the-remote-hubspot-mcp-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.scopes
+    url: https://mcp.hubspot.com/.well-known/oauth-protected-resource
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.pkce
+    url: https://developers.hubspot.com/docs/apps/developer-platform/build-apps/integrate-with-the-remote-hubspot-mcp-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.clientAuth
+    url: https://mcp.hubspot.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.registration
+    url: https://developers.hubspot.com/docs/apps/developer-platform/build-apps/integrate-with-the-remote-hubspot-mcp-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.registration
+    url: https://developers.hubspot.com/changelog/remote-hubspot-mcp-server-is-now-generally-available
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.registration
+    url: https://mcp.hubspot.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-21
+x-omega:
+  publicClient:
+    supported: false
+    evidence:
+      - url: https://developers.hubspot.com/docs/apps/developer-platform/build-apps/integrate-with-the-remote-hubspot-mcp-server
+        fetchedAt: 2026-10-21
+        sha256: a91fed92892add14413251bffef3f189b0cfcc48e2817c998d12bb9b9571f588
+        quote: "To configure your MCP client, you’ll need the following from your connector’s details page: Client ID Client secret"
+      - url: https://mcp.hubspot.com/.well-known/oauth-authorization-server
+        fetchedAt: 2026-10-21
+        sha256: 0e43d477683072141553f2c796340d434f411a405d69ff3fac5803a7e1737554
+        quote: '"token_endpoint_auth_methods_supported":["client_secret_post"]'

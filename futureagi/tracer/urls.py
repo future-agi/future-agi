@@ -1,4 +1,4 @@
-from django.urls import path  # type: ignore
+from django.urls import include, path  # type: ignore
 from rest_framework.routers import DefaultRouter
 
 from tracer.views.alerts import (
@@ -12,6 +12,8 @@ from tracer.views.annotation import (
     GetAnnotationLabelsView,
     TraceAnnotationView,
 )
+from tracer.views.bulk_export import BulkExportCreateView, BulkExportDetailView
+from tracer.views.export_schedule import ExportScheduleDetailView, ExportScheduleListView
 from tracer.views.charts import ChartsView
 from tracer.views.custom_eval_config import CustomEvalConfigView
 from tracer.views.dashboard import DashboardViewSet, DashboardWidgetViewSet
@@ -135,6 +137,13 @@ router.register(r"shared-links", SharedLinkViewSet, basename="shared-link")
 router.register(r"dashboard", DashboardViewSet, basename="dashboard")
 
 urlpatterns = [
+    path("", include("tracer.views.omega_agent_curves")),
+    path("", include("tracer.views.omega_deployments")),
+    path("", include("tracer.views.omega_agents")),
+    path("export-schedules/", ExportScheduleListView.as_view(), name="export-schedule-list"),
+    path("export-schedules/<uuid:schedule_id>/", ExportScheduleDetailView.as_view(), name="export-schedule-detail"),
+    path("bulk-exports/", BulkExportCreateView.as_view(), name="bulk-export-create"),
+    path("bulk-exports/<uuid:job_id>/", BulkExportDetailView.as_view(), name="bulk-export-detail"),
     path("alerts/", AlertView.as_view(), name="alerts"),
     path("alerts/options/", AlertOptionsView.as_view(), name="alert-options"),
     path(

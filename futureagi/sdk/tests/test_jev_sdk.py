@@ -135,7 +135,7 @@ def test_no_model_run_bills_as_jev_whatever_model_typesafe_reports(
     billing = BillingConfig.get()
     assert event.event_type == "jev_evaluator"
     assert event.amount == billing.calculate_ai_credits(billing.get_eval_per_run_fee())
-    assert event.event_id == usage_event_id(str(log.log_id), 1)
+    assert event.event_id == usage_event_id(str(log.log_id))
     assert event.properties["requested_model"] == "jev-latest"
     assert event.properties["actual_model"] == "jev-1.14.0"
     [evaluation] = response.data["result"][0]["evaluations"]
@@ -227,6 +227,7 @@ def test_an_async_run_records_the_jev_message(user, workspace, jev_template):
     assert evaluation.error_message == (
         "TypeSafe's rate limit was reached. Try again shortly."
     )
+    assert evaluation.reason == evaluation.error_message
     emit.assert_not_called()
 
 

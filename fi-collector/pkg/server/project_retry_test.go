@@ -68,11 +68,11 @@ func (m *restartMeter) scopes() []string {
 }
 
 func restartResult(org, ws string, sandbox bool) *auth.ResolveResult {
-	kind := "system"
+	kind, principal := "user", auth.PrincipalPersonal
 	if sandbox {
-		kind = auth.KeyTypeIngest
+		kind, principal = "", auth.PrincipalSandbox
 	}
-	return &auth.ResolveResult{OrgID: org, WorkspaceID: ws, KeyType: kind,
+	return &auth.ResolveResult{OrgID: org, WorkspaceID: ws, KeyType: kind, Principal: principal,
 		Projects: map[string]string{"customer-prod": routeProdID, "header-project": routeProdID, routeHiddenName: routeHiddenID}}
 }
 
@@ -135,7 +135,7 @@ func TestProjectAuthRestartTransportParity(t *testing.T) {
 						return auth.RouteOutcome{}, errors.New("restart reset request deadline or lease budget")
 					}
 					var out auth.RouteOutcome
-					if result.KeyType == auth.KeyTypeIngest {
+					if result.Principal == auth.PrincipalSandbox {
 						out, _ = (&routeFake{}).RouteSimulation(ctx, key, traces, result)
 					}
 					if n == 1 && change == "all-dropped" {

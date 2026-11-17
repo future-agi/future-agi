@@ -1,0 +1,86 @@
+{
+  "schema": "cat2-ui-incl-713-disposition-1",
+  "decision": "OWNER-RULINGS-20261019.md:18224-18250 (complete CAT2 union/UI-INCL ruling); gateway-SC2.json ModelCatalog.jsx and ModelDetailDrawer.jsx entries",
+  "legacyTest": "ModelStockSnapshot.test.jsx at 38712a907a6358ebaa753fed9043a9fb9f849bda",
+  "legacyProvenance": "catalog-provenance.json stockRendering; j-20261029t1401-8ca97e and identical repeat j-20261029t1405-f68571",
+  "legacyDisposition": "Retire the executable legacy SSR/hash assertion and its deleted component imports. Leave the snapshot file byte-identical and never regenerate it. Read only its 463 model keys as a frozen inventory, never its hashes as v2 expected renders.",
+  "coverage": "Every one of the 463 committed stock models renders a full v2 catalogue and the actual navigated ModelDetailPage overview (drawer replacement), plus its API tab. Repeat for all 463 models in the inclusive catalogue. Exact-set page assertions detect missing, extra and duplicate models. Expected prices/units come only from serialized data, not from app functions or render capture.",
+  "mapping": [
+    {
+      "legacyFamily": "Stock model cardinality >100 and CAT2-OFF has no inclusive_price",
+      "v2Equivalent": "loadOracle requires exactly 463 unique archived model IDs, exact sorted equality with BOTH committed catalogues, no stock inclusive_price and exactly 34 inclusive qualifications",
+      "expectedRed": "PASS",
+      "expectedGreen": "PASS"
+    },
+    {
+      "legacyFamily": "463 catalogue SSR hashes: identities, names, model links, vendor, context, capabilities, release and retirement",
+      "v2Equivalent": "ModelV2StockOracle.assertCatalogue exact per-model identity, href, vendor, context/max-output, capability text, released date, retirement markers; entire actual catalogue page renders all 463 IDs as an exact set",
+      "expectedRed": "PASS for stock and non-price fields",
+      "expectedGreen": "PASS"
+    },
+    {
+      "legacyFamily": "463 catalogue SSR hashes: prices, units, unavailable/free and provider tooltips",
+      "v2Equivalent": "assertCatalogue exact input/output cell text for stock; inclusive source-derived exact dimensional labels, charged decimals, units, provider aria-labels, column span, auto-height, absent duplicate output; router Varies, never Free; explicit availability marker",
+      "expectedRed": "Stock PASS; inclusive qualified catalogue assertions FAIL on missing span/exact dimensional labels and router Varies",
+      "expectedGreen": "PASS"
+    },
+    {
+      "legacyFamily": "463 complete drawer SSR hashes: title, identity, description and facts",
+      "v2Equivalent": "assertOverview mounts actual ModelDetailPage after catalogue link navigation for every ID; exact heading, ID, copy control, back link, vendor/type, complete description, context/max-output, modalities, release and endpoint",
+      "expectedRed": "PASS for stock and non-price fields",
+      "expectedGreen": "PASS"
+    },
+    {
+      "legacyFamily": "463 complete drawer SSR hashes: provider and billed prices, request fees, tier rows, unavailable and inclusive wording",
+      "v2Equivalent": "assertOverview exact-set pricing headers and complete row cell arrays, request/search lines, no stale inclusive claims on stock, reasons when unavailable; inclusive exact decimals for ALL dimensions and no summation billing claim; routers no scalar rows",
+      "expectedRed": "Stock PASS; fixed and router detail pricing FAIL (also independently exercised by ModelInclusivePricing)",
+      "expectedGreen": "PASS"
+    },
+    {
+      "legacyFamily": "463 complete drawer SSR hashes: supported parameters, capabilities and call example availability",
+      "v2Equivalent": "ModelV2StockOracle.test.jsx assertOverview -> assertCapabilities compares separate complete rendered capability and supported-parameter Chip arrays to independent expectedModel arrays for each of 463 stock and 463 inclusive models, rejecting missing/extra/duplicate chips. Empty capabilities require the exact no-controls-listed fallback and zero capability chips; populated capabilities forbid that fallback. Empty parameters require absence of the Supported request parameters heading and zero parameter chips; populated parameters require that heading. Existing routes/health and per-model API checks remain: callable iff sold, real cURL controls and exact model ID in code, no request example when unavailable",
+      "expectedRed": "PASS except inclusive paths stopped by earlier price failures",
+      "expectedGreen": "PASS"
+    },
+    {
+      "legacyFamily": "Full catalogue chrome and freshness within each SSR hash",
+      "v2Equivalent": "ModelV2StockOracle.test.jsx asserts the exact 463-model inventory/count and Bundled price list. Its independent 'pins both price headers, units and the complete billing explanation' case invokes assertCatalogueChrome on BOTH full catalogues; the per-model contract also invokes it for all 926 renders. assertCatalogueChrome requires exactly one input/output header with exact names and full tooltips, and exactly one complete normalized billing paragraph equal to generate-v2-stock-oracle.mjs catalogueChrome (no product imports/capture): provider + 5%, per-1M tokens versus stated inclusive units, provider-reported inclusive total plus markup NOT a sum, and own-key provider billing with no markup. Explicit negatives forbid the incompatible-mode paragraph, token-only inclusive header/copy, additive settlement and own-key markup claims. v2-oracle-harness.jsx exposes actual columnDefs.headerTooltip as title, never supplies expected values. Existing ModelCatalogPage interaction/layout tests remain supplementary, not the billing oracle",
+      "expectedRed": "Stock chrome PASS; full inclusive chrome FAIL on token-only input header, tooltip and footer; qualified per-model cases already fail earlier inclusive price assertions",
+      "expectedGreen": "PASS"
+    },
+    {
+      "legacyFamily": "Legacy DOM structure, MUI style/Emotion bytes and drawer portal transport",
+      "v2Equivalent": "SUPERSEDED, not rebaselined: SC2 mandates DS v2 GatewayGrid/FactGrid and routed ModelDetailPage instead of legacy Table/body2/drawer. Semantic assertions above replace incidental CSS hashes. Only grid virtualization and external data transport are substituted; real rows, columns, value formatters, cells and pages execute",
+      "expectedRed": "Not a transferable byte assertion under SC2",
+      "expectedGreen": "No legacy components restored"
+    },
+    {
+      "legacyFamily": "ModelInclusivePricing all 34 qualified models, two generation prices, tiny values, all serialized decimals and router qualification revocation",
+      "v2Equivalent": "ModelInclusivePricing.test.jsx retains all numeric/predicate cases on v2 and strengthens rendered revocation, dimensional row exact-set, router no scalar grid, no Free/scalar-price facet membership",
+      "expectedRed": "Fixed prices, tiny values, precision, routers and price facets FAIL by assertion; predicate/revocation controls PASS",
+      "expectedGreen": "PASS"
+    },
+    {
+      "legacyFamily": "ModelInclusivePricing request-only: two identical legacy cells and Per request drawer text",
+      "v2Equivalent": "SC2 v2 deliberately renders ONE exact $0.042 / request cell plus output dash; exact provider $0.04 and billed $0.042 on Request fee (per call) detail line, never Free. Values and unit preserved; duplicate legacy layout retired",
+      "expectedRed": "PASS",
+      "expectedGreen": "PASS"
+    }
+  ],
+  "generator": "TZ=UTC node src/sections/gateway/models/test-fixtures/generate-v2-stock-oracle.mjs > /tmp/cat2-v2-expected.json",
+  "runtime": "Guarded cloud frontend kit only. Original tests-before-product pins are preserved in V2-PORT.json. For fix-round replay, use pre-product source b1666f040b254285cd09d97ec088f83d53876e26 with only the four reviewed test/oracle/harness/disposition files materialized from the exact fix head recorded in V2-PORT.json; green uses that exact fix head. This is a test-only overlay, not a new pre-product commit; no product path is overlaid. The two Vitest files and generator must be byte-identical across the two prepared trees. Run WITHOUT --update; generated expected JSON must also be identical. Require assertion-red, not harness/import failure. No local tests, rendering, builds or generator execution.",
+  "revisionHistory": [
+    {
+      "recordedAt": "2026-10-31T01:21:25Z",
+      "reviewedHead": "5f34f0c9c4df32b95b21b4e2aa70aede66418823",
+      "review": "<WORKSPACE>/futureagi/tmp/port-708j/CAT2-UI-INCL/V2-SOL.json",
+      "findingIds": [
+        "CAT2-V2-ORACLE-EXACT-CAPABILITIES",
+        "CAT2-V2-ORACLE-CATALOGUE-BILLING-COPY"
+      ],
+      "change": "Strengthen the two mapped assertion families; preserve every other assertion, all fixture bytes, legacy snapshot bytes and product source. Runtime/source acceptance remains owed. Supersedes the positive-members-only capability mapping and the mounted-only catalogue chrome claim."
+    }
+  ],
+  "productAccepted": false,
+  "max_charge": "DARK"
+}

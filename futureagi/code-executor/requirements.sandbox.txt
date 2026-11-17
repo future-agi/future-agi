@@ -24,10 +24,11 @@
 # The resolution is the same for aarch64-manylinux_2_28, and every pin except
 # rouge-score (pure Python, sdist only) has cp311 wheels for both.
 absl-py==2.3.1            # via rouge-score
-anyio==4.12.1             # via httpx
-certifi==2026.1.4         # via httpcore, httpx, requests
+anyio==4.15.1             # via httpx
+certifi==2026.10.19       # via httpcore, httpx, requests
 charset-normalizer==3.4.4  # via requests
 click==8.3.1              # via nltk
+defusedxml==0.7.1         # via nltk (required by 3.10.x; same pin as uv.lock)
 falcon==4.3.1
 gunicorn==26.0.0
 h11==0.16.0               # via httpcore
@@ -38,7 +39,7 @@ jinja2==3.1.6
 joblib==1.5.3             # via nltk, scikit-learn
 levenshtein==0.27.3
 markupsafe==3.0.3         # via jinja2
-nltk==3.9.2
+nltk==3.10.4
 numpy==2.3.5
 packaging==24.2           # via gunicorn
 pandas==2.3.3
@@ -56,4 +57,4 @@ threadpoolctl==3.6.0      # via scikit-learn
 tqdm==4.67.1              # via nltk
 typing-extensions==4.16.0  # via anyio
 tzdata==2025.3            # via pandas
-urllib3==2.7.0            # via requests
+urllib3==2.8.0            # via requests

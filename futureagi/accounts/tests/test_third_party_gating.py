@@ -391,6 +391,7 @@ class TestHubspotContactUrl:
 # --------------------------------------------------------------------------
 
 MARKETPLACE_ROUTES = {
+    "aws-marketplace/onboarding-exchange/",
     "aws-marketplace/verify-token/",
     "aws-marketplace/signup/",
     "aws-marketplace/launch-software/",

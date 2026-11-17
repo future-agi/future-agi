@@ -1,6 +1,7 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
+
 from ee.usage.schemas.events import CheckResult
 from tfc.ee_gating import FeatureUnavailable
 
@@ -110,7 +111,13 @@ class TestBooleanFeatureEnforcement:
 
         with (
             patch("simulate.views.run_test.CreateRunTestSerializer") as mock_ser,
-            patch("simulate.views.run_test.AgentDefinition.objects") as mock_agent_qs,
+            # The view resolves the agent with get_object_or_404 on this
+            # manager. spec=["get"] hides _default_manager, so
+            # get_object_or_404 calls this mock's get() directly.
+            patch(
+                "simulate.views.run_test.AgentDefinition.no_workspace_objects",
+                spec=["get"],
+            ) as mock_agent_qs,
         ):
             mock_ser.return_value.is_valid.return_value = True
             mock_ser.return_value.validated_data = {"agent_definition_id": "test-agent"}
@@ -461,9 +468,7 @@ class TestBooleanFeatureEnforcement:
         # queryset out so the entitlement gate is reachable.
         scenario_id = "11111111-1111-1111-1111-111111111111"
         with patch("simulate.views.scenarios.Scenarios.objects") as mock_qs:
-            mock_qs.filter.return_value.select_related.return_value.first.return_value = (
-                None
-            )
+            mock_qs.filter.return_value.select_related.return_value.first.return_value = None
             response = view.post(request, scenario_id=scenario_id)
         assert response.status_code == 403
         mock_check.assert_called_once_with("org-1", "has_agentic_eval")

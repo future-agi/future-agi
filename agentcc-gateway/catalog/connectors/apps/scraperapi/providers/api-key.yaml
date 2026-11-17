@@ -1,0 +1,44 @@
+schema: "connector-manifest/v1#provider"
+app: scraperapi
+id: api-key
+version: 1.1.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.scraperapi.com/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: API key
+      help: "Create a ScraperAPI account and copy your dashboard API key. Supply the key without the Bearer prefix. Successful scraping calls consume your account's API credits."
+      helpUrl: https://www.scraperapi.com/solutions/ai/mcp/
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_metered
+  source: https://www.scraperapi.com/solutions/ai/mcp/
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://www.scraperapi.com/solutions/ai/mcp/
+    fetchedAt: 2026-11-09
+  - fact: transport.variant
+    url: https://docs.scraperapi.com/integrations/automation-and-workflow-integrations/n8n-integration/mcp-server-less-than-greater-than-n8n
+    fetchedAt: 2026-11-09
+  - fact: auth.kind
+    url: https://www.scraperapi.com/solutions/ai/mcp/
+    fetchedAt: 2026-11-09
+  - fact: auth.credentialParts
+    url: https://www.scraperapi.com/solutions/ai/mcp/
+    fetchedAt: 2026-11-09

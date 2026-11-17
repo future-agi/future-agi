@@ -12,7 +12,7 @@ from django.db import migrations
 
 def clear_stuck_encrypted_configs(apps, schema_editor):
     AgentccGuardrailPolicy = apps.get_model("prism", "AgentccGuardrailPolicy")
-    AgentccGuardrailPolicy.objects.filter(
+    AgentccGuardrailPolicy.objects.using(schema_editor.connection.alias).filter(
         name="__ui_guardrails__",
         encrypted_check_configs__isnull=False,
     ).update(encrypted_check_configs=None)

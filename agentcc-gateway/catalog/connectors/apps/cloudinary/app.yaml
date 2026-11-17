@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: cloudinary
+version: 1.0.0
+name: Cloudinary
+description: "Upload, search, transform, organize, rename, and delete image and video assets."
+vendor:
+  name: Cloudinary
+  domains: [cloudinary.com]
+eeCategory: developer
+group: other
+categories: [developer, design]
+tags: [design, automation]
+docsUrl: https://cloudinary.com/documentation/cloudinary_llm_mcp
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://cloudinary.com/documentation/cloudinary_llm_mcp
+    fetchedAt: 2026-11-09

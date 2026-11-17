@@ -16,11 +16,13 @@ from typing import TypedDict
 from urllib.parse import urlencode
 
 import structlog
+from accounts.models.user import User
+from accounts.services.token_service import issue_sos_tokens  # noqa: TID251
 from django.conf import settings
 from django.core.exceptions import ValidationError
 
-from accounts.models.user import User
-from accounts.services.token_service import issue_sos_tokens
+from accounts.services.handoff_exchange import KIND_SOS
+from accounts.services.handoff_exchange import issue as issue_handoff_code
 
 logger = structlog.get_logger(__name__)
 
@@ -64,6 +66,11 @@ def build_sos_handoff_url(
     Exactly one of the two is non-None. Callers decide how to surface the
     error — a redirect with a message for the browser flow, JSON for the
     copy-link flow.
+
+    The URL carries only a one-time handoff code (CR-07d), never the tokens:
+    the copy-link flow hands this URL to a person, so it can land in tickets
+    and chat as well as history and logs. The code redeems once and lives at
+    most 60 seconds, which also bounds a pasted link.
     """
     try:
         target = User.objects.select_related("organization").get(
@@ -77,5 +84,13 @@ def build_sos_handoff_url(
 
     tokens = start_sos_session(target, source=source, operator=operator)
 
-    params = urlencode({"access": tokens["access"], "refresh": tokens["refresh"]})
+    try:
+        code = issue_handoff_code(
+            KIND_SOS, {"access": tokens["access"], "refresh": tokens["refresh"]}
+        )
+    except Exception as exc:
+        logger.error("sos_handoff_code_failed", error_class=type(exc).__name__)
+        return None, "Could not create the SOS handoff link. Try again."
+
+    params = urlencode({"code": code})
     return f"{settings.APP_BASE_URL}/sos?{params}", None

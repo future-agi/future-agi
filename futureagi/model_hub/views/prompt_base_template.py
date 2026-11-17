@@ -5,12 +5,62 @@ from django.http import Http404
 from django.utils import timezone
 from rest_framework import viewsets
 from rest_framework.decorators import action
+from rest_framework.exceptions import APIException
 from rest_framework.permissions import IsAuthenticated
 
 from model_hub.models.prompt_base_template import PromptBaseTemplate
 from model_hub.serializers.prompt_base_template import PromptBaseTemplateSerializer
 from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.general_methods import GeneralMethods
+from tfc.utils.pagination import MAX_PAGE_SIZE, PageSizeTooLarge
+
+
+def _caller_organization(request):
+    return getattr(request, "organization", None) or request.user.organization
+
+
+def _caller_workspace_filter(request, field_name="workspace"):
+    workspace = getattr(request, "workspace", None)
+    if workspace is None:
+        from tfc.utils.workspace_scope import empty_workspace_filter
+
+        return empty_workspace_filter()
+    if getattr(workspace, "is_default", False):
+        organization = getattr(workspace, "organization", None)
+        query = models.Q(**{field_name: workspace})
+        if organization is not None:
+            query |= models.Q(
+                **{
+                    f"{field_name}__is_default": True,
+                    f"{field_name}__organization": organization,
+                }
+            )
+        query |= models.Q(**{f"{field_name}__isnull": True})
+        return query
+    return models.Q(**{field_name: workspace})
+
+
+def listed_prompt_base_templates(request):
+    """Prompt base templates the My templates list shows to the caller.
+
+    The caller's organization's own templates in the caller's workspace (a
+    default workspace also covers the organization's other default workspaces
+    and its templates with no workspace), plus the sample templates that
+    belong to no organization and no workspace. Deleted templates are left
+    out. Anything that accepts a template the list offers looks it up here.
+    """
+    organization = _caller_organization(request)
+    workspace_scope = _caller_workspace_filter(request)
+    custom_scope = models.Q(organization=organization) & workspace_scope
+    sample_scope = models.Q(
+        is_sample=True,
+        organization__isnull=True,
+        workspace__isnull=True,
+    )
+    return PromptBaseTemplate.no_workspace_objects.filter(
+        custom_scope | sample_scope,
+        deleted=False,
+    )
 
 
 class PromptBaseTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
@@ -29,41 +79,15 @@ class PromptBaseTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
         )
 
     def _organization(self):
-        return (
-            getattr(self.request, "organization", None)
-            or self.request.user.organization
-        )
+        return _caller_organization(self.request)
 
     def _workspace_filter(self, field_name="workspace"):
-        workspace = getattr(self.request, "workspace", None)
-        if workspace is None:
-            return models.Q()
-        if getattr(workspace, "is_default", False):
-            organization = getattr(workspace, "organization", None)
-            query = models.Q(**{field_name: workspace})
-            if organization is not None:
-                query |= models.Q(
-                    **{
-                        f"{field_name}__is_default": True,
-                        f"{field_name}__organization": organization,
-                    }
-                )
-            query |= models.Q(**{f"{field_name}__isnull": True})
-            return query
-        return models.Q(**{field_name: workspace})
+        return _caller_workspace_filter(self.request, field_name)
 
     def get_queryset(self):
-        organization = self._organization()
-        custom_scope = models.Q(organization=organization) & self._workspace_filter()
-        sample_scope = models.Q(
-            is_sample=True,
-            organization__isnull=True,
-            workspace__isnull=True,
+        return listed_prompt_base_templates(self.request).select_related(
+            "organization", "created_by", "workspace", "prompt_version"
         )
-        return PromptBaseTemplate.no_workspace_objects.filter(
-            custom_scope | sample_scope,
-            deleted=False,
-        ).select_related("organization", "created_by", "workspace", "prompt_version")
 
     def create(self, request, *args, **kwargs):
         """Create a new prompt base template"""
@@ -74,9 +98,7 @@ class PromptBaseTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 with transaction.atomic():
                     self.perform_create(serializer)
             except IntegrityError as e:
-                if "unique_prompt_base_template_name_organization_workspace" in str(
-                    e
-                ):
+                if "unique_prompt_base_template_name_organization_workspace" in str(e):
                     return self._duplicate_name_response()
                 raise
             return self._gm.create_response(serializer.data)
@@ -104,6 +126,8 @@ class PromptBaseTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
             name = request.query_params.get("name")
             category = request.query_params.get("category")
             page_size = int(request.query_params.get("page_size", 10))
+            if page_size > MAX_PAGE_SIZE:
+                raise PageSizeTooLarge()
             page_number = int(request.query_params.get("page_number", 0))
             start = page_number * page_size
             end = start + page_size
@@ -147,6 +171,8 @@ class PromptBaseTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                     "total_pages": total_pages,
                 }
             )
+        except APIException:
+            raise
         except Exception as e:
             return self._gm.internal_server_error_response(
                 f"Failed to list prompt base templates: {str(e)}"
@@ -180,9 +206,7 @@ class PromptBaseTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 with transaction.atomic():
                     self.perform_update(serializer)
             except IntegrityError as e:
-                if "unique_prompt_base_template_name_organization_workspace" in str(
-                    e
-                ):
+                if "unique_prompt_base_template_name_organization_workspace" in str(e):
                     return self._duplicate_name_response()
                 raise
             return self._gm.success_response(serializer.data)
@@ -239,9 +263,7 @@ class PromptBaseTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
         """Get all categories for the user's organization"""
         try:
             categories = (
-                self.get_queryset()
-                .values_list("category", flat=True)
-                .distinct()
+                self.get_queryset().values_list("category", flat=True).distinct()
             )
 
             return self._gm.success_response(list(set(categories)))

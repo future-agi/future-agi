@@ -12,10 +12,12 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	catalogdata "github.com/futureagi/agentcc-gateway/catalog"
 	"github.com/futureagi/agentcc-gateway/internal/a2a"
 	"github.com/futureagi/agentcc-gateway/internal/async"
 	"github.com/futureagi/agentcc-gateway/internal/auth"
@@ -25,7 +27,6 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/edge"
 	"github.com/futureagi/agentcc-gateway/internal/files"
 	"github.com/futureagi/agentcc-gateway/internal/guardrails"
-	"github.com/futureagi/agentcc-gateway/internal/guardrails/mcpsec"
 	"github.com/futureagi/agentcc-gateway/internal/guardrails/policy"
 	"github.com/futureagi/agentcc-gateway/internal/mcp"
 	"github.com/futureagi/agentcc-gateway/internal/metrics"
@@ -35,6 +36,7 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/otel"
 	"github.com/futureagi/agentcc-gateway/internal/pipeline"
 	"github.com/futureagi/agentcc-gateway/internal/providers"
+	"github.com/futureagi/agentcc-gateway/internal/providers/admission"
 	"github.com/futureagi/agentcc-gateway/internal/providers/speech"
 	"github.com/futureagi/agentcc-gateway/internal/realtime"
 	"github.com/futureagi/agentcc-gateway/internal/redisstate"
@@ -53,13 +55,16 @@ type Server struct {
 	cfg              *config.Config
 	configPath       string
 	httpServer       *http.Server
+	router           *Router
 	registry         *providers.Registry
 	engine           *pipeline.Engine
 	handlers         *Handlers
 	keyStore         *auth.KeyStore
 	keyHandlers      *KeyHandlers
+	orgHandlers      *OrgConfigHandlers // the per-org config admin handlers
 	metricsRegistry  *metrics.Registry
 	batchProcessor   *batch.Processor
+	delegated        *auth.EnvelopeVerifier
 	clusterMgr       *cluster.Manager
 	TenantStore      *tenant.Store
 	OrgProviderCache *providers.OrgProviderCache
@@ -68,22 +73,93 @@ type Server struct {
 	videoExporter    otel.SpanExporter
 	videoInitErr     error
 	shadowFlusher    *routing.ShadowFlusher
-	router           *Router
 	ready            atomic.Bool
+	// waitForKeyList holds /readyz at 503 until the key store has loaded a
+	// key list from the control plane, when one syncs keys (readyHandler).
+	hosted           bool
+	hostedRedisReady func(context.Context) error
+	waitForKeyList   bool
+	managed          ManagedSettings
+	mcp              *mcp.Server    // nil when MCP is disabled (routes_mcp.go)
+	keyScopes        *keyScopeState // scoped keys (key_scope.go)
+
+	// orgSectionsEnforced is GET /-/config's org_sections_enforced,
+	// set by SetOrgSectionsEnforced; nil leaves the field out.
+	orgSectionsEnforced []string
+	// orgSectionsNotEnforced is GET /-/config's org_sections_not_enforced:
+	// section -> why this node does not enforce it (SetOrgSectionsNotEnforced).
+	orgSectionsNotEnforced map[string]string
+	// publicPriceFeed is the startup copy of public_price_feed: the public
+	// feed serves it and GET /-/config reports it. A routing reload replaces
+	// cfg, never this copy, so it changes only on restart.
+	publicPriceFeed config.PublicPriceFeedConfig
+	// rotation serves provider key rotation (admin_rotation.go).
+	rotation *rotation.Manager
+
+	// shutdownOnce makes Shutdown safe to call more than once; later calls
+	// return the first call's result.
+	shutdownOnce sync.Once
+	shutdownErr  error
 }
 
-// PriceTableName is the name the price table keys a provider's models under,
-// as the provider that served an org's request states it: the org's own
-// instance when the org has one, else the config.yaml provider with that ID.
-func (s *Server) PriceTableName(orgID, providerID string) string {
-	var p providers.Provider
-	if orgID != "" && s.OrgProviderCache != nil {
-		p = s.OrgProviderCache.Get(orgID, providerID)
+// routeStub is one routes_<concern>.go file's registration function.
+type routeStub struct {
+	name     string
+	register func(s *Server, router *Router)
+}
+
+// routeStubs are the per-concern route files, registered by New in this
+// order. Each concern's lane owns its routes_<concern>.go file; adding a
+// concern here is an integrator change.
+var routeStubs = []routeStub{
+	{"catalog_admin", (*Server).registerCatalogAdminRoutes},
+	{"credits_admin", (*Server).registerCreditsAdminRoutes},
+	{"capabilities", (*Server).registerCapabilitiesRoutes},
+	{"models", (*Server).registerModelsRoutes},
+	{"generation", (*Server).registerGenerationRoutes},
+	{"account", (*Server).registerAccountRoutes},
+	{"key", (*Server).registerKeyRoutes},
+	{"feedback", (*Server).registerFeedbackRoutes},
+	{"catalog_access", (*Server).registerCatalogAccessRoutes},
+	{"replay", (*Server).registerReplayRoutes},
+	{"spendguard", (*Server).registerSpendGuardRoutes},
+	{"runtime", (*Server).registerRuntimeRoutes},
+	{"mcp", (*Server).registerMCPRoutes},
+	{"capability_echo", (*Server).registerCapabilityEchoRoutes},
+}
+
+// OrgConfigHandlers returns the per-org config admin handlers (PUT, GET and
+// DELETE /-/orgs/{org_id}/config and the bulk load), for the wiring that
+// hands them the tool catalog.
+func (s *Server) OrgConfigHandlers() *OrgConfigHandlers { return s.orgHandlers }
+
+// Handlers returns the server's HTTP handlers, for the wiring that installs
+// dependencies on them after New.
+func (s *Server) Handlers() *Handlers { return s.handlers }
+
+// SetEnvelopeNonceStore makes delegated envelopes' nonces consumed in store,
+// which the replicas share, so a cluster can serve delegated calls. Call
+// after New() and before Start().
+func (s *Server) SetEnvelopeNonceStore(store auth.NonceStore) {
+	s.delegated.SetNonceStore(store)
+}
+
+// newBatchProcessor runs each batch item as a POST /v1/chat/completions
+// through this server's own chain, under an in-process delegated person,
+// checked against the key store's delegations. A cluster node with Redis
+// keeps its batches there, under the gateway's key prefix, so the replica
+// that took a batch runs it and any replica gets, lists and cancels it; the
+// batch's owner is this node's cluster id.
+func (s *Server) newBatchProcessor(redisClient *redisstate.Client) *batch.Processor {
+	opts := []batch.Option{batch.WithKeyStore(s.keyStore, s.cfg.Auth.Enabled)}
+	if redisClient != nil && s.clusterMgr != nil {
+		prefix := s.cfg.Redis.Prefix
+		if prefix == "" {
+			prefix = "agentcc:"
+		}
+		opts = append(opts, batch.WithSharedStore(redisstate.NewBatchStore(redisClient, prefix+"batch:"), s.clusterMgr.NodeID()))
 	}
-	if p == nil && s.registry != nil {
-		p, _ = s.registry.GetProvider(providerID)
-	}
-	return providers.PriceTableName(p)
+	return batch.NewProcessor(batch.RunAsChatRequest(func() http.Handler { return s.httpServer.Handler }), opts...)
 }
 
 // SetKeyRevocationPublisher attaches a pub/sub broadcaster for multi-replica
@@ -104,8 +180,11 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 	if cfg != nil {
 		authEnabled = cfg.Auth.Enabled
 	}
+	if cfg != nil {
+		cfg.ControlPlane.BoundKeySyncInterval()
+	}
 	if cfg != nil && keyStore == nil {
-		keyStore = auth.NewKeyStore(cfg.Auth)
+		keyStore = auth.NewKeyStore(cfg.Auth, cfg.ControlPlane.SyncsKeys())
 	}
 	// Load settles this, but a Config built in code need not have been through
 	// it, and a server without a ceiling is one no request is bounded by.
@@ -118,6 +197,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 	}
 
 	orgProviderCache := providers.NewOrgProviderCache(cfg.Providers, cfg.OrgProviders.AllowPrivateURLs)
+	orgProviderCache.SetDefaultQueueTimeout(cfg.ProviderDefaults.QueueTimeout)
 	if cfg.OrgProviders.AllowPrivateURLs {
 		slog.Warn("org provider base URLs may point at private/LAN addresses; do not enable this on a gateway shared by untrusted orgs",
 			"env", config.EnvAllowPrivateProviderURLs)
@@ -132,7 +212,16 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 		metricsRegistry:  metricsRegistry,
 		TenantStore:      tenantStore,
 		OrgProviderCache: orgProviderCache,
+		publicPriceFeed:  startupPricePublication(cfg.PublicPriceFeed),
 	}
+	// The startup config decides: cmd/agentcc starts the control plane sync
+	// once, from it, and a reload does not restart it.
+	s.waitForKeyList = cfg.ControlPlane.SyncsKeys()
+	s.hosted = cfg.IsHosted()
+	if s.hosted && redisClient != nil {
+		s.hostedRedisReady = redisClient.Ready
+	}
+	s.delegated = auth.NewEnvelopeVerifier(cfg.Admin.Token, time.Now(), s.recordEnvelopeRejection)
 
 	// Create retry and failover handlers if routing is configured.
 	var retryer *routing.Retryer
@@ -162,11 +251,10 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 	}
 
 	// Create model fallback chains.
-	var modelFallbacks *routing.ModelFallbacks
-	if len(cfg.Routing.ModelFallbacks) > 0 {
-		modelFallbacks = routing.NewModelFallbacks(cfg.Routing.ModelFallbacks)
+	modelFallbacks := nodeFallbackPlans(&cfg.Routing)
+	if modelFallbacks != nil {
 		slog.Info("model fallbacks configured",
-			"models", len(cfg.Routing.ModelFallbacks),
+			"models", nodeFallbackCount(&cfg.Routing),
 		)
 	}
 
@@ -204,10 +292,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 	// Create traffic mirror.
 	var mirror *routing.Mirror
 	if cfg.Routing.Mirror.Enabled && len(cfg.Routing.Mirror.Rules) > 0 {
-		mirrorLookup := func(providerID string) (routing.MirrorProvider, bool) {
-			return registry.GetProvider(providerID)
-		}
-		mirror = routing.NewMirror(cfg.Routing.Mirror, mirrorLookup)
+		mirror = routing.NewMirror(cfg.Routing.Mirror, mirrorLookup(registry))
 		slog.Info("traffic mirroring enabled",
 			"rules", len(cfg.Routing.Mirror.Rules),
 		)
@@ -247,9 +332,23 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 	// A streamed completion exists nowhere else — it has to be assembled while
 	// the chunks go past, and only if something is going to record it.
 	handlers.SetCaptureStreamContent(cfg.Logging.RequestLogging.IncludeBodies || (cfg.OTel.Enabled && cfg.OTel.IncludeBodies))
+	handlers.reserveDefaultOutputTokens = cfg.Managed.ReserveDefaultOutputTokens
+	// managed.mixed_billing_chains: off unless the
+	// operator turns it on; read at startup (mixed_billing.go).
+	handlers.mixedBillingChains = cfg.Managed.MixedBillingChains
 	handlers.videoIPACL = cfg.IPACL
-	handlers.trustedProxies = cfg.IPACL.TrustedProxies
 	s.handlers = handlers
+
+	// The model shutdown calendar and the provider hosts it is looked up by.
+	if cal, err := catalogdata.Deprecations(); err != nil {
+		slog.Error("model shutdown calendar not loaded; no model is refused as shut down", "error", err)
+	} else {
+		handlers.deprecations = cal
+	}
+	handlers.providerHosts = providerHostsFor(cfg, registry)
+	// catalog.thought_signature_models as the operator set it: nil
+	// keeps the eligibility engine's own rule.
+	handlers.thoughtSignatureModels = cfg.Catalog.ThoughtSignatureModels
 
 	// Set up Files API store.
 	fileStore := files.NewStore()
@@ -263,8 +362,10 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 	if cfg.Video.Enabled {
 		s.videoInitErr = s.configureVideo(redisClient)
 	}
-	// Shared through Redis when there is one, so the pod that sees a run
-	// finish can charge it whichever pod started it.
+
+	// Assistants runs awaiting their charge: shared through Redis when there
+	// is one, so the pod that sees a run finish can charge it whichever pod
+	// started it.
 	if redisClient != nil {
 		handlers.runCharges = &redisRunCharges{client: redisClient}
 	} else {
@@ -277,43 +378,11 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 	handlers.asyncKeyRequired = !authEnabled && cfg.LicenseAuth.Enabled
 	handlers.resultIPACL = cfg.IPACL
 
-	asyncProviderFn := func(ctx context.Context, req *models.ChatCompletionRequest, metadata map[string]string) (*models.ChatCompletionResponse, map[string]string, error) {
-		rc := models.AcquireRequestContext()
-		rc.Model = req.Model
-		rc.Request = req
-		rc.IsStream = false
-		for k, v := range metadata {
-			rc.Metadata[k] = v
-		}
-
-		provider, err := registry.Resolve(req.Model)
-		if err != nil {
-			rc.Release()
-			return nil, nil, fmt.Errorf("no provider for model %q: %w", req.Model, err)
-		}
-		rc.Provider = provider.ID()
-
-		providerCall := func(callCtx context.Context, callRC *models.RequestContext) error {
-			resp, err := provider.ChatCompletion(callCtx, callRC.Request)
-			if err != nil {
-				return err
-			}
-			callRC.Response = resp
-			callRC.ResolvedModel = resp.Model
-			return nil
-		}
-
-		err = engine.Process(ctx, rc, providerCall)
-		meta := make(map[string]string, len(rc.Metadata))
-		for k, v := range rc.Metadata {
-			meta[k] = v
-		}
-		resp := rc.Response
-		rc.Release()
-		return resp, meta, err
-	}
-
-	asyncWorker := async.NewWorker(asyncStore, asyncProviderFn, async.DefaultMaxWorkers)
+	// Each job carries its own executor, built by the handler that admitted
+	// it (AsyncMiddleware), so it runs on that request's routing. The worker
+	// has no provider of its own; asyncWorkerConfig bounds how much of it one
+	// org may hold.
+	asyncWorker := async.NewWorker(asyncStore, asyncWorkerConfig(cfg))
 	handlers.asyncWorker = asyncWorker
 	s.asyncWorker = asyncWorker
 	asyncWorker.Start()
@@ -376,11 +445,19 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 			}
 
 			rc := models.AcquireRequestContext()
+			// Each run of a job (a retry is another run) is a run of its own,
+			// which no HTTP request carries in: a new request id and trace
+			// id from the source the RequestID middleware uses.
+			rc.RequestID = middleware.NewID()
+			rc.TraceID = middleware.NewID()
 			rc.Model = req.Model
 			rc.Request = &req
 			rc.IsStream = false
 
-			provider, err := registry.Resolve(req.Model)
+			// Only keys not limited to their org's providers submit a job
+			// (SubmitScheduled), so it is served only catalogue or configured
+			// models on a gateway with keys.
+			provider, err := handlers.resolveRegistryProvider(req.Model)
 			if err != nil {
 				rc.Release()
 				return nil, fmt.Errorf("no provider for model %q: %w", req.Model, err)
@@ -425,6 +502,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 
 	// Build route table.
 	router := NewRouter()
+	s.router = router
 
 	// Proxy endpoints.
 	router.Handle("POST", "/v1/chat/completions", handlers.ChatCompletion)
@@ -455,56 +533,57 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 	router.Handle("POST", "/v1/messages", handlers.AnthropicMessages)
 
 	router.Handle("POST", "/v1/count_tokens", handlers.CountTokens)
-	router.Handle("GET", "/v1/models", handlers.ListModels)
-	router.Handle("GET", "/v1/models/{model}", handlers.GetModel)
 
-	// Assistants API.
-	router.Handle("POST", "/v1/assistants", handlers.CreateAssistant)
-	router.Handle("GET", "/v1/assistants", handlers.ListAssistants)
-	router.Handle("GET", "/v1/assistants/{assistant_id}", handlers.GetAssistant)
-	router.Handle("POST", "/v1/assistants/{assistant_id}", handlers.UpdateAssistant)
-	router.Handle("DELETE", "/v1/assistants/{assistant_id}", handlers.DeleteAssistant)
+	// Assistants API. With assistants.enabled false (default true) every
+	// assistants, threads and vector stores route answers 404 naming the
+	// switch, and nothing is proxied.
+	assistantsRoute := assistantsSwitch(cfg.Assistants.Enabled)
+	router.Handle("POST", "/v1/assistants", assistantsRoute(handlers.CreateAssistant))
+	router.Handle("GET", "/v1/assistants", assistantsRoute(handlers.ListAssistants))
+	router.Handle("GET", "/v1/assistants/{assistant_id}", assistantsRoute(handlers.GetAssistant))
+	router.Handle("POST", "/v1/assistants/{assistant_id}", assistantsRoute(handlers.UpdateAssistant))
+	router.Handle("DELETE", "/v1/assistants/{assistant_id}", assistantsRoute(handlers.DeleteAssistant))
 
 	// Threads.
-	router.Handle("POST", "/v1/threads", handlers.CreateThread)
+	router.Handle("POST", "/v1/threads", assistantsRoute(handlers.CreateThread))
 	// NOTE: /v1/threads/runs must be before /v1/threads/{thread_id} to avoid "runs" matching as thread_id.
-	router.Handle("POST", "/v1/threads/runs", handlers.CreateThreadAndRun)
-	router.Handle("GET", "/v1/threads/{thread_id}", handlers.GetThread)
-	router.Handle("POST", "/v1/threads/{thread_id}", handlers.UpdateThread)
-	router.Handle("DELETE", "/v1/threads/{thread_id}", handlers.DeleteThread)
+	router.Handle("POST", "/v1/threads/runs", assistantsRoute(handlers.CreateThreadAndRun))
+	router.Handle("GET", "/v1/threads/{thread_id}", assistantsRoute(handlers.GetThread))
+	router.Handle("POST", "/v1/threads/{thread_id}", assistantsRoute(handlers.UpdateThread))
+	router.Handle("DELETE", "/v1/threads/{thread_id}", assistantsRoute(handlers.DeleteThread))
 
 	// Messages.
-	router.Handle("POST", "/v1/threads/{thread_id}/messages", handlers.CreateMessage)
-	router.Handle("GET", "/v1/threads/{thread_id}/messages", handlers.ListMessages)
-	router.Handle("GET", "/v1/threads/{thread_id}/messages/{message_id}", handlers.GetMessage)
-	router.Handle("POST", "/v1/threads/{thread_id}/messages/{message_id}", handlers.UpdateMessage)
-	router.Handle("DELETE", "/v1/threads/{thread_id}/messages/{message_id}", handlers.DeleteMessage)
+	router.Handle("POST", "/v1/threads/{thread_id}/messages", assistantsRoute(handlers.CreateMessage))
+	router.Handle("GET", "/v1/threads/{thread_id}/messages", assistantsRoute(handlers.ListMessages))
+	router.Handle("GET", "/v1/threads/{thread_id}/messages/{message_id}", assistantsRoute(handlers.GetMessage))
+	router.Handle("POST", "/v1/threads/{thread_id}/messages/{message_id}", assistantsRoute(handlers.UpdateMessage))
+	router.Handle("DELETE", "/v1/threads/{thread_id}/messages/{message_id}", assistantsRoute(handlers.DeleteMessage))
 
 	// Runs.
-	router.Handle("POST", "/v1/threads/{thread_id}/runs", handlers.CreateRun)
-	router.Handle("GET", "/v1/threads/{thread_id}/runs", handlers.ListRuns)
+	router.Handle("POST", "/v1/threads/{thread_id}/runs", assistantsRoute(handlers.CreateRun))
+	router.Handle("GET", "/v1/threads/{thread_id}/runs", assistantsRoute(handlers.ListRuns))
 	// NOTE: cancel and submit_tool_outputs must be before /v1/threads/{thread_id}/runs/{run_id}.
-	router.Handle("POST", "/v1/threads/{thread_id}/runs/{run_id}/cancel", handlers.CancelRun)
-	router.Handle("POST", "/v1/threads/{thread_id}/runs/{run_id}/submit_tool_outputs", handlers.SubmitToolOutputs)
-	router.Handle("GET", "/v1/threads/{thread_id}/runs/{run_id}", handlers.GetRun)
-	router.Handle("POST", "/v1/threads/{thread_id}/runs/{run_id}", handlers.UpdateRun)
+	router.Handle("POST", "/v1/threads/{thread_id}/runs/{run_id}/cancel", assistantsRoute(handlers.CancelRun))
+	router.Handle("POST", "/v1/threads/{thread_id}/runs/{run_id}/submit_tool_outputs", assistantsRoute(handlers.SubmitToolOutputs))
+	router.Handle("GET", "/v1/threads/{thread_id}/runs/{run_id}", assistantsRoute(handlers.GetRun))
+	router.Handle("POST", "/v1/threads/{thread_id}/runs/{run_id}", assistantsRoute(handlers.UpdateRun))
 
 	// Run Steps.
-	router.Handle("GET", "/v1/threads/{thread_id}/runs/{run_id}/steps", handlers.ListRunSteps)
-	router.Handle("GET", "/v1/threads/{thread_id}/runs/{run_id}/steps/{step_id}", handlers.GetRunStep)
+	router.Handle("GET", "/v1/threads/{thread_id}/runs/{run_id}/steps", assistantsRoute(handlers.ListRunSteps))
+	router.Handle("GET", "/v1/threads/{thread_id}/runs/{run_id}/steps/{step_id}", assistantsRoute(handlers.GetRunStep))
 
 	// Vector Stores API.
-	router.Handle("POST", "/v1/vector_stores", handlers.CreateVectorStore)
-	router.Handle("GET", "/v1/vector_stores", handlers.ListVectorStores)
+	router.Handle("POST", "/v1/vector_stores", assistantsRoute(handlers.CreateVectorStore))
+	router.Handle("GET", "/v1/vector_stores", assistantsRoute(handlers.ListVectorStores))
 	// NOTE: Specific sub-resource routes before generic {vector_store_id} routes.
-	router.Handle("POST", "/v1/vector_stores/{vector_store_id}/search", handlers.SearchVectorStore)
-	router.Handle("POST", "/v1/vector_stores/{vector_store_id}/files", handlers.CreateVectorStoreFile)
-	router.Handle("GET", "/v1/vector_stores/{vector_store_id}/files", handlers.ListVectorStoreFiles)
-	router.Handle("DELETE", "/v1/vector_stores/{vector_store_id}/files/{file_id}", handlers.DeleteVectorStoreFile)
-	router.Handle("POST", "/v1/vector_stores/{vector_store_id}/file_batches", handlers.CreateVectorStoreFileBatch)
-	router.Handle("GET", "/v1/vector_stores/{vector_store_id}", handlers.GetVectorStore)
-	router.Handle("POST", "/v1/vector_stores/{vector_store_id}", handlers.UpdateVectorStore)
-	router.Handle("DELETE", "/v1/vector_stores/{vector_store_id}", handlers.DeleteVectorStore)
+	router.Handle("POST", "/v1/vector_stores/{vector_store_id}/search", assistantsRoute(handlers.SearchVectorStore))
+	router.Handle("POST", "/v1/vector_stores/{vector_store_id}/files", assistantsRoute(handlers.CreateVectorStoreFile))
+	router.Handle("GET", "/v1/vector_stores/{vector_store_id}/files", assistantsRoute(handlers.ListVectorStoreFiles))
+	router.Handle("DELETE", "/v1/vector_stores/{vector_store_id}/files/{file_id}", assistantsRoute(handlers.DeleteVectorStoreFile))
+	router.Handle("POST", "/v1/vector_stores/{vector_store_id}/file_batches", assistantsRoute(handlers.CreateVectorStoreFileBatch))
+	router.Handle("GET", "/v1/vector_stores/{vector_store_id}", assistantsRoute(handlers.GetVectorStore))
+	router.Handle("POST", "/v1/vector_stores/{vector_store_id}", assistantsRoute(handlers.UpdateVectorStore))
+	router.Handle("DELETE", "/v1/vector_stores/{vector_store_id}", assistantsRoute(handlers.DeleteVectorStore))
 
 	// Native Google GenAI API.
 	router.Handle("POST", "/v1beta/models/{model_action}", handlers.GenAIHandler)
@@ -527,6 +606,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 		MaxMessageSize:     16 * 1024 * 1024,
 		AllowedOrigins:     cfg.CORS.AllowedOrigins,
 	})
+	realtimeHandler.known = handlers.catalogueKnows
 	router.Handle("GET", "/v1/realtime", realtimeHandler.HandleRealtime)
 
 	// Speech vendors' own streaming APIs (Deepgram, Cartesia), each under the vendor's name.
@@ -555,6 +635,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 
 	// Health endpoints.
 	router.Handle("GET", "/healthz", s.healthHandler)
+	router.Handle("GET", "/-/health", s.keyHealthHandler)
 	router.Handle("GET", "/readyz", s.readyHandler)
 	router.Handle("GET", "/livez", s.healthHandler)
 
@@ -564,52 +645,31 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 	router.Handle("GET", "/-/health/providers", s.providerHealthHandler)
 	router.Handle("GET", "/-/health/providers/{org_id}", s.orgProviderHealthHandler)
 
-	// Prometheus metrics endpoint.
+	// Prometheus metrics endpoint, at prometheus.path (default /-/metrics).
 	if metricsRegistry != nil {
-		router.Handle("GET", "/-/metrics", s.metricsHandler)
+		router.Handle("GET", metricsPath(cfg), s.metricsHandler)
 	}
 
-	// Batch API endpoints.
-	batchHandler := func(ctx context.Context, req *models.ChatCompletionRequest) (*models.ChatCompletionResponse, map[string]string, error) {
-		rc := models.AcquireRequestContext()
-		rc.Model = req.Model
-		rc.Request = req
-		rc.IsStream = false // batch requests are non-streaming
-
-		provider, err := registry.Resolve(req.Model)
-		if err != nil {
-			rc.Release()
-			return nil, nil, fmt.Errorf("no provider for model %q: %w", req.Model, err)
-		}
-		rc.Provider = provider.ID()
-
-		providerCall := func(callCtx context.Context, callRC *models.RequestContext) error {
-			resp, err := provider.ChatCompletion(callCtx, callRC.Request)
-			if err != nil {
-				return err
-			}
-			callRC.Response = resp
-			callRC.ResolvedModel = resp.Model
-			return nil
-		}
-
-		err = engine.Process(ctx, rc, providerCall)
-		meta := make(map[string]string, len(rc.Metadata))
-		for k, v := range rc.Metadata {
-			meta[k] = v
-		}
-		resp := rc.Response
-		rc.Release()
-		return resp, meta, err
+	// A cluster node, named by its id to the other replicas.
+	if cfg.Cluster.Enabled {
+		s.clusterMgr = cluster.NewManager(cfg.Cluster, cfg.Addr(), "0.1.0")
 	}
-	s.batchProcessor = batch.NewProcessor(batchHandler)
+
+	// Batch API endpoints. Each item runs as a POST /v1/chat/completions
+	// through this server's own chain under an in-process delegated person:
+	// its own request id, the batch trace, org config, providers, guardrails,
+	// budgets, credits and request log. No key is minted or forwarded. A
+	// cluster node with Redis keeps its batches there.
+	s.batchProcessor = s.newBatchProcessor(redisClient)
+	router.Handle("POST", "/-/delegated/v1/chat/completions", s.delegatedChatHandler)
 	router.Handle("POST", "/-/batches", s.submitBatchHandler)
+	router.Handle("GET", "/-/batches", s.listBatchesHandler)
 	router.Handle("GET", "/-/batches/{batch_id}", s.getBatchHandler)
 	router.Handle("POST", "/-/batches/{batch_id}/cancel", s.cancelBatchHandler)
 
 	// Warn at startup if admin token is not configured.
 	if cfg.Admin.Token == "" {
-		slog.Warn("AGENTCC_ADMIN_TOKEN is not set — all admin endpoints (/-/keys, /-/orgs, /-/config, /-/metrics, /-/batches) will return 401. Set admin.token in config.yaml or AGENTCC_ADMIN_TOKEN env var.")
+		slog.Warn("AGENTCC_ADMIN_TOKEN is not set — all admin endpoints (/-/keys, /-/orgs, /-/config, " + metricsPath(cfg) + ", /-/batches) will return 401. Set admin.token in config.yaml or AGENTCC_ADMIN_TOKEN env var.")
 	}
 
 	// Admin key management endpoints.
@@ -627,32 +687,32 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 	// Per-org config admin endpoints (multi-tenant).
 	{
 		orgHandlers := NewOrgConfigHandlers(tenantStore, cfg.Admin.Token, orgProviderCache)
+		s.orgHandlers = orgHandlers
 		if onOrgConfigChange != nil {
 			orgHandlers.SetOnConfigChange(onOrgConfigChange)
 		}
 		router.Handle("PUT", "/-/orgs/{org_id}/config", orgHandlers.SetOrgConfig)
 		router.Handle("GET", "/-/orgs/{org_id}/config", orgHandlers.GetOrgConfig)
+		router.Handle("GET", "/-/orgs/{org_id}/decisions/models", s.adminDecisionModels)
 		router.Handle("DELETE", "/-/orgs/{org_id}/config", orgHandlers.DeleteOrgConfig)
 		router.Handle("GET", "/-/orgs/configs", orgHandlers.ListOrgConfigs)
 		router.Handle("POST", "/-/orgs/configs/bulk", orgHandlers.BulkLoadOrgConfigs)
 	}
 
-	// Key rotation admin endpoints.
+	// Per-concern routes, each in its own routes_<concern>.go file.
+	for _, rs := range routeStubs {
+		rs.register(s, router)
+	}
+	if s.mcp != nil {
+		s.mcp.SetSearchEmbeddingRoute(&mcpSearchEmbeddingRoute{handlers: handlers, admit: searchAdmission(redisClient)})
+	}
+
+	// Key rotation admin endpoints: each config.yaml provider with
+	// rotation.enabled, with its own drain_period; a promote validates the
+	// new key upstream, then swaps the provider's instance (admin_rotation.go).
 	{
-		drainPeriod := 30 * time.Second                 // default
-		rotMgr := rotation.NewManager(drainPeriod, nil) // onRotate callback not wired for now
-
-		// Register each provider that has rotation enabled.
-		for name, pCfg := range cfg.Providers {
-			if pCfg.Rotation.Enabled {
-				if d := pCfg.Rotation.DrainPeriod; d > 0 {
-					drainPeriod = d
-				}
-				rotMgr.RegisterProvider(name, pCfg.APIKey)
-			}
-		}
-
-		rotHandlers := NewRotationHandlers(rotMgr, cfg.Admin.Token)
+		s.rotation = newRotationManager(cfg, registry)
+		rotHandlers := NewRotationHandlers(s.rotation, cfg.Admin.Token)
 		router.Handle("POST", "/-/admin/providers/{id}/rotate", rotHandlers.StartRotation)
 		router.Handle("GET", "/-/admin/providers/{id}/rotation", rotHandlers.GetRotationStatus)
 		router.Handle("POST", "/-/admin/providers/{id}/rotate/promote", rotHandlers.PromoteRotation)
@@ -665,10 +725,8 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 	router.Handle("POST", "/-/admin/video/jobs/{id}/attach", s.adminVideoAttach)
 	router.Handle("GET", "/-/admin/video/unsettled", s.adminVideoUnsettled)
 	// Cluster admin endpoint.
-	if cfg.Cluster.Enabled {
-		clusterMgr := cluster.NewManager(cfg.Cluster, cfg.Addr(), "0.1.0")
-		s.clusterMgr = clusterMgr
-		clusterHandlers := NewClusterHandlers(clusterMgr, cfg.Admin.Token)
+	if s.clusterMgr != nil {
+		clusterHandlers := NewClusterHandlers(s.clusterMgr, cfg.Admin.Token)
 		router.Handle("GET", "/-/cluster/nodes", clusterHandlers.ListNodes)
 	}
 
@@ -684,162 +742,6 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 			w.WriteHeader(http.StatusOK)
 			w.Write([]byte(script))
 		})
-	}
-
-	// MCP gateway.
-	if cfg.MCP.Enabled {
-		endpoint := cfg.MCP.Endpoint
-		if endpoint == "" {
-			endpoint = "/mcp"
-		}
-		mcpServer := mcp.NewServer(mcp.ServerConfig{
-			MaxAgentDepth:   cfg.MCP.MaxAgentDepth,
-			ToolCallTimeout: cfg.MCP.ToolCallTimeout,
-			SessionTTL:      cfg.MCP.SessionTTL,
-			Separator:       cfg.MCP.Separator,
-		})
-
-		// Attach per-key tool filtering if auth is configured.
-		if authEnabled && authKeyStore != nil {
-			mcpServer.SetKeyAuth(&mcpKeyAuth{keyStore: authKeyStore})
-			slog.Info("mcp per-key tool filtering enabled")
-		}
-
-		// Attach MCP tool call guardrail if configured.
-		if cfg.MCP.Guardrails.Enabled {
-			guardCfg := map[string]interface{}{
-				"blocked_tools":    cfg.MCP.Guardrails.BlockedTools,
-				"allowed_servers":  cfg.MCP.Guardrails.AllowedServers,
-				"validate_inputs":  cfg.MCP.Guardrails.ValidateInputs,
-				"validate_outputs": cfg.MCP.Guardrails.ValidateOutputs,
-				"custom_patterns":  cfg.MCP.Guardrails.CustomPatterns,
-				"tool_rate_limits": cfg.MCP.Guardrails.ToolRateLimits,
-			}
-			mcpServer.SetGuard(mcpsec.NewToolGuard(guardCfg))
-			slog.Info("mcp guardrails enabled",
-				"blocked_tools", len(cfg.MCP.Guardrails.BlockedTools),
-				"allowed_servers", len(cfg.MCP.Guardrails.AllowedServers),
-				"custom_patterns", len(cfg.MCP.Guardrails.CustomPatterns),
-				"tool_rate_limits", len(cfg.MCP.Guardrails.ToolRateLimits),
-			)
-		}
-
-		// Set tool version/deprecation info from config.
-		if len(cfg.MCP.ToolVersions) > 0 {
-			versions := make(map[string]mcp.ToolVersionInfo, len(cfg.MCP.ToolVersions))
-			for name, vc := range cfg.MCP.ToolVersions {
-				versions[name] = mcp.ToolVersionInfo{
-					Version:            vc.Version,
-					Deprecated:         vc.Deprecated,
-					DeprecationMessage: vc.DeprecationMessage,
-					ReplacedBy:         vc.ReplacedBy,
-				}
-			}
-			mcpServer.Registry().SetToolVersions(versions)
-			slog.Info("mcp tool versions configured", "count", len(versions))
-		}
-
-		// Connect to upstream MCP servers.
-		for id, serverCfg := range cfg.MCP.Servers {
-			client := mcp.NewClient(mcp.ClientConfig{
-				ServerID:      id,
-				URL:           serverCfg.URL,
-				Command:       serverCfg.Command,
-				Args:          serverCfg.Args,
-				TransportType: serverCfg.Transport,
-				Auth: mcp.AuthConfig{
-					Type:   serverCfg.Auth.Type,
-					Token:  serverCfg.Auth.Token,
-					Header: serverCfg.Auth.Header,
-					Key:    serverCfg.Auth.Key,
-				},
-				ToolsCacheTTL: serverCfg.ToolsCacheTTL,
-			})
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			if err := client.Connect(ctx); err != nil {
-				slog.Error("failed to connect to MCP server", "server", id, "error", err)
-				cancel()
-				continue
-			}
-			cancel()
-			mcpServer.RegisterClient(client)
-		}
-
-		router.Handle("POST", endpoint, mcpServer.HandlePost)
-		router.Handle("GET", endpoint, mcpServer.HandleSSE)
-
-		// Admin endpoints for MCP.
-		router.Handle("GET", "/-/mcp/status", func(w http.ResponseWriter, r *http.Request) {
-			if !s.checkAdminAuth(w, r) {
-				return
-			}
-			status := map[string]interface{}{
-				"enabled":   true,
-				"sessions":  mcpServer.SessionCount(),
-				"tools":     mcpServer.Registry().ToolCount(),
-				"resources": mcpServer.Registry().ResourceCount(),
-				"prompts":   mcpServer.Registry().PromptCount(),
-				"servers":   mcpServer.ClientStatuses(),
-			}
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(status)
-		})
-		router.Handle("GET", "/-/mcp/tools", func(w http.ResponseWriter, r *http.Request) {
-			if !s.checkAdminAuth(w, r) {
-				return
-			}
-			tools := mcpServer.Registry().ListToolsJSON()
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(tools)
-		})
-
-		// Tool execution playground endpoint.
-		router.Handle("POST", "/-/mcp/test", func(w http.ResponseWriter, r *http.Request) {
-			if !s.checkAdminAuth(w, r) {
-				return
-			}
-			var req struct {
-				Name      string                 `json:"name"`
-				Arguments map[string]interface{} `json:"arguments"`
-			}
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				w.WriteHeader(http.StatusBadRequest)
-				json.NewEncoder(w).Encode(map[string]string{"error": "invalid request body"})
-				return
-			}
-			if req.Name == "" {
-				w.WriteHeader(http.StatusBadRequest)
-				json.NewEncoder(w).Encode(map[string]string{"error": "tool name is required"})
-				return
-			}
-			result := mcpServer.TestTool(r.Context(), req.Name, req.Arguments)
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(result)
-		})
-
-		// Admin endpoints for MCP resources and prompts.
-		router.Handle("GET", "/-/mcp/resources", func(w http.ResponseWriter, r *http.Request) {
-			if !s.checkAdminAuth(w, r) {
-				return
-			}
-			resources := mcpServer.Registry().ListResources()
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(resources)
-		})
-		router.Handle("GET", "/-/mcp/prompts", func(w http.ResponseWriter, r *http.Request) {
-			if !s.checkAdminAuth(w, r) {
-				return
-			}
-			prompts := mcpServer.Registry().ListPrompts()
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(prompts)
-		})
-
-		slog.Info("mcp gateway enabled",
-			"endpoint", endpoint,
-			"servers", len(cfg.MCP.Servers),
-			"max_depth", cfg.MCP.MaxAgentDepth,
-		)
 	}
 
 	// A2A protocol.
@@ -867,7 +769,12 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 		}
 
 		a2aRegistry := a2a.NewRegistry(agentConfigs)
-		a2aExecutor := func(ctx context.Context, caller a2a.Caller, req *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
+		// A task's chat request passes the RequestID middleware, as every
+		// request the HTTP server receives does: its run gets a request id of
+		// its own, and carries the trace id of the A2A request that started
+		// the task (x-agentcc-trace-id below), else one of its own.
+		a2aChat := middleware.RequestID(http.HandlerFunc(handlers.ChatCompletion))
+		a2aExecutor := func(ctx context.Context, authHeader string, req *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
 			body, err := json.Marshal(req)
 			if err != nil {
 				return nil, err
@@ -875,19 +782,15 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 
 			httpReq := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body)).WithContext(ctx)
 			httpReq.Header.Set("Content-Type", "application/json")
-			if caller.Authorization != "" {
-				httpReq.Header.Set("Authorization", caller.Authorization)
+			if authHeader != "" {
+				httpReq.Header.Set("Authorization", authHeader)
 			}
-			// The chat handler records client_ip from the peer and the
-			// trusted X-Forwarded-For hops; give it the A2A caller's, not
-			// httptest's placeholder address.
-			httpReq.RemoteAddr = caller.RemoteAddr
-			for _, v := range caller.ForwardedFor {
-				httpReq.Header.Add("X-Forwarded-For", v)
+			if traceID := models.GetTraceID(ctx); traceID != "" {
+				httpReq.Header.Set("x-agentcc-trace-id", traceID)
 			}
 
 			rec := httptest.NewRecorder()
-			handlers.ChatCompletion(rec, httpReq)
+			a2aChat.ServeHTTP(rec, httpReq)
 
 			if rec.Code >= http.StatusBadRequest {
 				var errResp models.ErrorResponse
@@ -911,7 +814,8 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 			Name:        cfg.A2A.Card.Name,
 			Description: cfg.A2A.Card.Description,
 			Version:     cfg.A2A.Card.Version,
-		}, a2aRegistry, a2a.WithPipeline(engine, registry), a2a.WithChatCompletionExecutor(a2aExecutor))
+		}, a2aRegistry, a2a.WithPipeline(engine, registry), a2a.WithChatCompletionExecutor(a2aExecutor),
+			a2a.WithCaller(handlers.a2aCaller))
 
 		// Fetch agent cards in background.
 		go a2aRegistry.FetchCards(context.Background())
@@ -950,13 +854,48 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 		json.NewEncoder(w).Encode(m.Store.Stats())
 	})
 
-	s.router = router
+	// API surfaces outside /v1. KeyAuth gates each of these roots, and every
+	// path and method under it, exactly as it gates /v1. The native Google
+	// API and the speech vendors' relayed APIs are always served (their
+	// routes above), so they are always gated.
+	keyGatedRoots := append([]string{middleware.GenAIRoot}, middleware.SpeechRelayRoots()...)
+	if cfg.MCP.Enabled {
+		keyGatedRoots = append(keyGatedRoots, mcpEndpoint(cfg))
+	}
+	if cfg.A2A.Enabled {
+		keyGatedRoots = append(keyGatedRoots, "/a2a")
+	}
 
 	// Apply middleware: outermost wraps first.
-	var handler http.Handler = router
-	handler = middleware.Timeout(cfg.Server.MaxRequestTimeout)(handler)
-	handler = requireKeyForServedPaths(router, middleware.KeyAuth(authKeyStore, authEnabled), handler)
+	var handler http.Handler = capAdmissionGuard(tenantStore, cfg.Server.MaxRequestBodySize, router)
+	// One ceiling, server.max_request_timeout, on every route, chat
+	// completions included. The MCP endpoint and its OAuth metadata are the
+	// exception: the GET stream sets its own write deadline on every write,
+	// and each tool call has its own timeout (mcp.tool_call_timeout), so a
+	// request deadline would only cut the stream.
+	handler = middleware.TimeoutSkipping(cfg.Server.MaxRequestTimeout, nil, mcpTimeoutPrefixes(cfg))(handler)
+	// KeyAuth applies the pipeline's IP rules on every gated path, with its
+	// own ip_acl instance (keyGateIPACL). It also applies a scoped key's
+	// scope on every route (key_scope.go).
+	s.keyScopes = newKeyScopeState(cfg)
+	handler = middleware.KeyAuthScoped(authKeyStore, authEnabled, keyGateIPACL(cfg, tenantStore), s.keyScopes.gate(), keyGatedRoots...)(handler)
+	// Every IP rule (KeyAuth's and the pipeline's, through ClientIP) reads the
+	// client IP this resolves: the TCP peer, or with server.trusted_proxies
+	// the X-Forwarded-For entry its trusted proxies vouch for. With neither
+	// server setting, every route reads ip_acl.trusted_proxies hops.
+	// Load's Validate refused a config it cannot parse; a config built
+	// without Load and refused here trusts no proxy, on every route.
+	clientIPs, err := middleware.NewClientIPResolver(cfg.Server)
+	if err != nil {
+		slog.Error("client IP: trusting no proxy", "error", err)
+		clientIPs = nil
+	} else {
+		clientIPs.ReadIPACLTrustedProxies(cfg.IPACL.TrustedProxies)
+	}
+	middleware.LogTrustedProxyWarnings(cfg)
+	handler = middleware.TrustedClientIP(clientIPs)(handler)
 	handler = middleware.LicenseAuth(cfg.LicenseAuth, redisstate.NewLicenseStore(redisClient))(handler)
+	handler = s.runtimeTokenMiddleware(handler) // runs before license auth
 	handler = middleware.RequestID(handler)
 	if cfg.CORS.Enabled {
 		handler = middleware.CORS(cfg.CORS)(handler)
@@ -986,6 +925,8 @@ func (s *Server) Start() error {
 		s.videoWorker.Start()
 	}
 	s.ready.Store(true)
+	s.keyScopes.start()
+	defer s.ready.Store(false)
 
 	// Start cluster heartbeat if enabled.
 	if s.clusterMgr != nil {
@@ -1004,8 +945,14 @@ func (s *Server) Start() error {
 	return nil
 }
 
-// Shutdown gracefully stops the server.
+// Shutdown gracefully stops the server. It is safe to call more than once;
+// later calls return the first call's result.
 func (s *Server) Shutdown(ctx context.Context) error {
+	s.shutdownOnce.Do(func() { s.shutdownErr = s.shutdown(ctx) })
+	return s.shutdownErr
+}
+
+func (s *Server) shutdown(ctx context.Context) error {
 	slog.Info("shutting down gateway...")
 	s.ready.Store(false)
 
@@ -1025,13 +972,28 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	if s.asyncWorker != nil {
 		s.asyncWorker.Stop()
 	}
+	// Stop the batch processor's retention loop: it holds the processor's
+	// handler, and with it the whole server.
+	if s.batchProcessor != nil {
+		s.batchProcessor.Stop()
+	}
 
 	err := s.httpServer.Shutdown(ctx)
+	// Close the MCP server's upstream clients, so each stdio child runs its
+	// shutdown ladder instead of being orphaned in its own process group
+	// Clients close in parallel within ctx.
+	if s.mcp != nil {
+		if mcpErr := s.mcp.Shutdown(ctx); mcpErr != nil {
+			slog.Warn("mcp upstreams not all closed before the shutdown deadline", "error", mcpErr)
+		}
+	}
 	// Send the shadow results captured so far with what is left of ctx; if
 	// the requests used it all, this logs how many were not sent.
 	if s.shadowFlusher != nil {
 		s.shadowFlusher.Close(ctx)
 	}
+	// Send the scoped-key refusals still pending to the audit log.
+	s.keyScopes.stop(ctx)
 	if err != nil {
 		return fmt.Errorf("shutdown error: %w", err)
 	}
@@ -1052,6 +1014,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	if err := s.registry.Close(); err != nil {
 		slog.Warn("error closing registry", "error", err)
 	}
+	s.releaseRegistries()
 
 	slog.Info("gateway shut down cleanly")
 	return nil
@@ -1065,14 +1028,49 @@ func (s *Server) healthHandler(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(`{"status":"ok"}`))
 }
 
+// readyHandler answers /readyz, which the readiness probe reads: a replica
+// that answers 200 is sent traffic. One whose control plane syncs keys is not
+// ready until its first key sync has loaded them: before that it knows only
+// its config.yaml keys, and would answer every key made in the app 401.
+// Until a list loads, the control plane's answer that its database has no key
+// table yet (AppHasNoKeyTable: no key made in the app) counts as one, so a
+// new install whose migrations run after the gateway is ready (the Helm
+// chart's post-install bootstrap job under `helm install --wait`) can finish.
+// A ready replica whose control plane is pre-733 says so
+// ("control_plane": "pre-733", auth.KeyStore.ControlPlanePre733) until the
+// first 733 answer latches 733 key semantics, so ops can see it.
+// Liveness (/healthz, /livez) does not wait.
 func (s *Server) readyHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	if s.ready.Load() {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"status":"ready"}`))
-	} else {
+	w.Header().Set("Cache-Control", "no-store")
+	switch {
+	case !s.ready.Load():
 		w.WriteHeader(http.StatusServiceUnavailable)
 		w.Write([]byte(`{"status":"not_ready"}`))
+	case s.hosted && !s.hostedDependenciesReady(r.Context()):
+		w.WriteHeader(http.StatusServiceUnavailable)
+		w.Write([]byte(`{"status":"not_ready","reason":"hosted_dependencies"}`))
+	case s.delegated != nil && !s.delegated.Ready(time.Now()):
+		w.WriteHeader(http.StatusServiceUnavailable)
+		w.Write([]byte(`{"status":"not_ready","reason":"delegated nonce epoch warming"}`))
+	case s.waitForKeyList && !s.keyStore.KeyListLoaded() && !s.keyStore.AppHasNoKeyTable():
+		w.WriteHeader(http.StatusServiceUnavailable)
+		w.Write([]byte(`{"status":"not_ready","reason":"waiting for the first key sync from the control plane"}`))
+	case s.waitForKeyList && s.keyStore != nil && s.keyStore.ControlPlanePre733():
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"status":"ready","control_plane":"pre-733"}`))
+	default:
+		// A saturated provider entry (admission) does not make the replica
+		// unready: its other entries still serve, and every replica would
+		// drop out together under a gateway-wide surge. The count is the
+		// signal; GET /-/health/providers names the entries.
+		if n := admission.SaturatedEntries(); n > 0 {
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprintf(w, `{"status":"ready","saturated_provider_entries":%d}`, n)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"status":"ready"}`))
 	}
 }
 
@@ -1103,6 +1101,25 @@ func (s *Server) reloadHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Catalogue activation is a startup policy, not a routing hot reload.
+	// Refuse before changing anything so /-/config cannot claim it was applied.
+	if s.cfg.Managed.CAT2Enabled() != newCfg.Managed.CAT2Enabled() {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status": "restart_required",
+			"errors": []string{"managed.catalogue_families changed; restart every gateway replica"},
+		})
+		return
+	}
+	// The sync, auth and shared-state machinery is constructed once. Hosted
+	// reload must not pretend to replace it; only changes that are hot-applied
+	// by ReloadRouting are permitted.
+	if (s.hosted || newCfg.IsHosted()) && !hostedReloadCompatible(s.cfg, newCfg) {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(`{"status":"validation_failed","errors":["hosted infrastructure changes require restart"]}`))
+		return
+	}
+
 	// Reload routing components.
 	if err := s.handlers.ReloadRouting(newCfg, s.registry); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
@@ -1124,28 +1141,106 @@ func (s *Server) reloadHandler(w http.ResponseWriter, r *http.Request) {
 		"changes": map[string]interface{}{
 			"routing_strategy":   newCfg.Routing.DefaultStrategy,
 			"conditional_routes": len(newCfg.Routing.ConditionalRoutes),
-			"model_fallbacks":    len(newCfg.Routing.ModelFallbacks),
+			"model_fallbacks":    nodeFallbackCount(&newCfg.Routing),
 			"targets":            len(newCfg.Routing.Targets),
 		},
 	})
 }
 
+// configHandler answers GET /-/config: this node's settings the console
+// shows, never a secret, and the org config sections it
+// enforces.
 func (s *Server) configHandler(w http.ResponseWriter, r *http.Request) {
 	if !s.checkAdminAuth(w, r) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	contentMode := s.cfg.Privacy.DefaultContentMode
+	if contentMode == "" {
+		contentMode = "full"
+	}
+	body := map[string]interface{}{
 		"server": map[string]interface{}{
-			"port": s.cfg.Server.Port,
-			"host": s.cfg.Server.Host,
+			"port":                   s.cfg.Server.Port,
+			"host":                   s.cfg.Server.Host,
+			"read_timeout_ms":        s.cfg.Server.ReadTimeout.Milliseconds(),
+			"write_timeout_ms":       s.cfg.Server.WriteTimeout.Milliseconds(),
+			"idle_timeout_ms":        s.cfg.Server.IdleTimeout.Milliseconds(),
+			"max_request_timeout_ms": s.cfg.Server.MaxRequestTimeout.Milliseconds(),
+		},
+		"logging": map[string]interface{}{
+			"level":           s.cfg.Logging.Level,
+			"request_logging": s.cfg.Logging.RequestLogging.Enabled,
+			"include_bodies":  s.cfg.Logging.RequestLogging.IncludeBodies,
+			"content_mode":    contentMode,
+		},
+		// Batches live in this node's memory, or, on a cluster node with
+		// Redis, in Redis, where every replica reads them. A submission's own
+		// max_concurrency wins; 10 is what an unset one gets
+		// (batch.Processor), and 10 MiB is the submit body cap
+		// (submitBatchHandler).
+		"batch": map[string]interface{}{
+			"storage":                 s.batchStorage(),
+			"default_max_concurrency": 10,
+			"max_body_bytes":          10485760,
+		},
+		// The node's defaults for an organization's guardrail checks: without
+		// guardrails.enabled no org check runs; fail_open is the node's
+		// guardrails.fail_open, which an org that set none follows; mode is
+		// the one an org that set none gets, its checks in turn with the
+		// first block stopping the rest ("sequential"). An org's own stored
+		// fail_open and pipeline_mode apply when set; the console shows the
+		// org's stored value, or these when it set none.
+		"guardrail_pipeline": map[string]interface{}{
+			"enabled":   s.cfg.Guardrails.Enabled,
+			"fail_open": s.cfg.Guardrails.FailOpen,
+			"mode":      "sequential",
+		},
+		// Which delegated calls this gateway serves, so the console offers
+		// only those: the playground calls (Try it, the Guardrail test) on
+		// a single gateway, or on a cluster whose replicas share a nonce
+		// store; a delegated batch on a single gateway, or on a cluster
+		// whose replicas share both the nonce store and the batch store
+		// (any replica gets, lists and cancels a batch).
+		"delegated": map[string]interface{}{
+			"playground": s.delegated != nil && (!s.cfg.Cluster.Enabled || s.delegated.Shared()),
+			"batch":      s.delegated != nil && (!s.cfg.Cluster.Enabled || (s.delegated.Shared() && s.batchProcessor.Shared())),
+			"cluster":    s.cfg.Cluster.Enabled,
 		},
 		"providers_count": s.registry.ProviderCount(),
 		"models_count":    len(s.cfg.ModelMap),
 		"plugins_count":   s.engine.PluginCount(),
-	})
+	}
+	// The control plane uses these IDs to validate an omitted base_url for
+	// custom operator aliases. Expose names only, never credentials or URLs.
+	providerIDs := make([]string, 0, len(s.cfg.Providers))
+	for id, pcfg := range s.cfg.Providers {
+		if pcfg.BaseURL != "" {
+			providerIDs = append(providerIDs, id)
+		}
+	}
+	sort.Strings(providerIDs)
+	body["provider_ids"] = providerIDs
+	body["public_price_feed"] = s.pricePublicationReport()
+	if s.orgSectionsEnforced != nil {
+		body["org_sections_enforced"] = s.orgSectionsEnforced
+	}
+	if len(s.orgSectionsNotEnforced) > 0 {
+		body["org_sections_not_enforced"] = s.orgSectionsNotEnforced
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(body)
+}
+
+// batchStorage is where this node keeps its batches: "redis" with a shared
+// batch store, else "memory".
+func (s *Server) batchStorage() string {
+	if s.batchProcessor.Shared() {
+		return "redis"
+	}
+	return "memory"
 }
 
 func (s *Server) metricsHandler(w http.ResponseWriter, r *http.Request) {
@@ -1160,12 +1255,18 @@ func (s *Server) metricsHandler(w http.ResponseWriter, r *http.Request) {
 // Batch API handlers.
 
 func (s *Server) submitBatchHandler(w http.ResponseWriter, r *http.Request) {
-	if !s.checkAdminAuth(w, r) {
+	if s.refuseDelegatedBatchOnCluster(w) {
 		return
 	}
-	// Batch results belong to the administrator, not an API-key organization.
-	if err := s.handlers.resultNetworkAdmission(r, nil); err != nil {
-		models.WriteError(w, err)
+	var ok bool
+	r, ok = s.verifyDelegatedRequest(w, r)
+	if !ok {
+		return
+	}
+	// No admin bearer or automatically minted key can submit a batch.
+	caller, apiErr := s.batchProcessor.CallerFor(r)
+	if apiErr != nil {
+		models.WriteError(w, apiErr)
 		return
 	}
 	// Limit batch request body to 10MB to prevent OOM.
@@ -1194,12 +1295,31 @@ func (s *Server) submitBatchHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	b := s.batchProcessor.Submit(body.Requests, body.MaxConcurrency)
+	for _, item := range body.Requests {
+		if item == nil {
+			models.WriteError(w, models.ErrBadRequest("invalid_request", "requests must not contain null items"))
+			return
+		}
+	}
+	if refusal := capGateBatchSubmit(r); refusal != nil {
+		models.WriteError(w, refusal)
+		return
+	}
+
+	// Each item's run carries this request's trace id: the caller's
+	// x-agentcc-trace-id, or the one the RequestID middleware made for it.
+	b, err := s.batchProcessor.SubmitFor(body.Requests, body.MaxConcurrency, w.Header().Get("x-agentcc-trace-id"), caller)
+	if err != nil {
+		writeBatchStateUnavailable(w, "the batch could not be stored, so none of it ran; submit it again shortly")
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"batch_id":        b.ID,
+		"org_id":          b.OrgID,
+		"key_id":          b.KeyID,
 		"status":          b.GetStatus(),
 		"total":           b.Total,
 		"max_concurrency": b.MaxConc,
@@ -1207,7 +1327,15 @@ func (s *Server) submitBatchHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// GET /-/batches/{id} and POST /-/batches/{id}/cancel take the listing's
+// selection rule (delegatedBatchMode): an envelope or grant header selects the
+// verified principal's org; the admin token alone keeps
+// admin mode, scoped by ?org_id=.
 func (s *Server) getBatchHandler(w http.ResponseWriter, r *http.Request) {
+	if delegatedBatchMode(r) {
+		s.getDelegatedBatch(w, r)
+		return
+	}
 	if !s.checkAdminAuth(w, r) {
 		return
 	}
@@ -1226,47 +1354,92 @@ func (s *Server) getBatchHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	b, ok := s.batchProcessor.Get(batchID)
-	if !ok {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"error": "batch not found",
-		})
+	// Only the batch's own org (org_id; none for a batch without a key)
+	// finds it: another org's batch is not found.
+	b, err := s.batchProcessor.GetFor(batchID, r.URL.Query().Get("org_id"))
+	if writeBatchLookupError(w, err) {
 		return
 	}
+	writeBatchJSON(w, batchGetResponse(b))
+}
 
+// batchGetResponse is get's answer for the batch's own org: identity, state,
+// and once it has ended (completed, cancelled, or failed when its owner was
+// lost) its results and summary.
+func batchGetResponse(b *batch.Batch) map[string]interface{} {
+	snapshot := b.Snapshot()
 	resp := map[string]interface{}{
-		"batch_id":        b.ID,
-		"status":          b.GetStatus(),
-		"total":           b.Total,
-		"max_concurrency": b.MaxConc,
-		"created_at":      b.CreatedAt,
+		"batch_id":        snapshot.ID,
+		"org_id":          snapshot.OrgID,
+		"key_id":          snapshot.KeyID,
+		"status":          snapshot.Status,
+		"total":           snapshot.Total,
+		"max_concurrency": snapshot.MaxConc,
+		"created_at":      snapshot.CreatedAt,
 	}
-	if ct := b.GetCompletedAt(); ct != nil {
-		resp["completed_at"] = ct
+	if snapshot.ErrorCode != "" {
+		resp["error_code"] = snapshot.ErrorCode
 	}
-
-	status := b.GetStatus()
-	if status == "completed" || status == "cancelled" {
-		resp["results"] = b.GetResults()
-		summary := b.Summary()
-		resp["summary"] = map[string]interface{}{
-			"total_cost":          summary.TotalCost,
-			"total_input_tokens":  summary.TotalInputTokens,
-			"total_output_tokens": summary.TotalOutputTokens,
-			"completed":           summary.Completed,
-			"failed":              summary.Failed,
-			"cancelled":           summary.Cancelled,
-		}
+	if snapshot.CompletedAt != nil {
+		resp["completed_at"] = snapshot.CompletedAt
 	}
 
+	if snapshot.Status == "completed" || snapshot.Status == "cancelled" || snapshot.Status == "failed" {
+		resp["results"] = snapshot.Results
+		resp["summary"] = b.Summary()
+	}
+	return resp
+}
+
+func writeBatchJSON(w http.ResponseWriter, resp map[string]interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(resp)
 }
 
+// writeBatchNotFound is the one answer for a batch that does not exist and
+// for another org's batch, so neither reveals the other.
+func writeBatchNotFound(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusNotFound)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"error": "batch not found",
+	})
+}
+
+// batchStateUnreadable is the answer to a lookup the shared batch state
+// could not serve.
+const batchStateUnreadable = "the batch state could not be read right now; ask again shortly"
+
+// writeBatchStateUnavailable answers 503 with message (batch_state_unavailable)
+// when the shared batch state cannot be read or written, never not found: a
+// caller must not take a batch it could not see for gone.
+func writeBatchStateUnavailable(w http.ResponseWriter, message string) {
+	apiErr := models.ErrServiceUnavailable(message)
+	apiErr.Code = "batch_state_unavailable"
+	models.WriteError(w, apiErr)
+}
+
+// writeBatchLookupError answers a get or cancel that err failed: not found
+// (also for another org's batch), else unavailable. It reports whether it
+// answered.
+func writeBatchLookupError(w http.ResponseWriter, err error) bool {
+	switch {
+	case err == nil:
+		return false
+	case errors.Is(err, batch.ErrNotFound):
+		writeBatchNotFound(w)
+	default:
+		writeBatchStateUnavailable(w, batchStateUnreadable)
+	}
+	return true
+}
+
 func (s *Server) cancelBatchHandler(w http.ResponseWriter, r *http.Request) {
+	if delegatedBatchMode(r) {
+		s.cancelDelegatedBatch(w, r)
+		return
+	}
 	if !s.checkAdminAuth(w, r) {
 		return
 	}
@@ -1285,22 +1458,25 @@ func (s *Server) cancelBatchHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	b, ok := s.batchProcessor.Cancel(batchID)
-	if !ok {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"error": "batch not found",
-		})
+	b, err := s.batchProcessor.CancelFor(batchID, r.URL.Query().Get("org_id"))
+	if writeBatchLookupError(w, err) {
 		return
 	}
+	writeBatchJSON(w, batchCancelResponse(b))
+}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"batch_id": b.ID,
-		"status":   b.GetStatus(),
-	})
+// batchCancelResponse is cancel's answer: identity and state, never results.
+func batchCancelResponse(b *batch.Batch) map[string]interface{} {
+	snapshot := b.Snapshot()
+	resp := map[string]interface{}{
+		"batch_id": snapshot.ID,
+		"org_id":   snapshot.OrgID,
+		"status":   snapshot.Status,
+	}
+	if snapshot.ErrorCode != "" {
+		resp["error_code"] = snapshot.ErrorCode
+	}
+	return resp
 }
 
 func (s *Server) providerHealthHandler(w http.ResponseWriter, r *http.Request) {
@@ -1313,8 +1489,23 @@ func (s *Server) providerHealthHandler(w http.ResponseWriter, r *http.Request) {
 
 	health := s.handlers.healthMonitor.GetAllHealth()
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"providers": health,
+		"providers":  health,
+		"saturation": liveSaturation(),
 	})
+}
+
+// liveSaturation is the upstream slots of every provider entry with a live
+// instance (admission): in flight, max_concurrent, queued, busy refusals
+// since start, and whether the entry is saturated now.
+func liveSaturation() []admission.EntryState {
+	all := admission.Snapshot()
+	out := make([]admission.EntryState, 0, len(all))
+	for _, st := range all {
+		if st.Live {
+			out = append(out, st)
+		}
+	}
+	return out
 }
 
 func (s *Server) orgProviderHealthHandler(w http.ResponseWriter, r *http.Request) {
@@ -1396,10 +1587,6 @@ func ConvertModelOverrides(cfgOverrides map[string]config.ModelOverrideConfig) m
 				BatchOutputPerToken: co.Pricing.BatchOutputPerToken,
 				InputPerSecond:      co.Pricing.InputPerSecond,
 				InputPerCharacter:   co.Pricing.InputPerCharacter,
-				InputPerQuery:       co.Pricing.InputPerQuery,
-				PerPage:             co.Pricing.PerPage,
-				OutputPerImage:      co.Pricing.OutputPerImage,
-				OutputPerSecond:     co.Pricing.OutputPerSecond,
 			}
 		}
 		if co.Capabilities != nil {
@@ -1442,15 +1629,82 @@ func (s *Server) checkAdminAuth(w http.ResponseWriter, r *http.Request) bool {
 	return true
 }
 
+// a2aCaller is the A2A server's CallerFunc: the A2A caller is the key KeyAuth
+// authenticated, so an A2A task belongs to the same org as that key's jobs,
+// files and stored responses.
+func (h *Handlers) a2aCaller(r *http.Request) (a2a.Caller, bool) {
+	id, ok := h.callerIdentity(r)
+	return a2a.Caller{KeyID: id.KeyID, OrgID: id.OrgID}, ok
+}
+
 // mcpKeyAuth adapts auth.KeyStore to the mcp.KeyAuthenticator interface.
 type mcpKeyAuth struct {
 	keyStore *auth.KeyStore
 }
 
-func (a *mcpKeyAuth) AuthenticateKey(rawKey string) (allowed []string, denied []string, valid bool) {
+// AuthenticateKey returns the key's identity, which owns the MCP sessions it
+// opens, and its tool lists.
+func (a *mcpKeyAuth) AuthenticateKey(rawKey string) (mcp.KeyGrant, bool) {
 	key := a.keyStore.Authenticate(rawKey)
 	if key == nil || !key.IsActive() {
-		return nil, nil, false
+		return mcp.KeyGrant{}, false
 	}
-	return key.AllowedTools, key.DeniedTools, true
+	id := a.keyStore.Identity(key)
+	// The key's MCP lists: mcp_allowed_tools / mcp_denied_tools,
+	// or allowed_tools / denied_tools only when both MCP lists are absent.
+	allowed, denied := key.MCPToolLists()
+	return mcp.KeyGrant{
+		KeyID:        id.KeyID,
+		OrgID:        id.OrgID,
+		AllowedTools: allowed,
+		DeniedTools:  denied,
+	}, true
+}
+
+// metricsPath is where the Prometheus metrics endpoint is served:
+// prometheus.path, with a leading slash, or /-/metrics when unset. It needs
+// the admin token wherever it is; a path under /v1 would also need an API key
+// (KeyAuth gates /v1), so pick one outside it.
+func metricsPath(cfg *config.Config) string {
+	p := cfg.Prometheus.Path
+	if p == "" {
+		return "/-/metrics"
+	}
+	if p[0] != '/' {
+		p = "/" + p
+	}
+	return p
+}
+
+// assistantsSwitch returns the wrapper for the assistants, threads and vector
+// stores routes: the handler itself with assistants.enabled on, else one that
+// answers 404 naming the switch.
+func assistantsSwitch(enabled bool) func(http.HandlerFunc) http.HandlerFunc {
+	if enabled {
+		return func(h http.HandlerFunc) http.HandlerFunc { return h }
+	}
+	return func(http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			models.WriteError(w, models.ErrNotFound("assistants_disabled",
+				"The Assistants API (assistants, threads, vector stores) is turned off on this gateway: assistants.enabled is false in its config."))
+		}
+	}
+}
+
+// releaseRegistries removes this server's entries from the package-level
+// registries keyed by the server or its handlers, so a server that has shut
+// down is not kept reachable through them. Batch items reach the handlers
+// directly and can still start, so a released run budget fails closed: the
+// flag is set before the entry goes, and runBudgetCap refuses once it is.
+func (s *Server) releaseRegistries() {
+	outcomeStores.Delete(s)
+	spendGuards.Delete(s)
+	if s.handlers != nil {
+		capabilityCores.Delete(s.handlers)
+		if _, had := runBudgets.Load(s.handlers); had {
+			s.handlers.runBudgetReleased.Store(true)
+			runBudgets.Delete(s.handlers)
+		}
+		globalRoutings.Delete(s.handlers)
+	}
 }

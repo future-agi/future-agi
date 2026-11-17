@@ -657,7 +657,9 @@ describe("RunDetail", () => {
     ).toBeNull();
   });
 
-  it("heads a fix's check run with its fix, not a run number, and offers no Stop", () => {
+  // W10-AGENT-FIX-U08: the engine's label for the run ("c2-target") is an
+  // internal name, so the title names the improvement and the agent version.
+  it("heads a fix's check run with its improvement, not a run number or the engine's label, and offers no Stop", () => {
     useRunDetail.mockReturnValue({
       identity: {
         ...IDENTITY,
@@ -671,10 +673,13 @@ describe("RunDetail", () => {
     });
     renderDetail();
 
-    expect(screen.getByText(/^Check run c2-target for/)).toHaveTextContent(
-      "Check run c2-target for this fix · agent v2",
+    expect(screen.getByText(/^Check run for/)).toHaveTextContent(
+      "Check run for this improvement · agent v2",
     );
-    expect(screen.getByRole("link", { name: "this fix" })).toHaveAttribute(
+    expect(document.body).not.toHaveTextContent("c2-target");
+    expect(
+      screen.getByRole("link", { name: "this improvement" }),
+    ).toHaveAttribute(
       "href",
       "/dashboard/simulate/environments/env-1/improvements/fix-1",
     );
@@ -1379,13 +1384,19 @@ describe("RunDetail", () => {
     expect(screen.queryByRole("button", { name: "Improve" })).toBeNull();
   });
 
-  it("shows the Imagine tab as coming soon (no backend)", async () => {
+  it("shows the Imagine tab as Not available in this release (no backend)", async () => {
     const user = userEvent.setup();
     renderDetail();
 
     await user.click(screen.getByRole("button", { name: "Debug failures" }));
-    await user.click(screen.getByText("Imagine"));
-    expect(screen.getByLabelText("Coming soon")).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Diagnosis" })).toBeInTheDocument();
+    const imagineTab = screen.getByRole("tab", { name: /^Imagine/ });
+    expect(imagineTab).toHaveTextContent("Not available in this release");
+    await user.click(imagineTab);
+    expect(
+      screen.getAllByText("Not available in this release").length,
+    ).toBeGreaterThanOrEqual(2);
+    expect(screen.queryByText(/coming soon/i)).toBeNull();
   });
 
   it("keeps Improve open while the old optimizer is in beta", async () => {

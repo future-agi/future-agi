@@ -4,6 +4,7 @@ import { request as playwrightRequest, type Request, type Response } from '@play
 import { test, expect } from '../../lib/fixtures';
 import { sendTrace, type OtlpAttributes } from '../../lib/otlp';
 import { E2E } from '../../lib/env';
+import { mint } from '../../lib/minted-values';
 import { POLL } from '../../lib/state-probe';
 import { flowAnnotation } from '../../lib/flow-meta';
 
@@ -178,10 +179,16 @@ test('OBS-E2E-008: native and custom voice filters select only the current proje
   try {
     const headers = { Authorization: `Bearer ${actor.tokens.access}`,
       'X-Organization-Id': actor.organizationId, 'X-Workspace-Id': actor.workspaceId };
+    // The fixture's personal key is minted without a workspace, so it is stored
+    // organization-wide. This flow ingests into the actor's workspace, so mint
+    // this actor's own key with that workspace named explicitly.
+    const scoped = (await actor.api.post<{ result: { key_id: string; api_key: string; secret_key: string } }>(
+      '/accounts/key/generate_secret_key/', { key_name: `${prefix}-key`, workspace_id: actor.workspaceId })).result;
+    mint(scoped.api_key, scoped.secret_key);
     // pgresolver.go permits an unambiguous original default workspace for a
     // workspace-less system key. Verify that relationship; never retarget keys.
     const keys = await probe.pg<{ id: string; organization_id: string; workspace_id: string | null; type: string }>(
-      'SELECT id,organization_id,workspace_id,type FROM accounts_orgapikey WHERE api_key=$1 AND enabled=true AND deleted=false', [actor.apiKey]);
+      'SELECT id,organization_id,workspace_id,type FROM accounts_orgapikey WHERE api_key=$1 AND enabled=true AND deleted=false', [scoped.api_key]);
     expect(keys).toHaveLength(1); expect(keys[0].organization_id).toBe(actor.organizationId);
     if (keys[0].workspace_id === null) {
       expect(keys[0].type).toBe('system');
@@ -221,7 +228,7 @@ test('OBS-E2E-008: native and custom voice filters select only the current proje
     }
     await attach('seed-identities-before-ingestion', { prefix, projects, facts });
     for (const f of facts) {
-      expect(await sendTrace(req, { collectorUrl: E2E.collectorUrl, apiKey: actor.apiKey, secretKey: actor.secretKey,
+      expect(await sendTrace(req, { collectorUrl: E2E.collectorUrl, apiKey: scoped.api_key, secretKey: scoped.secret_key,
         projectName: f.project.name, rootName: `${prefix}.${f.code}`, childName: `${prefix}.${f.code}.child`,
         traceId: f.traceId, rootSpanId: f.root, childSpanId: f.child,
         startTimeUnixNano: BigInt(f.at) * 1_000_000n, endTimeUnixNano: BigInt(f.at + f.duration * 1000) * 1_000_000n,

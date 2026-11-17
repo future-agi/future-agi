@@ -10709,91 +10709,188 @@ export const appCoreJourneys = [
   },
   {
     id: "CORE-API-019",
-    title: "System organization key bootstrap readback and API-key auth",
-    tags: ["core", "keys", "system-keys", "data-roundtrip", "security"],
-    async run({ apiBase, client, organizationId, workspaceId, evidence }) {
+    title:
+      "Retired bootstrap refuses issuance; an explicit personal key authenticates its owner",
+    tags: [
+      "core",
+      "keys",
+      "personal-keys",
+      "mutating",
+      "data-roundtrip",
+      "security",
+    ],
+    async run({
+      apiBase,
+      client,
+      user,
+      organizationId,
+      workspaceId,
+      cleanup,
+      runId,
+      evidence,
+    }) {
+      requireMutations();
+      const userId = currentUserId(user);
+      assert(
+        userId && isUuid(organizationId),
+        "Personal-key journey requires a scoped session.",
+      );
       const unauthClient = createApiClient({ apiBase });
       const unauthError = await expectApiError(
         () => unauthClient.get(apiPath("/accounts/keys/")),
         [401, 403],
-        "Unauthenticated system-key bootstrap request unexpectedly succeeded.",
+        "Unauthenticated retired-bootstrap request unexpectedly succeeded.",
       );
-
-      const beforeAudit = await loadSystemOrgKeyDbAudit({
-        organizationId,
-      });
-      if (
-        Number(beforeAudit.enabled_system_key_count) === 0 &&
-        !envFlag("API_JOURNEY_MUTATIONS")
-      ) {
-        skip(
-          "No existing enabled system org key; set API_JOURNEY_MUTATIONS=1 to allow /accounts/keys/ to create the bootstrap key.",
+      const createPath = apiPath("/accounts/key/generate_secret_key/");
+      const keyName = `api journey personal ${runId}`;
+      const before = await loadPersonalKeyDbAudit({ organizationId });
+      assert(
+        Number(before.enabled_nonpersonal_count) === 0,
+        "An enabled non-personal key exists before the retired bootstrap.",
+      );
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const retired = await expectApiError(
+          () => client.get(apiPath("/accounts/keys/")),
+          [410],
+          "The retired bootstrap returned a credential instead of retirement guidance.",
+        );
+        assert(
+          retired.body?.code === "org_keys_retired" &&
+            retired.body?.create_url === "/dashboard/keys",
+          "Retired bootstrap did not return the canonical Keys page.",
+        );
+        assert(
+          Object.keys(retired.body).sort().join(",") === "code,create_url",
+          "Retired bootstrap returned fields beyond retirement guidance.",
+        );
+        const after = await loadPersonalKeyDbAudit({ organizationId });
+        assert(
+          JSON.stringify(after.key_ids) === JSON.stringify(before.key_ids),
+          "The retired bootstrap created or changed the key inventory.",
+        );
+        assert(
+          Number(after.enabled_nonpersonal_count) === 0,
+          "An enabled non-personal key remains after migration.",
         );
       }
-
-      const payload = await client.get(apiPath("/accounts/keys/"), {
-        unwrap: false,
+      const anonymousMint = await expectApiError(
+        () =>
+          unauthClient.post(createPath, {
+            key_name: keyName,
+            workspace_id: null,
+          }),
+        [401, 403],
+        "Anonymous personal-key issuance unexpectedly succeeded.",
+      );
+      const key = await client.post(createPath, {
+        key_name: keyName,
+        workspace_id: null,
       });
       assert(
-        payload?.status === "success",
-        "System-key bootstrap endpoint did not return status=success.",
+        isUuid(key?.key_id),
+        "Explicit personal-key issuance did not return a key id.",
       );
-      const key = payload.data || {};
-      assert(isUuid(key.id), "System-key bootstrap did not return a key id.");
-      assertRawDeveloperKeyMaterial(key.api_key, "system api_key");
-      assertRawDeveloperKeyMaterial(key.secret_key, "system secret_key");
-
-      const dbAudit = await loadSystemOrgKeyDbAudit({
+      cleanup.defer("revoke journey personal key", () =>
+        client.delete(apiPath("/accounts/key/delete_secret_key/"), {
+          body: { key_id: key.key_id },
+        }),
+      );
+      assert(
+        key.key_name === keyName,
+        "Personal key name changed during issuance.",
+      );
+      assertRawDeveloperKeyMaterial(key.api_key, "personal api_key");
+      assertRawDeveloperKeyMaterial(key.secret_key, "personal secret_key");
+      assertMaskedDeveloperKey(key.masked_api_key, "personal masked_api_key");
+      assertMaskedDeveloperKey(
+        key.masked_secret_key,
+        "personal masked_secret_key",
+      );
+      const dbAudit = await loadPersonalKeyDbAudit({
         organizationId,
-        keyId: key.id,
+        keyId: key.key_id,
         apiKey: key.api_key,
         secretKey: key.secret_key,
       });
       assert(
-        Number(dbAudit.enabled_system_key_count) === 1 &&
+        JSON.stringify(dbAudit.key_ids) ===
+          JSON.stringify([...before.key_ids, key.key_id].sort()),
+        "Explicit creation did not add exactly the returned key.",
+      );
+      assert(
+        Number(dbAudit.enabled_nonpersonal_count) === 0 &&
           Number(dbAudit.matching_key_count) === 1 &&
-          dbAudit.matching_key_id === key.id &&
-          dbAudit.type === "system" &&
+          dbAudit.matching_key_id === key.key_id &&
+          dbAudit.name === keyName &&
+          dbAudit.type === "user" &&
           dbAudit.enabled === true &&
           dbAudit.deleted === false &&
           dbAudit.workspace_id === null &&
-          dbAudit.user_id === null &&
+          dbAudit.user_id === userId &&
           dbAudit.api_key_matches === true &&
-          dbAudit.secret_key_matches === true,
-        `System-key DB audit mismatch: ${JSON.stringify(dbAudit)}`,
+          dbAudit.secret_key_at_rest === false &&
+          dbAudit.secret_key_hashed === true,
+        "Personal-key ownership, workspace or secret-storage audit did not match issuance.",
       );
-
-      const systemKeyClient = createApiClient({
+      const listed = await client.get(
+        apiPath("/accounts/key/get_secret_keys/"),
+        { query: { search: keyName } },
+      );
+      assert(
+        listed.table?.length === 1 &&
+          listed.table[0].id === key.key_id &&
+          listed.table[0].type === "user",
+        "Personal-key list did not return exactly the created identity.",
+      );
+      assert(
+        listed.table[0].api_key === key.masked_api_key &&
+          listed.table[0].secret_key === key.masked_secret_key,
+        "Personal-key list exposed values other than masked metadata.",
+      );
+      const headers = {
+        "X-Api-Key": key.api_key,
+        "X-Secret-Key": key.secret_key,
+      };
+      const keyClient = createApiClient({
         apiBase,
         organizationId,
         workspaceId,
       });
-      const systemUserInfo = await systemKeyClient.get(
-        apiPath("/accounts/user-info/"),
-        {
-          headers: {
-            "X-Api-Key": key.api_key,
-            "X-Secret-Key": key.secret_key,
-          },
-        },
-      );
-      const systemUserOrgId =
-        systemUserInfo?.organization_id ||
-        systemUserInfo?.organization?.id ||
-        systemUserInfo?.selected_organization?.id;
+      const keyUser = await keyClient.get(apiPath("/accounts/user-info/"), {
+        headers,
+      });
       assert(
-        currentUserId(systemUserInfo) && systemUserOrgId === organizationId,
-        "System org key did not authenticate to the expected organization.",
+        currentUserId(keyUser) === userId &&
+          keyUser.organization?.id === organizationId,
+        "Personal key did not authenticate as the issuing person in the selected organization.",
       );
-
+      const deniedMint = await expectApiError(
+        () =>
+          keyClient.post(
+            createPath,
+            { key_name: `${keyName}-denied`, workspace_id: null },
+            { headers },
+          ),
+        [403],
+        "An API-key-authenticated request issued another personal key.",
+      );
+      const afterDenied = await loadPersonalKeyDbAudit({ organizationId });
+      assert(
+        JSON.stringify(afterDenied.key_ids) === JSON.stringify(dbAudit.key_ids),
+        "Refused API-key issuance changed the key inventory.",
+      );
       evidence.push({
-        key_id: key.id,
+        key_id: key.key_id,
         unauth_status: unauthError.status,
-        created_system_key: Number(beforeAudit.enabled_system_key_count) === 0,
-        enabled_system_key_count: Number(dbAudit.enabled_system_key_count),
+        anonymous_mint_status: anonymousMint.status,
+        bootstrap_status: 410,
+        bootstrap_created_keys: 0,
+        enabled_nonpersonal_count: Number(dbAudit.enabled_nonpersonal_count),
         api_key_length: String(key.api_key).length,
         secret_key_length: String(key.secret_key).length,
-        system_key_user_info_auth: true,
+        personal_key_owner_auth: true,
+        masked_list: true,
+        api_key_mint_status: deniedMint.status,
       });
     },
   },
@@ -13687,7 +13784,7 @@ WHERE id = ${sqlUuid(keyId)}
   return runPostgresJson(sql);
 }
 
-async function loadSystemOrgKeyDbAudit({
+async function loadPersonalKeyDbAudit({
   organizationId,
   keyId,
   apiKey,
@@ -13699,37 +13796,38 @@ async function loadSystemOrgKeyDbAudit({
   const apiKeyMatchExpression = apiKey
     ? `api_key = ${sqlTextLiteral(apiKey)}`
     : "NULL::boolean";
-  const secretKeyMatchExpression = secretKey
-    ? `secret_key = ${sqlTextLiteral(secretKey)}`
+  // Return booleans, never credential columns, hashes or recoverable secrets.
+  const secretKeyAtRestExpression = secretKey
+    ? `(position(${sqlTextLiteral(secretKey)} in concat_ws('|', secret_key, secret_key_hash, secret_key_hint, secret_key_ciphertext)) > 0)`
     : "NULL::boolean";
   const sql = `
-WITH system_keys AS (
-  SELECT *
-  FROM accounts_orgapikey
-  WHERE organization_id = ${sqlUuid(organizationId)}
-    AND type = 'system'
-    AND enabled = true
-    AND deleted = false
-),
-matching_key AS (
-  SELECT *
-  FROM system_keys
-  ${matchingKeyFilter}
+WITH scoped_keys AS (
+  SELECT * FROM accounts_orgapikey WHERE organization_id = ${sqlUuid(organizationId)}
+), matching_key AS (
+  SELECT * FROM scoped_keys ${matchingKeyFilter}
 )
 SELECT json_build_object(
-  'enabled_system_key_count', (SELECT count(*) FROM system_keys),
+  'key_ids', (SELECT COALESCE(json_agg(id::text ORDER BY id), '[]'::json) FROM scoped_keys),
+  'enabled_nonpersonal_count', (SELECT count(*) FROM scoped_keys WHERE type <> 'user' AND enabled AND NOT deleted),
   'matching_key_count', (SELECT count(*) FROM matching_key),
-  'matching_key_id', (SELECT id::text FROM matching_key LIMIT 1),
-  'type', (SELECT type FROM matching_key LIMIT 1),
-  'enabled', (SELECT enabled FROM matching_key LIMIT 1),
-  'deleted', (SELECT deleted FROM matching_key LIMIT 1),
-  'workspace_id', (SELECT workspace_id::text FROM matching_key LIMIT 1),
-  'user_id', (SELECT user_id::text FROM matching_key LIMIT 1),
-  'api_key_matches', (SELECT ${apiKeyMatchExpression} FROM matching_key LIMIT 1),
-  'secret_key_matches', (SELECT ${secretKeyMatchExpression} FROM matching_key LIMIT 1)
+  'matching_key_id', (SELECT id::text FROM matching_key),
+  'name', (SELECT name FROM matching_key),
+  'type', (SELECT type FROM matching_key),
+  'enabled', (SELECT enabled FROM matching_key),
+  'deleted', (SELECT deleted FROM matching_key),
+  'workspace_id', (SELECT workspace_id::text FROM matching_key),
+  'user_id', (SELECT user_id::text FROM matching_key),
+  'api_key_matches', (SELECT ${apiKeyMatchExpression} FROM matching_key),
+  'secret_key_at_rest', (SELECT ${secretKeyAtRestExpression} FROM matching_key),
+  'secret_key_hashed', (SELECT secret_key = '' AND secret_key_hash LIKE 'hmac-sha256$%' AND secret_key_ciphertext = '' FROM matching_key)
 );
 `;
-  return runPostgresJson(sql);
+  try {
+    return await runPostgresJson(sql);
+  } catch {
+    // execFile errors include command arguments; this SQL contains the pair.
+    throw new Error("Personal-key storage audit could not be completed.");
+  }
 }
 
 async function hardDeleteDeveloperSecretKeyDb(keyId, organizationId) {

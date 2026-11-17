@@ -8,6 +8,7 @@ import sys
 
 import structlog
 
+from .checkout import install_checkout_filters
 from .processors import (
     add_otel_context,
     add_otel_context_from_record,
@@ -15,6 +16,7 @@ from .processors import (
     add_region_context,
     scrub_saml_event,
 )
+from .stripe_sdk import install_stripe_sdk_log_filter
 
 
 def get_env() -> str:
@@ -76,7 +78,14 @@ def get_renderer():
 
 
 def configure_structlog(cache_logger_on_first_use: bool = True):
-    """Configure structlog with proper processors."""
+    """Configure structlog with proper processors.
+
+    Also installs the checkout redaction at every configured log sink's final
+    output (tfc.logging.checkout), so any process using this configuration is
+    covered.
+    """
+    install_checkout_filters()
+    install_stripe_sdk_log_filter()
     structlog.configure(
         processors=get_processors()
         + [
@@ -98,6 +107,10 @@ def get_logging_config(base_dir: str) -> dict:
     Returns:
         Django LOGGING dict
     """
+    # Protect stdlib-only users of this configuration too: every stream and
+    # file handler sanitizes checkout paths in the text it finally writes.
+    install_checkout_filters()
+    install_stripe_sdk_log_filter()
     log_level = os.getenv("LOG_LEVEL", "INFO")
     # stdout, where every service's logs are collected. LOG_STREAM=stderr is for
     # a one-off manage.py command whose stdout is its output (./bin/dev manage).

@@ -1,0 +1,25 @@
+{
+  "name": "@omega/hub",
+  "version": "0.0.1",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "description": "The Omega Hub entry format (omega-hub/v1): its JSON Schema, the validator, the catalog builder and the asciicast tools. Plain ESM with no dependencies, so the CLI, CI and the docs sync share one implementation.",
+  "files": ["src", "schema", "template", "index.d.ts"],
+  "types": "./index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "import": "./src/index.mjs"
+    },
+    "./schema/omega.hub.schema.json": "./schema/omega.hub.schema.json"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test \"test/*.test.mjs\""
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.21",
+    "typescript": "^5.8.3"
+  }
+}

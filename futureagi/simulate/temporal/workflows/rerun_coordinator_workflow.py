@@ -48,6 +48,10 @@ from simulate.temporal.types.rerun import (
 )
 from simulate.temporal.types.test_execution import CallCompletedSignal
 
+# What a rerun's calls show as the reason they ended when the rerun stops on
+# an error. The error itself goes to the workflow log.
+RERUN_STOPPED = "The rerun stopped because of an error. Re-run it."
+
 # Import Django model with sandbox passthrough for status enum access
 with workflow.unsafe.imports_passed_through():
     from simulate.models.test_execution import TestExecution as TestExecutionModel
@@ -391,7 +395,7 @@ class RerunCoordinatorWorkflow:
                         test_execution_id=input.test_execution_id,
                         call_execution_ids=self._all_call_ids,
                         rerun_id=input.rerun_id,
-                        reason=f"Rerun coordinator failed: {error}",
+                        reason=RERUN_STOPPED,
                     ),
                     start_to_close_timeout=timedelta(minutes=2),
                     retry_policy=DB_RETRY_POLICY,

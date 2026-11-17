@@ -3,8 +3,8 @@ Management command to seed dummy data for testing.
 Creates data across tracing, datasets, simulation, and prototyping.
 
 Usage:
-    python manage.py seed_dummy_data --email=nikhilpareekiitr@gmail.com
-    python manage.py seed_dummy_data --email=nikhilpareekiitr@gmail.com --flush
+    python manage.py seed_dummy_data --email=example-user-13@example.com
+    python manage.py seed_dummy_data --email=example-user-13@example.com --flush
 
 CH25-TODO: KEEP-PG. Dev seed script — all ObservationSpan.objects sites
 in this file stay PG by design:
@@ -191,7 +191,7 @@ class Command(BaseCommand):
         parser.add_argument(
             "--email",
             type=str,
-            default="nikhilpareekiitr@gmail.com",
+            default="example-user-13@example.com",
             help="Email of the user to associate data with",
         )
         parser.add_argument(
@@ -399,7 +399,7 @@ class Command(BaseCommand):
                     )
 
                     span_id = str(uuid.uuid4())[:16]
-                    span = ObservationSpan.objects.create(
+                    _span = ObservationSpan.objects.create(
                         id=span_id,
                         project=project,
                         project_version=trace.project_version,
@@ -447,7 +447,6 @@ class Command(BaseCommand):
     def _seed_datasets(self, user, org):
         from model_hub.models.choices import (
             DatasetSourceChoices,
-            DataTypeChoices,
             SourceChoices,
             StatusType,
         )
@@ -455,7 +454,7 @@ class Command(BaseCommand):
 
         self.stdout.write("\n--- Seeding Datasets ---")
 
-        for domain_name, domain_desc in DATASET_DOMAINS:
+        for domain_name, _domain_desc in DATASET_DOMAINS:
             ds_name = f"[Seed] {domain_name}"
             # Define columns based on domain
             col_defs = self._get_column_defs(domain_name)
@@ -607,7 +606,9 @@ class Command(BaseCommand):
             "question": lambda: random.choice(SAMPLE_INPUTS),
             "answer": lambda: random.choice(SAMPLE_OUTPUTS),
             "prompt": lambda: random.choice(SAMPLE_INPUTS),
-            "expected_code": lambda: f"def solution_{row_idx}():\n    return {random.randint(1, 100)}",
+            "expected_code": lambda: (
+                f"def solution_{row_idx}():\n    return {random.randint(1, 100)}"
+            ),
             "review_text": lambda: random.choice(
                 [
                     "Great product! Exactly what I needed. Fast shipping too.",
@@ -634,7 +635,9 @@ class Command(BaseCommand):
             "specialty": lambda: random.choice(
                 ["cardiology", "neurology", "pediatrics", "oncology", "dermatology"]
             ),
-            "clause_text": lambda: f"Section {row_idx}.{random.randint(1,9)}: The party shall comply with all applicable regulations...",
+            "clause_text": lambda: (
+                f"Section {row_idx}.{random.randint(1, 9)}: The party shall comply with all applicable regulations..."
+            ),
             "classification": lambda: random.choice(
                 ["termination", "liability", "indemnification", "confidentiality"]
             ),
@@ -645,9 +648,15 @@ class Command(BaseCommand):
             "target_lang": lambda: random.choice(
                 ["Spanish", "French", "German", "Japanese", "Chinese"]
             ),
-            "article": lambda: f"In a recent study published in Nature, researchers discovered that {random.choice(['AI models', 'neural networks', 'language models'])} can {random.choice(['predict', 'generate', 'analyze'])} {random.choice(['medical data', 'scientific papers', 'code snippets'])} with unprecedented accuracy...",
-            "summary": lambda: f"Researchers found that AI can effectively process and analyze complex data with high accuracy.",
-            "conversation": lambda: f"User: {random.choice(SAMPLE_INPUTS)}\nAssistant: {random.choice(SAMPLE_OUTPUTS)}",
+            "article": lambda: (
+                f"In a recent study published in Nature, researchers discovered that {random.choice(['AI models', 'neural networks', 'language models'])} can {random.choice(['predict', 'generate', 'analyze'])} {random.choice(['medical data', 'scientific papers', 'code snippets'])} with unprecedented accuracy..."
+            ),
+            "summary": lambda: (
+                "Researchers found that AI can effectively process and analyze complex data with high accuracy."
+            ),
+            "conversation": lambda: (
+                f"User: {random.choice(SAMPLE_INPUTS)}\nAssistant: {random.choice(SAMPLE_OUTPUTS)}"
+            ),
             "topic": lambda: random.choice(
                 ["tech-support", "sales", "general-inquiry", "complaint", "feedback"]
             ),
@@ -665,7 +674,9 @@ class Command(BaseCommand):
                     "SELECT p.name, SUM(o.total) as revenue FROM products p JOIN orders o ON p.id = o.product_id GROUP BY p.id ORDER BY revenue DESC LIMIT 10",
                 ]
             ),
-            "database_schema": lambda: "users(id, name, email, created_at), orders(id, user_id, total, status, created_at), products(id, name, price, category)",
+            "database_schema": lambda: (
+                "users(id, name, email, created_at), orders(id, user_id, total, status, created_at), products(id, name, price, category)"
+            ),
             "image_url": lambda: f"https://example.com/images/sample_{row_idx}.jpg",
             "caption": lambda: random.choice(
                 [
@@ -822,7 +833,7 @@ class Command(BaseCommand):
                 )
 
                 # Test executions
-                for te_idx in range(random.randint(1, 3)):
+                for _te_idx in range(random.randint(1, 3)):
                     te_status = random.choice(
                         ["completed", "completed", "completed", "failed", "running"]
                     )
@@ -915,7 +926,7 @@ class Command(BaseCommand):
                             ),
                         )
 
-            self.stdout.write(f"    Versions, scenarios, tests & calls created")
+            self.stdout.write("    Versions, scenarios, tests & calls created")
 
         self.stdout.write(self.style.SUCCESS("  Simulation seeded!"))
 
@@ -1159,7 +1170,7 @@ class Command(BaseCommand):
                 ),
                 (
                     "user",
-                    "It's david.kim@email.com. I've been a customer for three years and I've never had this kind of problem.",
+                    "It's example-user-14@example.com. I've been a customer for three years and I've never had this kind of problem.",
                 ),
                 (
                     "assistant",
@@ -1323,7 +1334,7 @@ class Command(BaseCommand):
 
             # Create 15-30 voice call traces
             num_calls = random.randint(15, 30)
-            for c in range(num_calls):
+            for _c in range(num_calls):
                 conversation = random.choice(self.VAPI_CONVERSATIONS)
                 scenario_name, turns = conversation
                 model_name, provider_name = random.choice(self.VAPI_ASSISTANT_MODELS)
@@ -1353,7 +1364,7 @@ class Command(BaseCommand):
                 trace = Trace.objects.create(
                     project=project,
                     project_version=random.choice(versions),
-                    name=f"Vapi Call Log",
+                    name="Vapi Call Log",
                     input={"messages": [{"role": "user", "content": first_user_msg}]},
                     output={"content": last_assistant_msg},
                     session=(
@@ -1374,7 +1385,7 @@ class Command(BaseCommand):
                 completion_tokens = random.randint(200, 2000)
                 cost = round(random.uniform(0.01, 0.35), 4)
 
-                span = ObservationSpan.objects.create(
+                _span = ObservationSpan.objects.create(
                     id=str(uuid.uuid4())[:16],
                     project=project,
                     project_version=trace.project_version,
@@ -1436,7 +1447,7 @@ class Command(BaseCommand):
             "customer.id": str(uuid.uuid4()),
             # Workflow
             "workflow.id": str(uuid.uuid4()),
-            "workflow.name": f"Main Workflow",
+            "workflow.name": "Main Workflow",
             "workflow.background_sound": random.choice(["off", "office", "off"]),
             "workflow.voicemail_detection": None,
             "workflow.voicemail_message": None,

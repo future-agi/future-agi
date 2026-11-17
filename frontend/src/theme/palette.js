@@ -389,6 +389,26 @@ export {
   darkSyntax,
 };
 
+// Text-on-tint label tokens (a11y #14). Light: warning.dark and error.main
+// are used as text on their soft chips (#FEFCEC, #FAEEEE); the shipped
+// #B8AC47 / #DB2F2D read at 2.3:1 / 4.2:1 there. Dark: the same tokens sit on
+// #111 / #18181b and dark tinted chips, so they are lifted instead.
+export const LIGHT_TEXT_DISABLED = "#6B6B6B";
+export const LABEL_TOKENS = Object.freeze({
+  light: { warningDark: "#7A6F14", errorMain: "#C62828" },
+  dark: { warningDark: "#E5D97A", errorMain: "#E5484D" },
+});
+
+// The status colours keep the `alert` (tint) and `icon` (text-on-tint) pair
+// that screens still read, for example warning.icon in the code panel, where
+// warning.main is pale on white. Both now come from the design-system status
+// roles instead of fixed hex values.
+const withStatus = (color, role) => ({
+  ...color,
+  alert: role.bg,
+  icon: role.fg,
+});
+
 // The light and dark palettes come from the Future AGI Design System
 // (frontend/design-system/tokens/tokens.json → ds-tokens.js). The ramps above stay
 // exported for files that import them directly.
@@ -408,6 +428,11 @@ export function palette(mode) {
           syntax: darkSyntax,
         }),
     ...ds,
+    mode: /** @type {"light" | "dark"} */ (ds.mode),
+    info: withStatus({ ...base.info, ...ds.info }, ds.status.info),
+    success: withStatus({ ...base.success, ...ds.success }, ds.status.success),
+    warning: withStatus({ ...base.warning, ...ds.warning }, ds.status.warning),
+    error: withStatus({ ...base.error, ...ds.error }, ds.status.danger),
     background: {
       ...ds.background,
       // Falcon AI surfaces (inline AI bar background + AI-action hover)

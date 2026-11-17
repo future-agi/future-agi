@@ -9,10 +9,12 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"sync"
 	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/mcp"
+	"github.com/futureagi/agentcc-gateway/internal/middleware"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/pipeline"
 	"github.com/futureagi/agentcc-gateway/internal/providers"
@@ -27,34 +29,32 @@ type Server struct {
 	chatExecutor     ChatCompletionExecutor
 	engine           *pipeline.Engine
 	providerRegistry *providers.Registry
+	caller           CallerFunc
 	done             chan struct{}
 }
 
-// ChatCompletionExecutor runs a chat completion on behalf of the A2A caller.
-type ChatCompletionExecutor func(ctx context.Context, caller Caller, req *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error)
-
-// Caller is what the chat-completion path needs from the incoming A2A
-// request: its credentials and the address it came from, so the address
-// rules judge the A2A caller rather than the in-process request.
+// Caller is the API key a request was authenticated with. A task records the
+// Caller that created it: the task belongs to that key's org.
 type Caller struct {
-	Authorization string
-	RemoteAddr    string   // the TCP peer, host:port
-	ForwardedFor  []string // the X-Forwarded-For header lines, as received
+	KeyID string
+	OrgID string // "" for a key with no org, a license-authorized request, or auth off
 }
 
-// callerOf copies the caller's details out of r, so a returnImmediately worker
-// can use them after the handler returns.
-func callerOf(r *http.Request) Caller {
-	return Caller{
-		Authorization: r.Header.Get("Authorization"),
-		RemoteAddr:    r.RemoteAddr,
-		ForwardedFor:  append([]string(nil), r.Header.Values("X-Forwarded-For")...),
-	}
-}
+// CallerFunc returns the Caller of an A2A request. ok is false when the
+// request carries no authenticated caller although auth is on: such a request
+// is refused, never served as a caller with no org.
+type CallerFunc func(r *http.Request) (caller Caller, ok bool)
 
-// syncTaskStore is a thread-safe task store. It keeps its own copy of every
-// task and hands out copies, so a returnImmediately worker filling in its task
-// never shares memory with tasks/get, tasks/cancel or a response being encoded.
+// singleTenant is the CallerFunc of a server built without WithCaller (auth
+// off): every request is the same caller with no org.
+func singleTenant(*http.Request) (Caller, bool) { return Caller{}, true }
+
+type ChatCompletionExecutor func(ctx context.Context, authHeader string, req *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error)
+
+// syncTaskStore is a thread-safe, copy-on-write task store. It never shares a
+// *Task with a caller: Store saves a copy and every read returns one, so a
+// background execution, a cancel and a response encoder each work on their
+// own copy and meet only under mu.
 type syncTaskStore struct {
 	mu    sync.RWMutex
 	store *TaskStore
@@ -65,45 +65,78 @@ func newSyncTaskStore() *syncTaskStore {
 }
 
 func (s *syncTaskStore) Store(task *Task) {
-	snapshot := task.clone()
+	snapshot := cloneTask(task)
 	s.mu.Lock()
 	s.store.Store(snapshot)
 	s.mu.Unlock()
 }
 
-// StoreUnlessCanceled stores task unless the stored copy was already
-// canceled, so a worker that finishes after tasks/cancel cannot undo it.
-func (s *syncTaskStore) StoreUnlessCanceled(task *Task) {
-	snapshot := task.clone()
+// StoreResult saves the outcome of a task's execution unless the stored task
+// is already canceled: a cancel is final, so a result that loses the race
+// with it is dropped.
+func (s *syncTaskStore) StoreResult(task *Task) {
+	snapshot := cloneTask(task)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if existing, ok := s.store.Get(task.ID); ok && existing.Status.State == TaskStatusCanceled {
+	if cur, ok := s.store.Get(task.ID); ok && cur.Status.State == TaskStatusCanceled {
 		return
 	}
 	s.store.Store(snapshot)
 }
 
-func (s *syncTaskStore) Get(id string) (*Task, bool) {
+// CancelForOrg marks a stored task canceled, whatever its state, and returns a
+// copy, but only for the org that created it. Another org's task is reported
+// missing, exactly like an unknown id, and is left unchanged; a caller with no
+// org reaches only tasks created with no org.
+func (s *syncTaskStore) CancelForOrg(id, orgID string) (*Task, bool) {
+	if id == "" {
+		return nil, false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cur, ok := s.store.Get(id)
+	if !ok || cur.owner.OrgID != orgID {
+		return nil, false
+	}
+	canceled := cloneTask(cur)
+	canceled.Status = TaskStatus{
+		State:   TaskStatusCanceled,
+		Message: []MessagePart{{Type: "text", Text: "Task canceled"}},
+	}
+	s.store.Store(canceled)
+	return cloneTask(canceled), true
+}
+
+// GetForOrg returns a copy of the task only to the org that created it.
+// Another org's task is reported missing, exactly like an unknown id; a caller
+// with no org reaches only tasks created with no org.
+func (s *syncTaskStore) GetForOrg(id, orgID string) (*Task, bool) {
+	if id == "" {
+		return nil, false
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	task, ok := s.store.Get(id)
-	if !ok {
+	if !ok || task.owner.OrgID != orgID {
 		return nil, false
 	}
-	return task.clone(), true
+	return cloneTask(task), true
 }
 
-// Update applies fn to the stored task under the write lock and returns a
-// copy of the result.
-func (s *syncTaskStore) Update(id string, fn func(*Task)) (*Task, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	task, ok := s.store.Get(id)
-	if !ok {
-		return nil, false
+// cloneTask copies every slice a writer could replace or modify. Raw JSON
+// fields are never modified in place, so the copy shares them.
+func cloneTask(task *Task) *Task {
+	c := *task
+	c.Status.Message = slices.Clone(task.Status.Message)
+	c.Artifacts = slices.Clone(task.Artifacts)
+	for i := range c.Artifacts {
+		c.Artifacts[i].Parts = slices.Clone(c.Artifacts[i].Parts)
 	}
-	fn(task)
-	return task.clone(), true
+	c.History = slices.Clone(task.History)
+	for i := range c.History {
+		c.History[i].Parts = slices.Clone(c.History[i].Parts)
+	}
+	return &c
 }
 
 func (s *syncTaskStore) Cleanup(maxAge time.Duration) {
@@ -121,6 +154,7 @@ func NewServer(cardCfg CardConfig, registry *Registry, opts ...ServerOption) *Se
 		cardGen:  NewCardGenerator(cardCfg),
 		registry: registry,
 		tasks:    newSyncTaskStore(),
+		caller:   singleTenant,
 		done:     make(chan struct{}),
 	}
 	for _, opt := range opts {
@@ -151,6 +185,12 @@ func (s *Server) HandleAgentCard(w http.ResponseWriter, r *http.Request) {
 
 // HandleMessage handles POST /a2a — the main A2A JSON-RPC endpoint.
 func (s *Server) HandleMessage(w http.ResponseWriter, r *http.Request) {
+	caller, ok := s.caller(r)
+	if !ok {
+		writeA2AUnauthorized(w)
+		return
+	}
+
 	var msg mcp.Message
 	if err := json.NewDecoder(r.Body).Decode(&msg); err != nil {
 		writeA2AError(w, nil, mcp.ErrCodeParse, "invalid JSON: "+err.Error())
@@ -164,11 +204,11 @@ func (s *Server) HandleMessage(w http.ResponseWriter, r *http.Request) {
 
 	switch msg.Method {
 	case MethodMessageSend, MethodTasksSend:
-		s.handleMessageSend(w, r, &msg)
+		s.handleMessageSend(w, r, &msg, caller)
 	case MethodTasksGet:
-		s.handleTasksGet(w, &msg)
+		s.handleTasksGet(w, &msg, caller)
 	case MethodTasksCancel:
-		s.handleTasksCancel(w, &msg)
+		s.handleTasksCancel(w, &msg, caller)
 	default:
 		writeA2AError(w, msg.ID, mcp.ErrCodeMethodNotFound, "unknown method: "+msg.Method)
 	}
@@ -214,6 +254,17 @@ func WithPipeline(engine *pipeline.Engine, providerRegistry *providers.Registry)
 	}
 }
 
+// WithCaller sets how the server learns who sent a request: the gateway passes
+// the identity its KeyAuth recorded. Tasks are scoped to the org it returns.
+// Without it every request is the same caller with no org (auth off).
+func WithCaller(fn CallerFunc) ServerOption {
+	return func(s *Server) {
+		if fn != nil {
+			s.caller = fn
+		}
+	}
+}
+
 // WithChatCompletionExecutor routes A2A execution through an existing chat-completion path.
 func WithChatCompletionExecutor(executor ChatCompletionExecutor) ServerOption {
 	return func(s *Server) {
@@ -221,14 +272,14 @@ func WithChatCompletionExecutor(executor ChatCompletionExecutor) ServerOption {
 	}
 }
 
-func (s *Server) handleMessageSend(w http.ResponseWriter, r *http.Request, msg *mcp.Message) {
+func (s *Server) handleMessageSend(w http.ResponseWriter, r *http.Request, msg *mcp.Message, caller Caller) {
 	var params MessageSendParams
 	if err := json.Unmarshal(msg.Params, &params); err != nil {
 		writeA2AError(w, msg.ID, mcp.ErrCodeInvalidParams, "invalid message/send params")
 		return
 	}
 
-	// Create task.
+	// Create task. It belongs to the caller's org from here on.
 	taskID := generateTaskID()
 	task := &Task{
 		ID: taskID,
@@ -236,6 +287,7 @@ func (s *Server) handleMessageSend(w http.ResponseWriter, r *http.Request, msg *
 			State: TaskStatusWorking,
 		},
 		History: []Message{params.Message},
+		owner:   caller,
 	}
 
 	// Extract text from the A2A message.
@@ -261,17 +313,24 @@ func (s *Server) handleMessageSend(w http.ResponseWriter, r *http.Request, msg *
 
 	// If pipeline is wired, route through the full plugin pipeline.
 	if s.engine != nil && s.providerRegistry != nil {
+		traceID, clientIP := requestTraceID(w, r), middleware.ClientIP(r)
 		if params.Configuration != nil && params.Configuration.ReturnImmediately {
 			s.tasks.Store(task)
-			ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+			ctx, cancel := taskContext(traceID, clientIP)
 			s.taskCancels.Store(task.ID, cancel)
-			// The worker gets its own copy; task stays with this handler for the response.
-			go s.runMessageSendWithPipeline(ctx, callerOf(r), task.clone(), inputText, params)
+			// The execution gets its own copy: it writes the result while this
+			// handler is still encoding the accepted task. It releases its
+			// context when it returns, as the blocking path does.
+			authHeader, execTask := r.Header.Get("Authorization"), cloneTask(task)
+			go func() {
+				defer cancel()
+				s.runMessageSendWithPipeline(ctx, authHeader, execTask, inputText, params)
+			}()
 			writeA2AResult(w, msg.ID, task)
 			return
 		}
 
-		s.handleMessageSendWithPipeline(w, msg, callerOf(r), task, inputText, params)
+		s.handleMessageSendWithPipeline(w, msg, r.Header.Get("Authorization"), traceID, clientIP, task, inputText, params)
 		return
 	}
 
@@ -297,21 +356,41 @@ func (s *Server) handleMessageSend(w http.ResponseWriter, r *http.Request, msg *
 // handleMessageSendWithPipeline converts the A2A message to a ChatCompletionRequest,
 // processes it through the full pipeline (pre-plugins → provider → post-plugins),
 // and converts the response back to an A2A task.
-func (s *Server) handleMessageSendWithPipeline(w http.ResponseWriter, msg *mcp.Message, caller Caller, task *Task, inputText string, params MessageSendParams) {
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+func (s *Server) handleMessageSendWithPipeline(w http.ResponseWriter, msg *mcp.Message, authHeader, traceID, clientIP string, task *Task, inputText string, params MessageSendParams) {
+	ctx, cancel := taskContext(traceID, clientIP)
 	defer cancel()
-	s.runMessageSendWithPipeline(ctx, caller, task, inputText, params)
+	s.runMessageSendWithPipeline(ctx, authHeader, task, inputText, params)
 	writeA2AResult(w, msg.ID, task)
 }
 
-func (s *Server) runMessageSendWithPipeline(ctx context.Context, caller Caller, task *Task, inputText string, params MessageSendParams) {
+// requestTraceID is the trace id of the A2A request r: the one the gateway's
+// RequestID middleware set on its response (the caller's x-agentcc-trace-id,
+// or one it made), else the caller's header. The task's run carries it.
+func requestTraceID(w http.ResponseWriter, r *http.Request) string {
+	if id := w.Header().Get("x-agentcc-trace-id"); id != "" {
+		return id
+	}
+	return r.Header.Get("x-agentcc-trace-id")
+}
+
+// taskContext is the context a task's run gets: 120 s, apart from the A2A
+// request's own context (a return-immediately task outlives it), carrying
+// that request's trace id and its client IP (middleware.ClientIP), so the
+// task's model call meets the IP rules (ip_acl, a key's allowed_ips) as the
+// caller, not as the address of a request the gateway built itself.
+func taskContext(traceID, clientIP string) (context.Context, context.CancelFunc) {
+	ctx := middleware.WithClientIP(models.WithTraceID(context.Background(), traceID), clientIP)
+	return context.WithTimeout(ctx, 120*time.Second)
+}
+
+func (s *Server) runMessageSendWithPipeline(ctx context.Context, authHeader string, task *Task, inputText string, params MessageSendParams) {
 	defer s.taskCancels.Delete(task.ID)
 
 	model := s.resolveA2AModel(params)
 	if model == "" {
 		task.Status.State = TaskStatusFailed
 		task.Status.Message = []MessagePart{{Type: "text", Text: "A2A request must include metadata.model"}}
-		s.tasks.StoreUnlessCanceled(task)
+		s.tasks.StoreResult(task)
 		slog.Warn("a2a: missing metadata.model", "task_id", task.ID)
 		return
 	}
@@ -326,27 +405,36 @@ func (s *Server) runMessageSendWithPipeline(ctx context.Context, caller Caller, 
 	}
 
 	if s.chatExecutor != nil {
-		resp, err := s.chatExecutor(ctx, caller, req)
+		resp, err := s.chatExecutor(ctx, authHeader, req)
 		if err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
 				task.Status.State = TaskStatusCanceled
 				task.Status.Message = []MessagePart{{Type: "text", Text: "Task canceled"}}
-				s.tasks.StoreUnlessCanceled(task)
+				s.tasks.StoreResult(task)
 				return
 			}
 			task.Status.State = TaskStatusFailed
 			task.Status.Message = []MessagePart{{Type: "text", Text: fmt.Sprintf("Pipeline error: %s", err.Error())}}
-			s.tasks.StoreUnlessCanceled(task)
+			s.tasks.StoreResult(task)
 			return
 		}
 		s.finishTaskFromResponse(task, resp)
-		s.tasks.StoreUnlessCanceled(task)
+		s.tasks.StoreResult(task)
 		return
 	}
 
 	// Acquire RequestContext from pool.
 	rc := models.AcquireRequestContext()
 	defer rc.Release()
+
+	// The run's own ids, as the RequestID middleware gives a request: a new
+	// request id, and the trace id of the A2A request that started the task
+	// (one of its own when that request had none).
+	rc.RequestID = middleware.NewID()
+	rc.TraceID = models.GetTraceID(ctx)
+	if rc.TraceID == "" {
+		rc.TraceID = middleware.NewID()
+	}
 
 	rc.Model = model
 	rc.Request = req
@@ -362,7 +450,7 @@ func (s *Server) runMessageSendWithPipeline(ctx context.Context, caller Caller, 
 		task.Status.Message = []MessagePart{
 			{Type: "text", Text: fmt.Sprintf("No provider for model %q: %s", model, err.Error())},
 		}
-		s.tasks.StoreUnlessCanceled(task)
+		s.tasks.StoreResult(task)
 		slog.Warn("a2a: provider resolution failed", "model", model, "error", err)
 		return
 	}
@@ -384,21 +472,31 @@ func (s *Server) runMessageSendWithPipeline(ctx context.Context, caller Caller, 
 		if errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
 			task.Status.State = TaskStatusCanceled
 			task.Status.Message = []MessagePart{{Type: "text", Text: "Task canceled"}}
-			s.tasks.StoreUnlessCanceled(task)
+			s.tasks.StoreResult(task)
 			slog.Info("a2a task canceled", "task_id", task.ID)
 			return
 		}
 
 		task.Status.State = TaskStatusFailed
 		task.Status.Message = []MessagePart{{Type: "text", Text: fmt.Sprintf("Pipeline error: %s", err.Error())}}
-		s.tasks.StoreUnlessCanceled(task)
+		s.tasks.StoreResult(task)
 		slog.Warn("a2a: pipeline error", "task_id", task.ID, "error", err)
+		return
+	}
+	// An output check that withheld the answer (a guardrail's block) dropped
+	// it and recorded its error: the task fails with that error, as a task
+	// through the chat executor does, not as a provider that sent nothing.
+	if apiErr := models.WithheldAnswerError(rc); apiErr != nil {
+		task.Status.State = TaskStatusFailed
+		task.Status.Message = []MessagePart{{Type: "text", Text: fmt.Sprintf("Pipeline error: %s", apiErr.Error())}}
+		s.tasks.StoreResult(task)
+		slog.Warn("a2a: an output check withheld the answer", "task_id", task.ID, "error", apiErr)
 		return
 	}
 
 	s.finishTaskFromResponse(task, rc.Response)
 
-	s.tasks.StoreUnlessCanceled(task)
+	s.tasks.StoreResult(task)
 	slog.Info("a2a task completed (pipeline)", "task_id", task.ID, "model", model, "provider", rc.Provider)
 }
 
@@ -423,16 +521,17 @@ func (s *Server) finishTaskFromResponse(task *Task, resp *models.ChatCompletionR
 	task.Status.Message = []MessagePart{{Type: "text", Text: "No response from provider"}}
 }
 
-func (s *Server) handleTasksGet(w http.ResponseWriter, msg *mcp.Message) {
+func (s *Server) handleTasksGet(w http.ResponseWriter, msg *mcp.Message, caller Caller) {
 	var params TaskGetParams
 	if err := json.Unmarshal(msg.Params, &params); err != nil {
 		writeA2AError(w, msg.ID, mcp.ErrCodeInvalidParams, "invalid tasks/get params")
 		return
 	}
 
-	task, ok := s.tasks.Get(params.TaskID)
+	// Another org's task answers "task not found", the same as an unknown id.
+	task, ok := s.tasks.GetForOrg(params.TaskID, caller.OrgID)
 	if !ok && params.TaskIDSnake != "" {
-		task, ok = s.tasks.Get(params.TaskIDSnake)
+		task, ok = s.tasks.GetForOrg(params.TaskIDSnake, caller.OrgID)
 	}
 	if !ok {
 		taskID := params.TaskID
@@ -446,16 +545,18 @@ func (s *Server) handleTasksGet(w http.ResponseWriter, msg *mcp.Message) {
 	writeA2AResult(w, msg.ID, task)
 }
 
-func (s *Server) handleTasksCancel(w http.ResponseWriter, msg *mcp.Message) {
+func (s *Server) handleTasksCancel(w http.ResponseWriter, msg *mcp.Message, caller Caller) {
 	var params TaskCancelParams
 	if err := json.Unmarshal(msg.Params, &params); err != nil {
 		writeA2AError(w, msg.ID, mcp.ErrCodeInvalidParams, "invalid tasks/cancel params")
 		return
 	}
 
-	task, ok := s.tasks.Get(params.TaskID)
+	// Another org's task answers "task not found", the same as an unknown id,
+	// and is neither cancelled nor changed.
+	task, ok := s.tasks.CancelForOrg(params.TaskID, caller.OrgID)
 	if !ok && params.TaskIDSnake != "" {
-		task, ok = s.tasks.Get(params.TaskIDSnake)
+		task, ok = s.tasks.CancelForOrg(params.TaskIDSnake, caller.OrgID)
 	}
 	if !ok {
 		taskID := params.TaskID
@@ -466,22 +567,10 @@ func (s *Server) handleTasksCancel(w http.ResponseWriter, msg *mcp.Message) {
 		return
 	}
 
-	id := task.ID
-	if cancelFn, ok := s.taskCancels.Load(id); ok {
+	// The task is already marked canceled, so whatever the stopped execution
+	// stores from here on is dropped by StoreResult.
+	if cancelFn, ok := s.taskCancels.Load(task.ID); ok {
 		cancelFn.(context.CancelFunc)()
-	}
-	// Update in place under the store lock; the worker may be recording its own
-	// result for this task at the same moment.
-	task, ok = s.tasks.Update(id, func(t *Task) {
-		t.Status = TaskStatus{
-			State:   TaskStatusCanceled,
-			Message: []MessagePart{{Type: "text", Text: "Task canceled"}},
-		}
-	})
-	if !ok {
-		// Cleanup dropped the task after the lookup above.
-		writeA2AError(w, msg.ID, mcp.ErrCodeInvalidParams, "task not found: "+id)
-		return
 	}
 	writeA2AResult(w, msg.ID, task)
 }
@@ -522,6 +611,17 @@ func writeA2AResult(w http.ResponseWriter, id json.RawMessage, result interface{
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
+}
+
+// writeA2AUnauthorized answers a request that carries no authenticated caller
+// although auth is on. The gateway's KeyAuth refuses such a request before it
+// gets here; this is the last line. The request has not been parsed, so the
+// JSON-RPC error carries a null id.
+func writeA2AUnauthorized(w http.ResponseWriter) {
+	w.Header().Set("WWW-Authenticate", models.BearerChallenge)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusUnauthorized)
+	json.NewEncoder(w).Encode(mcp.NewErrorResponse(json.RawMessage("null"), mcp.ErrCodeInvalidRequest, "Invalid or missing API key"))
 }
 
 func writeA2AError(w http.ResponseWriter, id json.RawMessage, code int, message string) {

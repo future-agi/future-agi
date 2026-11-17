@@ -6,6 +6,7 @@
  *            (`enum` with `multiple: true` lets the user pick several options)
  *   options   enum / array choices: strings or { value, label }
  *   operators optional allow-list of canonical operator names for the field
+ *   allowCustomValue  `true` lets an enum take typed values beyond its options
  *
  * The panel itself (TraceFilterPanel) works on "properties"; this file turns
  * the schema into them and counts the active rows for the trigger button.
@@ -30,6 +31,21 @@ const CATEGORY_ICONS = {
 
 export const SHARED_FILTER_SOURCE = "filter";
 
+// A fixed list (`enum` with options) takes only its own options, as the Query
+// tab does: a typed string is not one of its values (options are often ids
+// shown by label). A field whose options are only suggestions sets
+// `allowCustomValue: true`.
+const customValueRule = (field) => {
+  if (field.allowCustomValue !== undefined) {
+    return { allowCustomValue: field.allowCustomValue };
+  }
+  return field.type === "enum" &&
+    Array.isArray(field.options) &&
+    field.options.length
+    ? { allowCustomValue: false }
+    : {};
+};
+
 export const fieldsToProperties = (fields = []) =>
   fields.map((field) => ({
     id: field.id,
@@ -46,6 +62,7 @@ export const fieldsToProperties = (fields = []) =>
     ...(Array.isArray(field.options) && field.options.length
       ? { choices: field.options }
       : {}),
+    ...customValueRule(field),
     ...(Array.isArray(field.operators) && field.operators.length
       ? { operators: field.operators }
       : {}),

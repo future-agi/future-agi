@@ -9,6 +9,13 @@ from tfc.temporal.schedules.config import ScheduleConfig
 # Tracer schedules (migrated from Celery Beat)
 TRACER_SCHEDULES: list[ScheduleConfig] = [
     ScheduleConfig(
+        schedule_id="dispatch-export-schedules",
+        activity_name="dispatch_export_schedules",
+        interval_seconds=60,
+        queue="tasks_s",
+        description="Queue due project exports to customer S3 destinations",
+    ),
+    ScheduleConfig(
         schedule_id="process-inline-evals",
         activity_name="process_in_line_evals",
         interval_seconds=10,

@@ -370,13 +370,21 @@ class BudgetFileTests(unittest.TestCase):
     def test_standalone_install_matches_docker_compose_yml(self):
         images = rendered_images("docker-compose.yml", "")
         install = self.config["standalone_install"]
+        ours = {untagged(image) for image in images if image.startswith("futureagi/")}
+        # The default services, no profile: the app and the code executor
+        # code evals run in.
+        self.assertEqual(ours, {install["app"], "futureagi/code-executor"})
+        # The install's total counts every one of them: our images other than
+        # the app are listed in `with` by repository, read at :latest as the
+        # compose file's default tags are.
         self.assertEqual(
-            {untagged(image) for image in images if image.startswith("futureagi/")},
-            {install["app"]},
+            {install["app"]}
+            | {image for image in install["with"] if image.startswith("futureagi/")},
+            ours,
         )
         self.assertEqual(
             {image for image in images if not image.startswith("futureagi/")},
-            set(install["with"]),
+            {image for image in install["with"] if not image.startswith("futureagi/")},
         )
 
     def test_every_compose_image_of_ours_has_a_budget(self):

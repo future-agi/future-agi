@@ -61,6 +61,85 @@ const commonAttribute = {
   size: "small",
 };
 
+// Provider fields that hold a secret (the Access Key ID and URLs stay readable).
+const SECRET_FIELD_NAMES = new Set(["key", "apiKey", "awsSecretAccessKey"]);
+
+// A secret is hidden while typing, with the show/hide button the settings
+// integrations use, and the browser never fills a saved password into it.
+const SecretKeyField = ({ label, ...props }) => {
+  const [shown, setShown] = useState(false);
+  return (
+    <APIKeyForm
+      {...props}
+      label={label}
+      type={shown ? "text" : "password"}
+      autoComplete="new-password"
+      InputProps={{
+        endAdornment: (
+          <IconButton
+            onClick={() => setShown((value) => !value)}
+            edge="end"
+            aria-label={shown ? `Hide ${label}` : `Show ${label}`}
+          >
+            <Iconify
+              icon={shown ? "solar:eye-bold" : "solar:eye-closed-bold"}
+            />
+          </IconButton>
+        ),
+      }}
+    />
+  );
+};
+
+SecretKeyField.propTypes = {
+  label: PropTypes.string,
+};
+
+const credentialFieldFor = (fieldName) =>
+  SECRET_FIELD_NAMES.has(fieldName) ? SecretKeyField : APIKeyForm;
+
+// Credentials pasted as JSON (a Vertex service-account key, private_key
+// included) go in a code editor, which has no password mode, so its text is
+// blurred until the same show/hide button reveals it. The editor stays mounted:
+// pasting and typing still work and the value is unchanged.
+const SecretJsonField = ({ label, placeholder, ...props }) => {
+  const [shown, setShown] = useState(false);
+  return (
+    <Box
+      data-secret={shown ? "shown" : "hidden"}
+      sx={{
+        display: "flex",
+        flexDirection: "column",
+        gap: 1,
+        '&[data-secret="hidden"] .monaco-editor': { filter: "blur(6px)" },
+      }}
+    >
+      <Stack direction="row" alignItems="center" justifyContent="space-between">
+        <Typography
+          variant="s1"
+          fontWeight="fontWeightRegular"
+          color="text.primary"
+        >
+          {placeholder}
+        </Typography>
+        <IconButton
+          onClick={() => setShown((value) => !value)}
+          size="small"
+          aria-label={shown ? `Hide ${label}` : `Show ${label}`}
+        >
+          <Iconify icon={shown ? "solar:eye-bold" : "solar:eye-closed-bold"} />
+        </IconButton>
+      </Stack>
+      <APIKeyForm {...props} isJsonKey showJsonField />
+    </Box>
+  );
+};
+
+SecretJsonField.propTypes = {
+  label: PropTypes.string,
+  placeholder: PropTypes.string,
+};
+
 const AddCustomModalForm = ({
   onClose,
   handleClose,
@@ -229,6 +308,8 @@ const AddCustomModalForm = ({
       config_json: configJson,
     };
 
+    // config_json carries the provider key, so analytics never gets it: the
+    // event names the provider and whether the model was added or edited.
     trackEvent(Events.customModelAdded, {
       model_provider: data.modelProvider,
       operation: edit ? "edit" : "create",
@@ -592,20 +673,25 @@ const AddCustomModalForm = ({
                     </ShowComponent>
                     <ShowComponent condition={currentTab !== TABS.JSON}>
                       <>
-                        {awsCredentialFields.map((field) => (
-                          <APIKeyForm
-                            key={field.fieldName}
-                            control={control}
-                            fieldName={field.fieldName}
-                            label={field.label}
-                            placeholder={field.placeholder}
-                            onChange={field.onChange}
-                            onFocusInput={field.onFocus}
-                            showJsonField={true}
-                            isJsonKey={false}
-                            {...commonAttribute}
-                          />
-                        ))}
+                        {awsCredentialFields.map((field) => {
+                          const CredentialField = credentialFieldFor(
+                            field.fieldName,
+                          );
+                          return (
+                            <CredentialField
+                              key={field.fieldName}
+                              control={control}
+                              fieldName={field.fieldName}
+                              label={field.label}
+                              placeholder={field.placeholder}
+                              onChange={field.onChange}
+                              onFocusInput={field.onFocus}
+                              showJsonField={true}
+                              isJsonKey={false}
+                              {...commonAttribute}
+                            />
+                          );
+                        })}
                       </>
                     </ShowComponent>
                   </ShowComponent>
@@ -613,20 +699,25 @@ const AddCustomModalForm = ({
                     condition={modelProvider === MODEL_PROVIDERS.VERTEX_AI}
                   >
                     <>
-                      {vertexKeyFields.map((field) => (
-                        <APIKeyForm
-                          key={field.fieldName}
-                          control={control}
-                          fieldName={field.fieldName}
-                          label={field.label}
-                          placeholder={field.placeholder}
-                          isJsonKey={field.isJsonKey}
-                          onFocusInput={field.onFocus}
-                          showJsonField={true}
-                          readOnly={false}
-                          {...commonAttribute}
-                        />
-                      ))}
+                      {vertexKeyFields.map((field) => {
+                        const CredentialField = field.isJsonKey
+                          ? SecretJsonField
+                          : APIKeyForm;
+                        return (
+                          <CredentialField
+                            key={field.fieldName}
+                            control={control}
+                            fieldName={field.fieldName}
+                            label={field.label}
+                            placeholder={field.placeholder}
+                            isJsonKey={field.isJsonKey}
+                            onFocusInput={field.onFocus}
+                            showJsonField={true}
+                            readOnly={false}
+                            {...commonAttribute}
+                          />
+                        );
+                      })}
                     </>
                   </ShowComponent>
                   <ShowComponent
@@ -656,18 +747,23 @@ const AddCustomModalForm = ({
                           required
                           placeholder="Choose endpoint type"
                         />
-                        {azureKeyFields.map((field) => (
-                          <APIKeyForm
-                            key={field.fieldName}
-                            control={control}
-                            fieldName={field.fieldName}
-                            label={field.label}
-                            placeholder={field.placeholder}
-                            onChange={field.onChange}
-                            onFocusInput={field.onFocus}
-                            {...commonAttribute}
-                          />
-                        ))}
+                        {azureKeyFields.map((field) => {
+                          const CredentialField = credentialFieldFor(
+                            field.fieldName,
+                          );
+                          return (
+                            <CredentialField
+                              key={field.fieldName}
+                              control={control}
+                              fieldName={field.fieldName}
+                              label={field.label}
+                              placeholder={field.placeholder}
+                              onChange={field.onChange}
+                              onFocusInput={field.onFocus}
+                              {...commonAttribute}
+                            />
+                          );
+                        })}
                       </>
                     </ShowComponent>
                   </ShowComponent>
@@ -690,18 +786,23 @@ const AddCustomModalForm = ({
                     </ShowComponent>
                     <ShowComponent condition={currentTab !== TABS.JSON}>
                       <>
-                        {openAiKeyFields.map((field) => (
-                          <APIKeyForm
-                            key={field.fieldName}
-                            control={control}
-                            fieldName={field.fieldName}
-                            label={field.label}
-                            placeholder={field.placeholder}
-                            onFocusInput={field.onFocus}
-                            onChange={field.onChange}
-                            {...commonAttribute}
-                          />
-                        ))}
+                        {openAiKeyFields.map((field) => {
+                          const CredentialField = credentialFieldFor(
+                            field.fieldName,
+                          );
+                          return (
+                            <CredentialField
+                              key={field.fieldName}
+                              control={control}
+                              fieldName={field.fieldName}
+                              label={field.label}
+                              placeholder={field.placeholder}
+                              onFocusInput={field.onFocus}
+                              onChange={field.onChange}
+                              {...commonAttribute}
+                            />
+                          );
+                        })}
                       </>
                     </ShowComponent>
                   </ShowComponent>

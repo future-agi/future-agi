@@ -11,12 +11,15 @@ from agentcc.serializers.org_config import AgentccOrgConfigWriteSerializer
 from agentcc.services.config_push import _build_payload, _transform_guardrails
 
 
+# A team test's expected value changes (release-lead 11-14): a setting an
+# organization never saved is left out, not defaulted, so its gateway keeps
+# the node's own Fail Open and mode, as v1.58.0 did. None: the key is absent.
 @pytest.mark.unit
 @pytest.mark.parametrize("shape", ["rules", "checks-list", "checks-map"])
 @pytest.mark.parametrize("key", ["fail_open", "failOpen"])
 @pytest.mark.parametrize(
     "value,expected",
-    [(False, False), (True, True), ("false", False), ("true", True), (None, False)],
+    [(False, False), (True, True), ("false", False), ("true", True), (None, None)],
 )
 def test_transform_preserves_explicit_boolean(shape, key, value, expected):
     check = {"name": "test-hook", "enabled": True, "action": "block", "config": {}}
@@ -29,7 +32,8 @@ def test_transform_preserves_explicit_boolean(shape, key, value, expected):
         data["rules" if shape == "rules" else "checks"] = [check]
     before = deepcopy(data)
     wire = _transform_guardrails(data)
-    assert wire["fail_open"] is expected
+    assert wire.get("fail_open") is expected
+    assert ("fail_open" in wire) is (expected is not None)
     assert wire["pipeline_mode"] == "sequential"
     assert GuardrailConfig.model_validate(wire).fail_open is expected
     assert "failOpen" not in wire and "pipelineMode" not in wire
@@ -54,12 +58,15 @@ def test_invalid_pipeline_settings_are_refused(guardrails):
     assert "guardrails" in serializer.errors
 
 
+# A team test's expected value changes (release-lead 11-14): a setting an
+# organization never saved is left out, not defaulted, so its gateway keeps
+# the node's own Fail Open and mode, as v1.58.0 did. None: the key is absent.
 @pytest.mark.unit
 def test_omitted_failure_policy_requires_opt_in():
     serializer = AgentccOrgConfigWriteSerializer(data={"guardrails": {"checks": {}}})
     assert serializer.is_valid(), serializer.errors
-    assert serializer.validated_data["guardrails"]["fail_open"] is False
-    assert serializer.validated_data["guardrails"]["pipeline_mode"] == "parallel"
+    assert "fail_open" not in serializer.validated_data["guardrails"]
+    assert "pipeline_mode" not in serializer.validated_data["guardrails"]
 
 
 @pytest.mark.integration
@@ -177,15 +184,18 @@ def test_empty_checks_still_preserve_pipeline_policy(empty):
 # Saved versions can hold both spellings of a setting: earlier dashboard edits
 # added the canonical key next to the camelCase one. Each case is
 # (saved settings, fail_open read back, pipeline_mode read back).
+# A team test's expected value changes (release-lead 11-14): a setting an
+# organization never saved is left out, not defaulted, so its gateway keeps
+# the node's own Fail Open and mode, as v1.58.0 did. None: the key is absent.
 SAVED_WITH_BOTH_SPELLINGS = [
-    ({"fail_open": True, "failOpen": False}, False, "parallel"),
-    ({"fail_open": False, "failOpen": True}, False, "parallel"),
-    ({"fail_open": True, "failOpen": "not-a-boolean"}, False, "parallel"),
-    ({"fail_open": "true", "failOpen": True}, True, "parallel"),
-    ({"pipeline_mode": "sequential", "pipelineMode": "parallel"}, False, "sequential"),
-    ({"pipeline_mode": "parallel", "pipelineMode": "sequential"}, False, "parallel"),
-    ({"pipeline_mode": "unknown"}, False, "parallel"),
-    ({"pipeline_mode": None, "pipelineMode": "Sequential"}, False, "sequential"),
+    ({"fail_open": True, "failOpen": False}, False, None),
+    ({"fail_open": False, "failOpen": True}, False, None),
+    ({"fail_open": True, "failOpen": "not-a-boolean"}, False, None),
+    ({"fail_open": "true", "failOpen": True}, True, None),
+    ({"pipeline_mode": "sequential", "pipelineMode": "parallel"}, None, "sequential"),
+    ({"pipeline_mode": "parallel", "pipelineMode": "sequential"}, None, "parallel"),
+    ({"pipeline_mode": "unknown"}, None, "parallel"),
+    ({"pipeline_mode": None, "pipelineMode": "Sequential"}, None, "sequential"),
 ]
 
 
@@ -199,9 +209,12 @@ def _saved_version(organization, guardrails, version=1, is_active=True):
 
 
 def _assert_canonical(settings, fail_open, pipeline_mode):
+    """None: the setting was never saved, so the key is absent."""
     assert "failOpen" not in settings and "pipelineMode" not in settings
-    assert settings["fail_open"] is fail_open
-    assert settings["pipeline_mode"] == pipeline_mode
+    assert settings.get("fail_open") is fail_open
+    assert ("fail_open" in settings) is (fail_open is not None)
+    assert settings.get("pipeline_mode") == pipeline_mode
+    assert ("pipeline_mode" in settings) is (pipeline_mode is not None)
 
 
 @pytest.mark.unit
@@ -221,8 +234,14 @@ def test_saved_reader_matches_write_reader_where_writes_are_accepted(
         "pipelineMode": mode_alias,
     }
     saved = saved_pipeline_settings(data)
-    assert saved["fail_open"] in (True, False)
-    assert saved["pipeline_mode"] in ("parallel", "sequential")
+    # A team test's expected value changes (release-lead 11-14): a setting
+    # with no value in either spelling is left out.
+    assert ("fail_open" in saved) is (
+        fail_open is not None or fail_open_alias is not None
+    )
+    assert ("pipeline_mode" in saved) is (mode is not None or mode_alias is not None)
+    assert saved.get("fail_open", False) in (True, False)
+    assert saved.get("pipeline_mode", "parallel") in ("parallel", "sequential")
     try:
         expected = pipeline_settings(data)
     except ValueError:
@@ -289,7 +308,7 @@ def test_history_with_both_spellings_lists(
     by_version = {row["version"]: row for row in history.json()["result"]}
     assert set(by_version) == {1, 2}
     _assert_canonical(by_version[1]["guardrails"], fail_open, pipeline_mode)
-    _assert_canonical(by_version[2]["guardrails"], True, "parallel")
+    _assert_canonical(by_version[2]["guardrails"], True, None)
 
 
 @pytest.mark.integration
@@ -382,7 +401,9 @@ def test_other_settings_save_while_active_version_has_both_spellings(
     assert config.version == 2
     assert config.routing == {"strategy": "round_robin"}
     wire = _build_payload(str(user.organization_id), config)["guardrails"]
-    _assert_canonical(wire, False, "parallel")
+    # A team test's expected value changes (release-lead 11-14): a setting the
+    # organization never saved is not stored or pushed (None: absent).
+    _assert_canonical(wire, False, None)
 
 
 @pytest.mark.integration
@@ -414,13 +435,15 @@ def test_guardrail_patch_on_saved_spellings_is_stored_canonical(
 @pytest.mark.parametrize(
     "saved,patch_value,fail_open,pipeline_mode",
     [
-        ({}, {"failOpen": True}, True, "parallel"),
-        ({}, {"pipelineMode": "sequential"}, False, "sequential"),
-        ({"fail_open": False}, {"failOpen": True}, True, "parallel"),
+        # A team test's expected value changes (release-lead 11-14): a setting
+        # the organization never saved is not stored or pushed (None: absent).
+        ({}, {"failOpen": True}, True, None),
+        ({}, {"pipelineMode": "sequential"}, None, "sequential"),
+        ({"fail_open": False}, {"failOpen": True}, True, None),
         (
             {"pipeline_mode": "sequential"},
             {"pipelineMode": "parallel"},
-            False,
+            None,
             "parallel",
         ),
         ({"failOpen": True}, {"pipelineMode": "sequential"}, True, "sequential"),

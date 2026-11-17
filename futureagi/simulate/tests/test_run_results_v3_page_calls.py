@@ -67,7 +67,10 @@ def _whole_calls(page: dict[str, Any]) -> list[CallExecution]:
 
 
 def _reference_row_dimensions(
-    calls: list[CallExecution], extra_row_ids: set[str] | None = None
+    calls: list[CallExecution],
+    extra_row_ids: set[str] | None = None,
+    *,
+    organization_id,
 ) -> dict[str, dict[str, Any]]:
     row_ids = {
         str(call.row_id or (call.call_metadata or {}).get("row_id"))
@@ -79,8 +82,12 @@ def _reference_row_dimensions(
     if not row_ids:
         return {}
     dimensions: dict[str, dict[str, Any]] = defaultdict(dict)
-    cells = Cell.all_objects.filter(
-        row_id__in=row_ids, column__name__in=list(DIMENSION_COLUMNS)
+    # Live cells of live rows of the run's own organization (T6 #7d).
+    cells = Cell.objects.filter(
+        row__deleted=False,
+        row__dataset__organization_id=organization_id,
+        row_id__in=row_ids,
+        column__name__in=list(DIMENSION_COLUMNS),
     ).select_related("column")
     for cell in cells:
         dimensions[str(cell.row_id)][cell.column.name] = cell.value
@@ -508,12 +515,14 @@ def test_slim_page_leaves_another_runs_call_to_its_own_run(
 
 @pytest.mark.django_db
 def test_row_dimensions_match_the_whole_cell_read(run):
-    _, calls, _, _ = run
+    execution, calls, _, _ = run
+    org = execution.run_test.organization_id
     extra = {str(row_id) for row_id in Row.objects.values_list("id", flat=True)}
-    expected = _reference_row_dimensions(calls, extra)
-    assert _dumps(_row_dimensions(calls, extra)) == _dumps(expected)
-    assert _row_dimensions(calls, extra)[str(calls[0].row_id)]["goal"] == "Older goal"
-    assert _row_dimensions([calls[2]]) == {}
+    expected = _reference_row_dimensions(calls, extra, organization_id=org)
+    dimensions = _row_dimensions(calls, extra, execution=execution)
+    assert _dumps(dimensions) == _dumps(expected)
+    assert dimensions[str(calls[0].row_id)]["goal"] == "Older goal"
+    assert _row_dimensions([calls[2]], execution=execution) == {}
 
 
 @pytest.mark.django_db

@@ -1,4 +1,9 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { fetchAllObserveProjects } from "src/api/project/observe-project-list";
 
@@ -61,7 +66,9 @@ export const useErrorFeedList = (params, options = {}) => {
       axios.get(endpoints.errorFeed.list, { params, signal }),
     select: (res) => res?.data?.result,
     staleTime: 30 * 1000,
-    keepPreviousData: true,
+    // Keep the current rows on screen while a new search, filter, sort or
+    // page loads, instead of dropping back to the loading state.
+    placeholderData: keepPreviousData,
   });
 };
 
@@ -152,7 +159,8 @@ export const useErrorFeedTraces = (clusterId, params = {}, options = {}) => {
     queryFn: () => axios.get(endpoints.errorFeed.traces(clusterId), { params }),
     select: (res) => res?.data?.result,
     enabled,
-    keepPreviousData: true,
+    // Keep the current page on screen while the next one loads.
+    placeholderData: keepPreviousData,
   });
 };
 
@@ -335,6 +343,8 @@ export const useCreateLinearIssue = () => {
         queryKey: KEYS.sidebar(variables.clusterId),
       });
     },
+    // The team picker (LinearTeamPicker) toasts the refusal itself, once.
+    meta: { errorHandled: true },
   });
 };
 
@@ -355,7 +365,9 @@ export const useUpdateErrorFeedIssue = () => {
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ["errorFeed", "list"] });
       queryClient.invalidateQueries({ queryKey: ["errorFeed", "stats"] });
-      queryClient.invalidateQueries({
+      // Returned so a caller's onSettled runs once the issue has been read
+      // again, so a picked value does not flash back while that read runs.
+      return queryClient.invalidateQueries({
         queryKey: KEYS.detail(variables.clusterId),
       });
     },

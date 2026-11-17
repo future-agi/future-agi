@@ -27,6 +27,7 @@ from agentic_eval.core_evals.run_prompt.runprompt_handlers.base_handler import (
 from agentic_eval.core_evals.run_prompt.runprompt_handlers.utils.adapters import (
     RunPromptAdapter,
 )
+from model_hub.utils.model_endpoints import _capture_llm_messages
 
 logger = structlog.get_logger(__name__)
 
@@ -98,6 +99,7 @@ class CustomTTSHandler(BaseModelHandler):
             )
 
             # Execute with retry on timeout
+            _capture_llm_messages({})
             s3_url, value_info = self._retry_on_timeout(
                 speech_handler,
                 self._adapter,
@@ -150,6 +152,7 @@ class CustomTTSHandler(BaseModelHandler):
             )
 
             # Execute with async retry (uses asyncio.sleep instead of blocking time.sleep)
+            _capture_llm_messages({})
             s3_url, value_info = await self._retry_on_timeout_async(
                 speech_handler,
                 self._adapter,

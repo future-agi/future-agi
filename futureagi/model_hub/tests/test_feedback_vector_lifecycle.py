@@ -94,6 +94,7 @@ def embed_feedback(manager, feedback, inputs=("prompt", "response")):
         insert=True,
         eval_id=str(feedback.eval_template_id),
         organization_id=str(feedback.organization_id),
+        workspace_id="vector-lifecycle-workspace",
     )
 
 
@@ -110,6 +111,7 @@ def formatted_context(manager, feedback):
         inputs=["What is the identifier?", "The identifier is ABC."],
         input_cols=["prompt", "response"],
         organization_id=str(feedback.organization_id),
+        workspace_id="vector-lifecycle-workspace",
     )
     return str(
         manager.process_examples(
@@ -352,8 +354,9 @@ def test_runtime_grounding_retains_feedback_and_tenant_scope(
 
     feedback = feedback_factory(explanation="owning tenant correction")
     embed_feedback(vector_manager, feedback)
-    # Deliberately give another tenant the same eval/item input shape. Retrieval
-    # must still exclude its feedback, even with workspace filtering disabled.
+    # Deliberately give another organization the same eval/item input shape in
+    # the same workspace: only the organization filter can exclude its
+    # feedback.
     vector_manager.db_client.upsert_vector(
         "feedbacks",
         str(feedback.eval_template_id),
@@ -366,6 +369,7 @@ def test_runtime_grounding_retains_feedback_and_tenant_scope(
             "feedback_value": "Passed",
             "input_type": "text",
             "organization_id": str(uuid.uuid4()),
+            "workspace_id": "vector-lifecycle-workspace",
         },
         ["item_id"],
     )
@@ -391,7 +395,10 @@ def test_runtime_grounding_retains_feedback_and_tenant_scope(
         "ground_truth_blocks": [{"type": "text", "text": "runtime ground truth"}],
     }
     params = prepare_run_params(
-        inputs, template, organization_id=str(feedback.organization_id)
+        inputs,
+        template,
+        organization_id=str(feedback.organization_id),
+        workspace_id="vector-lifecycle-workspace",
     )
     assert "owning tenant correction" in str(params["few_shots"])
     assert "other tenant correction" not in str(params["few_shots"])
@@ -454,6 +461,7 @@ def test_feedback_identity_filter_runs_before_ranking(
         insert=True,
         eval_id=str(own.eval_template_id),
         organization_id=str(own.organization_id),
+        workspace_id="vector-lifecycle-workspace",
     )
     identities = {
         "own": [str(own.id)],
@@ -473,6 +481,7 @@ def test_feedback_identity_filter_runs_before_ranking(
             inputs=["What is the identifier?", "The identifier is ABC."],
             input_cols=["prompt", "response"],
             organization_id=str(own.organization_id),
+            workspace_id="vector-lifecycle-workspace",
             top_k=1,
         )
     finally:
@@ -491,3 +500,74 @@ def test_feedback_identity_filter_runs_before_ranking(
     )
     assert "selected correction" in context
     assert "other correction" not in context
+
+
+@pytest.mark.integration
+def test_feedback_identity_limit_is_in_the_same_scoped_query(
+    feedback_factory, vector_manager, monkeypatch
+):
+    """Another feedback row of the same evaluation and workspace, closer to the
+    query, is never read when the retrieval is limited to one feedback row: the
+    id limit is part of the same query as the organization and workspace scope."""
+    own = feedback_factory(explanation="selected correction")
+    other = feedback_factory(explanation="other correction")
+    monkeypatch.setattr(
+        embedding_manager.model_manager,
+        "text_model",
+        lambda text: [0.8, 0.6] if text.startswith("Selected") else [1.0, 0.0],
+    )
+    embed_feedback(vector_manager, other)
+    vector_manager.data_formatter(
+        row_dict={
+            "feedback_id": str(own.id),
+            "prompt": "Selected identifier question?",
+            "response": "Selected identifier answer.",
+            "feedback_comment": own.explanation,
+            "feedback_value": own.value,
+        },
+        inputs_formater=["prompt", "response"],
+        insert=True,
+        eval_id=str(own.eval_template_id),
+        organization_id=str(own.organization_id),
+        workspace_id="vector-lifecycle-workspace",
+    )
+    original_client = vector_manager.db_client
+    limited = DatasetFeedbackVectorDB([str(own.id)])
+    queries = []
+    read = limited.execute_read
+
+    def recording_read(query, params=None, **kwargs):
+        queries.append((query, params or {}))
+        return read(query, params, **kwargs)
+
+    limited.execute_read = recording_read
+    vector_manager.db_client = limited
+    try:
+        examples = vector_manager.retrieve_avg_rag_based_examples(
+            eval_id=str(own.eval_template_id),
+            inputs=["What is the identifier?", "The identifier is ABC."],
+            input_cols=["prompt", "response"],
+            organization_id=str(own.organization_id),
+            workspace_id="vector-lifecycle-workspace",
+            top_k=1,
+        )
+    finally:
+        vector_manager.db_client.close()
+        vector_manager.db_client = original_client
+
+    context = str(
+        vector_manager.process_examples(
+            examples,
+            inputs=["prompt", "response"],
+            feedback_col_name="feedback_comment",
+            corrected_label_col_name="feedback_value",
+        )
+    )
+    assert "selected correction" in context
+    assert "other correction" not in context
+    searches = [(q, p) for q, p in queries if "cosineDistance" in q]
+    assert searches
+    for query, params in searches:
+        assert "id IN %(feedback_vector_ids)s" in query
+        assert "%(feedback_workspace_id)s" in query
+        assert params["feedback_workspace_id"] == "vector-lifecycle-workspace"

@@ -7,7 +7,7 @@
 #
 # Argo CD runs `helm template`, where lookup cannot preserve generated keys.
 # Pre-create futureagi-app with SECRET_KEY, INTEGRATION_ENCRYPTION_KEY,
-# AGENTCC_INTERNAL_API_KEY, AGENTCC_ADMIN_TOKEN, PROPERTY_CATALOG_API_PASSWORD,
+# FI_API_SECRET_PEPPER, AGENTCC_INTERNAL_API_KEY, AGENTCC_ADMIN_TOKEN, PROPERTY_CATALOG_API_PASSWORD,
 # PROPERTY_CATALOG_CONSUMER_PASSWORD and AGENTCC_WEBHOOK_SECRET. Keep all other
 # credentials in existing Secrets too; never commit their values here.
 # Apply argocd-project.yaml and create the destination namespace separately.

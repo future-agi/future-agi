@@ -62,9 +62,9 @@ func TestNew_DefaultValues(t *testing.T) {
 	if p.httpClient.Timeout != 60*time.Second {
 		t.Errorf("timeout = %v, want %v", p.httpClient.Timeout, 60*time.Second)
 	}
-	// Default semaphore capacity is 100.
-	if cap(p.semaphore) != 100 {
-		t.Errorf("semaphore cap = %d, want 100", cap(p.semaphore))
+	// Default slot capacity (remote max_concurrent) is 1024.
+	if p.slots.Cap() != 1024 {
+		t.Errorf("semaphore cap = %d, want 1024", p.slots.Cap())
 	}
 	// Default api-version is 2024-10-21.
 	if p.apiVersion != "2024-10-21" {
@@ -92,8 +92,8 @@ func TestNew_CustomValues(t *testing.T) {
 	if p.httpClient.Timeout != 30*time.Second {
 		t.Errorf("timeout = %v, want %v", p.httpClient.Timeout, 30*time.Second)
 	}
-	if cap(p.semaphore) != 50 {
-		t.Errorf("semaphore cap = %d, want 50", cap(p.semaphore))
+	if p.slots.Cap() != 50 {
+		t.Errorf("semaphore cap = %d, want 50", p.slots.Cap())
 	}
 	if p.apiVersion != "2025-01-01" {
 		t.Errorf("apiVersion = %q, want %q", p.apiVersion, "2025-01-01")
@@ -913,11 +913,12 @@ func TestIntegration_ChatCompletion_HTTPClientTimeout(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected *models.APIError, got %T: %v", err, err)
 	}
-	// The HTTP client timeout fires while ctx.Err() is still nil. It is a
-	// timeout all the same, and reporting it as an upstream failure makes it a
-	// 502 that an SDK retries.
-	if apiErr.Status != http.StatusGatewayTimeout {
-		t.Errorf("status = %d, want %d", apiErr.Status, http.StatusGatewayTimeout)
+	// The HTTP client's own timeout fires while ctx.Err() is still nil. It is
+	// the provider not answering in time, answered as the gateway timeout the
+	// context deadline gets (on_timeout acts on it), never as an upstream
+	// failure that an SDK retries as a 502.
+	if apiErr.Status != http.StatusGatewayTimeout || apiErr.Type != models.ErrTypeGatewayTimeout {
+		t.Errorf("status = %d type %q, want %d %s", apiErr.Status, apiErr.Type, http.StatusGatewayTimeout, models.ErrTypeGatewayTimeout)
 	}
 }
 

@@ -1,5 +1,30 @@
 from django.db import migrations, models
 
+UPDATE_SAFETY = {
+    "schema_version": 1,
+    "risk_classes": ["data_migration"],
+    "tables": ["postgres:simulate_hosted_harness_job"],
+    "mitigation": (
+        "forward adds a name column (constant default '') to "
+        "simulate_hosted_harness_job, then derives a name for each row whose name is "
+        "'' from its payload (metadata agent_name or name, else the last segment of "
+        "source.repository, else simulation- and the first 8 characters of the id), at "
+        "most 255 characters, reading with iterator(chunk_size=500) and writing with "
+        "bulk_update 500 rows at a time on the migration's own connection. A database "
+        "that applied 1.58.0 already has this migration recorded and does not run it "
+        "again. On a fresh install simulate_hosted_harness_job has no rows when it "
+        "runs, so nothing is written. Safe to run again: only rows whose name is still "
+        "'' are selected, and the migration is atomic, so a failed run rolls back "
+        "whole. The reverse sets name to '' on every row before the column is dropped. "
+        "Row scale: one row per hosted harness job; not a registered high-volume "
+        "table."
+    ),
+    "reviewer": "<actual-github-login>",
+    "review": "<actual-PR-review-discussion-permalink>",
+    "large_volume_rehearsal": True,
+}
+
+
 _CHUNK = 500
 
 
@@ -34,17 +59,17 @@ def backfill_names(apps, schema_editor):
     """
     HostedHarnessJob = apps.get_model("simulate", "HostedHarnessJob")
     pending = []
-    for job in HostedHarnessJob.objects.filter(name="").iterator(chunk_size=_CHUNK):
+    for job in HostedHarnessJob.objects.using(schema_editor.connection.alias).filter(name="").iterator(chunk_size=_CHUNK):
         try:
             job.name = _derived_name(job)
         except (AttributeError, TypeError):
             job.name = f"simulation-{str(job.id)[:8]}"
         pending.append(job)
         if len(pending) >= _CHUNK:
-            HostedHarnessJob.objects.bulk_update(pending, ["name"])
+            HostedHarnessJob.objects.using(schema_editor.connection.alias).bulk_update(pending, ["name"])
             pending = []
     if pending:
-        HostedHarnessJob.objects.bulk_update(pending, ["name"])
+        HostedHarnessJob.objects.using(schema_editor.connection.alias).bulk_update(pending, ["name"])
 
 
 def clear_names(apps, schema_editor):

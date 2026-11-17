@@ -1,3 +1,4 @@
+import { formatExactMoney } from "src/sections/common/format/money";
 import Iconify from "src/components/iconify";
 import PropTypes from "prop-types";
 
@@ -12,7 +13,7 @@ const formatDuration = (ms) => {
   return `${seconds}s`;
 };
 
-const formatCost = (cost) => `$${Number(cost).toFixed(4)}`;
+const formatCost = formatExactMoney;
 
 /**
  * @param {{ duration: number, tokens: number, cost: number }} props

@@ -1,0 +1,46 @@
+# Baseten documents API-key authentication for headless agents alongside OAuth.
+# Its --transport http client configuration selects Streamable HTTP.
+schema: "connector-manifest/v1#provider"
+app: baseten
+id: api-key
+version: 1.1.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://api.baseten.co/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: Baseten management API key
+      help: "Create a dedicated Baseten API key with management permissions for headless access. The MCP server connects to the workspace that owns the key. Supply the key without the Bearer prefix."
+      helpUrl: https://docs.baseten.co/agent-setup
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_metered
+  source: https://docs.baseten.co/inference/model-apis/pricing-and-limits
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://docs.baseten.co/agent-setup
+    fetchedAt: 2026-11-09
+  - fact: transport.variant
+    url: https://docs.baseten.co/agent-setup
+    fetchedAt: 2026-11-09
+  - fact: auth.kind
+    url: https://docs.baseten.co/agent-setup
+    fetchedAt: 2026-11-09
+  - fact: auth.credentialParts
+    url: https://docs.baseten.co/agent-setup
+    fetchedAt: 2026-11-09

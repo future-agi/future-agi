@@ -1,17 +1,31 @@
+import {
+  NUMERIC_BUTTON_CHOICES_MESSAGE,
+  hasTooManyButtonChoices,
+} from "src/sections/annotations/labels/numeric-button-choices";
 import { getNumberValidation } from "src/utils/validation";
 import { z } from "zod";
 
-const createTextAnnotationSettingsSchema = (originalMin, originalMax) =>
+const createTextAnnotationSettingsSchema = (
+  originalMin,
+  originalMax,
+  storedPlaceholderEmpty = false,
+) =>
   z
     .object({
-      placeholder: z.string().min(1, "Placeholder is required"),
+      // A label stored with an empty placeholder can be saved with it empty;
+      // a new label, or one stored with a placeholder, needs one.
+      placeholder: storedPlaceholderEmpty
+        ? z.string()
+        : z.string().min(1, "Placeholder is required"),
+      // Max has no upper limit of its own, as the server sets none.
       maxLength: getNumberValidation("Max length is required", {
         integerOnly: true,
         positive: true,
       }),
+      // Min may be 0.
       minLength: getNumberValidation("Min length is required", {
         integerOnly: true,
-        positive: true,
+        zeroAndPositive: true,
       }),
     })
     .superRefine((data, ctx) => {
@@ -56,14 +70,6 @@ const createTextAnnotationSettingsSchema = (originalMin, originalMax) =>
         });
       }
 
-      if (data.maxLength && Number(data.maxLength) > 255) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: "Max length cannot exceed 255 characters",
-          path: ["maxLength"],
-        });
-      }
-
       if (originalMin !== undefined && Number(data.minLength) > originalMin) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
@@ -88,17 +94,19 @@ const TextAnnotationSettingsSchema = createTextAnnotationSettingsSchema();
 const createNumericAnnotationSettingsSchema = (originalMin, originalMax) =>
   z
     .object({
+      // The same words and rules as the other numeric label form: decimals
+      // are allowed, as the server allows them.
       min: getNumberValidation("Min is required", {
-        integerOnly: true,
         zeroAndPositive: true,
+        zeroAndPositiveMessage: "Enter a value of 0 or more",
       }),
       max: getNumberValidation("Max is required", {
-        integerOnly: true,
         positive: true,
+        positiveMessage: "Enter a value above 0",
       }),
       stepSize: getNumberValidation("Step size is required", {
-        integerOnly: true,
         positive: true,
+        positiveMessage: "Enter a value above 0",
       }),
       displayType: z.string().min(1, "Display type is required"),
     })
@@ -107,6 +115,21 @@ const createNumericAnnotationSettingsSchema = (originalMin, originalMax) =>
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           message: "Step size cannot be greater than max value",
+          path: ["stepSize"],
+        });
+      }
+
+      // A button scale shows at most 11 choices; a label saved earlier with
+      // more still draws, but an edit to it is refused until the step or the
+      // display type changes.
+      if (
+        data.displayType === "button" &&
+        Number(data.stepSize) > 0 &&
+        hasTooManyButtonChoices(data.min, data.max, data.stepSize)
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: NUMERIC_BUTTON_CHOICES_MESSAGE,
           path: ["stepSize"],
         });
       }
@@ -161,8 +184,10 @@ const createNumericAnnotationSettingsSchema = (originalMin, originalMax) =>
 
 const NumericAnnotationSettingsSchema = createNumericAnnotationSettingsSchema();
 
+// A new label has 5 stars. A stored label keeps the count it was saved with,
+// a whole number from 1 as the server allows; this form has no field for it.
 const StarAnnotationSettingsSchema = z.object({
-  noOfStars: z.literal(5),
+  noOfStars: z.number().int().min(1),
 });
 
 const CategoricalAnnotationSettingsSchema = z.object({
@@ -217,8 +242,11 @@ export const createCreateEditLabelValidationSchema = (editData) => {
   if (editData.type === "text") {
     return buildDiscriminatedUnion(
       createTextAnnotationSettingsSchema(
-        Number(editData.settings?.minLength),
+        // A Min stored below 0 can be raised to 0, the lowest Min this form
+        // takes. A label stored without a Min keeps no Min check.
+        Math.max(0, Number(editData.settings?.minLength)),
         Number(editData.settings?.maxLength),
+        editData.settings?.placeholder === "",
       ),
       NumericAnnotationSettingsSchema,
     );

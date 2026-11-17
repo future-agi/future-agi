@@ -1,0 +1,11 @@
+{
+  "http": {
+    "method": "GET",
+    "url": "https://api.example.com/agentcc/mcp/service/workspaces/3f6c1e2a-8b4d-4c6e-9a1f-2b7d5e8c0a14/agent-keys/?mint_idempotency_key=01a160b1-6180-7000-8000-000000000001",
+    "headers": {
+      "x-api-key": "{{EE_SERVICE_API_KEY}}",
+      "x-secret-key": "{{EE_SERVICE_SECRET_KEY}}"
+    }
+  },
+  "body": null
+}

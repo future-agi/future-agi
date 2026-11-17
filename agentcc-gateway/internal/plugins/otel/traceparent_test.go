@@ -102,7 +102,7 @@ func spanFor(t *testing.T, p *Plugin, rc *models.RequestContext) *otelpkg.Span {
 	if !ok {
 		t.Fatal("no span was stored for the request")
 	}
-	return v.(*otelpkg.Span)
+	return v.(*pendingSpan).span
 }
 
 func TestProcessRequest_TracePropagationDisabled(t *testing.T) {

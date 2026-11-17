@@ -20,6 +20,12 @@
  * strip, no AI query box, no section caption.
  * A field may carry `choiceLabels: {value: label}` when its `choices` are
  * opaque keys (enum values, UUIDs) that should never be shown to the user.
+ * A field that narrows `operators` may also carry
+ * `unavailableOperators: {operator: reason}`: those operators stay in the
+ * list, turned off, with the reason under them.
+ * A text field may carry `operatorKeys: true` when the caller answers each
+ * operator on its own key: `<field>` (Equals), `<field>_not`,
+ * `<field>_contains`, `<field>_starts_with` and `<field>_not_contains`.
  */
 import {
   Box,
@@ -95,6 +101,75 @@ function getOperators(fieldDef) {
       ? fieldDef.operators
       : null;
   return allowed ? base.filter((op) => allowed.includes(op.value)) : base;
+}
+
+// What the operator list shows: every operator the field offers, plus the ones
+// it names in `unavailableOperators`, which carry their reason and can't be
+// picked. A new row never starts on one (defaultOperator reads getOperators).
+function operatorOptions(fieldDef) {
+  const offered = getOperators(fieldDef).map((op) => op.value);
+  const unavailable =
+    (typeof fieldDef === "object" && fieldDef?.unavailableOperators) || {};
+  const fieldType = typeof fieldDef === "string" ? fieldDef : fieldDef?.type;
+  const base = fieldType === "enum" ? ENUM_OPERATORS : STRING_OPERATORS;
+  return base
+    .filter((op) => offered.includes(op.value) || unavailable[op.value])
+    .map((op) =>
+      offered.includes(op.value)
+        ? op
+        : { ...op, unavailableReason: unavailable[op.value] },
+    );
+}
+
+// A new row starts on the first operator its field offers, so a field that
+// narrows `operators` never shows one it can't answer.
+function defaultOperator(fieldDef) {
+  const offered = getOperators(fieldDef);
+  // A field whose operators each have their own key starts on Equals, the bare key.
+  if (fieldDef?.operatorKeys && offered.some((op) => op.value === "equals")) {
+    return "equals";
+  }
+  return offered[0]?.value ?? (fieldDef?.type === "enum" ? "is" : "contains");
+}
+
+// A field with `operatorKeys` applies each operator on its own key: Equals on
+// `<field>`, and `<field>_not`, `<field>_contains`, `<field>_starts_with` or
+// `<field>_not_contains` for the rest. Longest suffix first, so a reopened
+// `<field>_not_contains` is never read as `<field>_not` or `<field>_contains`.
+const OPERATOR_KEY_SUFFIXES = [
+  ["_not_contains", "not_contains"],
+  ["_starts_with", "starts_with"],
+  ["_contains", "contains"],
+  ["_not", "not_equals"],
+];
+
+function operatorKey(row, fieldDef) {
+  if (fieldDef?.operatorKeys) {
+    const match = OPERATOR_KEY_SUFFIXES.find(([, op]) => op === row.operator);
+    return `${row.field}${match ? match[0] : ""}`;
+  }
+  const isNeg = row.operator === "is_not" || row.operator === "not_equals";
+  return isNeg ? `${row.field}_not` : row.field;
+}
+
+// The field and operator an applied key stands for, when its field has
+// `operatorKeys`; null for any other key.
+function splitOperatorKey(key, fieldMap) {
+  for (const [suffix, operator] of OPERATOR_KEY_SUFFIXES) {
+    const field = key.endsWith(suffix) ? key.slice(0, -suffix.length) : null;
+    if (field && fieldMap[field]?.operatorKeys) return { field, operator };
+  }
+  return null;
+}
+
+// A reopened `<field>_not` key comes back on the field's own negating operator.
+function negatedOperator(fieldDef) {
+  if (!fieldDef) return "is_not";
+  return (
+    getOperators(fieldDef).find(
+      (op) => op.value === "is_not" || op.value === "not_equals",
+    )?.value ?? "is_not"
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -512,7 +587,7 @@ function FilterRow({
   // No field to bind to (empty catalogue) — render nothing rather than reading
   // `.type` off undefined. The Basic tab shows an empty-state in this case.
   if (!fieldDef) return null;
-  const operators = getOperators(fieldDef);
+  const operators = operatorOptions(fieldDef);
 
   return (
     <Stack direction="row" alignItems="center" gap={0.5}>
@@ -523,7 +598,7 @@ function FilterRow({
           const newField = fieldMap[e.target.value];
           onChange(index, {
             field: e.target.value,
-            operator: newField?.type === "enum" ? "is" : "contains",
+            operator: defaultOperator(newField),
             value: newField?.type === "enum" ? [] : "",
           });
         }}
@@ -551,11 +626,33 @@ function FilterRow({
         }
         sx={{ minWidth: 110, fontSize: 12, height: 30 }}
       >
-        {operators.map((op) => (
-          <MenuItem key={op.value} value={op.value}>
-            {op.label}
-          </MenuItem>
-        ))}
+        {operators.map((op) =>
+          op.unavailableReason ? (
+            // Turned off, but the reason under it stays readable.
+            <MenuItem
+              key={op.value}
+              value={op.value}
+              disabled
+              sx={{
+                display: "block",
+                color: "text.disabled",
+                "&.Mui-disabled": { opacity: 1 },
+              }}
+            >
+              {op.label}
+              <Typography
+                component="span"
+                sx={{ display: "block", fontSize: 11, color: "text.secondary" }}
+              >
+                {op.unavailableReason}
+              </Typography>
+            </MenuItem>
+          ) : (
+            <MenuItem key={op.value} value={op.value}>
+              {op.label}
+            </MenuItem>
+          ),
+        )}
       </Select>
 
       {fieldDef.type === "enum" ? (
@@ -605,15 +702,14 @@ FilterRow.propTypes = {
 
 // Collapse rows into the `{field: [values]}` shape callers receive. Rows with
 // no value drop out; an all-empty set applies as null rather than `{}`.
-const buildFilterResult = (rows) => {
+const buildFilterResult = (rows, fieldMap = {}) => {
   const result = {};
   for (const row of rows) {
     const val = row.value;
     const isEmpty = !val || (Array.isArray(val) && val.length === 0);
     if (isEmpty) continue;
     const values = Array.isArray(val) ? val : [val];
-    const isNeg = row.operator === "is_not" || row.operator === "not_equals";
-    const key = isNeg ? `${row.field}_not` : row.field;
+    const key = operatorKey(row, fieldMap[row.field]);
     if (!result[key]) result[key] = [];
     // Rows sharing a key merge, so a value picked in two of them would
     // otherwise go out twice.
@@ -705,13 +801,14 @@ const FilterPanel = ({
     parseQuery: aiParseQuery,
     loading: aiLoading,
     error: aiError,
+    limitMessage: aiLimitMessage,
   } = useAIFilter(aiSchema);
 
   const defaultRow = useMemo(() => {
     const first = filterFields[0];
     return {
       field: first?.value || "",
-      operator: first?.type === "enum" ? "is" : "contains",
+      operator: defaultOperator(first),
       value: "",
     };
   }, [filterFields]);
@@ -731,15 +828,14 @@ const FilterPanel = ({
       // Convert object-style filters to rows
       const initial = [];
       for (const [key, val] of Object.entries(currentFilters)) {
-        const isNeg = key.endsWith("_not");
-        const field = isNeg ? key.slice(0, -4) : key;
+        const split = splitOperatorKey(key, fieldMap);
+        const isNeg = !split && key.endsWith("_not");
+        const field = split ? split.field : isNeg ? key.slice(0, -4) : key;
         const fieldDef = fieldMap[field];
         if (Array.isArray(val)) {
-          const op = isNeg
-            ? "is_not"
-            : fieldDef?.type === "enum"
-              ? "is"
-              : "contains";
+          const op =
+            split?.operator ??
+            (isNeg ? negatedOperator(fieldDef) : defaultOperator(fieldDef));
           if (fieldDef?.type === "enum") {
             // An enum row holds the whole set and shows it as chips, so keep
             // the values together — one row per value would come back as a
@@ -754,7 +850,7 @@ const FilterPanel = ({
         } else if (val) {
           initial.push({
             field,
-            operator: isNeg ? "not_equals" : "contains",
+            operator: split?.operator ?? (isNeg ? "not_equals" : "contains"),
             value: val,
           });
         }
@@ -768,7 +864,9 @@ const FilterPanel = ({
     setRows(initialRows);
     // Seed the guard with what these rows would apply to, so merely opening
     // the panel doesn't re-emit filters the caller already holds.
-    lastAppliedRef.current = serializeFilters(buildFilterResult(initialRows));
+    lastAppliedRef.current = serializeFilters(
+      buildFilterResult(initialRows, fieldMap),
+    );
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-apply on row changes (debounced)
@@ -776,7 +874,7 @@ const FilterPanel = ({
     if (!open) return;
     if (applyTimerRef.current) clearTimeout(applyTimerRef.current);
     applyTimerRef.current = setTimeout(() => {
-      const result = buildFilterResult(rows);
+      const result = buildFilterResult(rows, fieldMap);
       // `result` is rebuilt on every run, so callers keying off its identity
       // (an AG Grid datasource, a memo) would refetch even when nothing
       // changed. Compare by value and stay quiet when it hasn't.
@@ -813,7 +911,7 @@ const FilterPanel = ({
       ...prev,
       {
         field: nextAvailableField.value,
-        operator: nextAvailableField.type === "enum" ? "is" : "contains",
+        operator: defaultOperator(nextAvailableField),
         value: nextAvailableField.type === "enum" ? [] : "",
       },
     ]);
@@ -950,7 +1048,7 @@ const FilterPanel = ({
             variant="caption"
             sx={{ fontSize: 11, color: "text.secondary", px: 0.5 }}
           >
-            AI unavailable, using local parser
+            {aiLimitMessage || "AI unavailable, using local parser"}
           </Typography>
         )}
 
@@ -1095,6 +1193,12 @@ FilterPanel.propTypes = {
       choices: PropTypes.arrayOf(PropTypes.string),
       // {choiceValue: humanLabel} — when set, the UI shows only the label.
       choiceLabels: PropTypes.object,
+      // Operators the field answers; others are left out of the list.
+      operators: PropTypes.arrayOf(PropTypes.string),
+      // {operator: reason} — listed, turned off, with the reason.
+      unavailableOperators: PropTypes.objectOf(PropTypes.string),
+      // The operator is written into the applied key (`<field>_contains`).
+      operatorKeys: PropTypes.bool,
     }),
   ).isRequired,
   currentFilters: PropTypes.oneOfType([PropTypes.object, PropTypes.array]),

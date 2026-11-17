@@ -1,0 +1,23 @@
+{
+  "http": {
+    "status": 400,
+    "headers": {
+      "content-type": "application/json"
+    }
+  },
+  "body": {
+    "status": false,
+    "type": "validation_error",
+    "code": "mode_mismatch",
+    "detail": "Server linear uses per_user credentials; agent mode needs servers with shared or no credentials.",
+    "message": "Server linear uses per_user credentials; agent mode needs servers with shared or no credentials.",
+    "error": "Server linear uses per_user credentials; agent mode needs servers with shared or no credentials.",
+    "result": "Server linear uses per_user credentials; agent mode needs servers with shared or no credentials.",
+    "attr": "servers",
+    "details": {
+      "servers": [
+        "Server linear uses per_user credentials; agent mode needs servers with shared or no credentials."
+      ]
+    }
+  }
+}

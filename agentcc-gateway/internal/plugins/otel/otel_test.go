@@ -150,7 +150,10 @@ func TestPlugin_FullSpanLifecycle(t *testing.T) {
 	assertAttr(t, s, "gen_ai.usage.total_tokens", 200)
 	assertAttr(t, s, "gen_ai.request.max_tokens", 1000)
 	assertAttr(t, s, "gen_ai.cost.total", 0.005)
-	assertAttr(t, s, "gen_ai.server.time_to_first_token", 0.12)
+	assertAttr(t, s, "gen_ai.server.time_to_first_token", 120)
+	if _, ok := s.Attributes["traceai.timing.server_ttft.unit"]; ok {
+		t.Fatal("ttft unit marker set; the platform reads the value as milliseconds")
+	}
 	assertAttr(t, s, "session.id", "session-1")
 	assertAttr(t, s, "user.id", "user-1")
 	assertAttr(t, s, "agentcc.request_id", "req-123")
@@ -163,6 +166,61 @@ func TestPlugin_FullSpanLifecycle(t *testing.T) {
 		t.Fatal("span should be ended")
 	}
 }
+
+// The time to first token goes out in milliseconds with no unit marker: the
+// platform reads the attribute as milliseconds, as the tracing SDKs send it.
+// A request with no first token carries neither.
+func TestPlugin_TTFTMillisecondsNoUnitMarker(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		ttft *time.Duration
+		want float64
+	}{
+		{name: "set", ttft: durationPtr(120 * time.Millisecond), want: 120},
+		{name: "set_sub_millisecond", ttft: durationPtr(1500 * time.Microsecond), want: 1.5},
+		{name: "unset"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			exp := &captureExporter{}
+			p := NewWithExporter(exp, 1.0, true)
+			ctx := context.Background()
+
+			rc := newTestRC()
+			if tc.ttft != nil {
+				rc.Timings["ttft"] = *tc.ttft
+			}
+			p.ProcessRequest(ctx, rc)
+			p.ProcessResponse(ctx, rc)
+
+			spans := exp.Spans()
+			if len(spans) != 1 {
+				t.Fatalf("expected 1 span, got %d", len(spans))
+			}
+			attrs := spans[0].Attributes
+			value, hasValue := attrs["gen_ai.server.time_to_first_token"]
+			if unit, hasUnit := attrs["traceai.timing.server_ttft.unit"]; hasUnit {
+				t.Fatalf("ttft unit marker %v set; the platform reads the value as milliseconds", unit)
+			}
+			if tc.ttft == nil {
+				if hasValue {
+					t.Fatalf("no ttft recorded, but the span carries %v", value)
+				}
+				return
+			}
+			if !hasValue {
+				t.Fatal("ttft recorded, but the span carries no gen_ai.server.time_to_first_token")
+			}
+			if got, ok := value.(float64); !ok || got != tc.want {
+				t.Fatalf("gen_ai.server.time_to_first_token = %v (%T), want %v ms", value, value, tc.want)
+			}
+			if _, ok := attrs["agentcc.ttft_ms"]; ok {
+				t.Fatal("superseded agentcc.ttft_ms emitted alongside the conventional attribute")
+			}
+		})
+	}
+}
+
+func durationPtr(d time.Duration) *time.Duration { return &d }
 
 func TestPlugin_ErrorSpan(t *testing.T) {
 	exp := &captureExporter{}

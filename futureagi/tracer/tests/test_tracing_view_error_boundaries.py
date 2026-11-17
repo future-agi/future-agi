@@ -680,6 +680,29 @@ def test_detail_boundaries_preserve_typed_unavailable_response(
 
 @pytest.mark.unit
 @pytest.mark.parametrize(
+    ("limit_code", "limit_text"),
+    [
+        ("span_limit_exceeded", "more than 1,000 spans"),
+        ("eval_limit_exceeded", "more than 5,000 eval results"),
+        ("annotation_limit_exceeded", "more than 5,000 annotations"),
+    ],
+)
+def test_trace_detail_size_limit_is_not_reported_as_retryable_outage(
+    monkeypatch, limit_code, limit_text
+):
+    # A stored trace over a detail-read limit fails the same way on every
+    # retry, so the drawer must be able to tell it from a temporary outage.
+    response = _trace_detail_call(monkeypatch, TraceDetailReadUnavailable(limit_code))
+
+    assert response.status_code == 400
+    assert response.data["code"] == "trace_too_large"
+    assert limit_text in response.data["message"]
+    assert "temporarily unavailable" not in str(response.data)
+    assert limit_code not in str(response.data)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
     ("call_boundary", "exc"),
     [
         (_trace_detail_call, Trace.DoesNotExist()),

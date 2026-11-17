@@ -448,7 +448,8 @@ def _set_task_status_sync(
     filtered ``update`` touches the row only if it still holds that status, so a
     concurrent pause/delete is never clobbered. The lifecycle timestamp that goes
     with a status is stamped alongside it (``running`` → ``start_time``, terminal
-    ``completed``/``failed`` → ``end_time``).
+    ``completed``/``failed`` → ``end_time``). A continuous task keeps its first
+    start time across restarts: it is the lower bound for its whole history.
     """
     close_old_connections()
     try:
@@ -458,7 +459,18 @@ def _set_task_status_sync(
 
         fields: dict = {"status": status}
         if status == EvalTaskStatus.RUNNING:
-            fields["start_time"] = timezone.now()
+            from django.db.models import Case, F, Value, When
+
+            # Preserve the continuous history boundary in the same guarded
+            # UPDATE, without a read/write race or a second status transition.
+            fields["start_time"] = Case(
+                When(
+                    run_type=RunType.CONTINUOUS,
+                    start_time__isnull=False,
+                    then=F("start_time"),
+                ),
+                default=Value(timezone.now()),
+            )
         elif status in (EvalTaskStatus.COMPLETED, EvalTaskStatus.FAILED):
             fields["end_time"] = timezone.now()
 

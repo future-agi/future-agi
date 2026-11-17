@@ -2,11 +2,34 @@
 
 from django.db import migrations, models
 
+UPDATE_SAFETY = {
+    "schema_version": 1,
+    "risk_classes": ["data_migration"],
+    "tables": ["postgres:simulate_agent_version"],
+    "mitigation": (
+        "forward adds a nullable, indexed webhook_secret column to "
+        "simulate_agent_definition (schema only), then its data step sets "
+        "configuration_snapshot['webhook_secret'] to '' on every "
+        "simulate_agent_version row, loading all rows with .all() and saving each one "
+        "on the migration's own connection. A database that applied 1.58.0 already has "
+        "this migration recorded and does not run it again. On a fresh install "
+        "simulate_agent_version has no rows when it runs, so nothing is written. Safe "
+        "to run again: setting the key to '' again leaves the same row, and the "
+        "migration is atomic, so a failed run rolls back whole. The data step has no "
+        "reverse, so the migration cannot be unapplied. Row scale: one save per agent "
+        "version; not a registered high-volume table."
+    ),
+    "reviewer": "<actual-github-login>",
+    "review": "<actual-PR-review-discussion-permalink>",
+    "large_volume_rehearsal": True,
+}
+
+
 def backfill_webhook_secret(apps, schema_editor):
     AgentVersion = apps.get_model('simulate', 'AgentVersion')
-    for agent_version in AgentVersion.objects.all():
+    for agent_version in AgentVersion.objects.using(schema_editor.connection.alias).all():
         agent_version.configuration_snapshot['webhook_secret'] = ""
-        agent_version.save()
+        agent_version.save(using=schema_editor.connection.alias)
 
 class Migration(migrations.Migration):
 

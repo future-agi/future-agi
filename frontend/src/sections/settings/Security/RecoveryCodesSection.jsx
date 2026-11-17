@@ -238,6 +238,7 @@ const RecoveryCodesSection = ({ remaining, hasTotp, onStatusChange }) => {
         open={recoveryDialogOpen}
         onClose={handleRecoveryDialogClose}
         codes={recoveryCodes || []}
+        reason="regenerated"
       />
     </>
   );

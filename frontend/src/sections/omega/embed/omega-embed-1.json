@@ -1,0 +1,50 @@
+{
+  "protocol": "omega-embed/1",
+  "embedQuery": "embed=1",
+  "embeddersMeta": "studio-embedders",
+  "connectFragment": "#connect=<studio url>&t=<token>",
+  "childToParent": [
+    {
+      "type": "embed.hello",
+      "protocol": "omega-embed/1"
+    },
+    {
+      "type": "embed.route",
+      "path": "/e/router?run=run_1"
+    },
+    {
+      "type": "embed.open",
+      "href": "https://app.futureagi.com/dashboard/studio"
+    },
+    {
+      "type": "embed.gate",
+      "state": "needs-key"
+    },
+    {
+      "type": "embed.gate",
+      "state": "refused"
+    },
+    {
+      "type": "embed.gate",
+      "state": "ready"
+    }
+  ],
+  "parentToChild": [
+    {
+      "type": "embed.key",
+      "token": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    },
+    {
+      "type": "embed.navigate",
+      "path": "/e/router"
+    },
+    {
+      "type": "embed.theme",
+      "mode": "light"
+    },
+    {
+      "type": "embed.theme",
+      "mode": "dark"
+    }
+  ]
+}

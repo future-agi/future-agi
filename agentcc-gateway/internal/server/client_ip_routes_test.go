@@ -32,24 +32,24 @@ const (
 	proxyOutsideAllow = "35.191.0.10"
 )
 
-type clientIPRecorder struct {
+type routeClientIPRecorder struct {
 	mu  sync.Mutex
 	got []string
 }
 
-func (p *clientIPRecorder) Name() string  { return "client_ip_recorder" }
-func (p *clientIPRecorder) Priority() int { return 1 }
-func (p *clientIPRecorder) ProcessRequest(_ context.Context, rc *models.RequestContext) pipeline.PluginResult {
+func (p *routeClientIPRecorder) Name() string  { return "client_ip_recorder" }
+func (p *routeClientIPRecorder) Priority() int { return 1 }
+func (p *routeClientIPRecorder) ProcessRequest(_ context.Context, rc *models.RequestContext) pipeline.PluginResult {
 	p.mu.Lock()
 	p.got = append(p.got, rc.Metadata["client_ip"])
 	p.mu.Unlock()
 	return pipeline.ResultContinue()
 }
-func (p *clientIPRecorder) ProcessResponse(context.Context, *models.RequestContext) pipeline.PluginResult {
+func (p *routeClientIPRecorder) ProcessResponse(context.Context, *models.RequestContext) pipeline.PluginResult {
 	return pipeline.ResultContinue()
 }
 
-func (p *clientIPRecorder) take() []string {
+func (p *routeClientIPRecorder) take() []string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	got := p.got
@@ -206,7 +206,7 @@ func TestChatACLBehindTrustedProxies(t *testing.T) {
 func TestRoutesRecordTrustedClientIP(t *testing.T) {
 	mock := startMockOpenAI(t)
 	defer mock.Close()
-	rec := &clientIPRecorder{}
+	rec := &routeClientIPRecorder{}
 	s := clientIPServer(t, mock.URL, config.IPACLConfig{}, nil, rec)
 
 	routes := map[string]string{
@@ -255,8 +255,12 @@ func TestClientIPAssignmentsUseTrustedExtractor(t *testing.T) {
 		for _, m := range assign.FindAllStringSubmatch(string(src), -1) {
 			seen++
 			rhs := strings.TrimSpace(m[1])
-			if rhs != "h.clientIP(r)" && !strings.HasPrefix(rhs, "trustedClientIP(") {
-				t.Errorf("%s: client_ip assigned from %q; use h.clientIP(r)", f, rhs)
+			// The merged tree resolves the client address once per request
+			// (middleware.TrustedClientIP, by server.trusted_proxies or
+			// trusted_hops, else ip_acl.trusted_proxies hops), and every handler
+			// reads it with middleware.ClientIP(r).
+			if rhs != "middleware.ClientIP(r)" && !strings.HasPrefix(rhs, "trustedClientIP(") {
+				t.Errorf("%s: client_ip assigned from %q; use middleware.ClientIP(r)", f, rhs)
 			}
 		}
 	}

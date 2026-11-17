@@ -17,6 +17,7 @@ from django.core.management.base import BaseCommand
 
 from accounts.models import Organization, User
 from accounts.models.workspace import Workspace
+from accounts.services.hard_erase_issuance_entry import issuance_entry
 from agentic_eval.core.database.ch_vector import ClickHouseVectorDB
 from agentic_eval.core.embeddings.embedding_manager import (
     GROUND_TRUTH_TABLE_NAME,
@@ -244,68 +245,72 @@ class Command(BaseCommand):
 
     def _build_fixture(self) -> _Fixture:
         suffix = uuid.uuid4().hex[:8]
-        org = Organization.objects.create(name=f"rt-org-{suffix}")
-        user = User.objects.create_user(
-            email=f"rt-{suffix}@futureagi.com",
-            password="testpassword123",
-            name=f"rt-user-{suffix}",
-            organization=org,
-            organization_role=OrganizationRoles.OWNER,
-        )
-        workspace = Workspace.objects.create(
-            name=f"rt-ws-{suffix}",
-            organization=org,
-            is_default=True,
-            is_active=True,
-            created_by=user,
-        )
-        template = EvalTemplate.no_workspace_objects.create(
-            name=f"rt-eval-{suffix}",
-            organization=org,
-            workspace=workspace,
-            owner=OwnerChoices.USER.value,
-            config={
-                "output": "Pass/Fail",
-                "required_keys": ["question", "answer"],
-            },
-            criteria="Judge {{question}} against {{answer}}",
-            visible_ui=True,
-        )
-        gt = EvalGroundTruth.objects.create(
-            eval_template=template,
-            organization=org,
-            workspace=workspace,
-            name=f"rt-gt-{suffix}",
-            file_name="rt.csv",
-            columns=["question", "answer", "verdict", "reason"],
-            data=[
-                {
-                    "question": "how do i reset my password",
-                    "answer": "click the forgot password link on the login page",
-                    "verdict": "Pass",
-                    "reason": "clear and helpful",
+        org = Organization(name=f"rt-org-{suffix}")
+        with issuance_entry(
+            new_organizations=[org.pk], emails=[f"rt-{suffix}@futureagi.com"]
+        ):
+            org.save(force_insert=True)
+            user = User.objects.create_user(
+                email=f"rt-{suffix}@futureagi.com",
+                password="testpassword123",
+                name=f"rt-user-{suffix}",
+                organization=org,
+                organization_role=OrganizationRoles.OWNER,
+            )
+            workspace = Workspace.objects.create(
+                name=f"rt-ws-{suffix}",
+                organization=org,
+                is_default=True,
+                is_active=True,
+                created_by=user,
+            )
+            template = EvalTemplate.no_workspace_objects.create(
+                name=f"rt-eval-{suffix}",
+                organization=org,
+                workspace=workspace,
+                owner=OwnerChoices.USER.value,
+                config={
+                    "output": "Pass/Fail",
+                    "required_keys": ["question", "answer"],
                 },
-                {
-                    "question": "my refund is delayed two weeks",
-                    "answer": "hold on while i check that for you",
-                    "verdict": "Fail",
-                    "reason": "should have escalated per policy",
-                },
-                {
-                    "question": "can you help me close my account",
-                    "answer": "sure, please confirm your email to begin",
-                    "verdict": "Pass",
-                    "reason": "polite and within scope",
-                },
-            ],
-            row_count=3,
-            variable_mapping={"question": "question", "answer": "answer"},
-            role_mapping={"output": "verdict", "explanation": "reason"},
-            embedding_status=EvalGroundTruth.EmbeddingStatus.PENDING,
-        )
-        return _Fixture(
-            org=org, user=user, workspace=workspace, template=template, gt=gt
-        )
+                criteria="Judge {{question}} against {{answer}}",
+                visible_ui=True,
+            )
+            gt = EvalGroundTruth.objects.create(
+                eval_template=template,
+                organization=org,
+                workspace=workspace,
+                name=f"rt-gt-{suffix}",
+                file_name="rt.csv",
+                columns=["question", "answer", "verdict", "reason"],
+                data=[
+                    {
+                        "question": "how do i reset my password",
+                        "answer": "click the forgot password link on the login page",
+                        "verdict": "Pass",
+                        "reason": "clear and helpful",
+                    },
+                    {
+                        "question": "my refund is delayed two weeks",
+                        "answer": "hold on while i check that for you",
+                        "verdict": "Fail",
+                        "reason": "should have escalated per policy",
+                    },
+                    {
+                        "question": "can you help me close my account",
+                        "answer": "sure, please confirm your email to begin",
+                        "verdict": "Pass",
+                        "reason": "polite and within scope",
+                    },
+                ],
+                row_count=3,
+                variable_mapping={"question": "question", "answer": "answer"},
+                role_mapping={"output": "verdict", "explanation": "reason"},
+                embedding_status=EvalGroundTruth.EmbeddingStatus.PENDING,
+            )
+            return _Fixture(
+                org=org, user=user, workspace=workspace, template=template, gt=gt
+            )
 
     def _announce(self, fx: _Fixture, inspect: bool):
         self.stdout.write(
@@ -336,27 +341,35 @@ class Command(BaseCommand):
             db.close()
 
     def _teardown(self, fx: _Fixture) -> None:
-        # Soft-delete the CH vectors for this run, then drop the PG
-        # fixtures. We delete in reverse FK order.
-        db = ClickHouseVectorDB()
-        try:
-            db.client.execute(
-                f"ALTER TABLE {GROUND_TRUTH_TABLE_NAME} UPDATE deleted = 1 "
-                f"WHERE eval_id = '{fx.template.id}' AND "
-                f"has(metadata.key, 'organization_id') AND "
-                f"metadata.value[indexOf(metadata.key, 'organization_id')] = '{fx.org.id}'"
-            )
-        except Exception as exc:
-            self.stdout.write(
-                self.style.WARNING(f"  CH cleanup failed (ignored): {exc!r}")
-            )
-        finally:
-            db.close()
-        EvalGroundTruth.objects.filter(id=fx.gt.id).delete()
-        EvalTemplate.no_workspace_objects.filter(id=fx.template.id).delete()
-        Workspace.objects.filter(id=fx.workspace.id).delete()
-        User.objects.filter(id=fx.user.id).delete()
-        Organization.objects.filter(id=fx.org.id).delete()
+        """Preflight the complete fixture closure before any ClickHouse mutation.
+
+        Locks remain held through SQL deletion, so a new reference cannot slip
+        between preflight and erase. A later SQL/receiver failure cannot undo
+        the ClickHouse UPDATE: PG rolls back, but CH may retain tombstones.
+        Conversely a CH failure is logged and PG cleanup proceeds, as before.
+        This is synthetic-fixture cleanup, not a distributed atomic erase.
+        """
+        from accounts.services.hard_erase import authorized_scope, locked_preflight
+
+        using = fx.org._state.db
+        roots = [fx.org, fx.user, fx.workspace, fx.template, fx.gt]
+        with authorized_scope([fx.org.pk], using=using):
+            with locked_preflight(roots, using=using, origin=fx.org) as collector:
+                db = ClickHouseVectorDB()
+                try:
+                    db.client.execute(
+                        f"ALTER TABLE {GROUND_TRUTH_TABLE_NAME} UPDATE deleted = 1 "
+                        f"WHERE eval_id = '{fx.template.id}' AND "
+                        f"has(metadata.key, 'organization_id') AND "
+                        f"metadata.value[indexOf(metadata.key, 'organization_id')] = '{fx.org.id}'"
+                    )
+                except Exception as exc:
+                    self.stdout.write(
+                        self.style.WARNING(f"  CH cleanup failed (ignored): {exc!r}")
+                    )
+                finally:
+                    db.close()
+                collector.delete()
 
     def _assert(
         self, label: str, ok: bool, failure_detail: str, failures: list[str]

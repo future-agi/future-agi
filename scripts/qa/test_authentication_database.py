@@ -53,6 +53,21 @@ SOURCE = ROOT / "accounts/authentication.py"
 NOW = datetime(2026, 9, 9, tzinfo=UTC)
 
 
+def defined_name(node):
+    if isinstance(node, ast.Assign) and len(node.targets) == 1:
+        return getattr(node.targets[0], "id", None)
+    return getattr(node, "name", None)
+
+
+def run_definitions(path, names, namespace):
+    """Run the named top-level definitions of ``path``, unchanged, in ``namespace``."""
+    tree = ast.parse(path.read_text(), filename=str(path))
+    nodes = [node for node in tree.body if defined_name(node) in names]
+    assert sorted(map(defined_name, nodes)) == sorted(names)
+    module = ast.Module(body=nodes, type_ignores=[])
+    exec(compile(module, str(path), "exec"), namespace)
+
+
 def load_definitions():
     names = {
         "APIKeyAuthentication",
@@ -61,6 +76,8 @@ def load_definitions():
         "custom_exception_handler",
         "DatabaseUnavailable",
         "_database_unavailable_metadata",
+        "_refuse_unavailable_workspace",
+        "_is_workspace_write",
     }
     nodes = [
         node
@@ -97,10 +114,14 @@ def load_definitions():
         "logger": MagicMock(),
         "structlog": MagicMock(),
         "traceback": MagicMock(),
+        # Reads already go to the one database these doubles stand for.
+        "primary_required": lambda function: function,
     }
     ns.update(runpy.run_path(str(ROOT / "tfc/utils/api_errors.py")))
     ns["__name__"] = "accounts.authentication"
     exec(compile(ast.Module(body=nodes, type_ignores=[]), str(SOURCE), "exec"), ns)
+    run_definitions(ROOT / "accounts/api_secrets.py", {"MAX_SECRET_LENGTH"}, ns)
+    run_definitions(ROOT / "accounts/api_key_policy.py", {"authenticate_api_key"}, ns)
     return ns
 
 
@@ -111,7 +132,11 @@ class AuthenticationDatabaseTests(unittest.TestCase):
         self.real_decrypt = self.ns["decrypt_message"]
         ee = ModuleType("tfc.ee_gating")
         ee.FeatureUnavailable = type("FeatureUnavailable", (APIException,), {})
-        self.modules = patch.dict("sys.modules", {"tfc.ee_gating": ee})
+        policy = ModuleType("accounts.api_key_policy")
+        policy.APIKeyRetired = type("APIKeyRetired", (AuthenticationFailed,), {})
+        self.modules = patch.dict(
+            "sys.modules", {"tfc.ee_gating": ee, "accounts.api_key_policy": policy}
+        )
         self.modules.start()
         self.addCleanup(self.modules.stop)
         self.atomic = MagicMock(
@@ -137,6 +162,9 @@ class AuthenticationDatabaseTests(unittest.TestCase):
             _state=SimpleNamespace(fields_cache={"organization": None}),
         )
         self.users, self.tokens, self.keys, self.cache = (MagicMock() for _ in range(4))
+        # Authentication first reads a key by its public id.
+        rows = self.keys.select_related.return_value
+        self.key_lookup = rows.filter.return_value.first
         self.users.select_related.return_value.get.return_value = self.user
         self.token = SimpleNamespace(
             is_active=True, last_used_at=NOW, id="fixture-token", save=MagicMock()
@@ -148,7 +176,9 @@ class AuthenticationDatabaseTests(unittest.TestCase):
             User=SimpleNamespace(objects=self.users, DoesNotExist=self.missing),
             AuthToken=SimpleNamespace(objects=self.tokens, DoesNotExist=self.missing),
             AuthTokenType=SimpleNamespace(ACCESS=SimpleNamespace(value="access")),
-            OrgApiKey=SimpleNamespace(objects=self.keys, DoesNotExist=self.missing),
+            OrgApiKey=SimpleNamespace(
+                objects=self.keys, _base_manager=self.keys, DoesNotExist=self.missing
+            ),
             cache=self.cache,
         )
         self.ns["decrypt_message"] = MagicMock(
@@ -266,7 +296,7 @@ class AuthenticationDatabaseTests(unittest.TestCase):
                         "cold-token": self.tokens.get,
                         "cold-save": self.token.save,
                         "workspace": self.auth._set_workspace_context,
-                        "api-key": self.keys.select_related.return_value.get,
+                        "api-key": self.key_lookup,
                     }[stage]
 
                     def fail_at_boundary(*args, error=error, **kwargs):

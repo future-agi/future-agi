@@ -28,6 +28,7 @@ import {
   getYAxisRangeWarning,
   getAutoYAxisBounds,
   getFittedYAxisBounds,
+  getTopSeriesIndices,
   getVisibleIndices,
   resolveAxisBounds,
   resolveWidgetAxisPlan,
@@ -1039,6 +1040,52 @@ describe("getVisibleIndices", () => {
   });
 });
 
+describe("getTopSeriesIndices", () => {
+  const pts = (...ys) => ys.map((y, i) => ({ x: i, y }));
+
+  it("ranks by the exact period value, not by summed bucket points", () => {
+    // Bucket sums rank each two-bucket series at 100 and the 99 series last.
+    const series = [
+      ...Array.from({ length: 10 }, () => ({
+        aggregateValue: 50,
+        data: pts(50, 50),
+      })),
+      { aggregateValue: 99, data: pts(99, null) },
+    ];
+    const top = getTopSeriesIndices(series, 10);
+    expect(top.has(10)).toBe(true);
+    expect([...top][0]).toBe(10);
+    expect(top.size).toBe(10);
+  });
+
+  it("ranks a series without a period value by its summed points", () => {
+    const series = [
+      { data: pts(1, 1) },
+      { aggregateValue: undefined, data: pts(5, 5) },
+      { aggregateValue: null, data: pts(3) },
+    ];
+    expect([...getTopSeriesIndices(series, 2)]).toEqual([1, 2]);
+  });
+
+  it("does not read a null period value as zero", () => {
+    // Number(null) is 0, which would outrank -0.5; the points sum to -1.
+    const series = [
+      { aggregateValue: null, data: pts(-1) },
+      { aggregateValue: -0.5, data: pts(-0.5) },
+    ];
+    expect([...getTopSeriesIndices(series, 1)]).toEqual([1]);
+  });
+
+  it("keeps response order for ties", () => {
+    const series = [
+      { aggregateValue: 7, data: pts(7) },
+      { aggregateValue: 7, data: pts(7) },
+      { aggregateValue: 7, data: pts(7) },
+    ];
+    expect([...getTopSeriesIndices(series, 2)]).toEqual([0, 1]);
+  });
+});
+
 describe("resolveAxisBounds", () => {
   const pts2 = (...ys) => ys.map((y, i) => ({ x: i, y }));
   const series = [{ data: pts2(219, 7043, 1500) }];
@@ -1844,7 +1891,14 @@ describe("getChartMarkerSizes (TH-7757)", () => {
 describe("isAbsentChartPoint (TH-7757)", () => {
   const w = {
     config: {
-      series: [{ data: [{ x: 0, y: 0, absent: true }, { x: 1, y: 0 }] }],
+      series: [
+        {
+          data: [
+            { x: 0, y: 0, absent: true },
+            { x: 1, y: 0 },
+          ],
+        },
+      ],
     },
   };
 

@@ -41,6 +41,32 @@ def _response_ref(operation, status_code="200"):
     return responses[status_code]["schema"]["$ref"].rsplit("/", 1)[-1]
 
 
+def test_omega_bridges_publish_exact_distinct_auth_contracts():
+    target = _operation("/accounts/omega/observe-target/", "GET")
+    assert target["security"] == [{"X-Api-Key": [], "X-Secret-Key": []}]
+    assert _response_ref(target) == "OmegaObserveTargetResponse"
+    assert target["parameters"] == [
+        {
+            "name": "project_id",
+            "in": "query",
+            "required": True,
+            "type": "string",
+            "format": "uuid",
+        }
+    ]
+    session = _operation("/accounts/omega/session-exchange/", "POST")
+    assert session["security"] == []
+    authorization = next(
+        parameter
+        for parameter in session["parameters"]
+        if parameter["name"] == "Authorization"
+    )
+    assert authorization["in"] == "header" and authorization["required"] is True
+    assert "Bearer" in authorization["description"]
+    assert _body_ref(session) == "OmegaSessionExchangeRequest"
+    assert _response_ref(session) == "OmegaSessionExchangeResponse"
+
+
 def test_accounts_contract_debt_is_fully_burned_down():
     report = _debt_report()
     group_report = report["by_group"]["accounts"]

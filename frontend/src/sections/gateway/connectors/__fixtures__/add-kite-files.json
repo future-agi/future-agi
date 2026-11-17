@@ -1,0 +1,69 @@
+{
+  "result": {
+    "app": "kite-files",
+    "baseline": {
+      "tool_count": 3,
+      "tools_hash": "abeedeca554994f79e32ff74be1a664056ae7d9e05a5908c541f7497ab7b4aab"
+    },
+    "catalog_ref": "kite-files/kite-mcp@1.0.0",
+    "credential": {
+      "connected": true,
+      "header_name": "",
+      "help": "Create a key under Settings, API keys.",
+      "help_url": "https://docs.kite-files.example.com/keys",
+      "in": "header",
+      "kind": "bearer",
+      "label": "API key",
+      "mode": "shared",
+      "name": "Authorization"
+    },
+    "gateway_synced": true,
+    "mcp_enabled": true,
+    "mode": "agent",
+    "provider": "kite-mcp",
+    "server_id": "kite-files",
+    "tools": [
+      {
+        "description": "The echo tool.",
+        "destructive": false,
+        "gateway_posture": "allow",
+        "idempotent": true,
+        "name": "echo",
+        "open_world": true,
+        "read_only": true,
+        "reason": null,
+        "title": "Echo"
+      },
+      {
+        "description": "The get_weather tool.",
+        "destructive": false,
+        "gateway_posture": "allow",
+        "idempotent": true,
+        "name": "get_weather",
+        "open_world": true,
+        "read_only": true,
+        "reason": null,
+        "title": "Get weather"
+      },
+      {
+        "description": "The delete_file tool.",
+        "destructive": true,
+        "gateway_posture": "allow",
+        "idempotent": false,
+        "name": "delete_file",
+        "open_world": true,
+        "read_only": false,
+        "reason": "approval_required",
+        "title": "Delete file"
+      }
+    ],
+    "url": "https://mcp.kite-files.example.com/mcp",
+    "url_variables": {},
+    "version": 2,
+    "virtual_server": {
+      "id": "vs_01M5F7JC4T2R8W6Y1N3B5D7K9Q",
+      "slug": "kite-files"
+    }
+  },
+  "status": true
+}

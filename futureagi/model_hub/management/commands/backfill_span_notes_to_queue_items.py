@@ -16,16 +16,24 @@ field.
 
 Safe to run repeatedly: only creates a QueueItemNote if one doesn't
 already exist for (queue_item, annotator).
+
+A span id can be held by projects of several organizations, so the
+project of the span row does not say whose a note is. A note is copied
+only when that project's organization reads it (``span_notes_readable_in``),
+and only an author with an active membership there joins its default
+queue. Any other author's note is copied, or skipped, without the author
+joining any of that organization's queues.
 """
 
 from django.core.management.base import BaseCommand
 from django.db import transaction
 
+from accounts.models.organization_membership import OrganizationMembership
 from model_hub.models.annotation_queues import QueueItemNote
 from model_hub.utils.annotation_queue_helpers import (
     resolve_default_queue_item_for_source,
 )
-from tracer.models.span_notes import SpanNotes
+from tracer.models.span_notes import SpanNotes, span_notes_readable_in
 
 
 class Command(BaseCommand):
@@ -61,6 +69,7 @@ class Command(BaseCommand):
             "mirrored": 0,
             "skipped_no_scope": 0,
             "skipped_no_user": 0,
+            "skipped_not_read_there": 0,
             "skipped_already_mirrored": 0,
         }
 
@@ -80,12 +89,35 @@ class Command(BaseCommand):
                 stats["skipped_no_scope"] += 1
                 continue
 
+            # Copy a note only where the organization reads it. Check before
+            # the default queue is resolved: resolving it with a user adds
+            # them to that queue, which alone would make the note readable.
+            if not SpanNotes._base_manager.filter(
+                span_notes_readable_in(organization),
+                pk=span_note.pk,
+                deleted=False,
+            ).exists():
+                stats["skipped_not_read_there"] += 1
+                continue
+
+            # Only an active member joins the default queue (as a manager, as
+            # the inline annotation paths add their users). For anyone else
+            # the queue is resolved with no user: no queue adds them, and a
+            # queue made here has no creator.
+            queue_user = (
+                user
+                if OrganizationMembership.no_workspace_objects.filter(
+                    user=user, organization=organization, is_active=True
+                ).exists()
+                else None
+            )
+
             with transaction.atomic():
                 queue_item = resolve_default_queue_item_for_source(
                     "observation_span",
                     span,
                     organization,
-                    user,
+                    queue_user,
                 )
                 if queue_item is None:
                     stats["skipped_no_scope"] += 1
@@ -126,6 +158,9 @@ class Command(BaseCommand):
         )
         self.stdout.write(
             f"  Skipped (no created_by_user):      {stats['skipped_no_user']}"
+        )
+        self.stdout.write(
+            f"  Skipped (not read in that org):    {stats['skipped_not_read_there']}"
         )
         self.stdout.write(
             f"  Skipped (already mirrored):        {stats['skipped_already_mirrored']}"

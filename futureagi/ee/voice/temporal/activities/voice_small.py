@@ -432,12 +432,15 @@ async def prepare_call(input: PrepareCallInput) -> PrepareCallOutput:
             and connection_type is None
             and client_provider not in outbound_sip_providers
         ):
-            error_msg = (
-                f"Outbound simulation is not supported for customer provider "
-                f"'{client_provider}' over a phone/SIP connection."
+            # The call shows this sentence as its reason: a re-run cannot fix it.
+            reason = (
+                f"Outbound simulation is not supported for the provider "
+                f"'{client_provider}' over a phone or SIP connection."
             )
-            activity.logger.error(error_msg)
-            return PrepareCallOutput(is_outbound=is_outbound, error=error_msg)
+            activity.logger.error(reason)
+            return PrepareCallOutput(
+                is_outbound=is_outbound, error=reason, reason=reason
+            )
 
         # A customer provider with no web-bridge connector (e.g. Bland, which is
         # phone/SIP-only) must never be routed onto the web bridge: run_bridge
@@ -451,12 +454,16 @@ async def prepare_call(input: PrepareCallInput) -> PrepareCallOutput:
             )
 
             if connection_type not in get_connector_registry():
-                error_msg = (
-                    f"Customer provider '{client_provider}' has no web connector; "
-                    f"it requires a phone number for simulation."
+                # The call shows this sentence as its reason: a re-run cannot
+                # fix it.
+                reason = (
+                    f"The provider '{client_provider}' has no web connector. "
+                    f"Add a phone number to simulate it."
                 )
-                activity.logger.error(error_msg)
-                return PrepareCallOutput(is_outbound=is_outbound, error=error_msg)
+                activity.logger.error(reason)
+                return PrepareCallOutput(
+                    is_outbound=is_outbound, error=reason, reason=reason
+                )
 
         activity.logger.info(
             f"Prepared call {input.call_id}: is_outbound={is_outbound}, "

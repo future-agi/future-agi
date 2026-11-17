@@ -1,0 +1,22 @@
+# The API key provider is the default: the OAuth sign-in works only after the
+# customer's incident.io admin adds FutureAGI's redirect domain under
+# Settings > MCP server > Allowed redirect domains.
+schema: "connector-manifest/v1#app"
+id: incident-io
+version: 1.1.0
+name: incident.io
+description: "Incidents, alerts, escalations, on-call and post-mortems."
+vendor:
+  name: incident.io
+  domains: [incident.io]
+eeCategory: developer
+group: other
+categories: [developer, incident-management]
+tags: [incidents, on-call, alerts]
+docsUrl: https://docs.incident.io/ai/remote-mcp
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://docs.incident.io/ai/remote-mcp
+    fetchedAt: 2026-11-11

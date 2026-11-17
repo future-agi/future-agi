@@ -10,6 +10,7 @@ import {
   buildJevMapping,
   getJevValidationErrors,
 } from "src/sections/evals/utils/jevMapping";
+import { stripTemplate } from "src/sections/common/DecisionJudges/decisionModels";
 
 export const normalizeDecisionOutput = (output) =>
   ({
@@ -31,6 +32,7 @@ export default function useDecisionBinding({
   messages,
   inputDataTypes,
   isComposite = false,
+  instructions,
 }) {
   const active = !isComposite && evalType !== "code" && isDecisionModel(model);
   const catalog = useDecisionModels(active);
@@ -56,16 +58,26 @@ export default function useDecisionBinding({
     [active, typedMapping],
   );
   const errors = active
-    ? getJevValidationErrors({
-        mapping: typedMapping,
-        config,
-        choiceScores,
-        multiChoice,
-        messages,
-        inputDataTypes,
-        modelLabel: label,
-        modelGroup: group,
-      })
+    ? [
+        ...getJevValidationErrors({
+          mapping: typedMapping,
+          config,
+          choiceScores,
+          multiChoice,
+          messages,
+          inputDataTypes,
+          modelLabel: label,
+          modelGroup: group,
+        }),
+        // An agent evaluation's prompt is the question's instructions.
+        ...(evalType === "agent" &&
+        instructions !== undefined &&
+        !stripTemplate(instructions)
+          ? [
+              `${label} instructions must contain text: write the eval's prompt (it is the question's instructions).`,
+            ]
+          : []),
+      ]
     : [];
   return {
     active,

@@ -164,8 +164,9 @@ class TestTransformGuardrailsProviderDefaults:
                     },
                 },
             },
+            # A team test's expected value changes (release-lead 11-14): a
+            # pipeline mode the organization never saved is not pushed.
             "fail_open": False,
-            "pipeline_mode": "parallel",
         }
         assert guardrails_data == original
         assert _transform_guardrails(result) == result

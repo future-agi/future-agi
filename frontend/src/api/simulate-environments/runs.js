@@ -40,26 +40,27 @@ export function listRunTestExecutions(
 }
 
 // Maps one raw execution row to the workspace run shape. The camelCase field
-// mapping mirrors the product's TestRunsGrid over the same `results[]`:
-// `success_rate` is a 0–100 percentage; `total_chats` (chat/prompt) falls back
-// to `calls_attempted` (voice). `passed`/`failed` are derived from the success
-// rate since the payload carries no per-outcome counts, and there is no run
-// name field, so `label` is assigned by `mapExecutions` from the server count
-// and order (kept out of this pure mapper). `executionId` mirrors `id` so a row
-// click routes into the
-// reused product execution detail.
+// mapping mirrors TestRunsGrid. Hosted runs prefer the v3 evaluator-aware
+// summary; older servers and native runs retain their receipt/transport
+// fallback. `label` is assigned by mapExecutions from server count and order.
 export function executionToRun(raw) {
+  const outcomeSummary = raw?.outcome_summary;
+  const outcomes = outcomeSummary?.outcomes;
   const total =
-    raw?.total_calls ?? raw?.total_chats ?? raw?.calls_attempted ?? raw?.calls ?? 0;
-  const hasOutcomes = raw?.outcome_passed != null;
+    outcomeSummary?.total ?? raw?.total_calls ?? raw?.total_chats ?? raw?.calls_attempted ?? raw?.calls ?? 0;
+  const hasOutcomes = outcomeSummary != null || raw?.outcome_passed != null;
   const rate = raw?.success_rate ?? 0;
-  const passed = hasOutcomes
-    ? raw.outcome_passed
-    : raw?.completed_calls ?? Math.round((total * rate) / 100);
+  const passed = outcomeSummary
+    ? outcomes?.passed ?? 0
+    : hasOutcomes
+      ? raw.outcome_passed
+      : raw?.completed_calls ?? Math.round((total * rate) / 100);
   const skipped = hasOutcomes ? raw.outcome_skipped ?? 0 : 0;
-  const failed = hasOutcomes
-    ? (raw.outcome_failed ?? 0) + skipped
-    : raw?.failed_calls ?? Math.max(total - passed, 0);
+  const failed = outcomeSummary
+    ? (outcomes?.failed ?? 0) + (outcomes?.error ?? 0)
+    : hasOutcomes
+      ? (raw.outcome_failed ?? 0) + skipped
+      : raw?.failed_calls ?? Math.max(total - passed, 0);
 
   let status;
   if (!TERMINAL_STATUSES.includes(raw?.status)) {
@@ -90,11 +91,19 @@ export function executionToRun(raw) {
     total,
     passed,
     failed,
-    pending: hasOutcomes
-      ? Math.max(total - passed - failed, 0)
-      : raw?.pending_calls ?? Math.max(total - passed - failed, 0),
+    pending: outcomeSummary
+      ? (outcomes?.queued ?? 0) + (outcomes?.in_progress ?? 0)
+      : hasOutcomes
+        ? Math.max(total - passed - failed, 0)
+        : raw?.pending_calls ?? Math.max(total - passed - failed, 0),
     skipped,
     hasOutcomes,
+    ...(outcomeSummary
+      ? {
+          measured: outcomeSummary.measured,
+          passRate: outcomeSummary.pass_rate,
+        }
+      : {}),
     scenarioCount: raw?.selected_scenarios ?? null,
     scenarioIds: raw?.scenario_keys ?? [],
     trials: raw?.trials ?? 1,

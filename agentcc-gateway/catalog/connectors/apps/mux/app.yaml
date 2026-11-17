@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: mux
+version: 1.0.0
+name: Mux
+description: "Manage video assets and live streams, query playback analytics, and run video workflows."
+vendor:
+  name: Mux
+  domains: [mux.com]
+eeCategory: developer
+group: other
+categories: [developer, observability]
+tags: [automation]
+docsUrl: https://www.mux.com/docs/integrations/mcp-server
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://www.mux.com/docs/integrations/mcp-server
+    fetchedAt: 2026-11-09

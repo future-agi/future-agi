@@ -9,7 +9,11 @@ import pytest
 from django.test import override_settings
 from django.utils import timezone
 
-from tracer.constants.grouping_versions import FEATURE_POLICY_VERSION
+from tracer.constants.grouping_versions import (
+    FEATURE_POLICY_VERSION,
+    GROUPING_POLICY_VERSION,
+    SAMPLED_GROUPING_POLICY_VERSION,
+)
 from tracer.models.trace_error_analysis import ErrorClusterTraces
 from tracer.models.trace_grouping import (
     TraceGroupingAttempt,
@@ -467,10 +471,24 @@ def test_source_digest_excludes_only_mutable_grouping_status(observe_project):
     ERROR_FEED_GROUPING_WORK_BUDGET_USD="0.025",
     ERROR_FEED_GROUPING_TENANT_BUDGET_USD="0.025",
 )
+@pytest.mark.parametrize(
+    "policy", [GROUPING_POLICY_VERSION, SAMPLED_GROUPING_POLICY_VERSION]
+)
 def test_call_reservation_never_resends_unknown_and_accounts_actual_overage(
-    observe_project, monkeypatch
+    observe_project, monkeypatch, policy
 ):
+    if policy == GROUPING_POLICY_VERSION:
+        # Existing legacy registries retain their exception-based refusal contract.
+        TraceGroupingScope.no_workspace_objects.create(
+            project=observe_project,
+            organization_id=observe_project.organization_id,
+            workspace_id=observe_project.workspace_id,
+            policy_version=policy,
+        )
+    # Leave the sampled case unseeded to exercise the new-project default.
     _, claim = _claimed_runtime(observe_project, monkeypatch)
+    scope = TraceGroupingScope.no_workspace_objects.get(project=observe_project)
+    assert scope.policy_version == policy
     attempt_id = uuid.UUID(claim["attempt_id"])
     digest = "sha256:" + "a" * 64
     request = {
@@ -509,10 +527,29 @@ def test_call_reservation_never_resends_unknown_and_accounts_actual_overage(
     scope = TraceGroupingScope.no_workspace_objects.get(project=observe_project)
     assert scope.spent_usd == Decimal("0.020000000")
     assert scope.reserved_usd == Decimal("0")
-    with pytest.raises(GroupingConflict, match="budget"):
-        reserve_call(
+    if policy == GROUPING_POLICY_VERSION:
+        with pytest.raises(GroupingConflict, match="budget"):
+            reserve_call(
+                **{**request, "request_key": "next-request"}, max_cost_usd="0.010000000"
+            )
+    else:
+        denied = reserve_call(
             **{**request, "request_key": "next-request"}, max_cost_usd="0.010000000"
         )
+        assert denied == {
+            "status": "budget_exhausted",
+            "reason_code": "budget_exhausted",
+            "limit": "project",
+            "reason": "budget_exhausted:project",
+            "request_digest": digest,
+            "created": False,
+        }
+    scope.refresh_from_db()
+    assert scope.spent_usd == Decimal("0.020000000")
+    assert scope.reserved_usd == Decimal("0")
+    calls = TraceGroupingCall.no_workspace_objects.filter(scope=scope)
+    assert calls.count() == 1
+    assert not calls.filter(request_key="next-request").exists()
     with override_settings(ERROR_FEED_GROUPING_BUDGET_ENFORCED=False):
         uncapped = reserve_call(
             **{**request, "request_key": "next-request"}, max_cost_usd="1.000000000"

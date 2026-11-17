@@ -20,17 +20,28 @@ from model_hub.models.choices import (
     SourceChoices,
     StatusType,
 )
-from model_hub.models.develop_dataset import Column, Dataset, Row
+from model_hub.models.develop_dataset import Column, Row
 from model_hub.serializers.contracts import (
     MODEL_HUB_ERROR_RESPONSES,
     HuggingFaceDatasetConfigRequestSerializer,
     HuggingFaceDatasetCreateRequestSerializer,
 )
+from model_hub.serializers.develop_dataset import DatasetSerializer
 from model_hub.serializers.develop_dataset_contracts import (
     DatasetCreateStartedResponseSerializer,
     HuggingFaceDatasetConfigResponseSerializer,
 )
-from model_hub.serializers.develop_dataset import DatasetSerializer
+from model_hub.services.huggingface_access import (
+    HubAccessTokenNeeded,
+    hub_headers,
+    needs_access_token,
+    organization_hub_token,
+)
+from model_hub.services.huggingface_capability import (
+    HUGGINGFACE_IMPORT_UNAVAILABLE,
+    huggingface_import_available,
+)
+from model_hub.services.huggingface_revision import import_revision, revision_info
 from model_hub.utils.utils import (
     get_data_type_huggingface,
     load_hf_dataset_with_retries,
@@ -38,16 +49,15 @@ from model_hub.utils.utils import (
 from model_hub.views.utils.dataset_limit import dataset_add_refusal
 from model_hub.views.utils.hugginface import (
     get_huggingface_dataset_info,
-    process_huggingface_dataset,
 )
-from model_hub.views.utils.utils import get_recommendations
-from tfc.settings.settings import HUGGINGFACE_API_TOKEN
+from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_serializers import DatasetLimitCheckFailedErrorSerializer
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
+from tfc.utils.lazy_extras import extra_available
 from tfc.utils.parse_errors import parse_serialized_errors
-from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
+
 try:
     from ee.usage.utils.usage_entries import (
         ROW_LIMIT_REACHED_MESSAGE,
@@ -89,15 +99,27 @@ class GetHuggingFaceDatasetConfigView(APIView):
                 return self._gm.bad_request("Organization not found")
 
             try:
-                dataset_info = get_huggingface_dataset_info(
-                    dataset_path, organization_id
-                )
+                revision = request.validated_data.get("revision")
+                if revision and not huggingface_import_available():
+                    return self._gm.bad_request(HUGGINGFACE_IMPORT_UNAVAILABLE)
+                if revision or extra_available("datasets"):
+                    dataset_info = revision_info(
+                        dataset_path, organization_id, revision or "main"
+                    )
+                else:
+                    # Without the optional `ml` extra, a request that names no
+                    # revision keeps the base's HTTP-only metadata answer.
+                    dataset_info = get_huggingface_dataset_info(
+                        dataset_path, organization_id
+                    )
                 return self._gm.success_response(
                     {
                         "message": "Dataset configuration retrieved successfully",
                         "dataset_info": dataset_info,
                     }
                 )
+            except HubAccessTokenNeeded as e:
+                return self._gm.bad_request(str(e))
             except Exception as e:
                 logger.exception(
                     f"huggingface: Error in fetching the dataset configurations: {str(e)}"
@@ -124,9 +146,15 @@ class CreateDatasetFromHuggingFaceView(CreateAPIView):
     permission_classes = [IsAuthenticated]
     parser_classes = (MultiPartParser, FormParser, JSONParser)
 
-    def get_huggingface_dataset_info(self, dataset_name, split_name):
+    def get_huggingface_dataset_info(
+        self, dataset_name, split_name, organization_id=None
+    ):
+        hf_token = None
         try:
-            headers = {"Authorization": f"Bearer {HUGGINGFACE_API_TOKEN}"}
+            # The organization's saved Hugging Face key, or no token.
+            if organization_id:
+                hf_token = organization_hub_token(organization_id)
+            headers = hub_headers(hf_token)
             API_URL = (
                 f"https://datasets-server.huggingface.co/size?dataset={dataset_name}"
             )
@@ -146,6 +174,8 @@ class CreateDatasetFromHuggingFaceView(CreateAPIView):
                     get_error_message("FAILED_TO_LOAD_DATASET_FROM_HUGGINGFACE")
                 )
         except Exception as e:
+            if organization_id and needs_access_token(e, hf_token):
+                raise HubAccessTokenNeeded() from e
             logger.exception(
                 f"huggingface: Error in fetching the dataset rows: {str(e)}"
             )
@@ -163,6 +193,8 @@ class CreateDatasetFromHuggingFaceView(CreateAPIView):
         reject_unknown_fields=True,
     )
     def post(self, request, *args, **kwargs):
+        if not huggingface_import_available():
+            return self._gm.bad_request(HUGGINGFACE_IMPORT_UNAVAILABLE)
         try:
             data = request.validated_data
             new_dataset_name = data.get("name")
@@ -172,6 +204,7 @@ class CreateDatasetFromHuggingFaceView(CreateAPIView):
             dataset_name = data.get("huggingface_dataset_name")
             config_name = data.get("huggingface_dataset_config")
             split = data.get("huggingface_dataset_split")
+            revision = data.get("revision")
 
             if not dataset_name:
                 return self._gm.bad_request(get_error_message("DATASET_NAME_MISSING"))
@@ -216,12 +249,24 @@ class CreateDatasetFromHuggingFaceView(CreateAPIView):
 
             if dataset_serializer.is_valid():
                 try:
-                    dataset_info = self.get_huggingface_dataset_info(
-                        dataset_name, split
-                    )
-                    rows_in_dataset = (
-                        int(num_rows) if num_rows else int(dataset_info.get("num_rows"))
-                    )
+                    if revision:
+                        revision, config_name, rows_in_dataset = import_revision(
+                            dataset_name,
+                            config_name,
+                            split,
+                            organization.id,
+                            revision,
+                            num_rows,
+                        )
+                    else:
+                        dataset_info = self.get_huggingface_dataset_info(
+                            dataset_name, split, organization.id
+                        )
+                        rows_in_dataset = (
+                            int(num_rows)
+                            if num_rows
+                            else int(dataset_info.get("num_rows"))
+                        )
                     if log_and_deduct_cost_for_resource_request is not None:
                         call_log_row = log_and_deduct_cost_for_resource_request(
                             organization,
@@ -250,11 +295,14 @@ class CreateDatasetFromHuggingFaceView(CreateAPIView):
                                 ).id
                             ),
                             streaming=False,
+                            **({"revision": revision} if revision else {}),
                         )
                         if not first_row:
                             return self._gm.bad_request(
                                 get_error_message("FAILED_TO_PREVIEW_DATASET")
                             )
+                    except HubAccessTokenNeeded as e:
+                        return self._gm.bad_request(str(e))
                     except Exception as e:
                         logger.exception(
                             f"huggingface: Error in previewing the dataset: {str(e)}"
@@ -325,8 +373,6 @@ class CreateDatasetFromHuggingFaceView(CreateAPIView):
                         dataset.column_config = column_config_updates
                         dataset.save()
 
-                    get_recommendations(dataset)
-
                     rows = {}
 
                     for index in range(rows_in_dataset):
@@ -345,6 +391,8 @@ class CreateDatasetFromHuggingFaceView(CreateAPIView):
                             MixpanelEvents.SDK_DATASET_CREATE.value, properties
                         )
 
+                except HubAccessTokenNeeded as e:
+                    return self._gm.bad_request(str(e))
                 except Exception as e:
                     logger.exception(
                         f"huggingface: Error in creating the dataset from huggingface: {str(e)}"
@@ -376,6 +424,7 @@ class CreateDatasetFromHuggingFaceView(CreateAPIView):
                     rows_in_dataset,
                     column_order,
                     rows,
+                    *([revision] if revision else []),
                 ),
                 queue="tasks_l",
             )

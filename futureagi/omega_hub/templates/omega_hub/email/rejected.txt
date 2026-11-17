@@ -1,0 +1,7 @@
+A Future AGI maintainer did not accept {{ ref }}@{{ version }}.
+
+Reason:
+{{ submission.decision_reason }}
+
+To appeal, reply to {{ security }} within 30 days, quoting {{ ref }}@{{ version }}.
+Until that address exists, reply to this email.

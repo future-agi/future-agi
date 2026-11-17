@@ -1,4 +1,5 @@
 import EmptyState from "src/components/empty-state";
+import ErrorState from "src/components/error-state";
 import React, { useState, useEffect, useCallback } from "react";
 import PropTypes from "prop-types";
 import Box from "@mui/material/Box";
@@ -19,14 +20,19 @@ import MenuItem from "@mui/material/MenuItem";
 import Select from "@mui/material/Select";
 import FormControl from "@mui/material/FormControl";
 import { alpha, useTheme } from "@mui/material/styles";
+import { LoadingButton } from "@mui/lab";
+import { enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
+import { ConfirmDialog } from "src/components/custom-dialog";
+import { getSafeActionErrorMessage } from "src/utils/errorUtils";
 import ToolsSkeleton from "src/sections/falcon-ai/components/ToolsSkeleton";
 import {
   LAST_ENABLED_TOOL_HINT,
   isOnlyEnabledTool,
   toolActionErrorMessage,
 } from "src/sections/falcon-ai/components/connectorTools";
+import { connectorErrorText } from "src/sections/falcon-ai/components/connectorErrors";
 import { useConnectorToolPermissions } from "src/sections/falcon-ai/hooks/useConnectorToolPermissions";
 import {
   fetchConnectors,
@@ -91,10 +97,13 @@ export default function ConnectorSettingsPage() {
       }
       const data = await fetchConnectors();
       const results = data.results || data || [];
-      setConnectors(Array.isArray(results) ? results : []);
+      const list = Array.isArray(results) ? results : [];
+      setConnectors(list);
       setError(null);
+      return list;
     } catch {
       setError("Failed to load connectors.");
+      return null;
     } finally {
       if (showSpinner) {
         setLoading(false);
@@ -157,6 +166,9 @@ export default function ConnectorSettingsPage() {
   const filtered = connectors.filter(
     (c) => !search || c.name?.toLowerCase().includes(search.toLowerCase()),
   );
+  // The list never loaded: it is unknown, not empty, so the page offers a
+  // Retry and never "No connectors yet" or an Add connector call to action.
+  const listFailed = Boolean(error) && connectors.length === 0;
 
   const handleSelect = (id) => {
     setSelectedId(id);
@@ -170,26 +182,36 @@ export default function ConnectorSettingsPage() {
     setIsEditing(true);
   };
 
-  const handleSaved = async () => {
-    await loadConnectors();
+  // A create passes its response; an edit passes nothing and runs as before.
+  const handleSaved = async (created) => {
+    if (created) {
+      enqueueSnackbar("Connector created", { variant: "success" });
+    }
+    const rows = await loadConnectors();
     if (selectedId && !isNew) {
       await refetchSelectedConnector();
     }
     setIsEditing(false);
     setIsNew(false);
+    // Open the new connector once the reloaded list carries it.
+    const createdId = created?.result?.id;
+    const createdRow = rows?.find(
+      (c) => createdId != null && String(c.id) === String(createdId),
+    );
+    if (createdRow) {
+      setSelectedId(createdRow.id);
+    }
   };
 
+  // A failure propagates to ConnectorDetail, which shows it inline.
   const handleDelete = async (id) => {
-    try {
-      await deleteConnector(id);
-      setConnectors((prev) => prev.filter((c) => c.id !== id));
-      if (selectedId === id) {
-        setSelectedId(null);
-        setIsEditing(false);
-      }
-    } catch {
-      /* */
+    await deleteConnector(id);
+    setConnectors((prev) => prev.filter((c) => c.id !== id));
+    if (selectedId === id) {
+      setSelectedId(null);
+      setIsEditing(false);
     }
+    enqueueSnackbar("Connector deleted", { variant: "success" });
   };
 
   if (loading) {
@@ -238,7 +260,7 @@ export default function ConnectorSettingsPage() {
         </Button>
       </Box>
 
-      {error && (
+      {error && !listFailed && (
         <Alert severity="error" sx={{ mb: 2 }}>
           {error}
         </Alert>
@@ -298,7 +320,7 @@ export default function ConnectorSettingsPage() {
 
           {/* List */}
           <Box sx={{ flex: 1, overflow: "auto", px: 0.75 }}>
-            {filtered.length === 0 && !loading && (
+            {filtered.length === 0 && !loading && !listFailed && (
               <Typography
                 sx={{
                   textAlign: "center",
@@ -380,6 +402,14 @@ export default function ConnectorSettingsPage() {
               onDelete={() => handleDelete(selected.id)}
               onRefresh={() => refreshSelected(selected.id)}
             />
+          ) : listFailed ? (
+            <ErrorState
+              role="alert"
+              title="Connectors could not be loaded"
+              detail="Check your connection and retry."
+              onRetry={() => loadConnectors()}
+              sx={{ pt: 6, pb: 6, justifyContent: "center" }}
+            />
           ) : (
             <EmptyState
               icon="solar:widget-linear"
@@ -424,6 +454,8 @@ function ConnectorDetail({ connector, loading, onEdit, onDelete, onRefresh }) {
   const [testing, setTesting] = useState(false);
   const [discovering, setDiscovering] = useState(false);
   const [reauthing, setReauthing] = useState(false);
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [feedback, setFeedback] = useState(null);
   // Ordering, the last-tool guard, optimistic display and rollback are shared
   // with the Customize pane. The switch reads through the react-query cache
@@ -548,6 +580,29 @@ function ConnectorDetail({ connector, loading, onEdit, onDelete, onRefresh }) {
 
   const handleToolToggle = (toolName) => toggleTool(connector.id, toolName);
 
+  const toolCount = tools.length || connector.tool_count || 0;
+
+  const handleConfirmDelete = async () => {
+    setFeedback(null);
+    setDeleting(true);
+    try {
+      await onDelete();
+      setConfirmDeleteOpen(false);
+    } catch (error) {
+      // Close first: the open dialog hides the rest of the page.
+      setConfirmDeleteOpen(false);
+      setFeedback({
+        severity: "error",
+        message: getSafeActionErrorMessage(
+          error,
+          "Connector could not be deleted. Try again.",
+        ),
+      });
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   return (
     <Box
       sx={{
@@ -667,7 +722,7 @@ function ConnectorDetail({ connector, loading, onEdit, onDelete, onRefresh }) {
       {/* Error */}
       {connector.last_error && (
         <Alert severity="error" sx={{ mb: 2 }}>
-          {connector.last_error}
+          {connectorErrorText(connector.last_error)}
         </Alert>
       )}
 
@@ -732,7 +787,7 @@ function ConnectorDetail({ connector, loading, onEdit, onDelete, onRefresh }) {
           variant="outlined"
           color="error"
           startIcon={<Iconify icon="solar:trash-bin-trash-linear" width={14} />}
-          onClick={onDelete}
+          onClick={() => setConfirmDeleteOpen(true)}
           sx={{
             ml: "auto",
           }}
@@ -740,6 +795,36 @@ function ConnectorDetail({ connector, loading, onEdit, onDelete, onRefresh }) {
           Delete
         </Button>
       </Box>
+
+      <ConfirmDialog
+        open={confirmDeleteOpen}
+        onClose={() => {
+          if (!deleting) setConfirmDeleteOpen(false);
+        }}
+        closeDisabled={deleting}
+        title="Delete connector?"
+        content={
+          <Typography typography="s1" color="text.secondary">
+            Falcon AI will lose access to <strong>{connector.name}</strong>
+            {toolCount > 0
+              ? ` and its ${toolCount} tool${toolCount === 1 ? "" : "s"}`
+              : ""}
+            . Its saved settings and credentials are removed and cannot be
+            recovered.
+          </Typography>
+        }
+        action={
+          <LoadingButton
+            size="small"
+            variant="contained"
+            color="error"
+            loading={deleting}
+            onClick={handleConfirmDelete}
+          >
+            Delete connector
+          </LoadingButton>
+        }
+      />
 
       {/* Tools */}
       <Divider sx={{ mb: 2 }} />
@@ -854,6 +939,7 @@ ConnectorDetail.propTypes = {
     last_error: PropTypes.string,
     discovered_tools: PropTypes.array,
     enabled_tool_names: PropTypes.array,
+    tool_count: PropTypes.number,
   }).isRequired,
   onEdit: PropTypes.func.isRequired,
   onDelete: PropTypes.func.isRequired,
@@ -909,10 +995,11 @@ function ConnectorEditor({ connector, onSaved, onCancel }) {
       });
       if (isEdit) {
         await updateConnector(connector.id, payload);
+        onSaved();
       } else {
-        await createConnector(payload);
+        // The page opens the new connector from this response.
+        onSaved(await createConnector(payload));
       }
-      onSaved();
     } catch (err) {
       setError(
         err?.response?.data?.detail ||

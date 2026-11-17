@@ -19,11 +19,38 @@ import os
 import re
 import time
 import uuid
-from datetime import datetime, timezone
-from typing import Any, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 import httpx
 import structlog
+
+from agentic_eval.core.utils.jinja_utils import nest_dotted_value
+from agentic_eval.core.utils.llm_payloads import (
+    choices_judge_instructions,
+    compute_choices_failure,
+    is_valid_choices_result,
+    note_video_links,
+    response_format_schema,
+)
+from agentic_eval.core.utils.model_config import ModelConfigs
+from agentic_eval.core.utils.score import clamp_unit_score
+from agentic_eval.core_evals.fi_utils.evals_result import EvalResult
+from agentic_eval.core_evals.fi_utils.exceptions import MediaNotAccessibleError
+from ee.evals.llm.agent_evaluator.context import EvalLLMClient
+from ee.evals.llm.agent_evaluator.context.prompts import output_format_instruction
+from ee.evals.llm.agent_evaluator.prompts import (
+    CONTEXT_REF_BY_ROOT,
+    EXPLICIT_FLAG_TO_KWARG,
+    EXPLICIT_FLAG_TO_ROOT,
+    EXPLICIT_PATH_BY_ROOT,
+    EXPLORE_TRACE_ACTIONS_MENU,
+    LARGE_DATA_EXPLORATION_TEMPLATE,
+    TRAVERSAL_BY_ROOT,
+)
+from model_hub.utils.ground_truth_retrieval import GT_CALIBRATION_INSTRUCTION
+
+logger = structlog.get_logger(__name__)
 
 
 def _extract_gateway_diagnostics(exc: BaseException | None) -> dict:
@@ -62,21 +89,6 @@ def _extract_gateway_diagnostics(exc: BaseException | None) -> dict:
     return {}
 
 
-from agentic_eval.core.utils.llm_payloads import (
-    choices_judge_instructions,
-    compute_choices_failure,
-    is_valid_choices_result,
-    response_format_schema,
-)
-from agentic_eval.core_evals.fi_utils.evals_result import EvalResult
-
-logger = structlog.get_logger(__name__)
-
-from agentic_eval.core.utils.jinja_utils import nest_dotted_value
-from agentic_eval.core.utils.model_config import ModelConfigs
-from agentic_eval.core.utils.score import clamp_unit_score
-from agentic_eval.core_evals.fi_utils.exceptions import MediaNotAccessibleError
-
 # ── User-facing error message ────────────────────────────────────────────
 #
 # Every failure path inside the agent eval loop surfaces this same
@@ -89,7 +101,7 @@ from agentic_eval.core_evals.fi_utils.exceptions import MediaNotAccessibleError
 #   - engineers able to triage by cause via the Sentry dashboard
 #     (one error type per failure mode, not all merged together)
 USER_FACING_EVAL_FAILED = (
-    "Evaluation failed. Please try again. If the problem persists, " "contact support."
+    "Evaluation failed. Please try again. If the problem persists, contact support."
 )
 
 
@@ -203,20 +215,6 @@ SUMMARY_PROMPTS = {
 }
 
 
-from ee.evals.llm.agent_evaluator.context import EvalLLMClient
-from ee.evals.llm.agent_evaluator.context.prompts import output_format_instruction
-from ee.evals.llm.agent_evaluator.prompts import (
-    CONTEXT_REF_BY_ROOT,
-    EXPLICIT_FLAG_TO_KWARG,
-    EXPLICIT_FLAG_TO_ROOT,
-    EXPLICIT_PATH_BY_ROOT,
-    EXPLORE_TRACE_ACTIONS_MENU,
-    LARGE_DATA_EXPLORATION_TEMPLATE,
-    TRAVERSAL_BY_ROOT,
-)
-from model_hub.utils.ground_truth_retrieval import GT_CALIBRATION_INSTRUCTION
-
-
 def _build_eval_system_prompt(
     output_type: str,
     choices: list[str] | None = None,
@@ -279,7 +277,7 @@ def _build_eval_system_prompt(
     tool_str = "\n".join(tool_instructions)
 
     _date_hint = (
-        f"\n\nToday is {datetime.now(timezone.utc).strftime('%Y-%m-%d')} (UTC)."
+        f"\n\nToday is {datetime.now(UTC).strftime('%Y-%m-%d')} (UTC)."
         if check_internet
         else ""
     )
@@ -350,9 +348,9 @@ Output ONLY the JSON. Nothing else."""
 
 
 def _build_openai_media_blocks(
-    image_urls: Optional[list],
-    url_media_types: Optional[dict],
-    url_to_key: Optional[dict] = None,
+    image_urls: list | None,
+    url_media_types: dict | None,
+    url_to_key: dict | None = None,
 ) -> list:
     """Download detected media URLs and emit OpenAI-compatible content
     blocks. One shape for every caller — any model-specific shaping
@@ -450,7 +448,7 @@ def _openai_media_block(url_type: str, content_type: str, b64_data: str) -> dict
 _EVAL_INPUT_PLACEHOLDER_RE = re.compile(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}")
 
 _EVAL_INPUT_IMAGE_EXT_RE = re.compile(
-    r"https?://\S+\.(png|jpg|jpeg|gif|webp|svg|mp4)(\?|$)",
+    r"https?://\S+\.(png|jpg|jpeg|gif|webp|svg)(\?|$)",
     re.IGNORECASE,
 )
 _EVAL_INPUT_AUDIO_EXT_RE = re.compile(
@@ -466,7 +464,7 @@ _RENDER_AUDIO_URL_RE = re.compile(
     re.IGNORECASE,
 )
 _RENDER_IMAGE_URL_RE = re.compile(
-    r"^https?://\S+\.(png|jpg|jpeg|gif|webp|svg|mp4)(\?\S*)?$",
+    r"^https?://\S+\.(png|jpg|jpeg|gif|webp|svg)(\?\S*)?$",
     re.IGNORECASE,
 )
 _RENDER_PDF_URL_RE = re.compile(
@@ -486,11 +484,14 @@ class AgentEvaluator:
         input_dict: dict,
         *,
         raise_on_unfetchable: bool = False,
+        video_links: list[str] | None = None,
     ) -> tuple[list[str], dict[str, str], dict[str, str]]:
         """Classify each value in ``input_dict`` as image / audio / pdf via regex then content-sniff.
 
         Returns ``(urls, url_media_types, url_to_key)``. With ``raise_on_unfetchable=True``,
-        raises ``ValueError`` if an HTTP(S) URL is unreachable.
+        raises ``ValueError`` if an HTTP(S) URL is unreachable. A video link is not
+        an eval modality: it stays text, and its key is appended to ``video_links``
+        when given.
         """
         image_urls: list[str] = []
         url_media_types: dict[str, str] = {}
@@ -531,10 +532,14 @@ class AgentEvaluator:
             from agentic_eval.core.utils.functions import detect_input_type
 
             try:
-                detected = detect_input_type(_remaining) or {}
+                detected = detect_input_type(_remaining, video_type="video") or {}
             except Exception:
                 detected = {}
             for key, media_type in detected.items():
+                if media_type == "video":
+                    if video_links is not None:
+                        video_links.append(key)
+                    continue
                 if media_type not in _EVAL_INPUT_SUPPORTED_MEDIA:
                     if raise_on_unfetchable and str(media_type).lower() == "file":
                         val = _remaining.get(key, "")
@@ -565,9 +570,9 @@ class AgentEvaluator:
     def build_eval_input_blocks(
         rule_prompt: str,
         input_dict: dict,
-        input_types: Optional[dict] = None,
+        input_types: dict | None = None,
         *,
-        exclude_keys: Optional[set] = None,
+        exclude_keys: set | None = None,
         tag_keys: bool = False,
         text_truncate_chars: int = 1500,
     ) -> tuple[str, list[dict]]:
@@ -583,7 +588,7 @@ class AgentEvaluator:
 
         if input_types is None:
             _, derived, _ = AgentEvaluator.detect_eval_media(input_dict)
-            input_types = {url: kind for url, kind in derived.items()}
+            input_types = dict(derived)
 
         def _sub(match: "re.Match[str]") -> str:
             key = match.group(1)
@@ -683,8 +688,15 @@ class AgentEvaluator:
         self._is_protect = ModelConfigs.is_protect(model)
         # Effective Turing alias after any runtime override (alias only).
         self._effective_model = model
+        # The model the agent's client runs on once _run_agent picks it: the
+        # managed model, a Turing alias, a multimodal upgrade or, without
+        # managed AI, the configured model. Callers store it in their records;
+        # the result keeps naming the configured model.
+        self.ran_on_model: str | None = None
         # Generic media-type flags (audio/image/pdf/video) from input detection.
         self._media_types: list[str] = []
+        # Inputs that were video links: the result says the judge saw only the link.
+        self._video_links: list[str] = []
         self._output_type = output_type
         self._choices = choices or []
         self._choice_scores = choice_scores or {}
@@ -878,6 +890,8 @@ class AgentEvaluator:
         """
         from agentic_eval.core_evals.fi_evals.base_evaluator import BatchRunResult
 
+        self.ran_on_model = None
+
         # Split kwargs: override values vs. template variables.
         # If a key is also a required template variable, keep it in kwargs
         # so _render_prompt can still access it (e.g. user template variable
@@ -1020,7 +1034,7 @@ class AgentEvaluator:
         # Inject few-shot feedback examples into the rendered prompt
         if few_shots:
             few_shot_texts = []
-            for block in (few_shots if isinstance(few_shots, list) else [few_shots]):
+            for block in few_shots if isinstance(few_shots, list) else [few_shots]:
                 if isinstance(block, dict) and block.get("type") == "text":
                     few_shot_texts.append(block["text"])
                 elif isinstance(block, str):
@@ -1088,7 +1102,7 @@ class AgentEvaluator:
             logger.info(
                 "agent_eval_auto_context_loaded",
                 eval_id=self._current_eval_id,
-                loaded_roots={r: s for r, s in _loaded_roots_info},
+                loaded_roots=dict(_loaded_roots_info),
             )
 
             # Append a single discoverability block telling the agent
@@ -1273,8 +1287,11 @@ class AgentEvaluator:
         )
 
         _input_dict = {key: kwargs.get(key, "") for key in required_keys}
+        self._video_links = []
         _detected_urls, _url_media_types, _url_to_key = (
-            AgentEvaluator.detect_eval_media(_input_dict, raise_on_unfetchable=True)
+            AgentEvaluator.detect_eval_media(
+                _input_dict, raise_on_unfetchable=True, video_links=self._video_links
+            )
         )
         for u in _detected_urls:
             if u not in image_urls:
@@ -1564,8 +1581,9 @@ class AgentEvaluator:
     def _jinja_render(template_str: str, context: dict, finalize=None) -> str:
         """Render a Jinja2 template; preserve unknown ``{{key}}`` and fall back to str.replace on syntax errors."""
         import jinja2
-        from agentic_eval.core_evals.fi_utils.utils import PreserveUndefined
         from jinja2.sandbox import SandboxedEnvironment
+
+        from agentic_eval.core_evals.fi_utils.utils import PreserveUndefined
 
         env_kwargs: dict = {
             "variable_start_string": "{{",
@@ -1999,7 +2017,6 @@ class AgentEvaluator:
         tools and instructions, runs the multi-turn loop, and returns the result.
         """
         # Import here to avoid circular imports
-        from ai_tools.base import ToolContext
         from ee.falcon_ai.agent import AgentLoop
 
         # Build tool context from stored org/workspace
@@ -2063,6 +2080,8 @@ class AgentEvaluator:
                 "response_format",
                 None,
             )
+
+        self.ran_on_model = agent.llm_client.model
 
         # Tell the wrapper client what the per-turn iteration budget is.
         # The client uses this to inject soft hints at 70% / 90% so the
@@ -2134,8 +2153,12 @@ class AgentEvaluator:
                         ws = Workspace.objects.filter(
                             id=self.workspace_id, organization=org
                         ).first()
-                    mcp_tools = load_mcp_tools(organization=org, workspace=ws)
-                    requested_ids = set(str(cid) for cid in connector_ids)
+                    mcp_tools = load_mcp_tools(
+                        organization=org,
+                        workspace=ws,
+                        user=tool_context.user if self.user_id else None,
+                    )
+                    requested_ids = {str(cid) for cid in connector_ids}
                     for mcp_tool in mcp_tools:
                         connector_id = str(mcp_tool._connector.id)
                         if connector_id in requested_ids and mcp_tool not in eval_tools:
@@ -2700,7 +2723,7 @@ class AgentEvaluator:
         if self._output_type in ("score", "numeric"):
             try:
                 float(result_value)
-            except (ValueError, TypeError):
+            except (ValueError, TypeError) as err:
                 logger.error(
                     "eval_result_type_mismatch_numeric",
                     **self._failure_context(
@@ -2708,7 +2731,7 @@ class AgentEvaluator:
                         expected="numeric score (0.0-1.0)",
                     ),
                 )
-                raise ValueError(USER_FACING_EVAL_FAILED)
+                raise ValueError(USER_FACING_EVAL_FAILED) from err
             result_value = clamp_unit_score(result_value)
         elif self._output_type == "Pass/Fail":
             if str(result_value).lower() not in ("pass", "fail"):
@@ -2790,7 +2813,7 @@ class AgentEvaluator:
             "data": {"result": result_value},
             "failure": failure,
             "metadata": metadata,
-            "reason": explanation,
+            "reason": note_video_links(explanation, self._video_links),
             "runtime": runtime_ms,
             "model": self._model,
             "metrics": [

@@ -115,13 +115,10 @@ async function main() {
     );
     await listResponse;
 
-    await waitForVisibleText(page, "Manage workspace integrations", {
+    await waitForVisibleText(page, "Integrations", {
       exact: true,
     });
-    await waitForVisibleText(
-      page,
-      "Connect external observability platforms to import traces",
-    );
+    await waitForVisibleText(page, "Connect external platforms");
     await waitForVisibleText(page, displayName);
     await waitForVisibleText(page, hostUrl);
     await waitForVisibleText(page, traceLabel);
@@ -182,7 +179,7 @@ async function main() {
       page,
       `/dashboard/settings/workspace/${auth.workspaceId}/integrations`,
     );
-    await waitForVisibleText(page, "Manage workspace integrations", {
+    await waitForVisibleText(page, "Integrations", {
       exact: true,
     });
 

@@ -170,7 +170,9 @@ def test_simulation_smart_dispatch_never_falls_back_to_trace_reader():
         format="json",
     )
     request.workspace = _workspace()
-    force_authenticate(request, user=SimpleNamespace(is_authenticated=True))
+    force_authenticate(
+        request, user=SimpleNamespace(is_authenticated=True, organization=None)
+    )
     scope = {
         "organization_id": ORG_ID,
         "workspace_id": WORKSPACE_ID,
@@ -222,7 +224,9 @@ def test_simulation_smart_request_without_native_scope_is_typed_422():
         format="json",
     )
     request.workspace = _workspace()
-    force_authenticate(request, user=SimpleNamespace(is_authenticated=True))
+    force_authenticate(
+        request, user=SimpleNamespace(is_authenticated=True, organization=None)
+    )
 
     response = ai_filter.AIFilterView.as_view()(request)
 

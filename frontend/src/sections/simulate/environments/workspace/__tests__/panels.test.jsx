@@ -383,9 +383,9 @@ describe("useWorkspaceTab", () => {
 });
 
 describe("Versions tab", () => {
-  it("is hidden while versioning is off", () => {
+  it("is shown while versioning is off, so its panel can say so", () => {
     renderPanels();
-    expect(screen.queryByRole("tab", { name: /Versions/ })).toBeNull();
+    expect(screen.getByRole("tab", { name: /Versions/ })).toBeInTheDocument();
   });
 
   it("is shown and renders the versions body when versioning is on", () => {
@@ -397,10 +397,10 @@ describe("Versions tab", () => {
     expect(screen.getByText("versions-body")).toBeInTheDocument();
   });
 
-  it("falls back to the Overview when versions is deep-linked with versioning off", () => {
+  it("opens Versions when it is deep-linked with versioning off", () => {
     renderPanels({ tab: "versions" });
-    expect(screen.queryByText("versions-body")).toBeNull();
-    expect(screen.getByText(/overview-body/)).toBeInTheDocument();
+    expect(screen.getByText("versions-body")).toBeInTheDocument();
+    expect(screen.queryByText(/overview-body/)).toBeNull();
   });
 });
 

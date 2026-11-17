@@ -26,14 +26,14 @@ class ErrorFeedLicenseRequired:
 
 def get_accessible_project_ids(request) -> List[str]:
     """
-    Return list of project IDs the request's user has access to.
+    Return list of project IDs in the request's organization.
 
-    Scoped by organization (+ workspace if present on the request).
-    Returns empty list if the user has no organization.
+    Scoped by the organization the authentication class resolved onto the
+    request (+ workspace if present on the request). The user's own
+    ``organization`` field never chooses the scope. Returns empty list if the
+    request has no organization.
     """
-    org = getattr(request, "organization", None) or getattr(
-        request.user, "organization", None
-    )
+    org = getattr(request, "organization", None)
     if not org:
         return []
 
@@ -68,14 +68,14 @@ def is_authorized_empty_feed_scope(request) -> bool:
 
     `get_accessible_project_ids` returns ``[]`` both for a request with no
     organization and for a valid organization/workspace that simply has no
-    projects. The list and stats endpoints use this to tell the two apart
-    (TH-8209); the resolver itself and its other callers are unchanged.
+    projects. The list and stats endpoints use this to tell the two apart;
+    the resolver itself and its other callers are unchanged.
 
     Only the organization the authentication class resolved onto the request
-    counts. The resolver's ``user.organization`` fallback does not: a request
-    whose scope could not be established keeps the existing denial. When a
-    workspace was resolved it must belong to that organization. Workspace
-    membership itself was already enforced during authentication.
+    counts, the same one the resolver reads: a request whose scope could not
+    be established keeps the existing denial. When a workspace was resolved
+    it must belong to that organization. Workspace membership itself was
+    already enforced during authentication.
     """
     org = getattr(request, "organization", None)
     if org is None:

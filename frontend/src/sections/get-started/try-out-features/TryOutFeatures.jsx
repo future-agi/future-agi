@@ -1,9 +1,13 @@
 import { Box, Typography } from "@mui/material";
+import PropTypes from "prop-types";
 import React from "react";
 import FeatureCard from "./FeatureCard";
 import { featureCardList } from "../constant";
+import ModelRoutes from "../ModelRoutes";
 
-const TryOutFeatures = () => {
+// `showModelRoutes` is false while the open step shows the two routes
+// itself, so one screen has one box.
+const TryOutFeatures = ({ onAddProviderKey, showModelRoutes = true }) => {
   return (
     <Box>
       <Typography
@@ -11,8 +15,14 @@ const TryOutFeatures = () => {
         fontWeight={"fontWeightMedium"}
         color={"text.primary"}
       >
-        Try out our features
+        Explore
       </Typography>
+      {showModelRoutes && (
+        <ModelRoutes
+          sentence="Experiments and evaluations call a model, and your organization has no provider key of its own."
+          onAddProviderKey={onAddProviderKey}
+        />
+      )}
       <Box
         display={"flex"}
         flexDirection={"row"}
@@ -34,6 +44,11 @@ const TryOutFeatures = () => {
       </Box>
     </Box>
   );
+};
+
+TryOutFeatures.propTypes = {
+  onAddProviderKey: PropTypes.func,
+  showModelRoutes: PropTypes.bool,
 };
 
 export default TryOutFeatures;

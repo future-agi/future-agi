@@ -20,6 +20,7 @@ import {
   Select,
   Stack,
   TextField,
+  Tooltip,
   Typography,
 } from "@mui/material";
 import { alpha } from "@mui/material/styles";
@@ -28,6 +29,7 @@ import React, {
   forwardRef,
   useCallback,
   useEffect,
+  useId,
   useImperativeHandle,
   useMemo,
   useRef,
@@ -501,10 +503,27 @@ const RANGE_NUMERIC_TYPES = new Set([
 const RANGE_DATE_TYPES = new Set(["date", "datetime", "timestamp"]);
 // Numeric ranges stay type="text": type="number" swallows invalid keystrokes
 // with no feedback (same rationale as the Basic-tab inputs, TH-5195).
+// Date fields edit a local date + time, like the Basic tab: a date-only box
+// can't show a stored 'yyyy-MM-ddTHH:mm' value, and a bare day is later read
+// as UTC midnight.
 const rangeInputTypeFor = (fieldType) => {
-  if (RANGE_DATE_TYPES.has(fieldType)) return "date";
+  if (RANGE_DATE_TYPES.has(fieldType)) return "datetime-local";
   return "text";
 };
+
+// A day without a time ('yyyy-MM-dd') opens as that whole day: 00:00, or 23:59
+// when it is a range's upper bound.
+const DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const toDateTimeInputValue = (value, { endOfDay = false } = {}) => {
+  const str = value === null || value === undefined ? "" : String(value).trim();
+  if (!DATE_ONLY_PATTERN.test(str)) return str;
+  return `${str}T${endOfDay ? "23:59" : "00:00"}`;
+};
+
+// A date + time input reads "" while it is only partly filled in; Backspace
+// there edits the input instead of leaving the editor.
+const isClearedInput = (target) =>
+  target.value === "" && !target.validity?.badInput;
 
 const isValidRangeNumericInput = (v) =>
   v === "" || /^-?\d*\.?\d*$/.test(String(v).trim());
@@ -522,8 +541,51 @@ const isCompleteNumericInput = (v) => {
 
 const QUERY_PAGINATION_THRESHOLD_PX = 40;
 
+// Inline editors that replace the query box while a range or a date value is
+// being entered.
+const INLINE_EDITOR_SX = {
+  display: "flex",
+  flexWrap: "wrap",
+  alignItems: "center",
+  gap: 0.5,
+  width: "100%",
+  border: "1px solid",
+  borderColor: "divider",
+  borderRadius: 1,
+  px: 1.5,
+  py: 0.5,
+  minHeight: 40,
+  "&:focus-within": { borderColor: "primary.main" },
+};
+const INLINE_FIELD_SX = {
+  flex: 1,
+  minWidth: 100,
+  "& .MuiOutlinedInput-root": { height: 28, fontSize: 12 },
+  "& .MuiInputBase-input": { p: "4px 8px" },
+};
+
 // Category chips read "Scenario", not "scenario"; the chip itself can't restyle text.
 const sentenceCase = (str) => str.charAt(0).toUpperCase() + str.slice(1);
+
+// A value as the user picked it: the label of its `{ value, label }` choice or
+// its `choiceLabels` entry, else the value itself.
+const choiceLabelFor = (fieldDef, value) => {
+  const choice = Array.isArray(fieldDef?.choices)
+    ? fieldDef.choices.find(
+        (c) =>
+          c !== null && typeof c === "object" && (c.value ?? c.label) === value,
+      )
+    : undefined;
+  if (choice) return String(choice.label ?? choice.value ?? "");
+  return String(fieldDef?.choiceLabels?.[value] ?? value);
+};
+
+// While a chip holding several values is edited the box reads "a, b"; the
+// value being typed is the text after the last comma.
+const lastListPart = (text) => text.slice(text.lastIndexOf(",") + 1).trim();
+
+// One value of that list as the box shows it: a text box drops line breaks.
+const listItemText = (value) => String(value ?? "").replace(/[\r\n]/g, "");
 
 const QueryInput = forwardRef(function QueryInput(
   {
@@ -560,6 +622,7 @@ const QueryInput = forwardRef(function QueryInput(
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [focused, setFocused] = useState(false);
   const inputRef = useRef(null);
+  const rangeErrorId = useId();
   const bottomEdgeLatchedRef = useRef(false);
   const paginationRequestRef = useRef(null);
   const initialTokensKey = useMemo(
@@ -619,6 +682,11 @@ const QueryInput = forwardRef(function QueryInput(
     phase === "value" &&
     !isRangePhase &&
     RANGE_NUMERIC_TYPES.has(fieldMap[partialField]?.type);
+  // after / before / on for a date field: one date + time picker, not text.
+  const isDateScalar =
+    phase === "value" &&
+    !isRangePhase &&
+    RANGE_DATE_TYPES.has(fieldMap[partialField]?.type);
   const rangeFromInvalid =
     isNumericRange && !isValidRangeNumericInput(rangeFrom);
   const rangeToInvalid = isNumericRange && !isValidRangeNumericInput(rangeTo);
@@ -630,6 +698,17 @@ const QueryInput = forwardRef(function QueryInput(
       (!hasStaticValueChoices ||
         fieldMap[partialField]?.allowCustomValue === true),
   );
+  const valueFreeSolo =
+    phase === "value" && !isRangePhase && allowsFreeTextValue;
+  // Editing a chip that holds several values keeps it a list: Enter and a close
+  // apply a list, and suggestions follow the value being typed. One value that
+  // contains a comma is never split.
+  const editingList =
+    phase === "value" &&
+    !isRangePhase &&
+    Array.isArray(partialOriginalValue) &&
+    partialOriginalValue.length > 1;
+  const searchText = editingList ? lastListPart(inputValue) : inputValue;
 
   const options = useMemo(() => {
     if (phase === "field")
@@ -651,6 +730,8 @@ const QueryInput = forwardRef(function QueryInput(
     }
     if (phase === "value") {
       const fd = fieldMap[partialField];
+      // Date values come from the date + time picker, never sampled values.
+      if (RANGE_DATE_TYPES.has(fd?.type)) return [];
       // Static choices: gate on choices presence so categorical / thumbs /
       // annotator fields (which carry their real type tag) also pick up.
       // Dynamic values from parent (fetched from CH)
@@ -671,7 +752,9 @@ const QueryInput = forwardRef(function QueryInput(
           const value =
             typeof choice === "object" ? choice.value ?? choice.label : choice;
           const label =
-            typeof choice === "object" ? choice.label ?? choice.value : choice;
+            typeof choice === "object"
+              ? choice.label ?? choice.value
+              : fd.choiceLabels?.[choice] ?? choice;
           return { id: value, label: String(label ?? ""), type: "value" };
         });
       }
@@ -688,9 +771,9 @@ const QueryInput = forwardRef(function QueryInput(
 
   const filtered = useMemo(
     () =>
-      inputValue
+      searchText
         ? options.filter((option) => {
-            const query = inputValue.toLowerCase();
+            const query = searchText.toLowerCase();
             const candidates =
               phase === "value" ? [option.id, option.label] : [option.label];
             return candidates.some((candidate) =>
@@ -700,23 +783,32 @@ const QueryInput = forwardRef(function QueryInput(
             );
           })
         : options,
-    [inputValue, options, phase],
+    [searchText, options, phase],
   );
 
-  const exactInputOption = useMemo(() => {
-    const candidate = inputValue.trim().toLowerCase();
-    if (!candidate) return null;
-    return (
-      options.find((option) =>
-        [option.id, option.label].some(
-          (value) =>
-            String(value ?? "")
-              .trim()
-              .toLowerCase() === candidate,
-        ),
-      ) ?? null
-    );
-  }, [inputValue, options]);
+  const exactOptionFor = useCallback(
+    (text) => {
+      const candidate = String(text ?? "")
+        .trim()
+        .toLowerCase();
+      if (!candidate) return null;
+      return (
+        options.find((option) =>
+          [option.id, option.label].some(
+            (value) =>
+              String(value ?? "")
+                .trim()
+                .toLowerCase() === candidate,
+          ),
+        ) ?? null
+      );
+    },
+    [options],
+  );
+  const exactInputOption = useMemo(
+    () => exactOptionFor(inputValue),
+    [exactOptionFor, inputValue],
+  );
 
   const partialOriginalDisplayValue = useMemo(
     () =>
@@ -730,6 +822,135 @@ const QueryInput = forwardRef(function QueryInput(
   const originalInputUnchanged =
     partialOriginalValue !== undefined &&
     partialOriginalDisplayValue === inputValue.trim();
+
+  // Reads list text back as values. The chip's values that the edit left
+  // whole at the start or the end of the text are kept exactly as they were,
+  // each with its own type, even when one holds a comma or spaces. Only the
+  // edited stretch is split at commas: each part takes back an edited value
+  // it still names (each value once), else the option it names, else its own
+  // text where free text is allowed. Null while any part names nothing usable.
+  const resolveList = useCallback(
+    (text) => {
+      const originals = Array.isArray(partialOriginalValue)
+        ? partialOriginalValue
+        : [];
+      const texts = originals.map(listItemText);
+      const count = texts.length;
+      // Leading values still followed by a comma (or the end of the text).
+      let head = 0;
+      let headEnd = 0;
+      while (head < count) {
+        const joined = texts.slice(0, head + 1).join(", ");
+        const next = text.charAt(joined.length);
+        if (!text.startsWith(joined) || (next !== "" && next !== ",")) break;
+        head += 1;
+        headEnd = joined.length;
+      }
+      // Trailing values still led by ", " (or the start of the text), clear of
+      // the leading ones.
+      let tail = 0;
+      let tailStart = text.length;
+      while (head + tail < count) {
+        const joined = texts.slice(count - tail - 1).join(", ");
+        const start = text.length - joined.length;
+        const led =
+          start === 0
+            ? head === 0
+            : start - 2 >= headEnd && text.slice(start - 2, start) === ", ";
+        if (start < 0 || !text.endsWith(joined) || !led) break;
+        tail += 1;
+        tailStart = start;
+      }
+      const value = [];
+      const valueTypes = [];
+      const keep = (index) => {
+        value.push(originals[index]);
+        valueTypes.push(partialValueTypes[index]);
+      };
+      for (let index = 0; index < head; index += 1) keep(index);
+      const edited = [];
+      for (let index = head; index < count - tail; index += 1) {
+        edited.push(index);
+      }
+      const middle = text.slice(
+        head > 0 ? headEnd + 1 : 0,
+        tail > 0 ? Math.max(tailStart - 2, 0) : text.length,
+      );
+      for (const part of middle.split(",")) {
+        const typed = part.trim();
+        if (!typed) continue;
+        const claimed = edited.findIndex(
+          (index) => texts[index].trim() === typed,
+        );
+        const option = claimed === -1 ? exactOptionFor(typed) : null;
+        if (claimed !== -1) {
+          keep(edited.splice(claimed, 1)[0]);
+        } else if (option) {
+          value.push(option.id);
+          valueTypes.push(option.storageType);
+        } else if (
+          allowsFreeTextValue &&
+          (!isNumericScalar || isCompleteNumericInput(typed))
+        ) {
+          value.push(typed);
+          valueTypes.push(undefined);
+        } else {
+          return null;
+        }
+      }
+      for (let index = count - tail; index < count; index += 1) keep(index);
+      return { value, valueTypes };
+    },
+    [
+      partialOriginalValue,
+      partialValueTypes,
+      exactOptionFor,
+      allowsFreeTextValue,
+      isNumericScalar,
+    ],
+  );
+
+  // What Enter or a close applies from the query box, or null while the text
+  // names nothing usable: a fixed-choice field takes listed values only, and a
+  // partial number never applies (TH-5195).
+  const typedDraft = useMemo(() => {
+    if (phase !== "value" || isRangePhase) return null;
+    if (editingList) {
+      if (originalInputUnchanged) {
+        return { value: partialOriginalValue, valueTypes: partialValueTypes };
+      }
+      const list = resolveList(inputValue);
+      return list && list.value.length > 0 ? list : null;
+    }
+    const typed = inputValue.trim();
+    if (!typed) return null;
+    if (!allowsFreeTextValue && !exactInputOption) return null;
+    if (isNumericScalar && !isCompleteNumericInput(typed)) return null;
+    return {
+      value: exactInputOption
+        ? exactInputOption.id
+        : originalInputUnchanged
+          ? partialOriginalValue
+          : typed,
+      valueTypes: exactInputOption?.storageType
+        ? [exactInputOption.storageType]
+        : originalInputUnchanged
+          ? partialValueTypes
+          : undefined,
+    };
+  }, [
+    phase,
+    isRangePhase,
+    editingList,
+    originalInputUnchanged,
+    partialOriginalValue,
+    partialValueTypes,
+    resolveList,
+    inputValue,
+    allowsFreeTextValue,
+    exactInputOption,
+    isNumericScalar,
+  ]);
 
   const commitFilter = useCallback(
     (field, op, value, valueTypes) => {
@@ -811,31 +1032,18 @@ const QueryInput = forwardRef(function QueryInput(
           setRangeTo("");
           return updated;
         }
-        const v = inputValue.trim();
-        if (!v) return null;
-        if (!allowsFreeTextValue && !exactInputOption) return null;
-        // Don't commit a partial/invalid numeric on close (TH-5195).
-        if (isNumericScalar && !isCompleteNumericInput(v)) return null;
-        const selectedValue = exactInputOption
-          ? exactInputOption.id
-          : originalInputUnchanged
-            ? partialOriginalValue
-            : v;
-        const selectedValueTypes = exactInputOption?.storageType
-          ? [exactInputOption.storageType]
-          : originalInputUnchanged
-            ? partialValueTypes
-            : undefined;
+        // Nothing usable typed (or a partial number, TH-5195): not applied.
+        if (!typedDraft) return null;
         const token = {
           field: partialField,
           operator: partialOp,
-          value: selectedValue,
+          value: typedDraft.value,
         };
         if (
-          Array.isArray(selectedValueTypes) &&
-          selectedValueTypes.some(Boolean)
+          Array.isArray(typedDraft.valueTypes) &&
+          typedDraft.valueTypes.some(Boolean)
         ) {
-          token.valueTypes = selectedValueTypes;
+          token.valueTypes = typedDraft.valueTypes;
         }
         const updated = [...tokens, token];
         setTokens(updated);
@@ -857,14 +1065,7 @@ const QueryInput = forwardRef(function QueryInput(
       rangeFromInvalid,
       rangeToInvalid,
       isNumericRange,
-      isNumericScalar,
-      inputValue,
-      hasStaticValueChoices,
-      allowsFreeTextValue,
-      exactInputOption,
-      partialValueTypes,
-      partialOriginalValue,
-      originalInputUnchanged,
+      typedDraft,
     ],
   );
 
@@ -888,7 +1089,9 @@ const QueryInput = forwardRef(function QueryInput(
       if (!option) return;
       if (typeof option === "string") {
         const explicitValue = option.trim();
+        // A list edit is applied by Enter as a list, never as one literal.
         if (
+          editingList ||
           phase !== "value" ||
           !allowsFreeTextValue ||
           !explicitValue ||
@@ -918,6 +1121,23 @@ const QueryInput = forwardRef(function QueryInput(
         setRangeFrom("");
         setRangeTo("");
         reopenDropdown();
+      } else if (phase === "value" && editingList) {
+        // A picked suggestion takes the place of the value being typed and the
+        // list is applied; if an earlier part names nothing usable, the pick
+        // only fills in the text so that part can be fixed.
+        const headText = inputValue.slice(0, inputValue.lastIndexOf(",") + 1);
+        const head = resolveList(headText);
+        if (!head) {
+          setInputValue(`${headText}${headText ? " " : ""}${option.id}`);
+          return;
+        }
+        const listed = head.value.includes(option.id);
+        commitFilter(
+          partialField,
+          partialOp,
+          listed ? head.value : [...head.value, option.id],
+          listed ? head.valueTypes : [...head.valueTypes, option.storageType],
+        );
       } else if (phase === "value") {
         commitFilter(
           partialField,
@@ -938,6 +1158,9 @@ const QueryInput = forwardRef(function QueryInput(
       hasStaticValueChoices,
       allowsFreeTextValue,
       isNumericScalar,
+      editingList,
+      inputValue,
+      resolveList,
     ],
   );
 
@@ -961,6 +1184,7 @@ const QueryInput = forwardRef(function QueryInput(
         setInputValue("");
       } else {
         setPartialOp(token.operator);
+        const isDateToken = RANGE_DATE_TYPES.has(fieldMap[token.field]?.type);
         // Key off the operator, not the array shape — in/not_in and
         // multi-select values are also 2-element arrays.
         if (
@@ -968,25 +1192,33 @@ const QueryInput = forwardRef(function QueryInput(
           Array.isArray(token.value) &&
           token.value.length === 2
         ) {
-          setRangeFrom(token.value[0] ?? "");
-          setRangeTo(token.value[1] ?? "");
+          setRangeFrom(
+            isDateToken
+              ? toDateTimeInputValue(token.value[0])
+              : token.value[0] ?? "",
+          );
+          setRangeTo(
+            isDateToken
+              ? toDateTimeInputValue(token.value[1], { endOfDay: true })
+              : token.value[1] ?? "",
+          );
           setInputValue("");
         } else {
           setRangeFrom("");
           setRangeTo("");
+          const displayValue = Array.isArray(token.value)
+            ? token.value.join(", ")
+            : token.value === null || token.value === undefined
+              ? ""
+              : String(token.value);
           setInputValue(
-            Array.isArray(token.value)
-              ? token.value.join(", ")
-              : token.value === null || token.value === undefined
-                ? ""
-                : String(token.value),
+            isDateToken ? toDateTimeInputValue(displayValue) : displayValue,
           );
+          // A list searches for the value being typed, not for "a, b".
           onValueSearchChange?.(
-            Array.isArray(token.value)
-              ? token.value.join(", ")
-              : token.value === null || token.value === undefined
-                ? ""
-                : String(token.value),
+            Array.isArray(token.value) && token.value.length > 1
+              ? lastListPart(displayValue)
+              : displayValue,
             token.field,
           );
         }
@@ -997,7 +1229,7 @@ const QueryInput = forwardRef(function QueryInput(
       // initialTokens, which clears this partial editor before it can commit.
       // The completed edit is published by commitFilter/flushPartial instead.
     },
-    [tokens, onFieldChange, onValueSearchChange, opDefFor],
+    [tokens, fieldMap, onFieldChange, onValueSearchChange, opDefFor],
   );
 
   const handleKeyDown = useCallback(
@@ -1006,26 +1238,20 @@ const QueryInput = forwardRef(function QueryInput(
         phase === "value" &&
         !isRangePhase &&
         e.key === "Enter" &&
-        inputValue.trim() &&
-        allowsFreeTextValue &&
-        (!isNumericScalar || isCompleteNumericInput(inputValue.trim()))
+        typedDraft &&
+        (allowsFreeTextValue || editingList)
       ) {
         // MUI otherwise commits the first highlighted fuzzy suggestion after
         // this input-level handler returns. Resolve an exact option ourselves
         // so its typed id (including false / 0) wins regardless of ordering;
-        // otherwise preserve the user's explicit free-form text.
+        // otherwise preserve the user's explicit free-form text (or list).
         e.defaultMuiPrevented = true;
         e.preventDefault();
         commitFilter(
           partialField,
           partialOp,
-          exactInputOption?.id ??
-            (originalInputUnchanged ? partialOriginalValue : inputValue.trim()),
-          exactInputOption?.storageType
-            ? [exactInputOption.storageType]
-            : originalInputUnchanged
-              ? partialValueTypes
-              : undefined,
+          typedDraft.value,
+          typedDraft.valueTypes,
         );
         return;
       }
@@ -1051,7 +1277,6 @@ const QueryInput = forwardRef(function QueryInput(
     [
       phase,
       isRangePhase,
-      isNumericScalar,
       inputValue,
       partialField,
       partialOp,
@@ -1060,10 +1285,8 @@ const QueryInput = forwardRef(function QueryInput(
       editToken,
       hasStaticValueChoices,
       allowsFreeTextValue,
-      exactInputOption,
-      partialValueTypes,
-      partialOriginalValue,
-      originalInputUnchanged,
+      editingList,
+      typedDraft,
     ],
   );
 
@@ -1195,12 +1418,47 @@ const QueryInput = forwardRef(function QueryInput(
           typeof onLoadMoreValues === "function"
         : false;
 
+  // Typed text that matches nothing says so and what to do, instead of the
+  // suggestions vanishing.
+  const typedSearch = searchText.trim();
+  const noMatchNoun =
+    phase === "field" ? "field" : phase === "operator" ? "operator" : "value";
+  const noMatchText = !typedSearch
+    ? `No ${noMatchNoun}s to pick from.`
+    : phase === "value"
+      ? `No value matches "${typedSearch}". Only listed values can be used; clear the text to see them.`
+      : `No ${noMatchNoun} matches "${typedSearch}". Clear the text to see every ${noMatchNoun}.`;
+  // A half-built filter that a close would not apply says so while it is open.
+  const unfinishedStep =
+    phase === "operator"
+      ? "Pick an operator"
+      : allowsFreeTextValue
+        ? "Type or pick a value"
+        : "Pick a value from the list";
+  const unfinishedHint =
+    partialField && !typedDraft
+      ? `${unfinishedStep} to finish this filter. Unfinished filters are not applied.`
+      : undefined;
+
+  // Chips read with the labels the user picked; a list reads "a, b" and only a
+  // range keeps "from – to".
+  const tokenChipLabel = (token) => {
+    const fieldDef = fieldMap[token.field];
+    const opDef = opDefFor(token.field, token.operator);
+    const values = Array.isArray(token.value) ? token.value : [token.value];
+    const value =
+      Array.isArray(token.value) && opDef?.range
+        ? token.value.join(" – ")
+        : values.map((v) => choiceLabelFor(fieldDef, v)).join(", ");
+    return `${fieldDef?.label || token.field} ${opDef?.label || token.operator} ${value}`;
+  };
+
   // Shared chip/prefix render — used by both the Autocomplete renderInput
-  // startAdornment and the range-phase Box below.
+  // startAdornment and the range / date editor Boxes below.
   const tokenChips = tokens.map((token, idx) => (
     <Chip
       key={idx}
-      label={`${fieldMap[token.field]?.label || token.field} ${opDefFor(token.field, token.operator)?.label || token.operator} ${Array.isArray(token.value) ? token.value.join(" – ") : token.value}`}
+      label={tokenChipLabel(token)}
       size="small"
       onClick={() => editToken(idx)}
       onDelete={() => handleDeleteToken(idx)}
@@ -1240,21 +1498,121 @@ const QueryInput = forwardRef(function QueryInput(
     </Box>
   ));
 
-  if (isRangePhase) {
-    const rangeFieldSx = {
-      flex: 1,
-      minWidth: 100,
-      "& .MuiOutlinedInput-root": { height: 28, fontSize: 12 },
-      "& .MuiInputBase-input": { p: "4px 8px" },
+  if (isDateScalar) {
+    const dateValue = inputValue.trim();
+    const commitDate = () => {
+      if (!dateValue) return;
+      commitFilter(
+        partialField,
+        partialOp,
+        originalInputUnchanged ? partialOriginalValue : dateValue,
+        originalInputUnchanged ? partialValueTypes : undefined,
+      );
     };
+    const onDateKeyDown = (e) => {
+      if (e.key === "Enter" && dateValue) {
+        e.preventDefault();
+        commitDate();
+      }
+      if (
+        (e.key === "Backspace" || e.key === "Delete") &&
+        isClearedInput(e.target)
+      ) {
+        e.preventDefault();
+        setPartialOp(null);
+        setPartialValueTypes([]);
+        setPartialOriginalValue(undefined);
+        setInputValue("");
+      }
+    };
+
+    return (
+      <Box sx={INLINE_EDITOR_SX}>
+        {tokenChips}
+        {prefixChips}
+        <TextField
+          size="small"
+          type="datetime-local"
+          value={inputValue}
+          onChange={(e) => {
+            const next = e.target.value.trim();
+            if (next !== inputValue) {
+              setPartialValueTypes([]);
+              setPartialOriginalValue(undefined);
+            }
+            setInputValue(next);
+          }}
+          autoFocus
+          onKeyDown={onDateKeyDown}
+          sx={INLINE_FIELD_SX}
+          inputProps={{ "aria-label": "Date and time" }}
+        />
+        {/* A span keeps the tooltip working on a disabled button. */}
+        <Tooltip title="Apply date (Enter)">
+          <span>
+            <IconButton
+              size="small"
+              aria-label="Apply date"
+              onClick={commitDate}
+              disabled={!dateValue}
+            >
+              <Iconify icon="solar:check-linear" width={16} />
+            </IconButton>
+          </span>
+        </Tooltip>
+      </Box>
+    );
+  }
+
+  if (isRangePhase) {
+    // Cancel leaves the range editor for the query box. A chip that was being
+    // edited comes back unchanged instead of being dropped.
+    const cancelRange = () => {
+      if (partialOriginalValue !== undefined) {
+        const token = {
+          field: partialField,
+          operator: partialOp,
+          value: partialOriginalValue,
+        };
+        if (partialValueTypes.some(Boolean)) {
+          token.valueTypes = partialValueTypes;
+        }
+        setTokens([...tokens, token]);
+      }
+      setPartialField(null);
+      setPartialOp(null);
+      setPartialValueTypes([]);
+      setPartialOriginalValue(undefined);
+      setInputValue("");
+      setRangeFrom("");
+      setRangeTo("");
+      setTimeout(() => {
+        inputRef.current?.focus();
+        setDropdownOpen(true);
+      }, 0);
+    };
+    const rangeBoundInputProps = (invalid) =>
+      isNumericRange
+        ? {
+            inputMode: "decimal",
+            "aria-describedby": invalid ? rangeErrorId : undefined,
+          }
+        : undefined;
     const onRangeKeyDown = (e) => {
+      if (e.key === "Escape") {
+        // Only the range is cancelled; the filter panel stays open.
+        e.preventDefault();
+        e.stopPropagation();
+        cancelRange();
+        return;
+      }
       if (e.key === "Enter" && rangeFrom !== "" && rangeTo !== "") {
         e.preventDefault();
         commitRange();
       }
       if (
         (e.key === "Backspace" || e.key === "Delete") &&
-        e.target.value === ""
+        isClearedInput(e.target)
       ) {
         e.preventDefault();
         setPartialOp(null);
@@ -1264,22 +1622,7 @@ const QueryInput = forwardRef(function QueryInput(
     };
 
     return (
-      <Box
-        sx={{
-          display: "flex",
-          flexWrap: "wrap",
-          alignItems: "center",
-          gap: 0.5,
-          width: "100%",
-          border: "1px solid",
-          borderColor: "divider",
-          borderRadius: 1,
-          px: 1.5,
-          py: 0.5,
-          minHeight: 40,
-          "&:focus-within": { borderColor: "primary.main" },
-        }}
-      >
+      <Box sx={INLINE_EDITOR_SX}>
         {tokenChips}
         {prefixChips}
         <TextField
@@ -1291,8 +1634,8 @@ const QueryInput = forwardRef(function QueryInput(
           placeholder="from"
           autoFocus
           onKeyDown={onRangeKeyDown}
-          sx={rangeFieldSx}
-          inputProps={isNumericRange ? { inputMode: "decimal" } : undefined}
+          sx={INLINE_FIELD_SX}
+          inputProps={rangeBoundInputProps(rangeFromInvalid)}
         />
         <Box
           component="span"
@@ -1308,21 +1651,46 @@ const QueryInput = forwardRef(function QueryInput(
           onChange={(e) => setRangeTo(e.target.value.trim())}
           placeholder="to"
           onKeyDown={onRangeKeyDown}
-          sx={rangeFieldSx}
-          inputProps={isNumericRange ? { inputMode: "decimal" } : undefined}
+          sx={INLINE_FIELD_SX}
+          inputProps={rangeBoundInputProps(rangeToInvalid)}
         />
-        <IconButton
-          size="small"
-          onClick={commitRange}
-          disabled={
-            rangeFrom === "" ||
-            rangeTo === "" ||
-            rangeFromInvalid ||
-            rangeToInvalid
-          }
-        >
-          <Iconify icon="solar:check-linear" width={16} />
-        </IconButton>
+        {/* A span keeps the tooltip working on a disabled button. */}
+        <Tooltip title="Apply range (Enter)">
+          <span>
+            <IconButton
+              size="small"
+              aria-label="Apply range"
+              onClick={commitRange}
+              disabled={
+                rangeFrom === "" ||
+                rangeTo === "" ||
+                rangeFromInvalid ||
+                rangeToInvalid
+              }
+            >
+              <Iconify icon="solar:check-linear" width={16} />
+            </IconButton>
+          </span>
+        </Tooltip>
+        <Tooltip title="Cancel (Esc)">
+          <IconButton
+            size="small"
+            aria-label="Cancel range"
+            onClick={cancelRange}
+          >
+            <Iconify icon="solar:close-linear" width={16} />
+          </IconButton>
+        </Tooltip>
+        {(rangeFromInvalid || rangeToInvalid) && (
+          <Box
+            component="span"
+            id={rangeErrorId}
+            role="alert"
+            sx={{ width: "100%", fontSize: 12, color: "error.main" }}
+          >
+            Enter a number, like 10 or 2.5.
+          </Box>
+        )}
       </Box>
     );
   }
@@ -1330,20 +1698,25 @@ const QueryInput = forwardRef(function QueryInput(
   return (
     <Autocomplete
       size="small"
-      freeSolo={phase === "value" && !isRangePhase && allowsFreeTextValue}
+      freeSolo={valueFreeSolo}
       options={filtered}
       filterOptions={(availableOptions) => availableOptions}
       getOptionLabel={(o) => (typeof o === "string" ? o : o.label)}
       inputValue={inputValue}
       onInputChange={(_, v, reason) => {
         if (reason !== "reset") {
-          if (v !== inputValue) {
+          // A list edit keeps the chip's values to read the text back against.
+          if (v !== inputValue && !editingList) {
             setPartialValueTypes([]);
             setPartialOriginalValue(undefined);
           }
           setInputValue(v);
           if (phase === "field") onFieldSearchChange?.(v);
-          else if (phase === "value") onValueSearchChange?.(v, partialField);
+          else if (phase === "value")
+            onValueSearchChange?.(
+              editingList ? lastListPart(v) : v,
+              partialField,
+            );
         }
       }}
       onChange={handleSelect}
@@ -1351,8 +1724,13 @@ const QueryInput = forwardRef(function QueryInput(
         !isRangePhase &&
         dropdownOpen &&
         focused &&
-        (phase === "field" || filtered.length > 0)
+        (phase === "field" ||
+          filtered.length > 0 ||
+          // Typed text that matches nothing opens the "no match" row; a
+          // free-text value needs none, Enter applies it.
+          (Boolean(typedSearch) && !valueFreeSolo))
       }
+      noOptionsText={noMatchText}
       onOpen={() => setDropdownOpen(true)}
       onClose={() => setDropdownOpen(false)}
       loading={phase === "field" ? fieldLoading : valueLoading}
@@ -1433,7 +1811,9 @@ const QueryInput = forwardRef(function QueryInput(
             </Box>
             {isField && (
               <Chip
-                label={sentenceCase(fieldDef?.category || fieldDef?.type || "text")}
+                label={sentenceCase(
+                  fieldDef?.category || fieldDef?.type || "text",
+                )}
                 size="small"
                 variant="outlined"
                 sx={{
@@ -1454,7 +1834,7 @@ const QueryInput = forwardRef(function QueryInput(
               ? "More fields could not be loaded. Retained matches remain available."
               : phase === "value" && valueLoadError
                 ? "More values could not be loaded. Loaded matches remain available."
-                : undefined
+                : unfinishedHint
           }
           FormHelperTextProps={
             (phase === "field" && fieldLoadError) ||

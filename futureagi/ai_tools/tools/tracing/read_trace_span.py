@@ -8,7 +8,6 @@ from ai_tools.formatting import (
     format_datetime,
     key_value_block,
     section,
-    truncate,
 )
 from ai_tools.registry import register_tool
 
@@ -54,17 +53,45 @@ class ReadTraceSpanTool(BaseTool):
     category = "tracing"
     input_model = ReadTraceSpanInput
 
+    def run(self, raw_params, context):
+        if getattr(context, "background_analysis", None) is not None:
+            from ee.agenthub.traceerroragent.background_payload_tools import (
+                run_background_tool,
+            )
+
+            return run_background_tool(self, raw_params, context)
+        return super().run(raw_params, context)
+
     def execute(self, params: ReadTraceSpanInput, context: ToolContext) -> ToolResult:
         from tracer.models.trace import Trace
         from tracer.services.clickhouse.v2 import get_reader
 
+        guard = getattr(context, "background_analysis", None)
+        if guard is not None:
+            from ee.agenthub.traceerroragent.background_payload_tools import (
+                require_tool_parameters,
+            )
+
+            require_tool_parameters(params, guard, "read_trace_span")
+
+        def checkpoint():
+            if guard is not None:
+                guard.check()
+
+        checkpoint()
         # Verify trace access
         try:
-            Trace.objects.get(
+            trace = Trace.objects.get(
                 id=params.trace_id,
                 project__organization=context.organization,
             )
         except Trace.DoesNotExist:
+            if guard is not None:
+                from ee.agenthub.traceerroragent.background_tools import (
+                    reject_chauffeur,
+                )
+
+                reject_chauffeur(guard)
             return ToolResult.not_found("Trace", str(params.trace_id))
 
         # Read all spans for the trace from CH 25.3 — was
@@ -72,8 +99,13 @@ class ReadTraceSpanTool(BaseTool):
         # .values_list("id", "name") + multiple subsequent .get() calls.
         # Loading once and indexing in Python avoids 1-4 extra CH round-trips
         # for the id/exact-name/case-insensitive-name fallback chain.
+        checkpoint()
         with get_reader() as reader:
-            ch_spans = reader.list_by_trace(str(params.trace_id))
+            checkpoint()
+            ch_spans = reader.list_by_trace(
+                str(params.trace_id), project_id=str(trace.project_id)
+            )
+        checkpoint()
         all_spans = [(s.id, s.name) for s in ch_spans]
         valid_ids = {str(sid) for sid, _ in all_spans}
         valid_names = {name: str(sid) for sid, name in all_spans if name}
@@ -98,6 +130,12 @@ class ReadTraceSpanTool(BaseTool):
 
         # 4. Not found — return error with valid IDs so LLM can self-correct
         if not span:
+            if guard is not None:
+                from ee.agenthub.traceerroragent.background_tools import (
+                    reject_chauffeur,
+                )
+
+                reject_chauffeur(guard)
             hint_lines = [f"  `{s[0]}` — {s[1] or '(unnamed)'}" for s in all_spans[:20]]
             return ToolResult.error(
                 f"Span `{params.span_id}` not found in trace `{params.trace_id}`.\n\n"
@@ -127,6 +165,12 @@ class ReadTraceSpanTool(BaseTool):
 
         # Content size limit depends on exact flag
         max_len = 50000 if params.exact else LARGE_SPAN_THRESHOLD
+        if guard is not None:
+            from ee.agenthub.traceerroragent.background_tool_validation import (
+                validate_span_content,
+            )
+
+            validate_span_content(span, max_len, guard)
 
         # Input
         if span.input:

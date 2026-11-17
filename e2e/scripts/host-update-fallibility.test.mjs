@@ -529,7 +529,7 @@ test('installed JSON reporter contract smoke uses only a temporary browser-free 
   assert.equal(child.attachments[0].body, Buffer.from('{"unit":true}').toString('base64'));
 });
 
-test('workflow opt-in is dispatch-only, validates before builds, follows the unchanged suite and isolates artifacts', async () => {
+test('workflow opt-in is dispatch-only and fails closed before builds; the held suite uploads only sealed artifacts', async () => {
   const workflow = parseYaml(await readFile(new URL('../../.github/workflows/e2e-ci.yml', import.meta.url), 'utf8'));
   const inputs = workflow.on.workflow_dispatch.inputs;
   assert.equal(inputs.stack.default, 'standalone');
@@ -541,44 +541,47 @@ test('workflow opt-in is dispatch-only, validates before builds, follows the unc
   assert.equal(workflow.on.pull_request?.branches, undefined);
   assert.deepEqual(workflow.on.push.branches, ['dev', 'main']);
   assert.deepEqual(workflow.on.schedule, [{ cron: '37 2 * * *' }]);
-  const validation = workflow.jobs.changes.steps[0];
+  const changeSteps = workflow.jobs.changes.steps;
+  const validation = changeSteps.find(step => step.name === 'Validate host update fallibility opt-in');
+  const refusedProof = changeSteps.find(step => step.name === 'Reject unsealed host update fallibility proof');
+  const checkout = changeSteps.findIndex(step => step.uses === 'actions/checkout@v4');
+  assert.ok(changeSteps.indexOf(validation) > 0 && changeSteps.indexOf(validation) < checkout);
+  assert.ok(changeSteps.indexOf(refusedProof) > 0 && changeSteps.indexOf(refusedProof) < checkout);
+  assert.equal(refusedProof.if, "github.event_name == 'workflow_dispatch' && inputs.host_update_fallibility && inputs.stack == 'distributed'");
+  assert.equal(refusedProof['continue-on-error'], undefined);
   assert.equal(validation.if, "github.event_name == 'workflow_dispatch' && inputs.host_update_fallibility && inputs.stack != 'distributed'");
   assert.match(validation.run, /requires stack=distributed/);
   assert.match(validation.run, /exit 1/);
   assert.equal(workflow.jobs.e2e.needs, 'changes');
   const steps = workflow.jobs.e2e.steps;
   const normal = steps.findIndex(step => step.name === 'Run E2E suite');
-  const proof = steps[normal + 1];
-  assert.equal(steps[normal].run, 'bin/e2e test');
-  assert.equal(proof.id, 'host-update-fallibility');
-  assert.equal(proof.if, "github.event_name == 'workflow_dispatch' && inputs.host_update_fallibility && matrix.stack == 'distributed'");
-  assert.equal(proof.timeoutMinutes, undefined);
-  assert.equal(proof['timeout-minutes'], 22);
-  assert.ok(proof['timeout-minutes'] * 60_000 > BUDGET.overallMs + BUDGET.termGraceMs + BUDGET.killGraceMs);
-  assert.equal(proof['continue-on-error'], undefined);
-  assert.match(proof.run, /--output-dir "\$RUNNER_TEMP\/host-update-fallibility"$/);
-  const artifact = steps[normal + 2];
-  assert.equal(artifact.with.name, 'host-update-fallibility-distributed');
-  assert.equal(artifact.with.path, '${{ runner.temp }}/host-update-fallibility');
-  assert.equal(artifact.with['retention-days'], 7);
-  assert.equal(artifact.with['if-no-files-found'], 'error');
-  assert.match(artifact.if, /!cancelled\(\).*workflow_dispatch/);
+  assert.equal(steps[normal].run.trim(), 'bin/e2e test > "$E2E_VALUE_FREE_HELD" 2>&1');
+  assert.equal(steps[normal + 1].id, 'value_free_seal');
+  assert.equal(steps[normal + 2].name, 'Upload report');
+  assert.equal(steps.some(step => step.id === 'host-update-fallibility'), false);
+  assert.equal(steps.some(step => /host-update-fallibility\.mjs/.test(step.run ?? '')), false);
+  assert.deepEqual(steps.filter(step => step.uses === 'actions/upload-artifact@v4').map(step => step.name), ['Upload report']);
   const ordinaryReport = steps.find(step => step.name === 'Upload report');
-  assert.equal(ordinaryReport.with.path, 'e2e/playwright-report');
+  assert.equal(ordinaryReport.with.path, '${{ steps.value_free_seal.outputs.path }}');
+  assert.equal(ordinaryReport.if, "${{ !cancelled() && steps.value_free_seal.outputs.path != '' }}");
   assert.equal(ordinaryReport.with['retention-days'], 7);
   assert.equal(workflow.jobs.e2e['timeout-minutes'], 120);
-  const allow = new Function('github', 'inputs', 'matrix', `return ${proof.if};`);
+  const refuse = new Function('github', 'inputs', `return ${refusedProof.if};`);
   const invalid = new Function('github', 'inputs', `return ${validation.if};`);
   for (const event_name of ['pull_request', 'push', 'schedule', 'merge_group', 'workflow_dispatch']) {
     for (const flag of [true, false]) for (const stack of ['distributed', 'standalone']) {
-      const args = [{ event_name }, { host_update_fallibility: flag, stack }, { stack }];
-      assert.equal(Boolean(allow(...args)), event_name === 'workflow_dispatch' && flag && stack === 'distributed');
+      const args = [{ event_name }, { host_update_fallibility: flag, stack }];
+      assert.equal(Boolean(refuse(...args)), event_name === 'workflow_dispatch' && flag && stack === 'distributed');
       assert.equal(Boolean(invalid(...args)), event_name === 'workflow_dispatch' && flag && stack !== 'distributed');
     }
   }
   const rejected = spawnSync('/bin/bash', ['-c', validation.run], { encoding: 'utf8' });
   assert.equal(rejected.status, 1);
   assert.match(rejected.stdout, /no builds were started/);
+  const unsupported = spawnSync('/bin/bash', ['-c', refusedProof.run], { encoding: 'utf8' });
+  assert.equal(unsupported.status, 1);
+  assert.equal(unsupported.stdout, '::error::Host update fallibility proof is unavailable in the value-free certifying workflow; no builds were started.\n');
+  assert.equal(unsupported.stderr, '');
   assert.deepEqual(workflow.permissions, { contents: 'read' });
   assert.deepEqual(workflow.jobs.changes.permissions, { contents: 'read', 'pull-requests': 'read' });
   assert.deepEqual(workflow.jobs.e2e.permissions, { contents: 'read', packages: 'write' });

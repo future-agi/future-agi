@@ -1,0 +1,48 @@
+# PlanetScale's hosted MCP accepts a service-token secret as the bearer.
+# Supply the secret alone, not the token ID or an ID:secret pair. The token's
+# permissions govern access; the organization's OAuth MCP query setting does not.
+# The documented client configuration uses --transport http / type: http.
+schema: "connector-manifest/v1#provider"
+app: planetscale
+id: api-key
+version: 1.1.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.pscale.dev/mcp/planetscale
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: Service token secret
+      help: "Create a service token in PlanetScale organization settings. Supply its secret, not its ID. Tools use the token's organization and database permissions; grant only the access needed, especially for SQL writes."
+      helpUrl: https://planetscale.com/docs/connect/mcp-service-token
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_metered
+  source: https://planetscale.com/pricing
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://planetscale.com/docs/connect/mcp-service-token
+    fetchedAt: 2026-11-09
+  - fact: transport.variant
+    url: https://planetscale.com/docs/connect/mcp
+    fetchedAt: 2026-11-09
+  - fact: auth.kind
+    url: https://planetscale.com/docs/connect/mcp-service-token
+    fetchedAt: 2026-11-09
+  - fact: auth.credentialParts
+    url: https://planetscale.com/docs/connect/mcp-service-token
+    fetchedAt: 2026-11-09

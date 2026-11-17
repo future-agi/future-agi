@@ -1,0 +1,107 @@
+# H14: what the hosted walk (W19) adds to deploy/docker-compose.hosted.yml on a
+# disposable cloud VM. The hosted file is a preparation manifest with external
+# datastores and no published ports; this overlay supplies the stand-ins a walk
+# needs, all inside the VM:
+#   - Postgres, ClickHouse, Redis and Temporal on the project network, with the
+#     synthetic credentials e2e/walks/hosted/hosted-env.mjs rendered (never a real
+#     value, never written into the checkout or a receipt);
+#   - mock-llm, the only provider (the gateway's file is the e2e stock routing,
+#     e2e/stack/gateway.e2e.yaml, so every model goes to the mock);
+#   - the frontend, and the app, API and gateway published on 127.0.0.1 only for
+#     the browser and the readiness poller (the hosted file publishes none);
+#   - `migrate`, the phased migration job (manage.py hosted_gateway_migrate
+#     <phase>) under the configurable schema deadline.
+# Images come from a registry container on the VM's loopback (run-hosted.sh), so
+# the hosted file's image@digest references resolve with no registry outside it.
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${PG_USER}
+      POSTGRES_PASSWORD: ${PG_PASSWORD}
+      POSTGRES_DB: ${PG_DB}
+    healthcheck:
+      test: ["CMD-SHELL", 'pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"']
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    restart: "no"
+  clickhouse:
+    image: clickhouse/clickhouse-server:25.3-alpine
+    environment:
+      CLICKHOUSE_USER: ${CH_USER}
+      CLICKHOUSE_PASSWORD: ${CH_PASSWORD}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    restart: "no"
+  redis:
+    image: redis:7-alpine
+    command:
+      [
+        "sh",
+        "-c",
+        'exec redis-server --appendonly no --requirepass "$$REDIS_WALK_PASSWORD"',
+      ]
+    environment:
+      REDIS_WALK_PASSWORD: ${AGENTCC_REDIS_PASSWORD}
+    restart: "no"
+  temporal:
+    image: temporalio/auto-setup:1.29.1
+    environment:
+      DB: postgres12
+      DB_PORT: 5432
+      POSTGRES_USER: ${PG_USER}
+      POSTGRES_PWD: ${PG_PASSWORD}
+      POSTGRES_SEEDS: postgres
+      DBNAME: ${PG_DB}
+      ENABLE_ES: "false"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+  mock-llm:
+    image: node:22-alpine
+    command: ["node", "/srv/server.mjs"]
+    volumes:
+      - ../e2e/stack/mock-llm/server.mjs:/srv/server.mjs:ro
+    ports:
+      - "127.0.0.1:28082:8080"
+    restart: "no"
+  frontend:
+    image: ${FRONTEND_IMAGE}
+    environment:
+      VITE_HOST_API: http://localhost:8100
+    ports:
+      - "127.0.0.1:3100:80"
+    restart: "no"
+  backend:
+    ports:
+      - "127.0.0.1:8100:8000"
+    restart: "no"
+  agentcc-gateway:
+    deploy:
+      replicas: 2
+    ports:
+      - "127.0.0.1:28090-28091:8080"
+    volumes: !override
+      - ../e2e/stack/gateway.e2e.yaml:/etc/agentcc/config.yaml:ro
+    restart: "no"
+  migrate:
+    image: ${BACKEND_IMAGE}@${BACKEND_DIGEST}
+    profiles: ["walk-migrate"]
+    entrypoint: ["python"]
+    command: ["manage.py", "hosted_gateway_migrate", "schema"]
+    environment:
+      AGENTCC_DEPLOYMENT_PROFILE: hosted
+      PG_HOST: ${PG_HOST}
+      PG_PORT: ${PG_PORT}
+      PG_DIRECT_HOST: ${PG_HOST}
+      PG_DB: ${PG_DB}
+      PG_USER: ${PG_USER}
+      PG_PASSWORD: ${PG_PASSWORD}
+      SECRET_KEY: ${SECRET_KEY}
+      INTEGRATION_ENCRYPTION_KEY: ${INTEGRATION_ENCRYPTION_KEY}
+      REDIS_URL: ${REDIS_URL}
+      REGISTER_TEMPORAL_SCHEDULES: "false"
+      NO_STARTUP_DB_MUTATIONS: "true"
+      HOSTED_SCHEMA_DEADLINE_SECONDS: ${HOSTED_SCHEMA_DEADLINE_SECONDS:-900}
+    restart: "no"

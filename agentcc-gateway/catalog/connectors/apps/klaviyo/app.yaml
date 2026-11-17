@@ -1,0 +1,33 @@
+schema: "connector-manifest/v1#app"
+# Klaviyo's catalog identity for marketing campaigns, profiles and segments.
+# The default provider runs the vendor's MCP server locally.
+id: klaviyo
+version: 1.0.0
+name: Klaviyo
+description: "Manage marketing campaigns, profiles, segments, and performance reports in Klaviyo."
+vendor:
+  name: Klaviyo, Inc.
+  domains: [klaviyo.com]
+  githubOrgs: [klaviyo]
+eeCategory: communication
+group: other
+categories: [crm, marketing, email]
+docsUrl: https://developers.klaviyo.com/en/docs/connect_to_the_klaviyo_mcp_server
+defaultProvider: local
+lifecycle: { status: active }
+sources:
+  - fact: name
+    url: https://www.klaviyo.com/newsroom/mcp-server
+    fetchedAt: 2026-11-16
+  - fact: description
+    url: https://www.klaviyo.com/newsroom/mcp-server
+    fetchedAt: 2026-11-16
+  - fact: vendor.name
+    url: https://www.klaviyo.com/newsroom/mcp-server
+    fetchedAt: 2026-11-16
+  - fact: vendor.domains
+    url: https://github.com/klaviyo
+    fetchedAt: 2026-11-16
+  - fact: vendor.githubOrgs
+    url: https://github.com/klaviyo
+    fetchedAt: 2026-11-16

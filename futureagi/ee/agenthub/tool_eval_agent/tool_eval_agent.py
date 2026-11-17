@@ -8,26 +8,27 @@ Legacy VAPI-specific methods are preserved for backward compatibility.
 
 import json
 import traceback
-from typing import Dict, List, Any, Optional
-from datetime import datetime
+from typing import Any
 
-from ee.agenthub.tool_eval_agent.prompts import (
-    TOOL_EVAL_PLANNING_PROMPT,
-    TOOL_EVAL_ANALYSIS_PROMPT,
-    TOOL_EVAL_VALIDATION_PROMPT,
-)
-from agentic_eval.core.llm.llm import LLM
-from agentic_eval.core.utils.model_config import ModelConfigs
 import structlog
 
-logger = structlog.get_logger(__name__)
-from simulate.models.test_execution import CallExecution, CallTranscript
+from agentic_eval.core.llm.llm import LLM
+from agentic_eval.core.utils.model_config import ModelConfigs
+from ee.agenthub.tool_eval_agent.prompts import (
+    TOOL_EVAL_ANALYSIS_PROMPT,
+    TOOL_EVAL_PLANNING_PROMPT,
+    TOOL_EVAL_VALIDATION_PROMPT,
+)
 from simulate.models.chat_message import ChatMessageModel
+from simulate.models.test_execution import CallExecution, CallTranscript
+from tracer.models.observability_provider import ProviderChoices
+
 try:
     from ee.voice.services.types.voice import TranscriptMessage
 except ImportError:
     TranscriptMessage = None
-from tracer.models.observability_provider import ProviderChoices
+
+logger = structlog.get_logger(__name__)
 
 
 class ToolEvalAgent:
@@ -66,9 +67,16 @@ class ToolEvalAgent:
                 provider=provider,
             )
 
-    def evaluate_tool_calls(
-        self, messages: list[TranscriptMessage]
-    ) -> Dict[str, Any]:
+    @property
+    def vapi_service(self):
+        """Create the default service only when a legacy VAPI path needs it."""
+        if not hasattr(self, "_vapi_service"):
+            from ee.voice.services.vapi_service import VapiService
+
+            self._vapi_service = VapiService()
+        return self._vapi_service
+
+    def evaluate_tool_calls(self, messages: list[TranscriptMessage]) -> dict[str, Any]:
         """Evaluate tool calls from normalized transcript messages.
 
         This is the primary, provider-agnostic entry point. Adapters produce
@@ -81,9 +89,7 @@ class ToolEvalAgent:
         """
         tool_call_msgs = [m for m in messages if m.role == "tool_call"]
         result_msgs = {
-            m.tool_call_id: m
-            for m in messages
-            if m.role == "tool_call_result"
+            m.tool_call_id: m for m in messages if m.role == "tool_call_result"
         }
 
         if not tool_call_msgs:
@@ -104,9 +110,7 @@ class ToolEvalAgent:
         for tc in tool_call_msgs:
             result_msg = result_msgs.get(tc.tool_call_id)
             timestamp_ms = int(tc.time * 1000)
-            result_timestamp_ms = (
-                int(result_msg.time * 1000) if result_msg else None
-            )
+            result_timestamp_ms = int(result_msg.time * 1000) if result_msg else None
 
             tool_calls_data.append(
                 {
@@ -116,9 +120,7 @@ class ToolEvalAgent:
                     "timestamp_ms": timestamp_ms,
                     "seconds_from_start": tc.time,
                     "result": (
-                        self._parse_result(result_msg.content)
-                        if result_msg
-                        else None
+                        self._parse_result(result_msg.content) if result_msg else None
                     ),
                     "result_timestamp_ms": result_timestamp_ms,
                     "context_before": self._get_context_before(
@@ -137,7 +139,7 @@ class ToolEvalAgent:
             "conversation_context": conversation_context,
         }
 
-    def evaluate_tools_by_call_id(self, vapi_call_id: str) -> Dict[str, Any]:
+    def evaluate_tools_by_call_id(self, vapi_call_id: str) -> dict[str, Any]:
         """
         Evaluate all tool calls for a given VAPI call ID.
         Fetches data directly from VAPI API if CallExecution doesn't exist.
@@ -158,14 +160,12 @@ class ToolEvalAgent:
                     f"Found CallExecution for {vapi_call_id}, using database data"
                 )
                 call_data = self._get_call_data(call_execution)
-                call_execution_id = str(call_execution.id)
             else:
                 # Fetch directly from VAPI API
                 logger.info(
                     f"No CallExecution found for {vapi_call_id}, fetching directly from VAPI API"
                 )
                 call_data = self._get_call_data_from_provider(vapi_call_id)
-                call_execution_id = None
 
             # Extract tool calls from messages
             tool_calls_data = self._extract_tool_calls(call_data)
@@ -198,7 +198,7 @@ class ToolEvalAgent:
                     )
 
             # Generate overall summary
-            summary = self._generate_summary(evaluations, tool_calls_data)
+            self._generate_summary(evaluations, tool_calls_data)
 
             # Simplify output structure
             simplified_evaluations = []
@@ -226,7 +226,7 @@ class ToolEvalAgent:
                 "traceback": traceback.format_exc(),
             }
 
-    def _get_call_execution(self, vapi_call_id: str) -> Optional[CallExecution]:
+    def _get_call_execution(self, vapi_call_id: str) -> CallExecution | None:
         """Get CallExecution from database by service_provider_call_id."""
         try:
             return CallExecution.objects.get(service_provider_call_id=vapi_call_id)
@@ -236,7 +236,7 @@ class ToolEvalAgent:
             logger.error(f"Error fetching call execution: {str(e)}")
             return None
 
-    def _get_call_data(self, call_execution: CallExecution) -> Dict[str, Any]:
+    def _get_call_data(self, call_execution: CallExecution) -> dict[str, Any]:
         """
         Get complete call data including transcript and messages from database.
 
@@ -271,7 +271,7 @@ class ToolEvalAgent:
         if not vapi_data:
             # Fetch from VAPI API if not stored
             try:
-                vapi_data = self.vapi_service.get_call(
+                vapi_data = self.vapi_service.fetch_call(
                     call_execution.service_provider_call_id
                 )
             except Exception as e:
@@ -286,8 +286,8 @@ class ToolEvalAgent:
         }
 
     def _get_call_data_from_provider(
-        self, vapi_call_id: str, api_key: Optional[str] = None
-    ) -> Dict[str, Any]:
+        self, vapi_call_id: str, api_key: str | None = None
+    ) -> dict[str, Any]:
         """
         Get complete call data directly from VAPI API (no database dependency).
 
@@ -304,10 +304,12 @@ class ToolEvalAgent:
 
             # Use provided API key or fall back to default vapi_service
             if api_key:
+                from ee.voice.services.vapi_service import VapiService
+
                 vapi_service = VapiService(api_key=api_key)
-                vapi_data = vapi_service.get_call(vapi_call_id)
             else:
-                vapi_data = self.vapi_service.get_call(vapi_call_id)
+                vapi_service = self.vapi_service
+            vapi_data = vapi_service.fetch_call(vapi_call_id)
 
             # Extract messages from artifact
             artifact = vapi_data.get("artifact", {})
@@ -356,7 +358,9 @@ class ToolEvalAgent:
 
         except Exception as e:
             logger.error(f"Error fetching call data from VAPI: {str(e)}")
-            raise ValueError(f"Failed to fetch call data from VAPI API: {str(e)}")
+            raise ValueError(
+                f"Failed to fetch call data from VAPI API: {str(e)}"
+            ) from e
 
     def _map_vapi_role(self, role: str) -> str:
         """Map VAPI role to CallTranscript speaker role format."""
@@ -371,7 +375,7 @@ class ToolEvalAgent:
         }
         return role_mapping.get(role, "unknown")
 
-    def _extract_tool_calls(self, call_data: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def _extract_tool_calls(self, call_data: dict[str, Any]) -> list[dict[str, Any]]:
         """
         Extract all tool calls from the conversation.
         Parses VAPI transcript format with toolCalls and tool_call_result roles.
@@ -465,7 +469,7 @@ class ToolEvalAgent:
 
     def _get_chat_data_from_database(
         self, call_execution: CallExecution
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Get complete chat data from ChatMessageModel in database.
         Fetches user role messages and extracts tool data from their content field (MessageArray with VAPI schema).
@@ -667,15 +671,17 @@ class ToolEvalAgent:
 
         except Exception as e:
             logger.error(f"Error fetching chat data from database: {str(e)}")
-            raise ValueError(f"Failed to fetch chat data from database: {str(e)}")
+            raise ValueError(
+                f"Failed to fetch chat data from database: {str(e)}"
+            ) from e
 
     def _format_tool_call_from_transcript(
         self,
-        tool_data: Dict[str, Any],
-        transcript_item: Dict[str, Any],
+        tool_data: dict[str, Any],
+        transcript_item: dict[str, Any],
         idx: int,
-        conversation_context: List[Dict[str, Any]],
-    ) -> Dict[str, Any]:
+        conversation_context: list[dict[str, Any]],
+    ) -> dict[str, Any]:
         """Format tool call data from transcript format."""
         return {
             "tool_call_id": tool_data.get("id", f"tool_call_{idx}"),
@@ -692,10 +698,10 @@ class ToolEvalAgent:
 
     def _get_context_before(
         self,
-        conversation_context: List[Dict[str, Any]],
+        conversation_context: list[dict[str, Any]],
         timestamp_ms: int,
         limit: int = 10,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Get conversation context before a specific timestamp (in milliseconds)."""
         context = []
         for item in conversation_context:
@@ -708,10 +714,10 @@ class ToolEvalAgent:
 
     def _get_context_after(
         self,
-        conversation_context: List[Dict[str, Any]],
+        conversation_context: list[dict[str, Any]],
         timestamp_ms: int,
         limit: int = 5,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Get conversation context after a specific timestamp (in milliseconds)."""
         context = []
         for item in conversation_context:
@@ -723,7 +729,7 @@ class ToolEvalAgent:
 
         return context
 
-    def _parse_arguments(self, arguments: Any) -> Dict[str, Any]:
+    def _parse_arguments(self, arguments: Any) -> dict[str, Any]:
         """Parse tool call arguments from string or dict."""
         if isinstance(arguments, dict):
             return arguments
@@ -749,10 +755,10 @@ class ToolEvalAgent:
 
     def _evaluate_single_tool_call(
         self,
-        tool_call: Dict[str, Any],
-        conversation_context: List[Dict[str, Any]],
-        all_tool_calls: List[Dict[str, Any]],
-    ) -> Dict[str, Any]:
+        tool_call: dict[str, Any],
+        conversation_context: list[dict[str, Any]],
+        all_tool_calls: list[dict[str, Any]],
+    ) -> dict[str, Any]:
         """
         Evaluate a single tool call using the LLM.
 
@@ -829,7 +835,7 @@ class ToolEvalAgent:
                 "summary": f"Failed to evaluate: {str(e)}",
             }
 
-    def _format_tool_call_for_eval(self, tool_call: Dict[str, Any]) -> str:
+    def _format_tool_call_for_eval(self, tool_call: dict[str, Any]) -> str:
         """Format tool call data for LLM evaluation."""
         # Format timestamp information
         timestamp_ms = tool_call.get("timestamp_ms", 0)
@@ -876,7 +882,7 @@ Result Timestamp: {result_timestamp_ms} ms{f" (at {result_seconds:.3f} seconds f
 """
 
     def _format_conversation_context(
-        self, context_before: List[Dict[str, Any]], context_after: List[Dict[str, Any]]
+        self, context_before: list[dict[str, Any]], context_after: list[dict[str, Any]]
     ) -> str:
         """Format conversation context for LLM with proper role labels."""
         formatted = "=== CONVERSATION BEFORE TOOL CALL ===\n\n"
@@ -921,7 +927,7 @@ Result Timestamp: {result_timestamp_ms} ms{f" (at {result_seconds:.3f} seconds f
 
         return formatted
 
-    def _parse_evaluation_response(self, response: str) -> Dict[str, Any]:
+    def _parse_evaluation_response(self, response: str) -> dict[str, Any]:
         """Parse the LLM evaluation response into structured data."""
         # Clean the response
         cleaned_response = response.strip()
@@ -939,11 +945,11 @@ Result Timestamp: {result_timestamp_ms} ms{f" (at {result_seconds:.3f} seconds f
                 raise ValueError("No JSON object found in response")
         except json.JSONDecodeError as e:
             logger.error(f"JSON decode error: {str(e)}")
-            raise ValueError(f"Failed to parse evaluation JSON: {str(e)}")
+            raise ValueError(f"Failed to parse evaluation JSON: {str(e)}") from e
 
     def _generate_summary(
-        self, evaluations: List[Dict[str, Any]], tool_calls_data: List[Dict[str, Any]]
-    ) -> Dict[str, Any]:
+        self, evaluations: list[dict[str, Any]], tool_calls_data: list[dict[str, Any]]
+    ) -> dict[str, Any]:
         """Generate overall summary of tool evaluations."""
         if not evaluations:
             return {"message": "No tool calls evaluated"}

@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: rootly
+version: 1.0.0
+name: Rootly
+description: "Investigate and update incidents, inspect alerts, and coordinate on-call schedules and handoffs."
+vendor:
+  name: Rootly
+  domains: [rootly.com]
+eeCategory: developer
+group: other
+categories: [developer, observability]
+tags: [alerts, issues, scheduling]
+docsUrl: https://docs.rootly.com/integrations/mcp-server
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://docs.rootly.com/integrations/mcp-server
+    fetchedAt: 2026-11-09

@@ -87,7 +87,7 @@ func TestPromote(t *testing.T) {
 	m.RegisterProvider("openai", "sk-old")
 	m.StartRotation("openai", "sk-new")
 
-	err := m.Promote("openai")
+	_, err := m.Promote(context.Background(), "openai")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -126,7 +126,7 @@ func TestPromote_NoPending(t *testing.T) {
 	m := NewManager(30*time.Second, nil)
 	m.RegisterProvider("openai", "sk-old")
 
-	err := m.Promote("openai")
+	_, err := m.Promote(context.Background(), "openai")
 	if err == nil {
 		t.Fatal("expected error when no pending key")
 	}

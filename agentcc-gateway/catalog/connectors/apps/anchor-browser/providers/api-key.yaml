@@ -1,0 +1,44 @@
+schema: "connector-manifest/v1#provider"
+app: anchor-browser
+id: api-key
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://api.anchorbrowser.io/v1/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: anchor-api-key
+      secret: true
+      label: API key
+      help: "Create an API key at app.anchorbrowser.io/api-keys for the desired project. Supply the raw key in the anchor-api-key header. Browser tasks and sessions consume your project's usage credits."
+      helpUrl: https://docs.anchorbrowser.io/advanced/mcp
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_metered
+  source: https://anchorbrowser.io/pricing
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://docs.anchorbrowser.io/advanced/mcp
+    fetchedAt: 2026-11-09
+  - fact: transport.variant
+    url: https://docs.anchorbrowser.io/advanced/mcp
+    fetchedAt: 2026-11-09
+  - fact: auth.kind
+    url: https://docs.anchorbrowser.io/advanced/mcp
+    fetchedAt: 2026-11-09
+  - fact: auth.credentialParts
+    url: https://docs.anchorbrowser.io/advanced/mcp
+    fetchedAt: 2026-11-09
+x-omega: { oss: exclude }

@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: dbt-cloud
+version: 1.0.0
+name: dbt Cloud
+description: "Inspect dbt metadata and query models for accounts hosted on cloud.getdbt.com."
+vendor:
+  name: dbt Labs
+  domains: [getdbt.com]
+eeCategory: data
+group: other
+categories: [data, analytics]
+tags: [sql, database]
+docsUrl: https://docs.getdbt.com/docs/dbt-ai/setup-remote-mcp
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://docs.getdbt.com/docs/dbt-ai/setup-remote-mcp
+    fetchedAt: 2026-11-09

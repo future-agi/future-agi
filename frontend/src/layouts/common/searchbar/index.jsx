@@ -17,7 +17,6 @@ import { useRouter } from "src/routes/hooks";
 
 import { useBoolean } from "src/hooks/use-boolean";
 import { useResponsive } from "src/hooks/use-responsive";
-import { useEventListener } from "src/hooks/use-event-listener";
 
 import Label from "src/components/label";
 import Iconify from "src/components/iconify";
@@ -48,14 +47,8 @@ function Searchbar({ variant }) {
     setSearchQuery("");
   }, [search]);
 
-  const handleKeyDown = (event) => {
-    if (event.key === "k" && event.metaKey) {
-      search.onToggle();
-      setSearchQuery("");
-    }
-  };
-
-  useEventListener("keydown", handleKeyDown);
+  // Cmd/Ctrl-K belongs to the app's one command palette, which also lists
+  // every page this search finds (CommandPalette/AppPageCommands.jsx).
 
   const handleClick = useCallback(
     (path) => {

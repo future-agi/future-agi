@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: context7
+version: 1.0.0
+name: Context7
+description: "Find current, version-specific library documentation and code examples for coding agents."
+vendor:
+  name: Upstash
+  domains: [context7.com]
+eeCategory: developer
+group: other
+categories: [developer, knowledge-base]
+tags: [docs, search]
+docsUrl: https://context7.com/docs/resources/all-clients
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://context7.com/docs/resources/all-clients
+    fetchedAt: 2026-11-09

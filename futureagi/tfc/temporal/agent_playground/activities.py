@@ -265,8 +265,12 @@ def _execute_node_sync(
 
             runner = get_runner(template_name)
 
-            # Execute node
-            outputs = runner.run(config, inputs, execution_context)
+            # Execute node within the shared row admission budget, including modules.
+            from tfc.temporal.experiments.provider_policy import run_graph_node
+
+            outputs = run_graph_node(
+                runner, config, inputs, execution_context, graph_execution_id
+            )
 
             # Route outputs (ExecutionData — graph-internal routing)
             routing_result = route_node_outputs(
@@ -534,8 +538,7 @@ async def mark_node_skipped_activity(
     """Mark a node as skipped due to upstream failure."""
     if input.error:
         activity.logger.exception(
-            "Graph execution error: node %s skipped "
-            "(graph_execution_id=%s, reason=%s)",
+            "Graph execution error: node %s skipped (graph_execution_id=%s, reason=%s)",
             input.node_id,
             input.graph_execution_id,
             input.reason,
@@ -657,7 +660,7 @@ def _setup_module_execution_sync(
 
         # Get parent topology and module node
         parent_topology = GraphTopology.from_dict(topology_data)
-        module_node = parent_topology.get_node(UUID(module_node_id))
+        _module_node = parent_topology.get_node(UUID(module_node_id))
 
         # Get child graph version ID
         child_graph_version_id = parent_topology.get_module_child_graph_version_id(
@@ -768,9 +771,8 @@ def _finalize_module_execution_sync(
     close_old_connections()
 
     try:
-        from agent_playground.models import GraphExecution, NodeExecution
+        from agent_playground.models import NodeExecution
         from agent_playground.models.choices import (
-            GraphExecutionStatus,
             NodeExecutionStatus,
         )
         from agent_playground.services.engine import (

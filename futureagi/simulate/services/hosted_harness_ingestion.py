@@ -33,6 +33,7 @@ from simulate.services.hosted_harness import (
     canonical_json_bytes,
     update_execution_counts,
 )
+from simulate.utils.ended_reason import EndedReasonSource, set_ended_reason
 from tfc.settings.settings import UPLOAD_BUCKET_NAME
 from tfc.utils.storage_client import get_object_url, get_storage_client
 
@@ -880,7 +881,13 @@ def _apply_receipt_to_call(
     scenario_key = getattr(allocation, "execution_key", None) or allocation.scenario_key
     call.status = _call_lifecycle_status(body)
     call_data = body.get("call")
-    call.ended_reason = (call_data or {}).get("stop_reason") or ""
+    # The receipt's stop_reason is the harness's own reason the call stopped;
+    # the metadata copied below keeps the source this sets.
+    set_ended_reason(
+        call,
+        (call_data or {}).get("stop_reason") or "",
+        EndedReasonSource.PROVIDER,
+    )
     resolved_modality = _resolve_scenario_modality(job, body)
     if call_data and call_data.get("recording_artifacts"):
         # A persisted audio recording is definitive evidence of a voice call,

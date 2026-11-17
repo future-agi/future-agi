@@ -11,6 +11,7 @@ import {
 } from "@mui/material";
 import PropTypes from "prop-types";
 import Iconify from "src/components/iconify";
+import ErrorState from "src/components/error-state";
 import { useErrorFeedTrends } from "src/api/errorFeed/error-feed";
 import { useSharedIssue } from "../sharedIssueContext";
 import { LoadingScreen } from "src/components/loading-screen";
@@ -580,6 +581,7 @@ export default function TrendsTab({ error }) {
   });
   const data = shared ? shared.trends : fetched.data;
   const isLoading = shared ? false : fetched.isLoading;
+  const loadFailed = !shared && fetched.isError && !data;
 
   if (shared && !data) {
     return (
@@ -588,6 +590,18 @@ export default function TrendsTab({ error }) {
           No trend data for this issue.
         </Typography>
       </Stack>
+    );
+  }
+
+  // A failed request has no data; without this it would spin forever.
+  if (loadFailed) {
+    return (
+      <ErrorState
+        role="alert"
+        title="Couldn't load trends for this issue"
+        onRetry={() => fetched.refetch()}
+        sx={{ height: "auto", flexGrow: 0, py: 6 }}
+      />
     );
   }
 

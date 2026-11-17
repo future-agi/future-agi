@@ -263,13 +263,31 @@ class TestSessionComparisonChatSimAPI:
             }
         }
         mock_reader.count_with_filters.return_value = 2
+        mock_reader.session_trace_ids.return_value = [str(base_trace.id)]
+        mock_reader._resolve_session_ids_to_canonical.return_value = {
+            str(trace_session.id): str(trace_session.id)
+        }
+        session_client = MagicMock()
+        session_client.query.return_value.result_rows = [
+            (
+                str(trace_session.id),
+                str(trace_session.id),
+                "FAKE_SESSION",
+                start,
+                str(trace_session.project_id),
+            )
+        ]
 
         @contextmanager
         def fake_get_reader():
             yield mock_reader
 
-        with patch(
-            "tracer.services.clickhouse.v2.get_reader", fake_get_reader
+        with (
+            patch("tracer.services.clickhouse.v2.get_reader", fake_get_reader),
+            patch(
+                "tracer.services.clickhouse.v2.trace_session_dict_reader._get_client",
+                return_value=session_client,
+            ),
         ):
             response = auth_client.get(
                 f"/simulate/call-executions/{completed_text_call_execution.id}/session-comparison/"
@@ -313,10 +331,10 @@ class TestSessionComparisonChatSimAPI:
             f"/simulate/call-executions/{completed_text_call_execution.id}/session-comparison/"
         )
 
-        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.status_code == status.HTTP_404_NOT_FOUND
         data = response.json()
         assert data["status"] is False
-        assert data["result"] == "Comparison is only available for replay sessions"
+        assert data["result"] == "Comparison source not found."
 
     def test_bad_request_when_call_execution_not_completed(
         self, auth_client, completed_text_call_execution
@@ -371,9 +389,46 @@ class TestSessionComparisonChatSimAPI:
 
 @pytest.mark.unit
 class TestSessionComparisonChatSimViewUnit:
+    @pytest.fixture(autouse=True)
+    def authorized_scope(
+        self, organization, workspace, tracer_project, run_test, monkeypatch
+    ):
+        self.organization = organization
+        self.workspace = workspace
+        self.project_id = str(tracer_project.id)
+        self.run_test = run_test
+        self.session_id = str(uuid.UUID(int=701))
+        self.trace_id = str(uuid.UUID(int=702))
+        self.session_client = MagicMock()
+        self.session_client.query.return_value.result_rows = [
+            (
+                self.session_id,
+                self.session_id,
+                "FAKE_SESSION",
+                timezone.now(),
+                self.project_id,
+            )
+        ]
+        monkeypatch.setattr(
+            "tracer.services.clickhouse.v2.trace_session_dict_reader._get_client",
+            lambda: self.session_client,
+        )
+        self.reader = MagicMock()
+        self.reader.newest_trace_projects.return_value = {
+            self.trace_id: self.project_id
+        }
+
+        @contextmanager
+        def get_reader():
+            yield self.reader
+
+        monkeypatch.setattr("tracer.services.clickhouse.v2.get_reader", get_reader)
+
     def test_get_success_calls_comparison_helpers(self, user):
         factory = APIRequestFactory()
         request = factory.get("/simulate/call-executions/x/session-comparison/")
+        request.organization = self.organization
+        request.workspace = self.workspace
         force_authenticate(request, user=user)
 
         call_exec_id = uuid.uuid4()
@@ -381,11 +436,12 @@ class TestSessionComparisonChatSimViewUnit:
 
         fake_call_exec = SimpleNamespace(
             id=call_exec_id,
+            test_execution=SimpleNamespace(run_test=self.run_test),
             simulation_call_type=CallExecution.SimulationCallType.TEXT,
             status=CallExecution.CallStatus.COMPLETED,
             row_id=row_id,
         )
-        fake_row = SimpleNamespace(metadata={"session_id": "session-123"})
+        fake_row = SimpleNamespace(metadata={"session_id": self.session_id})
 
         with (
             patch(
@@ -414,24 +470,40 @@ class TestSessionComparisonChatSimViewUnit:
         assert data["status"] is True
         assert "comparison_metrics" in data["result"]
         assert "comparison_transcripts" in data["result"]
-        mock_metrics.assert_called_once_with(fake_call_exec, "session-123")
-        mock_transcripts.assert_called_once_with(fake_call_exec, "session-123")
+        mock_metrics.assert_called_once_with(
+            fake_call_exec, self.session_id, project_id=self.project_id
+        )
+        mock_transcripts.assert_called_once_with(
+            fake_call_exec, self.session_id, project_id=self.project_id
+        )
+        parameters = self.session_client.query.call_args.kwargs["parameters"]
+        assert set(parameters["pids"]) == {self.project_id}
+        assert parameters["ids"] == [self.session_id]
+        call_lookup, row_lookup = mock_get_obj.call_args_list
+        assert (
+            call_lookup.kwargs["test_execution__run_test__organization"]
+            == self.organization
+        )
+        assert row_lookup.kwargs["dataset__organization"] == self.organization
 
     def test_get_voice_execution_returns_recordings(self, user):
         """Voice call executions are supported and include comparison_recordings."""
         factory = APIRequestFactory()
         request = factory.get("/simulate/call-executions/x/session-comparison/")
+        request.organization = self.organization
+        request.workspace = self.workspace
         force_authenticate(request, user=user)
 
         call_exec_id = uuid.uuid4()
         row_id = uuid.uuid4()
         fake_call_exec = SimpleNamespace(
             id=call_exec_id,
+            test_execution=SimpleNamespace(run_test=self.run_test),
             simulation_call_type=CallExecution.SimulationCallType.VOICE,
             status=CallExecution.CallStatus.COMPLETED,
             row_id=row_id,
         )
-        fake_row = SimpleNamespace(metadata={"trace_id": "trace-456"})
+        fake_row = SimpleNamespace(metadata={"trace_id": self.trace_id})
 
         with (
             patch(
@@ -472,22 +544,30 @@ class TestSessionComparisonChatSimViewUnit:
         assert "comparison_metrics" in data["result"]
         assert "comparison_transcripts" in data["result"]
         assert "comparison_recordings" in data["result"]
-        mock_span.assert_called_once_with("trace-456")
-        span = mock_span.return_value
-        mock_metrics.assert_called_once_with(fake_call_exec, "trace-456", _span=span)
-        mock_transcripts.assert_called_once_with(
-            fake_call_exec, "trace-456", _span=span
+        mock_span.assert_called_once_with(self.trace_id, project_id=self.project_id)
+        self.reader.newest_trace_projects.assert_called_once_with(
+            [self.trace_id], [self.project_id]
         )
-        mock_recordings.assert_called_once_with(fake_call_exec, "trace-456", _span=span)
+        span = mock_span.return_value
+        mock_metrics.assert_called_once_with(fake_call_exec, self.trace_id, _span=span)
+        mock_transcripts.assert_called_once_with(
+            fake_call_exec, self.trace_id, _span=span
+        )
+        mock_recordings.assert_called_once_with(
+            fake_call_exec, self.trace_id, _span=span
+        )
 
     def test_get_rejects_not_completed_execution(self, user):
         factory = APIRequestFactory()
         request = factory.get("/simulate/call-executions/x/session-comparison/")
+        request.organization = self.organization
+        request.workspace = self.workspace
         force_authenticate(request, user=user)
 
         call_exec_id = uuid.uuid4()
         fake_call_exec = SimpleNamespace(
             id=call_exec_id,
+            test_execution=SimpleNamespace(run_test=self.run_test),
             simulation_call_type=CallExecution.SimulationCallType.TEXT,
             status=CallExecution.CallStatus.ONGOING,
             row_id=uuid.uuid4(),
@@ -508,11 +588,14 @@ class TestSessionComparisonChatSimViewUnit:
     def test_get_rejects_missing_row_id(self, user):
         factory = APIRequestFactory()
         request = factory.get("/simulate/call-executions/x/session-comparison/")
+        request.organization = self.organization
+        request.workspace = self.workspace
         force_authenticate(request, user=user)
 
         call_exec_id = uuid.uuid4()
         fake_call_exec = SimpleNamespace(
             id=call_exec_id,
+            test_execution=SimpleNamespace(run_test=self.run_test),
             simulation_call_type=CallExecution.SimulationCallType.TEXT,
             status=CallExecution.CallStatus.COMPLETED,
             row_id=None,
@@ -534,11 +617,14 @@ class TestSessionComparisonChatSimViewUnit:
         """Text calls without session_id in metadata return 400."""
         factory = APIRequestFactory()
         request = factory.get("/simulate/call-executions/x/session-comparison/")
+        request.organization = self.organization
+        request.workspace = self.workspace
         force_authenticate(request, user=user)
 
         call_exec_id = uuid.uuid4()
         fake_call_exec = SimpleNamespace(
             id=call_exec_id,
+            test_execution=SimpleNamespace(run_test=self.run_test),
             simulation_call_type=CallExecution.SimulationCallType.TEXT,
             status=CallExecution.CallStatus.COMPLETED,
             row_id=uuid.uuid4(),
@@ -558,18 +644,20 @@ class TestSessionComparisonChatSimViewUnit:
         assert response.data["result"] == "No session ID found for comparison"
 
     def test_get_rejects_non_replay_voice_execution(self, user):
-        """Voice calls without a replay baseline return 400."""
+        """Missing and unauthorized replay baselines share the categorical 404."""
         factory = APIRequestFactory()
         request = factory.get("/simulate/call-executions/x/session-comparison/")
+        request.organization = self.organization
+        request.workspace = self.workspace
         force_authenticate(request, user=user)
 
         call_exec_id = uuid.uuid4()
         fake_call_exec = SimpleNamespace(
             id=call_exec_id,
+            test_execution=SimpleNamespace(run_test=self.run_test),
             simulation_call_type=CallExecution.SimulationCallType.VOICE,
             status=CallExecution.CallStatus.COMPLETED,
             row_id=uuid.uuid4(),
-            test_execution=None,
         )
         fake_row = SimpleNamespace(metadata={"intent_id": None})
 
@@ -581,16 +669,17 @@ class TestSessionComparisonChatSimViewUnit:
                 request, call_execution_id=call_exec_id
             )
 
-        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.status_code == status.HTTP_404_NOT_FOUND
         assert response.data["status"] is False
-        assert (
-            response.data["result"]
-            == "Comparison is only available for replay sessions"
-        )
+        assert response.data["result"] == "Comparison source not found."
+        self.session_client.query.assert_not_called()
+        self.reader.newest_trace_projects.assert_not_called()
 
     def test_get_returns_500_on_unexpected_exception(self, user):
         factory = APIRequestFactory()
         request = factory.get("/simulate/call-executions/x/session-comparison/")
+        request.organization = self.organization
+        request.workspace = self.workspace
         force_authenticate(request, user=user)
 
         call_exec_id = uuid.uuid4()

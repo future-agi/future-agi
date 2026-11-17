@@ -15,6 +15,8 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -459,10 +461,19 @@ func spanToRow(
 	// Inputs/outputs: the first non-empty content key in inputContentKeys /
 	// outputContentKeys. OpenInference `input.value` / `output.value` still
 	// win; the GenAI keys after them fill spans that only carry those
-	// (OpenRouter Broadcast, plain OTel GenAI). The source attribute stays
-	// where adapter.Split put it; this only fills the hot column.
+	// (OpenRouter Broadcast, plain OTel GenAI, OTel GenAI tool spans). The
+	// source attribute stays where adapter.Split put it; this only fills the
+	// hot column.
 	input := contentValue(attrsStr, overflow, inputContentKeys)
 	output := contentValue(attrsStr, overflow, outputContentKeys)
+	// OpenLLMetry's legacy indexed messages are a last resort. An explicit
+	// input.value/output.value (even empty) must not expose alternate content.
+	if _, explicit := span.Attributes().Get("input.value"); input == "" && !explicit {
+		input = indexedMessageContent(span.Attributes(), "gen_ai.prompt.")
+	}
+	if _, explicit := span.Attributes().Get("output.value"); output == "" && !explicit {
+		output = indexedMessageContent(span.Attributes(), "gen_ai.completion.")
+	}
 
 	// CH-derived dimensions (P3b step2): stamp the DETERMINISTIC end_user_id /
 	// trace_session_id so collector-written spans unify with the read-side
@@ -861,22 +872,27 @@ func stringFromMap(m map[string]string, key string) string {
 //     which OpenRouter Broadcast also sets.
 //   - gen_ai.input.messages / gen_ai.output.messages: current OTel GenAI, a
 //     JSON string of the messages.
+//   - gen_ai.tool.call.arguments / gen_ai.tool.call.result: an OTel GenAI
+//     execute_tool span's arguments and result (the gateway's MCP tools/call
+//     spans carry nothing else). Last, so any message key above wins.
 //
-// Only these exact keys are read. Indexed keys such as gen_ai.prompt.0.content
-// (OpenLLMetry) and gen_ai.input.messages.0.message.role (traceAI's flattened
-// messages) don't match.
+// These lists match exact keys only. OpenLLMetry's indexed prompt/completion
+// messages are handled separately as a fallback by indexedMessageContent.
+// traceAI's gen_ai.input.messages.0.message.role still doesn't match here.
 var (
 	inputContentKeys = []string{
 		"input.value",
 		"span.input",
 		"gen_ai.prompt",
 		"gen_ai.input.messages",
+		"gen_ai.tool.call.arguments",
 	}
 	outputContentKeys = []string{
 		"output.value",
 		"span.output",
 		"gen_ai.completion",
 		"gen_ai.output.messages",
+		"gen_ai.tool.call.result",
 	}
 )
 
@@ -895,6 +911,64 @@ func contentValue(attrsStr map[string]string, overflow map[string]any, keys []st
 		}
 	}
 	return ""
+}
+
+// indexedMessageContent mirrors the OpenLLMetry adapter's indexed extraction:
+// numeric message order, JSON-decoded content, and all other fields retained
+// verbatim (including tool_calls.N.* and tool_call_id). Read pdata rather than
+// one split tier so structured, numeric and boolean fields are not lost. Only
+// the hot content is synthesized; the original attributes remain untouched.
+func indexedMessageContent(attrs pcommon.Map, prefix string) string {
+	byIndex := make(map[int]map[string]any)
+	attrs.Range(func(key string, value pcommon.Value) bool {
+		if !strings.HasPrefix(key, prefix) {
+			return true
+		}
+		index, field, ok := strings.Cut(strings.TrimPrefix(key, prefix), ".")
+		if !ok || index == "" || field == "" {
+			return true
+		}
+		for _, digit := range index {
+			if digit < '0' || digit > '9' {
+				return true
+			}
+		}
+		i, err := strconv.Atoi(index)
+		if err != nil {
+			return true
+		}
+		if byIndex[i] == nil {
+			byIndex[i] = map[string]any{"role": "user", "content": ""}
+		}
+		v := value.AsRaw()
+		if field == "content" && value.Type() == pcommon.ValueTypeStr {
+			// Preserve valid JSON, including large numbers, without a float64
+			// round-trip. Invalid JSON is ordinary message text.
+			if raw := json.RawMessage(value.Str()); json.Valid(raw) {
+				v = raw
+			}
+		}
+		byIndex[i][field] = v
+		return true
+	})
+	if len(byIndex) == 0 {
+		return ""
+	}
+	indices := make([]int, 0, len(byIndex))
+	for index := range byIndex {
+		indices = append(indices, index)
+	}
+	sort.Ints(indices)
+	// Sparse producer indices must not allocate index-sized arrays.
+	messages := make([]map[string]any, 0, len(indices))
+	for _, index := range indices {
+		messages = append(messages, byIndex[index])
+	}
+	encoded, err := json.Marshal(messages)
+	if err != nil {
+		return ""
+	}
+	return string(encoded)
 }
 
 // overflowAsString lifts the value at `key` from the overflow map and

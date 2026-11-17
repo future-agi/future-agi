@@ -5,6 +5,7 @@ import DashboardLayout from "src/layouts/dashboard";
 import { useNavSettingsData } from "src/layouts/dashboard/config-navigation";
 import { paths } from "src/routes/paths";
 import { responseFixture } from "src/api/hostUpdates/__tests__/fixtures";
+import { TestQueryProvider } from "src/utils/test-query-provider";
 
 const mocks = vi.hoisted(() => ({
   allowed: true,
@@ -42,8 +43,16 @@ vi.mock("src/components/iconify", () => ({ default: () => null }));
 vi.mock("src/components/settings", () => ({
   useSettingsContext: () => ({ themeLayout: mocks.layout }),
 }));
-vi.mock("src/hooks/useCapabilities", () => ({
+// Settings navigation also consumes CAPABILITY and the Omega capabilities
+// observation. Preserve constants and give the unrelated products a known state.
+vi.mock("src/hooks/useCapabilities", async (importOriginal) => ({
+  ...(await importOriginal()),
   useFeatureAllowed: () => ({ allowed: false }),
+  useCapabilities: () => ({
+    data: { features: {} },
+    isLoading: false,
+    isError: false,
+  }),
 }));
 vi.mock("src/hooks/use-responsive", () => ({ useResponsive: () => true }));
 vi.mock("src/routes/hooks", () => ({
@@ -94,6 +103,7 @@ describe("live shell and navigation integration", () => {
             <div>Ordinary app content</div>
           </DashboardLayout>
         </MemoryRouter>,
+        { wrapper: TestQueryProvider },
       );
       expect(
         screen.getAllByRole("link", { name: "View update details" }),
@@ -111,7 +121,9 @@ describe("live shell and navigation integration", () => {
     },
   );
   it("adds an Updates destination to live settings navigation", () => {
-    const { result } = renderHook(useNavSettingsData);
+    const { result } = renderHook(useNavSettingsData, {
+      wrapper: TestQueryProvider,
+    });
     const updates = result.current
       .flatMap((section) => section.items)
       .find((item) => item.title === "Updates");
@@ -122,7 +134,9 @@ describe("live shell and navigation integration", () => {
     (role) => {
       mocks.role = role;
       mocks.allowed = false;
-      const { result } = renderHook(useNavSettingsData);
+      const { result } = renderHook(useNavSettingsData, {
+        wrapper: TestQueryProvider,
+      });
       expect(
         result.current
           .flatMap((section) => section.items)
@@ -138,6 +152,7 @@ describe("live shell and navigation integration", () => {
           <div>Ordinary app content</div>
         </DashboardLayout>
       </MemoryRouter>,
+      { wrapper: TestQueryProvider },
     );
     expect(screen.getByText("Ordinary app content")).toBeInTheDocument();
     expect(screen.queryByRole("status")).not.toBeInTheDocument();

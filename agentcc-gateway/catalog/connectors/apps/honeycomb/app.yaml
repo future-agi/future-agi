@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: honeycomb
+version: 1.0.0
+name: Honeycomb
+description: "Query telemetry, inspect traces, investigate latency and errors, and manage Boards and alerts."
+vendor:
+  name: Honeycomb
+  domains: [honeycomb.io]
+eeCategory: developer
+group: other
+categories: [developer, observability]
+tags: [tracing, errors, dashboards, alerts]
+docsUrl: https://docs.honeycomb.io/integrations/mcp/configuration-guide
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://docs.honeycomb.io/integrations/mcp/configuration-guide
+    fetchedAt: 2026-11-09

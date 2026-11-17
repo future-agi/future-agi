@@ -237,7 +237,9 @@ export default function ErrorFeedDetailView() {
               <Button
                 size="small"
                 variant="text"
-                startIcon={<Iconify icon="solar:arrow-left-linear" width={14} />}
+                startIcon={
+                  <Iconify icon="solar:arrow-left-linear" width={14} />
+                }
                 onClick={() => navigate("/dashboard/error-feed")}
                 sx={{
                   color: "text.secondary",
@@ -363,7 +365,10 @@ export default function ErrorFeedDetailView() {
                     size="small"
                     variant="outlined"
                     startIcon={
-                      <Iconify icon="solar:download-minimalistic-linear" width={14} />
+                      <Iconify
+                        icon="solar:download-minimalistic-linear"
+                        width={14}
+                      />
                     }
                     disabled={
                       exportTraces.isPending || !currentError.trace_count
@@ -409,7 +414,7 @@ export default function ErrorFeedDetailView() {
                     size="small"
                     variant="outlined"
                     startIcon={
-                      <Iconify icon="solar:eye-closed-linear" width={14} />
+                      <Iconify icon="solar:graph-up-linear" width={14} />
                     }
                     disabled={updateIssue.isPending}
                     onClick={() =>
@@ -420,7 +425,7 @@ export default function ErrorFeedDetailView() {
                     }
                     sx={{ borderColor: "divider", color: "text.secondary" }}
                   >
-                    Ignore issue
+                    Escalate issue
                   </Button>
                 </>
               )}
@@ -438,7 +443,8 @@ export default function ErrorFeedDetailView() {
             bgcolor: "background.paper",
           }}
         >
-          <Tabs sx={{ boxShadow: "none" }}
+          <Tabs
+            sx={{ boxShadow: "none" }}
             value={safeTabIndex}
             onChange={(_, v) => setActiveTab(TABS[v].key)}
           >
@@ -515,7 +521,8 @@ export default function ErrorFeedDetailView() {
       </Box>
 
       {/* ── Right sidebar ── */}
-      <ErrorMetadataPanel error={currentError} />
+      {/* Cached navigation must reset the previous issue's local triage state. */}
+      <ErrorMetadataPanel key={currentError.cluster_id} error={currentError} />
 
       {!shared && (
         <>

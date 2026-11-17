@@ -113,9 +113,13 @@ func TestMessagesTimeoutIsATimeoutError(t *testing.T) {
 			if got := capture.status.Load(); got != http.StatusGatewayTimeout {
 				t.Errorf("request recorded as %d, want 504", got)
 			}
-			if capture.usage.Load() == nil || !capture.estimated.Load() {
-				t.Errorf("usage = %v, estimated = %v; want the output already sent priced, estimated",
-					capture.usage.Load(), capture.estimated.Load())
+			// DEV CHANGE NOT KEPT: dev prices every cut stream's output sent
+			// so far as an estimate. The line estimates a cut stream's usage
+			// only for a managed or budgeted key; this gateway's key is
+			// neither, so nothing is estimated.
+			if capture.estimated.Load() {
+				t.Errorf("usage = %v, estimated; want no estimate for a key that is neither managed nor budgeted",
+					capture.usage.Load())
 			}
 		})
 
@@ -150,11 +154,18 @@ func TestMessagesOtherErrorsKeepTheirTypes(t *testing.T) {
 		wantStatus int
 		wantType   string
 		wantBody   string // the whole body, when it must pass through untouched
+		provider   bool   // the line's provider error: provider_429, with the provider's message
 	}{
-		{nonStreaming(nativeRoute), http.StatusTooManyRequests, "rate_limit_error", anthropicUpstreamRejection},
-		{nativeRoute, http.StatusBadGateway, "api_error", ""},
-		{nonStreaming(translatedRoute), http.StatusTooManyRequests, "rate_limit_error", ""},
-		{translatedRoute, http.StatusTooManyRequests, "rate_limit_error", ""},
+		// DEV CHANGE NOT KEPT: dev forwards a native upstream error raw. The
+		// line answers it in its own Anthropic error, with the same status and
+		// type, the provider_429 code and the provider's details.
+		{nonStreaming(nativeRoute), http.StatusTooManyRequests, "rate_limit_error", "", true},
+		// DEV CHANGE NOT KEPT: dev answers a native stream that cannot start
+		// with the gateway's 502. The line answers the upstream's status, as
+		// for the non-streamed request.
+		{nativeRoute, http.StatusTooManyRequests, "rate_limit_error", "", true},
+		{nonStreaming(translatedRoute), http.StatusTooManyRequests, "rate_limit_error", "", false},
+		{translatedRoute, http.StatusTooManyRequests, "rate_limit_error", "", false},
 	}
 	for _, tc := range rejections {
 		t.Run(tc.route.name+", upstream 429", func(t *testing.T) {
@@ -171,6 +182,14 @@ func TestMessagesOtherErrorsKeepTheirTypes(t *testing.T) {
 			}
 			if tc.wantBody != "" && body != tc.wantBody {
 				t.Errorf("body = %s, want the upstream's own %s", body, tc.wantBody)
+			}
+			if tc.provider {
+				if payload := decodeAnthropicError(t, body); payload.Error.Code == nil || *payload.Error.Code != "provider_429" {
+					t.Errorf("error.code = %v, want provider_429\n%s", payload.Error.Code, body)
+				}
+				if !strings.Contains(body, `"provider_message":"slow down"`) {
+					t.Errorf("body = %s, want the provider's message in its metadata", body)
+				}
 			}
 		})
 	}
@@ -190,8 +209,12 @@ func TestMessagesOtherErrorsKeepTheirTypes(t *testing.T) {
 				if payload.Error.Type != "permission_error" {
 					t.Errorf("error.type = %q, want permission_error\n%s", payload.Error.Type, body)
 				}
-				if payload.Error.Code == nil || *payload.Error.Code != "permission_denied" {
-					t.Errorf("error.code = %v, want permission_denied\n%s", payload.Error.Code, body)
+				// DEV CHANGE NOT KEPT: dev sends every error's code. On the line
+				// error.code carries only the admission-cap, nested-media,
+				// run-budget and gateway timeout codes (anthropicfmt), so this
+				// refusal sends none.
+				if payload.Error.Code != nil {
+					t.Errorf("error.code = %q, want it absent\n%s", *payload.Error.Code, body)
 				}
 			})
 		}

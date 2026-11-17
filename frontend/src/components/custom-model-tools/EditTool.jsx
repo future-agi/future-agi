@@ -248,7 +248,19 @@ const EditTool = ({ onCancel, editTool }) => {
           </ShowComponent>
         </Box>
       </Box>
-      <Box sx={{ display: "flex", justifyContent: "flex-end", gap: 1.4 }}>
+      {/* IT-R1 G4: Cancel / Add tool stay on screen at 720 px. */}
+      <Box
+        sx={{
+          display: "flex",
+          justifyContent: "flex-end",
+          gap: 1.4,
+          position: "sticky",
+          bottom: 0,
+          zIndex: 1,
+          py: 1,
+          bgcolor: "background.paper",
+        }}
+      >
         <Button
           size="small"
           onClick={onCancel}

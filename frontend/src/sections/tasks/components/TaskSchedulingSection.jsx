@@ -27,6 +27,24 @@ import {
   samplingWindowInvalid,
 } from "./simpleSamplingPolicy";
 
+// ───────────────────────────────────────────────────────────────
+// Time window chips
+// ───────────────────────────────────────────────────────────────
+// The shared picker draws its ten chips in one 28 px row with a 556 px floor.
+// The task form column is narrower than that (412 px at a 1024 px window,
+// 553 px at 1280), so the row ran past the column: 3M, 6M and 12M were cut
+// off at 1024 and 12M lost its right edge at 1280. In this form the row wraps
+// its chips onto another line inside the column instead. The two `div` levels
+// are the picker's root and its chip row; the date popover portals out of it.
+const TIME_WINDOW_CHIPS_WRAP_SX = {
+  "& > div > div": {
+    flexWrap: "wrap",
+    minWidth: 0,
+    maxWidth: "100%",
+    height: "auto",
+  },
+};
+
 // Retain the Task editor's existing scheduling cards and date picker. The row
 // percentage and processing limit now live only in Data to evaluate.
 export default function TaskSchedulingSection({ control, isEdit = false }) {
@@ -198,18 +216,20 @@ export default function TaskSchedulingSection({ control, isEdit = false }) {
                 >{`(${formatTimeWindow(start.value, end.value, { isCustom: preset.value === "Custom" })})`}</Box>
               )}
             </Typography>
-            <DateTimeRangePicker
-              setParentDateFilter={(dates) => {
-                if (dates?.length === 2) {
-                  start.onChange(dates[0]);
-                  end.onChange(dates[1]);
-                }
-              }}
-              dateOption={preset.value}
-              setDateOption={preset.onChange}
-              dateFilter={[start.value, end.value]}
-              isEdit={isEdit}
-            />
+            <Box sx={TIME_WINDOW_CHIPS_WRAP_SX}>
+              <DateTimeRangePicker
+                setParentDateFilter={(dates) => {
+                  if (dates?.length === 2) {
+                    start.onChange(dates[0]);
+                    end.onChange(dates[1]);
+                  }
+                }}
+                dateOption={preset.value}
+                setDateOption={preset.onChange}
+                dateFilter={[start.value, end.value]}
+                isEdit={isEdit}
+              />
+            </Box>
           </Box>
         ))}
       <Dialog

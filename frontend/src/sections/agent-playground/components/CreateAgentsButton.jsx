@@ -7,7 +7,7 @@ import { LoadingButton } from "@mui/lab";
 import SvgColor from "src/components/svg-color";
 import Iconify from "src/components/iconify";
 import CustomPopover, { usePopover } from "src/components/custom-popover";
-import { CONNECT_AGENT_PATH } from "../agentsTabs";
+import { CONNECT_AGENT_PATH, CONNECT_AGENT_PLACE } from "../agentsTabs";
 import { useCreateGraph } from "src/api/agent-playground/agent-playground";
 import { useAgentPlaygroundStoreShallow } from "../store";
 
@@ -24,6 +24,7 @@ const OPTIONS = [
     title: "Connect agents",
     description:
       "Connect an agent that already runs, to test it in simulations",
+    destination: `Opens ${CONNECT_AGENT_PLACE}`,
     iconSrc: "/assets/icons/settings/Integrations_new.svg",
   },
 ];
@@ -31,7 +32,8 @@ const OPTIONS = [
 /**
  * "Create agents" — build one in the Playground, or connect one that already
  * exists. The Playground limit only gates the Playground option; connecting
- * an agent is always available.
+ * an agent is always available. Connecting leaves Agents for
+ * Simulate > Environment, so that option names where it goes.
  */
 export default function CreateAgentsButton({ canCreatePlayground = true }) {
   const navigate = useNavigate();
@@ -113,6 +115,13 @@ export default function CreateAgentsButton({ canCreatePlayground = true }) {
               <Typography sx={{ typography: "s2", color: "text.secondary" }}>
                 {option.description}
               </Typography>
+              {option.destination && (
+                <Typography
+                  sx={{ typography: "s3", color: "text.secondary", mt: 0.5 }}
+                >
+                  {option.destination}
+                </Typography>
+              )}
             </Box>
           </MenuItem>
         ))}

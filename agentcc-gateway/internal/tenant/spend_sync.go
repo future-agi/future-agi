@@ -23,12 +23,19 @@ type SpendSummary struct {
 	Orgs        map[string]OrgSpendSummary `json:"orgs"`
 }
 
-// OrgSpendSummary holds aggregated spend for a single org.
+// OrgSpendSummary holds aggregated spend for a single org, under the keys the
+// gateway's budget levels count by: PerKey by the key's name, PerUser by the
+// request's user and the key's owner (each once per request).
 type OrgSpendSummary struct {
 	TotalSpend float64            `json:"total_spend"`
 	PerKey     map[string]float64 `json:"per_key"`
 	PerUser    map[string]float64 `json:"per_user"`
 	PerModel   map[string]float64 `json:"per_model"`
+	// PerTeam and PerTag are by team name and by tag key (<name>:<value>),
+	// as the org's team and tag budgets name them. A control plane that
+	// predates them sends neither: those levels then start from zero.
+	PerTeam map[string]float64 `json:"per_team"`
+	PerTag  map[string]float64 `json:"per_tag"`
 }
 
 // SyncSpendFromControlPlane fetches the current-period spend summary
@@ -92,6 +99,9 @@ func runPeriodicSync(ctx context.Context, interval time.Duration, baseURL, admin
 	if interval <= 0 || baseURL == "" {
 		return
 	}
+	if keyStore != nil {
+		keyStore.SetDelegationSyncInterval(interval)
+	}
 	if loaded == nil {
 		loaded = &syncLoaded{}
 		loaded.orgs.Store(true)
@@ -111,19 +121,23 @@ func runPeriodicSync(ctx context.Context, interval time.Duration, baseURL, admin
 			slog.Info("periodic control plane sync stopped")
 			return
 		case <-ticker.C:
+			// Membership/revocation must not wait behind org-config latency or
+			// inherit an already expired org-fetch deadline.
+			if keyStore != nil {
+				syncCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+				if err := auth.SyncKeysFromControlPlane(syncCtx, baseURL, adminToken, keyStore); err != nil {
+					keys.failed(ctx, "periodic key sync failed", err)
+				} else {
+					keys.succeeded()
+				}
+				cancel()
+			}
 			syncCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 			if err := SyncFromControlPlane(syncCtx, baseURL, adminToken, store); err != nil {
 				orgs.failed(ctx, "periodic sync failed", err)
 			} else {
 				orgs.succeeded()
 				slog.Debug("periodic sync completed", "orgs", store.Count())
-			}
-			if keyStore != nil {
-				if err := auth.SyncKeysFromControlPlane(syncCtx, baseURL, adminToken, keyStore); err != nil {
-					keys.failed(ctx, "periodic key sync failed", err)
-				} else {
-					keys.succeeded()
-				}
 			}
 			cancel()
 		}

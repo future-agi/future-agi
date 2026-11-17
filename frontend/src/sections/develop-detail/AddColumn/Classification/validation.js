@@ -28,7 +28,14 @@ export const ClassificationValidationSchema = (
       .min(1, {
         message: "Language Model is required",
       }),
-    concurrency: z.number().positive("Concurrency must be a positive integer"),
+    // v2.1 g8: an empty field says what it needs, not a type error.
+    concurrency: z
+      .number({
+        invalid_type_error: "Enter how many rows run at once (a number)",
+        required_error: "Enter how many rows run at once (a number)",
+      })
+      .int("Concurrency must be a whole number")
+      .positive("Concurrency must be a positive integer"),
     new_column_name:
       isConditionalNode || isEdit
         ? z.string().optional()

@@ -1,3 +1,4 @@
+import { localProviderLogo } from "src/utils/localProviderLogo";
 import React, { useMemo } from "react";
 import PropTypes from "prop-types";
 import { Alert, Box, Collapse, Stack, Typography } from "@mui/material";
@@ -71,6 +72,8 @@ const SmartPreview = ({
 
   // Check for OpenAI messages format in raw input
   const hasMessages = isOpenAIMessages(input) || hasAttrMessages;
+  // OTel GenAI records the system prompt beside the input messages.
+  const systemInstructions = attributes?.["gen_ai.system_instructions"];
 
   // JSON mode always uses JsonPreviewBlock
   if (viewMode === "json") {
@@ -104,6 +107,7 @@ const SmartPreview = ({
           totalTokens={totalTokens}
           attrInputMessages={inputMessages}
           attrOutputMessages={outputMessages}
+          systemInstructions={systemInstructions}
         />
         <AttributesCard
           attributes={attributes}
@@ -134,6 +138,7 @@ const SmartPreview = ({
           totalTokens={totalTokens}
           attrInputMessages={inputMessages}
           attrOutputMessages={outputMessages}
+          systemInstructions={systemInstructions}
         />
       ) : isLLM ? (
         /* LLM without messages format — show model header + content cards */
@@ -322,7 +327,7 @@ const ModelHeader = ({ model, provider, providerLogo, tokens, cost }) => (
       {providerLogo ? (
         <Box
           component="img"
-          src={providerLogo}
+          src={localProviderLogo(provider)}
           alt={provider}
           sx={{ width: 14, height: 14, borderRadius: "4px" }}
         />
@@ -800,7 +805,7 @@ const AgentPreview = ({
             {providerLogo ? (
               <Box
                 component="img"
-                src={providerLogo}
+                src={localProviderLogo(provider)}
                 alt={provider}
                 sx={{ width: 13, height: 13, borderRadius: "4px" }}
               />
@@ -870,8 +875,8 @@ const AgentPreview = ({
         </Box>
       )}
 
-      {/* User message / task */}
-      {userMessage && (
+      {/* Extracted user message / task, when distinct from the full input */}
+      {userMessage && userMessage !== input && (
         <ContentCard
           title="User Message"
           content={userMessage}
@@ -880,7 +885,7 @@ const AgentPreview = ({
         />
       )}
 
-      {/* Full input (collapsed by default if we extracted a user message) */}
+      {/* Full input */}
       <ContentCard
         title="Input"
         content={input}

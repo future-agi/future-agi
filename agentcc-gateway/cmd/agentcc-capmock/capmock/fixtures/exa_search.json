@@ -1,0 +1,17 @@
+{
+  "requestId": "{{id}}",
+  "resolvedSearchType": "auto",
+  "searchType": "auto",
+  "results": [
+    {
+      "id": "https://example.com/capmock",
+      "title": "Capmock result for {{query}}",
+      "url": "https://example.com/capmock",
+      "publishedDate": "2026-10-01T00:00:00.000Z",
+      "author": "capmock",
+      "score": 0.91,
+      "text": "Example text."
+    }
+  ],
+  "costDollars": { "total": 0.007, "search": { "neural": 0.007 } }
+}

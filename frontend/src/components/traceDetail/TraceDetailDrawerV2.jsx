@@ -1,5 +1,4 @@
 import React, { useState, useCallback, useEffect, useMemo } from "react";
-import { getRequestErrorMessage } from "src/utils/errorUtils";
 import PropTypes from "prop-types";
 import {
   Alert,
@@ -10,6 +9,8 @@ import {
   Menu,
   MenuItem,
   Portal,
+  ToggleButton,
+  ToggleButtonGroup,
   Typography,
 } from "@mui/material";
 import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
@@ -22,23 +23,20 @@ import { modelCatalogQuery } from "src/api/model/model";
 import { useCreatePromptDraft } from "src/api/develop/prompt";
 import { getOutputFormatFromCatalogType } from "src/sections/develop-detail/RunPrompt/common";
 import logger from "src/utils/logger";
+import { toStoredTraceId } from "src/utils/trace-id";
 import DrawerHeader from "./DrawerHeader";
 import { CaptureCoverageNotice } from "./TraceDetailPanel";
 import DrawerToolbar from "./DrawerToolbar";
 import TraceDisplayPanel, { DEFAULT_VIEW_CONFIG } from "./TraceDisplayPanel";
 import {
   useGetSavedViews,
-  useCreateSavedView,
   useUpdateSavedView,
   useDeleteSavedView,
   useReorderSavedViews,
-  getOwnViewNames,
-  DEFAULT_VIEW_NAME,
-  findOwnDefaultView,
 } from "src/api/project/saved-views";
-import { useAuthContext } from "src/auth/hooks";
 import SpanTreeTimeline from "./SpanTreeTimeline";
 import SpanDetailPane from "./SpanDetailPane";
+import TraceCompareView from "./TraceCompareView";
 import LeftPanelSplit from "./TraceLeftPanel";
 import useFalconStore from "src/sections/falcon-ai/store/useFalconStore";
 import FalconAISidebar from "src/sections/falcon-ai/FalconAISidebar";
@@ -50,18 +48,18 @@ import {
 import { enqueueSnackbar } from "notistack";
 import { ShareDialog } from "src/components/share-dialog";
 import AddToQueueDialog from "src/sections/annotations/queues/components/add-to-queue-dialog";
-import AddDataset from "src/components/traceDetailDrawer/addToDataset/add-dataset";
+import { openAddData } from "src/sections/common/AddData/addDataStore";
 import AnnotationSidebarContent from "src/components/traceDetailDrawer/AnnotationSidebarContent";
 import AddLabelDrawer from "src/components/traceDetailDrawer/AddLabelDrawer";
 import { buildTraceAnnotationSources } from "src/components/voiceAnnotationSources";
 import AddTagsPopover from "./AddTagsPopover";
-import SaveViewPopover from "./SaveViewDialog";
 import { buildPromptConfigFromSpan } from "./promptFromSpan";
 import { useNavigate } from "react-router";
 import TraceFilterPanel from "src/sections/projects/LLMTracing/TraceFilterPanel";
 import ImagineTab from "src/components/imagine/ImagineTab";
 import ConfirmDialog from "src/components/custom-dialog/confirm-dialog";
 import useImagineStore from "src/components/imagine/useImagineStore";
+import FindBar from "src/sections/common/Find/FindBar";
 import ContentSkeleton from "src/components/content-skeleton";
 
 const PANEL_WIDTH = "60vw";
@@ -108,7 +106,7 @@ TraceDetailSpanFilterPanel.propTypes = {
 };
 
 const ACTION_ITEMS = [
-  { id: "dataset", label: "Move to dataset", icon: "solar:database-linear" },
+  { id: "dataset", label: "Add to dataset", icon: "solar:database-linear" },
   {
     id: "workbench",
     label: "Iterate in prompt workbench",
@@ -133,8 +131,86 @@ function getSpan(entry) {
   return entry?.observation_span || {};
 }
 
+// Shown in place of the span tree or timeline when the trace has spans but
+// the Span Type setting or the span filters hide all of them, so a filtered
+// trace does not read as an empty one.
+function HiddenSpansNotice({ byType, byFilters, onShowAll }) {
+  const cause =
+    byType && byFilters
+      ? "The Span Type setting in Display and the span filters hide"
+      : byType
+        ? "The Span Type setting in Display hides"
+        : "The span filters hide";
+  return (
+    <Box sx={{ p: 3, textAlign: "center" }}>
+      <Typography variant="body2" fontSize={13} fontWeight={600}>
+        All spans are hidden
+      </Typography>
+      <Typography
+        variant="body2"
+        color="text.secondary"
+        fontSize={12}
+        sx={{ mt: 0.5 }}
+      >
+        {`${cause} every span in this trace.`}
+      </Typography>
+      <Button
+        size="small"
+        variant="outlined"
+        onClick={onShowAll}
+        sx={{ mt: 1.5 }}
+      >
+        Show all spans
+      </Button>
+    </Box>
+  );
+}
+
+HiddenSpansNotice.propTypes = {
+  byType: PropTypes.bool,
+  byFilters: PropTypes.bool,
+  onShowAll: PropTypes.func.isRequired,
+};
+
+const TRACE_LAYOUTS = [
+  { value: "tree", label: "Tree" },
+  { value: "timeline", label: "Timeline" },
+];
+
+// Tree | Timeline in the toolbar, beside Display, so the timeline is one
+// click away. The Display panel keeps its own Trace View / Timeline View
+// choice; both set the same viewMode.
+function TraceLayoutSwitch({ viewMode, onChange }) {
+  return (
+    <ToggleButtonGroup
+      exclusive
+      size="small"
+      aria-label="Trace layout"
+      // The content area draws the tree for any mode but "timeline".
+      value={viewMode === "timeline" ? "timeline" : "tree"}
+      // Clicking the pressed option sends null: keep one option pressed.
+      onChange={(_, next) => {
+        if (next) onChange(next);
+      }}
+      // Never squeezed or wrapped by a narrow drawer (1024 px window).
+      sx={{ flexShrink: 0, whiteSpace: "nowrap" }}
+    >
+      {TRACE_LAYOUTS.map((layout) => (
+        <ToggleButton key={layout.value} value={layout.value}>
+          {layout.label}
+        </ToggleButton>
+      ))}
+    </ToggleButtonGroup>
+  );
+}
+
+TraceLayoutSwitch.propTypes = {
+  viewMode: PropTypes.string,
+  onChange: PropTypes.func.isRequired,
+};
+
 const TraceDetailDrawerV2 = ({
-  traceId,
+  traceId: givenTraceId,
   open,
   onClose,
   projectId,
@@ -153,6 +229,9 @@ const TraceDetailDrawerV2 = ({
   readOnly = false,
   sharedToken = null,
 }) => {
+  // Experiment results open a trace by the OpenTelemetry id their run
+  // recorded. Every read, write and link below uses the span store's form.
+  const traceId = toStoredTraceId(givenTraceId);
   const navigate = useNavigate();
 
   const { mutate: createPromptDraft, isPending: isCreatingDraft } =
@@ -208,6 +287,13 @@ const TraceDetailDrawerV2 = ({
   const [isFullscreen, setIsFullscreen] = useState(initialFullscreen);
   const [drawerWidth, setDrawerWidth] = useState(60); // percentage of viewport
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
+  const [compareOpen, setCompareOpen] = useState(false);
+  const isComparing =
+    compareOpen && open && !readOnly && !sharedToken && Boolean(projectId && traceId);
+
+  useEffect(() => {
+    setCompareOpen(false);
+  }, [traceId, projectId, testExecutionId, open, readOnly, sharedToken]);
 
   // When the Falcon sidebar is open (e.g. user clicked "Fix with Falcon"),
   // the trace drawer slides left by SIDEBAR_WIDTH so the sidebar is visible
@@ -217,7 +303,6 @@ const TraceDetailDrawerV2 = ({
 
   // Action dialog/drawer state
   const [queueAnchorEl, setQueueAnchorEl] = useState(null);
-  const [datasetDrawerOpen, setDatasetDrawerOpen] = useState(false);
   const [annotateDrawerOpen, setAnnotateDrawerOpen] = useState(null);
   const [addLabelDrawerOpen, setAddLabelDrawerOpen] = useState(false);
   const [tagsAnchorEl, setTagsAnchorEl] = useState(null);
@@ -232,6 +317,11 @@ const TraceDetailDrawerV2 = ({
       return null;
     }
   }, [storageKey]);
+
+  // The Trace tab's latest display and filters in this drawer, kept by the
+  // auto-save below. Imagine tabs change the live state (a saved one clears
+  // the span filters), so returning to Trace restores from here.
+  const traceViewRef = React.useRef(savedDefault);
 
   const [displayAnchorEl, setDisplayAnchorEl] = useState(null);
   const [spanTypeFilter, setSpanTypeFilter] = useState(
@@ -256,7 +346,6 @@ const TraceDetailDrawerV2 = ({
   const { data: savedViewsData } = useGetSavedViews(
     readOnly ? null : projectId,
   );
-  const { mutate: createSavedView } = useCreateSavedView(projectId);
   const { mutate: updateSavedView } = useUpdateSavedView(projectId);
   const { mutate: deleteSavedView } = useDeleteSavedView(projectId);
   const { mutate: reorderSavedViews } = useReorderSavedViews(projectId);
@@ -267,9 +356,6 @@ const TraceDetailDrawerV2 = ({
     () => savedViewsData?.custom_views ?? [],
     [savedViewsData],
   );
-  const { user } = useAuthContext();
-  // Inline duplicate-guard input: the current user's own view names.
-  const ownViewNames = getOwnViewNames(customViews, user?.id);
 
   const [activeDrawerTab, setActiveDrawerTab] = useState("trace");
   const [deleteTabId, setDeleteTabId] = useState(null);
@@ -316,8 +402,9 @@ const TraceDetailDrawerV2 = ({
     (tabId) => {
       setActiveDrawerTab(tabId);
       if (tabId === "trace") {
-        // Reset to user's default or hardcoded default
-        const def = savedDefault || DEFAULT_VIEW_CONFIG;
+        // Restore the Trace settings last chosen in this drawer, not the
+        // default read when it opened (the hardcoded default if none).
+        const def = traceViewRef.current || DEFAULT_VIEW_CONFIG;
         setViewMode(def.viewMode || "tree");
         setSpanTypeFilter(def.spanTypeFilter ?? null);
         setVisibleMetrics(
@@ -339,7 +426,7 @@ const TraceDetailDrawerV2 = ({
         setSpanFilters(tab.config.filters || []);
       }
     },
-    [drawerTabs, savedDefault],
+    [drawerTabs],
   );
 
   // Auto-save display settings when they change (debounced)
@@ -354,6 +441,7 @@ const TraceDetailDrawerV2 = ({
         showAgentGraph,
         filters: spanFilters,
       };
+      traceViewRef.current = config;
       localStorage.setItem(storageKey, JSON.stringify(config));
       return;
     }
@@ -390,138 +478,20 @@ const TraceDetailDrawerV2 = ({
     setShowAgentGraph(DEFAULT_VIEW_CONFIG.showAgentGraph);
   }, []);
 
-  // "Set default for everyone" — make current view project-visible
-  const handleSetDefaultView = useCallback(() => {
-    if (readOnly) return;
-    const onDone = {
-      onSuccess: () =>
-        enqueueSnackbar("View set as default for everyone", {
-          variant: "success",
-        }),
-      onError: (err) =>
-        enqueueSnackbar(
-          getRequestErrorMessage(err, "Failed to set view as default"),
-          { variant: "error" },
-        ),
-    };
-
-    if (activeDrawerTab !== "trace") {
-      // Flip visibility only. This branch handles non-"trace" (imagine) tabs,
-      // whose config is a different shape — resending the trace-shaped config
-      // below would corrupt it (the same reason auto-save skips imagine tabs).
-      updateSavedView({ id: activeDrawerTab, visibility: "project" }, onDone);
-      return;
-    }
-
-    const config = {
-      display: { viewMode, spanTypeFilter, visibleMetrics, showAgentGraph },
-      filters: spanFilters,
-    };
-
-    // Adopt the user's own default for this drawer's tab_type ("traces").
-    // Scoped to the current user so we never overwrite a teammate's shared
-    // default (a blind create would 400 on the name).
-    const existingDefault = findOwnDefaultView(customViews, {
-      tabType: "traces",
-      userId: user?.id,
-    });
-    if (existingDefault) {
-      updateSavedView(
-        { id: existingDefault.id, visibility: "project", config },
-        onDone,
-      );
-      return;
-    }
-
-    createSavedView(
-      {
-        project_id: projectId,
-        name: DEFAULT_VIEW_NAME,
-        tab_type: "traces",
-        visibility: "project",
-        config,
-      },
-      onDone,
-    );
-  }, [
-    activeDrawerTab,
-    viewMode,
-    spanTypeFilter,
-    visibleMetrics,
-    showAgentGraph,
-    spanFilters,
-    projectId,
-    customViews,
-    user,
-    updateSavedView,
-    createSavedView,
-    readOnly,
-  ]);
-
-  // Create new view from current config (called from "+" button or filter save)
-  // Save View popover state
-  const [saveViewAnchor, setSaveViewAnchor] = useState(null);
-  const [isSavingView, setIsSavingView] = useState(false);
-
-  const handleCreateView = useCallback((e) => {
-    setSaveViewAnchor(e?.currentTarget || e || document.body);
-  }, []);
-
-  const handleSaveViewConfirm = useCallback(
-    (name) => {
-      setIsSavingView(true);
-      const config = {
-        display: { viewMode, spanTypeFilter, visibleMetrics, showAgentGraph },
-        filters: spanFilters,
-      };
-      createSavedView(
-        {
-          project_id: projectId,
-          name,
-          tab_type: "traces",
-          config,
-        },
-        {
-          onSuccess: (res) => {
-            enqueueSnackbar("View created", { variant: "success" });
-            const newId = res?.data?.result?.id;
-            if (newId) setActiveDrawerTab(newId);
-            setSaveViewAnchor(null);
-            setIsSavingView(false);
-          },
-          onError: (err) => {
-            enqueueSnackbar(
-              getRequestErrorMessage(err, "Failed to create view"),
-              {
-                variant: "error",
-              },
-            );
-            setIsSavingView(false);
-          },
-        },
-      );
-    },
-    [
-      viewMode,
-      spanTypeFilter,
-      visibleMetrics,
-      showAgentGraph,
-      spanFilters,
-      projectId,
-      createSavedView,
-    ],
-  );
-
   // Close (delete) a custom view tab
-  const handleCloseTab = useCallback((tabId) => {
-    if (tabId === "trace") return;
-    // Unsaved Imagine tab — just switch back, no API call needed
-    if (tabId === "__new_imagine__") {
-      setActiveDrawerTab("trace");
-      return;
-    }
-    setDeleteTabId(tabId);
-  }, []);
+  const handleCloseTab = useCallback(
+    (tabId) => {
+      if (tabId === "trace") return;
+      // Unsaved Imagine tab — no API call needed. Return through the Trace
+      // restore: a saved Imagine tab opened before it cleared the span filters.
+      if (tabId === "__new_imagine__") {
+        handleTabChange("trace");
+        return;
+      }
+      setDeleteTabId(tabId);
+    },
+    [handleTabChange],
+  );
 
   // Create a new Imagine tab (temporary until saved)
   const handleCreateImagineTab = useCallback(() => {
@@ -550,10 +520,22 @@ const TraceDetailDrawerV2 = ({
   // A failed refresh must not present cached spans or totals as current data.
   const data = isError ? undefined : traceData;
   const accessDenied = error?.statusCode === 401 || error?.statusCode === 403;
+  // Over the trace view's span, eval or annotation limit: every retry fails
+  // the same way, so no Retry is offered.
+  const traceTooLarge = error?.code === "trace_too_large";
 
   const handleRefresh = useCallback(() => {
     refetch();
   }, [refetch]);
+
+  // The timeline's own metrics button turns latency and tokens on or off
+  // together, as the tree's does (TraceLeftPanel).
+  const handleToggleTimelineMetrics = useCallback(() => {
+    setVisibleMetrics((prev) => {
+      const next = !(prev.latency || prev.tokens);
+      return { ...prev, latency: next, tokens: next };
+    });
+  }, []);
 
   const rawSpans = data?.observation_spans;
   const summary = data?.summary;
@@ -662,6 +644,30 @@ const TraceDetailDrawerV2 = ({
     return filterTree(rawSpans);
   }, [rawSpans, spanFilters, spanTypeFilter, pinnedSpanId]);
 
+  // The trace has spans, but the filters above hide every one. The notice
+  // uses the memo's own tests to name the filters that are set.
+  const spansHiddenByFilter = rawSpans?.length > 0 && !spans?.length;
+  const typeFilterActive =
+    Array.isArray(spanTypeFilter) && spanTypeFilter.length > 0;
+  const spanFiltersActive = (spanFilters || []).some(
+    (f) => f.field && Array.isArray(f.value) && f.value.length > 0,
+  );
+
+  // The Trace auto-save above stores this, so later traces in the project
+  // open with every span shown.
+  const handleShowAllSpans = useCallback(() => {
+    setSpanTypeFilter(null);
+    setSpanFilters([]);
+  }, []);
+
+  const hiddenSpansNotice = spansHiddenByFilter ? (
+    <HiddenSpansNotice
+      byType={typeFilterActive}
+      byFilters={spanFiltersActive}
+      onShowAll={handleShowAllSpans}
+    />
+  ) : null;
+
   // Auto-select root span when trace data loads (or when trace changes).
   // If caller passed ``initialSpanId`` (e.g. opened from span-grid), prefer
   // that so the drawer lands on the clicked span.
@@ -672,11 +678,13 @@ const TraceDetailDrawerV2 = ({
     setSelectedSpanId(initialSpanId || rootSpanId || null);
   }, [traceId, rootSpanId, initialSpanId]);
 
-  // Find selected span in tree
+  // Find selected span in tree. A span the Display span-type filter or the
+  // span filters hide (e.g. one clicked in the Spans grid) is still looked up
+  // in the unfiltered spans, so its details open instead of an empty pane.
   const selectedSpanData = useMemo(() => {
-    if (!selectedSpanId || !spans) return null;
+    if (!selectedSpanId) return null;
     function find(entries) {
-      for (const entry of entries) {
+      for (const entry of entries || []) {
         const span = getSpan(entry);
         if (span?.id === selectedSpanId) return entry;
         if (entry.children?.length) {
@@ -686,8 +694,8 @@ const TraceDetailDrawerV2 = ({
       }
       return null;
     }
-    return find(spans);
-  }, [selectedSpanId, spans]);
+    return find(spans) || find(rawSpans);
+  }, [selectedSpanId, spans, rawSpans]);
 
   const handleSelectSpan = useCallback((spanId) => {
     setSelectedSpanId((prev) => (prev === spanId ? null : spanId));
@@ -722,7 +730,15 @@ const TraceDetailDrawerV2 = ({
           });
           break;
         case "dataset":
-          setDatasetDrawerOpen(true);
+          // R2 (P5): one way in; the global Add-data sheet.
+          if (traceId)
+            openAddData({
+              source: {
+                kind: "traces",
+                trace_ids: [traceId],
+                project_id: projectId,
+              },
+            });
           break;
         case "workbench": {
           if (!span) {
@@ -828,7 +844,9 @@ const TraceDetailDrawerV2 = ({
           setTagsAnchorEl(anchorEl || document.body);
           break;
         default:
-          enqueueSnackbar(`${actionId} — coming soon`, { variant: "info" });
+          // options-truth L3 G10 (S1): every listed action has a case above;
+          // an unknown id is a wiring bug, never a `coming soon` toast.
+          logger.warn(`trace drawer: unknown action ${actionId}`);
       }
     },
     [
@@ -891,7 +909,7 @@ const TraceDetailDrawerV2 = ({
         sx={coveredDrawerSx(covered)}
         PaperProps={{
           sx: {
-            width: isFullscreen
+            width: isFullscreen || isComparing
               ? `calc(100vw - ${falconOffsetPx}px)`
               : `${drawerWidth}vw`,
             height: "100vh",
@@ -911,7 +929,7 @@ const TraceDetailDrawerV2 = ({
         }}
       >
         {/* Resize handle — left edge */}
-        {!isFullscreen && (
+        {!isFullscreen && !isComparing && (
           <Box
             onMouseDown={(e) => {
               e.preventDefault();
@@ -946,6 +964,7 @@ const TraceDetailDrawerV2 = ({
           />
         )}
 
+        <FindBar scope=".MuiDrawer-paper" label="Find in this trace" />
         {/* Header */}
         <DrawerHeader
           open={open}
@@ -958,7 +977,7 @@ const TraceDetailDrawerV2 = ({
           hasPrev={hasPrev}
           hasNext={hasNext}
           onFullscreen={
-            initialFullscreen
+            initialFullscreen || isComparing
               ? undefined
               : () => setIsFullscreen((prev) => !prev)
           }
@@ -968,8 +987,14 @@ const TraceDetailDrawerV2 = ({
               ? undefined
               : () => {
                   if (traceId && projectId) {
+                    // Carry the selected span so the new tab opens on it; the
+                    // full page selects the root span when none is given.
+                    const spanQuery =
+                      selectedSpanId && selectedSpanId !== rootSpanId
+                        ? `?span_id=${encodeURIComponent(selectedSpanId)}`
+                        : "";
                     window.open(
-                      `/dashboard/observe/${projectId}/trace/${traceId}`,
+                      `/dashboard/observe/${projectId}/trace/${traceId}${spanQuery}`,
                       "_blank",
                     );
                   }
@@ -991,43 +1016,62 @@ const TraceDetailDrawerV2 = ({
             }
           }}
           onShare={readOnly ? undefined : () => setShareDialogOpen(true)}
+          onCompare={
+            !readOnly &&
+            !sharedToken &&
+            projectId &&
+            traceId &&
+            (isComparing || (data && !isLoading && !isError))
+              ? () => setCompareOpen((prev) => !prev)
+              : undefined
+          }
+          isComparing={isComparing}
         />
 
         {/* Toolbar — tab bar + filter/display/save buttons */}
-        <DrawerToolbar
-          tabs={drawerTabs}
-          activeTabId={activeDrawerTab}
-          readOnly={readOnly}
-          onTabChange={handleTabChange}
-          onCloseTab={handleCloseTab}
-          onCreateTab={handleCreateView}
-          onCreateImagineTab={handleCreateImagineTab}
-          onReorderTabs={(orderedIds) => {
-            // orderedIds are the new order for imagine tabs only. Merge with the
-            // other saved views (non-imagine) so their positions are preserved.
-            const imagineIdSet = new Set(orderedIds);
-            const imaginePosById = Object.fromEntries(
-              orderedIds.map((id, i) => [id, i]),
-            );
-            const allViews = customViews;
-            const nonImagine = allViews.filter((v) => !imagineIdSet.has(v.id));
-            const merged = [
-              ...nonImagine.map((v, i) => ({ id: v.id, position: i })),
-              ...orderedIds.map((id) => ({
-                id,
-                position: nonImagine.length + imaginePosById[id],
-              })),
-            ];
-            reorderSavedViews({ project_id: projectId, order: merged });
-          }}
-          onFilterOpen={(e) => setFilterAnchorEl(e?.currentTarget || e)}
-          onDisplayOpen={(el) => setDisplayAnchorEl(el)}
-          hasActiveFilter={spanFilters.length > 0}
-          hideFilter={readOnly}
-        />
+        {!isComparing && (
+          <DrawerToolbar
+            tabs={drawerTabs}
+            activeTabId={activeDrawerTab}
+            readOnly={readOnly}
+            onTabChange={handleTabChange}
+            onCloseTab={handleCloseTab}
+            onCreateImagineTab={handleCreateImagineTab}
+            onReorderTabs={(orderedIds) => {
+              // orderedIds are the new order for imagine tabs only. Merge with the
+              // other saved views (non-imagine) so their positions are preserved.
+              const imagineIdSet = new Set(orderedIds);
+              const imaginePosById = Object.fromEntries(
+                orderedIds.map((id, i) => [id, i]),
+              );
+              const allViews = customViews;
+              const nonImagine = allViews.filter((v) => !imagineIdSet.has(v.id));
+              const merged = [
+                ...nonImagine.map((v, i) => ({ id: v.id, position: i })),
+                ...orderedIds.map((id) => ({
+                  id,
+                  position: nonImagine.length + imaginePosById[id],
+                })),
+              ];
+              reorderSavedViews({ project_id: projectId, order: merged });
+            }}
+            onFilterOpen={(e) => setFilterAnchorEl(e?.currentTarget || e)}
+            onDisplayOpen={(el) => setDisplayAnchorEl(el)}
+            hasActiveFilter={spanFilters.length > 0}
+            hideFilter={readOnly}
+            rightSlot={
+              <TraceLayoutSwitch viewMode={viewMode} onChange={setViewMode} />
+            }
+          />
+        )}
 
-        {/* Display options popover — hidden on Imagine tab */}
-        {!isImagineActive && (
+        {/* Display options popover — hidden on Imagine tab. The drawer's
+            display is auto-saved in this browser above and there is no
+            project-wide drawer default, so "Set default for everyone" gets
+            no handler: the panel shows it disabled with a reason (hidden
+            when read-only). Saved views of tab_type "traces" belong to the
+            Observe list and the drawer never reads them back. */}
+        {!isComparing && !isImagineActive && (
           <TraceDisplayPanel
             anchorEl={displayAnchorEl}
             open={Boolean(displayAnchorEl)}
@@ -1046,13 +1090,12 @@ const TraceDetailDrawerV2 = ({
             showAgentGraph={showAgentGraph}
             onToggleAgentGraph={() => setShowAgentGraph((prev) => !prev)}
             onResetView={handleResetView}
-            onSetDefaultView={handleSetDefaultView}
             hideSetDefault={readOnly}
           />
         )}
 
         {/* Span filter popover — hidden on Imagine tab */}
-        {!isImagineActive && (
+        {!isComparing && !isImagineActive && (
           <TraceDetailSpanFilterPanel
             anchorEl={filterAnchorEl}
             open={Boolean(filterAnchorEl)}
@@ -1064,7 +1107,7 @@ const TraceDetailDrawerV2 = ({
         )}
 
         {/* Active filter chips row — hidden on Imagine tab */}
-        {!isImagineActive && spanFilters.length > 0 && (
+        {!isComparing && !isImagineActive && spanFilters.length > 0 && (
           <Box
             sx={{
               display: "flex",
@@ -1202,7 +1245,7 @@ const TraceDetailDrawerV2 = ({
           </Box>
         )}
 
-        {!isError && !isLoading && (
+        {!isComparing && !isError && !isLoading && (
           <CaptureCoverageNotice coverage={data?.capture_coverage} />
         )}
 
@@ -1212,7 +1255,7 @@ const TraceDetailDrawerV2 = ({
           sx={{
             flex: 1,
             display: "flex",
-            flexDirection: isImagineActive
+            flexDirection: isImagineActive || isComparing
               ? "column"
               : viewMode === "timeline"
                 ? "column"
@@ -1225,7 +1268,8 @@ const TraceDetailDrawerV2 = ({
               <Alert
                 severity="error"
                 action={
-                  !accessDenied && (
+                  !accessDenied &&
+                  !traceTooLarge && (
                     <Button
                       color="inherit"
                       size="small"
@@ -1238,17 +1282,27 @@ const TraceDetailDrawerV2 = ({
                 }
               >
                 <AlertTitle>Unable to load trace</AlertTitle>
-                {error?.statusCode === 401
-                  ? "Sign in again to view this trace."
-                  : error?.statusCode === 403
-                    ? "You do not have permission to view this trace. Ask your workspace administrator for access."
-                    : error?.statusCode === 404
-                      ? "This trace is no longer available or cannot be accessed from this view. Return to the trace list and select another trace."
-                      : error?.statusCode === 503
-                        ? "The trace service is unavailable. Try again. If this continues, ask your administrator to check service availability and trace size limits."
-                        : "The trace could not be loaded. Try again, or contact your administrator if the problem continues."}
+                {traceTooLarge
+                  ? "This trace is too large to open here. The trace view opens traces with up to 1,000 spans, 5,000 eval results and 5,000 annotations, and trying again will not change this."
+                  : error?.statusCode === 401
+                    ? "Sign in again to view this trace."
+                    : error?.statusCode === 403
+                      ? "You do not have permission to view this trace. Ask your workspace administrator for access."
+                      : error?.statusCode === 404
+                        ? "This trace is no longer available or cannot be accessed from this view. Return to the trace list and select another trace."
+                        : error?.statusCode === 503
+                          ? "The trace service is unavailable. Try again. If this continues, ask your administrator to check service availability and trace size limits."
+                          : "The trace could not be loaded. Try again, or contact your administrator if the problem continues."}
               </Alert>
             </Box>
+          ) : isComparing && data && !isLoading ? (
+            <TraceCompareView
+              key={`${projectId}:${traceId}`}
+              traceId={traceId}
+              data={data}
+              projectId={projectId}
+              initialSpanId={selectedSpanId}
+            />
           ) : isImagineActive ? (
             <ImagineTab
               traceId={traceId}
@@ -1297,11 +1351,20 @@ const TraceDetailDrawerV2 = ({
                   borderColor: "divider",
                 }}
               >
-                <SpanTreeTimeline
-                  spans={spans}
-                  selectedSpanId={selectedSpanId}
-                  onSelectSpan={handleSelectSpan}
-                />
+                {hiddenSpansNotice || (
+                  <SpanTreeTimeline
+                    spans={spans}
+                    selectedSpanId={selectedSpanId}
+                    onSelectSpan={handleSelectSpan}
+                    showMetrics={Boolean(
+                      visibleMetrics?.latency ||
+                        visibleMetrics?.tokens ||
+                        visibleMetrics?.cost,
+                    )}
+                    visibleMetrics={visibleMetrics}
+                    onToggleMetrics={handleToggleTimelineMetrics}
+                  />
+                )}
               </Box>
 
               {/* Bottom: Span detail (appears when span clicked) */}
@@ -1337,18 +1400,34 @@ const TraceDetailDrawerV2 = ({
           ) : (
             /* ── Tree layout: left/right split ── */
             <>
-              {/* Left Panel: Tree + Agent Graph with resizable split */}
-              <LeftPanelSplit
-                leftPanelWidth={leftPanelWidth}
-                viewMode={viewMode}
-                spans={spans}
-                selectedSpanId={selectedSpanId}
-                onSelectSpan={handleSelectSpan}
-                visibleMetrics={visibleMetrics}
-                setVisibleMetrics={setVisibleMetrics}
-                showAgentGraph={showAgentGraph}
-                onRefresh={handleRefresh}
-              />
+              {/* Left Panel: Tree + Agent Graph with resizable split. With
+                  every span hidden it has no tree or graph to show, so the
+                  notice takes its place at the same width. */}
+              {hiddenSpansNotice ? (
+                <Box
+                  sx={{
+                    width: `${leftPanelWidth}%`,
+                    flexShrink: 0,
+                    overflow: "auto",
+                    borderRight: "1px solid",
+                    borderColor: "divider",
+                  }}
+                >
+                  {hiddenSpansNotice}
+                </Box>
+              ) : (
+                <LeftPanelSplit
+                  leftPanelWidth={leftPanelWidth}
+                  viewMode={viewMode}
+                  spans={spans}
+                  selectedSpanId={selectedSpanId}
+                  onSelectSpan={handleSelectSpan}
+                  visibleMetrics={visibleMetrics}
+                  setVisibleMetrics={setVisibleMetrics}
+                  showAgentGraph={showAgentGraph}
+                  onRefresh={handleRefresh}
+                />
+              )}
 
               {/* Resizable divider with visual handle */}
               <Box
@@ -1535,13 +1614,6 @@ const TraceDetailDrawerV2 = ({
           }
         />
 
-        {/* Move to Dataset Drawer */}
-        <AddDataset
-          handleClose={() => setDatasetDrawerOpen(false)}
-          actionToDataset={datasetDrawerOpen}
-          spanId={selectedSpanId}
-        />
-
         {/* Annotate Drawer — new sidebar UI */}
         <Drawer
           anchor="right"
@@ -1624,16 +1696,6 @@ const TraceDetailDrawerV2 = ({
           />
         )}
 
-        {/* Save View Popover */}
-        <SaveViewPopover
-          anchorEl={saveViewAnchor}
-          open={Boolean(saveViewAnchor)}
-          onClose={() => setSaveViewAnchor(null)}
-          onSave={handleSaveViewConfirm}
-          isLoading={isSavingView}
-          existingNames={ownViewNames}
-        />
-
         {/* Delete tab confirmation dialog */}
         <ConfirmDialog
           open={Boolean(deleteTabId)}
@@ -1650,7 +1712,7 @@ const TraceDetailDrawerV2 = ({
                 setDeleteTabId(null);
                 deleteSavedView(tabId, {
                   onSuccess: () => {
-                    if (activeDrawerTab === tabId) setActiveDrawerTab("trace");
+                    if (activeDrawerTab === tabId) handleTabChange("trace");
                     enqueueSnackbar("View deleted", { variant: "info" });
                   },
                   onError: () => {

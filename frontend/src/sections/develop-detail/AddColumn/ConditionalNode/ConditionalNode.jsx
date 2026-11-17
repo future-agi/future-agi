@@ -25,6 +25,7 @@ import { ExtractEntitiesChild } from "../ExtractEntities/ExtractEntities";
 import { ExtractJsonKeyChild } from "../ExtractJsonKey/ExtractJsonKey";
 import { RetrievalChild } from "../Retrieval/Retrieval";
 import { ExecuteCodeChild } from "../ExecuteCode/ExecuteCode";
+import { EXECUTE_CODE_COLUMN_OFFERED } from "../common";
 import { ClassificationChild } from "../Classification/Classification";
 import { AddColumnApiCallChild } from "../AddColumnApiCall/AddColumnApiCall";
 import ConditionalInput from "./ConditionalInput";
@@ -42,7 +43,9 @@ const COLUMN_TYPE_OPTIONS = [
   { label: "Retrieval", value: "retrieval" },
   { label: "Extract Entities", value: "extract_entities" },
   { label: "Extract JSON Key", value: "extract_json" },
-  { label: "Execute Custom Code", value: "extract_code" },
+  ...(EXECUTE_CODE_COLUMN_OFFERED
+    ? [{ label: "Execute Custom Code", value: "extract_code" }]
+    : []),
   { label: "Classification", value: "classification" },
   { label: "API Calls", value: "api_call" },
 ];

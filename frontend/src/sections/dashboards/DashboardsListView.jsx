@@ -41,6 +41,9 @@ import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import { formatDistanceToNowStrict, format } from "date-fns";
 import useCanEditDashboard from "./hooks/useCanEditDashboard";
 
+const DASHBOARD_DOCS_URL =
+  "https://docs.futureagi.com/docs/observe/features/dashboard";
+
 function getInitials(name) {
   if (!name) return "?";
   const parts = name.trim().split(/\s+/);
@@ -57,6 +60,8 @@ function timeAgo(date) {
   }
 }
 
+// The last editor (with the edit time) and the creator (with the creation
+// time). Nothing records who viewed a dashboard, so never label these viewers.
 function getDashboardViewers(db) {
   const users = [];
   const seen = new Set();
@@ -151,7 +156,7 @@ function ViewerAvatars({ db }) {
             }}
           />
 
-          {/* Recently Viewed By */}
+          {/* Created and last edited by */}
           <Typography
             variant="caption"
             sx={{
@@ -161,7 +166,7 @@ function ViewerAvatars({ db }) {
               display: "block",
             }}
           >
-            Recently Viewed By:
+            Created and last edited by:
           </Typography>
           <Stack gap={1.5}>
             {viewers.map((v, i) => (
@@ -288,7 +293,13 @@ export default function DashboardsListView() {
 
   const { canCreate, canDelete } = useCanEditDashboard();
 
-  const { data: dashboards = [], isLoading } = useDashboardList();
+  const {
+    data: dashboards = [],
+    isLoading,
+    isError,
+    isFetching,
+    refetch,
+  } = useDashboardList();
   const createMutation = useCreateDashboard();
   const deleteMutation = useDeleteDashboard();
 
@@ -373,7 +384,7 @@ export default function DashboardsListView() {
       }}
     >
       <PageHeader
-        title="Dashboard"
+        title="Dashboards"
         description="Build charts from traces, evals and cost to monitor your agents over time."
         sx={{ mb: 0 }}
       />
@@ -480,10 +491,7 @@ export default function DashboardsListView() {
                 flexShrink: 0,
               }}
               onClick={() => {
-                window.open(
-                  "https://docs.futureagi.com/docs/observe/features/dashboard",
-                  "_blank",
-                );
+                window.open(DASHBOARD_DOCS_URL, "_blank");
               }}
             >
               <SvgColor
@@ -527,19 +535,38 @@ export default function DashboardsListView() {
 
       {/* Dashboard list */}
       <Box sx={{ flex: 1 }}>
-        {filteredDashboards.length === 0 ? (
-          searchQuery ? (
+        {isError && dashboards.length === 0 ? (
+          <EmptyState
+            icon="solar:danger-triangle-linear"
+            title="Couldn't load dashboards"
+            description="The list didn't load. Your dashboards weren't changed."
+            action={
+              <Button
+                variant="outlined"
+                size="small"
+                onClick={() => refetch()}
+                disabled={isFetching}
+              >
+                {isFetching ? "Retrying..." : "Retry"}
+              </Button>
+            }
+          />
+        ) : filteredDashboards.length === 0 ? (
+          searchQuery || creatorFilter.length > 0 ? (
             <EmptyState
               variant="no-results"
               icon="solar:magnifier-linear"
-              title="No dashboards match your search"
-              onClearFilters={() => setSearchQuery("")}
+              title="No dashboards match your filters"
+              onClearFilters={() => {
+                setSearchQuery("");
+                setCreatorFilter([]);
+              }}
             />
           ) : (
             <EmptyLayout
               title="No dashboards yet"
               description="Chart traces, evals and simulation metrics side by side, with your own filters and time ranges."
-              link="https://docs.futureagi.com"
+              link={DASHBOARD_DOCS_URL}
               linkText="Read the docs"
               icon="/assets/icons/navbar/ic_dashboard.svg"
               action={
@@ -574,9 +601,20 @@ export default function DashboardsListView() {
                 key={db.id}
                 direction="row"
                 alignItems="center"
+                role="button"
+                tabIndex={0}
+                aria-label={`Open dashboard ${db.name || "Untitled"}`}
                 onClick={() =>
                   navigate(paths.dashboard.dashboards.detail(db.id))
                 }
+                onKeyDown={(e) => {
+                  // Keys pressed on the row's own Delete button stay with it.
+                  if (e.target !== e.currentTarget) return;
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    navigate(paths.dashboard.dashboards.detail(db.id));
+                  }
+                }}
                 sx={{
                   px: 2,
                   py: 1.25,
@@ -589,6 +627,11 @@ export default function DashboardsListView() {
                     bgcolor: "action.hover",
                     borderColor: "border.hover",
                     "& .row-actions": { opacity: 1 },
+                  },
+                  "&:focus-within .row-actions": { opacity: 1 },
+                  "&:focus-visible": {
+                    outline: `2px solid ${theme.palette.border.focus}`,
+                    outlineOffset: 2,
                   },
                 }}
               >
@@ -632,6 +675,7 @@ export default function DashboardsListView() {
                   <IconButton
                     className="row-actions"
                     size="small"
+                    aria-label="Delete dashboard"
                     onClick={(e) => handleDelete(e, db)}
                     sx={{
                       opacity: 0,

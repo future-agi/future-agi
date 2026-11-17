@@ -1,0 +1,17 @@
+{
+  "http": {
+    "status": 503,
+    "headers": {
+      "content-type": "application/json"
+    }
+  },
+  "body": {
+    "status": false,
+    "type": "service_unavailable",
+    "code": "gateway_sync_failed",
+    "detail": "The gateway could not be reached, so no key was made. Mint again.",
+    "message": "The gateway could not be reached, so no key was made. Mint again.",
+    "error": "The gateway could not be reached, so no key was made. Mint again.",
+    "result": "The gateway could not be reached, so no key was made. Mint again."
+  }
+}

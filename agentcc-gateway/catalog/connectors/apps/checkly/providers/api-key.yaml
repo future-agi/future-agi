@@ -1,0 +1,45 @@
+# Checkly accepts user or service API keys; account selection is optional for MCP.
+schema: "connector-manifest/v1#provider"
+app: checkly
+id: api-key
+version: 1.1.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://api.checklyhq.com/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: Checkly API key
+      help: "Create a user API key in User Settings or a service API key in Account Settings. Service keys require Starter, Team or Enterprise and are account-scoped. Deprecated account keys are rejected. Supply the key without the Bearer prefix."
+      helpUrl: https://www.checklyhq.com/docs/admin/creating-api-key
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_plan
+  source: https://www.checklyhq.com/docs/admin/creating-api-key
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://www.checklyhq.com/docs/ai/mcp-server/setup.md
+    fetchedAt: 2026-11-09
+  - fact: transport.variant
+    url: https://www.checklyhq.com/docs/ai/mcp-server/
+    fetchedAt: 2026-11-09
+  - fact: auth.kind
+    url: https://www.checklyhq.com/docs/ai/mcp-server/setup.md
+    fetchedAt: 2026-11-09
+  - fact: auth.credentialParts
+    url: https://www.checklyhq.com/docs/ai/mcp-server/setup.md
+    fetchedAt: 2026-11-09

@@ -1,0 +1,46 @@
+# Brevo requires an MCP server API key, not a regular API key. Its documented
+# HTTP configuration sends the MCP token in the Authorization bearer header.
+schema: "connector-manifest/v1#provider"
+app: brevo
+id: api-key
+version: 1.1.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.brevo.com/v1/brevo/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: MCP server API key
+      help: "In Account > SMTP & API > API Keys, generate a key with Create MCP server API key enabled. This MCP token grants full read/write access to your Brevo account; it has no per-token permission scopes."
+      helpUrl: https://developers.brevo.com/docs/integration-guide
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_metered
+  source: https://developers.brevo.com/reference/get-account
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://developers.brevo.com/docs/integration-guide
+    fetchedAt: 2026-11-09
+  - fact: transport.variant
+    url: https://developers.brevo.com/docs/integration-guide
+    fetchedAt: 2026-11-09
+  - fact: auth.kind
+    url: https://developers.brevo.com/docs/integration-guide
+    fetchedAt: 2026-11-09
+  - fact: auth.credentialParts
+    url: https://developers.brevo.com/docs/integration-guide
+    fetchedAt: 2026-11-09

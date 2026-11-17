@@ -1,0 +1,45 @@
+# Bannerbear's official remote-client guide documents API-key bearer authentication.
+schema: "connector-manifest/v1#provider"
+app: bannerbear
+id: api-key
+version: 1.1.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.bannerbear.com
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: Bannerbear v5 API key
+      help: "Create a Bannerbear v5 API key under Developers > API Keys and grant only the template access you need. Supply the key without the Bearer prefix. Generation and workflows consume your workspace's credits."
+      helpUrl: https://www.bannerbear.com/blog/how-to-set-up-bannerbear-mcp-in-openclaw/
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_metered
+  source: https://www.bannerbear.com/pricing/
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://www.bannerbear.com/blog/how-to-set-up-bannerbear-mcp-in-openclaw/
+    fetchedAt: 2026-11-09
+  - fact: transport.variant
+    url: https://www.bannerbear.com/blog/how-to-set-up-bannerbear-mcp-in-openclaw/
+    fetchedAt: 2026-11-09
+  - fact: auth.kind
+    url: https://www.bannerbear.com/blog/how-to-set-up-bannerbear-mcp-in-openclaw/
+    fetchedAt: 2026-11-09
+  - fact: auth.credentialParts
+    url: https://www.bannerbear.com/blog/how-to-set-up-bannerbear-mcp-in-openclaw/
+    fetchedAt: 2026-11-09

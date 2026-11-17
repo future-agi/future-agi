@@ -1,0 +1,86 @@
+# The official remote Trello MCP server, run by Atlassian. It takes OAuth
+# consent only, never an Atlassian API token, and each connection reaches
+# the one Trello workspace the person picks on the consent screen. OAuth
+# comes from the same Atlassian authorization server as Rovo MCP, which
+# registers clients dynamically or by a client ID metadata document; the
+# scopes are those the server's protected-resource metadata lists. EE reads
+# a pre-registered client id and secret from its environment and cannot
+# register a client, so it gets none.
+schema: "connector-manifest/v1#provider"
+app: trello
+id: mcp
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.trello.com/v1
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent, user]
+auth:
+  kind: oauth2
+  oauth2:
+    authorizeUrl: https://auth.atlassian.com/authorize
+    tokenUrl: https://auth.atlassian.com/oauth/token
+    scopes:
+      - offline_access
+      - "read:me"
+      - "read:account"
+      - "read:board:trello"
+      - "write:board:trello"
+      - "read:organization:trello"
+      - "write:organization:trello"
+      - "read:member:trello"
+      - "read:member.inbox:trello"
+      - "write:member.inbox:trello"
+      - "read:member.planner:trello"
+      - "write:member.planner:trello"
+    pkce: true
+    tokenBody: form
+    clientAuth: body
+    revocation:
+      url: https://auth.atlassian.com/oauth/revoke
+      method: POST
+      tokenBody: form
+      tokenField: token
+      clientAuth: body
+    registration: [cimd, dcr]
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://github.com/atlassian/trello-mcp-server
+    fetchedAt: 2026-10-21
+  - fact: transport.url
+    url: https://mcp.trello.com/.well-known/oauth-protected-resource/v1
+    fetchedAt: 2026-10-21
+  - fact: auth.kind
+    url: https://github.com/atlassian/trello-mcp-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.authorizeUrl
+    url: https://auth.atlassian.com/VCeDsk8ZHncYF1g234fKtc4lNipbBhu3/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.tokenUrl
+    url: https://auth.atlassian.com/VCeDsk8ZHncYF1g234fKtc4lNipbBhu3/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.scopes
+    url: https://mcp.trello.com/.well-known/oauth-protected-resource/v1
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.pkce
+    url: https://auth.atlassian.com/VCeDsk8ZHncYF1g234fKtc4lNipbBhu3/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.clientAuth
+    url: https://auth.atlassian.com/VCeDsk8ZHncYF1g234fKtc4lNipbBhu3/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.revocation.url
+    url: https://auth.atlassian.com/VCeDsk8ZHncYF1g234fKtc4lNipbBhu3/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.registration
+    url: https://auth.atlassian.com/VCeDsk8ZHncYF1g234fKtc4lNipbBhu3/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-21
+x-omega: { ee: exclude }

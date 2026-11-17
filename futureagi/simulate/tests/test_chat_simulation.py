@@ -502,7 +502,9 @@ class TestCheckCallBalance:
         )
 
         assert allowed is False
-        assert "Redis unreachable" in err
+        # The reason is the fixed sentence; the error itself goes to the log.
+        assert err == "The usage check could not be completed, so the call was ended."
+        assert "Redis unreachable" not in err
 
 
 # ============================================================================

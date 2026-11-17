@@ -62,6 +62,13 @@ class FutureAGIRefreshToken(RefreshToken):
     workspace_id: str | None = None
 
 
+def _account_is_active(user_id: str) -> bool | None:
+    """Whether the account is active, or None when no account has this id."""
+    from accounts.models.user import User
+
+    return User.objects.filter(pk=user_id).values_list("is_active", flat=True).first()
+
+
 def _frontend_base_url() -> str:
     """The UI the consent page lives on: settings.FRONTEND_BASE_URL
     (FRONTEND_URL, else APP_BASE_URL), or the dev UI when neither is set."""
@@ -122,7 +129,7 @@ class FutureAGIOAuthProvider:
     ) -> str:
         """DEBUG mode: auto-approve using first active user."""
         from accounts.models.user import User
-        from accounts.models.workspace import Workspace
+        from accounts.services.workspace_landing import resolve_user_workspace
 
         user = await sync_to_async(
             lambda: User.objects.all()
@@ -135,11 +142,7 @@ class FutureAGIOAuthProvider:
             raise ValueError("No users found for auto-approve")
 
         org = user.organization
-        workspace = await sync_to_async(
-            lambda: Workspace.objects.all()
-            .filter(organization=org, is_default=True, is_active=True)
-            .first()
-        )()
+        workspace = await sync_to_async(resolve_user_workspace)(user, org)
 
         # Generate authorization code
         code_value = secrets.token_urlsafe(32)
@@ -320,6 +323,17 @@ class FutureAGIOAuthProvider:
     # ── Access Token ─────────────────────────────────────────────────
 
     async def load_access_token(self, token: str) -> FutureAGIAccessToken | None:
+        from mcp_server.models.oauth_revocation import MCPOAuthAccessRevocation
+        from mcp_server.oauth_utils import is_canonical_oauth_token
+
+        # Cached metadata must not admit text the decrypt path would reject.
+        if not is_canonical_oauth_token(token):
+            return None
+
+        # Revocation is authoritative even when metadata survives in cache.
+        if await sync_to_async(MCPOAuthAccessRevocation.is_revoked)(token):
+            return None
+
         # Try cache first
         data = await sync_to_async(cache.get)(f"{ACCESS_PREFIX}{token}")
         if data is not None:
@@ -364,17 +378,27 @@ class FutureAGIOAuthProvider:
         client: OAuthClientInformationFull,
         refresh_token: str,
     ) -> FutureAGIRefreshToken | None:
-        data = await sync_to_async(cache.get)(f"{REFRESH_PREFIX}{refresh_token}")
+        key = f"{REFRESH_PREFIX}{refresh_token}"
+        data = await sync_to_async(cache.get)(key)
         if data is None:
             return None
         try:
             rt = FutureAGIRefreshToken.model_validate(data)
             if rt.client_id != client.client_id:
                 return None
-            return rt
         except Exception:
             logger.exception("oauth_load_refresh_failed")
             return None
+        # A refresh token is loaded only for an active account. An inactive
+        # account's refresh token is removed when it is looked up, so it stays
+        # refused once the account is active again. A failed account read is
+        # raised to the caller, not answered as an unknown token.
+        active = await sync_to_async(_account_is_active)(rt.user_id)
+        if active is False:
+            await sync_to_async(cache.delete)(key)
+        if not active:
+            return None
+        return rt
 
     async def exchange_refresh_token(
         self,
@@ -457,6 +481,11 @@ class FutureAGIOAuthProvider:
         token: FutureAGIAccessToken | FutureAGIRefreshToken,
     ) -> None:
         if isinstance(token, FutureAGIAccessToken):
+            from mcp_server.models.oauth_revocation import MCPOAuthAccessRevocation
+
+            # Persist before deleting metadata or reporting success. A cache
+            # restart must not turn an explicit revocation into a cache miss.
+            await sync_to_async(MCPOAuthAccessRevocation.revoke)(token.token)
             await sync_to_async(cache.delete)(f"{ACCESS_PREFIX}{token.token}")
         elif isinstance(token, FutureAGIRefreshToken):
             await sync_to_async(cache.delete)(f"{REFRESH_PREFIX}{token.token}")

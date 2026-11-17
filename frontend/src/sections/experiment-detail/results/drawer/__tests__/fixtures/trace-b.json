@@ -1,0 +1,292 @@
+{
+  "trace": {
+    "id": "7cc568d9-0001-4000-8000-000000000026",
+    "name": "Support Agent v3",
+    "project_id": null,
+    "session": null,
+    "tags": ["#2B"],
+    "created_at": "2026-10-15T23:36:15.933Z"
+  },
+  "observation_spans": [
+    {
+      "observation_span": {
+        "id": "5bc568d9-0000-4000-8000-000000000026",
+        "trace_id": "7cc568d9-0001-4000-8000-000000000026",
+        "parent_span_id": null,
+        "name": "Support Agent v3",
+        "observation_type": "agent",
+        "status": "OK",
+        "status_message": null,
+        "start_time": "2026-10-15T23:36:15.933Z",
+        "end_time": "2026-10-15T23:36:25.733Z",
+        "latency_ms": 9800,
+        "model": null,
+        "provider": null,
+        "input": { "row": "T26" },
+        "output": "Thanks for the photo, Ana, and sorry about the jug. I couldn't find order 8830 on your account. Could you double-check the order number so I can arrange a refund or replacement?",
+        "total_tokens": 3410,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "cost": 0.011,
+        "span_attributes": { "run": "#2B", "trial": 1 },
+        "tags": []
+      },
+      "children": [
+        {
+          "observation_span": {
+            "id": "5bc568d9-0001-4000-8000-000000000026",
+            "trace_id": "7cc568d9-0001-4000-8000-000000000026",
+            "parent_span_id": "5bc568d9-0000-4000-8000-000000000026",
+            "name": "classify_intent",
+            "observation_type": "chain",
+            "status": "OK",
+            "status_message": null,
+            "start_time": "2026-10-15T23:36:15.933Z",
+            "end_time": "2026-10-15T23:36:17.859Z",
+            "latency_ms": 1926,
+            "model": null,
+            "provider": null,
+            "input": "My blender from order A-8830 arrived with a cracked jug, photo attached. Can I get a refund or a replacement?",
+            "output": { "intent": "refund_request", "order_ref": "8830" },
+            "total_tokens": 766,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "cost": 0.002472,
+            "span_attributes": { "step": 1 },
+            "tags": []
+          },
+          "children": []
+        },
+        {
+          "observation_span": {
+            "id": "5bc568d9-0002-4000-8000-000000000026",
+            "trace_id": "7cc568d9-0001-4000-8000-000000000026",
+            "parent_span_id": "5bc568d9-0000-4000-8000-000000000026",
+            "name": "lookup_order",
+            "observation_type": "chain",
+            "status": "ERROR",
+            "status_message": "[object Object]",
+            "start_time": "2026-10-15T23:36:17.859Z",
+            "end_time": "2026-10-15T23:36:18.238Z",
+            "latency_ms": 379,
+            "model": null,
+            "provider": null,
+            "input": { "order_id": "8830" },
+            "output": {
+              "error": { "code": 404, "message": "Order 8830 not found" }
+            },
+            "total_tokens": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "cost": 0,
+            "span_attributes": { "tool.mode": "live", "step": 2 },
+            "tags": []
+          },
+          "children": []
+        },
+        {
+          "observation_span": {
+            "id": "5bc568d9-0003-4000-8000-000000000026",
+            "trace_id": "7cc568d9-0001-4000-8000-000000000026",
+            "parent_span_id": "5bc568d9-0000-4000-8000-000000000026",
+            "name": "reformulate_query",
+            "observation_type": "chain",
+            "status": "OK",
+            "status_message": null,
+            "start_time": "2026-10-15T23:36:18.238Z",
+            "end_time": "2026-10-15T23:36:20.702Z",
+            "latency_ms": 2464,
+            "model": null,
+            "provider": null,
+            "input": "lookup_order failed: Order 8830 not found.",
+            "output": { "order_ref": "8830", "hint": "digits only" },
+            "total_tokens": 980,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "cost": 0.003162,
+            "span_attributes": { "step": 3 },
+            "tags": []
+          },
+          "children": []
+        },
+        {
+          "observation_span": {
+            "id": "5bc568d9-0004-4000-8000-000000000026",
+            "trace_id": "7cc568d9-0001-4000-8000-000000000026",
+            "parent_span_id": "5bc568d9-0000-4000-8000-000000000026",
+            "name": "lookup_order",
+            "observation_type": "chain",
+            "status": "ERROR",
+            "status_message": "[object Object]",
+            "start_time": "2026-10-15T23:36:20.702Z",
+            "end_time": "2026-10-15T23:36:21.108Z",
+            "latency_ms": 406,
+            "model": null,
+            "provider": null,
+            "input": { "order_id": "8830" },
+            "output": {
+              "error": { "code": 404, "message": "Order 8830 not found" }
+            },
+            "total_tokens": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "cost": 0,
+            "span_attributes": { "tool.mode": "live", "step": 4 },
+            "tags": []
+          },
+          "children": []
+        },
+        {
+          "observation_span": {
+            "id": "5bc568d9-0005-4000-8000-000000000026",
+            "trace_id": "7cc568d9-0001-4000-8000-000000000026",
+            "parent_span_id": "5bc568d9-0000-4000-8000-000000000026",
+            "name": "search_kb",
+            "observation_type": "chain",
+            "status": "OK",
+            "status_message": null,
+            "start_time": "2026-10-15T23:36:21.108Z",
+            "end_time": "2026-10-15T23:36:21.551Z",
+            "latency_ms": 443,
+            "model": null,
+            "provider": null,
+            "input": "damaged on arrival refund",
+            "output": [
+              { "id": "kb-4.2", "title": "\u00a74.2 Damaged on arrival" },
+              { "id": "kb-2.1", "title": "\u00a72.1 Refund timelines" }
+            ],
+            "total_tokens": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "cost": 0,
+            "span_attributes": { "step": 5 },
+            "tags": []
+          },
+          "children": []
+        },
+        {
+          "observation_span": {
+            "id": "5bc568d9-0006-4000-8000-000000000026",
+            "trace_id": "7cc568d9-0001-4000-8000-000000000026",
+            "parent_span_id": "5bc568d9-0000-4000-8000-000000000026",
+            "name": "plan",
+            "observation_type": "chain",
+            "status": "OK",
+            "status_message": null,
+            "start_time": "2026-10-15T23:36:21.551Z",
+            "end_time": "2026-10-15T23:36:23.662Z",
+            "latency_ms": 2111,
+            "model": null,
+            "provider": null,
+            "input": "Decide the next action from the order and policy.",
+            "output": {
+              "action": "ask_customer",
+              "note": "order 8830 not found"
+            },
+            "total_tokens": 840,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "cost": 0.002709,
+            "span_attributes": { "step": 6 },
+            "tags": []
+          },
+          "children": []
+        },
+        {
+          "observation_span": {
+            "id": "5bc568d9-0007-4000-8000-000000000026",
+            "trace_id": "7cc568d9-0001-4000-8000-000000000026",
+            "parent_span_id": "5bc568d9-0000-4000-8000-000000000026",
+            "name": "respond",
+            "observation_type": "chain",
+            "status": "OK",
+            "status_message": null,
+            "start_time": "2026-10-15T23:36:23.662Z",
+            "end_time": "2026-10-15T23:36:25.732Z",
+            "latency_ms": 2070,
+            "model": null,
+            "provider": null,
+            "input": "Write the reply.",
+            "output": "Thanks for the photo, Ana, and sorry about the jug. I couldn't find order 8830 on your account. Could you double-check the order number so I can arrange a refund or replacement?",
+            "total_tokens": 824,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "cost": 0.002657,
+            "span_attributes": { "step": 7 },
+            "tags": []
+          },
+          "children": []
+        },
+        {
+          "observation_span": {
+            "id": "5bc568d9-0008-4000-8000-000000000026",
+            "trace_id": "7cc568d9-0001-4000-8000-000000000026",
+            "parent_span_id": "5bc568d9-0000-4000-8000-000000000026",
+            "name": "End state",
+            "observation_type": "chain",
+            "status": "ERROR",
+            "status_message": "[object Object]",
+            "start_time": "2026-10-15T23:36:25.732Z",
+            "end_time": "2026-10-15T23:36:25.733Z",
+            "latency_ms": 1,
+            "model": null,
+            "provider": null,
+            "input": null,
+            "output": {
+              "changes": [],
+              "lines": [
+                "No changes on A-8830",
+                "End state: 0 changes",
+                "Order found \u2715 (order_found)"
+              ],
+              "summary": "End state: 0 changes",
+              "checks": [
+                {
+                  "key": "order_found",
+                  "name": "Order found",
+                  "passed": false
+                },
+                {
+                  "key": "refund_once",
+                  "name": "Refund issued once",
+                  "passed": null
+                },
+                {
+                  "key": "refund_amount",
+                  "name": "Refund amount",
+                  "passed": null
+                },
+                {
+                  "key": "timeline_stated",
+                  "name": "Timeline stated",
+                  "passed": null
+                },
+                {
+                  "key": "reply_rubric",
+                  "name": "Task reply rubric v1",
+                  "passed": null
+                }
+              ],
+              "failed": "order_found"
+            },
+            "total_tokens": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "cost": 0,
+            "span_attributes": { "step": 8 },
+            "tags": []
+          },
+          "children": []
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "total_spans": 9,
+    "total_latency_ms": 9800,
+    "total_tokens": 3410,
+    "total_cost": 0.011,
+    "error_count": 3
+  },
+  "graph": {}
+}

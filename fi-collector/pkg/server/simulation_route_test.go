@@ -48,7 +48,7 @@ func (f *routeFake) RouteSimulation(_ context.Context, _ string, traces ptrace.T
 	if f.err != nil {
 		return auth.RouteOutcome{}, f.err
 	}
-	if result.KeyType != "ingest" {
+	if result.Principal != auth.PrincipalSandbox {
 		return auth.RouteOutcome{}, nil
 	}
 	if f.dropReason != "" {
@@ -139,7 +139,7 @@ func newServerOn(t *testing.T, authenticator *auth.Authenticator, opts ...Option
 
 func sandboxKey() *auth.ResolveResult {
 	return &auth.ResolveResult{
-		OrgID: routeOrg, WorkspaceID: routeWorkspace, KeyType: "ingest",
+		OrgID: routeOrg, WorkspaceID: routeWorkspace, Principal: auth.PrincipalSandbox,
 		Projects: map[string]string{routeHiddenName: routeHiddenID, "customer-prod": routeProdID},
 	}
 }

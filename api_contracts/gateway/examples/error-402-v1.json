@@ -1,0 +1,16 @@
+{
+  "error": {
+    "type": "payment_required",
+    "code": "managed_credits_exhausted",
+    "message": "Your organization has no Future AGI credit. Add credit on the Settings Billing page, or use your own provider keys on the Gateway Providers page.",
+    "param": null,
+    "metadata": {
+      "limit_source": "agentcc_credits",
+      "remedy_hint": "add_credits",
+      "required_usd": 0.04,
+      "available_usd": 0.0,
+      "scope": "org",
+      "resets_at": null
+    }
+  }
+}

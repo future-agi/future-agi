@@ -23,6 +23,8 @@ from agentcc.views.provider_credential import AgentccProviderCredentialViewSet
 def _models_url(base_url, api_format="openai", provider_name="custom"):
     """The URL discovery actually requests for this provider configuration."""
     session = MagicMock()
+    # Discovery reads the status first (it refuses a 3xx), so the answer has one.
+    session.get.return_value.status_code = 200
     session.get.return_value.json.return_value = {"data": []}
     with (
         patch("agentcc.views.provider_credential.ensure_public_http_url"),

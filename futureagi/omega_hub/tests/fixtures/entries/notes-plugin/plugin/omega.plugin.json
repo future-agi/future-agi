@@ -1,0 +1,29 @@
+{
+  "manifest": "omega-plugin/v1",
+  "id": "acme.notes",
+  "name": "Notes",
+  "version": "1.2.0",
+  "description": "Saves and lists short notes.",
+  "publisher": "Acme",
+  "engines": { "omega": ">=0.0.1" },
+  "config": [
+    {
+      "name": "NOTES_FILE",
+      "description": "The JSON file the notes are kept in.",
+      "required": true,
+      "secret": false
+    }
+  ],
+  "contributes": {
+    "mcpServers": [
+      {
+        "name": "notes",
+        "command": "node",
+        "args": ["${pluginRoot}/notes-server.mjs"],
+        "env": { "NOTES_FILE": "${config:NOTES_FILE}" },
+        "tools": ["add_note", "list_notes"]
+      }
+    ],
+    "commands": ["notes"]
+  }
+}

@@ -16,6 +16,7 @@ from accounts.authentication import APIKeyAuthentication
 from model_hub.models.choices import AnnotationTypeChoices
 from model_hub.models.develop_annotations import AnnotationsLabels
 from model_hub.models.score import Score
+from model_hub.utils.annotation_queue_helpers import scores_in_their_own_organization
 from model_hub.views.scores import (
     _auto_complete_queue_items,
     _auto_create_queue_items_for_default_queues,
@@ -28,7 +29,7 @@ from tfc.utils.api_serializers import ApiErrorResponseSerializer
 from tfc.utils.general_methods import GeneralMethods
 from tracer.models.observation_span import ObservationSpan
 from tracer.models.project import Project
-from tracer.models.span_notes import SpanNotes
+from tracer.models.span_notes import SpanNotes, span_notes_readable_in
 from tracer.serializers.annotation import (
     BulkAnnotationRequestSerializer,
     BulkAnnotationResponseSerializer,
@@ -242,6 +243,25 @@ class TraceAnnotationView(ModelViewSet):
         if not rows:
             return []
 
+        # -- Keep only scores filed over this organization's own source -----
+        # Each row is a score. One that records another organization's
+        # project, for its source, on its queue item or on that item's queue,
+        # is left out, by the rule the Postgres readers of scores apply. The
+        # page is checked in one Postgres query, and a row Postgres does not
+        # hold is left out.
+        kept_ids = {
+            str(score_id)
+            for score_id in scores_in_their_own_organization(
+                Score.no_workspace_objects.filter(
+                    id__in=[row["id"] for row in rows],
+                    organization=organization,
+                )
+            ).values_list("id", flat=True)
+        }
+        rows = [row for row in rows if str(row["id"]) in kept_ids]
+        if not rows:
+            return []
+
         # -- Resolve annotation labels and users from PG --------------------
         label_ids = {row["label_id"] for row in rows}
         labels_map = {
@@ -345,9 +365,14 @@ class TraceAnnotationView(ModelViewSet):
         else:
             return []
 
-        queryset = Score.objects.filter(
-            _project_workspace_scope_q(request, "observation_span__project__"),
-            **query_params,
+        # The same organization rule as the ClickHouse path, so a span id that
+        # Postgres also holds in a project of this organization never lists a
+        # score whose source is another organization's.
+        queryset = scores_in_their_own_organization(
+            Score.objects.filter(
+                _project_workspace_scope_q(request, "observation_span__project__"),
+                **query_params,
+            )
         )
 
         if annotators_list:
@@ -434,7 +459,12 @@ class TraceAnnotationView(ModelViewSet):
 
     @staticmethod
     def _get_notes_from_pg(request, observation_span_id):
-        """Fetch span notes from PostgreSQL."""
+        """Fetch span notes from PostgreSQL.
+
+        Only notes written in the requesting organization: the span's project
+        alone does not say whose a note is, because another organization's
+        project can hold a span with the same id.
+        """
         notes_details = []
         if not observation_span_id:
             return notes_details
@@ -442,6 +472,7 @@ class TraceAnnotationView(ModelViewSet):
         notes = (
             SpanNotes.objects.filter(
                 _project_workspace_scope_q(request, "span__project__"),
+                span_notes_readable_in(_get_request_organization(request)),
                 span_id=observation_span_id,
             )
             .select_related("created_by_user")
@@ -518,6 +549,7 @@ class BulkAnnotationView(APIView):
                 results["annotations_to_update"],
                 results["notes_to_create"],
                 request.user,
+                _get_request_organization(request),
             )
 
             # Format and return response
@@ -1241,9 +1273,18 @@ class BulkAnnotationView(APIView):
         return {"to_create": notes_to_create, "errors": errors}
 
     def _save_data(
-        self, annotations_to_create, annotations_to_update, notes_to_create, user
+        self,
+        annotations_to_create,
+        annotations_to_update,
+        notes_to_create,
+        user,
+        organization=None,
     ):
-        """Perform bulk operations to save Score objects and notes."""
+        """Perform bulk operations to save Score objects and notes.
+
+        ``organization`` is the request's: only its own default queues gain an
+        item for an annotated span.
+        """
         annotations_created = 0
         annotations_updated = 0
         notes_created = 0
@@ -1286,7 +1327,10 @@ class BulkAnnotationView(APIView):
             for (source_type, _), group in source_groups.items():
                 try:
                     _auto_create_queue_items_for_default_queues(
-                        source_type, group["source_obj"], group["label_ids"]
+                        source_type,
+                        group["source_obj"],
+                        group["label_ids"],
+                        organization,
                     )
                     _auto_complete_queue_items(source_type, group["source_obj"], user)
                 except Exception:

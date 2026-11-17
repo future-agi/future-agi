@@ -33,6 +33,17 @@ class GuardRefused(Blocked):
         super().__init__(self.reason_code.value)
 
 
+class NotCovered(GuardRefused):
+    """unsupported_installation for services automatic updates do not cover yet.
+
+    Carries only service names from the fixed layout file (automatic_unsupported), never
+    exception text, paths or env values, so setup can say why and which manual updates work.
+    """
+    def __init__(self, services):
+        super().__init__(ReasonCode.UNSUPPORTED_INSTALLATION)
+        self.not_covered = tuple(sorted(services))
+
+
 def require(ok, reason=ReasonCode.CONFIGURATION_CHANGED):
     if not ok:
         raise GuardRefused(reason)

@@ -151,7 +151,11 @@ describe("TraceDetailDrawerV2 pinned initial span", () => {
     renderDrawer();
 
     const tree = mocks.treeProps.mock.lastCall[0];
+    // Without a pin the saved llm-only filter still shapes the tree...
     expect(ids(tree.spans)).toEqual(["root-llm", "llm-2"]);
-    expect(mocks.spanPaneProps).not.toHaveBeenCalled();
+    // ...and, as Observe does for a span opened from the Spans grid, the
+    // opened span's details still come from the unfiltered spans instead of an
+    // empty pane (TraceDetailDrawerV2 selectedSpanData).
+    expect(mocks.spanPaneProps.mock.lastCall[0].entry.observation_span.id).toBe("tool-1");
   });
 });

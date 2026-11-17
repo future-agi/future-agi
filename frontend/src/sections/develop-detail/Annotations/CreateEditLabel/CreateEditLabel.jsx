@@ -10,8 +10,8 @@ import {
   useTheme,
 } from "@mui/material";
 import PropTypes from "prop-types";
-import React from "react";
-import { useForm } from "react-hook-form";
+import React, { useEffect, useState } from "react";
+import { useForm, useWatch } from "react-hook-form";
 import Iconify from "src/components/iconify";
 import {
   AnnotationFormDefaultSettings,
@@ -52,16 +52,46 @@ const toSnakeLabelSettings = (settings) => {
 };
 
 const CreateEditLabelChild = ({ projectId, onClose, onSuccess, editData }) => {
+  // Read once when the form opens. The stored display decides whether
+  // "Buttons" is offered, and stays as it was even if the label passed in is
+  // cleared while the form is still on screen.
+  const [defaultValues] = useState(() =>
+    getDefaultCreateLabelFormValues(editData),
+  );
   const {
     control,
     setValue,
     handleSubmit,
+    trigger,
     formState: { isValid, isDirty },
   } = useForm({
-    defaultValues: getDefaultCreateLabelFormValues(editData),
-    resolver: zodResolver(createCreateEditLabelValidationSchema(editData)),
+    defaultValues,
+    // The edit checks compare against the stored settings as this form reads
+    // them, so a stored Min or Max counts whichever case the API sent.
+    resolver: zodResolver(
+      createCreateEditLabelValidationSchema(
+        editData && { ...editData, settings: defaultValues.settings },
+      ),
+    ),
     mode: "onChange",
   });
+
+  // A text label stored with an empty placeholder may keep it empty, so its
+  // Placeholder Text is not marked required.
+  const storedPlaceholderEmpty =
+    editData?.type === "text" && defaultValues.settings.placeholder === "";
+
+  // A numeric label opened for edit says why a save is refused under Step
+  // Size as soon as it opens, and checks again whenever the display, Min or
+  // Max change, so the reason shown is always the current one.
+  const isNumericEdit = editData?.type === "numeric";
+  const [displayType, min, max] = useWatch({
+    control,
+    name: ["settings.displayType", "settings.min", "settings.max"],
+  });
+  useEffect(() => {
+    if (isNumericEdit) trigger("settings.stepSize");
+  }, [isNumericEdit, trigger, displayType, min, max]);
   const theme = useTheme();
 
   const onAnnotationTypeChange = (e) => {
@@ -107,14 +137,18 @@ const CreateEditLabelChild = ({ projectId, onClose, onSuccess, editData }) => {
         project: projectId,
       };
       if (data.type === "categorical") {
-        // some extra non form data needed to be sent for simple categorical
+        // This form changes only a choice label's choices and Multi Choice.
+        // The rest of its stored settings, auto-annotation included, are sent
+        // back as they are; a label stored without a rule prompt,
+        // auto-annotation or strategy gets the defaults a new label has.
         apiData = {
           ...apiData,
           settings: {
-            ...apiData.settings,
             rule_prompt: "",
             auto_annotate: false,
             strategy: null,
+            ...defaultValues.settings,
+            ...apiData.settings,
           },
         };
       }
@@ -207,7 +241,11 @@ const CreateEditLabelChild = ({ projectId, onClose, onSuccess, editData }) => {
               }}
             />
           </Box>
-          <ConditionalLabelForm control={control} />
+          <ConditionalLabelForm
+            control={control}
+            storedDisplayType={defaultValues.settings.displayType}
+            placeholderRequired={!storedPlaceholderEmpty}
+          />
           <LabelPreview control={control} />
         </DialogContent>
         <DialogActions sx={{ py: theme.spacing(2) }}>

@@ -3,7 +3,7 @@ import { Box, Button, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import SvgColor from "src/components/svg-color";
 
-export default function QueueItemsEmpty({ onAddClick }) {
+export default function QueueItemsEmpty({ onAddClick, isPairwise = false }) {
   return (
     <Stack
       alignItems="center"
@@ -36,7 +36,9 @@ export default function QueueItemsEmpty({ onAddClick }) {
       </Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
         {onAddClick
-          ? "Add items from datasets, traces, prototypes, or simulations."
+          ? isPairwise
+            ? "Add two sources to compare as a pair."
+            : "Add items from datasets, traces, prototypes, or simulations."
           : "A queue manager can add items to this queue."}
       </Typography>
       {onAddClick && (
@@ -46,7 +48,7 @@ export default function QueueItemsEmpty({ onAddClick }) {
           startIcon={<Iconify icon="solar:add-linear" />}
           onClick={onAddClick}
         >
-          Add Items
+          {isPairwise ? "Add pair" : "Add Items"}
         </Button>
       )}
     </Stack>
@@ -55,4 +57,5 @@ export default function QueueItemsEmpty({ onAddClick }) {
 
 QueueItemsEmpty.propTypes = {
   onAddClick: PropTypes.func,
+  isPairwise: PropTypes.bool,
 };

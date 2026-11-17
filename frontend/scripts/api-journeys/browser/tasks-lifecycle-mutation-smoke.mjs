@@ -152,7 +152,7 @@ async function main() {
       async () => {
         await clickButtonWithText(page, "Save");
         await expectVisibleText(page, "Update Task", { exact: true });
-        await clickDialogButtonWithText(page, "Run task");
+        await clickDialogButtonWithText(page, "Update and run task");
       },
     );
     const updateBody = await updateResponse.json();

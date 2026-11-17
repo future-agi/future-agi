@@ -195,6 +195,100 @@ def validate_choice_scores(choice_scores: dict) -> list[str]:
     return errors
 
 
+class ChoiceScoreOverrideError(ValueError):
+    """A binding's per-evaluation choice score override is invalid (a 400)."""
+
+
+def _template_choice_labels(eval_template) -> list[str]:
+    labels = []
+    template_scores = getattr(eval_template, "choice_scores", None)
+    if isinstance(template_scores, dict):
+        labels.extend(str(label) for label in template_scores)
+    template_choices = getattr(eval_template, "choices", None)
+    if isinstance(template_choices, (list, tuple)):
+        labels.extend(label for label in template_choices if isinstance(label, str))
+    return list(dict.fromkeys(labels))
+
+
+def validate_choice_score_override(eval_template, runtime_config) -> None:
+    """Refuse a binding's invalid per-evaluation choice score override.
+
+    Checks every place a binding stores one (``run_config.choice_scores`` and
+    the top-level ``choice_scores`` of observe and simulate bindings): keys
+    must be choices of the template, values numbers between 0 and 1 (the
+    template score range). An empty or absent override is valid.
+
+    Raises:
+        ChoiceScoreOverrideError: a ValueError naming the offending choice.
+    """
+    if not isinstance(runtime_config, dict):
+        return
+    run_config = runtime_config.get("run_config")
+    candidates = [
+        run_config.get("choice_scores") if isinstance(run_config, dict) else None,
+        runtime_config.get("choice_scores"),
+    ]
+    labels = _template_choice_labels(eval_template)
+    known = set(labels)
+    listed = ", ".join(labels) if labels else "none"
+    errors = []
+    for override in candidates:
+        if override is None:
+            continue
+        if not isinstance(override, dict):
+            errors.append(
+                "choice_scores override must be an object mapping each choice to a score"
+            )
+            continue
+        for key, value in override.items():
+            if key not in known:
+                errors.append(
+                    f"choice_scores override: '{key}' is not a choice of this "
+                    f"evaluation (its choices: {listed})"
+                )
+            elif isinstance(value, bool) or not isinstance(value, (int, float)):
+                errors.append(
+                    f"choice_scores override: '{key}' must be a number, "
+                    f"got {type(value).__name__}"
+                )
+            # Compared as is: a JSON integer too large for a float would
+            # overflow math.isfinite. NaN fails the comparison too.
+            elif not 0.0 <= value <= 1.0:
+                shown = (
+                    "an integer outside that range"
+                    if isinstance(value, int) and abs(value) > 10**15
+                    else value
+                )
+                errors.append(
+                    f"choice_scores override: '{key}' must be between 0 and 1, "
+                    f"got {shown}"
+                )
+    if errors:
+        raise ChoiceScoreOverrideError("; ".join(errors))
+
+
+def validate_child_choice_score_overrides(children_by_id, child_configs) -> None:
+    """Refuse a composite's invalid per-child choice score overrides.
+
+    ``child_configs`` maps a child template id to that child's config, and each
+    is checked against its child template (``children_by_id``) by
+    ``validate_choice_score_override``.
+
+    Raises:
+        ChoiceScoreOverrideError: naming the child and the offending choice.
+    """
+    if not isinstance(child_configs, dict):
+        return
+    for child_id, child_config in child_configs.items():
+        child = children_by_id.get(str(child_id))
+        if child is None:
+            continue
+        try:
+            validate_choice_score_override(child, child_config)
+        except ChoiceScoreOverrideError as e:
+            raise ChoiceScoreOverrideError(f"{child.name}: {e}") from e
+
+
 def validate_pass_threshold(threshold) -> list[str]:
     """
     Validate a pass_threshold value.

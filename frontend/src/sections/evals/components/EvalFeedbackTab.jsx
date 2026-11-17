@@ -17,6 +17,13 @@ import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import Iconify from "src/components/iconify";
 import { useDebounce } from "src/hooks/use-debounce";
 import AddEvalsFeedbackDrawer from "src/sections/evals/EvalDetails/EvalsFeedback/AddEvalsFeedbackDrawer";
+import EmptyState from "src/sections/common/ux/EmptyState";
+import {
+  feedbackEditBlockedReason,
+  feedbackEvalExplanation,
+  feedbackNote,
+} from "src/sections/evals/EvalDetails/EvalsFeedback/feedbackConstant";
+import { useAuthContext } from "src/auth/hooks";
 
 import { normalizeEvalCellValue } from "src/sections/develop-detail/DataTab/common";
 import { useEvalFeedbackList } from "../hooks/useEvalFeedback";
@@ -27,6 +34,14 @@ const displayFeedbackValue = (raw) => {
   return Array.isArray(normalized)
     ? normalized.map((v) => String(v)).join(", ")
     : String(normalized ?? "");
+};
+
+// The label the table and the detail panel show; search matches it too.
+const feedbackLabel = (raw) => {
+  const normalized = typeof raw === "string" ? raw.toLowerCase() : raw;
+  if (normalized === "passed") return "Correct";
+  if (normalized === "failed") return "Incorrect";
+  return displayFeedbackValue(raw);
 };
 
 // ── Columns ──
@@ -64,16 +79,13 @@ const useColumns = () =>
         accessorKey: "value",
         header: "Feedback",
         size: 110,
+        enableSorting: false,
         cell: ({ getValue }) => {
           const v = getValue();
           const normalized = typeof v === "string" ? v.toLowerCase() : v;
           const isPassed = normalized === "passed";
           const isFailed = normalized === "failed";
-          const label = isPassed
-            ? "Correct"
-            : isFailed
-              ? "Incorrect"
-              : displayFeedbackValue(v);
+          const label = feedbackLabel(v);
           return (
             <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
               <Iconify
@@ -116,7 +128,8 @@ const useColumns = () =>
         header: "Improvement Note",
         meta: { flex: 2 },
         minSize: 200,
-        cell: ({ getValue }) => (
+        enableSorting: false,
+        cell: ({ row }) => (
           <Typography
             variant="body2"
             noWrap
@@ -126,7 +139,7 @@ const useColumns = () =>
               fontStyle: "italic",
             }}
           >
-            {getValue() || "—"}
+            {feedbackNote(row.original) || "—"}
           </Typography>
         ),
       },
@@ -135,6 +148,7 @@ const useColumns = () =>
         accessorKey: "action_type",
         header: "Action",
         size: 120,
+        enableSorting: false,
         cell: ({ getValue }) => {
           const v = getValue();
           if (!v) return null;
@@ -158,6 +172,7 @@ const useColumns = () =>
         accessorKey: "source",
         header: "Source",
         size: 100,
+        enableSorting: false,
         cell: ({ getValue }) => {
           const v = getValue();
           if (!v) return null;
@@ -183,6 +198,7 @@ const useColumns = () =>
         accessorKey: "user_name",
         header: "By",
         size: 120,
+        enableSorting: false,
         cell: ({ getValue }) => (
           <Typography
             variant="body2"
@@ -198,6 +214,7 @@ const useColumns = () =>
         accessorKey: "created_at",
         header: "Date",
         size: 140,
+        enableSorting: false,
         cell: ({ getValue }) => {
           const v = getValue();
           if (!v) return null;
@@ -230,6 +247,7 @@ const EvalFeedbackTab = ({ templateId }) => {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
   const queryClient = useQueryClient();
+  const { user } = useAuthContext();
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(25);
   const [searchQuery, setSearchQuery] = useState("");
@@ -244,16 +262,24 @@ const EvalFeedbackTab = ({ templateId }) => {
   const items = useMemo(() => data?.items || [], [data?.items]);
   const total = data?.total || 0;
 
+  // Clearing the field shows every row at once; typing still waits for the
+  // debounce.
+  const activeSearch = searchQuery.trim() ? debouncedSearch : "";
+
+  // Search covers the loaded page only (the field says so).
   const filteredItems = useMemo(() => {
-    if (!debouncedSearch) return items;
-    const q = debouncedSearch.toLowerCase();
+    if (!activeSearch) return items;
+    const q = activeSearch.toLowerCase();
     return items.filter(
       (f) =>
+        feedbackLabel(f.value).toLowerCase().includes(q) ||
         f.value?.toLowerCase().includes(q) ||
-        f.explanation?.toLowerCase().includes(q) ||
+        feedbackNote(f).toLowerCase().includes(q) ||
         f.user_name?.toLowerCase().includes(q),
     );
-  }, [items, debouncedSearch]);
+  }, [items, activeSearch]);
+  const noPageMatches =
+    Boolean(activeSearch) && items.length > 0 && filteredItems.length === 0;
 
   const columns = useColumns();
   const handleRowClick = useCallback(
@@ -265,6 +291,7 @@ const EvalFeedbackTab = ({ templateId }) => {
   );
 
   const detailRow = detailIndex !== null ? filteredItems[detailIndex] : null;
+  const editBlockedReason = feedbackEditBlockedReason(detailRow, user?.id);
 
   const handleFeedbackSubmitted = useCallback(() => {
     queryClient.invalidateQueries({
@@ -315,6 +342,14 @@ const EvalFeedbackTab = ({ templateId }) => {
         >
           <Typography variant="body2" fontWeight={600}>
             Feedback History
+            <Typography
+              component="span"
+              variant="caption"
+              color="text.secondary"
+              sx={{ ml: 1 }}
+            >
+              Newest first
+            </Typography>
             {isFetching && (
               <Typography
                 component="span"
@@ -330,7 +365,8 @@ const EvalFeedbackTab = ({ templateId }) => {
             <FormSearchField
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search..."
+              placeholder="Search this page"
+              inputProps={{ "aria-label": "Search this page" }}
               size="small"
             />
           </Box>
@@ -344,6 +380,22 @@ const EvalFeedbackTab = ({ templateId }) => {
             rowCount={total}
             onRowClick={handleRowClick}
             emptyMessage="No feedback submitted yet"
+            emptyContent={
+              noPageMatches ? (
+                <EmptyState
+                  compact
+                  icon="mdi:magnify"
+                  title={`No feedback on this page matches "${activeSearch}"`}
+                  body="Search looks at this page only. Clear the search or go to another page."
+                  actions={[
+                    {
+                      label: "Clear search",
+                      onClick: () => setSearchQuery(""),
+                    },
+                  ]}
+                />
+              ) : undefined
+            }
           />
         </Box>
 
@@ -464,7 +516,11 @@ const EvalFeedbackTab = ({ templateId }) => {
                 </Box>
               </Box>
             </Box>
-            <IconButton size="small" onClick={() => setDetailIndex(null)}>
+            <IconButton
+              size="small"
+              aria-label="Close feedback details"
+              onClick={() => setDetailIndex(null)}
+            >
               <Iconify icon="solar:close-linear" width={16} />
             </IconButton>
           </Box>
@@ -478,11 +534,8 @@ const EvalFeedbackTab = ({ templateId }) => {
                   : detailRow.value;
               const detailIsPassed = detailValue === "passed";
               const detailIsFailed = detailValue === "failed";
-              const detailLabel = detailIsPassed
-                ? "Correct"
-                : detailIsFailed
-                  ? "Incorrect"
-                  : displayFeedbackValue(detailRow.value);
+              const detailLabel = feedbackLabel(detailRow.value);
+              const detailNote = feedbackNote(detailRow);
               return (
                 <Box
                   sx={{
@@ -547,7 +600,7 @@ const EvalFeedbackTab = ({ templateId }) => {
                   </Box>
 
                   {/* Improvement note */}
-                  {detailRow.explanation && (
+                  {detailNote && (
                     <Box sx={{ mb: 2 }}>
                       <Typography
                         variant="caption"
@@ -565,7 +618,7 @@ const EvalFeedbackTab = ({ templateId }) => {
                           whiteSpace: "pre-wrap",
                         }}
                       >
-                        {detailRow.explanation}
+                        {detailNote}
                       </Typography>
                     </Box>
                   )}
@@ -647,16 +700,34 @@ const EvalFeedbackTab = ({ templateId }) => {
                     variant="outlined"
                     size="small"
                     fullWidth
+                    disabled={Boolean(editBlockedReason)}
+                    aria-describedby={
+                      editBlockedReason ? "feedback-edit-blocked" : undefined
+                    }
                     onClick={() => setFeedbackEditOpen(true)}
                     sx={{ gap: 1, color: "text.primary" }}
                   >
                     <Iconify
                       icon="solar:pen-linear"
                       width={14}
-                      sx={{ color: "primary.main" }}
+                      sx={{
+                        color: editBlockedReason
+                          ? "text.disabled"
+                          : "primary.main",
+                      }}
                     />
                     Edit Feedback
                   </Button>
+                  {editBlockedReason && (
+                    <Typography
+                      id="feedback-edit-blocked"
+                      variant="caption"
+                      color="text.secondary"
+                      sx={{ display: "block", mt: 0.5 }}
+                    >
+                      {editBlockedReason}
+                    </Typography>
+                  )}
 
                   {/* Raw JSON */}
                   <Box sx={{ mt: 2 }}>
@@ -706,13 +777,13 @@ const EvalFeedbackTab = ({ templateId }) => {
           {/* Edit feedback drawer */}
           {detailRow && (
             <AddEvalsFeedbackDrawer
-              open={feedbackEditOpen}
+              open={feedbackEditOpen && !editBlockedReason}
               onClose={(submitted) => {
                 setFeedbackEditOpen(false);
                 if (submitted) handleFeedbackSubmitted();
               }}
               selectedAddFeedback={{ id: detailRow.source_id || detailRow.id }}
-              output={{ reason: detailRow.explanation || "" }}
+              output={{ reason: feedbackEvalExplanation(detailRow) }}
               evalsId={templateId}
               existingFeedback={detailRow}
             />

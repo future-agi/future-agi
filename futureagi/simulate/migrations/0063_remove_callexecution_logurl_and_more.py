@@ -3,6 +3,42 @@
 import simulate.semantics
 from django.db import migrations, models
 
+UPDATE_SAFETY = {
+    "schema_version": 1,
+    "risk_classes": ["data_migration", "table_rewrite"],
+    "tables": [
+        "postgres:simulate_call_execution",
+        "postgres:simulate_call_execution_snapshot",
+    ],
+    "mitigation": (
+        "forward drops logUrl from simulate_call_execution, adds the nullable "
+        "customer_call_id, provider_call_data and service_provider_call_id columns to "
+        "it and provider_call_data and service_provider_call_id to "
+        "simulate_call_execution_snapshot, and changes only the help text of seven "
+        "simulate_call_execution fields. Its data step then loads every "
+        "simulate_call_execution row and every simulate_call_execution_snapshot row "
+        "with .all(), unbatched, on the migration's own connection, and saves "
+        "(update_fields) each row whose new field is empty while the old Vapi field "
+        "has a value: vapi_call_id into service_provider_call_id, "
+        "customer_vapi_call_id into customer_call_id, and a dict vapi_call_data as "
+        "{'vapi': ...} into provider_call_data. A database that applied 1.58.0 already "
+        "has this migration recorded and does not run it again. On a fresh install "
+        "both tables have no rows when it runs, so the pass is trivial. Lock and "
+        "volume are high only where those tables already hold rows, which is an "
+        "install upgrading from a release before this migration: the migration is "
+        "atomic, so the ACCESS EXCLUSIVE locks taken by the column changes on both "
+        "registered high-volume tables are held until the whole data pass commits, and "
+        "the pass loads each table whole into memory and saves row by row. Safe to run "
+        "again: a failed run rolls back whole, and a row whose new field is already "
+        "set is not written again. The data step's reverse is a no-op; reversing "
+        "re-creates logUrl without its old values. Row scale: every call execution and "
+        "every call execution snapshot."
+    ),
+    "reviewer": "<actual-github-login>",
+    "review": "<actual-PR-review-discussion-permalink>",
+    "large_volume_rehearsal": True,
+}
+
 
 def backfill_updated_fields_call_execution(apps, schema_editor):
     """
@@ -23,7 +59,7 @@ def backfill_updated_fields_call_execution(apps, schema_editor):
         return None
 
     # Backfill CallExecution records
-    for ce in CallExecution.objects.all():
+    for ce in CallExecution.objects.using(schema_editor.connection.alias).all():
         update_fields = []
 
         vapi_call_id = getattr(ce, "vapi_call_id", None)
@@ -44,10 +80,10 @@ def backfill_updated_fields_call_execution(apps, schema_editor):
                 update_fields.append("provider_call_data")
 
         if update_fields:
-            ce.save(update_fields=update_fields)
+            ce.save(using=schema_editor.connection.alias, update_fields=update_fields)
 
     # Backfill CallExecutionSnapshot records
-    for snap in CallExecutionSnapshot.objects.all():
+    for snap in CallExecutionSnapshot.objects.using(schema_editor.connection.alias).all():
         update_fields = []
 
         vapi_call_id = getattr(snap, "vapi_call_id", None)
@@ -63,7 +99,7 @@ def backfill_updated_fields_call_execution(apps, schema_editor):
                 update_fields.append("provider_call_data")
 
         if update_fields:
-            snap.save(update_fields=update_fields)
+            snap.save(using=schema_editor.connection.alias, update_fields=update_fields)
 
 class Migration(migrations.Migration):
 

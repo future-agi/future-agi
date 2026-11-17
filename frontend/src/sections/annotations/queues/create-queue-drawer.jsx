@@ -4,7 +4,6 @@ import {
   Box,
   Button,
   Checkbox,
-  Chip,
   Collapse,
   Drawer,
   FormControl,
@@ -52,6 +51,7 @@ const RESERVATION_TIMEOUT_OPTIONS = [
 ];
 
 const DEFAULT_VALUES = {
+  mode: "standard",
   name: "",
   description: "",
   instructions: "",
@@ -149,6 +149,7 @@ export default function CreateQueueDrawer({
     defaultValues: DEFAULT_VALUES,
   });
 
+  const mode = watch("mode");
   const annotators = watch("annotators");
   const autoAssign = watch("autoAssign");
   const annotatorCount = annotators.filter(isQueueAnnotatorRole).length;
@@ -172,6 +173,7 @@ export default function CreateQueueDrawer({
           roles: queueRoleList(a),
         })) || [];
       reset({
+        mode: editQueue.mode || "standard",
         name: editQueue.name || "",
         description: editQueue.description || "",
         instructions: editQueue.instructions || "",
@@ -219,7 +221,8 @@ export default function CreateQueueDrawer({
       reservation_timeout_minutes: formData.reservation_timeout_minutes,
       requires_review: formData.requires_review,
       auto_assign: formData.autoAssign,
-      label_ids: formData.label_ids,
+      ...(!isEdit ? { mode: formData.mode } : {}),
+      ...(formData.mode === "pairwise" ? {} : { label_ids: formData.label_ids }),
       annotator_ids: formData.annotators.map((a) => a.userId),
       annotator_roles: Object.fromEntries(
         formData.annotators.map((a) => [a.userId, a.roles || [a.role]]),
@@ -337,7 +340,7 @@ export default function CreateQueueDrawer({
                       }
                       inputProps={{ maxLength: 255 }}
                       FormHelperTextProps={{
-                        sx: { ml: 0, color: "text.disabled" },
+                        sx: { ml: 0, color: "text.secondary" },
                       }}
                       sx={{
                         "& .MuiOutlinedInput-root": { borderRadius: "4px" },
@@ -362,6 +365,25 @@ export default function CreateQueueDrawer({
                         "& .MuiOutlinedInput-root": { borderRadius: "4px" },
                       }}
                     />
+                  )}
+                />
+
+                <Controller
+                  name="mode"
+                  control={control}
+                  render={({ field }) => (
+                    <TextField
+                      {...field}
+                      select
+                      label="Queue mode"
+                      size="small"
+                      fullWidth
+                      disabled={!!isEdit}
+                      helperText="Mode cannot be changed after creation. Pairwise compares two sources without labels."
+                    >
+                      <MenuItem value="standard">Standard</MenuItem>
+                      <MenuItem value="pairwise">Pairwise</MenuItem>
+                    </TextField>
                   )}
                 />
 
@@ -393,38 +415,41 @@ export default function CreateQueueDrawer({
             </Section>
 
             {/* ── Section: Annotation Labels ───────────────── */}
-            <Section
-              title="Annotation Labels"
-              subtitle="Choose labels that annotators will assign to items in this queue."
-            >
-              <Controller
-                name="label_ids"
-                control={control}
-                rules={{
-                  validate: (value) =>
-                    (Array.isArray(value) && value.length > 0) ||
-                    "At least one label is required",
-                }}
-                render={({ field, fieldState }) => (
-                  <>
-                    <LabelPicker
-                      selectedIds={field.value}
-                      onChange={(ids) => field.onChange(ids)}
-                      lockLastSelected={isEdit}
-                    />
-                    {fieldState.error && (
-                      <Typography
-                        variant="caption"
-                        color="error.main"
-                        sx={{ mt: 0.75, display: "block" }}
-                      >
-                        {fieldState.error.message}
-                      </Typography>
-                    )}
-                  </>
-                )}
-              />
-            </Section>
+            {mode !== "pairwise" && (
+              <Section
+                title="Annotation Labels"
+                subtitle="Choose labels that annotators will assign to items in this queue."
+              >
+                <Controller
+                  name="label_ids"
+                  control={control}
+                  rules={{
+                    validate: (value) =>
+                      mode === "pairwise" ||
+                      (Array.isArray(value) && value.length > 0) ||
+                      "At least one label is required",
+                  }}
+                  render={({ field, fieldState }) => (
+                    <>
+                      <LabelPicker
+                        selectedIds={field.value}
+                        onChange={(ids) => field.onChange(ids)}
+                        lockLastSelected={isEdit}
+                      />
+                      {fieldState.error && (
+                        <Typography
+                          variant="caption"
+                          color="error.main"
+                          sx={{ mt: 0.75, display: "block" }}
+                        >
+                          {fieldState.error.message}
+                        </Typography>
+                      )}
+                    </>
+                  )}
+                />
+              </Section>
+            )}
 
             {/* ── Section: Annotators ──────────────────────── */}
             <Section
@@ -506,7 +531,7 @@ export default function CreateQueueDrawer({
                         "How many annotators must label each item — at most the number you've added"
                       }
                       FormHelperTextProps={{
-                        sx: { ml: 0, color: "text.disabled" },
+                        sx: { ml: 0, color: "text.secondary" },
                       }}
                       sx={{
                         "& .MuiOutlinedInput-root": { borderRadius: "4px" },
@@ -533,7 +558,7 @@ export default function CreateQueueDrawer({
                     placeholder="If the response is unclear or incomplete, choose the closest matching label"
                     helperText="Supports markdown formatting"
                     FormHelperTextProps={{
-                      sx: { ml: 0, color: "text.disabled" },
+                      sx: { ml: 0, color: "text.secondary" },
                     }}
                     sx={{ "& .MuiOutlinedInput-root": { borderRadius: "4px" } }}
                   />
@@ -619,56 +644,6 @@ export default function CreateQueueDrawer({
                                 <Typography variant="body2">Manual</Typography>
                               }
                             />
-                            <FormControlLabel
-                              value="round_robin"
-                              disabled
-                              control={<Radio size="small" />}
-                              label={
-                                <Stack
-                                  direction="row"
-                                  alignItems="center"
-                                  spacing={1}
-                                >
-                                  <Typography
-                                    variant="body2"
-                                    color="text.disabled"
-                                  >
-                                    Round Robin
-                                  </Typography>
-                                  <Chip
-                                    label="Coming soon"
-                                    size="small"
-                                    variant="outlined"
-                                    color="primary"
-                                  />
-                                </Stack>
-                              }
-                            />
-                            <FormControlLabel
-                              value="load_balanced"
-                              disabled
-                              control={<Radio size="small" />}
-                              label={
-                                <Stack
-                                  direction="row"
-                                  alignItems="center"
-                                  spacing={1}
-                                >
-                                  <Typography
-                                    variant="body2"
-                                    color="text.disabled"
-                                  >
-                                    Load Balanced
-                                  </Typography>
-                                  <Chip
-                                    label="Coming soon"
-                                    size="small"
-                                    variant="outlined"
-                                    color="primary"
-                                  />
-                                </Stack>
-                              }
-                            />
                           </RadioGroup>
                         )}
                       />
@@ -687,7 +662,7 @@ export default function CreateQueueDrawer({
                           fullWidth
                           helperText="How long an item stays reserved for an annotator"
                           FormHelperTextProps={{
-                            sx: { ml: 0, color: "text.disabled" },
+                            sx: { ml: 0, color: "text.secondary" },
                           }}
                           sx={{
                             "& .MuiOutlinedInput-root": { borderRadius: "4px" },

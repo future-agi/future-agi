@@ -1,57 +1,80 @@
 import PropTypes from "prop-types";
 import { slugify } from "./helpers/slugify";
 
-// A prebuilt template is a world that already exists — seeded state, tools,
-// rules, scenarios and a baseline agent. There's nothing to derive; the only
-// decision is where to build it. These constants back the "where to build it"
-// panel shown after a template card is clicked.
+// APPROVED — all 21 strings; site SIMBUILD owner-resolution-001, 22458062.
+// This is a local template preview, not a cloud build. Keep all new or changed
+// user-visible strings for that action here; the existing CLI copy is below.
+export const TEMPLATE_ADOPT_LABEL = "Open local draft";
 
-export const TEMPLATE_ADOPT_LABEL = "Build environment";
-
-export const BUILD_MODES = { CLOUD: "cloud", LOCAL: "local" };
+export const BUILD_MODES = { PREVIEW: "preview", LOCAL: "local" };
 
 export const BUILD_MODE_TABS = [
-  { value: BUILD_MODES.CLOUD, label: "Build here", icon: "solar:cloud-linear" },
-  { value: BUILD_MODES.LOCAL, label: "Build locally", icon: "solar:laptop-2-linear" },
+  {
+    value: BUILD_MODES.PREVIEW,
+    label: "Preview here",
+    icon: "solar:document-text-linear",
+  },
+  {
+    value: BUILD_MODES.LOCAL,
+    label: "Build locally",
+    icon: "solar:laptop-2-linear",
+  },
 ];
 
-export const CLOUD_CARD = {
-  title: "Build in the cloud",
-  subtitle: "Spins up in an isolated sandbox, ready to run in seconds.",
+export const DRAFT_CARD = {
+  title: "Preview a template draft",
+  subtitle:
+    "Inspect sample definitions locally. No cloud environment is created.",
 };
 
-export const CLOUD_BULLETS = [
+export const DRAFT_BULLETS = [
   {
     icon: "solar:box-minimalistic-linear",
-    text: "The seeded world, tools and hard rules come up exactly as designed.",
+    text: "Review summary counts for the template's data, tools and hard rules in this browser tab.",
   },
   {
     icon: "solar:user-speak-rounded-linear",
-    text: "The template's baseline agent is wired in, so you can run it right away.",
+    text: "Inspect a sample baseline agent and generated scenario drafts; no agent is connected.",
   },
   {
     icon: "solar:magic-stick-3-linear",
-    text: "Add your own agent version afterwards from the environment's Agents tab.",
+    text: "To build a cloud environment, open the Build environment tab in Simulate and connect your own agent or source.",
   },
 ];
 
 export const STATS_CARD = {
-  title: "What this template gives you",
-  subtitle: "Already built: you are not deriving it",
+  title: "Template contents",
+  subtitle: "Sample definitions for a local draft, not a deployed environment.",
 };
 
-export const AGENT_STAT_VALUE = "Seeded baseline (swap in yours after)";
+export const TEMPLATE_STAT_COPY = {
+  world: (count) => `${count.toLocaleString()} sample rows`,
+  tools: (count) => `${count} tool definitions`,
+  rules: (count) => `${count} rule definitions`,
+  scenarios: (count) => `${count} draft scenarios`,
+};
 
-export const NOTHING_TOUCHES_PRODUCTION = {
-  icon: "solar:shield-keyhole-linear",
-  heading: "Nothing touches production.",
-  body:
-    "Seeded data and test credentials in an isolated sandbox. Your deployed systems are never called.",
+export const AGENT_STAT_VALUE = "Sample baseline (not connected)";
+
+export const LOCAL_DRAFT_NOTICE = {
+  icon: "solar:info-circle-linear",
+  heading: "Local preview only.",
+  body: "Opening a draft creates no cloud environment, sandbox or simulation run.",
+};
+
+export const DRAFT_PREVIEW_COPY = {
+  title: "Local draft preview",
+  subtitle:
+    "This draft is only held on this page. Leaving or refreshing discards it.",
+  agent: "Sample agent",
+  scenarios: "Scenario drafts",
+  close: "Close draft",
 };
 
 export const LOCAL_CARD = {
   title: "Develop locally",
-  subtitle: "Scaffold this template into your own repo and iterate from your terminal.",
+  subtitle:
+    "Scaffold this template into your own repo and iterate from your terminal.",
 };
 
 export const LOCAL_INSTALL_HINT = "pip install futureagi";
@@ -73,7 +96,7 @@ const LOCAL_STEP_META = [
   {
     n: 3,
     title: "Deploy",
-    body: "Publish when you're ready. Runs execute on our infrastructure and traces land back in the dashboard.",
+    body: "Runs execute on our infrastructure. Simulation results remain in the simulation views; spans from agents run in hosted sandboxes aren't stored in Observe in this release.",
     cmd: (slug) => `fai env deploy ${slug}`,
   },
 ];

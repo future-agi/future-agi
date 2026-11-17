@@ -1,0 +1,73 @@
+[
+  {
+    "tool": "get_space",
+    "arguments": {
+      "name": "spaces/space-fixture"
+    }
+  },
+  {
+    "tool": "create_space",
+    "arguments": {
+      "body": {}
+    }
+  },
+  {
+    "tool": "end_conference",
+    "arguments": {
+      "name": "spaces/space-fixture",
+      "body": {}
+    }
+  },
+  {
+    "tool": "list_conferences",
+    "arguments": {
+      "pageSize": 10
+    }
+  },
+  {
+    "tool": "get_conference",
+    "arguments": {
+      "name": "conferenceRecords/conf-fixture"
+    }
+  },
+  {
+    "tool": "list_participants",
+    "arguments": {
+      "parent": "conferenceRecords/conf-fixture",
+      "pageSize": 10
+    }
+  },
+  {
+    "tool": "get_participant",
+    "arguments": {
+      "name": "conferenceRecords/conf-fixture/participants/person-fixture"
+    }
+  },
+  {
+    "tool": "list_recordings",
+    "arguments": {
+      "parent": "conferenceRecords/conf-fixture",
+      "pageSize": 10
+    }
+  },
+  {
+    "tool": "list_transcripts",
+    "arguments": {
+      "parent": "conferenceRecords/conf-fixture",
+      "pageSize": 10
+    }
+  },
+  {
+    "tool": "list_transcript_entries",
+    "arguments": {
+      "parent": "conferenceRecords/conf-fixture/transcripts/transcript-fixture",
+      "pageSize": 10
+    }
+  },
+  {
+    "tool": "get_space",
+    "arguments": {
+      "name": "spaces/missing-fixture"
+    }
+  }
+]

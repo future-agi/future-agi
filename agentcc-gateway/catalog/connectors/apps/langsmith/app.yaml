@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: langsmith
+version: 1.0.0
+name: LangSmith
+description: "Traces, runs, prompts, datasets and experiments in LangSmith."
+vendor:
+  name: LangChain
+  domains: [langchain.com]
+eeCategory: developer
+group: other
+categories: [developer, observability]
+tags: [tracing, prompts, datasets, evaluations]
+docsUrl: https://docs.langchain.com/langsmith/langsmith-remote-mcp
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://docs.langchain.com/langsmith/langsmith-remote-mcp
+    fetchedAt: 2026-10-21

@@ -37,3 +37,9 @@ routing:
     vertex_ai/gemini-3.8-flash:
       - provider: vertex
         model_override: gemini-3.8-flash
+
+# The guardrail plugin, with no rule of this file's own: the gateway runs the
+# checks an organization saves in the console (Gateway > Guardrails), and only
+# those. An organization that saves no check is not checked.
+guardrails:
+  enabled: true

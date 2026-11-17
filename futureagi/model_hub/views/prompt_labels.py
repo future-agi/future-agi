@@ -24,7 +24,14 @@ from model_hub.serializers.prompt_label import PromptLabelSerializer
 from model_hub.serializers.prompt_template import (
     PromptTemplateSerializer,
 )
-from model_hub.services.prompt_label import assign_labels_to_version
+from model_hub.services.prompt_actor import acting_as, request_actor
+from model_hub.services.prompt_label import (
+    DeletedTarget,
+    assign_labels_to_version,
+    move_label,
+    remove_label,
+)
+from model_hub.utils.workspace_scope import request_workspace_filter
 from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.general_methods import GeneralMethods
 
@@ -132,19 +139,28 @@ class PromptLabelViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
             return self.gm.bad_request("'label_id' and 'version_id' are required")
 
         try:
-            label = PromptLabel.objects.get(id=label_id)
-            version = PromptVersion.objects.get(id=version_id)
-        except (PromptLabel.DoesNotExist, PromptVersion.DoesNotExist):
-            return self.gm.bad_request("Invalid label or version")
-
-        org = getattr(request, "organization", None) or request.user.organization
-        template_org = getattr(version.original_template, "organization", None)
-        if template_org != org:
-            return self.gm.bad_request(
-                "You don't have permission to modify this template"
+            # The workspace-scoped manager does not see the global system labels (Production, Staging,
+            # Development: no organization), so they are looked up as the other label actions do.
+            label = PromptLabel.objects.filter(
+                id=label_id
+            ).first() or PromptLabel.no_workspace_objects.get(
+                id=label_id,
+                organization__isnull=True,
+                type=LabelTypeChoices.SYSTEM.value,
+                deleted=False,
             )
+            version = PromptVersion.no_workspace_objects.get(
+                request_workspace_filter(request, "original_template__workspace"),
+                id=version_id,
+                original_template__organization=getattr(request, "organization", None)
+                or request.user.organization,
+                deleted=False,
+            )
+        except (PromptLabel.DoesNotExist, PromptVersion.DoesNotExist):
+            return self.gm.not_found("Invalid label or version")
 
-        version.labels.remove(label)
+        with acting_as(request_actor(request)):
+            remove_label(version, label)
         return self.gm.success_response({"detail": "Label removed successfully"})
 
     @action(detail=False, methods=["post"], url_path="create-system-labels")
@@ -295,20 +311,17 @@ class PromptLabelViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
         ):
             return self.gm.bad_request("You don't have permission to use this label")
 
-        # Remove from other versions under same template
-        other_versions = PromptVersion.objects.filter(
-            original_template=template,
-            original_template__organization=getattr(request, "organization", None)
-            or request.user.organization,
-            labels__id=label_obj.id,
-            deleted=False,
-        ).exclude(id=target_version.id)
-        moved_from = []
-        for ov in other_versions:
-            ov.labels.remove(label_obj)
-            moved_from.append(ov.template_version)
-
-        target_version.labels.add(label_obj)
+        # One writer: the label leaves the version that held it and lands on the target, under the label's lock.
+        try:
+            with acting_as(request_actor(request)):
+                changes = move_label(target_version, label_obj)
+        except DeletedTarget:  # the version or its prompt was deleted meanwhile
+            return self.gm.bad_request(
+                f"No version '{version}' found for template '{template_id}'"
+            )
+        moved_from = [
+            ch.from_version.template_version for ch in changes if ch.from_version
+        ]
 
         return self.gm.success_response(
             {
@@ -442,7 +455,11 @@ class PromptLabelViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
             label_ids = list(set(label_ids))
 
             assign_labels_to_version(
-                template_version_id, label_ids, request.user, request.workspace
+                template_version_id,
+                label_ids,
+                request.user,
+                request.workspace,
+                actor=request_actor(request),
             )
 
             return self.gm.success_response("Labels assigned successfully")

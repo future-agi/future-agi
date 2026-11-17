@@ -13,8 +13,9 @@ Before you start:
 First prepare configuration without starting services. The script preserves an
 existing environment file byte-for-byte; it never regenerates its credentials.
 For a new file it preserves explicitly supplied application secrets, generating
-only missing ones. Catalog reader/writer passwords and all seven reviewed
-application/collector/runner image versions must be supplied explicitly.
+only missing ones. Catalog reader/writer passwords, all eight reviewed
+application/collector/runner/checker image versions and the Omega Hub's runner
+host (see [Omega Hub](#omega-hub)) must be supplied explicitly.
 For retained data with a missing environment file, restore the original configuration
 instead of generating new application or catalog credentials.
 
@@ -58,6 +59,12 @@ docker compose --env-file deploy/.env.production \
 
 If any required value is empty, compose exits with `must be set for production` and names the missing var.
 
+To run the Omega Hub, set `COMPOSE_PROFILES=hub` in `deploy/.env.production` (a new file from
+`deploy/setup.sh` already has it), and add `-f deploy/docker-compose.production.hub.yml` right
+after `-f deploy/docker-compose.production.yml` to every production Compose command in this
+guide, `$COMPOSE` included. Without `COMPOSE_PROFILES=hub` the Hub is off, no Hub service runs
+and the Hub's settings are not needed; see [Omega Hub](#omega-hub).
+
 ## Prerequisites
 
 - Docker Engine 24.0+ and Docker Compose v2.24+, except v2.24.1 (it rejects the
@@ -90,13 +97,15 @@ all. A first install has to run these jobs once, deliberately, one at a time,
 reviewing each before the next.
 
 Run them against the production env file, overriding only the command so each job
-applies instead of checking. `run --rm` starts that one job (and any datastore it
-depends on that is not running yet); it never brings up the application.
+applies instead of checking. `run --rm` starts the named job and any required
+dependencies that are not already satisfied; it does not bring up the application.
 
 ```bash
 cd <repo root>
 COMPOSE="docker compose --env-file deploy/.env.production \
   -f docker-compose.distributed.yml -f deploy/docker-compose.production.yml"
+# With the Omega Hub on (COMPOSE_PROFILES lists hub), add
+# -f deploy/docker-compose.production.hub.yml at the end of COMPOSE.
 
 # 1. PostgreSQL schema, system evals and Temporal schedules.
 #    Run the image's own entrypoint with SERVICE_TYPE=bootstrap rather than a
@@ -116,8 +125,15 @@ $COMPOSE run --rm \
 # 2. Native ClickHouse objects.
 $COMPOSE run --rm clickhouse-native-bootstrap --phase native --apply
 
-# 3. PeerDB Temporal namespace, then peers and mirrors.
+# 3. PeerDB Temporal namespace, then peers and mirrors. peerdb-server creates
+#    PeerDB's own catalog tables when it starts, and `run --rm peerdb-init`
+#    does not start it: start it first and wait for its `peers` table, or
+#    peerdb-init stops with "PeerDB inventory request failed" (relation
+#    "peers" does not exist).
 $COMPOSE run --rm peerdb-temporal-init --apply
+$COMPOSE up -d --no-build peerdb-server
+until $COMPOSE exec -T peerdb-catalog psql -U postgres -tAc \
+  "select 1 from information_schema.tables where table_name = 'peers'" | grep -q 1; do sleep 3; done
 $COMPOSE run --rm peerdb-init --apply
 
 # 4. CDC-derived objects, once the mirrors above report ready.
@@ -225,6 +241,9 @@ docker compose --env-file deploy/.env.production \
   --apply
 ```
 
+With the Omega Hub on, add `-f deploy/docker-compose.production.hub.yml` after
+`-f deploy/docker-compose.production.yml` in that command.
+
 The source credential only ever runs one bounded `SELECT` per page against the
 span table, so give it a read-only login rather than the writer. Kafka
 destination and per-span limits are inherited from the `fi-collector` service
@@ -294,22 +313,34 @@ the [Configuration reference](https://docs.futureagi.com/docs/self-hosting/confi
 
 ```bash
 SECRET_KEY=$(openssl rand -hex 32)
+# Pepper of the keyed hash that stores API secrets; the backend and fi-collector
+# read the same value. Never change it once keys exist.
+FI_API_SECRET_PEPPER=$(openssl rand -hex 32)
 AGENTCC_INTERNAL_API_KEY=$(openssl rand -hex 32)
 AGENTCC_ADMIN_TOKEN=$(openssl rand -hex 32)
 PG_PASSWORD=$(openssl rand -hex 16)
 MINIO_ROOT_PASSWORD=$(openssl rand -hex 16)
-# Fernet key for integration credentials stored in Postgres (optional until
-# you connect an integration; without it, connecting one fails).
+# Fernet key: encrypts every organization's system API key and the integration
+# credentials stored in Postgres. Required: the app refuses to start without it.
 INTEGRATION_ENCRYPTION_KEY=$(python3 -c "import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())")
 ```
 
-For a new installation, paste each into `deploy/.env.production`. For retained
-installations, reuse the original values: a new `INTEGRATION_ENCRYPTION_KEY`
-cannot decrypt credentials stored with the old one. Also supply
+For a new installation, paste each into `deploy/.env.production` (`setup.sh`
+generates all of them). For retained installations, reuse the original values:
+a new `INTEGRATION_ENCRYPTION_KEY` cannot decrypt what the old one encrypted, and
+a new `FI_API_SECRET_PEPPER` makes every API key fail. Also supply
 `PROPERTY_CATALOG_API_PASSWORD` and `PROPERTY_CATALOG_CONSUMER_PASSWORD` matching
 the separately provisioned `observed_catalog_reader`/`observed_catalog_writer`.
 Setup never generates or rotates catalog passwords; changing an env value does not
 change an installed ClickHouse user's password.
+
+Upgrading a retained installation to a release that stores API secrets as a
+keyed hash: add `FI_API_SECRET_PEPPER` (new) and, if it is still empty,
+`INTEGRATION_ENCRYPTION_KEY` to `deploy/.env.production` before pulling the new
+images. Generating the encryption key is safe only while it is empty: with this
+overlay's `ENV_TYPE=production` nothing can have been encrypted without it.
+Without either value, `compose config` (and `setup.sh`) names the missing
+variable, and the app refuses to start.
 
 The catalog consumer detects table topology automatically; no quorum env setting
 is needed. Plain `AggregatingMergeTree` tables need only their existing table
@@ -331,15 +362,17 @@ topology stops the consumer without committing the Kafka record.
 
 Each image is independently versioned. Include the collector release in `.env.production`:
 
-| Variable                    | Image                                                                    |
-| --------------------------- | ------------------------------------------------------------------------ |
-| `FUTURE_AGI_VERSION`        | `futureagi/future-agi` (backend + worker)                                |
-| `FRONTEND_VERSION`          | `futureagi/frontend`                                                     |
-| `FI_COLLECTOR_VERSION`      | `futureagi/fi-collector` (collector, consumer and packaged backfill)     |
-| `AGENTCC_GATEWAY_VERSION`   | `futureagi/agentcc-gateway`                                              |
-| `SERVING_VERSION`           | `futureagi/serving` (CPU; `<version>-gpu` is the CUDA build, amd64 only) |
-| `CODE_EXECUTOR_VERSION`     | `futureagi/code-executor`                                                |
-| `SIMULATION_RUNNER_VERSION` | `futureagi/future-agi-simulation-runner` (separate SDK worker image)     |
+| Variable                    | Image                                                                            |
+| --------------------------- | -------------------------------------------------------------------------------- |
+| `FUTURE_AGI_VERSION`        | `futureagi/future-agi` (backend + worker)                                        |
+| `FRONTEND_VERSION`          | `futureagi/frontend`                                                             |
+| `FI_COLLECTOR_VERSION`      | `futureagi/fi-collector` (collector, consumer and packaged backfill)             |
+| `AGENTCC_GATEWAY_VERSION`   | `futureagi/agentcc-gateway`                                                      |
+| `SERVING_VERSION`           | `futureagi/serving` (CPU; `<version>-gpu` is the CUDA build, amd64 only)         |
+| `CODE_EXECUTOR_VERSION`     | `futureagi/code-executor`                                                        |
+| `SIMULATION_RUNNER_VERSION` | `futureagi/future-agi-simulation-runner` (separate SDK worker image)             |
+| `OMEGA_HUB_CHECKER_VERSION` | `futureagi/omega-hub-checker` (the Omega Hub's checker, [Omega Hub](#omega-hub)) |
+| `OMEGA_HUB_RUNNER_IMAGE`    | the image uploads run in, a full reference pinned by digest (not a tag)          |
 
 Use reviewed release tags and record their verified registry digests, source SHAs
 and CPU architecture manifests; a version-looking tag alone is not immutable proof.
@@ -389,6 +422,9 @@ docker compose --env-file deploy/.env.production \
   up -d --no-build --wait --wait-timeout 1200
 ```
 
+With the Omega Hub on, add `-f deploy/docker-compose.production.hub.yml` after
+`-f deploy/docker-compose.production.yml` in both commands.
+
 Verify:
 
 ```bash
@@ -396,6 +432,97 @@ docker compose ps
 curl -fsS http://localhost:3000/ > /dev/null && echo "frontend ok"
 curl -fsS http://localhost:8000/health/ > /dev/null && echo "backend ok"
 ```
+
+## Omega Hub
+
+The Omega Hub is the registry of agents, tools and skills that people publish
+and install with `omega hub add`. It runs in the backend; the `hub-checker`
+service checks every upload, and a maintainer approves it before anyone else
+can see it. Each upload's keyless test and demo run with the network off in a
+container of the runner image on a **dedicated runner host**: a VM of its own
+whose Docker runs containers on gVisor and accepts only mutual-TLS clients
+([deploy/hub-runner](hub-runner/README.md)). The checker holds only its token
+and that host's client certificate: no database, storage or provider
+credential, and never this host's Docker.
+
+**To run the Hub in production, set `COMPOSE_PROFILES=hub` in
+`deploy/.env.production`** (a new file from `deploy/setup.sh` already has it).
+That turns the Hub on in the backend and selects the Hub's production file,
+`deploy/docker-compose.production.hub.yml`, with its settings and the checker:
+it goes right after `deploy/docker-compose.production.yml`, and `deploy/setup.sh`
+and `bin/update --production` add it themselves. With that file Compose refuses
+to start without the Hub's settings. Without `COMPOSE_PROFILES=hub` the Hub is
+off: no Hub service runs, and uploads are refused even when the file holds a
+checker token. No runner daemon runs on the app host either way.
+
+What a web upload goes through: **received** (the backend stores it and queues
+a check) → **checking** (the checker claimed it) → **in review** (it passed;
+only its publisher and the maintainers can see it) or **checks failed** →
+**approved** by a maintainer → listed and installable.
+
+### 1. The runner host
+
+Set it up with [deploy/hub-runner/README.md](hub-runner/README.md): its own VM,
+gVisor as the only runtime, inbound TCP 2376 from this host only, outbound only
+to your registry. Put its client certificate (`ca.pem`, `cert.pem`, `key.pem`)
+in a directory on this host readable by the checker only, and load or push the
+runner image (the release manifest's `runtimes.hubRunner`) there. Then set:
+
+| Variable                                        | Value                                                                                   |
+| ----------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `COMPOSE_PROFILES`                              | `hub` (add other profiles after a comma, e.g. `hub,full`); without it the Hub is off    |
+| `OMEGA_HUB_CHECKER_TOKEN`                       | 32+ random bytes (`deploy/setup.sh` generates it); the backend and the checker share it |
+| `OMEGA_HUB_CHECKER_VERSION`                     | the reviewed `futureagi/omega-hub-checker` release                                      |
+| `OMEGA_HUB_RUNNER_IMAGE`                        | the runner image by digest, `<repository>@sha256:<digest>`                              |
+| `OMEGA_HUB_RUNNER_DOCKER_HOST`                  | `tcp://<runner host>:2376`                                                              |
+| `OMEGA_HUB_RUNNER_TLS_DIR`                      | the directory with the client certificate                                               |
+| `OMEGA_HUB_APP_URL`, `OMEGA_HUB_PUBLIC_API_URL` | `<FRONTEND_URL>/dashboard/hub`, `<VITE_HOST_API>/omega-hub/v1`                          |
+
+The checker's entrypoint refuses to start (and `up --wait` fails) unless that
+daemon answers over TLS, its default runtime is gVisor, a container of the
+runner image really sees gVisor's kernel, and the image is there or can be
+pulled.
+
+### 2. The maintainers
+
+Nothing is listed until a maintainer approves it, and only Admins and Owners of
+one organisation can be maintainers:
+
+```bash
+COMPOSE="docker compose --env-file deploy/.env.production \
+  -f docker-compose.distributed.yml -f deploy/docker-compose.production.yml \
+  -f deploy/docker-compose.production.hub.yml"
+# 1. Each maintainer signs up in the UI; one of them creates the maintainers'
+#    organisation and invites the other as Admin.
+# 2. Its id goes into deploy/.env.production as OMEGA_HUB_MAINTAINER_ORG_ID,
+#    and the backend and workers restart with it:
+$COMPOSE up -d --no-build backend worker
+# 3. Grant each one; the audit log records who granted it (--by, an existing user).
+#    It prints "is a maintainer now = True" once they are Admin or Owner there:
+$COMPOSE exec backend python manage.py omega_hub_maintainer grant \
+  --email maintainer-a@example.com --by maintainer-a@example.com
+$COMPOSE exec backend python manage.py omega_hub_maintainer grant \
+  --email maintainer-b@example.com --by maintainer-a@example.com
+```
+
+Behind a reverse proxy, also set `OMEGA_HUB_TRUSTED_PROXY_DEPTH=1` (or
+`OMEGA_HUB_CLIENT_IP_HEADER`), so the Hub's throttles see each client.
+
+### 3. Turning it on
+
+The Hub is one of the Omega products under controlled rollout. Set
+`VITE_OMEGA_CONSOLE=1` on the frontend, then admit organisations; every change
+names a staff operator holding `omega_rollout.operate_rollout`:
+
+```bash
+$COMPOSE exec backend python manage.py omega_rollout stage hub S0 --actor ops@example.com --reason "first install"
+$COMPOSE exec backend python manage.py omega_rollout allow hub --org <organisation id> --cohort staff \
+  --actor ops@example.com --reason "first publishers"
+$COMPOSE exec backend python manage.py omega_rollout status
+```
+
+A product no organisation is admitted to stays hidden, and `kill hub` pauses
+it (submissions, reviews and the checker's claims stop; browsing keeps working).
 
 ## Deployment topologies
 
@@ -421,6 +548,8 @@ TLS proxy (Caddy/nginx)
 ```
 
 Set `VITE_HOST_API=/api` and let the proxy do the routing. Backend doesn't need CORS for cross-origin since SPA calls same origin.
+
+In both shapes, passkeys belong to the UI's public address. With `WEBAUTHN_RP_ID` and `WEBAUTHN_ORIGIN` unset, the backend takes them from `FRONTEND_URL` (else `APP_URL`): for `https://app.example.com` the passkey domain is `app.example.com` and the expected origin `https://app.example.com`, never the API's address. Set those two variables only to override that. Write `FRONTEND_URL` as a full `https://` URL. A missing or `localhost` URL keeps the local defaults (`localhost`, `http://localhost:3031`). Passkeys added while the UI was on `localhost` do not work on the public address; register them again there.
 
 On Kubernetes, use the [Helm chart](helm/futureagi/README.md) instead (`helm install futureagi oci://ghcr.io/future-agi/charts/futureagi --version X.Y.Z`, signed and published with every release): it covers the Gateway API and Ingress, TLS, external datastores, secrets, upgrades and backups.
 
@@ -490,6 +619,14 @@ For internal MinIO, configure `mc mirror` to an off-host bucket, or replace the 
 > image bump: read [Upgrading an existing install: backfill before you cut over](#upgrading-an-existing-install-backfill-before-you-cut-over)
 > first, or every custom-attribute picker is empty for all history until you backfill.
 
+> Upgrading onto the release that stores API secrets as a keyed hash: add
+> `FI_API_SECRET_PEPPER` and, if it is empty, `INTEGRATION_ENCRYPTION_KEY` to
+> `deploy/.env.production` first ([1. Generate secrets](#1-generate-secrets)).
+> Upgrade fi-collector before the backend: a collector of the previous release
+> refuses every key the new backend has sealed. Afterwards,
+> `docker compose ... exec backend python manage.py api_secrets status` must exit 0
+> (no API secret left in plaintext).
+
 ### Upgrading a production install
 
 The overlay's bootstrap jobs only check the schema, so a release's
@@ -500,16 +637,20 @@ so the order is: check out the release, pin it, pull, initialize, start.
 ```bash
 COMPOSE="docker compose --env-file deploy/.env.production \
   -f docker-compose.distributed.yml -f deploy/docker-compose.production.yml"
+# With the Omega Hub on (COMPOSE_PROFILES lists hub), add
+# -f deploy/docker-compose.production.hub.yml at the end of COMPOSE.
 
 git fetch --tags && git checkout vX.Y.Z
 # bump the relevant version variable(s) in deploy/.env.production
 # (FUTURE_AGI_VERSION / FRONTEND_VERSION / FI_COLLECTOR_VERSION / AGENTCC_GATEWAY_VERSION /
-#  SERVING_VERSION / CODE_EXECUTOR_VERSION / SIMULATION_RUNNER_VERSION);
+#  SERVING_VERSION / CODE_EXECUTOR_VERSION / SIMULATION_RUNNER_VERSION /
+#  OMEGA_HUB_CHECKER_VERSION); review OMEGA_HUB_RUNNER_IMAGE separately by digest
 # AGENTCC_GATEWAY_VERSION first, then FUTURE_AGI_VERSION (see "2. Pin a release")
 $COMPOSE pull
 # run the release's initialization jobs: the commands of "Performing that
 # initialization" above that its release notes call for (every release with
-# database migrations needs step 1); `run --rm` starts nothing else
+# database migrations needs step 1); `run --rm` may also start required
+# dependencies, but not the application
 $COMPOSE up -d --no-build --wait --wait-timeout 1200
 ```
 
@@ -529,15 +670,29 @@ topics, volumes and obsolete workloads until their explicit retirement is approv
 only the qualified base Standalone layout. Production and Distributed upgrades
 remain operator-run; Helm uses its [own upgrade flow](helm/futureagi/README.md#upgrading).
 
-`./bin/update --production` does the same upgrade with a signed release, in
-two steps around your initialization jobs. `apply --stage` runs your backup
-hook, writes only the seven version pins in `deploy/.env.production`, pulls the
-images and verifies each against the release's signed digest, and restarts
-nothing. You then run the release's initialization jobs exactly as above; they
-use the staged, verified images. `apply` then starts the stack with the same
-`--env-file`, compose files and `up -d --no-build --wait` as above, with the
-file authoritative over shell exports. Check out the release tag first:
-bin/update refuses to start new images with another release's compose files.
+`./bin/update --production` updates the seven managed version keys with a
+signed release, in two steps around your initialization jobs. `apply --stage`
+runs your backup hook, changes only those keys in `deploy/.env.production`,
+pulls the managed Future AGI images and verifies their digests against the
+release's signed manifest, and restarts nothing. Other service images are
+outside that digest check. You then run the release's initialization jobs
+exactly as above; they use the staged, verified images. `apply` then starts
+the stack with the same `--env-file`, compose files and
+`up -d --no-build --wait` as above, with the file authoritative over shell
+exports. With the Omega Hub on (`COMPOSE_PROFILES` lists `hub`) it adds
+`-f deploy/docker-compose.production.hub.yml` after the production overlay
+itself; Hub operators add it the same way to the Compose commands they run by
+hand. A Hub stack started before the Hub's settings moved to that file is
+refused until it has been started once with it: run the printed
+`... up -d --no-build --wait` with the hub file, or re-run `deploy/setup.sh`. Check out the release tag first: bin/update refuses to start new
+images with another release's compose files.
+
+The seven keys are `FUTURE_AGI_VERSION`, `FRONTEND_VERSION`,
+`FI_COLLECTOR_VERSION`, `AGENTCC_GATEWAY_VERSION`, `SERVING_VERSION`,
+`CODE_EXECUTOR_VERSION` and `SIMULATION_RUNNER_VERSION`. It does not update
+`OMEGA_HUB_CHECKER_VERSION` or `OMEGA_HUB_RUNNER_IMAGE`; review and update
+those separately when the release requires it, keeping the runner image
+pinned by digest.
 
 ```bash
 git fetch --tags && git checkout vX.Y.Z
@@ -548,7 +703,9 @@ git fetch --tags && git checkout vX.Y.Z
 ./bin/update --production apply
 ```
 
-A plain `--production apply` with nothing staged is refused before the backup.
+For a fresh production update whose manifest sets `migration.requires_bootstrap`,
+plain `apply` is refused before the backup; use `apply --stage` first.
+Without that flag, plain `apply` can proceed directly to rollout.
 `apply --stage` prints the Compose command to run the jobs with; use it rather
 than the `$COMPOSE` above when your env file is not `deploy/.env.production`.
 Run the jobs from a shell that does not export any key of the env file
@@ -582,6 +739,10 @@ docker volume rm futureagi_rabbitmq-data
 docker volume rm futureagi_property-catalog-sequencer-data
 ```
 
+With the Omega Hub on, add `-f deploy/docker-compose.production.hub.yml` after
+`-f deploy/docker-compose.production.yml` in the `up` command, or `--remove-orphans`
+removes the Hub's checker too.
+
 ## Resource sizing
 
 | Service         | RAM        | CPU           |
@@ -600,19 +761,24 @@ docker volume rm futureagi_property-catalog-sequencer-data
 
 ## Pre-flight checklist
 
-- [ ] `SECRET_KEY`, `AGENTCC_INTERNAL_API_KEY`, `AGENTCC_ADMIN_TOKEN` are 32+ random bytes
-- [ ] `PG_PASSWORD`, `MINIO_ROOT_PASSWORD` set to non-default values; `INTEGRATION_ENCRYPTION_KEY` set before connecting integrations
+- [ ] `SECRET_KEY`, `FI_API_SECRET_PEPPER`, `AGENTCC_INTERNAL_API_KEY`, `AGENTCC_ADMIN_TOKEN` are 32+ random bytes
+- [ ] `INTEGRATION_ENCRYPTION_KEY` is a Fernet key (32 random bytes, URL-safe base64), kept from the original install on retained data
+- [ ] `PG_PASSWORD`, `MINIO_ROOT_PASSWORD` set to non-default values
 - [ ] Both catalog passwords match the provisioned identities; retained credentials were not rotated
 - [ ] Check-only initialization prerequisite independently verified; no implicit production migrations or mirror repair
+- [ ] MCP shared-static revision rollout coordinated across gateway, Django and workers: reviewed `prism` migration 0063 complete, all gateway replicas upgraded before new Django pushes, active org configs refreshed with nonzero revisions, and each serving replica uses the revision-capable resolver plus the same Redis authority. Account for the temporary fail-closed mixed-version interval; never roll back one component alone or discard revision/pending state. See [W4 rollout and rollback requirements](../docs/gateway/release-notes.md#w4-shared-credential-rollout-gateway-and-django-together).
+- [ ] At that coordinated deploy, register `agentcc-mcp-shared-evictions-retry` (every minute, at most 20 slots / 3 per org / 60-second start budget, no-op without obligations); verify unsupported `501 revision_revocation_unsupported` responses retain pending obligations and a later capable purge clears them. Registration is unpaused; no feature/account is enabled by the retry. Hosted multi-replica revoke/disconnect acceptance is independently recorded.
 - [ ] Backend/workers/frontend and collector/consumer/backfill have matching source, registry digest and architecture receipts; `FI_COLLECTOR_VERSION` is explicit (not `local`/`latest`); remaining image versions are pinned
 - [ ] `FRONTEND_URL` matches the public URL behind your reverse proxy, and `APP_URL` is the same URL (invite and password-reset links; unset, they point at `localhost:3000`)
 - [ ] `VITE_HOST_API` matches the public backend URL (or `/api` if route-split at the proxy)
 - [ ] Backend CORS allows the frontend origin (split-domain only)
 - [ ] Reverse proxy terminates TLS; frontend container is not exposed publicly on port 3000
 - [ ] `code-executor` is running and reachable from the backend and workers; `CODE_EXECUTOR_LOCAL_FALLBACK` is unset or `false`
+- [ ] `hub-checker` is running: its log says the runner host's default runtime is `runsc` and a runner container sees gVisor; the runner host is its own VM, firewalled to this host on 2376 and to your registry outbound ([Omega Hub](#omega-hub))
+- [ ] `OMEGA_HUB_MAINTAINER_ORG_ID` is set and `omega_hub_maintainer grant` said `is a maintainer now = True` for each maintainer; `OMEGA_HUB_TRUSTED_PROXY_DEPTH` matches your proxies
 - [ ] Postgres, ClickHouse, MinIO data volumes are on persistent storage
 - [ ] Backup crons (Postgres + ClickHouse) scheduled and tested with restore dry-run
 - [ ] Docker daemon and host OS get security patches on a known cadence
 - [ ] The rest of the [production checklist](https://docs.futureagi.com/docs/self-hosting/production/checklist) holds: `ENV_TYPE=production`, public URLs, locked-down origins, email or share-by-link invites
 - [ ] `OSS_RETURN_PASSWORD_RESET_LINK` is unset or `false`
-- [ ] Telemetry decided: left on, or `FUTURE_AGI_TELEMETRY_DISABLED=true` ([what is sent](https://docs.futureagi.com/docs/self-hosting/configuration/telemetry))
+- [ ] Telemetry decided: left on, or `FUTURE_AGI_TELEMETRY_DISABLED=true` (sends no deployment telemetry to Future AGI; [what is sent](https://docs.futureagi.com/docs/self-hosting/configuration/telemetry))

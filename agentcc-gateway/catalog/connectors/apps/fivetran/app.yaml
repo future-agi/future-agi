@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: fivetran
+version: 1.0.0
+name: Fivetran
+description: "Query data and discover business context from a configured Fivetran Context Layer."
+vendor:
+  name: Fivetran
+  domains: [fivetran.com, fivetran.ai]
+eeCategory: data
+group: other
+categories: [data, analytics]
+tags: [sql, search]
+docsUrl: https://fivetran.com/docs/context-layer/agent-context-mcp/setup-guide
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://fivetran.com/docs/context-layer/agent-context-mcp/setup-guide
+    fetchedAt: 2026-11-09

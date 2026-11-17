@@ -141,6 +141,11 @@ const EditEvaluation = ({
       mapping: evalConfig.mapping || evalConfig.config?.mapping || {},
       outputType: evalConfig.output_type || evalConfig.outputType,
       userEvalId: evalConfig.id,
+      // The binding's stored version, so the picker reopens on it and hands
+      // it back unchanged unless the person picks another.
+      ...(Object.hasOwn(evalConfig, "pinned_version_id")
+        ? { pinned_version_id: evalConfig.pinned_version_id ?? null }
+        : {}),
     };
   }, [evalConfig]);
 
@@ -168,6 +173,15 @@ const EditEvaluation = ({
         config: cfg.config || {},
         ...(Object.keys(runConfig).length ? { run_config: runConfig } : {}),
       },
+      // The version the picker hands back: the stored one unless the person
+      // picked another (null for Default version). Sent only when the
+      // reopened binding said which, and left out when the picker leaves it
+      // out (an edited definition saves as a new version, as on the
+      // dataset's own drawer).
+      ...(Object.hasOwn(initialEval || {}, "pinned_version_id") &&
+      cfg.versionId !== undefined
+        ? { pinned_version_id: cfg.versionId }
+        : {}),
       // Experiment evals have source_id=experiment.id, not dataset_id.
       // Pass experiment_id so the backend looks up the right UserEvalMetric
       // instead of 404ing against the dataset-scoped record.

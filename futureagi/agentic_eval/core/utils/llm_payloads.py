@@ -11,9 +11,9 @@ import json
 import mimetypes
 import os
 import re
-from typing import Any, Dict, List, Optional, Sequence, Union
+from collections.abc import Sequence
+from typing import Any
 
-import requests
 import structlog
 
 from agentic_eval.core.utils.model_config import LiteLlmProvider
@@ -22,16 +22,16 @@ from tfc.utils.storage import download_image_from_url
 
 logger = structlog.get_logger(__name__)
 
-ContentBlock = Dict[str, Any]
-Message = Dict[str, Any]
+ContentBlock = dict[str, Any]
+Message = dict[str, Any]
 
 
-def _provider_value(provider: Union[str, LiteLlmProvider]) -> str:
+def _provider_value(provider: str | LiteLlmProvider) -> str:
     """Extract string value from provider enum or string."""
     return provider.value if isinstance(provider, LiteLlmProvider) else str(provider)
 
 
-def extract_media_bytes(input_value: Any) -> Optional[bytes]:
+def extract_media_bytes(input_value: Any) -> bytes | None:
     """
     Extract raw bytes from common input formats.
 
@@ -52,7 +52,7 @@ def extract_media_bytes(input_value: Any) -> Optional[bytes]:
     return None
 
 
-def normalize_to_bytes(input_value: Any) -> Optional[bytes]:
+def normalize_to_bytes(input_value: Any) -> bytes | None:
     """
     Convert various input types to raw bytes.
 
@@ -126,7 +126,7 @@ def build_text_content(text: Any) -> ContentBlock:
     return {"type": "text", "text": "" if text is None else str(text)}
 
 
-def _coerce_image_url(image_input: Union[str, bytes], *, media_type: str) -> str:
+def _coerce_image_url(image_input: str | bytes, *, media_type: str) -> str:
     """
     Returns a URL usable in an `image_url` content block.
     Accepts: http(s) URL, data URI, base64 string, or raw bytes.
@@ -145,8 +145,8 @@ def _coerce_image_url(image_input: Union[str, bytes], *, media_type: str) -> str
 
 def build_image_content(
     *,
-    provider: Union[str, LiteLlmProvider],
-    image_input: Union[str, bytes, dict],
+    provider: str | LiteLlmProvider,
+    image_input: str | bytes | dict,
     media_type: str = "image/jpeg",
 ) -> ContentBlock:
     """
@@ -171,7 +171,7 @@ def build_image_content(
     return {"type": "image_url", "image_url": {"url": standardized}}
 
 
-def _coerce_audio_base64(audio_input: Union[str, bytes]) -> str:
+def _coerce_audio_base64(audio_input: str | bytes) -> str:
     if isinstance(audio_input, bytes):
         return base64.b64encode(audio_input).decode("utf-8")
 
@@ -183,8 +183,8 @@ def _coerce_audio_base64(audio_input: Union[str, bytes]) -> str:
 
 def build_audio_content(
     *,
-    provider: Union[str, LiteLlmProvider],
-    audio_input: Union[str, bytes],
+    provider: str | LiteLlmProvider,
+    audio_input: str | bytes,
     audio_format: str = "mp3",
 ) -> ContentBlock:
     """
@@ -215,7 +215,7 @@ def build_audio_content(
     raise NotImplementedError(f"Audio payload not supported for provider={p}")
 
 
-def _coerce_pdf_bytes(pdf_input: Union[str, bytes]) -> bytes:
+def _coerce_pdf_bytes(pdf_input: str | bytes) -> bytes:
     if isinstance(pdf_input, bytes):
         return pdf_input
 
@@ -231,9 +231,9 @@ def _coerce_pdf_bytes(pdf_input: Union[str, bytes]) -> bytes:
 
 def build_pdf_content(
     *,
-    provider: Union[str, LiteLlmProvider],
-    pdf_input: Optional[Union[str, bytes]] = None,
-    file_id: Optional[str] = None,
+    provider: str | LiteLlmProvider,
+    pdf_input: str | bytes | None = None,
+    file_id: str | None = None,
     filename: str = "x.pdf",
     mime_type: str = "application/pdf",
 ) -> ContentBlock:
@@ -337,7 +337,7 @@ def build_pdf_content(
 
 def build_file_reference_content(
     *,
-    provider: Union[str, LiteLlmProvider],
+    provider: str | LiteLlmProvider,
     file_id: str,
     mime_type: str,
 ) -> ContentBlock:
@@ -381,7 +381,7 @@ def build_user_message(content: Sequence[ContentBlock]) -> Message:
 _SUPPORTED_MEDIA = {"image", "images", "audio", "pdf"}
 
 _IMAGE_EXT_PAT = re.compile(
-    r"https?://\S+\.(png|jpg|jpeg|gif|webp|svg|bmp|tiff|mp4)(\?|$)",
+    r"https?://\S+\.(png|jpg|jpeg|gif|webp|svg|bmp|tiff)(\?|$)",
     re.IGNORECASE,
 )
 
@@ -404,7 +404,7 @@ def build_media_content_block(
     value: Any,
     media_type: str,
     key: str,
-) -> List[ContentBlock]:
+) -> list[ContentBlock]:
     """
     Build content blocks for a single input of known modality.
 
@@ -419,10 +419,10 @@ def build_media_content_block(
     Returns:
         List of content blocks. Empty list if value is empty/None.
     """
-    blocks: List[ContentBlock] = []
+    blocks: list[ContentBlock] = []
 
     if media_type in ("image", "images"):
-        image_inputs: List[Any]
+        image_inputs: list[Any]
         if isinstance(value, str):
             try:
                 parsed = json.loads(value)
@@ -453,15 +453,19 @@ def build_media_content_block(
                     )
                     raise MediaNotAccessibleError(key=key) from e
                 mime = mimetypes.guess_type(img_str)[0] or "image/jpeg"
-                url = f"data:{mime};base64,{base64.b64encode(img_bytes).decode('utf-8')}"
+                url = (
+                    f"data:{mime};base64,{base64.b64encode(img_bytes).decode('utf-8')}"
+                )
             else:
                 url = standardize_to_data_uri(img, "image/jpeg")
             tag = f"{key}_{img_num}" if len(image_inputs) > 1 else key
-            blocks.extend([
-                {"type": "text", "text": f"<{tag}>"},
-                {"type": "image_url", "image_url": {"url": url}},
-                {"type": "text", "text": f"</{tag}>"},
-            ])
+            blocks.extend(
+                [
+                    {"type": "text", "text": f"<{tag}>"},
+                    {"type": "image_url", "image_url": {"url": url}},
+                    {"type": "text", "text": f"</{tag}>"},
+                ]
+            )
 
     elif media_type == "audio":
         if not value or (isinstance(value, str) and not value.strip()):
@@ -488,34 +492,58 @@ def build_media_content_block(
             data_uri = f"data:audio/{audio_fmt};base64,{b64_data}"
         else:
             data_uri = standardize_to_data_uri(value, "audio/mp3")
-        blocks.extend([
-            {"type": "text", "text": f"<{key}>"},
-            {"type": "image_url", "image_url": {"url": data_uri}},
-            {"type": "text", "text": f"</{key}>"},
-        ])
+        blocks.extend(
+            [
+                {"type": "text", "text": f"<{key}>"},
+                {"type": "image_url", "image_url": {"url": data_uri}},
+                {"type": "text", "text": f"</{key}>"},
+            ]
+        )
 
     elif media_type == "pdf":
         if not value or (isinstance(value, str) and not value.strip()):
             return blocks
         if is_url_like(value) and not str(value).startswith("data:"):
-            pdf_block: ContentBlock = {"type": "file", "file": {"file_id": value, "format": "application/pdf"}}
+            pdf_block: ContentBlock = {
+                "type": "file",
+                "file": {"file_id": value, "format": "application/pdf"},
+            }
         else:
             data_uri = standardize_to_data_uri(value, "application/pdf")
-            pdf_block = {"type": "file", "file": {"file_data": data_uri, "format": "application/pdf"}}
-        blocks.extend([
-            {"type": "text", "text": f"<{key}>"},
-            pdf_block,
-            {"type": "text", "text": f"</{key}>"},
-        ])
+            pdf_block = {
+                "type": "file",
+                "file": {"file_data": data_uri, "format": "application/pdf"},
+            }
+        blocks.extend(
+            [
+                {"type": "text", "text": f"<{key}>"},
+                pdf_block,
+                {"type": "text", "text": f"</{key}>"},
+            ]
+        )
 
     return blocks
 
 
+# Said in an evaluation's result for each input that was a video link: video is
+# not an eval modality, so the judge was given the link as text.
+VIDEO_LINK_NOT_VIEWED = "the video was passed as a link and not viewed"
+
+
+def note_video_links(reason: Any, video_links: Sequence[str]) -> Any:
+    """Add one line per video-link input to an evaluation's reason."""
+    if not video_links:
+        return reason
+    notes = "\n".join(f"Note ({key}): {VIDEO_LINK_NOT_VIEWED}." for key in video_links)
+    return f"{reason}\n\n{notes}" if reason else notes
+
+
 def detect_and_build_media_blocks(
-    inputs: Dict[str, Any],
-    required_keys: List[str],
-    input_data_types: Optional[Dict[str, str]] = None,
-    image_urls: Optional[List[str]] = None,
+    inputs: dict[str, Any],
+    required_keys: list[str],
+    input_data_types: dict[str, str] | None = None,
+    image_urls: list[str] | None = None,
+    video_links: list[str] | None = None,
 ) -> tuple:
     """
     Two-stage modality detection + content block building.
@@ -528,6 +556,8 @@ def detect_and_build_media_blocks(
         required_keys: Keys to process from inputs.
         input_data_types: Explicit modality overrides per key (from eval config).
         image_urls: Additional explicit image URLs to include.
+        video_links: When given, each key whose value is a video link is
+            appended to it. A video link stays text: no block, not in the map.
 
     Returns:
         (media_blocks, key_to_modality_map)
@@ -535,8 +565,8 @@ def detect_and_build_media_blocks(
         - key_to_modality_map: {key: detected_modality} for keys with media
     """
     input_data_types = input_data_types or {}
-    key_media_types: Dict[str, str] = {}
-    remaining: Dict[str, Any] = {}
+    key_media_types: dict[str, str] = {}
+    remaining: dict[str, Any] = {}
 
     # Stage 1: fast regex + explicit types
     for key in required_keys:
@@ -579,13 +609,17 @@ def detect_and_build_media_blocks(
         from agentic_eval.core.utils.functions import detect_input_type
 
         try:
-            detected = detect_input_type(remaining) or {}
+            detected = detect_input_type(remaining, video_type="video") or {}
         except Exception:
             detected = {}
 
         for key, media_type in detected.items():
             if isinstance(media_type, str) and media_type in _SUPPORTED_MEDIA:
                 key_media_types[key] = media_type
+            elif media_type == "video":
+                # Kept as text in the payload; the caller may say it was not viewed.
+                if video_links is not None:
+                    video_links.append(key)
             elif str(media_type).lower() == "file":
                 val = remaining.get(key, "") if isinstance(remaining, dict) else ""
                 if isinstance(val, str) and val.startswith(("http://", "https://")):
@@ -597,7 +631,7 @@ def detect_and_build_media_blocks(
                     raise MediaNotAccessibleError(key=key)
 
     # Build content blocks from detected types
-    media_blocks: List[ContentBlock] = []
+    media_blocks: list[ContentBlock] = []
     for key in required_keys:
         media_type = key_media_types.get(key)
         if not media_type:
@@ -610,7 +644,9 @@ def detect_and_build_media_blocks(
     if image_urls:
         for url in image_urls:
             if isinstance(url, str) and url.strip():
-                media_blocks.append({"type": "image_url", "image_url": {"url": url.strip()}})
+                media_blocks.append(
+                    {"type": "image_url", "image_url": {"url": url.strip()}}
+                )
 
     return media_blocks, key_media_types
 
@@ -719,6 +755,7 @@ def compute_choices_failure(
     ``pass_threshold`` (mean over picks for multi_choice). Without: ordinal
     convention — the first declared choice is the pass label.
     """
+
     def _norm(s) -> str:
         return str(s).strip().lower()
 
@@ -749,5 +786,3 @@ def compute_choices_failure(
                     return True
         return True
     return actual != _norm(choices[0])
-
-

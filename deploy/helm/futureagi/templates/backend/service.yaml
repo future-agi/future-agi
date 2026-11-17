@@ -20,6 +20,13 @@ spec:
       port: {{ $b.service.port }}
       targetPort: http
       protocol: TCP
+    {{- if include "futureagi.omega.internalTls" . }}
+    # TLS for the Omega gateway and Omega EE (omega.internalTls).
+    - name: https-internal
+      port: {{ .Values.omega.internalTls.port }}
+      targetPort: https-internal
+      protocol: TCP
+    {{- end }}
 ---
 {{- if $b.autoscaling.enabled }}
 {{ include "futureagi.hpa" (dict "root" . "component" "backend" "name" (include "futureagi.component" $ctx) "autoscaling" $b.autoscaling) }}

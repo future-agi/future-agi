@@ -168,6 +168,77 @@ class WebhookDestinationTests(unittest.TestCase):
                 response.close.assert_called_once()
                 pool.close.assert_called_once()
 
+    def test_delivery_dns_wait_has_a_short_deadline(self):
+        future = MagicMock()
+        future.result.side_effect = TimeoutError("resolver stalled")
+        with (
+            patch("tfc.utils.ssrf_guard._RESOLVERS") as executor,
+            patch("tfc.utils.ssrf_guard._RESOLVER_SLOTS") as slots,
+            patch("tfc.utils.ssrf_guard._monotonic", return_value=100),
+            patch("tfc.utils.ssrf_guard.socket.getaddrinfo", return_value=address_info("93.184.216.34")),
+            patch("tfc.utils.webhook_delivery._open_pinned_pool") as pool,
+        ):
+            executor.submit.return_value = future
+            pool.return_value.request.return_value.status = 204
+            with self.assertRaises(TimeoutError):
+                post_webhook("https://receiver.invalid/hook", json={}, headers={}, timeout=10)
+            self.assertGreater(future.result.call_args.kwargs["timeout"], 0)
+            self.assertLessEqual(future.result.call_args.kwargs["timeout"], 2)
+            self.assertLessEqual(slots.acquire.call_args.kwargs["timeout"], 2)
+            pool.assert_not_called()
+
+    def test_validation_dns_deadline_does_not_leak_diagnostics(self):
+        future = MagicMock()
+        future.result.side_effect = TimeoutError("secret resolver detail")
+        with (
+            patch("tfc.utils.ssrf_guard._RESOLVERS") as executor,
+            patch("tfc.utils.ssrf_guard._RESOLVER_SLOTS"),
+            patch("tfc.utils.ssrf_guard.socket.getaddrinfo", return_value=address_info("93.184.216.34")),
+        ):
+            executor.submit.return_value = future
+            with self.assertRaises(SsrfBlocked) as caught:
+                validate_webhook_url("https://receiver.invalid/hook?token=secret")
+            self.assertNotIn("secret", str(caught.exception))
+            self.assertNotIn("receiver", str(caught.exception))
+
+    def test_delivery_refuses_when_resolver_capacity_is_exhausted(self):
+        with (
+            patch("tfc.utils.ssrf_guard._RESOLVER_SLOTS") as slots,
+            patch("tfc.utils.ssrf_guard._RESOLVERS") as executor,
+            patch("tfc.utils.ssrf_guard.socket.getaddrinfo", return_value=address_info("93.184.216.34")),
+            patch("tfc.utils.webhook_delivery._open_pinned_pool") as pool,
+        ):
+            slots.acquire.return_value = False
+            pool.return_value.request.return_value.status = 204
+            with self.assertRaises(TimeoutError):
+                post_webhook("https://receiver.invalid/hook", json={}, headers={}, timeout=10)
+            executor.submit.assert_not_called()
+            pool.assert_not_called()
+
+    def test_delivery_deadline_covers_response_headers_and_closes_resources(self):
+        from tfc.utils.ssrf_guard import _DeadlineHTTPSConnection
+
+        now = [100]
+        response = MagicMock(status=204)
+        pool = MagicMock()
+
+        def delayed_headers(*args, **kwargs):
+            now[0] = 111
+            return response
+
+        pool.request.side_effect = delayed_headers
+        with (
+            patch("tfc.utils.ssrf_guard._monotonic", side_effect=lambda: now[0]),
+            patch("tfc.utils.ssrf_guard.socket.getaddrinfo", return_value=address_info("93.184.216.34")),
+            patch("tfc.utils.webhook_delivery._open_pinned_pool", return_value=pool),
+        ):
+            with self.assertRaises(TimeoutError):
+                post_webhook("https://receiver.invalid/hook", json={}, headers={}, timeout=10)
+        self.assertIs(pool.ConnectionCls, _DeadlineHTTPSConnection)
+        pool.conn_kw.__setitem__.assert_called_once_with("deadline", 110)
+        response.close.assert_called_once()
+        pool.close.assert_called_once()
+
     def test_connection_failure_closes_pool(self):
         with (
             patch(

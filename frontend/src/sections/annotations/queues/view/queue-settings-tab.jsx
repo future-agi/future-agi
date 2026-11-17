@@ -1,11 +1,11 @@
 import PropTypes from "prop-types";
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useId, useRef, useState } from "react";
 import { useNavigate } from "react-router";
+import { enqueueSnackbar } from "notistack";
 import {
   Alert,
   Box,
   Button,
-  Chip,
   Dialog,
   DialogActions,
   DialogContent,
@@ -25,9 +25,11 @@ import Section from "src/components/section";
 import { LoadingButton } from "@mui/lab";
 import { Controller, useForm, FormProvider } from "react-hook-form";
 import Iconify from "src/components/iconify";
+import { ConfirmDialog } from "src/components/custom-dialog";
 import {
   useArchiveAnnotationQueue,
   useHardDeleteAnnotationQueue,
+  useRestoreAnnotationQueue,
   useUpdateAnnotationQueue,
   useUpdateAnnotationQueueStatus,
 } from "src/api/annotation-queues/annotation-queues";
@@ -87,11 +89,38 @@ export default function QueueSettingsTab({ queue, queueId, creatorId }) {
     useUpdateAnnotationQueueStatus();
   const { mutate: archiveQueue, isPending: isArchiving } =
     useArchiveAnnotationQueue();
+  const { mutate: restoreQueue } = useRestoreAnnotationQueue();
   const isPending = isUpdating || isStatusUpdating;
+  const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false);
+  const isPairwise = queue?.mode === "pairwise";
 
-  const handleArchive = () => {
-    navigate("/dashboard/annotations/queues");
-    archiveQueue(queueId);
+  // Archive asks first, like the queue list. It leaves the page only after
+  // the archive succeeds, so a failed call keeps the user's edits in place.
+  const handleConfirmArchive = () => {
+    archiveQueue(queueId, {
+      onSuccess: () => {
+        // Same toast as the queue list's Archive, with an explicit Undo.
+        enqueueSnackbar(
+          queue?.is_default
+            ? "Default queue archived. Rules paused. Visiting the project page again restores it."
+            : "Queue archived. Rules paused.",
+          {
+            variant: "info",
+            action: () => (
+              <Button
+                color="inherit"
+                size="small"
+                onClick={() => restoreQueue(queueId)}
+              >
+                Undo
+              </Button>
+            ),
+          },
+        );
+        setArchiveConfirmOpen(false);
+        navigate("/dashboard/annotations/queues");
+      },
+    });
   };
 
   const methods = useForm({
@@ -110,7 +139,14 @@ export default function QueueSettingsTab({ queue, queueId, creatorId }) {
     },
   });
 
-  const { control, handleSubmit, reset, setValue, watch } = methods;
+  const {
+    control,
+    handleSubmit,
+    reset,
+    setValue,
+    watch,
+    formState: { isDirty },
+  } = methods;
 
   const labelIds = watch("label_ids");
   const annotators = watch("annotators");
@@ -155,7 +191,7 @@ export default function QueueSettingsTab({ queue, queueId, creatorId }) {
       reservation_timeout_minutes: formData.reservation_timeout_minutes,
       requires_review: formData.requires_review,
       auto_assign: formData.autoAssign,
-      label_ids: formData.label_ids,
+      ...(isPairwise ? {} : { label_ids: formData.label_ids }),
       annotator_ids: formData.annotators.map((a) => a.userId),
       annotator_roles: Object.fromEntries(
         formData.annotators.map((a) => [a.userId, a.roles || [a.role]]),
@@ -255,7 +291,7 @@ export default function QueueSettingsTab({ queue, queueId, creatorId }) {
                       }}
                     >
                       {getStatusOptions(currentStatus, {
-                        hasLabels: (labelIds || []).length > 0,
+                        hasLabels: isPairwise || (labelIds || []).length > 0,
                       }).map((opt) => (
                         <MenuItem
                           key={opt.value}
@@ -288,16 +324,22 @@ export default function QueueSettingsTab({ queue, queueId, creatorId }) {
             }}
           >
             <Typography variant="subtitle1" sx={{ mb: 2 }}>
-              Labels
+              {isPairwise ? "Pairwise mode" : "Labels"}
             </Typography>
             <Stack spacing={2.5}>
-              <LabelPicker
-                selectedIds={labelIds}
-                lockLastSelected
-                onChange={(ids) =>
-                  setValue("label_ids", ids, { shouldDirty: true })
-                }
-              />
+              {isPairwise ? (
+                <Typography variant="body2" color="text.secondary">
+                  Compare A and B without labels. Queue mode cannot be changed.
+                </Typography>
+              ) : (
+                <LabelPicker
+                  selectedIds={labelIds}
+                  lockLastSelected
+                  onChange={(ids) =>
+                    setValue("label_ids", ids, { shouldDirty: true })
+                  }
+                />
+              )}
 
               <Divider />
               <Typography variant="subtitle1">Members</Typography>
@@ -445,50 +487,6 @@ export default function QueueSettingsTab({ queue, queueId, creatorId }) {
                         control={<Radio size="small" />}
                         label="Manual"
                       />
-                      <FormControlLabel
-                        value="round_robin"
-                        disabled
-                        control={<Radio size="small" />}
-                        label={
-                          <Stack
-                            direction="row"
-                            alignItems="center"
-                            spacing={1}
-                          >
-                            <Typography variant="body2" color="text.disabled">
-                              Round Robin
-                            </Typography>
-                            <Chip
-                              label="Coming soon"
-                              size="small"
-                              variant="outlined"
-                              color="primary"
-                            />
-                          </Stack>
-                        }
-                      />
-                      <FormControlLabel
-                        value="load_balanced"
-                        disabled
-                        control={<Radio size="small" />}
-                        label={
-                          <Stack
-                            direction="row"
-                            alignItems="center"
-                            spacing={1}
-                          >
-                            <Typography variant="body2" color="text.disabled">
-                              Load Balanced
-                            </Typography>
-                            <Chip
-                              label="Coming soon"
-                              size="small"
-                              variant="outlined"
-                              color="primary"
-                            />
-                          </Stack>
-                        }
-                      />
                     </RadioGroup>
                   )}
                 />
@@ -505,16 +503,6 @@ export default function QueueSettingsTab({ queue, queueId, creatorId }) {
               pb: 3,
             }}
           >
-            <LoadingButton
-              type="button"
-              variant="outlined"
-              color="error"
-              loading={isArchiving}
-              startIcon={<Iconify icon="solar:archive-down-bold" />}
-              onClick={handleArchive}
-            >
-              Archive Queue
-            </LoadingButton>
             <Button
               type="submit"
               variant="contained"
@@ -526,19 +514,60 @@ export default function QueueSettingsTab({ queue, queueId, creatorId }) {
             </Button>
           </Box>
 
-          <DangerZone queue={queue} />
+          <DangerZone
+            queue={queue}
+            onArchive={() => setArchiveConfirmOpen(true)}
+            isArchiving={isArchiving}
+          />
         </Stack>
       </Box>
+
+      <ConfirmDialog
+        open={archiveConfirmOpen}
+        onClose={() => !isArchiving && setArchiveConfirmOpen(false)}
+        closeDisabled={isArchiving}
+        title="Archive queue"
+        content={
+          <>
+            <Typography>
+              Archive <strong>{queue?.name}</strong>?
+            </Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+              Automation rules pause and items are hidden.
+              {queue?.is_default
+                ? " Visiting the project page again restores this queue automatically."
+                : " You can restore it from Queues → Archived."}
+            </Typography>
+            {isDirty && (
+              <Typography variant="body2" color="warning.main" sx={{ mt: 1 }}>
+                Unsaved changes will be lost.
+              </Typography>
+            )}
+          </>
+        }
+        action={
+          <LoadingButton
+            size="small"
+            variant="contained"
+            color="warning"
+            loading={isArchiving}
+            onClick={handleConfirmArchive}
+          >
+            Archive
+          </LoadingButton>
+        }
+      />
     </FormProvider>
   );
 }
 
-function DangerZone({ queue }) {
-  // Hard delete is intentionally separated from the everyday "Archive"
-  // button on the queue list. It bypasses the soft-delete that the rest
-  // of the app relies on for restore-on-recreate, so we gate it behind
-  // an explicit type-the-name confirmation.
+function DangerZone({ queue, onArchive, isArchiving }) {
+  // Both removal actions live here, away from "Save Changes". Archive is the
+  // recoverable soft delete (with a confirm and Undo). Hard delete bypasses
+  // the soft-delete that the rest of the app relies on for
+  // restore-on-recreate, so it is gated behind a type-the-name confirmation.
   const navigate = useNavigate();
+  const headingId = useId();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [typed, setTyped] = useState("");
   const { mutate: hardDelete, isPending: isDeleting } =
@@ -549,20 +578,36 @@ function DangerZone({ queue }) {
     <>
       <Section
         variant="panel"
+        component="section"
+        aria-labelledby={headingId}
         sx={{ borderColor: "error.main", borderWidth: 1, borderStyle: "solid" }}
       >
         <Stack spacing={2}>
-          <Typography variant="h6" color="error.main">
+          <Typography id={headingId} variant="h6" color="error.main">
             Danger zone
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            Permanently delete this queue. All automation rules, items,
-            assignments, and annotation scores attached to it are removed. This
-            cannot be undone — for a recoverable removal, use{" "}
-            <strong>Archive</strong> from the queue list instead.
+            Archive this queue to pause its automation rules and hide its
+            items. You can restore it from Queues → Archived.
           </Typography>
-          <Box>
+          <Typography variant="body2" color="text.secondary">
+            Delete it permanently to remove all automation rules, items,
+            assignments, and annotation scores attached to it. This cannot be
+            undone.
+          </Typography>
+          <Stack direction="row" spacing={2} useFlexGap flexWrap="wrap">
+            <LoadingButton
+              type="button"
+              variant="outlined"
+              color="warning"
+              loading={isArchiving}
+              startIcon={<Iconify icon="solar:archive-down-bold" />}
+              onClick={onArchive}
+            >
+              Archive queue
+            </LoadingButton>
             <Button
+              type="button"
               variant="outlined"
               color="error"
               onClick={() => {
@@ -572,7 +617,7 @@ function DangerZone({ queue }) {
             >
               Delete queue permanently
             </Button>
-          </Box>
+          </Stack>
         </Stack>
       </Section>
 
@@ -631,7 +676,11 @@ function DangerZone({ queue }) {
   );
 }
 
-DangerZone.propTypes = { queue: PropTypes.object };
+DangerZone.propTypes = {
+  queue: PropTypes.object,
+  onArchive: PropTypes.func.isRequired,
+  isArchiving: PropTypes.bool,
+};
 
 QueueSettingsTab.propTypes = {
   queue: PropTypes.object,

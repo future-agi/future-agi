@@ -10,6 +10,7 @@ from rest_framework.throttling import UserRateThrottle
 from rest_framework.views import APIView
 from webauthn.helpers import base64url_to_bytes
 
+from accounts.authentication import allows_no_workspace
 from accounts.models.user import User
 from accounts.permissions import RequiresIndependentAuth
 from accounts.serializers.contracts import (
@@ -125,6 +126,7 @@ class TOTPSetupView(APIView):
         responses={200: TOTPSetupResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
         reject_unknown_fields=True,
     )
+    @allows_no_workspace("POST")
     def post(self, request):
         try:
             device, provisioning_uri, secret = create_totp_device(request.user)
@@ -153,6 +155,7 @@ class TOTPConfirmView(APIView):
         responses={200: TOTPConfirmResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
         reject_unknown_fields=True,
     )
+    @allows_no_workspace("POST")
     def post(self, request):
         code = request.validated_data["code"]
         if not confirm_totp_device(request.user, code):
@@ -180,6 +183,7 @@ class TOTPDisableView(APIView):
         responses={200: TOTPDisableResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
         reject_unknown_fields=True,
     )
+    @allows_no_workspace("DELETE")
     def delete(self, request):
         code = request.validated_data["code"]
 
@@ -410,6 +414,7 @@ class RecoveryCodesRegenerateView(APIView):
         },
         reject_unknown_fields=True,
     )
+    @allows_no_workspace("POST")
     def post(self, request):
         user = request.user
         has_totp = False

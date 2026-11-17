@@ -10,6 +10,36 @@ from tracer.utils.otel import ConversationAttributes, MessageAttributes
 BATCH_SIZE = 1000
 MAX_RETRIES = 3
 
+UPDATE_SAFETY = {
+    "schema_version": 1,
+    "risk_classes": ["data_migration"],
+    "tables": [
+        "postgres:tracer_observation_span",
+        "postgres:tracer_project",
+    ],
+    "mitigation": (
+        "Copies the flattened conversation transcript attributes of each root span in "
+        "a simulator-source project into eval_attributes['provider_transcript'] on "
+        "tracer_observation_span, for spans that have no provider_transcript yet. "
+        "Reads root spans joined to tracer_project (its id and source only), counts "
+        "them, then reads LIMIT/OFFSET pages of 1000 (each later page rescans the "
+        "rows before it) and writes a page's changed spans with one bulk_update; if "
+        "that fails it saves those spans one by one. Per-span and per-page errors are "
+        "logged and skipped. The migration is atomic: every updated span stays locked "
+        "until the step commits, and a failed run rolls back as a whole. Row scale: "
+        "one row per root span of a simulator project; tracer_observation_span is a "
+        "registered high-volume table, tracer_project is not. Second run: a span the "
+        "first run wrote has provider_transcript and is skipped, so it is not written "
+        "again; a re-run would still fill provider_transcript on root simulator spans "
+        "written since that carry transcript attributes without it. No schema change, "
+        "and the operation has no reverse. tracer_observation_span has no in-app "
+        "outbox capture trigger, and the step sends nothing to ClickHouse."
+    ),
+    "reviewer": "<actual-github-login>",
+    "review": "<actual-PR-review-discussion-permalink>",
+    "large_volume_rehearsal": True,
+}
+
 # CH25-TODO: KEEP-PG. Django data migration — runs against the PG
 # source-of-truth via apps.get_model() (the historical-model API). Data
 # migrations cannot use CHSpanReader by design: they execute inside the
@@ -20,7 +50,7 @@ def add_transcripts_to_eval_attributes(apps, schema_editor):
     ObservationSpan = apps.get_model("tracer", "ObservationSpan")
 
     ## Gets all spans from voice observability projects
-    spans_qs = (ObservationSpan.objects.filter(
+    spans_qs = (ObservationSpan.objects.using(schema_editor.connection.alias).filter(
                     parent_span_id__isnull=True,
                     project__source = 'simulator',
                 )
@@ -99,7 +129,7 @@ def add_transcripts_to_eval_attributes(apps, schema_editor):
                 # Try execept block for bulk update
             if spans_to_update:
                 try:
-                    ObservationSpan.objects.bulk_update(
+                    ObservationSpan.objects.using(schema_editor.connection.alias).bulk_update(
                         spans_to_update,
                         ['eval_attributes'],
                         batch_size=BATCH_SIZE
@@ -115,7 +145,7 @@ def add_transcripts_to_eval_attributes(apps, schema_editor):
                     # Fallback: try updating individually
                     for span in spans_to_update:
                         try:
-                            span.save(update_fields=["eval_attributes"])
+                            span.save(using=schema_editor.connection.alias, update_fields=["eval_attributes"])
                         except Exception as individual_error:
                             failed_spans.append({
                                 "span_id": str(span.id),

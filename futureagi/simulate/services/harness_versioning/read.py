@@ -28,7 +28,7 @@ from simulate.models import (
     RunTest,
 )
 from simulate.services.harness_versioning import diffs
-from simulate.services.harness_versioning.versions import versioning_enabled
+from simulate.services.harness_versioning.versions import pins_runs, versioning_enabled
 from simulate.services.hosted_harness import HostedHarnessError
 
 logger = logging.getLogger(__name__)
@@ -61,10 +61,26 @@ _SOURCE_FACTS = {
 _PROMPT_KINDS = ("provider", "phone", "livekit")
 
 
-def versioning_flags() -> dict[str, bool]:
+def versioning_flags(
+    environment: HostedHarnessJob | None = None,
+) -> dict[str, bool | str]:
+    """Availability plus persisted readiness when an environment is supplied.
+
+    Callers without an environment retain the two flags. Readiness describes
+    the pins that exist now, not whether a background backfill is running.
+    """
     enabled = versioning_enabled()
     nudges = bool(getattr(settings, "HARNESS_VERSIONING_NUDGES_ENABLED", False))
-    return {"enabled": enabled, "nudges_enabled": enabled and nudges}
+    flags: dict[str, bool | str] = {
+        "enabled": enabled,
+        "nudges_enabled": enabled and nudges,
+    }
+    if environment is not None:
+        if not enabled:
+            flags["state"] = "off"
+        else:
+            flags["state"] = "ready" if pins_runs(environment) else "enabling"
+    return flags
 
 
 def require_versioning() -> None:

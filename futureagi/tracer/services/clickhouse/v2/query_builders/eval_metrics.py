@@ -22,8 +22,9 @@ class EvalMetricsQueryBuilderV2(V2RewriteMixin, EvalMetricsQueryBuilder):
     The legacy ``eval_metrics_hourly`` rollup is fed from the PeerDB eval
     logger and is therefore not authoritative after direct-write cutover.
     Keep the graph on the config/time-pruned authoritative raw table selected
-    by ``CH25_EVAL_LOGGER_TABLE`` until a schema-compatible rollup can preserve
-    the same average-score contract. The surrounding spans read and connection
+    by ``CH25_EVAL_LOGGER_TABLE``. The inherited raw route rejects the direct
+    v2 table while its schema lacks status/skipped_reason; it must not invent
+    completed lifecycle state or fall back to the CDC table or stored rollup. The surrounding spans read and connection
     still use the CH25/V2 path. This is a read-routing change only; it requires
     no DDL.
     """

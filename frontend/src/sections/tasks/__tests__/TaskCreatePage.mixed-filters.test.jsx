@@ -144,6 +144,34 @@ describe("Task Create mixed catalog filter submission", () => {
     axios.post.mockResolvedValue({ data: { result: { id: "task-1" } } });
   });
 
+  it("preserves the sessions row type and configured complete-conversation eval on create", async () => {
+    harness.initialValues = {
+      ...harness.initialValues,
+      rowType: "sessions",
+      runType: "continuous",
+      evalsDetails: [
+        { id: "eval-config-1", mapping: { input: "conversation_complete" } },
+      ],
+    };
+    render(
+      <QueryClientProvider
+        client={
+          new QueryClient({ defaultOptions: { mutations: { retry: false } } })
+        }
+      >
+        <TaskCreatePage />
+      </QueryClientProvider>,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Create task" }));
+    await waitFor(() => expect(axios.post).toHaveBeenCalledTimes(1));
+    const payload = axios.post.mock.calls[0][1];
+    expect(payload.row_type).toBe("sessions");
+    expect(payload.run_type).toBe("continuous");
+    // Mappings are saved on CustomEvalConfig by the picker. Task creation
+    // attaches those persisted configs by ID, not by resubmitting mappings.
+    expect(payload.evals).toEqual(["eval-config-1"]);
+  });
+
   it("creates a valid continuous task after live → row percentage → Historical data → retained live restore", async () => {
     harness.selection = true;
     const live = {

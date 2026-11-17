@@ -1,0 +1,21 @@
+# DISABLED preparation overlay. This R candidate lacks the accepted stage-2
+# public composition and actual EE pair; it must not render MCP as enabled.
+# See deploy/hosted-readiness.json MCP-SOURCE-PAIR, MCP-CN30A, MCP-CATALOGUE.
+# Required later: gateway release first, paired EE revision/contract digest,
+# actual migrations 0052-0057 and vault check, secure state keys, public gateway
+# URL, auth on, writes denied by default, static-credential CN30a acceptance.
+# OAuth/K2/Arcade/approvals/limits and credits activation stay separate gates.
+# Hosted admission must not depend on opaque backend secret contents.
+billing:
+  enforcement: true
+agentccGateway:
+  config:
+    mcp:
+      enabled: false
+      dev_insecure_state: false
+      allow_anonymous_dev: false
+      managed_servers: {}
+      egress:
+        private_allow: []
+    tools:
+      enabled: false

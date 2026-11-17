@@ -1,6 +1,7 @@
 import { test, expect } from '../../lib/fixtures';
 import { flowAnnotation } from '../../lib/flow-meta';
 import { E2E } from '../../lib/env';
+import { ApiError } from '../../lib/api-client';
 
 // GraphViewSet.list/create and GraphCreateSerializer: name is the required create field.
 const GRAPHS = '/agent-playground/graphs/';
@@ -103,7 +104,9 @@ test('AGENT-E2E-002: Agents remain complete across bounded list pages', {
     }, { timeout: UI_READY });
   }
 
-  for (const requestedSize of [101, 100000000]) {
+  // futureagi/common/utils/pagination.py:17-30 clamps accepted sizes to 100;
+  // futureagi/tfc/utils/pagination.py:6 sets the accepted ceiling to 5000.
+  for (const requestedSize of [101, 5000]) {
     await test.step(`page_size=${requestedSize} is capped without losing rows`, async () => {
       const first = (await actor.api.get<GraphPage>(GRAPHS, {
         search: prefix, page_size: requestedSize, page_number: 1,
@@ -125,4 +128,27 @@ test('AGENT-E2E-002: Agents remain complete across bounded list pages', {
       expect(new Set(ids).size).toBe(created.length);
     });
   }
+
+  await test.step('page_size=100000000 is refused with the exact page limit envelope', async () => {
+    // futureagi/agent_playground/views/graph.py:158-159 rejects before listing;
+    // futureagi/tfc/utils/pagination.py:9-15 defines the status, code and sentence.
+    const refused = await actor.api.get<GraphPage>(GRAPHS, {
+      search: prefix, page_size: 100000000, page_number: 1,
+    }).catch((error: unknown) => {
+      if (!(error instanceof ApiError)) throw error;
+      return error;
+    });
+    expect(refused).toBeInstanceOf(ApiError);
+    if (!(refused instanceof ApiError)) throw new Error('Oversized graph request unexpectedly succeeded');
+    await attach('refused-100000000', { status: refused.status, body: refused.body });
+    expect(refused.status).toBe(400);
+    const message = 'The maximum page size is 5000. Fetch more pages to retrieve additional results.';
+    // futureagi/accounts/authentication.py:1498-1504 and tfc/utils/api_errors.py:229-242
+    // preserve the detail list and repeat the public sentence in the envelope.
+    expect(refused.body).toEqual({
+      status: false, type: 'validation_error', code: 'page_size_too_large',
+      detail: message, message, error: message, result: message,
+      details: { detail: [message] },
+    });
+  });
 });

@@ -1,0 +1,45 @@
+# Stigg documents native --transport http with a raw environment API key.
+schema: "connector-manifest/v1#provider"
+app: stigg
+id: api-key
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.stigg.io
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: X-API-KEY
+      secret: true
+      label: Stigg environment API key
+      help: "Use your Stigg environment API key from Integrations > API keys. The key selects the environment; start with a sandbox key. Supply the raw key for the X-API-KEY header."
+      helpUrl: https://docs.stigg.io/api-and-sdks/mcp-server
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_metered
+  source: https://www.stigg.io/pricing
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://docs.stigg.io/api-and-sdks/mcp-server
+    fetchedAt: 2026-11-09
+  - fact: transport.variant
+    url: https://docs.stigg.io/api-and-sdks/ai-terminal
+    fetchedAt: 2026-11-09
+  - fact: auth.kind
+    url: https://docs.stigg.io/api-and-sdks/mcp-server
+    fetchedAt: 2026-11-09
+  - fact: auth.credentialParts
+    url: https://docs.stigg.io/api-and-sdks/mcp-server
+    fetchedAt: 2026-11-09
+x-omega: { oss: exclude }

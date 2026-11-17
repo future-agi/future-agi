@@ -20,6 +20,12 @@ import AddNewDataset from "./AddNewDataset";
 import { defaultSpanFields } from "../common";
 
 const EMPTY_ARRAY = [];
+const SESSION_FIELDS = [
+  { name: "turns", type: "json" },
+  { name: "session_id", type: "text" },
+  { name: "user_id", type: "text" },
+  { name: "metrics", type: "json" },
+];
 const VIRTUAL_FIELDS = [
   { name: "eval_metrics", type: "json" },
   { name: "annotation_metrics", type: "json" },
@@ -31,6 +37,8 @@ const AddDataset = ({
   spanId,
   selectedTraces,
   selectedSpans,
+  selectedSessions,
+  sessionFilters,
   currentTab,
   selectAll,
   onSuccess,
@@ -57,7 +65,7 @@ const AddDataset = ({
         .get(endpoints.project.getObservationSpanField)
         .then((res) => res.data),
     select: (data) => data?.result,
-    enabled: Boolean(actionToDataset),
+    enabled: Boolean(actionToDataset) && currentTab !== "sessions",
   });
 
   // const { data: observationSpan } = useQuery({
@@ -69,6 +77,7 @@ const AddDataset = ({
   // });
 
   const datasetObservationFields = useMemo(() => {
+    if (currentTab === "sessions") return SESSION_FIELDS;
     const matchedFields = observationFields.filter((field) =>
       defaultSpanFields.includes(field.name),
     );
@@ -76,7 +85,7 @@ const AddDataset = ({
     // Virtual fields are computed per-span in the dataset task from EvalLogger
     // and Score; they are not real model fields returned by the backend.
     return [...matchedFields, ...VIRTUAL_FIELDS];
-  }, [observationFields]);
+  }, [observationFields, currentTab]);
 
   const covered = useDrawerCovered(Boolean(actionToDataset));
 
@@ -117,7 +126,9 @@ const AddDataset = ({
 
       {/* Dataset Select */}
       <Typography variant="body2" mb={1} color={theme.palette.text.secondary}>
-        Move this span to a dataset or create one
+        {currentTab === "sessions"
+          ? "Add each session as one row with its ordered conversation turns"
+          : "Move this span to a dataset or create one"}
       </Typography>
       {/* options */}
 
@@ -176,6 +187,8 @@ const AddDataset = ({
           observationFields={datasetObservationFields}
           selectedTraces={selectedTraces}
           selectedSpans={selectedSpans}
+          selectedSessions={selectedSessions}
+          sessionFilters={sessionFilters}
           selectAll={selectAll}
           currentTab={currentTab}
           onSuccess={onSuccess}
@@ -187,6 +200,8 @@ const AddDataset = ({
           observationFields={datasetObservationFields}
           selectedTraces={selectedTraces}
           selectedSpans={selectedSpans}
+          selectedSessions={selectedSessions}
+          sessionFilters={sessionFilters}
           selectAll={selectAll}
           currentTab={currentTab}
           onSuccess={onSuccess}
@@ -202,6 +217,8 @@ AddDataset.propTypes = {
   spanId: PropTypes.string,
   selectedTraces: PropTypes.array,
   selectedSpans: PropTypes.array,
+  selectedSessions: PropTypes.array,
+  sessionFilters: PropTypes.array,
   currentTab: PropTypes.string,
   selectAll: PropTypes.bool,
   onSuccess: PropTypes.func,

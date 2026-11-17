@@ -6,6 +6,7 @@ import Iconify from "src/components/iconify";
 import StatusBadge from "src/components/status-badge/StatusBadge";
 import CustomTooltip from "src/components/tooltip";
 import { PARTIAL_INPUT_WARNING_TYPE } from "src/sections/common/EvalsTasks/warningTypes";
+import { RECORDED_VERSION_TOOLTIP } from "./evalVersionCopy";
 
 export const ScoreCell = ({ value }) => {
   if (value == null)
@@ -82,7 +83,7 @@ export const DEFAULT_COLUMN_CONFIG = [
   },
   {
     value: "version",
-    label: "Version",
+    label: "Recorded version",
     enabled: true,
     is_visible: true,
     order_index: 5,
@@ -333,15 +334,14 @@ const renderVersion = ({ getValue }) => {
         —
       </Typography>
     );
-  const label =
-    typeof v === "number" || !String(v).startsWith("v") ? `v${v}` : String(v);
   return (
     <Typography
       variant="s3"
       noWrap
+      title={RECORDED_VERSION_TOOLTIP}
       sx={{ color: "text.tertiary", fontVariantNumeric: "tabular-nums" }}
     >
-      {label}
+      {`Recorded ${typeof v === "number" || !String(v).startsWith("v") ? `v${v}` : String(v)}`}
     </Typography>
   );
 };
@@ -427,7 +427,12 @@ const COLUMN_DEFS = {
   input: { meta: { flex: 2 }, minSize: 200, cell: renderInput },
   reason: { meta: { flex: 1.5 }, minSize: 150, cell: renderReason },
   source: { size: 100, cell: renderSource },
-  version: { size: 80, cell: renderVersion },
+  version: {
+    header: "Recorded version",
+    description: RECORDED_VERSION_TOOLTIP,
+    size: 160,
+    cell: renderVersion,
+  },
   feedback: {
     header: "",
     size: 50,
@@ -458,10 +463,13 @@ export const useColumns = (columnConfig) =>
           id: c.value,
           accessorKey: c.value,
           header: def.header !== undefined ? def.header : c.label,
+          ...(def.description ? { description: def.description } : {}),
           ...(def.size != null ? { size: def.size } : {}),
           ...(def.minSize != null ? { minSize: def.minSize } : {}),
           ...(def.meta ? { meta: def.meta } : {}),
-          ...(def.enableSorting === false ? { enableSorting: false } : {}),
+          // Usage logs always come back newest first and the endpoint takes
+          // no sort, so no header may look sortable.
+          enableSorting: false,
           cell: def.cell,
         };
       });

@@ -479,7 +479,11 @@ def test_r02_c19_detail_and_version_readback_under_denial():
         updated_at=timezone.now(),
     )
     with (
-        patch.object(EvalTemplate.no_workspace_objects, "get", return_value=template),
+        patch(
+            "model_hub.views.separate_evals._get_accessible_eval_template_for_request",
+            autospec=True,
+            return_value=template,
+        ),
         patch.object(EvalTemplateVersion.objects, "filter") as versions,
         patch.object(EvalTemplateVersion.objects, "get_default", return_value=None),
         patch("tfc.ee_gates._jev_denied_off_cloud", return_value=True),
@@ -740,7 +744,8 @@ def test_byok_playground_without_a_typesafe_key_says_which_key_to_add(
 @pytest.mark.django_db(transaction=True)
 def test_playground_bills_jev_with_the_metering_events(auth_client, user, jev_gateway):
     """One Jev billing shape on every path: the playground emits the
-    ee.jev.metering event, keyed to its run, and returns a string reason."""
+    ee.jev.metering event, its charge keyed to its run alone, and returns a
+    string reason."""
     import httpx
 
     from ee.jev.metering import usage_event_id
@@ -770,7 +775,7 @@ def test_playground_bills_jev_with_the_metering_events(auth_client, user, jev_ga
     billing = BillingConfig.get()
     assert event.event_type == "jev_evaluator"
     assert event.amount == billing.calculate_ai_credits(billing.get_eval_per_run_fee())
-    assert event.event_id == usage_event_id(result["log_id"], 1)
+    assert event.event_id == usage_event_id(result["log_id"])
     assert event.org_id == str(user.organization.id)
     assert event.properties["provider"] == "typesafe"
     assert event.properties["requested_model"] == "jev-latest"

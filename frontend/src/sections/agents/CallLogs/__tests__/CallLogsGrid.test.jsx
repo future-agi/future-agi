@@ -36,6 +36,10 @@ vi.mock("ag-grid-react", async () => {
 vi.mock("src/styles/clean-data-table.css", () => ({}));
 vi.mock("@tanstack/react-query", async (importOriginal) => ({
   ...(await importOriginal()),
+  // The empty project state reads the project's provider; these tests have
+  // no QueryClientProvider, so that read settles with no provider.
+  // CallLogsGrid.voiceEmptyState.test.jsx covers what it shows.
+  useQuery: () => ({ data: undefined }),
   useQueryClient: () => queryClientMock,
 }));
 vi.mock("src/hooks/use-ag-theme", () => ({

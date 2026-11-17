@@ -1,0 +1,31 @@
+{
+  "undispatched": {
+    "agent_id": "",
+    "agent_run_id": "",
+    "api_key_id": "",
+    "attempts": "[{\"attempt_id\":\"01M605YDX8GM7KXGZ9NK0ZEJZP.1\",\"kind\":\"primary\",\"provider\":\"openrouter\",\"model\":\"openai/o1-pro\",\"credential_type\":\"managed\",\"upstream_micros\":50,\"billed_micros\":53,\"outcome\":\"error\"},{\"attempt_id\":\"01M605YDX8GM7KXGZ9NK0ZEJZP.2\",\"kind\":\"model_fallback\",\"provider\":\"openrouter\",\"model\":\"google/gemini-3.5-flash\",\"credential_type\":\"managed\",\"upstream_micros\":0,\"billed_micros\":0,\"outcome\":\"skipped\"}]",
+    "billed_micros": "53",
+    "catalog_snapshot_id": "f88c97c49b53",
+    "cost_source": "provider_reported",
+    "endpoint_id": "openrouter:google-vertex/global/flex:google/gemini-3.5-flash",
+    "generation_id": "01M605YDX8GM7KXGZ9NK0ZEJZP",
+    "hold_micros": "1693692",
+    "kind": "spend",
+    "landed_micros": "50",
+    "markup_bps": "500",
+    "markup_micros": "3",
+    "model": "google/gemini-3.5-flash",
+    "org_id": "org-m",
+    "policy_version": "unversioned",
+    "processing_fee_bps": "0",
+    "provider": "openrouter",
+    "request_id": "01M605YDX8GM7KXGZ9NK0ZEJZP",
+    "served_upstream_provider": "",
+    "ts_ms": "1793155086253",
+    "upstream_fee_bps": "0",
+    "upstream_key_id": "",
+    "upstream_micros": "50",
+    "usage_estimated": "0",
+    "v": "1"
+  }
+}

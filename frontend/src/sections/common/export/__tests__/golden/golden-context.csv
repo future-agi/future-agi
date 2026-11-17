@@ -1,0 +1,7 @@
+# Golden fixture · v3 split smoke
+row_id,customer_message,conversation,expected_reply,expected_tool_calls,order_total,Groundedness,Correct?,row_metadata
+r-1,"Order A-3920 says ""delivered"", but nothing arrived, sorry",[],"Sorry for the wait.
+A-3920 is delayed; the new estimate is Thursday.","[{""name"":""lookup_order"",""args"":{""order_id"":""A-3920""}}]",64,0.41,true,"{""channel"":""chat"",""ticket_id"":""T-1001""}"
+r-2,"  Où est ma commande ? — Zoë  ","[{""role"":""user"",""content"":""I wrote last week about A-7781.""},{""role"":""assistant"",""content"":""Thanks for your patience.""}]",,[],-3,1,false,
+r-3,"Refund
+please, ✓ 日本",,"Refunded $12.50, 5–7 business days.",,,,,"{""nested"":{""a"":[1,2]}}"

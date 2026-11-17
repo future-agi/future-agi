@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: parallel-task
+version: 1.0.0
+name: Parallel Task
+description: "Deep research reports and dataset enrichment, run as async tasks."
+vendor:
+  name: Parallel
+  domains: [parallel.ai]
+eeCategory: research
+group: other
+categories: [research, deep-research]
+tags: [enrichment, research-tasks]
+docsUrl: https://docs.parallel.ai/integrations/mcp/task-mcp
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://docs.parallel.ai/integrations/mcp/task-mcp
+    fetchedAt: 2026-10-21

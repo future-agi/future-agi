@@ -1,0 +1,7 @@
+{
+  "synthetic": true,
+  "liveValidated": false,
+  "deployment": "off",
+  "limitations": "Synthetic fixtures only; app-authorized presentations, with bounded whole-presentation reads.",
+  "scopeNotes": "drive.file: non-sensitive, only app-authorized files"
+}

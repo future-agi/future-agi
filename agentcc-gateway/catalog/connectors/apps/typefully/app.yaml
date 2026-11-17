@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: typefully
+version: 1.0.0
+name: Typefully
+description: "Draft, edit, schedule, and manage social posts, media, tags, and publishing queues."
+vendor:
+  name: Typefully
+  domains: [typefully.com]
+eeCategory: communication
+group: other
+categories: [communication, social]
+tags: [posts, automation]
+docsUrl: https://support.typefully.com/en/articles/13128440-typefully-mcp-server
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://support.typefully.com/en/articles/13128440-typefully-mcp-server
+    fetchedAt: 2026-11-09

@@ -1,0 +1,36 @@
+{
+  "about": "One period of two organizations' requests, as the gateway counts them and as the control plane's spend summary (GET /agentcc/spend-summary/) reports them. Read by the Django view's test (the view writes summary for these logs) and by the gateway's restart tests (counting requests before a restart equals seeding summary after it). <ORG_A> and <ORG_B> stand for the tests' organization ids. A key's budget level is its name; a user's is the request's user and the key's owner (each once); a team is the key's team; a tag is <name>:<value>.",
+  "keys": [
+    {"org": "<ORG_A>", "gateway_key_id": "gk-restart-a1", "name": "svc-a", "owner": "alice"},
+    {"org": "<ORG_A>", "gateway_key_id": "gk-restart-a2", "name": "svc-a", "owner": "carol"},
+    {"org": "<ORG_B>", "gateway_key_id": "gk-restart-b1", "name": "svc-b", "owner": "bob"}
+  ],
+  "requests": [
+    {"request_id": "restart-1", "org": "<ORG_A>", "key": "gk-restart-a1", "user": "alice", "team": "eng", "tags": {"project": "atlas"}, "model": "gpt-4o", "cost": 4.0, "logged_key_fields": true},
+    {"request_id": "restart-2", "org": "<ORG_A>", "key": "gk-restart-a2", "user": "dave", "team": "eng", "tags": {}, "model": "gpt-4o", "cost": 2.0, "logged_key_fields": true},
+    {"request_id": "restart-3", "org": "<ORG_A>", "key": "gk-restart-a1", "user": "alice", "team": "", "tags": {"env": "prod"}, "model": "gpt-4o", "cost": 1.5, "logged_key_fields": true},
+    {"request_id": "restart-4", "org": "<ORG_A>", "key": "gk-restart-a1", "user": "alice", "team": "", "tags": {}, "model": "gpt-4o", "cost": 0.5, "logged_key_fields": false},
+    {"request_id": "restart-5", "org": "<ORG_B>", "key": "gk-restart-b1", "user": "bob", "team": "eng", "tags": {"project": "atlas"}, "model": "gpt-4o", "cost": 3.0, "logged_key_fields": true}
+  ],
+  "summary": {
+    "period": "monthly",
+    "orgs": {
+      "<ORG_A>": {
+        "total_spend": 8.0,
+        "per_key": {"svc-a": 8.0},
+        "per_user": {"alice": 6.0, "dave": 2.0, "carol": 2.0},
+        "per_model": {"gpt-4o": 8.0},
+        "per_team": {"eng": 6.0},
+        "per_tag": {"project:atlas": 4.0, "env:prod": 1.5}
+      },
+      "<ORG_B>": {
+        "total_spend": 3.0,
+        "per_key": {"svc-b": 3.0},
+        "per_user": {"bob": 3.0},
+        "per_model": {"gpt-4o": 3.0},
+        "per_team": {"eng": 3.0},
+        "per_tag": {"project:atlas": 3.0}
+      }
+    }
+  }
+}

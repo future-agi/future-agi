@@ -6,9 +6,19 @@ import {
   useFakeMutation,
 } from "./agentVersionsTestUtils";
 
+const { privateGithubAvailable } = vi.hoisted(() => ({
+  privateGithubAvailable: vi.fn(() => undefined),
+}));
+
 vi.mock("src/api/simulate-environments/versions", async () => ({
   ...(await vi.importActual("src/api/simulate-environments/versions")),
   useCreateAgentVersion: vi.fn(() => useFakeMutation("create")),
+}));
+// The deployment's answer to "are private GitHub sources offered here?":
+// undefined (not known yet) unless a test says otherwise.
+vi.mock("../../../hooks/usePrivateGithubAvailable", async (importOriginal) => ({
+  ...(await importOriginal()),
+  default: () => privateGithubAvailable(),
 }));
 vi.mock("src/api/harness/harness", () => ({
   uploadHarnessSource: vi.fn(),
@@ -64,6 +74,8 @@ beforeEach(() => {
   resetMutations();
   uploadHarnessSource.mockReset();
   prepareSourceFolder.mockReset();
+  privateGithubAvailable.mockReset();
+  privateGithubAvailable.mockReturnValue(undefined);
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -101,6 +113,70 @@ describe("AgentSourceChange", () => {
     expect(
       screen.getByText("Private repositories aren't watched for new commits."),
     ).toBeInTheDocument();
+  });
+
+  describe("where the deployment no longer reads private GitHub repositories", () => {
+    const UNAVAILABLE =
+      "Private GitHub repositories are not available on Future AGI cloud. Upload the code to keep using this environment.";
+    const github = (visibility) => ({
+      source: {
+        kind: "github",
+        repository: "acme/agent",
+        ref: "main",
+        visibility,
+      },
+    });
+
+    it("says so on a private repository's source, in one sentence", () => {
+      privateGithubAvailable.mockReturnValue(false);
+      renderFor(github("private"));
+
+      expect(
+        screen.getByTestId("private-github-unavailable"),
+      ).toHaveTextContent(UNAVAILABLE);
+      expect(screen.getByText(UNAVAILABLE)).toBeVisible();
+      expect(
+        screen.getByText("Built from acme/agent @ main"),
+      ).toBeInTheDocument();
+    });
+
+    it("says nothing more on a public repository's source", () => {
+      privateGithubAvailable.mockReturnValue(false);
+      renderFor(github("public"));
+
+      expect(
+        screen.getByText("Watching acme/agent @ main"),
+      ).toBeInTheDocument();
+      expect(screen.queryByTestId("private-github-unavailable")).toBeNull();
+      expect(screen.queryByText(UNAVAILABLE)).toBeNull();
+    });
+
+    it("says nothing more on an uploaded source", () => {
+      privateGithubAvailable.mockReturnValue(false);
+      renderFor({ source: { kind: "archive" } });
+
+      expect(screen.queryByTestId("private-github-unavailable")).toBeNull();
+      expect(screen.queryByText(UNAVAILABLE)).toBeNull();
+    });
+
+    it.each([
+      ["offers private repositories", true],
+      ["hasn't answered yet", undefined],
+    ])(
+      "says nothing more on a private repository where the deployment %s",
+      (_, available) => {
+        privateGithubAvailable.mockReturnValue(available);
+        renderFor(github("private"));
+
+        expect(screen.queryByTestId("private-github-unavailable")).toBeNull();
+        expect(screen.queryByText(UNAVAILABLE)).toBeNull();
+        expect(
+          screen.getByText(
+            "Private repositories aren't watched for new commits.",
+          ),
+        ).toBeInTheDocument();
+      },
+    );
   });
 
   it("says a GitHub source pinned to a commit isn't watched", () => {

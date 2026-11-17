@@ -1,5 +1,5 @@
 /* eslint-disable react/prop-types */
-import React, { useState, useMemo, useCallback } from "react";
+import React, { useState, useMemo, useEffect, useRef } from "react";
 import PropTypes from "prop-types";
 import {
   Box,
@@ -15,6 +15,7 @@ import {
 import Iconify from "src/components/iconify";
 import { enqueueSnackbar } from "notistack";
 import {
+  useGetSharedLinkDetail,
   useAddSharedLinkAccess,
   useRemoveSharedLinkAccess,
 } from "src/api/shared-links";
@@ -114,11 +115,19 @@ const AccessOption = ({
   </Box>
 );
 
+const isGrant = (entry) =>
+  Boolean(entry?.id) &&
+  typeof entry.email === "string" &&
+  Boolean(entry.email.trim());
+const normalizedEmail = (email) => email.trim().toLowerCase();
+
 /* ── ShareDialog ──────────────────────────────── */
 
 const ShareDialog = ({ open, onClose, resourceType, resourceId }) => {
   const [emailInput, setEmailInput] = useState("");
-  const [localEmails, setLocalEmails] = useState([]); // optimistic local ACL
+  const [pendingInvite, setPendingInvite] = useState(null);
+  const [removingId, setRemovingId] = useState(null);
+  const [aclChanges, setAclChanges] = useState([]);
 
   const generation = useDialogGeneration(
     open,
@@ -134,6 +143,29 @@ const ShareDialog = ({ open, onClose, resourceType, resourceId }) => {
   });
   const { shareLink, loading } = link;
   const shareLinkReady = access.ready;
+  const linkId = shareLink?.id;
+  const detail = useGetSharedLinkDetail(open ? linkId || null : null);
+
+  // Each open/resource/link has its own ACL work. A stale callback must not
+  // populate, notify, or unlock a later session (including after unmount).
+  const aclScope = useMemo(
+    () => ({ open, resourceType, resourceId, linkId }),
+    [open, resourceType, resourceId, linkId],
+  );
+  const currentAclScope = useRef(aclScope);
+  const aclOperation = useRef(false);
+  currentAclScope.current = aclScope;
+  useEffect(() => {
+    currentAclScope.current = aclScope;
+    aclOperation.current = false;
+    setEmailInput("");
+    setPendingInvite(null);
+    setRemovingId(null);
+    setAclChanges([]);
+    return () => {
+      if (currentAclScope.current === aclScope) currentAclScope.current = null;
+    };
+  }, [aclScope]);
 
   // Only a token link is shareable: a dashboard page URL needs sign-in.
   const shareUrl = link.tokenUrl || null;
@@ -151,31 +183,105 @@ const ShareDialog = ({ open, onClose, resourceType, resourceId }) => {
   const removeAccessMutation = useRemoveSharedLinkAccess();
 
   const allEmails = useMemo(() => {
-    const accessList = shareLink?.access_list || [];
-    const backendEmails = accessList.map((e) => ({
-      id: e.id,
-      email: e.email,
-      source: "server",
-    }));
-    const localOnly = localEmails
-      .filter((e) => !backendEmails.some((b) => b.email === e))
-      .map((e) => ({ id: e, email: e, source: "local" }));
-    return [...backendEmails, ...localOnly];
-  }, [shareLink, localEmails]);
+    const accessList =
+      linkId && detail.data?.id === linkId ? detail.data.access_list : [];
+    const grants = new Map(
+      (Array.isArray(accessList) ? accessList : [])
+        .filter(isGrant)
+        .map((entry) => [entry.id, entry]),
+    );
+    // Mutation acknowledgements carry real IDs. Keep them until a newer
+    // successful detail read supersedes them, not just until any rerender.
+    aclChanges.forEach((change) => {
+      if (change.scope !== aclScope) return;
+      if (
+        !detail.isError &&
+        detail.data?.id === linkId &&
+        detail.dataUpdatedAt > change.at
+      )
+        return;
+      if (change.removed) grants.delete(change.grant.id);
+      else grants.set(change.grant.id, change.grant);
+    });
+    return [...grants.values()];
+  }, [
+    detail.data,
+    detail.dataUpdatedAt,
+    detail.isError,
+    linkId,
+    aclChanges,
+    aclScope,
+  ]);
 
-  const handleAddEmail = useCallback(() => {
-    const email = emailInput.trim().toLowerCase();
+  const rememberGrant = (grant, removed = false) => {
+    setAclChanges((previous) => [
+      ...previous.filter(
+        (change) => change.scope === aclScope && change.grant.id !== grant.id,
+      ),
+      { scope: aclScope, grant, removed, at: Date.now() },
+    ]);
+  };
+  const aclBusy = Boolean(pendingInvite || removingId);
+  const isCurrentAcl = () => currentAclScope.current === aclScope;
+
+  const confirmInvitation = (grant) => {
+    rememberGrant(grant);
+    setPendingInvite(null);
+    aclOperation.current = false;
+    enqueueSnackbar(`Shared with ${grant.email}`, {
+      variant: "success",
+      autoHideDuration: 2000,
+    });
+  };
+
+  // A duplicate POST returns []; an error may also have committed. Neither
+  // outcome supplies a removable grant until a successful detail read does.
+  const recheckInvitation = async (email) => {
+    if (!isCurrentAcl()) return;
+    setPendingInvite({ email, unknown: false });
+    try {
+      const result = await detail.refetch();
+      if (!isCurrentAcl()) return;
+      if (
+        result?.isError ||
+        result?.data?.id !== linkId ||
+        !Array.isArray(result?.data?.access_list)
+      ) {
+        throw new Error("Unconfirmed invitation");
+      }
+      const grant = result.data.access_list.find(
+        (entry) => isGrant(entry) && normalizedEmail(entry.email) === email,
+      );
+      if (grant) confirmInvitation(grant);
+      else {
+        setPendingInvite(null);
+        aclOperation.current = false;
+        enqueueSnackbar("Invitation was not confirmed. Please try again.", {
+          variant: "warning",
+        });
+      }
+    } catch {
+      if (!isCurrentAcl()) return;
+      setPendingInvite({ email, unknown: true });
+      enqueueSnackbar("Couldn't confirm the invitation. Recheck access.", {
+        variant: "warning",
+      });
+    }
+  };
+
+  const handleAddEmail = () => {
+    if (!open || aclOperation.current) return;
+    const email = normalizedEmail(emailInput);
     if (!email || !email.includes("@")) {
       if (email)
         enqueueSnackbar("Enter a valid email address", { variant: "warning" });
       return;
     }
-    if (allEmails.some((e) => e.email === email)) {
+    if (allEmails.some((e) => normalizedEmail(e.email) === email)) {
       enqueueSnackbar("Already shared with this email", { variant: "info" });
       setEmailInput("");
       return;
     }
-    const linkId = shareLink?.id;
     if (!linkId || !shareLinkReady) {
       enqueueSnackbar(
         loading
@@ -186,37 +292,68 @@ const ShareDialog = ({ open, onClose, resourceType, resourceId }) => {
       return;
     }
 
-    // Try backend, always add locally for instant feedback
-    setLocalEmails((prev) => [...prev, email]);
+    // Serialize ACL writes: per-call mutation callbacks otherwise only run
+    // for the last consecutive mutation, stranding earlier pending invites.
+    aclOperation.current = true;
+    setPendingInvite({ email, unknown: false });
     setEmailInput("");
-    enqueueSnackbar(`Shared with ${email}`, {
-      variant: "success",
-      autoHideDuration: 2000,
-    });
+    addAccessMutation.mutate(
+      { linkId, emails: [email] },
+      {
+        onSuccess: (response) => {
+          if (!isCurrentAcl()) return;
+          const created = response?.data?.result;
+          const grant =
+            Array.isArray(created) &&
+            created.find(
+              (entry) =>
+                isGrant(entry) && normalizedEmail(entry.email) === email,
+            );
+          if (grant) confirmInvitation(grant);
+          else return recheckInvitation(email);
+        },
+        onError: () => {
+          if (isCurrentAcl()) return recheckInvitation(email);
+        },
+      },
+    );
+  };
 
-    addAccessMutation.mutate({ linkId, emails: [email] });
-  }, [
-    emailInput,
-    allEmails,
-    shareLink,
-    shareLinkReady,
-    loading,
-    addAccessMutation,
-  ]);
-
-  const handleRemoveEmail = useCallback(
-    (entry) => {
-      if (entry.source === "local") {
-        setLocalEmails((prev) => prev.filter((e) => e !== entry.email));
-      } else if (shareLink?.id) {
-        removeAccessMutation.mutate({
-          linkId: shareLink.id,
-          accessId: entry.id,
-        });
-      }
-    },
-    [shareLink, removeAccessMutation],
-  );
+  const handleRemoveEmail = (entry) => {
+    if (
+      !open ||
+      !linkId ||
+      !shareLinkReady ||
+      aclOperation.current ||
+      !isGrant(entry)
+    )
+      return;
+    aclOperation.current = true;
+    setRemovingId(entry.id);
+    removeAccessMutation.mutate(
+      { linkId, accessId: entry.id },
+      {
+        onSuccess: () => {
+          if (!isCurrentAcl()) return;
+          rememberGrant(entry, true);
+          setRemovingId(null);
+          aclOperation.current = false;
+        },
+        onError: () => {
+          if (!isCurrentAcl()) return;
+          setRemovingId(null);
+          aclOperation.current = false;
+          enqueueSnackbar(
+            "Couldn't confirm removal. Recheck access or try again.",
+            { variant: "warning" },
+          );
+          // A lost DELETE response is not evidence of rollback. Refresh the
+          // authoritative list, but never hide the row merely on failure.
+          detail.refetch?.().catch(() => {});
+        },
+      },
+    );
+  };
 
   const handleKeyDown = (e) => {
     if (e.key === "Enter") {
@@ -454,7 +591,7 @@ const ShareDialog = ({ open, onClose, resourceType, resourceId }) => {
               variant="contained"
               size="small"
               onClick={handleAddEmail}
-              disabled={!emailInput.trim() || !shareLinkReady}
+              disabled={!emailInput.trim() || !shareLinkReady || aclBusy}
               sx={{
                 flexShrink: 0,
                 bgcolor: "primary.main",
@@ -465,6 +602,54 @@ const ShareDialog = ({ open, onClose, resourceType, resourceId }) => {
               Invite
             </Button>
           </Stack>
+
+          {pendingInvite && (
+            <Stack
+              direction="row"
+              alignItems="center"
+              spacing={1}
+              role="status"
+              sx={{ my: 1 }}
+            >
+              <Box sx={{ flex: 1 }}>
+                <Typography sx={{ fontSize: 12 }}>
+                  {pendingInvite.email}
+                </Typography>
+                <Typography sx={{ fontSize: 12, color: "text.disabled" }}>
+                  {pendingInvite.unknown
+                    ? "Invitation not confirmed"
+                    : "Pending invitation"}
+                </Typography>
+              </Box>
+              {pendingInvite.unknown && (
+                <Button
+                  size="small"
+                  onClick={() => recheckInvitation(pendingInvite.email)}
+                >
+                  Recheck invitation
+                </Button>
+              )}
+            </Stack>
+          )}
+          {detail.isError && (
+            <Stack
+              direction="row"
+              alignItems="center"
+              spacing={1}
+              role="status"
+            >
+              <Typography sx={{ fontSize: 12, color: "warning.dark" }}>
+                {"Couldn't load people with access."}
+              </Typography>
+              <Button
+                size="small"
+                disabled={aclBusy}
+                onClick={() => detail.refetch().catch(() => {})}
+              >
+                Recheck access
+              </Button>
+            </Stack>
+          )}
 
           {/* ── People with access ────────────── */}
           {allEmails.length > 0 && (
@@ -537,19 +722,24 @@ const ShareDialog = ({ open, onClose, resourceType, resourceId }) => {
                         {entry.email}
                       </Typography>
                       <Typography sx={{ fontSize: 12, color: "text.disabled" }}>
-                        Can view
+                        {removingId === entry.id
+                          ? "Removing access…"
+                          : "Can view"}
                       </Typography>
                     </Box>
                   </Stack>
                   <Tooltip title="Remove access">
-                    <IconButton
-                      size="small"
-                      aria-label={`Remove access for ${entry.email}`}
-                      onClick={() => handleRemoveEmail(entry)}
-                      sx={{ opacity: 0.4, "&:hover": { opacity: 1 } }}
-                    >
-                      <Iconify icon="solar:close-linear" width={14} />
-                    </IconButton>
+                    <span>
+                      <IconButton
+                        size="small"
+                        aria-label={`Remove access for ${entry.email}`}
+                        onClick={() => handleRemoveEmail(entry)}
+                        disabled={!shareLinkReady || aclBusy}
+                        sx={{ opacity: 0.4, "&:hover": { opacity: 1 } }}
+                      >
+                        <Iconify icon="solar:close-linear" width={14} />
+                      </IconButton>
+                    </span>
                   </Tooltip>
                 </Stack>
               ))}

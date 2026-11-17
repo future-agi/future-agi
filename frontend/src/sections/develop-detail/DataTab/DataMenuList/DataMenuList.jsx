@@ -24,6 +24,7 @@ import { FormSearchSelectFieldState } from "src/components/FromSearchSelectField
 import { useDevelopSelectedRowsStoreShallow } from "../../states";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
+import { getSafeActionErrorMessage } from "src/utils/errorUtils";
 
 const StyledFormControl = styled(FormControl)({
   width: "100%",
@@ -40,6 +41,7 @@ const DataMenuList = ({
   const [selectedOption, setSelectedOption] = useState("new");
   const theme = useTheme();
   const [selectedDatasetId, setSelectedDatasetId] = useState("");
+  const [actionError, setActionError] = useState("");
   const { selectAll, toggledNodes } = useDevelopSelectedRowsStoreShallow(
     (s) => ({
       selectAll: s.selectAll,
@@ -81,11 +83,13 @@ const DataMenuList = ({
     setOpenDialog(false);
     setSelectedOption("new");
     setSelectedDatasetId("");
+    setActionError("");
     reset(); // Reset form values
   };
 
   const handleOptionChange = (event) => {
     setSelectedOption(event.target.value);
+    setActionError("");
     if (event.target.value === "new") {
       setSelectedDatasetId("");
     } else {
@@ -153,13 +157,25 @@ const DataMenuList = ({
     };
   }, [theme]);
 
+  // The dialog closes once the rows are in. A refused or failed request keeps
+  // it open with what was typed or picked, and says why above the actions
+  // (a validation reason the server wrote for users; never raw server text).
+  const showFailure = (what) => (error) => {
+    const reason = getSafeActionErrorMessage(error, "");
+    setActionError(reason ? `${what}: ${reason}` : `${what}. Try again.`);
+  };
+
   const handleAction = () => {
+    setActionError("");
     if (selectedOption === "new") {
       setName(watchedDatasetName);
       trackEvent(Events.addRowToDatasetSuccessful, {
         [PropertyName.method]: "new dataset",
       });
-      onCreateDatasetRows(watchedDatasetName);
+      onCreateDatasetRows(watchedDatasetName, {
+        onSuccess: () => handleClose(),
+        onError: showFailure(`Couldn't create "${watchedDatasetName.trim()}"`),
+      });
     } else {
       setTargetDatasetId(selectedDatasetId);
       const selectedDataset = datasetList?.find(
@@ -174,9 +190,14 @@ const DataMenuList = ({
           select_all: selectAll,
         },
       });
-      onMergeRows(selectedDatasetId);
+      const target = selectedDataset?.name
+        ? `"${selectedDataset.name}"`
+        : "that dataset";
+      onMergeRows(selectedDatasetId, {
+        onSuccess: () => handleClose(),
+        onError: showFailure(`Couldn't add the rows to ${target}`),
+      });
     }
-    handleClose();
   };
 
   const isActionDisabled = () => {
@@ -285,6 +306,11 @@ const DataMenuList = ({
                 </StyledFormControl>
               </ShowComponent>
             </Box>
+            {actionError && (
+              <Typography role="alert" variant="body2" color="error.main">
+                {actionError}
+              </Typography>
+            )}
           </Box>
         </DialogContent>
       </CustomDialog>

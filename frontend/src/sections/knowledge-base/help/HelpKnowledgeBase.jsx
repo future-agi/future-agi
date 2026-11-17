@@ -1,3 +1,4 @@
+import ExternalContentFrame from "src/components/external-content/ExternalContentFrame";
 import { Box, Button, Link, Typography } from "@mui/material";
 import PropTypes from "prop-types";
 import React from "react";
@@ -33,7 +34,7 @@ const HelpKnowledgeBase = ({ helpIcon = false, onCreateKnowledge }) => {
             width: "100%",
           }}
         >
-          <iframe
+          <ExternalContentFrame
             src="https://demo.arcade.software/x7sLrkNnZixgEQB9NsFE?embed&embed_mobile=inline&embed_desktop=inline&show_copy_link=true"
             title="Knowledge Base"
             frameBorder="0"

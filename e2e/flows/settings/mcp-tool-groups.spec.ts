@@ -16,12 +16,12 @@ interface ToolListEnvelope {
   result: { tools: { name: string; category: string }[] };
 }
 
-test('SET-E2E-001: admin restricts MCP tool groups for connected clients', {
+test("SET-E2E-001: a person turns off a tool group for their own editor's MCP tools", {
   tag: ['@flow', '@smoke'],
   annotation: flowAnnotation({
     id: 'SET-E2E-001', area: 'settings',
-    userGoal: 'An admin restricts which MCP tool groups are available to connected clients',
-    steps: ['open Settings MCP Server', 'expand Tool Groups',
+    userGoal: "A person chooses which MCP tool groups their own editor gets in this workspace, without changing other members' editors",
+    steps: ['open Settings MCP Server', "expand Your editor's tools in this workspace",
             'turn off Datasets & Knowledge Bases', 'save the selection'],
     backendChecks: [
       'GET /mcp/config/tool-groups/ equals the initial group set minus datasets',
@@ -60,10 +60,17 @@ test('SET-E2E-001: admin restricts MCP tool groups for connected clients', {
     await expect(page.getByText('MCP Server', { exact: true }).first())
       .toBeVisible({ timeout: UI_READY });
 
-    await page.getByRole('button', { name: /Tool Groups/i }).click();
+    // The section is a collapsed accordion named for the person's own editor in this workspace (e0db1ef7).
+    const section = page.getByRole('button', { name: /^Your editor's tools in / });
+    await expect(section).toBeVisible({ timeout: UI_READY });
+    if ((await section.getAttribute('aria-expanded')) !== 'true') await section.click();
+    await expect(section).toHaveAttribute('aria-expanded', 'true', { timeout: UI_READY });
+    await expect(page.getByText("Only affects your own editor. It does not change other members' editors."))
+      .toBeVisible({ timeout: UI_READY });
+    // One row per group: its name and its switch, which reads as a checkbox.
     const datasetsRow = page.locator('div').filter({
-      hasText: /^Datasets & Knowledge Bases$/,
-    }).filter({ has: page.getByRole('checkbox') });
+      has: page.getByText('Datasets & Knowledge Bases', { exact: true }),
+    }).filter({ has: page.getByRole('checkbox') }).last();
     await expect(datasetsRow.getByRole('checkbox')).toBeChecked({ timeout: UI_READY });
     await datasetsRow.getByRole('checkbox').click();
     await expect(datasetsRow.getByRole('checkbox')).not.toBeChecked({ timeout: UI_READY });

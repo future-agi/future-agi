@@ -59,8 +59,20 @@ def observe_status(installation, state, *, now=None) -> StatusObservation:
         fresh.check_ownership()
         config = fresh.config(refresh=True)
         services = fresh.futureagi_services(config)
+        definitions = config.get('services') or {}
+        # Only declared completion dependencies are jobs; restart=no alone
+        # must not hide a stopped long-lived replica. Compose defaults to no restart.
+        jobs = set()
+        for service in definitions.values():
+            dependencies = service.get('depends_on') or {}
+            if isinstance(dependencies, dict):
+                jobs.update(name for name, dependency in dependencies.items()
+                            if isinstance(dependency, dict)
+                            and dependency.get('condition') == 'service_completed_successfully'
+                            and (definitions.get(name) or {}).get('restart', 'no') == 'no')
         containers = [c for c in fresh.containers() if not c.get('oneoff')]
         components = []
+        live = False
         for component in sorted({s['component'] for s in services} & set(COMPONENT_VARIABLES)):
             names = {s['service'] for s in services if s['component'] == component}
             replicas = [c for c in containers if c['service'] in names]
@@ -69,16 +81,21 @@ def observe_status(installation, state, *, now=None) -> StatusObservation:
             for container in replicas:
                 info = fresh.image(container.get('image_id') or '')
                 version = _version((info or {}).get('version'))
-                if version is None or container.get('status') != 'running':
+                is_running = container.get('status') == 'running'
+                completed = (container['service'] in jobs and container.get('status') == 'exited'
+                             and container.get('exit_code') == 0)
+                if version is None or not (is_running or completed):
                     known = False
                 else:
                     versions.add(version)
+                    live = live or is_running
             selected = {_version(s['ref'].tag) for s in services if s['component'] == component}
             components.append({'component': component,
                                'selected_version': next(iter(selected)) if len(selected) == 1 else None,
                                'observed_versions': sorted(versions, key=parse_version) if known else [],
                                'observation': 'known' if known else 'unknown'})
-        known = bool(components) and all(c['observation'] == 'known' for c in components)
+        # Completed jobs attest their image versions, not a running installation.
+        known = live and bool(components) and all(c['observation'] == 'known' for c in components)
         running = {v for c in components for v in c['observed_versions']}
         selected = {c['selected_version'] for c in components}
         runtime = 'consistent' if known and len(running) == 1 else 'mixed' if known else 'unknown'

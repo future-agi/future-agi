@@ -13,6 +13,9 @@ import {
 // not MUI's default 56px list-icon gutter.
 const ICON_SX = { minWidth: 0, mr: 1 };
 
+// Shown under a turned-off Run for a failed or canceled build.
+const BUILD_ENDED_REASON = "This environment did not finish building.";
+
 export default function RowActionsMenu({ menuFor, onClose, onOpen, onRun, onDeleteRequest }) {
   const active = menuFor?.row;
   const buildingActive = [
@@ -20,6 +23,12 @@ export default function RowActionsMenu({ menuFor, onClose, onOpen, onRun, onDele
     ENV_STATUS.FINALIZING,
     ENV_STATUS.CANCELLING,
   ].includes(active?.status);
+  // A failed or canceled build has nothing to run: Run simulation would only
+  // reopen its failed page. Open leads there too, and that page offers a new
+  // build. Run stays in the menu, turned off, with the reason under it.
+  const buildEnded = [ENV_STATUS.FAILED, ENV_STATUS.CANCELLED].includes(
+    active?.status,
+  );
   const runLabel =
     active?.runsTotal > 0 && !buildingActive
       ? ROW_ACTION_LABEL.rerun
@@ -27,12 +36,25 @@ export default function RowActionsMenu({ menuFor, onClose, onOpen, onRun, onDele
 
   const runItem = (
     <MenuItem
-      disabled={buildingActive}
-      onClick={() => {
-        onRun?.(active);
-        onClose?.();
+      disabled={buildingActive || buildEnded}
+      onClick={
+        buildEnded
+          ? undefined
+          : () => {
+              onRun?.(active);
+              onClose?.();
+            }
+      }
+      sx={{
+        typography: "s2",
+        // Turned off, but the reason under it stays readable.
+        ...(buildEnded && {
+          "&.Mui-disabled": { opacity: 1 },
+          "& .MuiListItemIcon-root, & .MuiListItemText-primary": {
+            color: "text.disabled",
+          },
+        }),
       }}
-      sx={{ typography: "s2" }}
     >
       <ListItemIcon sx={ICON_SX}>
         <Iconify icon="solar:play-linear" width={16} />
@@ -40,6 +62,10 @@ export default function RowActionsMenu({ menuFor, onClose, onOpen, onRun, onDele
       <ListItemText
         primary={runLabel}
         primaryTypographyProps={{ sx: { typography: "s2" } }}
+        secondary={buildEnded ? BUILD_ENDED_REASON : null}
+        secondaryTypographyProps={{
+          sx: { typography: "s2", color: "text.secondary" },
+        }}
       />
     </MenuItem>
   );

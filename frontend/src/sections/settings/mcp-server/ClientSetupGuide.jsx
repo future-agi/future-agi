@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import React, { useState, useMemo, useRef } from "react";
 import PropTypes from "prop-types";
 import {
   Alert,
@@ -17,19 +17,51 @@ import {
 import Section from "src/components/section";
 import Iconify from "src/components/iconify";
 import { enqueueSnackbar } from "notistack";
+import { deploymentMcpUrl } from "src/utils/deploymentMcpUrl";
+import { copyToClipboard } from "src/utils/utils";
+import { buildMcpClientConfigs } from "./clientSetupSnippets";
+
+// Shown when the browser refuses every way to copy, for example a self-hosted
+// install opened over plain http. The text is already selected by then.
+const COPY_FAILED_MESSAGE =
+  "Could not copy. Press Ctrl+C (Cmd+C on Mac) to copy the selected text.";
+
+// Select the visible text so copying it by hand is one keystroke.
+function selectText(node) {
+  if (!node) return;
+  if (typeof node.select === "function") {
+    node.focus();
+    node.select();
+    return;
+  }
+  const range = document.createRange();
+  range.selectNodeContents(node);
+  const selection = window.getSelection();
+  selection.removeAllRanges();
+  selection.addRange(range);
+}
+
+// Call straight from the click handler: the fallback copy only works while
+// the browser still treats the click as the user's action.
+async function copyOrSelect(text, target, successMessage) {
+  if (await copyToClipboard(text)) {
+    enqueueSnackbar(successMessage, { variant: "success" });
+    return;
+  }
+  selectText(target);
+  enqueueSnackbar(COPY_FAILED_MESSAGE, { variant: "error" });
+}
 
 CopyButton.propTypes = {
   text: PropTypes.string,
+  targetRef: PropTypes.shape({ current: PropTypes.any }),
 };
 
-function CopyButton({ text }) {
+function CopyButton({ text, targetRef }) {
   const theme = useTheme();
 
-  const handleCopy = () => {
-    navigator.clipboard.writeText(text).then(() => {
-      enqueueSnackbar("Copied to clipboard", { variant: "success" });
-    });
-  };
+  const handleCopy = () =>
+    copyOrSelect(text, targetRef?.current, "Copied to clipboard");
 
   return (
     <Tooltip title="Copy">
@@ -83,45 +115,24 @@ ClientSetupGuide.propTypes = {
 export default function ClientSetupGuide({ config }) {
   const theme = useTheme();
   const [tab, setTab] = useState(0);
+  const urlInputRef = useRef(null);
+  // Only the active tab's panel is mounted, so one ref covers every code block.
+  const codeRef = useRef(null);
 
   // Dark mode = monochrome (white primary), Light mode = purple primary
   const accent = theme.palette.primary.main;
   const accentContrast = theme.palette.primary.contrastText;
 
-  const mcpUrl = config?.mcp_url || "https://api.futureagi.com/mcp";
+  // The endpoint this deployment really serves (GET /mcp/config/ mcp_url,
+  // the same base its OAuth metadata and 401 advertise). When the server
+  // reports none, this app's own API base from config plus /mcp: never a
+  // hard-coded production host.
+  const mcpUrl = config?.mcp_url || deploymentMcpUrl();
 
-  const handleCopyUrl = () => {
-    navigator.clipboard.writeText(mcpUrl).then(() => {
-      enqueueSnackbar("MCP URL copied to clipboard", { variant: "success" });
-    });
-  };
+  const handleCopyUrl = () =>
+    copyOrSelect(mcpUrl, urlInputRef.current, "MCP URL copied to clipboard");
 
-  const configs = useMemo(
-    () => ({
-      cursor: JSON.stringify(
-        { mcpServers: { futureagi: { url: mcpUrl } } },
-        null,
-        2,
-      ),
-      claudeCode: `claude mcp add futureagi --transport http ${mcpUrl}`,
-      vscode: JSON.stringify(
-        { "mcp.servers": { futureagi: { type: "http", url: mcpUrl } } },
-        null,
-        2,
-      ),
-      claudeDesktop: JSON.stringify(
-        { mcpServers: { futureagi: { url: mcpUrl } } },
-        null,
-        2,
-      ),
-      windsurf: JSON.stringify(
-        { mcpServers: { futureagi: { serverUrl: mcpUrl } } },
-        null,
-        2,
-      ),
-    }),
-    [mcpUrl],
-  );
+  const configs = useMemo(() => buildMcpClientConfigs(mcpUrl), [mcpUrl]);
 
   const deepLinks = useMemo(() => {
     // Cursor expects base64-encoded JSON config
@@ -148,13 +159,14 @@ export default function ClientSetupGuide({ config }) {
     );
   };
 
-  const handleCopyCommand = (text, label) => {
-    navigator.clipboard.writeText(text).then(() => {
-      enqueueSnackbar(`${label} command copied — paste it in your terminal`, {
-        variant: "success",
-      });
-    });
-  };
+  // The command is also shown in the code block below, so that is what gets
+  // selected when copying fails.
+  const handleCopyCommand = (text, label) =>
+    copyOrSelect(
+      text,
+      codeRef.current,
+      `${label} command copied — paste it in your terminal`,
+    );
 
   const tabItems = [
     {
@@ -214,6 +226,15 @@ export default function ClientSetupGuide({ config }) {
     borderColor: "divider",
   };
 
+  if (!mcpUrl) {
+    return (
+      <Alert severity="info" sx={{ mb: 3 }} data-testid="mcp-url-unknown">
+        This deployment does not report its MCP endpoint. Set BASE_URL to the
+        API&apos;s public URL to connect an IDE.
+      </Alert>
+    );
+  }
+
   return (
     <Section variant="panel" sx={{ p: 3, mb: 3 }}>
       {/* Header */}
@@ -237,6 +258,8 @@ export default function ClientSetupGuide({ config }) {
         value={mcpUrl}
         fullWidth
         size="small"
+        inputRef={urlInputRef}
+        inputProps={{ "aria-label": "MCP server URL" }}
         InputProps={{
           readOnly: true,
           sx: {
@@ -329,7 +352,8 @@ export default function ClientSetupGuide({ config }) {
         <Tabs
           value={tab}
           onChange={(_, v) => setTab(v)}
-          sx={{ boxShadow: "none",
+          sx={{
+            boxShadow: "none",
             "& .MuiTab-root": {
               gap: 0.75,
             },
@@ -422,8 +446,8 @@ export default function ClientSetupGuide({ config }) {
             {item.filePath}
           </Typography>
           <Box sx={codeBlockSx}>
-            <CopyButton text={item.code} />
-            {item.code}
+            <CopyButton text={item.code} targetRef={codeRef} />
+            <span ref={codeRef}>{item.code}</span>
           </Box>
         </TabPanel>
       ))}

@@ -317,6 +317,23 @@ class EnrollmentTests(unittest.TestCase):
         self.restart_policy = 'no'
         en.qualify_restart_policies(InstallationFixture(self))
 
+    def test_a_service_automatic_updates_do_not_cover_yet_refuses_with_its_own_reason(self):
+        for service in ('code-executor', 'hub-checker'):
+            with self.subTest(service=service):
+                self.model['services'][service] = {'restart': 'unless-stopped'}
+                # The public reason stays unsupported_installation; the refusal carries the layout's names.
+                with self.assertRaises(GuardRefused) as caught:
+                    en.qualify_restart_policies(InstallationFixture(self))
+                self.assertEqual(caught.exception.reason_code, ReasonCode.UNSUPPORTED_INSTALLATION)
+                self.assertEqual(caught.exception.not_covered, (service,))
+                with self.assertRaises(GuardRefused) as caught:
+                    self.setup()
+                self.assertEqual(caught.exception.reason_code, ReasonCode.UNSUPPORTED_INSTALLATION)
+                self.assertEqual(caught.exception.not_covered, (service,))
+                self.assertEqual(self.tags, [])
+                del self.model['services'][service]
+        en.qualify_restart_policies(InstallationFixture(self))
+
     def test_deactivation_disables_forward_but_retains_safety_launcher_when_pending(self):
         self.setup()
         tab = self.manager.tab
@@ -752,6 +769,26 @@ class EnrollmentTests(unittest.TestCase):
             with self.subTest(value=value):
                 with self.assertRaises((ValueError, GuardRefused)):
                     en.configuration(self.store, SimpleNamespace(**dict(vars(self.options), release_source=value)), 'dedicated-context')
+
+
+class SetupRefusalTextTests(unittest.TestCase):
+    def test_not_covered_names_the_reason_and_the_commands_that_work(self):
+        from deploy.update.__main__ import setup_refusal_lines
+        text = '\n'.join(setup_refusal_lines('unsupported_installation', ('code-executor',)))
+        self.assertIn('Setup incomplete: unsupported_installation.', text)
+        for needle in ('Automatic updates are not available for this install in this release: it runs code-executor,',
+                       '(every default Standalone install runs code-executor;', './bin/update',
+                       './bin/install', '--from-source', 'The install and its .env were not changed.'):
+            self.assertIn(needle, text)
+        self.assertNotIn('Nothing was changed', text)
+        other = '\n'.join(setup_refusal_lines('unsupported_installation'))
+        self.assertIn('Setup incomplete: unsupported_installation.', other)
+        self.assertIn('Check host Python 3.9+', other)
+        self.assertNotIn('Automatic updates are not available', other)
+
+    def test_the_public_reason_vocabulary_is_unchanged(self):
+        from deploy.update.contracts import ReasonCode
+        self.assertNotIn('automatic_updates_not_covered', {code.value for code in ReasonCode})
 
 
 class SetupCliTests(unittest.TestCase):

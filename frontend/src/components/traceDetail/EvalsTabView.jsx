@@ -5,19 +5,11 @@ import { alpha } from "@mui/material/styles";
 import Markdown from "react-markdown";
 import Iconify from "src/components/iconify";
 import OverflowTooltip from "src/components/tooltip/OverflowTooltip";
-import { enqueueSnackbar } from "notistack";
+import { CAPABILITY, useFeatureAllowed } from "src/hooks/useCapabilities";
 import EvalErrorLocalization from "./EvalErrorLocalization";
 import EvalStatusIndicator from "src/components/eval/EvalStatusIndicator";
 import StatusBadge from "src/components/status-badge/StatusBadge";
 import { EVAL_STATUS, getEvalNonScoreStatus } from "src/utils/evalStatus";
-
-// Kept locally so callers that don't supply an onFixWithFalcon handler still
-// see the informational toast — preserves pre-integration behavior.
-function defaultFixNotice() {
-  enqueueSnackbar("Fix with AI isn’t available in this view", {
-    variant: "info",
-  });
-}
 
 /**
  * Shared evals tab view — the visual presentation originally lived inside
@@ -480,8 +472,6 @@ const EvalTableRow = ({
                 e.stopPropagation();
                 if (onFixWithFalcon) {
                   onFixWithFalcon({ level: "eval", ev });
-                } else {
-                  defaultFixNotice();
                 }
               }}
               sx={{ alignSelf: "flex-start" }}
@@ -511,7 +501,7 @@ EvalTableRow.propTypes = {
  *  - search + "Add Evals" toolbar
  *  - sticky table header + scrollable rows
  */
-const EvalsTabView = ({
+const EvalsTabContent = ({
   evals,
   onSelectSpan,
   emptyMessage,
@@ -519,8 +509,12 @@ const EvalsTabView = ({
   onFixWithFalcon,
   showFixWithFalcon = true,
   showAddEvals = true,
+  onAddEvals = null,
   showErrorLocalization = true,
+  falconAvailable = false,
 }) => {
+  const canFix =
+    showFixWithFalcon && Boolean(onFixWithFalcon) && falconAvailable;
   const [search, setSearch] = useState("");
   // The action column only holds "View span", so a drawer that can't jump to
   // a span gives its width to Score instead.
@@ -709,7 +703,7 @@ const EvalsTabView = ({
             label-based non-passes also keep the button visible (e.g. an
             eval with score=null and no Pass label still shows up as
             non-passing in the "X/N passed" text). */}
-        {showFixWithFalcon && list.some((e) => !isPassedEval(e)) && (
+        {canFix && list.some((e) => !isPassedEval(e)) && (
           <Button
             size="small"
             variant="outlined"
@@ -717,6 +711,7 @@ const EvalsTabView = ({
               <Iconify icon="solar:stars-minimalistic-linear" width={14} />
             }
             onClick={() => {
+              if (!canFix) return;
               if (onFixWithFalcon) {
                 const failing = list.filter((e) => !isPassedEval(e));
                 onFixWithFalcon({
@@ -724,8 +719,6 @@ const EvalsTabView = ({
                   failingEvals: failing,
                   allEvals: list,
                 });
-              } else {
-                defaultFixNotice();
               }
             }}
             sx={{ mt: 1 }}
@@ -783,50 +776,41 @@ const EvalsTabView = ({
             }}
           />
         </Box>
-        {showAddEvals && (
+        {showAddEvals && onAddEvals ? (
           <Box
+            component="button"
+            type="button"
+            onClick={onAddEvals}
+            data-testid="evals-tab-add-evals"
+            aria-label="Add evals to this span's project (opens the task creator)"
             sx={{
               display: "inline-flex",
               alignItems: "center",
               gap: 0.5,
               px: 1,
               py: 0.35,
-              border: "1px dashed",
+              border: "1px solid",
               borderColor: "divider",
               borderRadius: "4px",
               bgcolor: "background.paper",
               flexShrink: 0,
-              opacity: 0.7,
+              cursor: "pointer",
+              font: "inherit",
+              color: "text.primary",
+              "&:hover": { bgcolor: "action.hover" },
+              "&:focus-visible": {
+                outline: "2px solid",
+                outlineColor: "primary.main",
+                outlineOffset: 1,
+              },
             }}
           >
-            <Iconify
-              icon="solar:add-circle-linear"
-              width={14}
-              color="text.disabled"
-            />
-            <Typography
-              sx={{ fontSize: 12, fontWeight: 500, color: "text.disabled" }}
-            >
+            <Iconify icon="solar:add-circle-linear" width={14} />
+            <Typography sx={{ fontSize: 12, fontWeight: 500 }}>
               Add Evals
             </Typography>
-            <Box
-              sx={{
-                px: 0.6,
-                py: 0.1,
-                borderRadius: "4px",
-                bgcolor: (theme) => alpha(theme.palette.success.main, 0.16),
-                color: "success.dark",
-                fontSize: 12,
-                fontWeight: 600,
-                letterSpacing: 0.2,
-                lineHeight: 1.5,
-                whiteSpace: "nowrap",
-              }}
-            >
-              Coming soon
-            </Box>
           </Box>
-        )}
+        ) : null}
       </Box>
 
       {/* Table */}
@@ -923,7 +907,7 @@ const EvalsTabView = ({
             onSelectSpan={onSelectSpan}
             showSpanColumn={showSpanColumn}
             onFixWithFalcon={onFixWithFalcon}
-            showFixWithFalcon={showFixWithFalcon}
+            showFixWithFalcon={canFix}
             showErrorLocalization={showErrorLocalization}
             layout={layout}
           />
@@ -933,6 +917,25 @@ const EvalsTabView = ({
   );
 };
 
+function CapabilityGatedEvals(props) {
+  const falcon = useFeatureAllowed(CAPABILITY.FALCON_AI);
+  return (
+    <EvalsTabContent
+      {...props}
+      falconAvailable={falcon.allowed && !falcon.isLoading && !falcon.isError}
+    />
+  );
+}
+
+// A view with no executable Fix action needs no capability request at all.
+const EvalsTabView = (props) =>
+  props.showFixWithFalcon !== false &&
+  typeof props.onFixWithFalcon === "function" ? (
+    <CapabilityGatedEvals {...props} />
+  ) : (
+    <EvalsTabContent {...props} />
+  );
+
 EvalsTabView.propTypes = {
   evals: PropTypes.array,
   onSelectSpan: PropTypes.func,
@@ -941,7 +944,15 @@ EvalsTabView.propTypes = {
   onFixWithFalcon: PropTypes.func,
   showFixWithFalcon: PropTypes.bool,
   showAddEvals: PropTypes.bool,
+  // options-truth L3 G10 (S1): `Add Evals` opens the task creator,
+  // prefilled with this span's project and span. No handler, no button.
+  onAddEvals: PropTypes.func,
   showErrorLocalization: PropTypes.bool,
+};
+
+EvalsTabContent.propTypes = {
+  ...EvalsTabView.propTypes,
+  falconAvailable: PropTypes.bool,
 };
 
 export default EvalsTabView;

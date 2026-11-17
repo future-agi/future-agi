@@ -6,6 +6,8 @@ The installer tests own bounded waits and read-only checks inside the jobs.
 
 from __future__ import annotations
 
+import base64
+import os
 import re
 import shlex
 import shutil
@@ -35,6 +37,9 @@ PRODUCTION_ENV = {
     "CODE_EXECUTOR_VERSION": "startup-contract-executor",
     "SIMULATION_RUNNER_VERSION": "startup-contract-simulation",
     "SECRET_KEY": "startup-contract-secret",
+    "FI_API_SECRET_PEPPER": "startup-contract-api-secret-pepper-0123456789",
+    # A Fernet key (32 bytes, URL-safe base64), as the app requires at start.
+    "INTEGRATION_ENCRYPTION_KEY": base64.urlsafe_b64encode(os.urandom(32)).decode(),
     "AGENTCC_INTERNAL_API_KEY": "startup-contract-internal-key",
     "AGENTCC_ADMIN_TOKEN": "startup-contract-admin-token",
     "PG_PASSWORD": "startup-contract-pg-password",
@@ -43,6 +48,14 @@ PRODUCTION_ENV = {
     "PROPERTY_CATALOG_CONSUMER_PASSWORD": "startup-contract-catalog-writer",
     "FRONTEND_URL": "https://app.example.com",
     "VITE_HOST_API": "https://api.example.com",
+    # The Omega Hub checker and its dedicated runner host (deploy/hub-runner).
+    "OMEGA_HUB_CHECKER_VERSION": "startup-contract-hub-checker",
+    "OMEGA_HUB_CHECKER_TOKEN": "startup-contract-hub-checker-token",
+    "OMEGA_HUB_APP_URL": "https://app.example.com/dashboard/hub",
+    "OMEGA_HUB_PUBLIC_API_URL": "https://api.example.com/omega-hub/v1",
+    "OMEGA_HUB_RUNNER_IMAGE": "registry.example.com/omega-hub-runner@sha256:" + "0" * 64,
+    "OMEGA_HUB_RUNNER_DOCKER_HOST": "tcp://hub-runner.example.internal:2376",
+    "OMEGA_HUB_RUNNER_TLS_DIR": "/etc/futureagi/hub-runner-client",
 }
 PG_BOOTSTRAP = "postgres-schema-bootstrap"
 INDEX_BOOTSTRAP = "property-catalog-clickhouse-bootstrap"
@@ -462,6 +475,8 @@ class StartupComposeContractTests(unittest.TestCase):
     def test_production_jobs_and_all_workers_inherit_required_auth_values(self):
         required = (
             "SECRET_KEY",
+            "FI_API_SECRET_PEPPER",
+            "INTEGRATION_ENCRYPTION_KEY",
             "AGENTCC_INTERNAL_API_KEY",
             "AGENTCC_ADMIN_TOKEN",
             "PG_PASSWORD",
@@ -511,6 +526,68 @@ def installer_code(block: str) -> str:
     return re.sub(r'"(?:[^"\\]|\\.)*"|\'[^\']*\'', '""', code)
 
 
+# No replay: the bring-up block holds no loop keyword and no sleep, with one
+# exception. bin/install's Hub profile notice splits a profile list with a
+# `while IFS= read -r NAME; do ... done <<< WORD` loop whose body runs no
+# command: only plain assignments and `if [[ TEST ]]; then return 0; fi`, with
+# no command substitution, pipe, list, redirection or line continuation. Such
+# a loop cannot start, retry, wait for or clean up anything; a body that could
+# call any command or function, defined in the block or not, never matches.
+LOOP_RULE = r"\b(?:until|while|for|foreach|sleep|Start-Sleep)\b"
+_DQ = r'"(?:[^"\\()`\n]|\\.)*"'
+_SQ = r"'[^'\\\n]*'"
+_WORD = rf"(?:{_DQ}|{_SQ}|[^\s;&|<>()`\"'\\])+"
+_TEST = rf"(?:{_DQ}|{_SQ}|(?!\]\])[^\n;()`\"'\\])+"
+PURE_READ_LOOP = re.compile(
+    r"^[ \t]*while IFS= read -r [A-Za-z_]\w*; do\n"
+    rf"(?:[ \t]*(?:[A-Za-z_]\w*={_WORD}|if \[\[ {_TEST} \]\]; then return 0; fi)\n)+"
+    rf"[ \t]*done <<< {_WORD}$",
+    re.M,
+)
+
+
+def without_pure_read_loops(block: str) -> str:
+    return PURE_READ_LOOP.sub("", block)
+
+
+# The exempt loop, as bin/install's warn_disabled_hub_containers writes it.
+EXEMPT_READ_LOOP = """
+  while IFS= read -r profile; do
+    profile="${profile#"${profile%%[![:space:]]*}"}"
+    profile="${profile%"${profile##*[![:space:]]}"}"
+    if [[ "$profile" == hub || "$profile" == '*' ]]; then return 0; fi
+  done <<< "${profiles//,/$'\\n'}"
+"""
+# What the loop rule exists to refuse; each must still trip it.
+REFUSED_LOOPS = (
+    "until $DC up -d --wait; do sleep 5; done",
+    "while ! $DC up -d; do :; done",
+    "for attempt in 1 2 3; do $DC up -d && break; done",
+    '$DC up -d || { sleep 5; $DC up -d; }',
+    'while IFS= read -r name; do\n  $DC up -d "$name"\ndone <<< "$services"',
+    'while IFS= read -r name; do\n  if start_stack; then return 0; fi\ndone <<< "$s"',
+    'while IFS= read -r name; do\n'
+    '  if [[ -n "$name" ]] && start_stack ]]; then return 0; fi\n'
+    'done <<< "$s"',
+    'while IFS= read -r name; do\n  name=x\n  sleep 1\ndone <<< "$s"',
+    "while IFS= read -r name; do\n  name=x\ndone < <(docker ps -q)",
+    'while IFS= read -r name; do\n  name=x\ndone <<< "$($DC ps --services)"',
+    'while IFS= read -r name; do\n  state=$($DC ps -q "$name")\ndone <<< "$s"',
+    'while IFS= read -r name; do\n  name=x;start_stack\ndone <<< "$s"',
+    'while IFS= read -r name; do\n  name=x start_stack\ndone <<< "$s"',
+    'while IFS= read -r name; do\n'
+    '  if [[ -n "$name" ]]; then start_stack; fi\n'
+    'done <<< "$s"',
+    'while IFS= read -r name; do\n  name=`start_stack`\ndone <<< "$s"',
+    "while IFS= read -r name; do\n  name=$'\\''$(start_stack)'\ndone <<< \"$s\"",
+    'while IFS= read -r name; do\n  name=x\\\nstart_stack\ndone <<< "$s"',
+    "foreach ($attempt in 1..3) { Invoke-Compose up -d }",
+    "while ($LASTEXITCODE -ne 0) { Invoke-Compose up -d }",
+    "do { Invoke-Compose up -d } until ($LASTEXITCODE -eq 0)",
+    "Start-Sleep -Seconds 5",
+)
+
+
 class InstallerStartupContractTests(unittest.TestCase):
     # Execute only the bounded bring-up block with an in-process Compose double.
     # Never run installer preflight, .env writes, builds, daemon calls or cleanup.
@@ -544,7 +621,7 @@ class InstallerStartupContractTests(unittest.TestCase):
                 self.assertEqual(len(re.findall(bounded_up[name], code)), 1, code)
                 self.assertEqual(len(re.findall(compose_up[name], code)), 2)
                 self.assertNotRegex(
-                    code, r"\b(?:until|while|for|foreach|sleep|Start-Sleep)\b"
+                    installer_code(without_pure_read_loops(block)), LOOP_RULE
                 )
                 for forbidden in (
                     "--force-recreate",
@@ -564,6 +641,16 @@ class InstallerStartupContractTests(unittest.TestCase):
             self.startup_block("install.ps1"),
             r"if \(\$LASTEXITCODE -ne 0\) \{\s+Die ",
         )
+
+    def test_loop_rule_exempts_only_a_command_free_read_loop(self):
+        def trips(text):
+            code = installer_code(without_pure_read_loops(text))
+            return re.search(LOOP_RULE, code) is not None
+
+        self.assertFalse(trips(EXEMPT_READ_LOOP))
+        for text in REFUSED_LOOPS:
+            with self.subTest(text=text):
+                self.assertTrue(trips(text))
 
     def assert_attempt(self, result, status, mode):
         command, failure_phrases = INSTALL_MODES[mode]
@@ -610,6 +697,8 @@ project_has_service() {
   case " $PROJECT_SERVICES " in *" $1 "*) return 0 ;; esac
   return 1
 }
+# bin/lib/env.sh:51 with nothing exported (env is PATH only) and no .env.
+compose_env_value() { printf '%s' "${2:-}"; }
 step() { :; }
 ok() { printf 'OK:%s\\n' "$*"; }
 warn() { printf 'WARN:%s\\n' "$*"; }
@@ -670,6 +759,8 @@ function Invoke-Compose {
   Write-Output ('COMPOSE:' + ($args -join ' '))
   $global:LASTEXITCODE = $script:ComposeStatus
 }
+# bin/lib/env.ps1:52 with no .env.
+function Get-EnvValue { param([string]$Var) '' }
 function Step { }
 function Append-Log { }
 function Ok { Write-Output ('OK:' + ($args -join ' ')) }

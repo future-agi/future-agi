@@ -1,0 +1,16 @@
+{
+  "http": {
+    "status": 404,
+    "headers": {
+      "content-type": "application/json"
+    }
+  },
+  "body": {
+    "jsonrpc": "2.0",
+    "id": 3,
+    "error": {
+      "code": -32600,
+      "message": "virtual server not found"
+    }
+  }
+}

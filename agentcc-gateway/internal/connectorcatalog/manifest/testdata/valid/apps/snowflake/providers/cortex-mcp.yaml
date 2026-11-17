@@ -1,0 +1,63 @@
+# Fixture for the manifest validator tests, not catalog data. Facts are
+# illustrative; the catalog itself lives in agentcc-gateway/catalog/connectors.
+schema: "connector-manifest/v1#provider"
+app: snowflake
+id: cortex-mcp
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus:
+  label: ga
+  source: https://docs.snowflake.com/en/user-guide/snowflake-cortex/cortex-agents-mcp
+transport:
+  kind: http
+  url: "https://{accountUrl}/api/v2/databases/{database}/schemas/{schema}/mcp-servers/{serverName}"
+  urlVariables:
+    accountUrl:
+      description: "The account host, such as myorg-myaccount.snowflakecomputing.com."
+      pattern: "^[a-z0-9-]+([.][a-z0-9-]+)*[.]snowflakecomputing[.]com$"
+      scope: org
+    database:
+      description: The database that holds the MCP server object.
+      pattern: "^[A-Za-z_][A-Za-z0-9_]{0,254}$"
+      scope: org
+    schema:
+      description: The schema that holds the MCP server object.
+      pattern: "^[A-Za-z_][A-Za-z0-9_]{0,254}$"
+      scope: org
+    serverName:
+      description: The MCP server object's name.
+      pattern: "^[A-Za-z_][A-Za-z0-9_]{0,254}$"
+      scope: org
+hosted: true
+trusted: false
+accountModes: [user]
+auth:
+  kind: oauth2
+  oauth2:
+    authorizeUrl: "https://{accountUrl}/oauth/authorize"
+    tokenUrl: "https://{accountUrl}/oauth/token-request"
+    scopes: []
+    pkce: true
+    tokenBody: form
+    clientAuth: basic
+    urlVariables:
+      accountUrl:
+        description: The account host.
+        pattern: "^[a-z0-9-]+([.][a-z0-9-]+)*[.]snowflakecomputing[.]com$"
+        scope: org
+    registration: [preregistered]
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_metered }
+quality: { tier: listed }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://docs.snowflake.com/en/user-guide/snowflake-cortex/cortex-agents-mcp
+    fetchedAt: 2026-10-19
+  - fact: auth.oauth2.authorizeUrl
+    url: https://docs.snowflake.com/en/user-guide/oauth-custom
+    fetchedAt: 2026-10-19
+  - fact: auth.oauth2.tokenUrl
+    url: https://docs.snowflake.com/en/user-guide/oauth-custom
+    fetchedAt: 2026-10-19

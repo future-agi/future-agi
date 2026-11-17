@@ -1,18 +1,7 @@
 from django.utils import timezone
 from rest_framework import serializers
 
-from accounts.models import OrgApiKey
 from tfc.utils.error_codes import get_error_message
-
-
-class OrgApiKeySerializer(serializers.ModelSerializer):
-    class Meta:
-        model = OrgApiKey
-        fields = [
-            "id",
-            "api_key",
-            "secret_key",
-        ]
 
 
 class UserSecretKeySerializer(serializers.Serializer):
@@ -21,6 +10,7 @@ class UserSecretKeySerializer(serializers.Serializer):
 
 class CreateSecretKeySerializer(serializers.Serializer):
     key_name = serializers.CharField(max_length=100, required=True)
+    workspace_id = serializers.UUIDField(required=False, allow_null=True)
     expires_at = serializers.DateTimeField(
         required=False,
         allow_null=True,
@@ -49,5 +39,9 @@ class CreateSecretKeySerializer(serializers.Serializer):
                         "Required for a coding_agent key, and accepted for no other."
                     )
                 }
+            )
+        if attrs["type"] == "coding_agent" and "workspace_id" in attrs:
+            raise serializers.ValidationError(
+                {"workspace_id": "A coding agent key uses its environment's workspace; omit workspace_id."}
             )
         return attrs

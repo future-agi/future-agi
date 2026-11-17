@@ -20,6 +20,7 @@ from unittest.mock import patch
 from urllib.parse import quote, urlparse
 
 import pytest
+from django.db import DatabaseError
 from django.test import override_settings
 from django.utils import timezone
 
@@ -49,6 +50,7 @@ from simulate.services.hosted_harness_diagnostics import cached_attempt_redactio
 from simulate.services.hosted_harness_gateway import (
     _ADJUSTMENTS_PATH,
     _SIMULATOR_SECRETS_PATH,
+    GitHubAppTokenProvider,
     HostedHarnessGateway,
     HostedSourceAcquirer,
     _add_scoped_guest_pin_policy,
@@ -79,6 +81,16 @@ from simulate.services.hosted_sandbox import (
     SandboxConflictError,
     SandboxNotFoundError,
     SandboxProviderError,
+)
+
+try:  # New module: on the pre-containment tree these tests fail one by one.
+    from simulate.services import github_app_tenancy
+except ImportError:
+    github_app_tenancy = None
+
+PRIVATE_GITHUB_UNAVAILABLE_MESSAGE = (
+    "Private GitHub repositories are not available on Future AGI cloud. "
+    "Use a public repository or upload the code."
 )
 
 
@@ -1241,6 +1253,219 @@ def test_gateway_clones_exact_commit_without_archiving_git_credentials(
         names = set(tar.getnames())
     assert "source/agent.py" in names
     assert all(".git" not in name for name in names)
+
+
+_GITHUB_ACCESS_TOKENS = "https://api.github.com/app/installations/{}/access_tokens"
+
+
+class _GitHubApp:
+    """Stands in for the App JWT signer and GitHub's token endpoints, recording each
+    call and answering as GitHub does."""
+
+    def __init__(self):
+        self.signed = []
+        self.posts = []
+        self.deletes = []
+
+    def encode(self, claims, _key, algorithm):
+        self.signed.append((claims["iss"], algorithm))
+        return "synthetic-app-jwt"
+
+    def post(self, url, **kwargs):
+        self.posts.append((url, kwargs["headers"]["Authorization"]))
+        return SimpleNamespace(
+            status_code=201, json=lambda: {"token": "synthetic-installation-token"}
+        )
+
+    def delete(self, url, **kwargs):
+        self.deletes.append((url, kwargs["headers"]["Authorization"]))
+        return SimpleNamespace(status_code=204)
+
+
+@pytest.fixture
+def github_app(monkeypatch):
+    app = _GitHubApp()
+    gateway = "simulate.services.hosted_harness_gateway"
+    monkeypatch.setattr(f"{gateway}.jwt.encode", app.encode)
+    monkeypatch.setattr(f"{gateway}.requests.post", app.post)
+    monkeypatch.setattr(f"{gateway}.requests.delete", app.delete)
+    return app
+
+
+def _configure_github_app(settings, deployment=""):
+    settings.CLOUD_DEPLOYMENT = deployment
+    settings.GITHUB_APP_ID = "12345"
+    settings.GITHUB_APP_PRIVATE_KEY = "synthetic-app-private-key"
+
+
+def _live_orgs(monkeypatch, answer):
+    """Answer the organization query with ``answer`` ids, or raise it if it is an
+    exception, recording each time it is asked."""
+    asked = []
+
+    def live_org_ids():
+        asked.append(True)
+        if isinstance(answer, BaseException):
+            raise answer
+        return list(answer)
+
+    monkeypatch.setattr(github_app_tenancy, "_live_org_ids", live_org_ids)
+    return asked
+
+
+# (CLOUD_DEPLOYMENT, the organization query's answer) where the platform App serves,
+# or may serve, more than one organization.
+_MULTI_TENANT = (
+    pytest.param("", ("org-a", "org-b"), id="two-orgs-not-cloud"),
+    pytest.param("US", ("org-a",), id="cloud-US-one-org"),
+    pytest.param("eu", ("org-a",), id="cloud-lowercase-eu-one-org"),
+    pytest.param(" DEV ", ("org-a",), id="cloud-padded-DEV-one-org"),
+    pytest.param("", DatabaseError("synthetic outage"), id="org-query-fails"),
+)
+
+
+def _assert_private_github_refused(refused):
+    assert refused.value.code == "github_private_unavailable"
+    assert refused.value.message == PRIVATE_GITHUB_UNAVAILABLE_MESSAGE
+    assert refused.value.message == (
+        "Private GitHub repositories are not available on Future AGI cloud. "
+        "Use a public repository or upload the code."
+    )
+    assert refused.value.status_code == 422
+    assert refused.value.retryable is False
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("deployment", ["US", "EU", "DEV"])
+def test_cloud_mints_no_token_for_a_stored_installation(
+    organization, settings, monkeypatch, github_app, deployment
+):
+    """A job already stored with an installation id, which on Cloud may be another
+    organization's, clones nothing: the refusal comes before the App JWT is signed or
+    GitHub's access-token endpoint is asked, though only one organization exists."""
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="stored-installation"
+    )
+    assert job.payload["source"]["installation_id"] == "installation-1"
+    _configure_github_app(settings, deployment)
+    commands = []
+
+    def run(command, **_kwargs):
+        commands.append(command)
+        return SimpleNamespace(returncode=1, stdout="", stderr="no clone in this test")
+
+    monkeypatch.setattr("simulate.services.hosted_harness_gateway.subprocess.run", run)
+
+    with pytest.raises(HostedHarnessError) as refused:
+        HostedSourceAcquirer().acquire(job)
+
+    assert github_app.posts == []
+    assert github_app.signed == []
+    assert github_app.deletes == []
+    assert commands == []
+    _assert_private_github_refused(refused)
+
+
+@pytest.mark.parametrize(("deployment", "orgs"), _MULTI_TENANT)
+@pytest.mark.parametrize("entry", ["installation_token", "credential"])
+def test_multi_tenant_refuses_the_mint_before_github_is_asked(
+    settings, monkeypatch, github_app, deployment, orgs, entry
+):
+    _configure_github_app(settings, deployment)
+    _live_orgs(monkeypatch, orgs)
+    provider = GitHubAppTokenProvider.from_settings()
+
+    with pytest.raises(HostedHarnessError) as refused:
+        if entry == "credential":
+            with provider.credential("installation-of-another-organization"):
+                pass
+        else:
+            provider.installation_token("installation-of-another-organization")
+
+    assert github_app.posts == []
+    assert github_app.signed == []
+    assert github_app.deletes == []
+    _assert_private_github_refused(refused)
+
+
+def _assert_minted_and_revoked(github_app, installation_id):
+    assert github_app.signed == [("12345", "RS256")]
+    assert github_app.posts == [
+        (_GITHUB_ACCESS_TOKENS.format(installation_id), "Bearer synthetic-app-jwt")
+    ]
+    assert github_app.deletes == [
+        (
+            "https://api.github.com/installation/token",
+            "Bearer synthetic-installation-token",
+        )
+    ]
+
+
+@pytest.mark.parametrize("deployment", ["", "false", "SELF_HOSTED"])
+def test_single_org_self_hosted_still_mints_and_revokes_the_installation_token(
+    settings, monkeypatch, github_app, deployment
+):
+    """A self-hosted install with one organization configured its own App, so the mint
+    is unchanged there; the organizations are asked afresh on each mint."""
+    _configure_github_app(settings, deployment)
+    asked = _live_orgs(monkeypatch, ("only-org",))
+    provider = GitHubAppTokenProvider.from_settings()
+
+    with provider.credential("installation-1") as token:
+        assert token == "synthetic-installation-token"
+        assert github_app.deletes == []
+
+    _assert_minted_and_revoked(github_app, "installation-1")
+    assert asked == [True]
+
+
+@pytest.mark.parametrize(
+    "deployment",
+    [
+        pytest.param("", id="unset"),
+        pytest.param("false", id="false"),
+        pytest.param("SELF_HOSTED", id="SELF_HOSTED"),
+        pytest.param("US", id="US"),
+    ],
+)
+@pytest.mark.parametrize("missing", ["GITHUB_APP_ID", "GITHUB_APP_PRIVATE_KEY"])
+def test_without_the_platform_app_configured_the_mint_is_unchanged(
+    settings, monkeypatch, github_app, deployment, missing
+):
+    """A provider built with its own credentials while the platform App is not
+    configured mints as before, and no organization is counted."""
+    _configure_github_app(settings, deployment)
+    setattr(settings, missing, "")
+    asked = _live_orgs(monkeypatch, ("org-a", "org-b"))
+    provider = GitHubAppTokenProvider(
+        app_id="12345", private_key="synthetic-app-private-key"
+    )
+
+    with provider.credential("installation-1") as token:
+        assert token == "synthetic-installation-token"
+
+    _assert_minted_and_revoked(github_app, "installation-1")
+    assert asked == []
+
+
+@pytest.mark.django_db
+def test_live_organizations_are_counted_from_the_database(
+    organization, settings, github_app
+):
+    """The seam itself: a second organization makes the deployment multi-tenant."""
+    from accounts.models import Organization
+
+    _configure_github_app(settings)
+    Organization.objects.create(name="Second synthetic organization")
+
+    ids = github_app_tenancy._live_org_ids()
+
+    assert len(ids) == 2
+    assert github_app_tenancy.platform_github_app_refused() is True
+    with pytest.raises(HostedHarnessError) as refused:
+        GitHubAppTokenProvider.from_settings().installation_token("installation-1")
+    assert github_app.posts == []
+    _assert_private_github_refused(refused)
 
 
 class _Filesystem:
@@ -3776,8 +4001,14 @@ class _ExportWorld:
             sys.modules, "simulate.services.agent_setup", summary_module
         )
 
+        # These historical tests exercise the dormant export planner with a
+        # synthetic credential provider, not today's production OFF policy.
+        # The real OFF launch is covered separately below; no deployment flag
+        # or real key issuer is enabled by this fixture.
         ingest_module = ModuleType("tracer.services.collector_ingest")
         ingest_module.ExportCredentials = _ExportCredentials
+        ingest_module.SANDBOX_EXPORT_STATE = "ON"
+        ingest_module.DISABLED_REASON = "run_token_unavailable"
 
         # Keyword-only, like the real one, so a positional call fails here too.
         def get_or_create_export_credentials(
@@ -3918,6 +4149,47 @@ def _assert_launched_without_export(world, declared_secrets=None):
     assert "collector.example.com" not in world.domains
     assert _EXPORT_API_KEY.encode() not in world.uploads["/work/job.json"]
     assert _LEAK_SENTINEL not in world.logs.text()
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("instrumentation", ["opentelemetry", "traceai"])
+def test_real_platform_export_is_off_and_launches_with_zero_keys(
+    organization, workspace, user, settings, monkeypatch, instrumentation
+):
+    from importlib import import_module
+    from unittest.mock import Mock
+
+    from accounts.models import OrgApiKey
+    from tracer.models.project import Project
+
+    real_ingest = import_module("tracer.services.collector_ingest")
+    assert real_ingest.SANDBOX_EXPORT_STATE == "OFF"
+    world = _ExportWorld(
+        organization,
+        workspace,
+        user,
+        settings,
+        monkeypatch,
+        instrumentation=instrumentation,
+    )
+    # Restore the production OFF provider instead of the dormant planner stub.
+    monkeypatch.setitem(sys.modules, "tracer.services.collector_ingest", real_ingest)
+    log = Mock()
+    monkeypatch.setattr(real_ingest, "logger", log)
+    keys_before = OrgApiKey._base_manager.count()
+    projects_before = set(Project.with_simulation.values_list("id", flat=True))
+    world.launch()
+
+    _assert_launched_without_export(world)
+    assert OrgApiKey._base_manager.count() == keys_before == 0
+    assert set(Project.with_simulation.values_list("id", flat=True)) == projects_before
+    assert world.credential_calls == []
+    assert world.hidden_calls == []
+    assert world.summary_calls == []
+    log.info.assert_called_once_with(
+        "sandbox_span_export_off", state="OFF", reason="run_token_unavailable"
+    )
+    assert world.export_log() == []
 
 
 @pytest.mark.django_db
@@ -4152,6 +4424,121 @@ def test_export_environment_and_keys_for_a_bound_source_agent_with_observability
     # The launch-time redaction set holds each value.
     redacted = cached_attempt_redaction_values(world.attempt.id)
     assert {_EXPORT_API_KEY, _EXPORT_SECRET_KEY} <= set(redacted)
+
+
+# Names a launched sandbox's processes are given whose values are not held for
+# scrubbing, each with why its value is not secret.
+_NOT_HELD_NON_SECRET = {
+    "PATH": "A fixed list of program folders, the same in every sandbox.",
+    "PYTHONPATH": "A fixed folder inside the sandbox where the harness source sits.",
+    "ALK_SIMULATOR_FUNDING": "A fixed word, the same for every run, saying who pays.",
+}
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("chat", [False, True], ids=["launch", "launch_and_chat"])
+def test_every_environment_value_a_launched_sandbox_gets_is_held_for_scrubbing(
+    chat, organization, workspace, user, settings, monkeypatch, tmp_path
+):
+    from simulate.services.hosted_harness_conversation import ensure_conversation
+    from simulate.services.hosted_harness_gateway import (
+        _CHAT_SESSION,
+        _ENTRYPOINT_SESSION,
+    )
+
+    # Every optional source of a value is on: the export, a provider key, the
+    # simulator material, the phone target's private policy and a harness source
+    # folder.
+    (tmp_path / "fi").mkdir()
+    settings.ALK_HOSTED_SOURCE_OVERLAY = str(tmp_path)
+    settings.HARNESS_RESOURCE_PROFILES = []
+    phone = "+15550100199"
+    monkeypatch.setenv("ALK_CAB_GUEST_POC_TARGET_PHONE_NUMBER", phone)
+    monkeypatch.setenv("ALK_CAB_GUEST_POC_PIN", "held-check-value-0001")
+    world = _ExportWorld(
+        organization,
+        workspace,
+        user,
+        settings,
+        monkeypatch,
+        tag="held",
+        declared={"OPENAI_API_KEY": "held-check-value-0002"},
+    )
+    # Distinct values, so each name is shown held on its own.
+    world.simulator_values = {
+        "ALK_HARNESS": "vertex-gemini",
+        "ALK_HARNESS_MODEL": "gemini-3.7-flash",
+        "ALK_HARNESS_WORKERS_AT_ONCE": "3",
+        "ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS": "3600",
+        "ALK_VOICEMAIL_SCENARIOS": "off",
+        "CLAUDE_CODE_USE_VERTEX": "0",
+        "AGENTCC_BASE_URL": "https://gateway.example.test/agentcc",
+        "AGENTCC_API_KEY": "held-check-value-0003",
+        "ALK_CLAUDE_GATEWAY_URL": "https://gateway.example.test/claude",
+        "ALK_CLAUDE_GATEWAY_API_KEY": "held-check-value-0004",
+    }
+    agent = {
+        **world.job.payload["agent"],
+        "connector": "phone",
+        "config": {"phone_number": phone},
+    }
+    world.job.payload = {**world.job.payload, "agent": agent}
+    world.job.save(update_fields=["payload", "updated_at"])
+
+    # Every environment handed to a command, with the session or call it went to.
+    handed = []
+    process = world.client.sandbox.process
+    run_in_session = process.execute_session_command
+    run = process.exec
+
+    def execute_session_command(session_id, request):
+        handed.append((session_id, dict(request.env or {})))
+        return run_in_session(session_id, request)
+
+    def exec_with_env(command, **kwargs):
+        if kwargs.get("env") is not None:
+            handed.append(("exec", dict(kwargs["env"])))
+        return run(command, **kwargs)
+
+    process.execute_session_command = execute_session_command
+    process.exec = exec_with_env
+
+    world.launch()
+    assert world.attempt.state == HostedHarnessAttempt.State.RUNNING
+    assert world.mark["FI_SIMULATION_EXPORT"] == "our_keys"
+    sessions = {_ENTRYPOINT_SESSION}
+    if chat:
+        world.job.refresh_from_db()
+        lease = world.gateway.ensure_conversation_runtime(
+            world.job,
+            conversation=ensure_conversation(world.job),
+            endpoint_base_url="https://platform.example.com",
+        )
+        # Chat starts beside the harness, in the launched attempt's own sandbox.
+        assert lease.attempt_id == world.attempt.id
+        sessions.add(_CHAT_SESSION)
+    assert sessions <= {session for session, _env in handed}
+    names = {name for _session, env in handed for name in env}
+    assert {
+        "ALK_CAB_GUEST_POC_TARGET_PHONE_NUMBER",
+        "ALK_CAB_GUEST_POC_PIN",
+    } <= names
+
+    held_values = cached_attempt_redaction_values(world.attempt.id)
+    assert held_values is not None
+    held = set(held_values)
+    # Names only, never values, in what a failure prints.
+    not_held = sorted(
+        {
+            f"{session}:{name}"
+            for session, env in handed
+            for name, value in env.items()
+            if value and str(value) not in held and name not in _NOT_HELD_NON_SECRET
+        }
+    )
+    assert not not_held, f"given to the sandbox but not held: {not_held}"
+    unused = sorted(set(_NOT_HELD_NON_SECRET) - names)
+    assert not unused, f"listed as not held but never given: {unused}"
 
 
 @pytest.mark.django_db
@@ -4951,6 +5338,12 @@ def test_diagnostics_redaction_fallback_holds_every_ingest_key_switched_off_dele
         type="ingest",
     )
     before = OrgApiKey._base_manager.filter(type="ingest").count()
+    # READINESS L03 (integration round 7): the stored rows keep no plaintext, so the
+    # fallback reads each ingest secret back from its encrypted copy.
+    for key in (ingest, switched_off, deleted):
+        stored = OrgApiKey._base_manager.get(pk=key.pk)
+        assert stored.secret_key == "" and stored.secret_key_ciphertext
+        assert stored.reveal_secret() == key.secret_key
     seen = {}
 
     def poll(_attempt, _sandbox, **kwargs):
@@ -4970,6 +5363,274 @@ def test_diagnostics_redaction_fallback_holds_every_ingest_key_switched_off_dele
     assert not {stranger.api_key, stranger.secret_key} & values
     # Read, never created.
     assert OrgApiKey._base_manager.filter(type="ingest").count() == before
+
+
+@pytest.mark.django_db
+def test_diagnostics_redaction_fallback_keeps_no_logs_when_an_ingest_copy_cannot_be_opened(
+    organization, workspace, monkeypatch
+):
+    # Round 7 (L03 x dev's ingest keys): a secret the fallback cannot read back cannot be
+    # redacted, so no diagnostics are kept; a hash-only row (never handed out) holds its
+    # api_key only and does not stop the capture.
+    from accounts.models.user import OrgApiKey
+    from simulate.services.hosted_harness_diagnostics import (
+        forget_attempt_redaction_values,
+    )
+
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key=f"redact-{uuid.uuid4().hex[:8]}"
+    )
+    attempt = register_attempt(
+        job.id, endpoint_base_url="https://platform.example"
+    ).attempt
+    forget_attempt_redaction_values(attempt.id)
+    hash_only = OrgApiKey.no_workspace_objects.create(
+        organization=organization, workspace=workspace, name="hash only", type="ingest"
+    )
+    OrgApiKey._base_manager.filter(pk=hash_only.pk).update(secret_key_ciphertext="")
+    polls = []
+    monkeypatch.setattr(
+        f"{_GATEWAY}.poll_sandbox_diagnostics",
+        lambda _attempt, _sandbox, **kwargs: polls.append(kwargs),
+    )
+
+    HostedHarnessGateway._capture_diagnostics(attempt, object(), final=True)
+
+    values = set(polls[0]["secret_values"])
+    assert hash_only.api_key in values and hash_only.secret_key not in values
+
+    sealed = OrgApiKey.no_workspace_objects.create(
+        organization=organization, workspace=workspace, name="sealed", type="ingest"
+    )
+    OrgApiKey._base_manager.filter(pk=sealed.pk).update(
+        secret_key_ciphertext="gAAAAAB-not-a-fernet-token"
+    )
+
+    result = HostedHarnessGateway._capture_diagnostics(attempt, object(), final=True)
+
+    assert result is None
+    assert len(polls) == 1
+    attempt.refresh_from_db()
+    assert attempt.diagnostics_error == "redaction:ApiSecretNotRecoverable"
+    assert cached_attempt_redaction_values(attempt.id) is None
+
+
+# The secret values a launched sandbox's commands are given, each distinct. The
+# private setting is shorter than the length other held values are masked from.
+_LAUNCH_HELD_PHONE = "+15550100147"
+_LAUNCH_HELD_VALUES = {
+    "AGENTCC_API_KEY": "launch-held-key-0001",
+    "ALK_CLAUDE_GATEWAY_API_KEY": "launch-held-key-0002",
+    "ALK_CAB_GUEST_POC_PIN": "4711",
+    "ALK_CAB_GUEST_POC_TARGET_PHONE_NUMBER": _LAUNCH_HELD_PHONE,
+}
+# Fields of the stored diagnostics that name the run, and so may hold any digits.
+_DIAGNOSTICS_IDENTIFIERS = {
+    "job_id",
+    "attempt_id",
+    "sandbox_id",
+    "snapshot_name",
+    "captured_at",
+}
+
+
+def _launch_holding_secret_values(organization, workspace, user, settings, monkeypatch):
+    """A launched attempt whose sandbox commands were given every value above."""
+    from simulate.services.hosted_harness_gateway import _ENTRYPOINT_SESSION
+
+    settings.HARNESS_RESOURCE_PROFILES = []
+    pin = _LAUNCH_HELD_VALUES["ALK_CAB_GUEST_POC_PIN"]
+    monkeypatch.setenv("ALK_CAB_GUEST_POC_TARGET_PHONE_NUMBER", _LAUNCH_HELD_PHONE)
+    monkeypatch.setenv("ALK_CAB_GUEST_POC_PIN", pin)
+    world = _ExportWorld(
+        organization, workspace, user, settings, monkeypatch, tag="held-secrets"
+    )
+    for name in ("AGENTCC_API_KEY", "ALK_CLAUDE_GATEWAY_API_KEY"):
+        world.simulator_values[name] = _LAUNCH_HELD_VALUES[name]
+    world.simulator_values["ALK_CLAUDE_GATEWAY_URL"] = "https://gateway.example.test"
+    # The private pair is released only for its own phone target.
+    agent = {
+        **world.job.payload["agent"],
+        "connector": "phone",
+        "config": {"phone_number": _LAUNCH_HELD_PHONE},
+    }
+    world.job.payload = {**world.job.payload, "agent": agent}
+    world.job.save(update_fields=["payload", "updated_at"])
+    given = {}
+    process = world.client.sandbox.process
+    run_in_session = process.execute_session_command
+
+    def execute_session_command(session_id, request):
+        given[session_id] = dict(request.env or {})
+        return run_in_session(session_id, request)
+
+    process.execute_session_command = execute_session_command
+    world.launch()
+    assert world.attempt.state == HostedHarnessAttempt.State.RUNNING
+    entrypoint = given.get(_ENTRYPOINT_SESSION, {})
+    # Names only, never values, in what a failure prints.
+    not_given = sorted(
+        name
+        for name, value in _LAUNCH_HELD_VALUES.items()
+        if entrypoint.get(name) != value
+    )
+    assert not not_given, f"the launch did not give its sandbox: {not_given}"
+    return world
+
+
+def _capture_final_diagnostics(world, monkeypatch):
+    """Ends the run with a failed build and reads every place its logs reach, by name.
+
+    A failed build is not retried, so its failure reaches the job and the job's read.
+    """
+    from simulate.services.hosted_harness_diagnostics import poll_sandbox_diagnostics
+
+    pin = _LAUNCH_HELD_VALUES["ALK_CAB_GUEST_POC_PIN"]
+    # Each value printed bare, then the private pair each under a label.
+    printed = "".join(f"{value}\n" for value in _LAUNCH_HELD_VALUES.values())
+    printed += f"guest pin {pin}\nguest phone {_LAUNCH_HELD_PHONE}\n"
+    process = world.client.sandbox.process
+    process.entrypoint_output = f"build started\n{printed}No world was saved.\n"
+    process.process_output = f"worker started\n{printed}"
+    process.command_exit_code = 1
+    process.command_status = "finished"
+    stored = []
+
+    class _Storage:
+        def put_object(self, **kwargs):
+            stored.append(json.loads(gzip.decompress(kwargs["data"].read())))
+
+    monkeypatch.setattr(
+        "simulate.services.hosted_harness_diagnostics.get_storage_client",
+        lambda: _Storage(),
+    )
+    captured = []
+
+    def poll(*args, **kwargs):
+        captured.append(poll_sandbox_diagnostics(*args, **kwargs))
+        return captured[-1]
+
+    monkeypatch.setattr(f"{_GATEWAY}.poll_sandbox_diagnostics", poll)
+
+    world.gateway.reconcile_completed(world.attempt)
+
+    assert len(captured) == 1 and len(stored) == 1
+    assert stored[0]["final"] is True
+    world.attempt.refresh_from_db()
+    failure = world.attempt.terminal_failure
+    assert failure["code"] == "authoring_failed"
+    job = HostedHarnessJob.no_workspace_objects.get(id=world.job.id)
+    assert job.state == HostedHarnessJob.State.FAILED
+    stored_without_identifiers = {
+        key: value
+        for key, value in stored[0].items()
+        if key not in _DIAGNOSTICS_IDENTIFIERS
+    }
+    return {
+        "captured entrypoint log": captured[0].entrypoint_log,
+        "captured process logs": captured[0].process_logs,
+        "stored diagnostics": json.dumps(stored_without_identifiers),
+        "attempt failure guest_log_tail": failure["details"]["guest_log_tail"],
+        "attempt failure process_logs": failure["details"]["process_logs"],
+        "attempt failure": json.dumps(failure),
+        "job failure": json.dumps(job.failure),
+        "served status failure": json.dumps(serialize_job(job)["status"]["failure"]),
+    }
+
+
+def _places_holding(reached, name):
+    """The places, by name, whose text holds the value given under ``name``."""
+    return sorted(
+        place for place, text in reached.items() if _LAUNCH_HELD_VALUES[name] in text
+    )
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("name", sorted(_LAUNCH_HELD_VALUES))
+def test_a_cold_diagnostics_capture_masks_every_value_the_launch_held(
+    name, organization, workspace, user, settings, monkeypatch
+):
+    from simulate.services.hosted_harness_diagnostics import (
+        forget_attempt_redaction_values,
+    )
+
+    world = _launch_holding_secret_values(
+        organization, workspace, user, settings, monkeypatch
+    )
+    # The capture runs where the launch's values are not held: another worker, a
+    # restart or an evicted entry.
+    forget_attempt_redaction_values(world.attempt.id)
+    assert cached_attempt_redaction_values(world.attempt.id) is None
+
+    reached = _capture_final_diagnostics(world, monkeypatch)
+
+    # Names only, never the value, in what a failure prints.
+    unmasked = _places_holding(reached, name)
+    assert not unmasked, f"{name} is unmasked in: {unmasked}"
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("name", sorted(_LAUNCH_HELD_VALUES))
+def test_a_warm_diagnostics_capture_masks_every_value_the_launch_held(
+    name, organization, workspace, user, settings, monkeypatch
+):
+    world = _launch_holding_secret_values(
+        organization, workspace, user, settings, monkeypatch
+    )
+    # The capture runs in the process that launched the attempt.
+    assert cached_attempt_redaction_values(world.attempt.id) is not None
+
+    reached = _capture_final_diagnostics(world, monkeypatch)
+
+    # Names only, never the value, in what a failure prints.
+    unmasked = _places_holding(reached, name)
+    assert not unmasked, f"{name} is unmasked in: {unmasked}"
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "builder",
+    [f"{_GATEWAY}.PlatformSecretResolver.resolve", f"{_GATEWAY}.redaction_values"],
+    ids=["target_keys", "held_values"],
+)
+def test_a_cold_diagnostics_capture_keeps_no_logs_when_held_values_cannot_be_built(
+    builder, organization, monkeypatch
+):
+    from simulate.services.hosted_harness_diagnostics import (
+        forget_attempt_redaction_values,
+    )
+
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key=f"redact-{uuid.uuid4().hex[:8]}"
+    )
+    attempt = register_attempt(
+        job.id, endpoint_base_url="https://platform.example"
+    ).attempt
+    forget_attempt_redaction_values(attempt.id)
+
+    def cannot_build(*_args, **_kwargs):
+        raise LookupError("held values unavailable")
+
+    monkeypatch.setattr(builder, cannot_build)
+    uploads = []
+    monkeypatch.setattr(
+        "simulate.services.hosted_harness_diagnostics.get_storage_client",
+        lambda: SimpleNamespace(put_object=lambda **kwargs: uploads.append(kwargs)),
+    )
+    sandbox = _Sandbox()
+    sandbox.process.entrypoint_output = "build started\n"
+    sandbox.process.process_output = "worker started\n"
+
+    result = HostedHarnessGateway._capture_diagnostics(attempt, sandbox, final=True)
+
+    assert result is None
+    # No log was read or stored.
+    assert sandbox.process.exec_calls == []
+    assert uploads == []
+    attempt.refresh_from_db()
+    assert attempt.diagnostics_error == "redaction:LookupError"
+    assert not attempt.diagnostics_object_key
+    assert cached_attempt_redaction_values(attempt.id) is None
 
 
 class _StoredObject(io.BytesIO):

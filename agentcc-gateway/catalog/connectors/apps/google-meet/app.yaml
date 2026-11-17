@@ -1,0 +1,23 @@
+{
+  "schema": "connector-manifest/v1#app",
+  "id": "google-meet",
+  "version": "1.0.0",
+  "name": "Google Meet",
+  "description": "Create meeting spaces and read participants, recordings and transcripts for app-created spaces.",
+  "vendor": { "name": "Google", "domains": ["googleapis.com"] },
+  "eeCategory": "productivity",
+  "group": "google",
+  "categories": ["productivity"],
+  "docsUrl": "https://developers.google.com/workspace/meet/api/reference/rest",
+  "archetype": "workspace-docs",
+  "defaultProvider": "futureagi-rest",
+  "lifecycle": { "status": "active" },
+  "sources":
+    [
+      {
+        "fact": "vendor.domains",
+        "url": "https://raw.githubusercontent.com/googleapis/google-api-go-client/b2487a489315d16e91d98a8d940dca2e59e0bd9d/meet/v2/meet-api.json",
+        "fetchedAt": "2026-10-28",
+      },
+    ],
+}

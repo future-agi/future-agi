@@ -5,10 +5,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/async"
 	"github.com/futureagi/agentcc-gateway/internal/auth"
 	"github.com/futureagi/agentcc-gateway/internal/config"
+	"github.com/futureagi/agentcc-gateway/internal/middleware"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/pipeline"
 	"github.com/futureagi/agentcc-gateway/internal/providers"
@@ -23,7 +25,35 @@ func asyncCallerHandlers() *Handlers {
 		{Key: "synthetic-static"}, {Key: "synthetic-static2"},
 	}})
 	// The worker is never started, so jobs stay exactly as the test leaves them.
-	return &Handlers{keyStore: keys, asyncStore: store, asyncWorker: async.NewWorker(store, nil, 1)}
+	return &Handlers{keyStore: keys, asyncStore: store, asyncWorker: async.NewWorker(store, async.WorkerConfig{MaxWorkers: 1})}
+}
+
+// asyncServe runs fn behind the server's key gate (KeyAuth on /v1), as the
+// router serves the async routes: the handlers read the caller from the key
+// KeyAuth authenticated, and the gate itself answers a request whose key it
+// does not know.
+func asyncServe(h *Handlers, w http.ResponseWriter, r *http.Request, fn http.HandlerFunc) {
+	middleware.KeyAuth(h.keyStore, h.keyStore != nil, nil, "/v1")(fn).ServeHTTP(w, r)
+}
+
+// asyncGet and asyncDelete are GetAsyncJob and DeleteAsyncJob behind the gate.
+func asyncGet(h *Handlers) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) { asyncServe(h, w, r, h.GetAsyncJob) }
+}
+
+func asyncDelete(h *Handlers) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) { asyncServe(h, w, r, h.DeleteAsyncJob) }
+}
+
+// asyncSubmit is AsyncMiddleware behind the gate, on no provider (the worker
+// never runs the job). It reports whether the request was answered, by the
+// gate or by the middleware.
+func asyncSubmit(h *Handlers, w http.ResponseWriter, r *http.Request, rc *models.RequestContext) bool {
+	handled := true
+	asyncServe(h, w, r, func(w http.ResponseWriter, r *http.Request) {
+		handled = h.AsyncMiddleware(w, r, rc, nil, nil, time.Minute)
+	})
+	return handled
 }
 
 func asyncCallerRequest(method, jobID, key string) *http.Request {
@@ -41,12 +71,15 @@ func asyncCallerSubmit(t *testing.T, h *Handlers, key string) string {
 	rc := models.AcquireRequestContext()
 	defer rc.Release()
 	rc.Request = &models.ChatCompletionRequest{Model: "synthetic-model"}
-	// Request metadata must not decide who owns the job.
+	// On this release only an internal key queues an async job (every other
+	// key is limited to its org's providers); request metadata must not
+	// decide who owns the job.
+	rc.Metadata["key_type"] = "internal"
 	rc.Metadata["org_id"] = "forged"
 	rc.Metadata["key_org_id"] = "forged"
 	setAuthMetadataFromRequest(rc, r)
 	w := httptest.NewRecorder()
-	if !h.AsyncMiddleware(w, r, rc) || w.Code != http.StatusAccepted {
+	if !asyncSubmit(h, w, r, rc) || w.Code != http.StatusAccepted {
 		t.Fatalf("create: %d %s", w.Code, w.Body.String())
 	}
 	var result struct {
@@ -66,9 +99,9 @@ func TestAsyncJobOtherCallerGetsNotFound(t *testing.T) {
 				id := asyncCallerSubmit(t, h, "synthetic-a")
 				cancelled := false
 				h.asyncStore.Update(id, func(j *async.Job) { j.CancelFn = func() { cancelled = true } })
-				call := h.GetAsyncJob
+				call := asyncGet(h)
 				if method == http.MethodDelete {
-					call = h.DeleteAsyncJob
+					call = asyncDelete(h)
 				}
 				w, missing := httptest.NewRecorder(), httptest.NewRecorder()
 				call(w, asyncCallerRequest(method, id, key))
@@ -96,14 +129,14 @@ func TestAsyncJobSameOrgAndSameKeyAccess(t *testing.T) {
 			w := httptest.NewRecorder()
 			r := asyncCallerRequest(http.MethodGet, id, "")
 			r.Header.Set("x-api-key", pair[1])
-			h.GetAsyncJob(w, r)
+			asyncGet(h)(w, r)
 			if w.Code != http.StatusOK {
 				t.Fatalf("owner read: %d %s", w.Code, w.Body.String())
 			}
 			cancelled := false
 			h.asyncStore.Update(id, func(j *async.Job) { j.CancelFn = func() { cancelled = true; _ = h.asyncStore.Count() } })
 			w = httptest.NewRecorder()
-			h.DeleteAsyncJob(w, asyncCallerRequest(http.MethodDelete, id, pair[1]))
+			asyncDelete(h)(w, asyncCallerRequest(http.MethodDelete, id, pair[1]))
 			if w.Code != http.StatusOK || !cancelled || h.asyncStore.Get(id) != nil {
 				t.Errorf("owner cancellation: status=%d callback=%v", w.Code, cancelled)
 			}
@@ -115,7 +148,7 @@ func TestAsyncJobKeyWithoutOrgCannotReadOtherKeysJob(t *testing.T) {
 	h := asyncCallerHandlers()
 	id := asyncCallerSubmit(t, h, "synthetic-static")
 	w := httptest.NewRecorder()
-	h.GetAsyncJob(w, asyncCallerRequest(http.MethodGet, id, "synthetic-static2"))
+	asyncGet(h)(w, asyncCallerRequest(http.MethodGet, id, "synthetic-static2"))
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("other static key read: %d", w.Code)
 	}
@@ -127,9 +160,9 @@ func TestAsyncJobWithoutOwnerNotReturned(t *testing.T) {
 	for _, method := range []string{http.MethodGet, http.MethodDelete} {
 		w := httptest.NewRecorder()
 		if method == http.MethodGet {
-			h.GetAsyncJob(w, asyncCallerRequest(method, "legacy", "synthetic-a"))
+			asyncGet(h)(w, asyncCallerRequest(method, "legacy", "synthetic-a"))
 		} else {
-			h.DeleteAsyncJob(w, asyncCallerRequest(method, "legacy", "synthetic-a"))
+			asyncDelete(h)(w, asyncCallerRequest(method, "legacy", "synthetic-a"))
 		}
 		if w.Code != http.StatusNotFound {
 			t.Errorf("job without owner %s: %d", method, w.Code)
@@ -143,14 +176,17 @@ func TestAsyncJobStandaloneModeWorksWithoutKey(t *testing.T) {
 	s := createTestServer(t, mock.URL)
 	s.asyncWorker.Stop()
 	h := s.handlers
+	// The line's stopped worker refuses new jobs (503), so the job goes to a
+	// worker on the same store that is never started: it stays queued.
+	h.asyncWorker = async.NewWorker(h.asyncStore, async.WorkerConfig{MaxWorkers: 1})
 	id := asyncCallerSubmit(t, h, "")
 	w := httptest.NewRecorder()
-	h.GetAsyncJob(w, asyncCallerRequest(http.MethodGet, id, ""))
+	asyncGet(h)(w, asyncCallerRequest(http.MethodGet, id, ""))
 	if w.Code != http.StatusOK {
 		t.Fatalf("standalone read: %d", w.Code)
 	}
 	w = httptest.NewRecorder()
-	h.DeleteAsyncJob(w, asyncCallerRequest(http.MethodDelete, id, ""))
+	asyncDelete(h)(w, asyncCallerRequest(http.MethodDelete, id, ""))
 	if w.Code != http.StatusOK {
 		t.Fatalf("standalone delete: %d", w.Code)
 	}
@@ -180,15 +216,15 @@ func TestAsyncJobLicenseModeWithoutKeysRequiresKey(t *testing.T) {
 	defer rc.Release()
 	rc.Request = &models.ChatCompletionRequest{Model: "gpt-4o"}
 	w := httptest.NewRecorder()
-	if !h.AsyncMiddleware(w, r, rc) || w.Code != http.StatusUnauthorized || h.asyncStore.Count() != 1 {
+	if !asyncSubmit(h, w, r, rc) || w.Code != http.StatusUnauthorized || h.asyncStore.Count() != 1 {
 		t.Fatalf("submit without a key: handled with %d count=%d", w.Code, h.asyncStore.Count())
 	}
 	for _, method := range []string{http.MethodGet, http.MethodDelete} {
 		w := httptest.NewRecorder()
 		if method == http.MethodGet {
-			h.GetAsyncJob(w, asyncCallerRequest(method, "license-job", ""))
+			asyncGet(h)(w, asyncCallerRequest(method, "license-job", ""))
 		} else {
-			h.DeleteAsyncJob(w, asyncCallerRequest(method, "license-job", ""))
+			asyncDelete(h)(w, asyncCallerRequest(method, "license-job", ""))
 		}
 		if w.Code != http.StatusUnauthorized {
 			t.Errorf("%s without a key got %d: %s", method, w.Code, w.Body.String())
@@ -208,7 +244,7 @@ func TestAsyncSubmitWithUnknownKeyRejected(t *testing.T) {
 	rc.Request = &models.ChatCompletionRequest{Model: "synthetic-model"}
 	rc.Metadata["org_id"] = "org-a"
 	w := httptest.NewRecorder()
-	if !h.AsyncMiddleware(w, r, rc) || w.Code != http.StatusUnauthorized || h.asyncStore.Count() != 0 {
+	if !asyncSubmit(h, w, r, rc) || w.Code != http.StatusUnauthorized || h.asyncStore.Count() != 0 {
 		t.Fatalf("unknown key submit: %d count=%d", w.Code, h.asyncStore.Count())
 	}
 }

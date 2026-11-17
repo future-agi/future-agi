@@ -26,12 +26,38 @@ from django.db.models import Count, Q
 
 _BATCH = 500
 
+UPDATE_SAFETY = {
+    "schema_version": 1,
+    "risk_classes": ["data_migration"],
+    "tables": [
+        "postgres:tracer_trace_error_group",
+        "postgres:tracer_trace_scan_issue",
+    ],
+    "mitigation": (
+        "Resets tracer_trace_error_group.error_count to the number of distinct live "
+        "tracer_trace_scan_issue rows of each live scanner cluster (source = "
+        "'scanner'), for clusters with at least one such issue whose stored count "
+        "differs. Reads clusters in id-ordered keyset pages of 500, each page one "
+        "grouped count over a left join to their issues, and writes a page's stale "
+        "clusters with one bulk_update. atomic = False commits each page, so a "
+        "resumed run keeps what already committed. Row scale: one row per scanner "
+        "cluster plus a read of its issues; tracer_trace_error_group is a registered "
+        "high-volume table, tracer_trace_scan_issue is not. Second run: a repaired "
+        "cluster already matches its count and is not written; a re-run would still "
+        "reset any scanner cluster whose live issue count changed since, to the count "
+        "at that time. No schema change; the reverse is a no-op."
+    ),
+    "reviewer": "<actual-github-login>",
+    "review": "<actual-PR-review-discussion-permalink>",
+    "large_volume_rehearsal": True,
+}
+
 
 def repair_error_counts(apps, schema_editor):
     TraceErrorGroup = apps.get_model("tracer", "TraceErrorGroup")
 
     base_qs = (
-        TraceErrorGroup.objects.filter(source="scanner", deleted=False)
+        TraceErrorGroup.objects.using(schema_editor.connection.alias).filter(source="scanner", deleted=False)
         .annotate(
             actual=Count(
                 "scan_issues",
@@ -58,7 +84,7 @@ def repair_error_counts(apps, schema_editor):
         if stale:
             for cluster in stale:
                 cluster.error_count = cluster.actual
-            TraceErrorGroup.objects.bulk_update(
+            TraceErrorGroup.objects.using(schema_editor.connection.alias).bulk_update(
                 stale, ["error_count"], batch_size=len(stale)
             )
 

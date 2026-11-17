@@ -8,6 +8,7 @@ on:
       - "api_contracts/gateway/**"
       - "futureagi/agentcc/contracts/**"
       - "futureagi/agentcc/tests/fixtures/gateway_org_config.full.json"
+      - "futureagi/agentcc/connector_catalog/**"
       - "scripts/generate-agentcc-gateway-contracts.py"
       - ".github/workflows/agentcc-gateway-ci.yml"
   push:
@@ -17,6 +18,7 @@ on:
       - "api_contracts/gateway/**"
       - "futureagi/agentcc/contracts/**"
       - "futureagi/agentcc/tests/fixtures/gateway_org_config.full.json"
+      - "futureagi/agentcc/connector_catalog/**"
       - "scripts/generate-agentcc-gateway-contracts.py"
       - ".github/workflows/agentcc-gateway-ci.yml"
   workflow_dispatch:
@@ -42,6 +44,7 @@ jobs:
 
     env:
       TEST_REDIS_ADDR: localhost:6379
+      TEST_REDIS_DB: "0"
 
     steps:
       - uses: actions/checkout@v4
@@ -57,6 +60,14 @@ jobs:
       - name: Download gateway deps
         working-directory: agentcc-gateway
         run: go mod download
+
+      # dist/** and the Django copy are generated from the connector catalog's
+      # records (CONNECTORS-PLAN 2.5). go test checks the records only
+      # (check --sources-only), on purpose, so a data lane never regenerates
+      # them; this full check fails when any of them is stale.
+      - name: Check the generated connector catalog
+        working-directory: agentcc-gateway
+        run: go run ./cmd/agentcc-catalog check
 
       - name: Check generated Go formatting
         working-directory: agentcc-gateway
@@ -75,7 +86,7 @@ jobs:
       # cancel path; widen this once that is fixed.
       - name: Run gateway tests under the race detector
         working-directory: agentcc-gateway
-        run: go test -race -count=1 ./internal/pipeline/... ./internal/plugins/... ./internal/models/... ./internal/otel/... ./internal/audit/...
+        run: go test -race -count=1 -timeout 20m ./internal/pipeline/... ./internal/plugins/... ./internal/models/... ./internal/otel/... ./internal/audit/...
 
       - uses: docker/setup-buildx-action@v3
 

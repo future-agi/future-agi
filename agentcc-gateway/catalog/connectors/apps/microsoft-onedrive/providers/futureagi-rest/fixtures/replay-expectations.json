@@ -1,0 +1,78 @@
+{
+  "schema": "k2-replay-expectations/v1",
+  "app": "microsoft-onedrive",
+  "source": "V10 synthetic catalog fixtures; not live acceptance",
+  "test_account": "v10-synthetic-unverified-microsoft-onedrive",
+  "tools": 8,
+  "vendor_404": "Microsoft graph.microsoft.com 404",
+  "drive_checks": [
+    {
+      "name": "first_tool_read_only",
+      "jq": ".tools[] | select(.name == \"get_file\") | .annotations.readOnlyHint",
+      "want": "true"
+    },
+    {
+      "name": "fixture_resource_returned",
+      "jq": ".calls[0].result.content[0].text | contains(\"fixture\")",
+      "want": "true"
+    },
+    {
+      "name": "typed_first_projection",
+      "jq": ".calls[0].result.content[0].text | fromjson | .id",
+      "want": "microsoft-onedrive-item-fixture"
+    },
+    {
+      "name": "get_file_annotations",
+      "jq": ".tools[] | select(.name == \"get_file\") | .annotations | [.readOnlyHint, .destructiveHint, .idempotentHint, .openWorldHint] | map(tostring) | join(\" \")",
+      "want": "true false true false"
+    },
+    {
+      "name": "list_children_annotations",
+      "jq": ".tools[] | select(.name == \"list_children\") | .annotations | [.readOnlyHint, .destructiveHint, .idempotentHint, .openWorldHint] | map(tostring) | join(\" \")",
+      "want": "true false true false"
+    },
+    {
+      "name": "list_versions_annotations",
+      "jq": ".tools[] | select(.name == \"list_versions\") | .annotations | [.readOnlyHint, .destructiveHint, .idempotentHint, .openWorldHint] | map(tostring) | join(\" \")",
+      "want": "true false true false"
+    },
+    {
+      "name": "get_version_annotations",
+      "jq": ".tools[] | select(.name == \"get_version\") | .annotations | [.readOnlyHint, .destructiveHint, .idempotentHint, .openWorldHint] | map(tostring) | join(\" \")",
+      "want": "true false true false"
+    },
+    {
+      "name": "list_permissions_annotations",
+      "jq": ".tools[] | select(.name == \"list_permissions\") | .annotations | [.readOnlyHint, .destructiveHint, .idempotentHint, .openWorldHint] | map(tostring) | join(\" \")",
+      "want": "true false true false"
+    },
+    {
+      "name": "copy_template_annotations",
+      "jq": ".tools[] | select(.name == \"copy_template\") | .annotations | [.readOnlyHint, .destructiveHint, .idempotentHint, .openWorldHint] | map(tostring) | join(\" \")",
+      "want": "false false false false"
+    },
+    {
+      "name": "rename_file_annotations",
+      "jq": ".tools[] | select(.name == \"rename_file\") | .annotations | [.readOnlyHint, .destructiveHint, .idempotentHint, .openWorldHint] | map(tostring) | join(\" \")",
+      "want": "false false false false"
+    },
+    {
+      "name": "delete_file_annotations",
+      "jq": ".tools[] | select(.name == \"delete_file\") | .annotations | [.readOnlyHint, .destructiveHint, .idempotentHint, .openWorldHint] | map(tostring) | join(\" \")",
+      "want": "false true true false"
+    }
+  ],
+  "vendor_request_checks": [
+    {
+      "name": "documented_first_request",
+      "index": 0,
+      "want": "GET /v1.0/drives/drive-fixture/items/microsoft-onedrive-item-fixture?"
+    }
+  ],
+  "every_vendor_request": [
+    {
+      "name": "documented_api_prefix",
+      "jq": ".path | startswith(\"/v1.0/\")"
+    }
+  ]
+}

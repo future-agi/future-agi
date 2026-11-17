@@ -270,6 +270,7 @@ class TraceSummarySerializer(serializers.Serializer):
     model = serializers.CharField(allow_null=True)
     input_tokens = serializers.IntegerField(allow_null=True)
     output_tokens = serializers.IntegerField(allow_null=True)
+    cost = serializers.FloatField(allow_null=True)
 
 
 class TraceEvidenceSerializer(serializers.Serializer):
@@ -490,6 +491,7 @@ class RecommendationSerializer(serializers.Serializer):
 class DeepAnalysisResponseSerializer(serializers.Serializer):
     status = serializers.CharField()
     trace_id = serializers.CharField()
+    code = serializers.CharField(allow_null=True, required=False)
     root_causes = RootCauseSerializer(many=True)
     recommendations = RecommendationSerializer(many=True)
     immediate_fix = serializers.CharField(allow_null=True)

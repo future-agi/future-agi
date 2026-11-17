@@ -75,11 +75,11 @@ func TestExecutionEnvelopeHTTPContract(t *testing.T) {
 							var check g.Guardrail
 							switch tc.adapter {
 							case "webhook":
-								check = webhook.New("check", map[string]interface{}{"url": checker.URL})
+								check = webhook.NewConfigFileRule("check", map[string]interface{}{"url": checker.URL})
 							case "futureagi":
-								check = fi.New("check", map[string]interface{}{"base_url": checker.URL, "api_key": "synthetic", "secret_key": "synthetic", "eval_ids": tc.ids})
+								check = fi.NewConfigFileRule("check", map[string]interface{}{"base_url": checker.URL, "api_key": "synthetic", "secret_key": "synthetic", "eval_ids": tc.ids})
 							default:
-								check = external.New("check", map[string]interface{}{"provider": tc.adapter, "api_key": "synthetic", "endpoint": checker.URL})
+								check = external.NewConfigFileRule("check", map[string]interface{}{"provider": tc.adapter, "api_key": "synthetic", "endpoint": checker.URL})
 							}
 							if stage == "post" {
 								check = executionStage{Guardrail: check, stage: g.StagePost}
@@ -94,10 +94,14 @@ func TestExecutionEnvelopeHTTPContract(t *testing.T) {
 									t.Fatal(err)
 								}
 								if policy != "omitted" {
-									gc.FailOpen = policy == "true"
+									open := policy == "true"
+									gc.FailOpen = &open
 								}
 								store.Set("synthetic-org", &tenant.OrgConfig{Guardrails: &gc})
-								cfg.FailOpen = policy != "true" // Deliberately opposite: global cannot enable tenant fail-open.
+								// Opposite to the org's explicit value: the node cannot override
+								// it. With the org's value omitted the node's true applies, as
+								// v1.58.0 ran org checks.
+								cfg.FailOpen = policy != "true"
 							} else {
 								cfg.FailOpen = policy == "true"
 								cfg.Rules = []config.GuardrailRuleConfig{{Name: "check", Stage: stage, Mode: "sync", Action: "block", Threshold: threshold}}
@@ -136,7 +140,10 @@ func TestExecutionEnvelopeHTTPContract(t *testing.T) {
 							}
 							defer response.Body.Close()
 							want := 200
-							if tc.decision == "unavailable" && policy != "true" {
+							// Fail open: the org's explicit true, or, on a dynamic (org)
+							// check with the org's value omitted, the node's true.
+							open := policy == "true" || (mode == "dynamic" && policy == "omitted")
+							if tc.decision == "unavailable" && !open {
 								want = 503
 							}
 							if tc.decision == "deny" || tc.decision == "scored" && threshold < 1 {

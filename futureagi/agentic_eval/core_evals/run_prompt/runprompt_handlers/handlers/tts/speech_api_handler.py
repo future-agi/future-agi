@@ -13,10 +13,13 @@ Features:
 - Fallback to audio-preview for 404 errors (optional)
 """
 
+# Pre-existing lint debt, exempted file-wide so a security fix can touch this
+# module behaviour-neutrally (text without placeholders and typing rewrites).
+# ruff: noqa: F541, UP006, UP035
+
 import time
 from typing import Any, Dict
 
-import litellm
 import structlog
 from asgiref.sync import sync_to_async
 
@@ -28,6 +31,21 @@ from agentic_eval.core_evals.run_prompt.runprompt_handlers.base_handler import (
 from agentic_eval.core_evals.run_prompt.runprompt_handlers.utils.audio_processor import (
     AudioProcessor,
 )
+from agentic_eval.core_evals.run_prompt.runprompt_handlers.utils.payload_builder import (
+    vertex_credentials_and_location,
+)
+from model_hub.utils.model_endpoints import (
+    EndpointCallError,
+    ModelConfigurationRefused,
+    audio_model_kwargs,
+    guarded_aspeech,
+    guarded_speech,
+    is_endpoint_error,
+    is_vertex_provider,
+    refuse_vertex_call_without_a_service_account_key,
+    refuse_vertex_model_sent_to_another_provider,
+)
+from model_hub.utils.model_key import ModelKeyMissing
 
 logger = structlog.get_logger(__name__)
 
@@ -71,12 +89,36 @@ class SpeechAPIHandler(BaseModelHandler):
         Returns:
             Dictionary of speech parameters for litellm.speech()
         """
-        return AudioProcessor.build_speech_params(
+        speech_params = AudioProcessor.build_speech_params(
             model=self.context.model,
             input_text=input_text,
             api_key=self.context.api_key,
             run_prompt_config=self.context.run_prompt_config,
         )
+        api_key = self.context.api_key
+        if is_vertex_provider(self.context.provider) and isinstance(api_key, dict):
+            # A customer's Vertex model is called with the customer's own
+            # service-account key and its location, as the chat payload is,
+            # and not with the stored configuration as a plain key.
+            creds, vertex_location = vertex_credentials_and_location(api_key)
+            speech_params.pop("api_key", None)
+            speech_params["vertex_credentials"] = creds
+            if vertex_location:
+                speech_params["vertex_location"] = vertex_location
+        else:
+            speech_params.update(audio_model_kwargs(self.context.provider, api_key))
+        # A Vertex model given no service-account key of the customer's own
+        # (a key alone, no configuration, an empty one or a location alone)
+        # is refused before these calls.
+        refuse_vertex_call_without_a_service_account_key(
+            self.context.provider, speech_params
+        )
+        # So is a Vertex model whose name the model library sends to another
+        # provider.
+        refuse_vertex_model_sent_to_another_provider(
+            self.context.provider, speech_params
+        )
+        return speech_params
 
     def _should_fallback_to_completion(self, error: Exception) -> bool:
         """
@@ -91,10 +133,19 @@ class SpeechAPIHandler(BaseModelHandler):
         Returns:
             True if we should try the completion endpoint fallback
         """
+        is_audio_preview = "gpt-4o-audio-preview" in self.context.model
+        if isinstance(error, EndpointCallError):
+            return (
+                is_audio_preview
+                and error.category == "status"
+                and error.status_code == 404
+            )
+        if is_endpoint_error(error) or isinstance(
+            error, (ModelConfigurationRefused, ModelKeyMissing)
+        ):
+            return False
         error_str = str(error).lower()
         is_404_error = "404" in error_str or "invalid url" in error_str
-        is_audio_preview = "gpt-4o-audio-preview" in self.context.model
-
         return is_404_error and is_audio_preview
 
     def execute_sync(self, streaming: bool = False) -> HandlerResponse:
@@ -126,7 +177,7 @@ class SpeechAPIHandler(BaseModelHandler):
             )
 
             # Execute speech API call with drop_params=True to handle provider differences
-            audio_response = litellm.speech(**speech_params, drop_params=True)
+            audio_response = guarded_speech(**speech_params, drop_params=True)
 
             # Validate response is not None
             self._validate_response_not_empty(audio_response, response_type="TTS")
@@ -167,6 +218,10 @@ class SpeechAPIHandler(BaseModelHandler):
                 )
                 return self._fallback_to_completion_sync(start_time)
 
+            if is_endpoint_error(e) or isinstance(
+                e, (ModelConfigurationRefused, ModelKeyMissing)
+            ):
+                raise
             self.logger.exception(f"Speech API TTS execution failed: {str(e)}")
             return self._build_handler_response(
                 response=None,
@@ -206,7 +261,7 @@ class SpeechAPIHandler(BaseModelHandler):
             )
 
             # Execute speech API call with drop_params=True to handle provider differences
-            audio_response = await litellm.aspeech(**speech_params, drop_params=True)
+            audio_response = await guarded_aspeech(**speech_params, drop_params=True)
 
             # Validate response is not None
             self._validate_response_not_empty(audio_response, response_type="TTS")
@@ -249,6 +304,10 @@ class SpeechAPIHandler(BaseModelHandler):
                 )
                 return await self._fallback_to_completion_async(start_time)
 
+            if is_endpoint_error(e) or isinstance(
+                e, (ModelConfigurationRefused, ModelKeyMissing)
+            ):
+                raise
             self.logger.exception(f"Speech API TTS async execution failed: {str(e)}")
             return self._build_handler_response(
                 response=None,

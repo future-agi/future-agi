@@ -1,3 +1,8 @@
+import { formatExactMoney } from "src/sections/common/format/money";
+import {
+  evalQualitySummary,
+  isValidEvalQualityPoint,
+} from "src/utils/evalQualityMetrics";
 import { isIncompleteCost, monetaryCostLabel } from "./common";
 /* eslint-disable react/prop-types */
 /**
@@ -915,14 +920,22 @@ const PrimaryGraph = ({
 
     for (const item of items) {
       if (item.timestamp == null) continue;
-      const ts = item.timestamp.replace(/\+00:00$/, "");
+      // ClickHouse zone-less buckets are UTC; keep explicit offsets intact.
+      const ts = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(item.timestamp)
+        ? item.timestamp
+        : `${item.timestamp}Z`;
+      const timestamp = new Date(ts).getTime();
       mData.push({
-        x: new Date(ts).getTime(),
-        y: isIncompleteCost(item.cost_coverage) || item.value == null ? null : Number(item.value),
+        ...item,
+        x: timestamp,
+        y:
+          isIncompleteCost(item.cost_coverage) || item.value == null
+            ? null
+            : Number(item.value),
         cost_coverage: item.cost_coverage,
       });
       tData.push({
-        x: new Date(ts).getTime(),
+        x: timestamp,
         y: item.primary_traffic == null ? null : Number(item.primary_traffic),
       });
     }
@@ -956,7 +969,9 @@ const PrimaryGraph = ({
   const metricSeriesName = metricSeriesQualifiers.length
     ? `${metricDef.label} (${metricSeriesQualifiers.join(", ")})`
     : metricDef.label;
-  const lineSeriesName = metricData.some((point) => isIncompleteCost(point.cost_coverage))
+  const lineSeriesName = metricData.some((point) =>
+    isIncompleteCost(point.cost_coverage),
+  )
     ? `${metricSeriesName} · Cost coverage incomplete`
     : metricSeriesName;
   const trafficSeriesName = "Traffic";
@@ -1096,11 +1111,23 @@ const PrimaryGraph = ({
         theme: theme.palette.mode,
         x: { format: "dd MMM yyyy" },
         y: {
+          // Preserve the exact-source tooltip contract.
+          // prettier-ignore
           formatter: (v, { seriesIndex, dataPointIndex }) => {
+            const isEvalMetric = metricDef.apiType === "EVAL" && seriesIndex === 0;
+            const point = isEvalMetric ? metricData[dataPointIndex] : null;
+            if (isEvalMetric && !isValidEvalQualityPoint(point)) return "-";
             const coverage = metricData[dataPointIndex]?.cost_coverage;
-            if (seriesIndex === 0 && isIncompleteCost(coverage)) return monetaryCostLabel(null, coverage);
-            if (v == null) return "-";
+            if (seriesIndex === 0 && !isEvalMetric && isIncompleteCost(coverage)) return monetaryCostLabel(null, coverage);
+            if (v == null) {
+              if (!isEvalMetric) return "-";
+              if (point.count === 0) return "No data";
+              return point.count > 0 && point.scored_count === 0
+                ? "Unscored"
+                : "-";
+            }
             if (seriesIndex === 0) {
+              if (["$", "USD", "usd"].includes(metricDef.unit)) return formatExactMoney(v);
               return metricDef.unit
                 ? `${v.toFixed(2)} ${metricDef.unit}`
                 : v.toFixed(2);
@@ -1113,6 +1140,7 @@ const PrimaryGraph = ({
     }),
     [
       metricDef,
+      metricData,
       lineSeriesName,
       lineColor,
       barColor,
@@ -1451,6 +1479,14 @@ const PrimaryGraph = ({
         </Box>
       </Box>
 
+      {displaySnapshot && metricDef.apiType === "EVAL" && (
+        <Typography
+          role="status"
+          sx={{ px: 1, fontSize: 11, color: "text.secondary" }}
+        >
+          {evalQualitySummary(metricData, true)}
+        </Typography>
+      )}
       {/* Chart */}
       {graphStatusMessage && displaySnapshot ? (
         <Typography

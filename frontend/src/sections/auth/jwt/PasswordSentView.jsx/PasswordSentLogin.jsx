@@ -15,9 +15,11 @@ import React from "react";
 import { RHFTextField } from "src/components/hook-form";
 import Iconify from "src/components/iconify";
 import axios, { endpoints } from "src/utils/axios";
+import logger from "src/utils/logger";
 
 const PasswordSentLogin = ({
   email,
+  emailLabel = "Email ID",
   setRegisterSuccess,
   password,
   errorMsg,
@@ -40,9 +42,11 @@ const PasswordSentLogin = ({
       });
     },
     onError: (err) => {
+      logger.error("Resending the sign-up password failed", err);
       enqueueSnackbar({
         variant: "error",
-        message: `"Error resending password:"${err}`,
+        message:
+          "We couldn't resend your password, so wait a minute and select Resend again.",
         autoHideDuration: 3000,
       });
     },
@@ -90,7 +94,7 @@ const PasswordSentLogin = ({
           }}
         >
           <Typography variant="s2" fontWeight={"Medium"}>
-            Business Email address
+            {emailLabel}
           </Typography>
           <Typography variant="m2" fontWeight={"Medium"}>
             {email}
@@ -182,6 +186,7 @@ export default PasswordSentLogin;
 
 PasswordSentLogin.propTypes = {
   email: PropTypes.string.isRequired,
+  emailLabel: PropTypes.string,
   password: PropTypes.object,
   setRegisterSuccess: PropTypes.func,
   errorMsg: PropTypes.string,

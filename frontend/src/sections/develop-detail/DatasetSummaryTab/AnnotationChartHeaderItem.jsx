@@ -1,8 +1,21 @@
 import { Box, Typography } from "@mui/material";
 import PropTypes from "prop-types";
 import React from "react";
+import { fmtNumber, fmtScore } from "src/sections/common/format/fmt";
 
-const AnnotationChartHeaderItem = ({ title, value }) => {
+/** One formatter: `38.71%` → `38.7%`, `0.6249` → `0.62`, `N/A` explained. */
+function display(value, missing) {
+  if (!(value || value === 0)) return { text: "N/A", note: missing ?? null };
+  const str = String(value);
+  if (/^-?\d+(\.\d+)?%$/.test(str))
+    return { text: `${fmtNumber(Math.round(parseFloat(str) * 10) / 10)}%` };
+  if (isNaN(value)) return { text: str };
+  const n = Number(value);
+  return { text: Number.isInteger(n) ? fmtNumber(n) : fmtScore(n) };
+}
+
+const AnnotationChartHeaderItem = ({ title, value, missing }) => {
+  const shown = display(value, missing);
   return (
     <Box
       display="flex"
@@ -29,14 +42,13 @@ const AnnotationChartHeaderItem = ({ title, value }) => {
         fontWeight={"fontWeightSemiBold"}
         color="text.primary"
       >
-        {value || value === 0
-          ? isNaN(value)
-            ? value
-            : Number.isInteger(Number(value))
-              ? value
-              : Number(value).toFixed(2)
-          : "N/A"}
+        {shown.text}
       </Typography>
+      {shown.note && (
+        <Typography typography="s3" color="text.secondary">
+          {shown.note}
+        </Typography>
+      )}
     </Box>
   );
 };
@@ -45,5 +57,6 @@ export default AnnotationChartHeaderItem;
 
 AnnotationChartHeaderItem.propTypes = {
   title: PropTypes.string,
-  value: PropTypes.string,
+  value: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
+  missing: PropTypes.string,
 };

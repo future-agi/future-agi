@@ -54,6 +54,10 @@ const EACH = "__each__";
 const PANEL_DAYS = 44;
 const PANEL_MODELS = 96;
 const PANEL_GAP = 20;
+// Keep long runs inspectable without dropping days or squeezing them away.
+const SCROLL_DAYS = 31;
+const MIN_DAY_CELL = 14;
+const SCROLL_HEIGHT = 480;
 
 // Thin stripes of a step's colour over the palest tint: a cell with too few
 // answers to trust.
@@ -164,9 +168,16 @@ function TimeGrid({ grid, question, answer, onSelect, unit, sample, running }) {
     Boolean(cell?.errors) &&
     (fewErrors ||
       (cell.errors >= 2 && cell.errors / cell.n >= stats.errorFloor));
+  const gridWidth =
+    width && grid.pivot === "modelDay" && columns.length > SCROLL_DAYS
+      ? Math.max(
+          width,
+          LABEL_COL + TOTAL_COL + columns.length * (MIN_DAY_CELL + GRID_GAP),
+        )
+      : width;
   const cellW =
-    width && columns.length
-      ? (width - LABEL_COL - TOTAL_COL - columns.length * GRID_GAP) /
+    gridWidth && columns.length
+      ? (gridWidth - LABEL_COL - TOTAL_COL - columns.length * GRID_GAP) /
         columns.length
       : 0;
   const cellH = rows.length <= 10 ? 20 : rows.length <= 20 ? 16 : 13;
@@ -268,7 +279,7 @@ function TimeGrid({ grid, question, answer, onSelect, unit, sample, running }) {
           labelW={LABEL_COL}
           rightW={TOTAL_COL}
           topH={16}
-          width={width}
+          width={gridWidth}
           paint={paint}
           describe={describe}
           onPick={(r, c) => {
@@ -560,7 +571,17 @@ function SmallMultiples({ grid, question, summary, onSelect, unit, sample }) {
     legendAnswers(summary, question).map((entry) => [entry.answer, entry]),
   );
   const perRow = width >= 940 ? 3 : width >= 600 ? 2 : 1;
-  const panelW = width ? (width - (perRow - 1) * PANEL_GAP) / perRow : 0;
+  const availablePanelW = width
+    ? (width - (perRow - 1) * PANEL_GAP) / perRow
+    : 0;
+  const wide = grid.pivot === "modelDay" && grid.columns.length > SCROLL_DAYS;
+  const panelW =
+    width && wide
+      ? Math.max(
+          availablePanelW,
+          PANEL_MODELS + grid.columns.length * (MIN_DAY_CELL + 1),
+        )
+      : availablePanelW;
   return (
     <Box ref={box}>
       <Box
@@ -569,6 +590,10 @@ function SmallMultiples({ grid, question, summary, onSelect, unit, sample }) {
           gridTemplateColumns: `repeat(${perRow}, minmax(0, 1fr))`,
           columnGap: `${PANEL_GAP}px`,
           rowGap: 2,
+          minWidth:
+            wide && panelW
+              ? perRow * panelW + (perRow - 1) * PANEL_GAP
+              : undefined,
         }}
       >
         {panelW > 0 &&
@@ -638,6 +663,7 @@ export default function AskHeatmap({
   unit: unitProp,
   onReadMore,
   readingMore,
+  readMoreCost,
 }) {
   const { summary, questions, sample, unit } = useRunData({
     summary: given,
@@ -711,7 +737,7 @@ export default function AskHeatmap({
   );
   if (!question) return null;
   const plural = (UNITS[unit] || UNITS.sessions).plural;
-  if (
+  const sparseTime =
     pivot === "dayHour" &&
     !grid.rows.some((row) =>
       grid.columns.some(
@@ -719,35 +745,18 @@ export default function AskHeatmap({
           (grid.cells.get(`${row.key}|${column.key}`)?.answered || 0) >=
           SMALL_N,
       ),
-    )
-  )
-    return (
-      <VizCard title="Heatmap" label="Heatmap of answers">
-        <Stack spacing={1} alignItems="flex-start">
-          <Typography variant="subtitle2">
-            Not enough answers for time patterns
-          </Typography>
-          <Typography variant="body2" color="text.secondary">
-            Each time cell needs at least {SMALL_N} answers. Use the timeline
-            and answer split for now.
-            {!onReadMore &&
-              !running &&
-              " Start a new question with a larger scope to read more."}
-          </Typography>
-          <Button
-            size="small"
-            variant="outlined"
-            onClick={onReadMore}
-            disabled={!onReadMore || running || readingMore}
-          >
-            Read more
-          </Button>
-        </Stack>
-      </VizCard>
     );
   const run = runTally(summary, question);
   const overallShare =
     shown && run.answered ? (run.byLabel.get(shown) || 0) / run.answered : null;
+
+  const dayCount =
+    pivot === "dayHour"
+      ? grid.rows.length
+      : pivot === "modelDay"
+        ? grid.columns.length
+        : 0;
+  const scrollDays = dayCount > SCROLL_DAYS;
 
   let caption;
   if (kind === "time") {
@@ -761,11 +770,54 @@ export default function AskHeatmap({
     )
       ?.label.toLowerCase()
       .replace(/s$/, "")}.`;
+  if (scrollDays)
+    caption += ` · All ${dayCount} days with data · scroll to inspect`;
   if (sample.isSample)
     caption = `${caption} · counts of the ${formatCount(sample.read)} read`;
 
   let body;
-  if (kind === "time") {
+  if (sparseTime) {
+    // The Rows pivots that count answers per group, not per hour: the way on
+    // from a sparse Day × Hour. Read more only where the run can read more,
+    // never as a dead button.
+    const groups = choices
+      .filter((choice) => choice.kind === "matrix")
+      .map((choice) => choice.label);
+    const named =
+      groups.length > 1
+        ? `${groups.slice(0, -1).join(", ")} or ${groups[groups.length - 1]}`
+        : groups[0];
+    const switchTo = named ? `Switch Rows to ${named}` : null;
+    let next = switchTo ? `${switchTo}.` : "";
+    if (onReadMore)
+      next = switchTo
+        ? `${switchTo}, or read more rows.`
+        : "Read more rows to fill it in.";
+    else if (!running)
+      next = switchTo
+        ? `${switchTo}, or start a new question with a larger scope.`
+        : "Start a new question with a larger scope to read more.";
+    body = (
+      <Stack spacing={1} alignItems="flex-start">
+        <Typography variant="subtitle2">
+          Not enough answers for time patterns
+        </Typography>
+        <Typography variant="body2" color="text.secondary">
+          {`Each Day × Hour cell needs at least ${SMALL_N} answers to be shaded. ${next}`.trim()}
+        </Typography>
+        {onReadMore && (
+          <Button
+            size="small"
+            variant="outlined"
+            onClick={onReadMore}
+            disabled={Boolean(running || readingMore)}
+          >
+            {readMoreCost ? `Read more · ${readMoreCost}` : "Read more"}
+          </Button>
+        )}
+      </Stack>
+    );
+  } else if (kind === "time") {
     if (!grid?.rows.length)
       body = (
         <Typography
@@ -821,7 +873,7 @@ export default function AskHeatmap({
     <VizCard
       title="Heatmap"
       label="Heatmap of answers"
-      caption={caption}
+      caption={sparseTime ? undefined : caption}
       action={
         <>
           <TextField
@@ -838,7 +890,7 @@ export default function AskHeatmap({
               </MenuItem>
             ))}
           </TextField>
-          {kind === "time" && (
+          {kind === "time" && !sparseTime && (
             <TextField
               select
               size="small"
@@ -868,7 +920,18 @@ export default function AskHeatmap({
         </>
       }
     >
-      {body}
+      {scrollDays ? (
+        <Box
+          role="region"
+          aria-label="Scrollable heatmap"
+          tabIndex={0}
+          sx={{ maxHeight: SCROLL_HEIGHT, overflow: "auto" }}
+        >
+          {body}
+        </Box>
+      ) : (
+        body
+      )}
     </VizCard>
   );
 }
@@ -889,4 +952,6 @@ AskHeatmap.propTypes = {
   window: PropTypes.array,
   onReadMore: PropTypes.func,
   readingMore: PropTypes.bool,
+  // What Read more bills ("about 60 credits"), where answers are billed.
+  readMoreCost: PropTypes.string,
 };

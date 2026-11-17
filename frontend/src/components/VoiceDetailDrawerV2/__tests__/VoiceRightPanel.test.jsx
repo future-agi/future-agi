@@ -5,6 +5,17 @@ import userEvent from "@testing-library/user-event";
 import { render, screen } from "src/utils/test-utils";
 import VoiceRightPanel from "../VoiceRightPanel";
 
+vi.mock("src/hooks/useCapabilities", async (importOriginal) => ({
+  .../** @type {typeof import("src/hooks/useCapabilities")} */ (
+    await importOriginal()
+  ),
+  useFeatureAllowed: () => ({
+    allowed: true,
+    isLoading: false,
+    isError: false,
+  }),
+}));
+
 vi.mock("src/sections/falcon-ai/helpers/openFixWithFalcon", () => ({
   openFixWithFalcon: vi.fn(),
 }));

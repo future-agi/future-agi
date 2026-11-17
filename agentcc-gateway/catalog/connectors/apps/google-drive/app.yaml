@@ -1,0 +1,22 @@
+schema: connector-manifest/v1#app
+id: google-drive
+version: 1.0.0
+name: Google Drive
+description: Manage files explicitly authorized for this app; no whole-drive access or binary uploads.
+vendor:
+  name: Google
+  domains:
+    - googleapis.com
+eeCategory: productivity
+group: google
+categories:
+  - productivity
+docsUrl: https://developers.google.com/workspace/drive/api/reference/rest
+archetype: cloud-drive
+defaultProvider: futureagi-rest
+lifecycle:
+  status: active
+sources:
+  - fact: vendor.domains
+    url: https://raw.githubusercontent.com/googleapis/google-api-go-client/b2487a489315d16e91d98a8d940dca2e59e0bd9d/drive/v3/drive-api.json
+    fetchedAt: "2026-10-28"

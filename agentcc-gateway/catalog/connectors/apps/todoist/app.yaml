@@ -1,0 +1,22 @@
+schema: "connector-manifest/v1#app"
+id: todoist
+version: 1.0.0
+name: Todoist
+description: "Tasks, projects, labels and filters in Todoist."
+vendor:
+  name: Todoist
+  domains: [todoist.com, todoist.net]
+eeCategory: productivity
+group: other
+categories: [productivity, project-management]
+tags: [tasks, projects]
+docsUrl: https://www.todoist.com/help/todoist/todoist-and-ai/connect-todoist-to-an-ai-assistant-xMSzFfHng
+defaultProvider: mcp
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://www.todoist.com/help/todoist/todoist-and-ai/connect-todoist-to-an-ai-assistant-xMSzFfHng
+    fetchedAt: 2026-11-12
+  - fact: vendor.domains
+    url: https://developer.todoist.com/api/v1
+    fetchedAt: 2026-11-12

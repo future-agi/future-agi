@@ -1,5 +1,6 @@
 """Playground response shape stays canonical whether or not the metering helper is loaded (TH-6719)."""
 
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -201,3 +202,56 @@ def test_response_output_preserves_polymorphic_shapes(
         source="eval_playground",
     )
     assert output["output"] == value
+
+
+class _FakeAgentEvalInstance(_FakeEvalInstance):
+    """An agent run whose client ran on the managed model: its result names the
+    configured model, and only the evaluator knows the model it ran on."""
+
+    ran_on_model = "falcon_ai"
+
+    def run(self, **_kwargs):
+        return _FakeBatchResult(
+            [
+                {
+                    "data": {"result": "Pass"},
+                    "failure": False,
+                    "reason": "grounded",
+                    "runtime": 42,
+                    "model": "gpt-4o",
+                    "metrics": [{"id": "agent_eval_score", "value": "Pass"}],
+                    "metadata": json.dumps(
+                        {
+                            "usage": {"total_tokens": 150},
+                            "agent_metadata": {"model_used": "gpt-4o"},
+                        }
+                    ),
+                }
+            ]
+        )
+
+
+@pytest.mark.django_db
+def test_response_does_not_show_the_model_an_agent_ran_on(
+    monkeypatch, pass_fail_template, organization
+):
+    _patch_runner(monkeypatch, format_output_return="Passed")
+    monkeypatch.setattr(
+        "model_hub.views.utils.evals.EvaluationRunner._create_eval_instance",
+        lambda *_args, **_kwargs: _FakeAgentEvalInstance(),
+    )
+    monkeypatch.setattr(evals_module, "log_and_deduct_cost_for_api_request", None)
+
+    output = run_eval_func(
+        {"config": {}, "params": {}},
+        {"input": "hello"},
+        pass_fail_template,
+        organization,
+        source="eval_playground",
+    )
+
+    body = json.dumps(output, default=str)
+    assert "ran_on_model" not in body
+    assert "falcon_ai" not in body
+    assert output["model"] == "gpt-4o"
+    assert "gpt-4o" in json.dumps(output["metadata"], default=str)

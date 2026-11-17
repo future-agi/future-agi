@@ -269,6 +269,7 @@ const TotpSetupDialog = ({ open, onClose, onStatusChange }) => {
         open={recoveryDialogOpen}
         onClose={handleRecoveryDialogClose}
         codes={recoveryCodes || []}
+        reason="totp"
       />
     </>
   );

@@ -2,18 +2,29 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 
 import { CellSkeleton, Field } from "../traceCells";
+import { registerOfflineIcon } from "src/components/iconify/registry";
+import bundled from "src/components/iconify/offline-icons.json";
+
+// Field accepts a caller-owned glyph; this test supplies that caller's fixture.
+registerOfflineIcon("solar:tag-linear", bundled["solar:tag-linear"]);
 
 describe("Field (persona cell attribute)", () => {
   it("wraps a long value instead of cutting it off", () => {
-    const traits = "Detail-oriented, Questioning, Anxious, Impatient, Talks over the agent";
-    render(<Field icon="solar:tag-linear" label="Traits" value={traits} />);
+    const traits =
+      "Detail-oriented, Questioning, Anxious, Impatient, Talks over the agent";
+    const { container } = render(
+      <Field icon="solar:tag-linear" label="Traits" value={traits} />,
+    );
+    expect(container.querySelector("[data-missing-icon]")).toBeNull();
     const value = screen.getByText(traits);
     expect(getComputedStyle(value).whiteSpace).not.toBe("nowrap");
     expect(getComputedStyle(value).textOverflow).not.toBe("ellipsis");
   });
 
   it("renders nothing for an empty value", () => {
-    const { container } = render(<Field icon="solar:tag-linear" label="Traits" value="" />);
+    const { container } = render(
+      <Field icon="solar:tag-linear" label="Traits" value="" />,
+    );
     expect(container).toBeEmptyDOMElement();
   });
 });

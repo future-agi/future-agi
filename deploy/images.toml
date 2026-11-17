@@ -99,9 +99,9 @@ architectures = ["amd64"]
 [[image]]
 name = "futureagi/code-executor"
 runs = "nsjail sandbox for untrusted code evals"
-setups = "Standalone (`COMPOSE_PROFILES=sandbox`), Distributed, Helm; needs `privileged`"
+setups = "Standalone (`COMPOSE_PROFILES=sandbox`), Distributed, Helm; not privileged: needs `NET_ADMIN`, seccomp `Unconfined` and unprivileged user namespaces"
 ports = "8060"
-user = "root"
+user = "65534:65534"
 health_check = "`GET /health` on :8060"
 architectures = ["amd64", "arm64"]
 
@@ -113,6 +113,24 @@ ports = "none"
 user = "root (from the backend)"
 health_check = "inherited from the backend: healthy while it runs"
 architectures = ["amd64"]
+
+[[image]]
+name = "futureagi/omega-hub-checker"
+runs = "The Omega Hub checker: claims each upload, judges it, and runs its keyless test and demo on the runner daemon over mutual TLS. Holds only its token and the runner's client certificate"
+setups = "Standalone (`COMPOSE_PROFILES=hub`), Distributed, Helm (`hub.enabled`)"
+ports = "none"
+user = "`node` (1000)"
+health_check = "none: its entrypoint refuses to start unless the runner daemon runs containers on gVisor"
+architectures = ["amd64", "arm64"]
+
+[[image]]
+name = "futureagi/omega-hub-runner-host"
+runs = "The checker's runner daemon: Docker in Docker whose only runtime is gVisor (`runsc`), on TCP 2376 with mutual TLS. Next to Standalone and Distributed; on a host of its own in production"
+setups = "Standalone (`COMPOSE_PROFILES=hub`), Distributed, production runner host; needs `privileged`"
+ports = "2376"
+user = "root"
+health_check = "`docker info` over its own TLS listener"
+architectures = ["amd64", "arm64"]
 
 # The one image without a budget of its own.
 [[image]]

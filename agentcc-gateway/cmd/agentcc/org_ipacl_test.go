@@ -12,6 +12,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/futureagi/agentcc-gateway/internal/auth"
 )
 
 // An org's own ip_acl applies whether or not the global ip_acl is enabled.
@@ -33,11 +35,11 @@ func TestOrgIPACLAppliesWithGlobalIPACLDisabled(t *testing.T) {
 		switch r.URL.Path {
 		case "/agentcc/org-configs/bulk/":
 			fmt.Fprint(w, `{"status":true,"result":{`+
-				`"org-remote":{"ip_acl":{"enabled":true,"allow":["10.0.0.0/8"]}},`+
-				`"org-local":{"ip_acl":{"enabled":true,"allow":["127.0.0.0/8"]}}}}`)
+				`"org-remote":{`+orgIPACLProvider+`"ip_acl":{"enabled":true,"allow":["10.0.0.0/8"]}},`+
+				`"org-local":{`+orgIPACLProvider+`"ip_acl":{"enabled":true,"allow":["127.0.0.0/8"]}}}}`)
 			orgsServed.Store(true)
 		case "/agentcc/api-keys/bulk/":
-			fmt.Fprint(w, `{"status":true,"result":[]}`)
+			fmt.Fprint(w, orgIPACLKeyList("org-remote", "sk-org-remote-0001", "org-local", "sk-org-local-0001"))
 		default:
 			fmt.Fprint(w, `{}`)
 		}
@@ -49,6 +51,7 @@ func TestOrgIPACLAppliesWithGlobalIPACLDisabled(t *testing.T) {
 	cfg := fmt.Sprintf(`server:
   host: 127.0.0.1
   port: %d
+  trusted_proxies: ["192.0.2.255/32"] # resolves client IPs; the peer stays the client
 providers:
   openai:
     base_url: %s
@@ -59,23 +62,12 @@ ip_acl:
   enabled: false
 auth:
   enabled: true
-  keys:
-    - name: remote
-      key: sk-org-remote-0001
-      owner: test
-      key_type: internal
-      metadata:
-        org_id: org-remote
-    - name: local
-      key: sk-org-local-0001
-      owner: test
-      key_type: internal
-      metadata:
-        org_id: org-local
 control_plane:
   url: %s
   sync_on_startup: true
-`, port, provider.URL, backend.URL)
+admin:
+  token: %s
+`, port, provider.URL, backend.URL, testAdminToken)
 	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -164,8 +156,8 @@ func TestOrgIPACLUpdateAppliesToNextRequest(t *testing.T) {
 		"guardrails":   "guardrails:\n  enabled: true\n",
 	}
 	const (
-		localOnly  = `{"ip_acl":{"enabled":true,"allow":["127.0.0.0/8"]}}`
-		remoteOnly = `{"ip_acl":{"enabled":true,"allow":["10.0.0.0/8"]}}`
+		localOnly  = `{` + orgIPACLProvider + `"ip_acl":{"enabled":true,"allow":["127.0.0.0/8"]}}`
+		remoteOnly = `{` + orgIPACLProvider + `"ip_acl":{"enabled":true,"allow":["10.0.0.0/8"]}}`
 	)
 	for pluginsName, extra := range plugins {
 		for _, via := range []string{"admin API", "control plane sync"} {
@@ -205,7 +197,27 @@ func TestOrgIPACLUpdateAppliesToNextRequest(t *testing.T) {
 	}
 }
 
-const orgIPACLAdminToken = "synthetic-admin-token-0001"
+// orgIPACLAdminToken is one the gateway's start-up check accepts: a gateway with
+// a control plane refuses to start without a 64-hex admin token.
+const orgIPACLAdminToken = testAdminToken
+
+// orgIPACLProvider gives an org the gateway's openai provider with a key of
+// its own, which a call made with the org's gateway key goes out on.
+const orgIPACLProvider = `"providers":{"openai":{"enabled":true,"api_key":"org-key","models":["gpt-4o"]}},`
+
+// orgIPACLKeyList is the control plane's key list with one key per org, given
+// as org id, key pairs. A gateway with a control plane takes an org's keys
+// from that list alone: it refuses one written in its config file.
+func orgIPACLKeyList(orgKeys ...string) string {
+	var entries []string
+	for i := 0; i+1 < len(orgKeys); i += 2 {
+		org, key := orgKeys[i], orgKeys[i+1]
+		entries = append(entries, fmt.Sprintf(`{"id":%q,"name":%q,"key_hash":%q,"metadata":{"org_id":%q,"user_id":%q}}`,
+			"key-"+org, org, auth.HashKey(key), org, "user-"+org))
+	}
+	return fmt.Sprintf(`{"status":true,"result":[%s],"snapshot":{"complete":true,"issued_ever":%d},"retired":[],"config_conflicts":[]}`,
+		strings.Join(entries, ","), len(entries))
+}
 
 // orgIPACLGateway is a gateway started by startOrgIPACLGateway.
 type orgIPACLGateway struct {
@@ -253,7 +265,7 @@ func startOrgIPACLGateway(t *testing.T, extraYAML, orgsJSON string, periodicSync
 			fmt.Fprint(w, `{"status":true,"result":`+g.orgs.Load().(string)+`}`)
 			g.synced.Add(1)
 		case "/agentcc/api-keys/bulk/":
-			fmt.Fprint(w, `{"status":true,"result":[]}`)
+			fmt.Fprint(w, orgIPACLKeyList("org-local", "sk-org-local-0001"))
 		default:
 			fmt.Fprint(w, `{}`)
 		}
@@ -265,6 +277,7 @@ func startOrgIPACLGateway(t *testing.T, extraYAML, orgsJSON string, periodicSync
 	cfg := fmt.Sprintf(`server:
   host: 127.0.0.1
   port: %d
+  trusted_proxies: ["192.0.2.255/32"] # resolves client IPs; the peer stays the client
 providers:
   openai:
     base_url: %s
@@ -277,13 +290,6 @@ admin:
   token: %s
 auth:
   enabled: true
-  keys:
-    - name: local
-      key: sk-org-local-0001
-      owner: test
-      key_type: internal
-      metadata:
-        org_id: org-local
 control_plane:
   url: %s
   sync_on_startup: true

@@ -28,6 +28,30 @@ logger = logging.getLogger(__name__)
 
 _CAMEL_RE = re.compile(r"([a-z0-9])([A-Z])")
 
+UPDATE_SAFETY = {
+    "schema_version": 1,
+    "risk_classes": ["data_migration"],
+    "tables": ["postgres:tracer_eval_task"],
+    "mitigation": (
+        "Normalizes tracer_eval_task.filters items to snake_case keys (one level on "
+        "each item and on its filter_config) and folds span_attributes_filters items "
+        "into filters; values are not changed, and when both spellings of a key exist "
+        "the snake_case entry wins. Reads every eval task whose filters is not null "
+        "through the base manager (soft-deleted rows included) with "
+        "iterator(chunk_size=500), and writes only a row it changed, with one "
+        "QuerySet.update by primary key, so updated_at is kept; a row that raises is "
+        "logged and left unchanged. The migration is atomic: every updated row stays "
+        "locked until the step commits, and a failed run rolls back as a whole. Row "
+        "scale: one row per eval task; tracer_eval_task is a registered high-volume "
+        "table. Second run: keys are already snake_case and the legacy key is gone, "
+        "so rows the first run changed are not written again; a re-run would still "
+        "normalize filters written since. No schema change; the reverse is a no-op."
+    ),
+    "reviewer": "<actual-github-login>",
+    "review": "<actual-PR-review-discussion-permalink>",
+    "large_volume_rehearsal": True,
+}
+
 
 def _snake(key):
     return _CAMEL_RE.sub(r"\1_\2", key).lower()
@@ -91,7 +115,7 @@ def forwards(apps, schema_editor):
     stats = {"scanned": 0, "updated": 0, "failed": 0}
     # _base_manager: plain manager in both the historical and live registries —
     # covers soft-deleted rows and skips workspace-context filtering.
-    for task in EvalTask._base_manager.exclude(filters__isnull=True).iterator(
+    for task in EvalTask._base_manager.using(schema_editor.connection.alias).exclude(filters__isnull=True).iterator(
         chunk_size=500
     ):
         stats["scanned"] += 1
@@ -101,7 +125,7 @@ def forwards(apps, schema_editor):
             new_filters, changed = normalize_task_filters(task.filters)
             if not changed:
                 continue
-            EvalTask._base_manager.filter(pk=task.pk).update(filters=new_filters)
+            EvalTask._base_manager.using(schema_editor.connection.alias).filter(pk=task.pk).update(filters=new_filters)
             stats["updated"] += 1
         except Exception as e:
             stats["failed"] += 1

@@ -1,0 +1,29 @@
+{
+  "http": {
+    "method": "POST",
+    "url": "https://gateway.example.com/mcp/v/vs_01K7CN5EEAGENTM0DE00000001",
+    "headers": {
+      "content-type": "application/json",
+      "accept": "application/json, text/event-stream",
+      "authorization": "Bearer {{ORG_VIRTUAL_KEY}}",
+      "mcp-session-id": "{{MCP_SESSION_ID}}",
+      "mcp-protocol-version": "2025-06-18"
+    }
+  },
+  "body": {
+    "jsonrpc": "2.0",
+    "id": 7,
+    "method": "tools/call",
+    "params": {
+      "name": "github__create_issue",
+      "arguments": {
+        "repo": "acme/web",
+        "title": "Checkout fails on Safari"
+      },
+      "_meta": {
+        "protocolVersion": "2025-06-18",
+        "io.futureagi/approval_id": "{{APPROVAL_ID}}"
+      }
+    }
+  }
+}

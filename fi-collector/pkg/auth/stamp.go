@@ -31,6 +31,15 @@ var ErrTooManyNewProjects = errors.New("stamp: too many new project names in one
 // ResourceSpans with an unresolvable project name are dropped.
 // Returns the number of dropped ResourceSpans (0 in the happy path).
 func StampResourceAttrs(ctx context.Context, a *Authenticator, cacheKey string, traces ptrace.Traces, result *ResolveResult) (int, error) {
+	return StampResourceAttrsExpected(ctx, a, cacheKey, traces, result, nil)
+}
+
+// StampResourceAttrsExpected applies the optional exporter assertion before any project
+// auto-create. Expected-target requests are read-only: an unknown project is a 403 mismatch.
+func StampResourceAttrsExpected(ctx context.Context, a *Authenticator, cacheKey string, traces ptrace.Traces, result *ResolveResult, expected *ExpectedTarget) (int, error) {
+	if err := expected.CheckScope(result); err != nil {
+		return 0, err
+	}
 	if result == nil {
 		return 0, nil
 	}
@@ -59,6 +68,9 @@ func StampResourceAttrs(ctx context.Context, a *Authenticator, cacheKey string, 
 		nameSet[pn] = struct{}{}
 	}
 	if len(missing) > 0 {
+		if expected != nil {
+			return 0, ErrExpectedTargetMismatch
+		}
 		return 0, fmt.Errorf("stamp: %d ResourceSpan(s) have no project_name (indices: %s)",
 			len(missing), formatIndices(missing))
 	}
@@ -67,20 +79,30 @@ func StampResourceAttrs(ctx context.Context, a *Authenticator, cacheKey string, 
 	for n := range nameSet {
 		names = append(names, n)
 	}
-	if a != nil {
-		if missing, ok := result.MissingProjectsInWorkspace(result.WorkspaceID, names); ok && len(missing) > MaxNewProjectsPerRequest {
-			// The first names, in order, are added; deterministic value
-			// failures are skipped for a while, so each retry
-			// gets further either way.
-			sort.Strings(missing)
-			if err := a.ResolveProjectsForKey(ctx, cacheKey, result, missing[:MaxNewProjectsPerRequest]); err != nil {
-				return 0, fmt.Errorf("stamp: resolve projects: %w", err)
+	var err error
+	if expected != nil {
+		// Expected-target lookup is read-only at every cardinality. In
+		// particular it must bypass the ordinary bounded-create branch.
+		err = a.ResolveProjectsForExpectedTarget(ctx, cacheKey, result, names, expected.ProjectID)
+	} else {
+		// A project auto-created below is a voice project when its first root
+		// span is a conversation (autoCreateSource reads this mark).
+		ctx = withConversationRoots(ctx, conversationRootProjects(rss))
+		if a != nil {
+			if missing, ok := result.MissingProjectsInWorkspace(result.WorkspaceID, names); ok && len(missing) > MaxNewProjectsPerRequest {
+				// The first names, in order, are added; deterministic value
+				// failures are skipped for a while, so each retry
+				// gets further either way.
+				sort.Strings(missing)
+				if err := a.ResolveProjectsForKey(ctx, cacheKey, result, missing[:MaxNewProjectsPerRequest]); err != nil {
+					return 0, fmt.Errorf("stamp: resolve projects: %w", err)
+				}
+				return 0, ErrTooManyNewProjects
 			}
-			return 0, ErrTooManyNewProjects
 		}
+		err = a.ResolveProjectsForKey(ctx, cacheKey, result, names)
 	}
-
-	if err := a.ResolveProjectsForKey(ctx, cacheKey, result, names); err != nil {
+	if err != nil {
 		return 0, fmt.Errorf("stamp: resolve projects: %w", err)
 	}
 
@@ -90,6 +112,9 @@ func StampResourceAttrs(ctx context.Context, a *Authenticator, cacheKey string, 
 		attrs := rss.At(i).Resource().Attributes()
 		projectName := getStrAttr(attrs, "project_name")
 		projectID, ok := result.GetProjectInWorkspace(result.WorkspaceID, projectName)
+		if expected != nil && (!ok || projectID != expected.ProjectID) {
+			return 0, ErrExpectedTargetMismatch
+		}
 		if !ok || projectID == "" {
 			unresolvable[projectName] = struct{}{}
 			continue
@@ -137,6 +162,92 @@ func stampObserveProjectType(attrs pcommon.Map, result *ResolveResult, projectID
 		return
 	}
 	attrs.PutStr(resourceProjectTypeKey, ProjectTypeObserve)
+}
+
+// conversationRootsCtxKey carries conversationRootProjects from the stamp to
+// GetOrCreateProject, through ResolveProjectsForKey and its singleflight.
+type conversationRootsCtxKey struct{}
+
+// withConversationRoots marks names on ctx as projects whose first root span
+// is a conversation.
+func withConversationRoots(ctx context.Context, names map[string]struct{}) context.Context {
+	if len(names) == 0 {
+		return ctx
+	}
+	return context.WithValue(ctx, conversationRootsCtxKey{}, names)
+}
+
+// spanKindKeys and operationNameKeys mirror spanKindAttrKeys and
+// operationNameAttrKeys in clickhouse25exporter/converter.go, which decide
+// the observation_type a span is stored with.
+var (
+	spanKindKeys      = []string{"fi.span.kind", "gen_ai.span.kind", "llm.request.type", "openinference.span.kind"}
+	operationNameKeys = []string{"gen_ai.operation.name"}
+)
+
+// conversationRootProjects returns the project_names whose first root span
+// (one without a parent, in batch order) the exporter stores as
+// observation_type "conversation": the voice-call root that the Observe voice
+// grid lists. A name whose spans in this batch all have a parent is not
+// marked.
+func conversationRootProjects(rss ptrace.ResourceSpansSlice) map[string]struct{} {
+	decided := make(map[string]struct{})
+	var marked map[string]struct{}
+	for i := 0; i < rss.Len(); i++ {
+		rs := rss.At(i)
+		name := getStrAttr(rs.Resource().Attributes(), "project_name")
+		if _, ok := decided[name]; ok {
+			continue
+		}
+		conversation, found := firstRootIsConversation(rs)
+		if !found {
+			continue
+		}
+		decided[name] = struct{}{}
+		if conversation {
+			if marked == nil {
+				marked = make(map[string]struct{})
+			}
+			marked[name] = struct{}{}
+		}
+	}
+	return marked
+}
+
+// firstRootIsConversation reports whether rs has a root span and whether the
+// first one is a conversation.
+func firstRootIsConversation(rs ptrace.ResourceSpans) (conversation, found bool) {
+	sss := rs.ScopeSpans()
+	for j := 0; j < sss.Len(); j++ {
+		spans := sss.At(j).Spans()
+		for k := 0; k < spans.Len(); k++ {
+			if span := spans.At(k); span.ParentSpanID().IsEmpty() {
+				return isConversationSpan(span.Attributes()), true
+			}
+		}
+	}
+	return false, false
+}
+
+// isConversationSpan resolves a span's kind as the exporter's
+// resolveObservationType does: the first non-empty string span-kind
+// attribute, else the operation name, trimmed and lowercased. No exporter
+// synonym maps onto "conversation".
+func isConversationSpan(attrs pcommon.Map) bool {
+	raw := firstStrAttr(attrs, spanKindKeys)
+	if raw == "" {
+		raw = firstStrAttr(attrs, operationNameKeys)
+	}
+	return strings.ToLower(strings.TrimSpace(raw)) == "conversation"
+}
+
+func firstStrAttr(attrs pcommon.Map, keys []string) string {
+	for _, k := range keys {
+		if v := getStrAttr(attrs, k); v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // getStrAttr returns the string value of key from attrs, or "" if absent/wrong type.

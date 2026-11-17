@@ -337,7 +337,7 @@ class OrganizationSubscription(BaseModel):
 
 # Canonical definitions live in tfc.constants.api_calls (OSS).
 # Re-exported here for backward compatibility within the ee module.
-from tfc.constants.api_calls import APICallTypeChoices  # noqa: F401
+from tfc.constants.api_calls import APICallTypeChoices  # noqa: E402, F401
 
 
 class APICallType(BaseModel):
@@ -445,7 +445,7 @@ class RateLimit(BaseModel):
         return f"{self.subscription_tier.name} - {self.api_call_type.name}: Rate Limits"
 
 
-from tfc.constants.api_calls import APICallStatusChoices  # noqa: F401
+from tfc.constants.api_calls import APICallStatusChoices  # noqa: E402, F401
 
 
 class OrganizationBilling(BaseModel):
@@ -1034,7 +1034,7 @@ class UsageBudget(BaseModel):
     threshold_value = models.DecimalField(
         max_digits=16,
         decimal_places=4,
-        help_text="In display units (credits, GB) or cents for total_spend.",
+        help_text="In display units (credits, GB) or US dollars for total_spend.",
     )
     action = models.CharField(
         max_length=20,

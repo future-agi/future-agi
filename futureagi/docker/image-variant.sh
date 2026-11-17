@@ -17,9 +17,9 @@
 
 case "${IMAGE_VARIANT:=standard}" in
     standard)
-        # The groups that were base dependencies before the image-size split
+        # The pre-split groups plus lightweight dataset support
         # (pyproject.toml [project.optional-dependencies]).
-        : "${EXTRAS:=sandbox,billing,ops,gcp,langchain,rabbitmq,localizer}"
+        : "${EXTRAS:=sandbox,billing,ops,gcp,langchain,rabbitmq,localizer,datasets}"
         : "${FFMPEG_FLAVOR:=debian}"
         : "${WITH_GIT:=true}"
         : "${WITH_UV:=true}"
@@ -28,7 +28,7 @@ case "${IMAGE_VARIANT:=standard}" in
         : "${NLTK_DATA_PROFILE:=full}"
         ;;
     slim)
-        : "${EXTRAS:=none}"
+        : "${EXTRAS:=datasets}"
         : "${FFMPEG_FLAVOR:=minimal}"
         : "${WITH_GIT:=false}"
         : "${WITH_UV:=false}"

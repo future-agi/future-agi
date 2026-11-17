@@ -20,6 +20,9 @@ const FormTextFieldV2 = React.forwardRef(
       onBlur,
       onChange: propOnChange,
       fieldType = "text",
+      // A number field keeps one leading "-" only when this is set. Taken out
+      // of ``rest`` so it never reaches MUI or the DOM.
+      allowNegative = false,
       // Filter ``shrink`` out of ``rest`` — it belongs only on InputLabel.
       // See note in rhf-text-field.jsx for why.
       // eslint-disable-next-line no-unused-vars
@@ -42,11 +45,15 @@ const FormTextFieldV2 = React.forwardRef(
             onChange={(e) => {
               const newValue =
                 fieldType === "number"
-                  ? handleNumericInput(e.target.value)
+                  ? handleNumericInput(e.target.value, { allowNegative })
                   : e.target.value;
               const parsedValue =
                 isNumber && newValue !== "" ? parseFloat(newValue) : newValue;
-              onChange(parsedValue);
+              // "-" or "-." alone is half a number: the form gets "", as a
+              // number input reports it, never NaN.
+              onChange(
+                allowNegative && Number.isNaN(parsedValue) ? "" : parsedValue,
+              );
               propOnChange?.(e);
             }}
             onBlur={() => {
@@ -157,6 +164,7 @@ FormTextFieldV2.propTypes = {
   defaultValue: PropTypes.any,
   onBlur: PropTypes.func,
   fieldType: PropTypes.string,
+  allowNegative: PropTypes.bool,
   onChange: PropTypes.func,
   ref: PropTypes.object,
   shrink: PropTypes.bool,

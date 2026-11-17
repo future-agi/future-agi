@@ -1,0 +1,12 @@
+{
+  "code": 200,
+  "status": 20000,
+  "data": {
+    "title": "Capmock page",
+    "description": "Example description.",
+    "url": "{{target}}",
+    "content": "Example page text.",
+    "usage": { "tokens": 120 }
+  },
+  "meta": { "usage": { "tokens": 120 } }
+}

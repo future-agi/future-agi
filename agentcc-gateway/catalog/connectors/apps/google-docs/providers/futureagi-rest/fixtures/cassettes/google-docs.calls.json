@@ -1,0 +1,140 @@
+[
+  {
+    "tool": "get_document",
+    "arguments": {
+      "documentId": "doc-fixture"
+    }
+  },
+  {
+    "tool": "create_document",
+    "arguments": {
+      "body": {
+        "title": "Meeting notes"
+      }
+    }
+  },
+  {
+    "tool": "insert_text",
+    "arguments": {
+      "documentId": "doc-fixture",
+      "body": {
+        "requests": [
+          {
+            "insertText": {
+              "location": {
+                "index": 1
+              },
+              "text": "Hello"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "tool": "replace_text",
+    "arguments": {
+      "documentId": "doc-fixture",
+      "body": {
+        "requests": [
+          {
+            "replaceAllText": {
+              "containsText": {
+                "text": "PLACEHOLDER",
+                "matchCase": true
+              },
+              "replaceText": "Quarterly"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "tool": "delete_text",
+    "arguments": {
+      "documentId": "doc-fixture",
+      "body": {
+        "requests": [
+          {
+            "deleteContentRange": {
+              "range": {
+                "startIndex": 1,
+                "endIndex": 3
+              }
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "tool": "insert_table",
+    "arguments": {
+      "documentId": "doc-fixture",
+      "body": {
+        "requests": [
+          {
+            "insertTable": {
+              "rows": 2,
+              "columns": 2,
+              "location": {
+                "index": 1
+              }
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "tool": "format_text",
+    "arguments": {
+      "documentId": "doc-fixture",
+      "body": {
+        "requests": [
+          {
+            "updateTextStyle": {
+              "range": {
+                "startIndex": 1,
+                "endIndex": 3
+              },
+              "textStyle": {
+                "bold": true
+              },
+              "fields": "bold"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "tool": "format_paragraph",
+    "arguments": {
+      "documentId": "doc-fixture",
+      "body": {
+        "requests": [
+          {
+            "updateParagraphStyle": {
+              "range": {
+                "startIndex": 1,
+                "endIndex": 3
+              },
+              "paragraphStyle": {
+                "namedStyleType": "HEADING_1"
+              },
+              "fields": "namedStyleType"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "tool": "get_document",
+    "arguments": {
+      "documentId": "missing-fixture"
+    }
+  }
+]

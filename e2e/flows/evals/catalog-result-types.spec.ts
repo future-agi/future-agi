@@ -342,8 +342,8 @@ test('EVAL-E2E-003: typed executed evaluations retain exact native results and r
           const [updated, saved] = await Promise.all([update, version]);
           expect(updated.status()).toBe(200); expect(saved.status()).toBe(200);
           const wire = updated.request().postDataJSON();
-          // PromptEditor.getBlocks preserves Quill's terminal newline on native Save Version.
-          expect(wire).toMatchObject({ instructions: `${instructions}\n`, model: mockModel.model, output_type: 'deterministic',
+          // Changing multiple-choice settings preserves the seeded prompt text.
+          expect(wire).toMatchObject({ instructions, model: mockModel.model, output_type: 'deterministic',
             choice_scores: f.choiceScores, pass_threshold: 0.5, multi_choice: true,
             check_internet: false, error_localizer_enabled: false });
           const body = await saved.json() as Created;
@@ -368,7 +368,8 @@ test('EVAL-E2E-003: typed executed evaluations retain exact native results and r
         expect(defs).toHaveLength(1);
         expect(defs[0]).toMatchObject({ organization_id: actor.organizationId, workspace_id: actor.workspaceId,
           model: mockModel.model, multi_choice: f.key === 'multi', choice_scores: f.choiceScores,
-          config: { eval_type_id: 'CustomPromptEvaluator', rule_prompt: f.key === 'multi' ? `${instructions}\n` : instructions, check_internet: false,
+          // Creation and Save Version both persist the seeded prompt text unchanged.
+          config: { eval_type_id: 'CustomPromptEvaluator', rule_prompt: instructions, check_internet: false,
             error_localizer_enabled: false } });
         const configs = await probe.pg<{ id: string; project_id: string; eval_template_id: string; model: string;
           mapping: Record<string, string>; config: { mapping: Record<string, string> }; error_localizer: boolean }>(
@@ -582,8 +583,10 @@ test('EVAL-E2E-003: typed executed evaluations retain exact native results and r
       const oracle = [...buckets].map(([timestamp, { scores }]) => ({ timestamp,
         value: scores.reduce((a, b) => a + b, 0) / scores.length, primary_traffic: scores.length }))
         .sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+      // A point also carries its error rate and outcome counts
+      // (eval_metrics.py _format_points); the oracle states these three.
       const positive = body.result.data.filter(p => (p.primary_traffic ?? 0) > 0)
-        .map(p => ({ ...p, timestamp: graphTimestampUTC(p.timestamp) }))
+        .map(p => ({ timestamp: graphTimestampUTC(p.timestamp), value: p.value, primary_traffic: p.primary_traffic }))
         .sort((a, b) => a.timestamp.localeCompare(b.timestamp));
       expect(positive).toEqual(oracle);
       expect(body.result.data.reduce((n, p) => n + (p.primary_traffic ?? 0), 0)).toBe(selection.indexes.length);

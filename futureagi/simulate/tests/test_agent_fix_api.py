@@ -7,7 +7,7 @@ from contextlib import ExitStack, contextmanager, nullcontext
 from datetime import timedelta
 from decimal import Decimal
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import call, patch
 from uuid import uuid4, uuid5
 
 import httpx
@@ -670,6 +670,156 @@ class TestEngineModelCalls:
 
         assert (response.status_code, response.json()["error"]) == refusal
         gateway.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("error_code", "dimension", "reason"),
+        [
+            ("BUDGET_PAUSED", "total_spend", "Total spending is paused"),
+            ("BUDGET_PAUSED", "ai_credits", "AI credit spending is paused"),
+            ("FREE_TIER_LIMIT", "ai_credits", "The AI credit allowance is exhausted"),
+            ("BALANCE_EXHAUSTED", "", "The prepaid balance is exhausted"),
+            ("PAYMENT_REQUIRED", "ai_credits", "The subscription has unpaid invoices"),
+        ],
+        ids=["total-pause", "ai-pause", "hard-cap", "prepaid-balance", "unpaid"],
+    )
+    def test_organization_admission_is_rechecked_before_each_model_call(
+        self,
+        api_client,
+        source_run,
+        gateway,
+        billed,
+        monkeypatch,
+        error_code,
+        dimension,
+        reason,
+    ):
+        from ee.usage.schemas.events import CheckResult
+        from ee.usage.services.config import BillingConfig
+        from simulate.services import harness_usage
+
+        fix_run = _armed(_fix_run(source_run))
+        monkeypatch.setattr(harness_usage, "is_oss", lambda: False)
+        monkeypatch.setattr(
+            BillingConfig, "get_ai_cost_markup", lambda self: Decimal("2")
+        )
+        with patch(
+            "ee.usage.services.metering.check_usage",
+            return_value=CheckResult(allowed=True),
+        ) as usage:
+            response = self._complete(api_client, fix_run)
+
+            assert response.status_code == 200, response.content
+            gateway.assert_called_once()
+            assert len(billed) == 1
+            fix_run.refresh_from_db()
+            spent = fix_run.spent_usd
+            assert spent == _billed(Decimal("0.0123"))
+            budget = Decimal(str(fix_run.request["budget_usd"]))
+            assert spent < budget
+            assert fix_run.model_reserved_usd == 0
+            assert Decimal(
+                gateway.call_args.kwargs["headers"]["x-agentcc-max-cost-usd"]
+            ) * Decimal("2") == budget
+
+            # Admission changes while this fix still has its own budget left.
+            usage.return_value = CheckResult(
+                allowed=False,
+                error_code=error_code,
+                dimension=dimension,
+                reason=reason,
+            )
+            gateway.reset_mock()
+            billed.clear()
+
+            response = self._complete(api_client, fix_run)
+
+            assert response.status_code == 402, response.content
+            assert response.json() == {
+                "error": "usage_limit",
+                "message": reason,
+                "retryable": False,
+            }
+            assert usage.call_args_list == [
+                call(str(fix_run.organization_id), "agent_fix")
+            ] * 2
+            gateway.assert_not_called()
+            assert billed == []
+            fix_run.refresh_from_db()
+            assert fix_run.spent_usd == spent
+            assert fix_run.model_reserved_usd == 0
+            assert fix_run.state == AgentFixRun.State.RUNNING
+
+            # Restoring credits must not leave an unspent call holding the budget.
+            usage.return_value = CheckResult(allowed=True)
+            gateway.return_value = httpx.Response(
+                200,
+                json={"choices": [{"message": {"content": "diagnosis"}}]},
+                headers={"x-agentcc-cost": "0.0123", "x-agentcc-request-id": "req-2"},
+            )
+            response = self._complete(api_client, fix_run)
+
+            assert response.status_code == 200, response.content
+            assert usage.call_args_list == [
+                call(str(fix_run.organization_id), "agent_fix")
+            ] * 3
+            gateway.assert_called_once()
+            assert Decimal(
+                gateway.call_args.kwargs["headers"]["x-agentcc-max-cost-usd"]
+            ) * Decimal("2") == budget - spent
+            assert len(billed) == 1
+            assert Decimal(str(billed[0].amount)) * Decimal("0.01") == spent
+            fix_run.refresh_from_db()
+            assert fix_run.spent_usd == spent * 2
+            assert fix_run.model_reserved_usd == 0
+
+    def test_a_usage_check_error_does_not_dispatch_or_reserve_model_spend(
+        self, source_run, gateway, billed, monkeypatch
+    ):
+        from simulate.services import agent_fix_models, harness_usage
+
+        fix_run = _fix_run(source_run, spent_usd=Decimal("0.25"))
+        monkeypatch.setattr(harness_usage, "is_oss", lambda: False)
+        with patch(
+            "ee.usage.services.metering.check_usage",
+            side_effect=ConnectionError("usage check unavailable"),
+        ) as usage:
+            with pytest.raises(ConnectionError, match="usage check unavailable"):
+                agent_fix_models.complete(
+                    fix_run,
+                    json.dumps({"model": ENGINE_MODEL, "messages": []}).encode(),
+                )
+
+        usage.assert_called_once_with(str(fix_run.organization_id), "agent_fix")
+        gateway.assert_not_called()
+        assert billed == []
+        fix_run.refresh_from_db()
+        assert fix_run.spent_usd == Decimal("0.25")
+        assert fix_run.model_reserved_usd == 0
+        assert fix_run.state == AgentFixRun.State.RUNNING
+
+    def test_oss_model_calls_keep_the_existing_usage_bypass(
+        self, api_client, source_run, gateway, monkeypatch
+    ):
+        from ee.usage.schemas.events import CheckResult
+        from simulate.services import harness_usage
+
+        fix_run = _armed(_fix_run(source_run))
+        monkeypatch.setattr(harness_usage, "is_oss", lambda: True)
+        with patch(
+            "ee.usage.services.metering.check_usage",
+            return_value=CheckResult(allowed=False),
+        ) as usage:
+            response = self._complete(api_client, fix_run)
+
+        assert response.status_code == 200, response.content
+        usage.assert_not_called()
+        gateway.assert_called_once()
+        assert Decimal(
+            gateway.call_args.kwargs["headers"]["x-agentcc-max-cost-usd"]
+        ) == Decimal(str(fix_run.request["budget_usd"]))
+        fix_run.refresh_from_db()
+        assert fix_run.spent_usd == Decimal("0.0123")
+        assert fix_run.model_reserved_usd == 0
 
     def test_a_client_asking_for_a_stream_is_told_why(
         self, api_client, source_run, gateway

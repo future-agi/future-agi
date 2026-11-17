@@ -1,5 +1,4 @@
 from collections import Counter
-from typing import Optional
 
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
@@ -21,7 +20,7 @@ class AnalyzeErrorClusterInput(PydanticBaseModel):
     cluster_id: str = Field(
         description="The cluster ID to analyze",
     )
-    question: Optional[str] = Field(
+    question: str | None = Field(
         default=None,
         description=(
             "A specific question to investigate about this cluster, e.g., "
@@ -109,8 +108,9 @@ class AnalyzeErrorClusterTool(BaseTool):
                 data={"cluster_id": cluster.cluster_id, "traces_analyzed": 0},
             )
 
-        error_details = list(db.get_error_details_for_traces(trace_ids))
-        analyses = list(db.get_analyses_for_traces(trace_ids))
+        from tracer.services.analysis_result_snapshot import cluster_snapshot
+
+        error_details, analyses = cluster_snapshot(trace_ids)
         analysis_by_trace = {str(a.trace_id): a for a in analyses}
 
         # ── Aggregate root causes ───────────────────────────────────
@@ -264,7 +264,7 @@ class AnalyzeErrorClusterTool(BaseTool):
             top_days = weekday_counts.most_common(3)
             day_str = ", ".join(f"{day} ({count})" for day, count in top_days)
             content_parts.append(
-                "### Temporal Pattern\n\n" f"**Most active days:** {day_str}\n"
+                f"### Temporal Pattern\n\n**Most active days:** {day_str}\n"
             )
             if hour_counts:
                 top_hours = hour_counts.most_common(3)

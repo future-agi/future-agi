@@ -1,0 +1,45 @@
+schema: "connector-manifest/v1#provider"
+app: mux
+id: api-key
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.mux.com
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Basic "
+      secret: true
+      label: Encoded access token
+      help: "Create a token in Mux Dashboard > Settings > Access Tokens. Base64-encode its ID and secret joined by a colon; enter the encoded value without Basic. Calls use that token's environment and permissions; prefer Read-only when possible."
+      helpUrl: https://www.mux.com/docs/integrations/mcp-server
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_metered
+  source: https://www.mux.com/pricing
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://www.mux.com/docs/integrations/mcp-server
+    fetchedAt: 2026-11-09
+  - fact: transport.variant
+    url: https://www.mux.com/blog/remote-mcp
+    fetchedAt: 2026-11-09
+  - fact: auth.kind
+    url: https://www.mux.com/docs/integrations/mcp-server
+    fetchedAt: 2026-11-09
+  - fact: auth.credentialParts
+    url: https://www.mux.com/docs/integrations/mcp-server
+    fetchedAt: 2026-11-09
+x-omega: { oss: exclude }

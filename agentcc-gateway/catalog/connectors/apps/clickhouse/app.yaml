@@ -1,0 +1,20 @@
+schema: "connector-manifest/v1#app"
+id: clickhouse
+version: 1.0.0
+name: ClickHouse Cloud
+description: "Read-only SQL, schemas, services, backups and billing in ClickHouse Cloud."
+vendor:
+  name: ClickHouse
+  domains: [clickhouse.com, clickhouse.cloud]
+eeCategory: data
+group: other
+categories: [data, data-warehouse]
+tags: [sql, analytics]
+docsUrl: https://clickhouse.com/docs/products/cloud/features/ai-ml/remote-mcp
+archetype: data-warehouse
+defaultProvider: mcp
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://clickhouse.com/docs/products/cloud/features/ai-ml/remote-mcp
+    fetchedAt: 2026-11-11

@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+# Wave-gate capability rows: the capability rows of the next plan
+# step, with the search capability deferred to the next wave
+# (decided 2026-10-18 23:00):
+#   1. 08_v6_search.sh: DEFERRED with the search capability (not in this wave).
+#   2. W3b_capability_ledger_live.sh: a managed capability call reaches the ledger
+#      drain as one ledger spend entry with provider=<vendor> (the echo
+#      capability on echo-a, as the earlier row used it in place of a search
+#      adapter), and the managed byok_only refusal on the live binary with tools.enabled.
+#      The row "one managed search and one model call in the agent budget's run scope and
+#      the request log" needs the search capability (capability calls take the run holds only
+#      through it): DEFERRED with it.
+#   3. TestIC10WiredGatewayRefusesManagedByokOnlyGlob, --- PASS by
+#      name. (The provider kind is not on the release line: the MCP
+#      port dropped it.)
+#   4. The secret-migration check: agentcc_mcp_migrate_secrets
+#      --check on the gate database reports zero plaintext MCP secrets.
+#
+# Environment: SCN_REDIS, SCN_REDIS_DB (required); GATE_HOME; GATE_DJANGO_MANAGE.
+set -u
+GATES=$(cd "$(dirname "$0")" && pwd)
+SC=$(cd "$GATES/.." && pwd)
+GW=$(cd "$SC/../.." && pwd)
+GATE_HOME=${GATE_HOME:-$HOME/.futureagi-local/gateway-program/lanes/X6-gates}
+mkdir -p "$GATE_HOME"
+if [ -z "${SCN_REDIS:-}" ] || ! [[ "${SCN_REDIS_DB:-}" =~ ^[1-9][0-9]*$ ]]; then
+  echo "W3b_capabilities: SCN_REDIS and a non-zero SCN_REDIS_DB are required" >&2
+  exit 1
+fi
+status=0
+
+echo "### W3b_capabilities part 1: 08_v6_search.sh DEFERRED (search is the next wave's)"
+
+echo "### W3b_capabilities part 2: W3b_capability_ledger_live.sh"
+log=$GATE_HOME/w3b-cap-part2-ledger-live.log
+if [ -z "${GATE_DJANGO_MANAGE:-}" ]; then
+  echo "W3b_capabilities part 2: FAIL (GATE_DJANGO_MANAGE is not set)"
+  status=1
+elif GATE_HOME=$GATE_HOME bash "$GATES/W3b_capability_ledger_live.sh" >"$log" 2>&1; then
+  echo "W3b_capabilities part 2: PASS ($(grep -Eo '[0-9]+ assertions' "$log" | tail -1)); run-scope row DEFERRED with search"
+else
+  echo "W3b_capabilities part 2: FAIL (log $log)"
+  grep -E "SCN FAIL" "$log" | head -3
+  status=1
+fi
+
+echo "### W3b_capabilities part 3: the managed byok_only refusal by name"
+p3=$GATE_HOME/w3b-cap-part3.log
+(cd "$GW" && go test ./cmd/agentcc \
+  -run '^TestIC10WiredGatewayRefusesManagedByokOnlyGlob$' -count=1 -v) >"$p3" 2>&1
+rc=$?
+missing=0
+for name in TestIC10WiredGatewayRefusesManagedByokOnlyGlob; do
+  grep -Eq -- "^--- PASS: $name " "$p3" || { echo "  missing PASS for $name"; missing=1; }
+done
+if [ $rc -eq 0 ] && [ $missing -eq 0 ]; then
+  echo "W3b_capabilities part 3: PASS"
+else
+  echo "W3b_capabilities part 3: FAIL (exit $rc; log $p3)"
+  status=1
+fi
+
+echo "### W3b_capabilities part 4: agentcc_mcp_migrate_secrets --check on the gate database"
+p4=$GATE_HOME/w3b-cap-part4-migrate-secrets.log
+if [ -z "${GATE_DJANGO_MANAGE:-}" ]; then
+  echo "W3b_capabilities part 4: FAIL (GATE_DJANGO_MANAGE is not set)"
+  status=1
+elif bash "$GATE_DJANGO_MANAGE" agentcc_mcp_migrate_secrets --check >"$p4" 2>&1 &&
+  grep -q "No plaintext MCP secrets in org configs." "$p4"; then
+  echo "W3b_capabilities part 4: PASS (zero plaintext MCP secrets)"
+else
+  echo "W3b_capabilities part 4: FAIL (log $p4)"
+  tail -5 "$p4"
+  status=1
+fi
+
+if [ $status -eq 0 ]; then echo "W3b_capabilities: PASS"; else echo "W3b_capabilities: FAIL"; fi
+exit $status

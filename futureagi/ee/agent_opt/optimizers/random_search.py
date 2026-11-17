@@ -11,6 +11,12 @@ from ..base.base_generator import BaseGenerator
 
 from ..datamappers import BasicDataMapper
 from ..types import IterationHistory, OptimizationResult
+from model_hub.utils.model_endpoints import (
+    ENDPOINT_ERROR_TYPES,
+    ModelConfigurationRefused,
+    guarded_completion,
+    vertex_call_arguments,
+)
 from simulate.utils.agent_prompt_optimiser import update_agent_optimiser_run_step
 from .stepper import RandomSearchStepper
 
@@ -323,13 +329,17 @@ Original Prompt ({len(initial_prompt)} characters — each variation must be sim
             f"Using max_tokens={model_max_tokens} for teacher model {teacher_model}"
         )
 
-        response = litellm.completion(
-            model=teacher_model,
-            messages=messages,
-            api_key=api_key,
+        arguments = {
+            "model": teacher_model,
+            "messages": messages,
+            "api_key": api_key,
             **teacher_kwargs,
-            drop_params=True,
-        )
+        }
+        if api_key is not None:
+            # A Vertex model is given its saved key as its Vertex
+            # configuration.
+            arguments = vertex_call_arguments(None, arguments, api_key)
+        response = guarded_completion(**arguments, drop_params=True)
         response_content = response.choices[0].message.content
 
         if isinstance(response_content, str):
@@ -339,6 +349,8 @@ Original Prompt ({len(initial_prompt)} characters — each variation must be sim
         prompt_variations = PromptVariations.model_validate_json(response_content)
         return prompt_variations.variations
 
+    except (ModelConfigurationRefused, *ENDPOINT_ERROR_TYPES):
+        raise
     except (ValidationError, json.JSONDecodeError) as e:
         logger.error(f"Failed to parse teacher model response: {e}")
         raise RuntimeError("Teacher model returned invalid JSON") from e

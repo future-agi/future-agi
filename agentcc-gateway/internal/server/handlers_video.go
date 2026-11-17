@@ -11,16 +11,30 @@ import (
 	"strings"
 	"time"
 
+	"github.com/futureagi/agentcc-gateway/internal/middleware"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/otel"
 	authplugin "github.com/futureagi/agentcc-gateway/internal/plugins/auth"
 	budgetplugin "github.com/futureagi/agentcc-gateway/internal/plugins/budget"
 	ipaclplugin "github.com/futureagi/agentcc-gateway/internal/plugins/ipacl"
+	"github.com/futureagi/agentcc-gateway/internal/requestview"
 	"github.com/futureagi/agentcc-gateway/internal/tenant"
 	"github.com/futureagi/agentcc-gateway/internal/video"
 	"github.com/futureagi/agentcc-gateway/internal/video/capability"
 	"github.com/futureagi/agentcc-gateway/internal/video/lifecycle"
 )
+
+// errEndpointNotConfigured is the 501 endpoint_not_configured of an endpoint
+// this gateway has nothing behind (the scheduled routes,
+// handlers_scheduled.go).
+func errEndpointNotConfigured(message string) *models.APIError {
+	return &models.APIError{
+		Status:  http.StatusNotImplemented,
+		Type:    models.ErrTypeServer,
+		Code:    "endpoint_not_configured",
+		Message: message,
+	}
+}
 
 func videoJSON(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json")
@@ -47,26 +61,39 @@ func (h *Handlers) videoReady(w http.ResponseWriter) bool {
 }
 
 // videoIdentity authenticates even when the general gateway permits anonymous
-// chat. Video ownership is always derived from a live API key, never headers or
-// body metadata supplied by the caller.
+// chat. Video ownership is always derived from the live API key KeyAuth
+// authenticated for this request, never headers or body metadata supplied
+// by the caller: a request KeyAuth authenticated no key for is refused, the
+// key is read with KeyAuth's header precedence (middleware.RequestAPIKey),
+// and the org is the one KeyAuth recorded.
 func (h *Handlers) videoIdentity(r *http.Request, rc *models.RequestContext) error {
 	rc.RequestID = models.GetRequestID(r.Context())
 	rc.TraceID = otel.NewSpan("video.request", "agentcc-gateway").TraceID
 	rc.EndpointType = "video"
 	rc.Metadata["cache_control"] = "no-store"
-	setAuthMetadataFromRequest(rc, r)
-	// Behind a load balancer the TCP peer is the proxy. Only the configured
-	// number of trusted hops is read from X-Forwarded-For, never its first
-	// (caller-supplied) entry, so org and key IP allowlists see the real client.
-	rc.Metadata["client_ip"] = trustedClientIP(r, h.videoIPACL.TrustedProxies)
+	delete(rc.Metadata, "authorization")
+	if key := middleware.RequestAPIKey(r); key != "" {
+		rc.Metadata["authorization"] = "Bearer " + key
+	}
+	// Behind a load balancer the TCP peer is the proxy. The client is the
+	// address the KeyAuth gate judged (middleware.ClientIP): the one
+	// server.trusted_proxies or server.trusted_hops reports, as on every other
+	// route, or with neither the entry ip_acl.trusted_proxies hops from the
+	// right of X-Forwarded-For, never its first (caller-supplied) entry.
+	rc.Metadata["client_ip"] = middleware.ClientIP(r)
 	if h.keyStore == nil {
 		return &models.APIError{Status: 403, Type: models.ErrTypeInvalidRequest, Code: "missing_org", Message: "Video generation requires an organization API key"}
+	}
+	id, ok := middleware.KeyIdentity(r.Context())
+	if !ok {
+		return middleware.ErrUnauthorizedKey(middleware.RequestAPIKey(r))
 	}
 	result := authplugin.New(h.keyStore, true).ProcessRequest(r.Context(), rc)
 	if result.Error != nil {
 		return result.Error
 	}
-	org := rc.Metadata[tenant.MetadataKeyOrgID]
+	org := id.OrgID
+	rc.Metadata[tenant.MetadataKeyOrgID] = org
 	if org == "" {
 		return &models.APIError{Status: 403, Type: models.ErrTypeInvalidRequest, Code: "missing_org", Message: "Video generation requires an organization API key"}
 	}
@@ -118,6 +145,16 @@ func (h *Handlers) SubmitVideo(w http.ResponseWriter, r *http.Request) {
 	}
 	rc.Model = req.Model
 	rc.Provider, _, _ = strings.Cut(req.Model, "/")
+	// The checks on the request read its prompt (rc.PassThrough), as on every
+	// other API, and a check's rewrite of it goes into the job the provider
+	// gets.
+	rc.PassThrough = requestview.VideoPrompt(req.Model, &req.Prompt)
+	// A submit has no answer: the job is stored and the provider runs it
+	// later, so no check on the answer runs here (the request's checks do).
+	rc.Flags.NoAnswerToCheck = true
+	// X-Guardrail-Policy applies here as on chat and every other route a check
+	// on the request reads, under the key's allow_policy_override.
+	readGuardrailPolicyHeader(rc, r)
 	// No request body, client metadata or raw headers are attached to the logging
 	// context; the canonical request belongs only in the retained job record.
 	var accepted video.AcceptResult

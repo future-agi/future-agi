@@ -1,0 +1,28 @@
+{
+  "contract": "price-catalog-v1",
+  "catalog_id": "price-catalog.v0",
+  "version": 0,
+  "status": "unconfirmed",
+  "effective_at": null,
+  "_note": "Test fixture for the public ledger: ids, products, units and settlement classes only. No price, tier or fee appears here; the real catalog lives in the private future-agi/ee repo.",
+  "dimensions": [
+    {"id": "ai_credits", "product": "evals", "native_unit": "credits", "native_to_display_divisor": 1, "settlement_class": {"value": "invoice"}},
+    {"id": "storage", "product": "platform", "native_unit": "bytes", "native_to_display_divisor": 1073741824, "settlement_class": {"value": "invoice"}},
+    {"id": "gateway_requests", "product": "gateway", "native_unit": "requests", "native_to_display_divisor": 1, "settlement_class": {"value": "invoice"}},
+    {"id": "gateway_cache_hits", "product": "gateway", "native_unit": "hits", "native_to_display_divisor": 1, "settlement_class": {"value": "invoice"}},
+    {"id": "managed_spend", "product": "gateway", "native_unit": "usd_micros", "native_to_display_divisor": 1000000, "settlement_class": {"value": "prepaid_only"}},
+    {"id": "agent_runs", "product": "agents", "native_unit": "runs", "native_to_display_divisor": 1, "settlement_class": {"value": "wallet_then_invoice"}},
+    {"id": "sandbox_vcpu_s", "product": "sandboxes", "native_unit": "vcpu_seconds", "native_to_display_divisor": 1, "settlement_class": {"value": "wallet_then_invoice"}}
+  ],
+  "event_types": [
+    {"event_type": "turing_large_evaluator", "dimension": "ai_credits"},
+    {"event_type": "error_localizer", "dimension": "ai_credits"},
+    {"event_type": "observe_add", "dimension": "storage"},
+    {"event_type": "gateway_request", "dimension": "gateway_requests"},
+    {"event_type": "gateway_cache_hit", "dimension": "gateway_cache_hits"},
+    {"event_type": "gateway_managed_spend", "dimension": "managed_spend"},
+    {"event_type": "task_run", "dimension": "agent_runs"},
+    {"event_type": "sandbox_vcpu", "dimension": "sandbox_vcpu_s"}
+  ],
+  "model_pricing": {"markup_bps": {"value": 500}}
+}

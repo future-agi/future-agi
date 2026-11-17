@@ -116,6 +116,9 @@ type geminiErrorDetail struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
 	Status  string `json:"status"`
+	// Details holds one google.rpc.ErrorInfo naming the gateway error code,
+	// when there is one.
+	Details []map[string]any `json:"details,omitempty"`
 }
 
 // KnownRequestFields returns the JSON keys a generateContent body defines, so a

@@ -1,0 +1,109 @@
+schema: connector-gen/rest-overlay/v1
+spec: fixtures/spec/drive-v3.discovery.json.gz
+tools:
+  - name: list_files
+    title: List files
+    description: List files explicitly opened with or created by this app. Use q="trashed = false" and pageToken for pagination.
+    operation:
+      id: drive.files.list
+    scopes:
+      - https://www.googleapis.com/auth/drive.file
+    annotations:
+      openWorldHint: false
+    posture: auto
+  - name: get_file
+    title: Get file
+    description: Read metadata for an app-authorized fileId, for example file-fixture. This tool does not download file content.
+    operation:
+      id: drive.files.get
+    scopes:
+      - https://www.googleapis.com/auth/drive.file
+    annotations:
+      openWorldHint: false
+    posture: auto
+  - name: copy_file
+    title: Copy file
+    description: Copy an app-authorized file to a new name, for example body.name="Quarterly copy".
+    operation:
+      id: drive.files.copy
+    scopes:
+      - https://www.googleapis.com/auth/drive.file
+    annotations:
+      openWorldHint: false
+      destructiveHint: false
+    posture: ask
+    body:
+      fields:
+        - name
+        - parents
+      required:
+        - name
+      description: Copy an app-authorized file to a new name, for example body.name="Quarterly copy".
+  - name: create_file
+    title: Create file
+    description: Create metadata for a file or folder, for example name="Reports", mimeType="application/vnd.google-apps.folder". Binary uploads are not supported.
+    operation:
+      id: drive.files.create
+    scopes:
+      - https://www.googleapis.com/auth/drive.file
+    annotations:
+      openWorldHint: false
+      destructiveHint: false
+    posture: ask
+    body:
+      fields:
+        - name
+        - mimeType
+        - parents
+        - description
+      required:
+        - name
+      description: Create metadata for a file or folder, for example name="Reports", mimeType="application/vnd.google-apps.folder". Binary uploads are not supported.
+  - name: rename_file
+    title: Rename file
+    description: Rename an app-authorized file. Set body.name, for example "Quarterly report".
+    operation:
+      id: drive.files.update
+    scopes:
+      - https://www.googleapis.com/auth/drive.file
+    annotations:
+      openWorldHint: false
+      destructiveHint: false
+    posture: ask
+    body:
+      fields:
+        - name
+      required:
+        - name
+      description: Rename an app-authorized file. Set body.name, for example "Quarterly report".
+  - name: delete_file
+    title: Delete file
+    description: Permanently delete the specified app-authorized fileId; this does not move it to trash.
+    operation:
+      id: drive.files.delete
+    scopes:
+      - https://www.googleapis.com/auth/drive.file
+    annotations:
+      openWorldHint: false
+      destructiveHint: true
+    posture: deny
+  - name: list_permissions
+    title: List permissions
+    description: List access permissions on an app-authorized fileId; for example file-fixture.
+    operation:
+      id: drive.permissions.list
+    scopes:
+      - https://www.googleapis.com/auth/drive.file
+    annotations:
+      openWorldHint: false
+    posture: auto
+  - name: list_revisions
+    title: List revisions
+    description: List stored revisions of an app-authorized fileId, for example file-fixture. Follow nextPageToken.
+    operation:
+      id: drive.revisions.list
+    scopes:
+      - https://www.googleapis.com/auth/drive.file
+    annotations:
+      openWorldHint: false
+    posture: auto

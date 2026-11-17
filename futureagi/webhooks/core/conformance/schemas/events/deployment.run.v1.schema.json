@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:futureagi:webhooks:v1:deployment.run",
+  "type": "object",
+  "required": ["id", "type", "api_version", "timestamp", "organization_id", "workspace_id", "data"],
+  "properties": {
+    "id": {"type": "string", "pattern": "^evt_(test_)?[0-9A-HJKMNP-TV-Z]{26}$"},
+    "type": {"enum": ["deployment.run.completed", "deployment.run.failed"]},
+    "api_version": {"const": "v1"},
+    "timestamp": {"type": "string", "description": "= data.run.ended_at"},
+    "organization_id": {"type": "string", "format": "uuid"},
+    "workspace_id": {"type": "string", "format": "uuid"},
+    "test": {"const": true},
+    "data": {
+      "type": "object",
+      "required": ["deployment", "run", "usage", "cost", "trace", "links"],
+      "properties": {
+        "deployment": {
+          "type": "object",
+          "required": ["id", "name", "environment", "revision"],
+          "properties": {
+            "id": {"type": "string", "pattern": "^dep-[0-9a-f]{16}$"},
+            "name": {"type": "string"},
+            "environment": {"type": "string"},
+            "revision": {"type": "integer", "minimum": 1}
+          }
+        },
+        "run": {
+          "type": "object",
+          "required": ["id", "thread_id", "assistant_id", "workflow_id", "status", "attempt", "trigger", "created_at",
+                       "started_at", "ended_at", "duration_ms", "queue_ms", "supersteps", "error", "context",
+                       "verified_by_trace"],
+          "properties": {
+            "status": {"enum": ["succeeded", "failed", "cancelled", "interrupted"]},
+            "duration_ms": {"type": ["integer", "null"], "minimum": 0},
+            "queue_ms": {"type": ["integer", "null"], "minimum": 0},
+            "context": {"type": ["object", "null"]},
+            "context_dropped": {"const": "secret_shape"},
+            "verified_by_trace": {"type": "boolean"}
+          }
+        },
+        "usage": {"oneOf": [{"type": "null"}, {
+          "type": "object",
+          "required": ["input_tokens", "output_tokens", "total_tokens", "model_calls", "source"],
+          "properties": {"source": {"enum": ["observe", "runtime"]}}
+        }]},
+        "cost": {"oneOf": [{"type": "null"}, {
+          "type": "object",
+          "required": ["usd_micros", "final", "basis"],
+          "properties": {
+            "usd_micros": {"type": "integer", "minimum": 0},
+            "final": {"type": "boolean"},
+            "basis": {"const": "observe_model_prices"}
+          }
+        }]},
+        "trace": {"oneOf": [{"type": "null"}, {
+          "type": "object", "required": ["id", "project_id"],
+          "properties": {"id": {"type": "string", "pattern": "^[0-9a-f]{32}$"}, "project_id": {"type": "string", "format": "uuid"}}
+        }]},
+        "links": {
+          "type": "object",
+          "required": ["deployment", "trace", "run_api"],
+          "properties": {
+            "deployment": {"type": "string", "format": "uri"},
+            "trace": {"type": ["string", "null"], "format": "uri"},
+            "run_api": {"type": ["string", "null"], "format": "uri"}
+          }
+        }
+      }
+    }
+  },
+  "additionalProperties": true
+}

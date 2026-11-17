@@ -1,3 +1,4 @@
+import ExternalContentFrame from "src/components/external-content/ExternalContentFrame";
 import { Box, Drawer, Typography, IconButton, Stack } from "@mui/material";
 import Section from "src/components/section";
 import { LoadingScreen } from "src/components/loading-screen";
@@ -163,7 +164,8 @@ const PdfPreviewDrawer = () => {
 
         return (
           <div style={{ position: "relative", height: "100%" }}>
-            <iframe
+            <ExternalContentFrame
+              title="Office document preview"
               src={`https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(fileUrl)}`}
               style={{ width: "100%", height: "100%", border: "none" }}
             />

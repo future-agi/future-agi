@@ -279,6 +279,52 @@ def test_units_readback_refuses_after_source_retention(
     assert "private source" not in after.content.decode()
 
 
+def test_report_says_its_results_were_removed_after_source_deletion(
+    auth_client, observe_project, insight_enabled, cutoff
+):
+    # Deleting a trace or session a report read retires its
+    # run. The report must not then read as never run: its latest run is the
+    # retired one, failed with the reason, and a link to that run says why it
+    # can't open. A report that never ran still has no run.
+    config, run, _ = report(observe_project, cutoff + timedelta(days=1))
+    never_run = InsightConfig.objects.create(
+        project=observe_project,
+        organization=observe_project.organization,
+        workspace=observe_project.workspace,
+        name="Never run",
+        question="What are users trying to do?",
+        lens="usage",
+        unit="sessions",
+    )
+    retention.retire_insight_runs([run.id], organization_id=run.organization_id)
+
+    detail = auth_client.get(f"/tracer/insights/configs/{config.id}/")
+    assert detail.status_code == 200
+    item = detail.json()["result"]
+    assert item["runs"] == []
+    latest = item["latest_run"]
+    assert latest is not None
+    assert latest["id"] == str(run.id)
+    assert latest["status"] == "failed"
+    assert latest["error_code"] == retention.EXPIRED
+    assert latest["error"] == retention.EXPIRED_MESSAGE
+    assert latest["distribution"] == []
+
+    listed = auth_client.get(
+        "/tracer/insights/configs/", {"project_id": str(observe_project.id)}
+    )
+    assert listed.status_code == 200
+    by_id = {c["id"]: c for c in listed.json()["result"]["configs"]}
+    assert by_id[str(config.id)]["latest_run"]["error_code"] == retention.EXPIRED
+    assert by_id[str(never_run.id)]["latest_run"] is None
+
+    opened = auth_client.get(f"/tracer/insights/runs/{run.id}/")
+    assert opened.status_code == 404
+    assert opened.json()["code"] == retention.EXPIRED
+    for response in (detail, listed, opened):
+        assert "private source" not in response.content.decode()
+
+
 def test_prepare_cannot_restore_content_after_source_deletion(
     observe_project, monkeypatch, cutoff
 ):

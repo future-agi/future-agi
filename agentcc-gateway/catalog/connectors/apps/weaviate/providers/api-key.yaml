@@ -1,0 +1,55 @@
+# The hosted Query Agent needs both a cluster API key and the cluster URL.
+# This profile covers collections that need no separately supplied embedding
+# provider key; it does not configure optional model-provider credential headers.
+# Query Agent tools are read-only and respect the supplied key's permissions.
+schema: "connector-manifest/v1#provider"
+app: weaviate
+id: api-key
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://api.agents.weaviate.io/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: Cluster API key
+      help: "Create a key in your cluster's API Keys section in Weaviate Cloud, assigning only needed collection permissions. Enable Agents for your organization. This profile requires collections that need no separately supplied embedding-provider key."
+      helpUrl: https://docs.weaviate.io/cloud/manage-clusters/connect
+    - in: header
+      name: X-Weaviate-Cluster-Url
+      secret: false
+      label: Weaviate Cloud cluster URL
+      help: "Supply your Weaviate Cloud cluster's HTTPS REST URL. This required header selects the cluster; self-hosted clusters are not supported by the hosted Query Agent."
+      helpUrl: https://docs.weaviate.io/query-agent/clients/mcp
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_metered
+  source: https://weaviate.io/pricing
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://docs.weaviate.io/query-agent/clients/mcp
+    fetchedAt: 2026-11-09
+  - fact: transport.variant
+    url: https://docs.weaviate.io/query-agent/clients/mcp
+    fetchedAt: 2026-11-09
+  - fact: auth.kind
+    url: https://docs.weaviate.io/query-agent/clients/mcp
+    fetchedAt: 2026-11-09
+  - fact: auth.credentialParts
+    url: https://docs.weaviate.io/query-agent/clients/mcp
+    fetchedAt: 2026-11-09
+x-omega: { oss: exclude }

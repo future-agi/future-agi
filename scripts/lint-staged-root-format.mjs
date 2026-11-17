@@ -38,7 +38,20 @@ const files = process.argv
   .map((file) => path.relative(rootDir, file))
   .filter((file) => extensions.has(path.extname(file)))
   .filter((file) => !file.startsWith(`frontend${path.sep}`))
-  .filter((file) => !file.startsWith(path.join("api_contracts", "openapi")));
+  .filter((file) => !file.startsWith(path.join("api_contracts", "openapi")))
+  // This snapshot is sha256-pinned and must stay byte-identical to its EE and Console
+  // copies. It is updated by the coordinated contract step, not a generic formatter.
+  // Staged safety checks and the gateway wall checksum test still cover this file.
+  .filter(
+    (file) =>
+      file !==
+      path.join(
+        "services",
+        "omega-gateway",
+        "manifest",
+        "console-route-manifest.v1.json",
+      ),
+  );
 
 const uniqueFiles = [...new Set(files)];
 if (uniqueFiles.length === 0) process.exit(0);

@@ -18,7 +18,8 @@ export const expandedStyles = {
 
 export const commonPropTypes = {
   value: PropTypes.any,
-  valueReason: PropTypes.array,
+  // CustomCellRender passes value_infos.reason as a string (toString()).
+  valueReason: PropTypes.oneOfType([PropTypes.string, PropTypes.array]),
   formattedValueReason: PropTypes.func.isRequired,
   originType: PropTypes.string,
   metadata: PropTypes.any,
@@ -59,6 +60,12 @@ export const DataTypes = {
   IMAGES: "images",
   FILE: "document",
   PERSONA: "persona",
+  // Round 2 (R2-SPEC P5 / P6): pass through the wire like `json`.
+  CONVERSATION: "conversation",
+  CHECKS: "checks",
+  TRACE: "trace",
+  ENUM: "enum",
+  VIDEO: "video",
 };
 
 export const OutputTypes = {

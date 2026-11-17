@@ -40,7 +40,8 @@ export const PIVOTS = [
   { value: "turns", label: "Turns", kind: "matrix" },
 ];
 
-const MAX_DAYS = 31;
+// Only limit empty-day padding, never the populated days of a run.
+const MAX_PADDED_DAYS = 31;
 export const MAX_USERS = 15;
 // Hourly columns once a cell holds this many rows on average, or the window
 // is short enough to show every hour anyway.
@@ -97,7 +98,7 @@ function dayRows(cellDays, window, now) {
         from.getMonth(),
         from.getDate(),
       );
-      cursor.getTime() < end && all.length <= MAX_DAYS;
+      cursor.getTime() < end && all.length <= MAX_PADDED_DAYS;
       cursor = new Date(
         cursor.getFullYear(),
         cursor.getMonth(),
@@ -105,9 +106,9 @@ function dayRows(cellDays, window, now) {
       )
     )
       all.push(dayKeyOf(cursor));
-    if (all.length <= MAX_DAYS) all.forEach((day) => days.add(day));
+    if (all.length <= MAX_PADDED_DAYS) all.forEach((day) => days.add(day));
   }
-  return [...days].sort().slice(-MAX_DAYS);
+  return [...days].sort();
 }
 
 /**

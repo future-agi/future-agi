@@ -1,0 +1,4387 @@
+{
+  "cases": [
+    {
+      "name": "wrong_version",
+      "document": {
+        "schema_version": "models-feed-v1",
+        "content_version": "64e6ff1bad9230ca2487a043605c2e45b334b12b849365ac0208b417518ae115",
+        "currency": "USD",
+        "quote_scope": "fixed_chat_card_only",
+        "one_key_markup_bps": 500,
+        "byok_gateway_fee_bps": 0,
+        "coverage": {
+          "chat_completions": true,
+          "messages": true,
+          "eligibility": "default_catalog_policy_with_free_opt_in; not_account_entitlement_or_live_provider_qualification",
+          "excluded": "tenant_BYOK_custom_prices,capabilities,tools,embeddings,image,audio,video,OCR,generation,tiered,dynamic"
+        },
+        "rules": {
+          "rate_meaning": "USD_per_unit; nominal_one_key_rates_are_rates_not_independently_rounded_invoice_lines",
+          "prompt_totals": "uncached=prompt-cache_read-cache_write; if negative, prompt is exclusive uncached input",
+          "cache_rates": "positive_cache_rate_else_prompt_rate; cache counts replace included prompt tokens",
+          "reasoning": "positive_reasoning_rate replaces clamp(reasoning,0,completion); otherwise included in completion",
+          "reported_cost": "provider_reported_cost_precedes_card_reconstruction_including_reported_zero",
+          "settlement_rounding": "snap_USD_times_1e6_to_1e-6_micro; half_up_upstream_per_attempt; half_up_markup_on_integer_upstream; sum_billable_attempts",
+          "admission": "ceil_estimated_prompt_plus_output_cap_plus_request_times_markup; admission_hold_not_settled_actual; separate_tool_units_not_covered_by_this_bound",
+          "byok": "zero_Future_AGI_gateway_fee; upstream_still_payable_to_provider; tenant_specific_BYOK_quotes_not_published",
+          "source_snapshot": "sha256_of_public_source_projection_excluding_markup; not_fetch_time_or_private_catalogue_snapshot"
+        },
+        "sources": [
+          {
+            "provider_id": "synthetic",
+            "catalog_source": "openrouter",
+            "snapshot_id": "77c99dbe23dbde40988e2f11164bf155625817d7e8dceea8fa2457bd19651eeb"
+          }
+        ],
+        "offers": [
+          {
+            "provider_id": "synthetic",
+            "catalog_source": "openrouter",
+            "model_id": "fixture/all",
+            "endpoint_id": "fixture-endpoint/fixture/all",
+            "upstream_provider": "",
+            "endpoint_status": 0,
+            "explicit_free": false,
+            "dimensions": [
+              {
+                "name": "uncached_input",
+                "unit": "token",
+                "rule": "prompt_minus_cache_unless_exclusive",
+                "card_rate_usd": "0.000002",
+                "provider_rate_usd": "0.000002",
+                "nominal_one_key_rate_usd": "0.0000021"
+              },
+              {
+                "name": "output",
+                "unit": "token",
+                "rule": "completion_minus_separately_priced_reasoning",
+                "card_rate_usd": "0.00001",
+                "provider_rate_usd": "0.00001",
+                "nominal_one_key_rate_usd": "0.0000105"
+              },
+              {
+                "name": "cache_read",
+                "unit": "token",
+                "rule": "replaces_included_prompt",
+                "card_rate_usd": "0.0000005",
+                "provider_rate_usd": "0.0000005",
+                "nominal_one_key_rate_usd": "0.000000525"
+              },
+              {
+                "name": "cache_write",
+                "unit": "token",
+                "rule": "replaces_included_prompt",
+                "card_rate_usd": "0.000003",
+                "provider_rate_usd": "0.000003",
+                "nominal_one_key_rate_usd": "0.00000315"
+              },
+              {
+                "name": "reasoning",
+                "unit": "token",
+                "rule": "replaces_clamped_completion",
+                "card_rate_usd": "0.000004",
+                "provider_rate_usd": "0.000004",
+                "nominal_one_key_rate_usd": "0.0000042"
+              },
+              {
+                "name": "request",
+                "unit": "request",
+                "rule": "once_per_billable_attempt",
+                "card_rate_usd": "0.0001",
+                "provider_rate_usd": "0.0001",
+                "nominal_one_key_rate_usd": "0.000105"
+              },
+              {
+                "name": "web_search",
+                "unit": "search_request",
+                "rule": "per_reported_search_request",
+                "card_rate_usd": "0.002",
+                "provider_rate_usd": "0.002",
+                "nominal_one_key_rate_usd": "0.0021"
+              }
+            ]
+          },
+          {
+            "provider_id": "synthetic",
+            "catalog_source": "openrouter",
+            "model_id": "fixture/fallback",
+            "endpoint_id": "fixture-endpoint/fixture/fallback",
+            "upstream_provider": "",
+            "endpoint_status": 0,
+            "explicit_free": false,
+            "dimensions": [
+              {
+                "name": "uncached_input",
+                "unit": "token",
+                "rule": "prompt_minus_cache_unless_exclusive",
+                "card_rate_usd": "0.000002",
+                "provider_rate_usd": "0.000002",
+                "nominal_one_key_rate_usd": "0.0000021"
+              },
+              {
+                "name": "output",
+                "unit": "token",
+                "rule": "completion_minus_separately_priced_reasoning",
+                "card_rate_usd": "0.00001",
+                "provider_rate_usd": "0.00001",
+                "nominal_one_key_rate_usd": "0.0000105"
+              },
+              {
+                "name": "cache_read",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0.000002",
+                "nominal_one_key_rate_usd": "0.0000021"
+              },
+              {
+                "name": "cache_write",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0.000002",
+                "nominal_one_key_rate_usd": "0.0000021"
+              },
+              {
+                "name": "reasoning",
+                "unit": "token",
+                "rule": "included_in_output",
+                "card_rate_usd": "0",
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              },
+              {
+                "name": "request",
+                "unit": "request",
+                "rule": "once_per_billable_attempt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "web_search",
+                "unit": "search_request",
+                "rule": "not_quoted",
+                "card_rate_usd": null,
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              }
+            ]
+          },
+          {
+            "provider_id": "synthetic",
+            "catalog_source": "openrouter",
+            "model_id": "fixture/half",
+            "endpoint_id": "fixture-endpoint/fixture/half",
+            "upstream_provider": "",
+            "endpoint_status": 0,
+            "explicit_free": false,
+            "dimensions": [
+              {
+                "name": "uncached_input",
+                "unit": "token",
+                "rule": "prompt_minus_cache_unless_exclusive",
+                "card_rate_usd": "0.0000005",
+                "provider_rate_usd": "0.0000005",
+                "nominal_one_key_rate_usd": "0.000000525"
+              },
+              {
+                "name": "output",
+                "unit": "token",
+                "rule": "completion_minus_separately_priced_reasoning",
+                "card_rate_usd": "0.0000005",
+                "provider_rate_usd": "0.0000005",
+                "nominal_one_key_rate_usd": "0.000000525"
+              },
+              {
+                "name": "cache_read",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0.0000005",
+                "nominal_one_key_rate_usd": "0.000000525"
+              },
+              {
+                "name": "cache_write",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0.0000005",
+                "nominal_one_key_rate_usd": "0.000000525"
+              },
+              {
+                "name": "reasoning",
+                "unit": "token",
+                "rule": "included_in_output",
+                "card_rate_usd": "0",
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              },
+              {
+                "name": "request",
+                "unit": "request",
+                "rule": "once_per_billable_attempt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "web_search",
+                "unit": "search_request",
+                "rule": "not_quoted",
+                "card_rate_usd": null,
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              }
+            ]
+          },
+          {
+            "provider_id": "synthetic",
+            "catalog_source": "openrouter",
+            "model_id": "fixture/listed:free",
+            "endpoint_id": "fixture-endpoint/fixture/listed:free",
+            "upstream_provider": "",
+            "endpoint_status": 0,
+            "explicit_free": true,
+            "dimensions": [
+              {
+                "name": "uncached_input",
+                "unit": "token",
+                "rule": "prompt_minus_cache_unless_exclusive",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "output",
+                "unit": "token",
+                "rule": "completion_minus_separately_priced_reasoning",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "cache_read",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "cache_write",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "reasoning",
+                "unit": "token",
+                "rule": "included_in_output",
+                "card_rate_usd": "0",
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              },
+              {
+                "name": "request",
+                "unit": "request",
+                "rule": "once_per_billable_attempt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "web_search",
+                "unit": "search_request",
+                "rule": "not_quoted",
+                "card_rate_usd": null,
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              }
+            ]
+          },
+          {
+            "provider_id": "synthetic",
+            "catalog_source": "openrouter",
+            "model_id": "fixture/request",
+            "endpoint_id": "fixture-endpoint/fixture/request",
+            "upstream_provider": "",
+            "endpoint_status": 0,
+            "explicit_free": false,
+            "dimensions": [
+              {
+                "name": "uncached_input",
+                "unit": "token",
+                "rule": "prompt_minus_cache_unless_exclusive",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "output",
+                "unit": "token",
+                "rule": "completion_minus_separately_priced_reasoning",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "cache_read",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "cache_write",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "reasoning",
+                "unit": "token",
+                "rule": "included_in_output",
+                "card_rate_usd": "0",
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              },
+              {
+                "name": "request",
+                "unit": "request",
+                "rule": "once_per_billable_attempt",
+                "card_rate_usd": "0.04",
+                "provider_rate_usd": "0.04",
+                "nominal_one_key_rate_usd": "0.042"
+              },
+              {
+                "name": "web_search",
+                "unit": "search_request",
+                "rule": "not_quoted",
+                "card_rate_usd": null,
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              }
+            ]
+          },
+          {
+            "provider_id": "synthetic",
+            "catalog_source": "openrouter",
+            "model_id": "fixture/zero-input",
+            "endpoint_id": "fixture-endpoint/fixture/zero-input",
+            "upstream_provider": "",
+            "endpoint_status": 0,
+            "explicit_free": false,
+            "dimensions": [
+              {
+                "name": "uncached_input",
+                "unit": "token",
+                "rule": "prompt_minus_cache_unless_exclusive",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "output",
+                "unit": "token",
+                "rule": "completion_minus_separately_priced_reasoning",
+                "card_rate_usd": "0.000001",
+                "provider_rate_usd": "0.000001",
+                "nominal_one_key_rate_usd": "0.00000105"
+              },
+              {
+                "name": "cache_read",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "cache_write",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "reasoning",
+                "unit": "token",
+                "rule": "included_in_output",
+                "card_rate_usd": "0",
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              },
+              {
+                "name": "request",
+                "unit": "request",
+                "rule": "once_per_billable_attempt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "web_search",
+                "unit": "search_request",
+                "rule": "not_quoted",
+                "card_rate_usd": null,
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "unknown_private_field",
+      "document": {
+        "schema_version": "model-prices-v1",
+        "content_version": "64e6ff1bad9230ca2487a043605c2e45b334b12b849365ac0208b417518ae115",
+        "currency": "USD",
+        "quote_scope": "fixed_chat_card_only",
+        "one_key_markup_bps": 500,
+        "byok_gateway_fee_bps": 0,
+        "coverage": {
+          "chat_completions": true,
+          "messages": true,
+          "eligibility": "default_catalog_policy_with_free_opt_in; not_account_entitlement_or_live_provider_qualification",
+          "excluded": "tenant_BYOK_custom_prices,capabilities,tools,embeddings,image,audio,video,OCR,generation,tiered,dynamic"
+        },
+        "rules": {
+          "rate_meaning": "USD_per_unit; nominal_one_key_rates_are_rates_not_independently_rounded_invoice_lines",
+          "prompt_totals": "uncached=prompt-cache_read-cache_write; if negative, prompt is exclusive uncached input",
+          "cache_rates": "positive_cache_rate_else_prompt_rate; cache counts replace included prompt tokens",
+          "reasoning": "positive_reasoning_rate replaces clamp(reasoning,0,completion); otherwise included in completion",
+          "reported_cost": "provider_reported_cost_precedes_card_reconstruction_including_reported_zero",
+          "settlement_rounding": "snap_USD_times_1e6_to_1e-6_micro; half_up_upstream_per_attempt; half_up_markup_on_integer_upstream; sum_billable_attempts",
+          "admission": "ceil_estimated_prompt_plus_output_cap_plus_request_times_markup; admission_hold_not_settled_actual; separate_tool_units_not_covered_by_this_bound",
+          "byok": "zero_Future_AGI_gateway_fee; upstream_still_payable_to_provider; tenant_specific_BYOK_quotes_not_published",
+          "source_snapshot": "sha256_of_public_source_projection_excluding_markup; not_fetch_time_or_private_catalogue_snapshot"
+        },
+        "sources": [
+          {
+            "provider_id": "synthetic",
+            "catalog_source": "openrouter",
+            "snapshot_id": "77c99dbe23dbde40988e2f11164bf155625817d7e8dceea8fa2457bd19651eeb"
+          }
+        ],
+        "offers": [
+          {
+            "provider_id": "synthetic",
+            "catalog_source": "openrouter",
+            "model_id": "fixture/all",
+            "endpoint_id": "fixture-endpoint/fixture/all",
+            "upstream_provider": "",
+            "endpoint_status": 0,
+            "explicit_free": false,
+            "dimensions": [
+              {
+                "name": "uncached_input",
+                "unit": "token",
+                "rule": "prompt_minus_cache_unless_exclusive",
+                "card_rate_usd": "0.000002",
+                "provider_rate_usd": "0.000002",
+                "nominal_one_key_rate_usd": "0.0000021"
+              },
+              {
+                "name": "output",
+                "unit": "token",
+                "rule": "completion_minus_separately_priced_reasoning",
+                "card_rate_usd": "0.00001",
+                "provider_rate_usd": "0.00001",
+                "nominal_one_key_rate_usd": "0.0000105"
+              },
+              {
+                "name": "cache_read",
+                "unit": "token",
+                "rule": "replaces_included_prompt",
+                "card_rate_usd": "0.0000005",
+                "provider_rate_usd": "0.0000005",
+                "nominal_one_key_rate_usd": "0.000000525"
+              },
+              {
+                "name": "cache_write",
+                "unit": "token",
+                "rule": "replaces_included_prompt",
+                "card_rate_usd": "0.000003",
+                "provider_rate_usd": "0.000003",
+                "nominal_one_key_rate_usd": "0.00000315"
+              },
+              {
+                "name": "reasoning",
+                "unit": "token",
+                "rule": "replaces_clamped_completion",
+                "card_rate_usd": "0.000004",
+                "provider_rate_usd": "0.000004",
+                "nominal_one_key_rate_usd": "0.0000042"
+              },
+              {
+                "name": "request",
+                "unit": "request",
+                "rule": "once_per_billable_attempt",
+                "card_rate_usd": "0.0001",
+                "provider_rate_usd": "0.0001",
+                "nominal_one_key_rate_usd": "0.000105"
+              },
+              {
+                "name": "web_search",
+                "unit": "search_request",
+                "rule": "per_reported_search_request",
+                "card_rate_usd": "0.002",
+                "provider_rate_usd": "0.002",
+                "nominal_one_key_rate_usd": "0.0021"
+              }
+            ]
+          },
+          {
+            "provider_id": "synthetic",
+            "catalog_source": "openrouter",
+            "model_id": "fixture/fallback",
+            "endpoint_id": "fixture-endpoint/fixture/fallback",
+            "upstream_provider": "",
+            "endpoint_status": 0,
+            "explicit_free": false,
+            "dimensions": [
+              {
+                "name": "uncached_input",
+                "unit": "token",
+                "rule": "prompt_minus_cache_unless_exclusive",
+                "card_rate_usd": "0.000002",
+                "provider_rate_usd": "0.000002",
+                "nominal_one_key_rate_usd": "0.0000021"
+              },
+              {
+                "name": "output",
+                "unit": "token",
+                "rule": "completion_minus_separately_priced_reasoning",
+                "card_rate_usd": "0.00001",
+                "provider_rate_usd": "0.00001",
+                "nominal_one_key_rate_usd": "0.0000105"
+              },
+              {
+                "name": "cache_read",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0.000002",
+                "nominal_one_key_rate_usd": "0.0000021"
+              },
+              {
+                "name": "cache_write",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0.000002",
+                "nominal_one_key_rate_usd": "0.0000021"
+              },
+              {
+                "name": "reasoning",
+                "unit": "token",
+                "rule": "included_in_output",
+                "card_rate_usd": "0",
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              },
+              {
+                "name": "request",
+                "unit": "request",
+                "rule": "once_per_billable_attempt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "web_search",
+                "unit": "search_request",
+                "rule": "not_quoted",
+                "card_rate_usd": null,
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              }
+            ]
+          },
+          {
+            "provider_id": "synthetic",
+            "catalog_source": "openrouter",
+            "model_id": "fixture/half",
+            "endpoint_id": "fixture-endpoint/fixture/half",
+            "upstream_provider": "",
+            "endpoint_status": 0,
+            "explicit_free": false,
+            "dimensions": [
+              {
+                "name": "uncached_input",
+                "unit": "token",
+                "rule": "prompt_minus_cache_unless_exclusive",
+                "card_rate_usd": "0.0000005",
+                "provider_rate_usd": "0.0000005",
+                "nominal_one_key_rate_usd": "0.000000525"
+              },
+              {
+                "name": "output",
+                "unit": "token",
+                "rule": "completion_minus_separately_priced_reasoning",
+                "card_rate_usd": "0.0000005",
+                "provider_rate_usd": "0.0000005",
+                "nominal_one_key_rate_usd": "0.000000525"
+              },
+              {
+                "name": "cache_read",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0.0000005",
+                "nominal_one_key_rate_usd": "0.000000525"
+              },
+              {
+                "name": "cache_write",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0.0000005",
+                "nominal_one_key_rate_usd": "0.000000525"
+              },
+              {
+                "name": "reasoning",
+                "unit": "token",
+                "rule": "included_in_output",
+                "card_rate_usd": "0",
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              },
+              {
+                "name": "request",
+                "unit": "request",
+                "rule": "once_per_billable_attempt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "web_search",
+                "unit": "search_request",
+                "rule": "not_quoted",
+                "card_rate_usd": null,
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              }
+            ]
+          },
+          {
+            "provider_id": "synthetic",
+            "catalog_source": "openrouter",
+            "model_id": "fixture/listed:free",
+            "endpoint_id": "fixture-endpoint/fixture/listed:free",
+            "upstream_provider": "",
+            "endpoint_status": 0,
+            "explicit_free": true,
+            "dimensions": [
+              {
+                "name": "uncached_input",
+                "unit": "token",
+                "rule": "prompt_minus_cache_unless_exclusive",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "output",
+                "unit": "token",
+                "rule": "completion_minus_separately_priced_reasoning",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "cache_read",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "cache_write",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "reasoning",
+                "unit": "token",
+                "rule": "included_in_output",
+                "card_rate_usd": "0",
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              },
+              {
+                "name": "request",
+                "unit": "request",
+                "rule": "once_per_billable_attempt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "web_search",
+                "unit": "search_request",
+                "rule": "not_quoted",
+                "card_rate_usd": null,
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              }
+            ]
+          },
+          {
+            "provider_id": "synthetic",
+            "catalog_source": "openrouter",
+            "model_id": "fixture/request",
+            "endpoint_id": "fixture-endpoint/fixture/request",
+            "upstream_provider": "",
+            "endpoint_status": 0,
+            "explicit_free": false,
+            "dimensions": [
+              {
+                "name": "uncached_input",
+                "unit": "token",
+                "rule": "prompt_minus_cache_unless_exclusive",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "output",
+                "unit": "token",
+                "rule": "completion_minus_separately_priced_reasoning",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "cache_read",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "cache_write",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "reasoning",
+                "unit": "token",
+                "rule": "included_in_output",
+                "card_rate_usd": "0",
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              },
+              {
+                "name": "request",
+                "unit": "request",
+                "rule": "once_per_billable_attempt",
+                "card_rate_usd": "0.04",
+                "provider_rate_usd": "0.04",
+                "nominal_one_key_rate_usd": "0.042"
+              },
+              {
+                "name": "web_search",
+                "unit": "search_request",
+                "rule": "not_quoted",
+                "card_rate_usd": null,
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              }
+            ]
+          },
+          {
+            "provider_id": "synthetic",
+            "catalog_source": "openrouter",
+            "model_id": "fixture/zero-input",
+            "endpoint_id": "fixture-endpoint/fixture/zero-input",
+            "upstream_provider": "",
+            "endpoint_status": 0,
+            "explicit_free": false,
+            "dimensions": [
+              {
+                "name": "uncached_input",
+                "unit": "token",
+                "rule": "prompt_minus_cache_unless_exclusive",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "output",
+                "unit": "token",
+                "rule": "completion_minus_separately_priced_reasoning",
+                "card_rate_usd": "0.000001",
+                "provider_rate_usd": "0.000001",
+                "nominal_one_key_rate_usd": "0.00000105"
+              },
+              {
+                "name": "cache_read",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "cache_write",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "reasoning",
+                "unit": "token",
+                "rule": "included_in_output",
+                "card_rate_usd": "0",
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              },
+              {
+                "name": "request",
+                "unit": "request",
+                "rule": "once_per_billable_attempt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "web_search",
+                "unit": "search_request",
+                "rule": "not_quoted",
+                "card_rate_usd": null,
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              }
+            ]
+          }
+        ],
+        "tenant_secret": "synthetic-only"
+      }
+    },
+    {
+      "name": "negative_rate",
+      "document": {
+        "schema_version": "model-prices-v1",
+        "content_version": "64e6ff1bad9230ca2487a043605c2e45b334b12b849365ac0208b417518ae115",
+        "currency": "USD",
+        "quote_scope": "fixed_chat_card_only",
+        "one_key_markup_bps": 500,
+        "byok_gateway_fee_bps": 0,
+        "coverage": {
+          "chat_completions": true,
+          "messages": true,
+          "eligibility": "default_catalog_policy_with_free_opt_in; not_account_entitlement_or_live_provider_qualification",
+          "excluded": "tenant_BYOK_custom_prices,capabilities,tools,embeddings,image,audio,video,OCR,generation,tiered,dynamic"
+        },
+        "rules": {
+          "rate_meaning": "USD_per_unit; nominal_one_key_rates_are_rates_not_independently_rounded_invoice_lines",
+          "prompt_totals": "uncached=prompt-cache_read-cache_write; if negative, prompt is exclusive uncached input",
+          "cache_rates": "positive_cache_rate_else_prompt_rate; cache counts replace included prompt tokens",
+          "reasoning": "positive_reasoning_rate replaces clamp(reasoning,0,completion); otherwise included in completion",
+          "reported_cost": "provider_reported_cost_precedes_card_reconstruction_including_reported_zero",
+          "settlement_rounding": "snap_USD_times_1e6_to_1e-6_micro; half_up_upstream_per_attempt; half_up_markup_on_integer_upstream; sum_billable_attempts",
+          "admission": "ceil_estimated_prompt_plus_output_cap_plus_request_times_markup; admission_hold_not_settled_actual; separate_tool_units_not_covered_by_this_bound",
+          "byok": "zero_Future_AGI_gateway_fee; upstream_still_payable_to_provider; tenant_specific_BYOK_quotes_not_published",
+          "source_snapshot": "sha256_of_public_source_projection_excluding_markup; not_fetch_time_or_private_catalogue_snapshot"
+        },
+        "sources": [
+          {
+            "provider_id": "synthetic",
+            "catalog_source": "openrouter",
+            "snapshot_id": "77c99dbe23dbde40988e2f11164bf155625817d7e8dceea8fa2457bd19651eeb"
+          }
+        ],
+        "offers": [
+          {
+            "provider_id": "synthetic",
+            "catalog_source": "openrouter",
+            "model_id": "fixture/all",
+            "endpoint_id": "fixture-endpoint/fixture/all",
+            "upstream_provider": "",
+            "endpoint_status": 0,
+            "explicit_free": false,
+            "dimensions": [
+              {
+                "name": "uncached_input",
+                "unit": "token",
+                "rule": "prompt_minus_cache_unless_exclusive",
+                "card_rate_usd": "0.000002",
+                "provider_rate_usd": "-1",
+                "nominal_one_key_rate_usd": "0.0000021"
+              },
+              {
+                "name": "output",
+                "unit": "token",
+                "rule": "completion_minus_separately_priced_reasoning",
+                "card_rate_usd": "0.00001",
+                "provider_rate_usd": "0.00001",
+                "nominal_one_key_rate_usd": "0.0000105"
+              },
+              {
+                "name": "cache_read",
+                "unit": "token",
+                "rule": "replaces_included_prompt",
+                "card_rate_usd": "0.0000005",
+                "provider_rate_usd": "0.0000005",
+                "nominal_one_key_rate_usd": "0.000000525"
+              },
+              {
+                "name": "cache_write",
+                "unit": "token",
+                "rule": "replaces_included_prompt",
+                "card_rate_usd": "0.000003",
+                "provider_rate_usd": "0.000003",
+                "nominal_one_key_rate_usd": "0.00000315"
+              },
+              {
+                "name": "reasoning",
+                "unit": "token",
+                "rule": "replaces_clamped_completion",
+                "card_rate_usd": "0.000004",
+                "provider_rate_usd": "0.000004",
+                "nominal_one_key_rate_usd": "0.0000042"
+              },
+              {
+                "name": "request",
+                "unit": "request",
+                "rule": "once_per_billable_attempt",
+                "card_rate_usd": "0.0001",
+                "provider_rate_usd": "0.0001",
+                "nominal_one_key_rate_usd": "0.000105"
+              },
+              {
+                "name": "web_search",
+                "unit": "search_request",
+                "rule": "per_reported_search_request",
+                "card_rate_usd": "0.002",
+                "provider_rate_usd": "0.002",
+                "nominal_one_key_rate_usd": "0.0021"
+              }
+            ]
+          },
+          {
+            "provider_id": "synthetic",
+            "catalog_source": "openrouter",
+            "model_id": "fixture/fallback",
+            "endpoint_id": "fixture-endpoint/fixture/fallback",
+            "upstream_provider": "",
+            "endpoint_status": 0,
+            "explicit_free": false,
+            "dimensions": [
+              {
+                "name": "uncached_input",
+                "unit": "token",
+                "rule": "prompt_minus_cache_unless_exclusive",
+                "card_rate_usd": "0.000002",
+                "provider_rate_usd": "0.000002",
+                "nominal_one_key_rate_usd": "0.0000021"
+              },
+              {
+                "name": "output",
+                "unit": "token",
+                "rule": "completion_minus_separately_priced_reasoning",
+                "card_rate_usd": "0.00001",
+                "provider_rate_usd": "0.00001",
+                "nominal_one_key_rate_usd": "0.0000105"
+              },
+              {
+                "name": "cache_read",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0.000002",
+                "nominal_one_key_rate_usd": "0.0000021"
+              },
+              {
+                "name": "cache_write",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0.000002",
+                "nominal_one_key_rate_usd": "0.0000021"
+              },
+              {
+                "name": "reasoning",
+                "unit": "token",
+                "rule": "included_in_output",
+                "card_rate_usd": "0",
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              },
+              {
+                "name": "request",
+                "unit": "request",
+                "rule": "once_per_billable_attempt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "web_search",
+                "unit": "search_request",
+                "rule": "not_quoted",
+                "card_rate_usd": null,
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              }
+            ]
+          },
+          {
+            "provider_id": "synthetic",
+            "catalog_source": "openrouter",
+            "model_id": "fixture/half",
+            "endpoint_id": "fixture-endpoint/fixture/half",
+            "upstream_provider": "",
+            "endpoint_status": 0,
+            "explicit_free": false,
+            "dimensions": [
+              {
+                "name": "uncached_input",
+                "unit": "token",
+                "rule": "prompt_minus_cache_unless_exclusive",
+                "card_rate_usd": "0.0000005",
+                "provider_rate_usd": "0.0000005",
+                "nominal_one_key_rate_usd": "0.000000525"
+              },
+              {
+                "name": "output",
+                "unit": "token",
+                "rule": "completion_minus_separately_priced_reasoning",
+                "card_rate_usd": "0.0000005",
+                "provider_rate_usd": "0.0000005",
+                "nominal_one_key_rate_usd": "0.000000525"
+              },
+              {
+                "name": "cache_read",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0.0000005",
+                "nominal_one_key_rate_usd": "0.000000525"
+              },
+              {
+                "name": "cache_write",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0.0000005",
+                "nominal_one_key_rate_usd": "0.000000525"
+              },
+              {
+                "name": "reasoning",
+                "unit": "token",
+                "rule": "included_in_output",
+                "card_rate_usd": "0",
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              },
+              {
+                "name": "request",
+                "unit": "request",
+                "rule": "once_per_billable_attempt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "web_search",
+                "unit": "search_request",
+                "rule": "not_quoted",
+                "card_rate_usd": null,
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              }
+            ]
+          },
+          {
+            "provider_id": "synthetic",
+            "catalog_source": "openrouter",
+            "model_id": "fixture/listed:free",
+            "endpoint_id": "fixture-endpoint/fixture/listed:free",
+            "upstream_provider": "",
+            "endpoint_status": 0,
+            "explicit_free": true,
+            "dimensions": [
+              {
+                "name": "uncached_input",
+                "unit": "token",
+                "rule": "prompt_minus_cache_unless_exclusive",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "output",
+                "unit": "token",
+                "rule": "completion_minus_separately_priced_reasoning",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "cache_read",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "cache_write",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "reasoning",
+                "unit": "token",
+                "rule": "included_in_output",
+                "card_rate_usd": "0",
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              },
+              {
+                "name": "request",
+                "unit": "request",
+                "rule": "once_per_billable_attempt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "web_search",
+                "unit": "search_request",
+                "rule": "not_quoted",
+                "card_rate_usd": null,
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              }
+            ]
+          },
+          {
+            "provider_id": "synthetic",
+            "catalog_source": "openrouter",
+            "model_id": "fixture/request",
+            "endpoint_id": "fixture-endpoint/fixture/request",
+            "upstream_provider": "",
+            "endpoint_status": 0,
+            "explicit_free": false,
+            "dimensions": [
+              {
+                "name": "uncached_input",
+                "unit": "token",
+                "rule": "prompt_minus_cache_unless_exclusive",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "output",
+                "unit": "token",
+                "rule": "completion_minus_separately_priced_reasoning",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "cache_read",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "cache_write",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "reasoning",
+                "unit": "token",
+                "rule": "included_in_output",
+                "card_rate_usd": "0",
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              },
+              {
+                "name": "request",
+                "unit": "request",
+                "rule": "once_per_billable_attempt",
+                "card_rate_usd": "0.04",
+                "provider_rate_usd": "0.04",
+                "nominal_one_key_rate_usd": "0.042"
+              },
+              {
+                "name": "web_search",
+                "unit": "search_request",
+                "rule": "not_quoted",
+                "card_rate_usd": null,
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              }
+            ]
+          },
+          {
+            "provider_id": "synthetic",
+            "catalog_source": "openrouter",
+            "model_id": "fixture/zero-input",
+            "endpoint_id": "fixture-endpoint/fixture/zero-input",
+            "upstream_provider": "",
+            "endpoint_status": 0,
+            "explicit_free": false,
+            "dimensions": [
+              {
+                "name": "uncached_input",
+                "unit": "token",
+                "rule": "prompt_minus_cache_unless_exclusive",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "output",
+                "unit": "token",
+                "rule": "completion_minus_separately_priced_reasoning",
+                "card_rate_usd": "0.000001",
+                "provider_rate_usd": "0.000001",
+                "nominal_one_key_rate_usd": "0.00000105"
+              },
+              {
+                "name": "cache_read",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "cache_write",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "reasoning",
+                "unit": "token",
+                "rule": "included_in_output",
+                "card_rate_usd": "0",
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              },
+              {
+                "name": "request",
+                "unit": "request",
+                "rule": "once_per_billable_attempt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "web_search",
+                "unit": "search_request",
+                "rule": "not_quoted",
+                "card_rate_usd": null,
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "missing_dimension",
+      "document": {
+        "schema_version": "model-prices-v1",
+        "content_version": "64e6ff1bad9230ca2487a043605c2e45b334b12b849365ac0208b417518ae115",
+        "currency": "USD",
+        "quote_scope": "fixed_chat_card_only",
+        "one_key_markup_bps": 500,
+        "byok_gateway_fee_bps": 0,
+        "coverage": {
+          "chat_completions": true,
+          "messages": true,
+          "eligibility": "default_catalog_policy_with_free_opt_in; not_account_entitlement_or_live_provider_qualification",
+          "excluded": "tenant_BYOK_custom_prices,capabilities,tools,embeddings,image,audio,video,OCR,generation,tiered,dynamic"
+        },
+        "rules": {
+          "rate_meaning": "USD_per_unit; nominal_one_key_rates_are_rates_not_independently_rounded_invoice_lines",
+          "prompt_totals": "uncached=prompt-cache_read-cache_write; if negative, prompt is exclusive uncached input",
+          "cache_rates": "positive_cache_rate_else_prompt_rate; cache counts replace included prompt tokens",
+          "reasoning": "positive_reasoning_rate replaces clamp(reasoning,0,completion); otherwise included in completion",
+          "reported_cost": "provider_reported_cost_precedes_card_reconstruction_including_reported_zero",
+          "settlement_rounding": "snap_USD_times_1e6_to_1e-6_micro; half_up_upstream_per_attempt; half_up_markup_on_integer_upstream; sum_billable_attempts",
+          "admission": "ceil_estimated_prompt_plus_output_cap_plus_request_times_markup; admission_hold_not_settled_actual; separate_tool_units_not_covered_by_this_bound",
+          "byok": "zero_Future_AGI_gateway_fee; upstream_still_payable_to_provider; tenant_specific_BYOK_quotes_not_published",
+          "source_snapshot": "sha256_of_public_source_projection_excluding_markup; not_fetch_time_or_private_catalogue_snapshot"
+        },
+        "sources": [
+          {
+            "provider_id": "synthetic",
+            "catalog_source": "openrouter",
+            "snapshot_id": "77c99dbe23dbde40988e2f11164bf155625817d7e8dceea8fa2457bd19651eeb"
+          }
+        ],
+        "offers": [
+          {
+            "provider_id": "synthetic",
+            "catalog_source": "openrouter",
+            "model_id": "fixture/all",
+            "endpoint_id": "fixture-endpoint/fixture/all",
+            "upstream_provider": "",
+            "endpoint_status": 0,
+            "explicit_free": false,
+            "dimensions": [
+              {
+                "name": "uncached_input",
+                "unit": "token",
+                "rule": "prompt_minus_cache_unless_exclusive",
+                "card_rate_usd": "0.000002",
+                "provider_rate_usd": "0.000002",
+                "nominal_one_key_rate_usd": "0.0000021"
+              },
+              {
+                "name": "output",
+                "unit": "token",
+                "rule": "completion_minus_separately_priced_reasoning",
+                "card_rate_usd": "0.00001",
+                "provider_rate_usd": "0.00001",
+                "nominal_one_key_rate_usd": "0.0000105"
+              },
+              {
+                "name": "cache_read",
+                "unit": "token",
+                "rule": "replaces_included_prompt",
+                "card_rate_usd": "0.0000005",
+                "provider_rate_usd": "0.0000005",
+                "nominal_one_key_rate_usd": "0.000000525"
+              },
+              {
+                "name": "cache_write",
+                "unit": "token",
+                "rule": "replaces_included_prompt",
+                "card_rate_usd": "0.000003",
+                "provider_rate_usd": "0.000003",
+                "nominal_one_key_rate_usd": "0.00000315"
+              },
+              {
+                "name": "reasoning",
+                "unit": "token",
+                "rule": "replaces_clamped_completion",
+                "card_rate_usd": "0.000004",
+                "provider_rate_usd": "0.000004",
+                "nominal_one_key_rate_usd": "0.0000042"
+              },
+              {
+                "name": "request",
+                "unit": "request",
+                "rule": "once_per_billable_attempt",
+                "card_rate_usd": "0.0001",
+                "provider_rate_usd": "0.0001",
+                "nominal_one_key_rate_usd": "0.000105"
+              }
+            ]
+          },
+          {
+            "provider_id": "synthetic",
+            "catalog_source": "openrouter",
+            "model_id": "fixture/fallback",
+            "endpoint_id": "fixture-endpoint/fixture/fallback",
+            "upstream_provider": "",
+            "endpoint_status": 0,
+            "explicit_free": false,
+            "dimensions": [
+              {
+                "name": "uncached_input",
+                "unit": "token",
+                "rule": "prompt_minus_cache_unless_exclusive",
+                "card_rate_usd": "0.000002",
+                "provider_rate_usd": "0.000002",
+                "nominal_one_key_rate_usd": "0.0000021"
+              },
+              {
+                "name": "output",
+                "unit": "token",
+                "rule": "completion_minus_separately_priced_reasoning",
+                "card_rate_usd": "0.00001",
+                "provider_rate_usd": "0.00001",
+                "nominal_one_key_rate_usd": "0.0000105"
+              },
+              {
+                "name": "cache_read",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0.000002",
+                "nominal_one_key_rate_usd": "0.0000021"
+              },
+              {
+                "name": "cache_write",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0.000002",
+                "nominal_one_key_rate_usd": "0.0000021"
+              },
+              {
+                "name": "reasoning",
+                "unit": "token",
+                "rule": "included_in_output",
+                "card_rate_usd": "0",
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              },
+              {
+                "name": "request",
+                "unit": "request",
+                "rule": "once_per_billable_attempt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "web_search",
+                "unit": "search_request",
+                "rule": "not_quoted",
+                "card_rate_usd": null,
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              }
+            ]
+          },
+          {
+            "provider_id": "synthetic",
+            "catalog_source": "openrouter",
+            "model_id": "fixture/half",
+            "endpoint_id": "fixture-endpoint/fixture/half",
+            "upstream_provider": "",
+            "endpoint_status": 0,
+            "explicit_free": false,
+            "dimensions": [
+              {
+                "name": "uncached_input",
+                "unit": "token",
+                "rule": "prompt_minus_cache_unless_exclusive",
+                "card_rate_usd": "0.0000005",
+                "provider_rate_usd": "0.0000005",
+                "nominal_one_key_rate_usd": "0.000000525"
+              },
+              {
+                "name": "output",
+                "unit": "token",
+                "rule": "completion_minus_separately_priced_reasoning",
+                "card_rate_usd": "0.0000005",
+                "provider_rate_usd": "0.0000005",
+                "nominal_one_key_rate_usd": "0.000000525"
+              },
+              {
+                "name": "cache_read",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0.0000005",
+                "nominal_one_key_rate_usd": "0.000000525"
+              },
+              {
+                "name": "cache_write",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0.0000005",
+                "nominal_one_key_rate_usd": "0.000000525"
+              },
+              {
+                "name": "reasoning",
+                "unit": "token",
+                "rule": "included_in_output",
+                "card_rate_usd": "0",
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              },
+              {
+                "name": "request",
+                "unit": "request",
+                "rule": "once_per_billable_attempt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "web_search",
+                "unit": "search_request",
+                "rule": "not_quoted",
+                "card_rate_usd": null,
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              }
+            ]
+          },
+          {
+            "provider_id": "synthetic",
+            "catalog_source": "openrouter",
+            "model_id": "fixture/listed:free",
+            "endpoint_id": "fixture-endpoint/fixture/listed:free",
+            "upstream_provider": "",
+            "endpoint_status": 0,
+            "explicit_free": true,
+            "dimensions": [
+              {
+                "name": "uncached_input",
+                "unit": "token",
+                "rule": "prompt_minus_cache_unless_exclusive",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "output",
+                "unit": "token",
+                "rule": "completion_minus_separately_priced_reasoning",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "cache_read",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "cache_write",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "reasoning",
+                "unit": "token",
+                "rule": "included_in_output",
+                "card_rate_usd": "0",
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              },
+              {
+                "name": "request",
+                "unit": "request",
+                "rule": "once_per_billable_attempt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "web_search",
+                "unit": "search_request",
+                "rule": "not_quoted",
+                "card_rate_usd": null,
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              }
+            ]
+          },
+          {
+            "provider_id": "synthetic",
+            "catalog_source": "openrouter",
+            "model_id": "fixture/request",
+            "endpoint_id": "fixture-endpoint/fixture/request",
+            "upstream_provider": "",
+            "endpoint_status": 0,
+            "explicit_free": false,
+            "dimensions": [
+              {
+                "name": "uncached_input",
+                "unit": "token",
+                "rule": "prompt_minus_cache_unless_exclusive",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "output",
+                "unit": "token",
+                "rule": "completion_minus_separately_priced_reasoning",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "cache_read",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "cache_write",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "reasoning",
+                "unit": "token",
+                "rule": "included_in_output",
+                "card_rate_usd": "0",
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              },
+              {
+                "name": "request",
+                "unit": "request",
+                "rule": "once_per_billable_attempt",
+                "card_rate_usd": "0.04",
+                "provider_rate_usd": "0.04",
+                "nominal_one_key_rate_usd": "0.042"
+              },
+              {
+                "name": "web_search",
+                "unit": "search_request",
+                "rule": "not_quoted",
+                "card_rate_usd": null,
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              }
+            ]
+          },
+          {
+            "provider_id": "synthetic",
+            "catalog_source": "openrouter",
+            "model_id": "fixture/zero-input",
+            "endpoint_id": "fixture-endpoint/fixture/zero-input",
+            "upstream_provider": "",
+            "endpoint_status": 0,
+            "explicit_free": false,
+            "dimensions": [
+              {
+                "name": "uncached_input",
+                "unit": "token",
+                "rule": "prompt_minus_cache_unless_exclusive",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "output",
+                "unit": "token",
+                "rule": "completion_minus_separately_priced_reasoning",
+                "card_rate_usd": "0.000001",
+                "provider_rate_usd": "0.000001",
+                "nominal_one_key_rate_usd": "0.00000105"
+              },
+              {
+                "name": "cache_read",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "cache_write",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "reasoning",
+                "unit": "token",
+                "rule": "included_in_output",
+                "card_rate_usd": "0",
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              },
+              {
+                "name": "request",
+                "unit": "request",
+                "rule": "once_per_billable_attempt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "web_search",
+                "unit": "search_request",
+                "rule": "not_quoted",
+                "card_rate_usd": null,
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "unknown_dimension",
+      "document": {
+        "schema_version": "model-prices-v1",
+        "content_version": "64e6ff1bad9230ca2487a043605c2e45b334b12b849365ac0208b417518ae115",
+        "currency": "USD",
+        "quote_scope": "fixed_chat_card_only",
+        "one_key_markup_bps": 500,
+        "byok_gateway_fee_bps": 0,
+        "coverage": {
+          "chat_completions": true,
+          "messages": true,
+          "eligibility": "default_catalog_policy_with_free_opt_in; not_account_entitlement_or_live_provider_qualification",
+          "excluded": "tenant_BYOK_custom_prices,capabilities,tools,embeddings,image,audio,video,OCR,generation,tiered,dynamic"
+        },
+        "rules": {
+          "rate_meaning": "USD_per_unit; nominal_one_key_rates_are_rates_not_independently_rounded_invoice_lines",
+          "prompt_totals": "uncached=prompt-cache_read-cache_write; if negative, prompt is exclusive uncached input",
+          "cache_rates": "positive_cache_rate_else_prompt_rate; cache counts replace included prompt tokens",
+          "reasoning": "positive_reasoning_rate replaces clamp(reasoning,0,completion); otherwise included in completion",
+          "reported_cost": "provider_reported_cost_precedes_card_reconstruction_including_reported_zero",
+          "settlement_rounding": "snap_USD_times_1e6_to_1e-6_micro; half_up_upstream_per_attempt; half_up_markup_on_integer_upstream; sum_billable_attempts",
+          "admission": "ceil_estimated_prompt_plus_output_cap_plus_request_times_markup; admission_hold_not_settled_actual; separate_tool_units_not_covered_by_this_bound",
+          "byok": "zero_Future_AGI_gateway_fee; upstream_still_payable_to_provider; tenant_specific_BYOK_quotes_not_published",
+          "source_snapshot": "sha256_of_public_source_projection_excluding_markup; not_fetch_time_or_private_catalogue_snapshot"
+        },
+        "sources": [
+          {
+            "provider_id": "synthetic",
+            "catalog_source": "openrouter",
+            "snapshot_id": "77c99dbe23dbde40988e2f11164bf155625817d7e8dceea8fa2457bd19651eeb"
+          }
+        ],
+        "offers": [
+          {
+            "provider_id": "synthetic",
+            "catalog_source": "openrouter",
+            "model_id": "fixture/all",
+            "endpoint_id": "fixture-endpoint/fixture/all",
+            "upstream_provider": "",
+            "endpoint_status": 0,
+            "explicit_free": false,
+            "dimensions": [
+              {
+                "name": "generation",
+                "unit": "token",
+                "rule": "prompt_minus_cache_unless_exclusive",
+                "card_rate_usd": "0.000002",
+                "provider_rate_usd": "0.000002",
+                "nominal_one_key_rate_usd": "0.0000021"
+              },
+              {
+                "name": "output",
+                "unit": "token",
+                "rule": "completion_minus_separately_priced_reasoning",
+                "card_rate_usd": "0.00001",
+                "provider_rate_usd": "0.00001",
+                "nominal_one_key_rate_usd": "0.0000105"
+              },
+              {
+                "name": "cache_read",
+                "unit": "token",
+                "rule": "replaces_included_prompt",
+                "card_rate_usd": "0.0000005",
+                "provider_rate_usd": "0.0000005",
+                "nominal_one_key_rate_usd": "0.000000525"
+              },
+              {
+                "name": "cache_write",
+                "unit": "token",
+                "rule": "replaces_included_prompt",
+                "card_rate_usd": "0.000003",
+                "provider_rate_usd": "0.000003",
+                "nominal_one_key_rate_usd": "0.00000315"
+              },
+              {
+                "name": "reasoning",
+                "unit": "token",
+                "rule": "replaces_clamped_completion",
+                "card_rate_usd": "0.000004",
+                "provider_rate_usd": "0.000004",
+                "nominal_one_key_rate_usd": "0.0000042"
+              },
+              {
+                "name": "request",
+                "unit": "request",
+                "rule": "once_per_billable_attempt",
+                "card_rate_usd": "0.0001",
+                "provider_rate_usd": "0.0001",
+                "nominal_one_key_rate_usd": "0.000105"
+              },
+              {
+                "name": "web_search",
+                "unit": "search_request",
+                "rule": "per_reported_search_request",
+                "card_rate_usd": "0.002",
+                "provider_rate_usd": "0.002",
+                "nominal_one_key_rate_usd": "0.0021"
+              }
+            ]
+          },
+          {
+            "provider_id": "synthetic",
+            "catalog_source": "openrouter",
+            "model_id": "fixture/fallback",
+            "endpoint_id": "fixture-endpoint/fixture/fallback",
+            "upstream_provider": "",
+            "endpoint_status": 0,
+            "explicit_free": false,
+            "dimensions": [
+              {
+                "name": "uncached_input",
+                "unit": "token",
+                "rule": "prompt_minus_cache_unless_exclusive",
+                "card_rate_usd": "0.000002",
+                "provider_rate_usd": "0.000002",
+                "nominal_one_key_rate_usd": "0.0000021"
+              },
+              {
+                "name": "output",
+                "unit": "token",
+                "rule": "completion_minus_separately_priced_reasoning",
+                "card_rate_usd": "0.00001",
+                "provider_rate_usd": "0.00001",
+                "nominal_one_key_rate_usd": "0.0000105"
+              },
+              {
+                "name": "cache_read",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0.000002",
+                "nominal_one_key_rate_usd": "0.0000021"
+              },
+              {
+                "name": "cache_write",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0.000002",
+                "nominal_one_key_rate_usd": "0.0000021"
+              },
+              {
+                "name": "reasoning",
+                "unit": "token",
+                "rule": "included_in_output",
+                "card_rate_usd": "0",
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              },
+              {
+                "name": "request",
+                "unit": "request",
+                "rule": "once_per_billable_attempt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "web_search",
+                "unit": "search_request",
+                "rule": "not_quoted",
+                "card_rate_usd": null,
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              }
+            ]
+          },
+          {
+            "provider_id": "synthetic",
+            "catalog_source": "openrouter",
+            "model_id": "fixture/half",
+            "endpoint_id": "fixture-endpoint/fixture/half",
+            "upstream_provider": "",
+            "endpoint_status": 0,
+            "explicit_free": false,
+            "dimensions": [
+              {
+                "name": "uncached_input",
+                "unit": "token",
+                "rule": "prompt_minus_cache_unless_exclusive",
+                "card_rate_usd": "0.0000005",
+                "provider_rate_usd": "0.0000005",
+                "nominal_one_key_rate_usd": "0.000000525"
+              },
+              {
+                "name": "output",
+                "unit": "token",
+                "rule": "completion_minus_separately_priced_reasoning",
+                "card_rate_usd": "0.0000005",
+                "provider_rate_usd": "0.0000005",
+                "nominal_one_key_rate_usd": "0.000000525"
+              },
+              {
+                "name": "cache_read",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0.0000005",
+                "nominal_one_key_rate_usd": "0.000000525"
+              },
+              {
+                "name": "cache_write",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0.0000005",
+                "nominal_one_key_rate_usd": "0.000000525"
+              },
+              {
+                "name": "reasoning",
+                "unit": "token",
+                "rule": "included_in_output",
+                "card_rate_usd": "0",
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              },
+              {
+                "name": "request",
+                "unit": "request",
+                "rule": "once_per_billable_attempt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "web_search",
+                "unit": "search_request",
+                "rule": "not_quoted",
+                "card_rate_usd": null,
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              }
+            ]
+          },
+          {
+            "provider_id": "synthetic",
+            "catalog_source": "openrouter",
+            "model_id": "fixture/listed:free",
+            "endpoint_id": "fixture-endpoint/fixture/listed:free",
+            "upstream_provider": "",
+            "endpoint_status": 0,
+            "explicit_free": true,
+            "dimensions": [
+              {
+                "name": "uncached_input",
+                "unit": "token",
+                "rule": "prompt_minus_cache_unless_exclusive",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "output",
+                "unit": "token",
+                "rule": "completion_minus_separately_priced_reasoning",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "cache_read",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "cache_write",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "reasoning",
+                "unit": "token",
+                "rule": "included_in_output",
+                "card_rate_usd": "0",
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              },
+              {
+                "name": "request",
+                "unit": "request",
+                "rule": "once_per_billable_attempt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "web_search",
+                "unit": "search_request",
+                "rule": "not_quoted",
+                "card_rate_usd": null,
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              }
+            ]
+          },
+          {
+            "provider_id": "synthetic",
+            "catalog_source": "openrouter",
+            "model_id": "fixture/request",
+            "endpoint_id": "fixture-endpoint/fixture/request",
+            "upstream_provider": "",
+            "endpoint_status": 0,
+            "explicit_free": false,
+            "dimensions": [
+              {
+                "name": "uncached_input",
+                "unit": "token",
+                "rule": "prompt_minus_cache_unless_exclusive",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "output",
+                "unit": "token",
+                "rule": "completion_minus_separately_priced_reasoning",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "cache_read",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "cache_write",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "reasoning",
+                "unit": "token",
+                "rule": "included_in_output",
+                "card_rate_usd": "0",
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              },
+              {
+                "name": "request",
+                "unit": "request",
+                "rule": "once_per_billable_attempt",
+                "card_rate_usd": "0.04",
+                "provider_rate_usd": "0.04",
+                "nominal_one_key_rate_usd": "0.042"
+              },
+              {
+                "name": "web_search",
+                "unit": "search_request",
+                "rule": "not_quoted",
+                "card_rate_usd": null,
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              }
+            ]
+          },
+          {
+            "provider_id": "synthetic",
+            "catalog_source": "openrouter",
+            "model_id": "fixture/zero-input",
+            "endpoint_id": "fixture-endpoint/fixture/zero-input",
+            "upstream_provider": "",
+            "endpoint_status": 0,
+            "explicit_free": false,
+            "dimensions": [
+              {
+                "name": "uncached_input",
+                "unit": "token",
+                "rule": "prompt_minus_cache_unless_exclusive",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "output",
+                "unit": "token",
+                "rule": "completion_minus_separately_priced_reasoning",
+                "card_rate_usd": "0.000001",
+                "provider_rate_usd": "0.000001",
+                "nominal_one_key_rate_usd": "0.00000105"
+              },
+              {
+                "name": "cache_read",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "cache_write",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "reasoning",
+                "unit": "token",
+                "rule": "included_in_output",
+                "card_rate_usd": "0",
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              },
+              {
+                "name": "request",
+                "unit": "request",
+                "rule": "once_per_billable_attempt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "web_search",
+                "unit": "search_request",
+                "rule": "not_quoted",
+                "card_rate_usd": null,
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "wrong_unit",
+      "document": {
+        "schema_version": "model-prices-v1",
+        "content_version": "64e6ff1bad9230ca2487a043605c2e45b334b12b849365ac0208b417518ae115",
+        "currency": "USD",
+        "quote_scope": "fixed_chat_card_only",
+        "one_key_markup_bps": 500,
+        "byok_gateway_fee_bps": 0,
+        "coverage": {
+          "chat_completions": true,
+          "messages": true,
+          "eligibility": "default_catalog_policy_with_free_opt_in; not_account_entitlement_or_live_provider_qualification",
+          "excluded": "tenant_BYOK_custom_prices,capabilities,tools,embeddings,image,audio,video,OCR,generation,tiered,dynamic"
+        },
+        "rules": {
+          "rate_meaning": "USD_per_unit; nominal_one_key_rates_are_rates_not_independently_rounded_invoice_lines",
+          "prompt_totals": "uncached=prompt-cache_read-cache_write; if negative, prompt is exclusive uncached input",
+          "cache_rates": "positive_cache_rate_else_prompt_rate; cache counts replace included prompt tokens",
+          "reasoning": "positive_reasoning_rate replaces clamp(reasoning,0,completion); otherwise included in completion",
+          "reported_cost": "provider_reported_cost_precedes_card_reconstruction_including_reported_zero",
+          "settlement_rounding": "snap_USD_times_1e6_to_1e-6_micro; half_up_upstream_per_attempt; half_up_markup_on_integer_upstream; sum_billable_attempts",
+          "admission": "ceil_estimated_prompt_plus_output_cap_plus_request_times_markup; admission_hold_not_settled_actual; separate_tool_units_not_covered_by_this_bound",
+          "byok": "zero_Future_AGI_gateway_fee; upstream_still_payable_to_provider; tenant_specific_BYOK_quotes_not_published",
+          "source_snapshot": "sha256_of_public_source_projection_excluding_markup; not_fetch_time_or_private_catalogue_snapshot"
+        },
+        "sources": [
+          {
+            "provider_id": "synthetic",
+            "catalog_source": "openrouter",
+            "snapshot_id": "77c99dbe23dbde40988e2f11164bf155625817d7e8dceea8fa2457bd19651eeb"
+          }
+        ],
+        "offers": [
+          {
+            "provider_id": "synthetic",
+            "catalog_source": "openrouter",
+            "model_id": "fixture/all",
+            "endpoint_id": "fixture-endpoint/fixture/all",
+            "upstream_provider": "",
+            "endpoint_status": 0,
+            "explicit_free": false,
+            "dimensions": [
+              {
+                "name": "uncached_input",
+                "unit": "image",
+                "rule": "prompt_minus_cache_unless_exclusive",
+                "card_rate_usd": "0.000002",
+                "provider_rate_usd": "0.000002",
+                "nominal_one_key_rate_usd": "0.0000021"
+              },
+              {
+                "name": "output",
+                "unit": "token",
+                "rule": "completion_minus_separately_priced_reasoning",
+                "card_rate_usd": "0.00001",
+                "provider_rate_usd": "0.00001",
+                "nominal_one_key_rate_usd": "0.0000105"
+              },
+              {
+                "name": "cache_read",
+                "unit": "token",
+                "rule": "replaces_included_prompt",
+                "card_rate_usd": "0.0000005",
+                "provider_rate_usd": "0.0000005",
+                "nominal_one_key_rate_usd": "0.000000525"
+              },
+              {
+                "name": "cache_write",
+                "unit": "token",
+                "rule": "replaces_included_prompt",
+                "card_rate_usd": "0.000003",
+                "provider_rate_usd": "0.000003",
+                "nominal_one_key_rate_usd": "0.00000315"
+              },
+              {
+                "name": "reasoning",
+                "unit": "token",
+                "rule": "replaces_clamped_completion",
+                "card_rate_usd": "0.000004",
+                "provider_rate_usd": "0.000004",
+                "nominal_one_key_rate_usd": "0.0000042"
+              },
+              {
+                "name": "request",
+                "unit": "request",
+                "rule": "once_per_billable_attempt",
+                "card_rate_usd": "0.0001",
+                "provider_rate_usd": "0.0001",
+                "nominal_one_key_rate_usd": "0.000105"
+              },
+              {
+                "name": "web_search",
+                "unit": "search_request",
+                "rule": "per_reported_search_request",
+                "card_rate_usd": "0.002",
+                "provider_rate_usd": "0.002",
+                "nominal_one_key_rate_usd": "0.0021"
+              }
+            ]
+          },
+          {
+            "provider_id": "synthetic",
+            "catalog_source": "openrouter",
+            "model_id": "fixture/fallback",
+            "endpoint_id": "fixture-endpoint/fixture/fallback",
+            "upstream_provider": "",
+            "endpoint_status": 0,
+            "explicit_free": false,
+            "dimensions": [
+              {
+                "name": "uncached_input",
+                "unit": "token",
+                "rule": "prompt_minus_cache_unless_exclusive",
+                "card_rate_usd": "0.000002",
+                "provider_rate_usd": "0.000002",
+                "nominal_one_key_rate_usd": "0.0000021"
+              },
+              {
+                "name": "output",
+                "unit": "token",
+                "rule": "completion_minus_separately_priced_reasoning",
+                "card_rate_usd": "0.00001",
+                "provider_rate_usd": "0.00001",
+                "nominal_one_key_rate_usd": "0.0000105"
+              },
+              {
+                "name": "cache_read",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0.000002",
+                "nominal_one_key_rate_usd": "0.0000021"
+              },
+              {
+                "name": "cache_write",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0.000002",
+                "nominal_one_key_rate_usd": "0.0000021"
+              },
+              {
+                "name": "reasoning",
+                "unit": "token",
+                "rule": "included_in_output",
+                "card_rate_usd": "0",
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              },
+              {
+                "name": "request",
+                "unit": "request",
+                "rule": "once_per_billable_attempt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "web_search",
+                "unit": "search_request",
+                "rule": "not_quoted",
+                "card_rate_usd": null,
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              }
+            ]
+          },
+          {
+            "provider_id": "synthetic",
+            "catalog_source": "openrouter",
+            "model_id": "fixture/half",
+            "endpoint_id": "fixture-endpoint/fixture/half",
+            "upstream_provider": "",
+            "endpoint_status": 0,
+            "explicit_free": false,
+            "dimensions": [
+              {
+                "name": "uncached_input",
+                "unit": "token",
+                "rule": "prompt_minus_cache_unless_exclusive",
+                "card_rate_usd": "0.0000005",
+                "provider_rate_usd": "0.0000005",
+                "nominal_one_key_rate_usd": "0.000000525"
+              },
+              {
+                "name": "output",
+                "unit": "token",
+                "rule": "completion_minus_separately_priced_reasoning",
+                "card_rate_usd": "0.0000005",
+                "provider_rate_usd": "0.0000005",
+                "nominal_one_key_rate_usd": "0.000000525"
+              },
+              {
+                "name": "cache_read",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0.0000005",
+                "nominal_one_key_rate_usd": "0.000000525"
+              },
+              {
+                "name": "cache_write",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0.0000005",
+                "nominal_one_key_rate_usd": "0.000000525"
+              },
+              {
+                "name": "reasoning",
+                "unit": "token",
+                "rule": "included_in_output",
+                "card_rate_usd": "0",
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              },
+              {
+                "name": "request",
+                "unit": "request",
+                "rule": "once_per_billable_attempt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "web_search",
+                "unit": "search_request",
+                "rule": "not_quoted",
+                "card_rate_usd": null,
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              }
+            ]
+          },
+          {
+            "provider_id": "synthetic",
+            "catalog_source": "openrouter",
+            "model_id": "fixture/listed:free",
+            "endpoint_id": "fixture-endpoint/fixture/listed:free",
+            "upstream_provider": "",
+            "endpoint_status": 0,
+            "explicit_free": true,
+            "dimensions": [
+              {
+                "name": "uncached_input",
+                "unit": "token",
+                "rule": "prompt_minus_cache_unless_exclusive",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "output",
+                "unit": "token",
+                "rule": "completion_minus_separately_priced_reasoning",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "cache_read",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "cache_write",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "reasoning",
+                "unit": "token",
+                "rule": "included_in_output",
+                "card_rate_usd": "0",
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              },
+              {
+                "name": "request",
+                "unit": "request",
+                "rule": "once_per_billable_attempt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "web_search",
+                "unit": "search_request",
+                "rule": "not_quoted",
+                "card_rate_usd": null,
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              }
+            ]
+          },
+          {
+            "provider_id": "synthetic",
+            "catalog_source": "openrouter",
+            "model_id": "fixture/request",
+            "endpoint_id": "fixture-endpoint/fixture/request",
+            "upstream_provider": "",
+            "endpoint_status": 0,
+            "explicit_free": false,
+            "dimensions": [
+              {
+                "name": "uncached_input",
+                "unit": "token",
+                "rule": "prompt_minus_cache_unless_exclusive",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "output",
+                "unit": "token",
+                "rule": "completion_minus_separately_priced_reasoning",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "cache_read",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "cache_write",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "reasoning",
+                "unit": "token",
+                "rule": "included_in_output",
+                "card_rate_usd": "0",
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              },
+              {
+                "name": "request",
+                "unit": "request",
+                "rule": "once_per_billable_attempt",
+                "card_rate_usd": "0.04",
+                "provider_rate_usd": "0.04",
+                "nominal_one_key_rate_usd": "0.042"
+              },
+              {
+                "name": "web_search",
+                "unit": "search_request",
+                "rule": "not_quoted",
+                "card_rate_usd": null,
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              }
+            ]
+          },
+          {
+            "provider_id": "synthetic",
+            "catalog_source": "openrouter",
+            "model_id": "fixture/zero-input",
+            "endpoint_id": "fixture-endpoint/fixture/zero-input",
+            "upstream_provider": "",
+            "endpoint_status": 0,
+            "explicit_free": false,
+            "dimensions": [
+              {
+                "name": "uncached_input",
+                "unit": "token",
+                "rule": "prompt_minus_cache_unless_exclusive",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "output",
+                "unit": "token",
+                "rule": "completion_minus_separately_priced_reasoning",
+                "card_rate_usd": "0.000001",
+                "provider_rate_usd": "0.000001",
+                "nominal_one_key_rate_usd": "0.00000105"
+              },
+              {
+                "name": "cache_read",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "cache_write",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "reasoning",
+                "unit": "token",
+                "rule": "included_in_output",
+                "card_rate_usd": "0",
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              },
+              {
+                "name": "request",
+                "unit": "request",
+                "rule": "once_per_billable_attempt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "web_search",
+                "unit": "search_request",
+                "rule": "not_quoted",
+                "card_rate_usd": null,
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "unquoted_prompt",
+      "document": {
+        "schema_version": "model-prices-v1",
+        "content_version": "64e6ff1bad9230ca2487a043605c2e45b334b12b849365ac0208b417518ae115",
+        "currency": "USD",
+        "quote_scope": "fixed_chat_card_only",
+        "one_key_markup_bps": 500,
+        "byok_gateway_fee_bps": 0,
+        "coverage": {
+          "chat_completions": true,
+          "messages": true,
+          "eligibility": "default_catalog_policy_with_free_opt_in; not_account_entitlement_or_live_provider_qualification",
+          "excluded": "tenant_BYOK_custom_prices,capabilities,tools,embeddings,image,audio,video,OCR,generation,tiered,dynamic"
+        },
+        "rules": {
+          "rate_meaning": "USD_per_unit; nominal_one_key_rates_are_rates_not_independently_rounded_invoice_lines",
+          "prompt_totals": "uncached=prompt-cache_read-cache_write; if negative, prompt is exclusive uncached input",
+          "cache_rates": "positive_cache_rate_else_prompt_rate; cache counts replace included prompt tokens",
+          "reasoning": "positive_reasoning_rate replaces clamp(reasoning,0,completion); otherwise included in completion",
+          "reported_cost": "provider_reported_cost_precedes_card_reconstruction_including_reported_zero",
+          "settlement_rounding": "snap_USD_times_1e6_to_1e-6_micro; half_up_upstream_per_attempt; half_up_markup_on_integer_upstream; sum_billable_attempts",
+          "admission": "ceil_estimated_prompt_plus_output_cap_plus_request_times_markup; admission_hold_not_settled_actual; separate_tool_units_not_covered_by_this_bound",
+          "byok": "zero_Future_AGI_gateway_fee; upstream_still_payable_to_provider; tenant_specific_BYOK_quotes_not_published",
+          "source_snapshot": "sha256_of_public_source_projection_excluding_markup; not_fetch_time_or_private_catalogue_snapshot"
+        },
+        "sources": [
+          {
+            "provider_id": "synthetic",
+            "catalog_source": "openrouter",
+            "snapshot_id": "77c99dbe23dbde40988e2f11164bf155625817d7e8dceea8fa2457bd19651eeb"
+          }
+        ],
+        "offers": [
+          {
+            "provider_id": "synthetic",
+            "catalog_source": "openrouter",
+            "model_id": "fixture/all",
+            "endpoint_id": "fixture-endpoint/fixture/all",
+            "upstream_provider": "",
+            "endpoint_status": 0,
+            "explicit_free": false,
+            "dimensions": [
+              {
+                "name": "uncached_input",
+                "unit": "token",
+                "rule": "prompt_minus_cache_unless_exclusive",
+                "card_rate_usd": "0.000002",
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": "0.0000021"
+              },
+              {
+                "name": "output",
+                "unit": "token",
+                "rule": "completion_minus_separately_priced_reasoning",
+                "card_rate_usd": "0.00001",
+                "provider_rate_usd": "0.00001",
+                "nominal_one_key_rate_usd": "0.0000105"
+              },
+              {
+                "name": "cache_read",
+                "unit": "token",
+                "rule": "replaces_included_prompt",
+                "card_rate_usd": "0.0000005",
+                "provider_rate_usd": "0.0000005",
+                "nominal_one_key_rate_usd": "0.000000525"
+              },
+              {
+                "name": "cache_write",
+                "unit": "token",
+                "rule": "replaces_included_prompt",
+                "card_rate_usd": "0.000003",
+                "provider_rate_usd": "0.000003",
+                "nominal_one_key_rate_usd": "0.00000315"
+              },
+              {
+                "name": "reasoning",
+                "unit": "token",
+                "rule": "replaces_clamped_completion",
+                "card_rate_usd": "0.000004",
+                "provider_rate_usd": "0.000004",
+                "nominal_one_key_rate_usd": "0.0000042"
+              },
+              {
+                "name": "request",
+                "unit": "request",
+                "rule": "once_per_billable_attempt",
+                "card_rate_usd": "0.0001",
+                "provider_rate_usd": "0.0001",
+                "nominal_one_key_rate_usd": "0.000105"
+              },
+              {
+                "name": "web_search",
+                "unit": "search_request",
+                "rule": "per_reported_search_request",
+                "card_rate_usd": "0.002",
+                "provider_rate_usd": "0.002",
+                "nominal_one_key_rate_usd": "0.0021"
+              }
+            ]
+          },
+          {
+            "provider_id": "synthetic",
+            "catalog_source": "openrouter",
+            "model_id": "fixture/fallback",
+            "endpoint_id": "fixture-endpoint/fixture/fallback",
+            "upstream_provider": "",
+            "endpoint_status": 0,
+            "explicit_free": false,
+            "dimensions": [
+              {
+                "name": "uncached_input",
+                "unit": "token",
+                "rule": "prompt_minus_cache_unless_exclusive",
+                "card_rate_usd": "0.000002",
+                "provider_rate_usd": "0.000002",
+                "nominal_one_key_rate_usd": "0.0000021"
+              },
+              {
+                "name": "output",
+                "unit": "token",
+                "rule": "completion_minus_separately_priced_reasoning",
+                "card_rate_usd": "0.00001",
+                "provider_rate_usd": "0.00001",
+                "nominal_one_key_rate_usd": "0.0000105"
+              },
+              {
+                "name": "cache_read",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0.000002",
+                "nominal_one_key_rate_usd": "0.0000021"
+              },
+              {
+                "name": "cache_write",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0.000002",
+                "nominal_one_key_rate_usd": "0.0000021"
+              },
+              {
+                "name": "reasoning",
+                "unit": "token",
+                "rule": "included_in_output",
+                "card_rate_usd": "0",
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              },
+              {
+                "name": "request",
+                "unit": "request",
+                "rule": "once_per_billable_attempt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "web_search",
+                "unit": "search_request",
+                "rule": "not_quoted",
+                "card_rate_usd": null,
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              }
+            ]
+          },
+          {
+            "provider_id": "synthetic",
+            "catalog_source": "openrouter",
+            "model_id": "fixture/half",
+            "endpoint_id": "fixture-endpoint/fixture/half",
+            "upstream_provider": "",
+            "endpoint_status": 0,
+            "explicit_free": false,
+            "dimensions": [
+              {
+                "name": "uncached_input",
+                "unit": "token",
+                "rule": "prompt_minus_cache_unless_exclusive",
+                "card_rate_usd": "0.0000005",
+                "provider_rate_usd": "0.0000005",
+                "nominal_one_key_rate_usd": "0.000000525"
+              },
+              {
+                "name": "output",
+                "unit": "token",
+                "rule": "completion_minus_separately_priced_reasoning",
+                "card_rate_usd": "0.0000005",
+                "provider_rate_usd": "0.0000005",
+                "nominal_one_key_rate_usd": "0.000000525"
+              },
+              {
+                "name": "cache_read",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0.0000005",
+                "nominal_one_key_rate_usd": "0.000000525"
+              },
+              {
+                "name": "cache_write",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0.0000005",
+                "nominal_one_key_rate_usd": "0.000000525"
+              },
+              {
+                "name": "reasoning",
+                "unit": "token",
+                "rule": "included_in_output",
+                "card_rate_usd": "0",
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              },
+              {
+                "name": "request",
+                "unit": "request",
+                "rule": "once_per_billable_attempt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "web_search",
+                "unit": "search_request",
+                "rule": "not_quoted",
+                "card_rate_usd": null,
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              }
+            ]
+          },
+          {
+            "provider_id": "synthetic",
+            "catalog_source": "openrouter",
+            "model_id": "fixture/listed:free",
+            "endpoint_id": "fixture-endpoint/fixture/listed:free",
+            "upstream_provider": "",
+            "endpoint_status": 0,
+            "explicit_free": true,
+            "dimensions": [
+              {
+                "name": "uncached_input",
+                "unit": "token",
+                "rule": "prompt_minus_cache_unless_exclusive",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "output",
+                "unit": "token",
+                "rule": "completion_minus_separately_priced_reasoning",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "cache_read",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "cache_write",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "reasoning",
+                "unit": "token",
+                "rule": "included_in_output",
+                "card_rate_usd": "0",
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              },
+              {
+                "name": "request",
+                "unit": "request",
+                "rule": "once_per_billable_attempt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "web_search",
+                "unit": "search_request",
+                "rule": "not_quoted",
+                "card_rate_usd": null,
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              }
+            ]
+          },
+          {
+            "provider_id": "synthetic",
+            "catalog_source": "openrouter",
+            "model_id": "fixture/request",
+            "endpoint_id": "fixture-endpoint/fixture/request",
+            "upstream_provider": "",
+            "endpoint_status": 0,
+            "explicit_free": false,
+            "dimensions": [
+              {
+                "name": "uncached_input",
+                "unit": "token",
+                "rule": "prompt_minus_cache_unless_exclusive",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "output",
+                "unit": "token",
+                "rule": "completion_minus_separately_priced_reasoning",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "cache_read",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "cache_write",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "reasoning",
+                "unit": "token",
+                "rule": "included_in_output",
+                "card_rate_usd": "0",
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              },
+              {
+                "name": "request",
+                "unit": "request",
+                "rule": "once_per_billable_attempt",
+                "card_rate_usd": "0.04",
+                "provider_rate_usd": "0.04",
+                "nominal_one_key_rate_usd": "0.042"
+              },
+              {
+                "name": "web_search",
+                "unit": "search_request",
+                "rule": "not_quoted",
+                "card_rate_usd": null,
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              }
+            ]
+          },
+          {
+            "provider_id": "synthetic",
+            "catalog_source": "openrouter",
+            "model_id": "fixture/zero-input",
+            "endpoint_id": "fixture-endpoint/fixture/zero-input",
+            "upstream_provider": "",
+            "endpoint_status": 0,
+            "explicit_free": false,
+            "dimensions": [
+              {
+                "name": "uncached_input",
+                "unit": "token",
+                "rule": "prompt_minus_cache_unless_exclusive",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "output",
+                "unit": "token",
+                "rule": "completion_minus_separately_priced_reasoning",
+                "card_rate_usd": "0.000001",
+                "provider_rate_usd": "0.000001",
+                "nominal_one_key_rate_usd": "0.00000105"
+              },
+              {
+                "name": "cache_read",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "cache_write",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "reasoning",
+                "unit": "token",
+                "rule": "included_in_output",
+                "card_rate_usd": "0",
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              },
+              {
+                "name": "request",
+                "unit": "request",
+                "rule": "once_per_billable_attempt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "web_search",
+                "unit": "search_request",
+                "rule": "not_quoted",
+                "card_rate_usd": null,
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "byok_fee",
+      "document": {
+        "schema_version": "model-prices-v1",
+        "content_version": "64e6ff1bad9230ca2487a043605c2e45b334b12b849365ac0208b417518ae115",
+        "currency": "USD",
+        "quote_scope": "fixed_chat_card_only",
+        "one_key_markup_bps": 500,
+        "byok_gateway_fee_bps": 500,
+        "coverage": {
+          "chat_completions": true,
+          "messages": true,
+          "eligibility": "default_catalog_policy_with_free_opt_in; not_account_entitlement_or_live_provider_qualification",
+          "excluded": "tenant_BYOK_custom_prices,capabilities,tools,embeddings,image,audio,video,OCR,generation,tiered,dynamic"
+        },
+        "rules": {
+          "rate_meaning": "USD_per_unit; nominal_one_key_rates_are_rates_not_independently_rounded_invoice_lines",
+          "prompt_totals": "uncached=prompt-cache_read-cache_write; if negative, prompt is exclusive uncached input",
+          "cache_rates": "positive_cache_rate_else_prompt_rate; cache counts replace included prompt tokens",
+          "reasoning": "positive_reasoning_rate replaces clamp(reasoning,0,completion); otherwise included in completion",
+          "reported_cost": "provider_reported_cost_precedes_card_reconstruction_including_reported_zero",
+          "settlement_rounding": "snap_USD_times_1e6_to_1e-6_micro; half_up_upstream_per_attempt; half_up_markup_on_integer_upstream; sum_billable_attempts",
+          "admission": "ceil_estimated_prompt_plus_output_cap_plus_request_times_markup; admission_hold_not_settled_actual; separate_tool_units_not_covered_by_this_bound",
+          "byok": "zero_Future_AGI_gateway_fee; upstream_still_payable_to_provider; tenant_specific_BYOK_quotes_not_published",
+          "source_snapshot": "sha256_of_public_source_projection_excluding_markup; not_fetch_time_or_private_catalogue_snapshot"
+        },
+        "sources": [
+          {
+            "provider_id": "synthetic",
+            "catalog_source": "openrouter",
+            "snapshot_id": "77c99dbe23dbde40988e2f11164bf155625817d7e8dceea8fa2457bd19651eeb"
+          }
+        ],
+        "offers": [
+          {
+            "provider_id": "synthetic",
+            "catalog_source": "openrouter",
+            "model_id": "fixture/all",
+            "endpoint_id": "fixture-endpoint/fixture/all",
+            "upstream_provider": "",
+            "endpoint_status": 0,
+            "explicit_free": false,
+            "dimensions": [
+              {
+                "name": "uncached_input",
+                "unit": "token",
+                "rule": "prompt_minus_cache_unless_exclusive",
+                "card_rate_usd": "0.000002",
+                "provider_rate_usd": "0.000002",
+                "nominal_one_key_rate_usd": "0.0000021"
+              },
+              {
+                "name": "output",
+                "unit": "token",
+                "rule": "completion_minus_separately_priced_reasoning",
+                "card_rate_usd": "0.00001",
+                "provider_rate_usd": "0.00001",
+                "nominal_one_key_rate_usd": "0.0000105"
+              },
+              {
+                "name": "cache_read",
+                "unit": "token",
+                "rule": "replaces_included_prompt",
+                "card_rate_usd": "0.0000005",
+                "provider_rate_usd": "0.0000005",
+                "nominal_one_key_rate_usd": "0.000000525"
+              },
+              {
+                "name": "cache_write",
+                "unit": "token",
+                "rule": "replaces_included_prompt",
+                "card_rate_usd": "0.000003",
+                "provider_rate_usd": "0.000003",
+                "nominal_one_key_rate_usd": "0.00000315"
+              },
+              {
+                "name": "reasoning",
+                "unit": "token",
+                "rule": "replaces_clamped_completion",
+                "card_rate_usd": "0.000004",
+                "provider_rate_usd": "0.000004",
+                "nominal_one_key_rate_usd": "0.0000042"
+              },
+              {
+                "name": "request",
+                "unit": "request",
+                "rule": "once_per_billable_attempt",
+                "card_rate_usd": "0.0001",
+                "provider_rate_usd": "0.0001",
+                "nominal_one_key_rate_usd": "0.000105"
+              },
+              {
+                "name": "web_search",
+                "unit": "search_request",
+                "rule": "per_reported_search_request",
+                "card_rate_usd": "0.002",
+                "provider_rate_usd": "0.002",
+                "nominal_one_key_rate_usd": "0.0021"
+              }
+            ]
+          },
+          {
+            "provider_id": "synthetic",
+            "catalog_source": "openrouter",
+            "model_id": "fixture/fallback",
+            "endpoint_id": "fixture-endpoint/fixture/fallback",
+            "upstream_provider": "",
+            "endpoint_status": 0,
+            "explicit_free": false,
+            "dimensions": [
+              {
+                "name": "uncached_input",
+                "unit": "token",
+                "rule": "prompt_minus_cache_unless_exclusive",
+                "card_rate_usd": "0.000002",
+                "provider_rate_usd": "0.000002",
+                "nominal_one_key_rate_usd": "0.0000021"
+              },
+              {
+                "name": "output",
+                "unit": "token",
+                "rule": "completion_minus_separately_priced_reasoning",
+                "card_rate_usd": "0.00001",
+                "provider_rate_usd": "0.00001",
+                "nominal_one_key_rate_usd": "0.0000105"
+              },
+              {
+                "name": "cache_read",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0.000002",
+                "nominal_one_key_rate_usd": "0.0000021"
+              },
+              {
+                "name": "cache_write",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0.000002",
+                "nominal_one_key_rate_usd": "0.0000021"
+              },
+              {
+                "name": "reasoning",
+                "unit": "token",
+                "rule": "included_in_output",
+                "card_rate_usd": "0",
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              },
+              {
+                "name": "request",
+                "unit": "request",
+                "rule": "once_per_billable_attempt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "web_search",
+                "unit": "search_request",
+                "rule": "not_quoted",
+                "card_rate_usd": null,
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              }
+            ]
+          },
+          {
+            "provider_id": "synthetic",
+            "catalog_source": "openrouter",
+            "model_id": "fixture/half",
+            "endpoint_id": "fixture-endpoint/fixture/half",
+            "upstream_provider": "",
+            "endpoint_status": 0,
+            "explicit_free": false,
+            "dimensions": [
+              {
+                "name": "uncached_input",
+                "unit": "token",
+                "rule": "prompt_minus_cache_unless_exclusive",
+                "card_rate_usd": "0.0000005",
+                "provider_rate_usd": "0.0000005",
+                "nominal_one_key_rate_usd": "0.000000525"
+              },
+              {
+                "name": "output",
+                "unit": "token",
+                "rule": "completion_minus_separately_priced_reasoning",
+                "card_rate_usd": "0.0000005",
+                "provider_rate_usd": "0.0000005",
+                "nominal_one_key_rate_usd": "0.000000525"
+              },
+              {
+                "name": "cache_read",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0.0000005",
+                "nominal_one_key_rate_usd": "0.000000525"
+              },
+              {
+                "name": "cache_write",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0.0000005",
+                "nominal_one_key_rate_usd": "0.000000525"
+              },
+              {
+                "name": "reasoning",
+                "unit": "token",
+                "rule": "included_in_output",
+                "card_rate_usd": "0",
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              },
+              {
+                "name": "request",
+                "unit": "request",
+                "rule": "once_per_billable_attempt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "web_search",
+                "unit": "search_request",
+                "rule": "not_quoted",
+                "card_rate_usd": null,
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              }
+            ]
+          },
+          {
+            "provider_id": "synthetic",
+            "catalog_source": "openrouter",
+            "model_id": "fixture/listed:free",
+            "endpoint_id": "fixture-endpoint/fixture/listed:free",
+            "upstream_provider": "",
+            "endpoint_status": 0,
+            "explicit_free": true,
+            "dimensions": [
+              {
+                "name": "uncached_input",
+                "unit": "token",
+                "rule": "prompt_minus_cache_unless_exclusive",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "output",
+                "unit": "token",
+                "rule": "completion_minus_separately_priced_reasoning",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "cache_read",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "cache_write",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "reasoning",
+                "unit": "token",
+                "rule": "included_in_output",
+                "card_rate_usd": "0",
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              },
+              {
+                "name": "request",
+                "unit": "request",
+                "rule": "once_per_billable_attempt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "web_search",
+                "unit": "search_request",
+                "rule": "not_quoted",
+                "card_rate_usd": null,
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              }
+            ]
+          },
+          {
+            "provider_id": "synthetic",
+            "catalog_source": "openrouter",
+            "model_id": "fixture/request",
+            "endpoint_id": "fixture-endpoint/fixture/request",
+            "upstream_provider": "",
+            "endpoint_status": 0,
+            "explicit_free": false,
+            "dimensions": [
+              {
+                "name": "uncached_input",
+                "unit": "token",
+                "rule": "prompt_minus_cache_unless_exclusive",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "output",
+                "unit": "token",
+                "rule": "completion_minus_separately_priced_reasoning",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "cache_read",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "cache_write",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "reasoning",
+                "unit": "token",
+                "rule": "included_in_output",
+                "card_rate_usd": "0",
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              },
+              {
+                "name": "request",
+                "unit": "request",
+                "rule": "once_per_billable_attempt",
+                "card_rate_usd": "0.04",
+                "provider_rate_usd": "0.04",
+                "nominal_one_key_rate_usd": "0.042"
+              },
+              {
+                "name": "web_search",
+                "unit": "search_request",
+                "rule": "not_quoted",
+                "card_rate_usd": null,
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              }
+            ]
+          },
+          {
+            "provider_id": "synthetic",
+            "catalog_source": "openrouter",
+            "model_id": "fixture/zero-input",
+            "endpoint_id": "fixture-endpoint/fixture/zero-input",
+            "upstream_provider": "",
+            "endpoint_status": 0,
+            "explicit_free": false,
+            "dimensions": [
+              {
+                "name": "uncached_input",
+                "unit": "token",
+                "rule": "prompt_minus_cache_unless_exclusive",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "output",
+                "unit": "token",
+                "rule": "completion_minus_separately_priced_reasoning",
+                "card_rate_usd": "0.000001",
+                "provider_rate_usd": "0.000001",
+                "nominal_one_key_rate_usd": "0.00000105"
+              },
+              {
+                "name": "cache_read",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "cache_write",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "reasoning",
+                "unit": "token",
+                "rule": "included_in_output",
+                "card_rate_usd": "0",
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              },
+              {
+                "name": "request",
+                "unit": "request",
+                "rule": "once_per_billable_attempt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "web_search",
+                "unit": "search_request",
+                "rule": "not_quoted",
+                "card_rate_usd": null,
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "missing_rounding_contract",
+      "document": {
+        "schema_version": "model-prices-v1",
+        "content_version": "64e6ff1bad9230ca2487a043605c2e45b334b12b849365ac0208b417518ae115",
+        "currency": "USD",
+        "quote_scope": "fixed_chat_card_only",
+        "one_key_markup_bps": 500,
+        "byok_gateway_fee_bps": 0,
+        "coverage": {
+          "chat_completions": true,
+          "messages": true,
+          "eligibility": "default_catalog_policy_with_free_opt_in; not_account_entitlement_or_live_provider_qualification",
+          "excluded": "tenant_BYOK_custom_prices,capabilities,tools,embeddings,image,audio,video,OCR,generation,tiered,dynamic"
+        },
+        "rules": {
+          "rate_meaning": "USD_per_unit; nominal_one_key_rates_are_rates_not_independently_rounded_invoice_lines",
+          "prompt_totals": "uncached=prompt-cache_read-cache_write; if negative, prompt is exclusive uncached input",
+          "cache_rates": "positive_cache_rate_else_prompt_rate; cache counts replace included prompt tokens",
+          "reasoning": "positive_reasoning_rate replaces clamp(reasoning,0,completion); otherwise included in completion",
+          "reported_cost": "provider_reported_cost_precedes_card_reconstruction_including_reported_zero",
+          "admission": "ceil_estimated_prompt_plus_output_cap_plus_request_times_markup; admission_hold_not_settled_actual; separate_tool_units_not_covered_by_this_bound",
+          "byok": "zero_Future_AGI_gateway_fee; upstream_still_payable_to_provider; tenant_specific_BYOK_quotes_not_published",
+          "source_snapshot": "sha256_of_public_source_projection_excluding_markup; not_fetch_time_or_private_catalogue_snapshot"
+        },
+        "sources": [
+          {
+            "provider_id": "synthetic",
+            "catalog_source": "openrouter",
+            "snapshot_id": "77c99dbe23dbde40988e2f11164bf155625817d7e8dceea8fa2457bd19651eeb"
+          }
+        ],
+        "offers": [
+          {
+            "provider_id": "synthetic",
+            "catalog_source": "openrouter",
+            "model_id": "fixture/all",
+            "endpoint_id": "fixture-endpoint/fixture/all",
+            "upstream_provider": "",
+            "endpoint_status": 0,
+            "explicit_free": false,
+            "dimensions": [
+              {
+                "name": "uncached_input",
+                "unit": "token",
+                "rule": "prompt_minus_cache_unless_exclusive",
+                "card_rate_usd": "0.000002",
+                "provider_rate_usd": "0.000002",
+                "nominal_one_key_rate_usd": "0.0000021"
+              },
+              {
+                "name": "output",
+                "unit": "token",
+                "rule": "completion_minus_separately_priced_reasoning",
+                "card_rate_usd": "0.00001",
+                "provider_rate_usd": "0.00001",
+                "nominal_one_key_rate_usd": "0.0000105"
+              },
+              {
+                "name": "cache_read",
+                "unit": "token",
+                "rule": "replaces_included_prompt",
+                "card_rate_usd": "0.0000005",
+                "provider_rate_usd": "0.0000005",
+                "nominal_one_key_rate_usd": "0.000000525"
+              },
+              {
+                "name": "cache_write",
+                "unit": "token",
+                "rule": "replaces_included_prompt",
+                "card_rate_usd": "0.000003",
+                "provider_rate_usd": "0.000003",
+                "nominal_one_key_rate_usd": "0.00000315"
+              },
+              {
+                "name": "reasoning",
+                "unit": "token",
+                "rule": "replaces_clamped_completion",
+                "card_rate_usd": "0.000004",
+                "provider_rate_usd": "0.000004",
+                "nominal_one_key_rate_usd": "0.0000042"
+              },
+              {
+                "name": "request",
+                "unit": "request",
+                "rule": "once_per_billable_attempt",
+                "card_rate_usd": "0.0001",
+                "provider_rate_usd": "0.0001",
+                "nominal_one_key_rate_usd": "0.000105"
+              },
+              {
+                "name": "web_search",
+                "unit": "search_request",
+                "rule": "per_reported_search_request",
+                "card_rate_usd": "0.002",
+                "provider_rate_usd": "0.002",
+                "nominal_one_key_rate_usd": "0.0021"
+              }
+            ]
+          },
+          {
+            "provider_id": "synthetic",
+            "catalog_source": "openrouter",
+            "model_id": "fixture/fallback",
+            "endpoint_id": "fixture-endpoint/fixture/fallback",
+            "upstream_provider": "",
+            "endpoint_status": 0,
+            "explicit_free": false,
+            "dimensions": [
+              {
+                "name": "uncached_input",
+                "unit": "token",
+                "rule": "prompt_minus_cache_unless_exclusive",
+                "card_rate_usd": "0.000002",
+                "provider_rate_usd": "0.000002",
+                "nominal_one_key_rate_usd": "0.0000021"
+              },
+              {
+                "name": "output",
+                "unit": "token",
+                "rule": "completion_minus_separately_priced_reasoning",
+                "card_rate_usd": "0.00001",
+                "provider_rate_usd": "0.00001",
+                "nominal_one_key_rate_usd": "0.0000105"
+              },
+              {
+                "name": "cache_read",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0.000002",
+                "nominal_one_key_rate_usd": "0.0000021"
+              },
+              {
+                "name": "cache_write",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0.000002",
+                "nominal_one_key_rate_usd": "0.0000021"
+              },
+              {
+                "name": "reasoning",
+                "unit": "token",
+                "rule": "included_in_output",
+                "card_rate_usd": "0",
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              },
+              {
+                "name": "request",
+                "unit": "request",
+                "rule": "once_per_billable_attempt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "web_search",
+                "unit": "search_request",
+                "rule": "not_quoted",
+                "card_rate_usd": null,
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              }
+            ]
+          },
+          {
+            "provider_id": "synthetic",
+            "catalog_source": "openrouter",
+            "model_id": "fixture/half",
+            "endpoint_id": "fixture-endpoint/fixture/half",
+            "upstream_provider": "",
+            "endpoint_status": 0,
+            "explicit_free": false,
+            "dimensions": [
+              {
+                "name": "uncached_input",
+                "unit": "token",
+                "rule": "prompt_minus_cache_unless_exclusive",
+                "card_rate_usd": "0.0000005",
+                "provider_rate_usd": "0.0000005",
+                "nominal_one_key_rate_usd": "0.000000525"
+              },
+              {
+                "name": "output",
+                "unit": "token",
+                "rule": "completion_minus_separately_priced_reasoning",
+                "card_rate_usd": "0.0000005",
+                "provider_rate_usd": "0.0000005",
+                "nominal_one_key_rate_usd": "0.000000525"
+              },
+              {
+                "name": "cache_read",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0.0000005",
+                "nominal_one_key_rate_usd": "0.000000525"
+              },
+              {
+                "name": "cache_write",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0.0000005",
+                "nominal_one_key_rate_usd": "0.000000525"
+              },
+              {
+                "name": "reasoning",
+                "unit": "token",
+                "rule": "included_in_output",
+                "card_rate_usd": "0",
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              },
+              {
+                "name": "request",
+                "unit": "request",
+                "rule": "once_per_billable_attempt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "web_search",
+                "unit": "search_request",
+                "rule": "not_quoted",
+                "card_rate_usd": null,
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              }
+            ]
+          },
+          {
+            "provider_id": "synthetic",
+            "catalog_source": "openrouter",
+            "model_id": "fixture/listed:free",
+            "endpoint_id": "fixture-endpoint/fixture/listed:free",
+            "upstream_provider": "",
+            "endpoint_status": 0,
+            "explicit_free": true,
+            "dimensions": [
+              {
+                "name": "uncached_input",
+                "unit": "token",
+                "rule": "prompt_minus_cache_unless_exclusive",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "output",
+                "unit": "token",
+                "rule": "completion_minus_separately_priced_reasoning",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "cache_read",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "cache_write",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "reasoning",
+                "unit": "token",
+                "rule": "included_in_output",
+                "card_rate_usd": "0",
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              },
+              {
+                "name": "request",
+                "unit": "request",
+                "rule": "once_per_billable_attempt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "web_search",
+                "unit": "search_request",
+                "rule": "not_quoted",
+                "card_rate_usd": null,
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              }
+            ]
+          },
+          {
+            "provider_id": "synthetic",
+            "catalog_source": "openrouter",
+            "model_id": "fixture/request",
+            "endpoint_id": "fixture-endpoint/fixture/request",
+            "upstream_provider": "",
+            "endpoint_status": 0,
+            "explicit_free": false,
+            "dimensions": [
+              {
+                "name": "uncached_input",
+                "unit": "token",
+                "rule": "prompt_minus_cache_unless_exclusive",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "output",
+                "unit": "token",
+                "rule": "completion_minus_separately_priced_reasoning",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "cache_read",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "cache_write",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "reasoning",
+                "unit": "token",
+                "rule": "included_in_output",
+                "card_rate_usd": "0",
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              },
+              {
+                "name": "request",
+                "unit": "request",
+                "rule": "once_per_billable_attempt",
+                "card_rate_usd": "0.04",
+                "provider_rate_usd": "0.04",
+                "nominal_one_key_rate_usd": "0.042"
+              },
+              {
+                "name": "web_search",
+                "unit": "search_request",
+                "rule": "not_quoted",
+                "card_rate_usd": null,
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              }
+            ]
+          },
+          {
+            "provider_id": "synthetic",
+            "catalog_source": "openrouter",
+            "model_id": "fixture/zero-input",
+            "endpoint_id": "fixture-endpoint/fixture/zero-input",
+            "upstream_provider": "",
+            "endpoint_status": 0,
+            "explicit_free": false,
+            "dimensions": [
+              {
+                "name": "uncached_input",
+                "unit": "token",
+                "rule": "prompt_minus_cache_unless_exclusive",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "output",
+                "unit": "token",
+                "rule": "completion_minus_separately_priced_reasoning",
+                "card_rate_usd": "0.000001",
+                "provider_rate_usd": "0.000001",
+                "nominal_one_key_rate_usd": "0.00000105"
+              },
+              {
+                "name": "cache_read",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "cache_write",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "reasoning",
+                "unit": "token",
+                "rule": "included_in_output",
+                "card_rate_usd": "0",
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              },
+              {
+                "name": "request",
+                "unit": "request",
+                "rule": "once_per_billable_attempt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "web_search",
+                "unit": "search_request",
+                "rule": "not_quoted",
+                "card_rate_usd": null,
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "unsupported_fixed_image",
+      "document": {
+        "schema_version": "model-prices-v1",
+        "content_version": "64e6ff1bad9230ca2487a043605c2e45b334b12b849365ac0208b417518ae115",
+        "currency": "USD",
+        "quote_scope": "fixed_chat_card_only",
+        "one_key_markup_bps": 500,
+        "byok_gateway_fee_bps": 0,
+        "coverage": {
+          "chat_completions": true,
+          "messages": true,
+          "eligibility": "default_catalog_policy_with_free_opt_in; not_account_entitlement_or_live_provider_qualification",
+          "excluded": "tenant_BYOK_custom_prices,capabilities,tools,embeddings,image,audio,video,OCR,generation,tiered,dynamic"
+        },
+        "rules": {
+          "rate_meaning": "USD_per_unit; nominal_one_key_rates_are_rates_not_independently_rounded_invoice_lines",
+          "prompt_totals": "uncached=prompt-cache_read-cache_write; if negative, prompt is exclusive uncached input",
+          "cache_rates": "positive_cache_rate_else_prompt_rate; cache counts replace included prompt tokens",
+          "reasoning": "positive_reasoning_rate replaces clamp(reasoning,0,completion); otherwise included in completion",
+          "reported_cost": "provider_reported_cost_precedes_card_reconstruction_including_reported_zero",
+          "settlement_rounding": "snap_USD_times_1e6_to_1e-6_micro; half_up_upstream_per_attempt; half_up_markup_on_integer_upstream; sum_billable_attempts",
+          "admission": "ceil_estimated_prompt_plus_output_cap_plus_request_times_markup; admission_hold_not_settled_actual; separate_tool_units_not_covered_by_this_bound",
+          "byok": "zero_Future_AGI_gateway_fee; upstream_still_payable_to_provider; tenant_specific_BYOK_quotes_not_published",
+          "source_snapshot": "sha256_of_public_source_projection_excluding_markup; not_fetch_time_or_private_catalogue_snapshot"
+        },
+        "sources": [
+          {
+            "provider_id": "synthetic",
+            "catalog_source": "openrouter",
+            "snapshot_id": "77c99dbe23dbde40988e2f11164bf155625817d7e8dceea8fa2457bd19651eeb"
+          }
+        ],
+        "offers": [
+          {
+            "provider_id": "synthetic",
+            "catalog_source": "openrouter",
+            "model_id": "fixture/all",
+            "endpoint_id": "fixture-endpoint/fixture/all",
+            "upstream_provider": "",
+            "endpoint_status": 0,
+            "explicit_free": false,
+            "dimensions": [
+              {
+                "name": "uncached_input",
+                "unit": "token",
+                "rule": "prompt_minus_cache_unless_exclusive",
+                "card_rate_usd": "0.000002",
+                "provider_rate_usd": "0.000002",
+                "nominal_one_key_rate_usd": "0.0000021"
+              },
+              {
+                "name": "output",
+                "unit": "token",
+                "rule": "completion_minus_separately_priced_reasoning",
+                "card_rate_usd": "0.00001",
+                "provider_rate_usd": "0.00001",
+                "nominal_one_key_rate_usd": "0.0000105"
+              },
+              {
+                "name": "cache_read",
+                "unit": "token",
+                "rule": "replaces_included_prompt",
+                "card_rate_usd": "0.0000005",
+                "provider_rate_usd": "0.0000005",
+                "nominal_one_key_rate_usd": "0.000000525"
+              },
+              {
+                "name": "cache_write",
+                "unit": "token",
+                "rule": "replaces_included_prompt",
+                "card_rate_usd": "0.000003",
+                "provider_rate_usd": "0.000003",
+                "nominal_one_key_rate_usd": "0.00000315"
+              },
+              {
+                "name": "reasoning",
+                "unit": "token",
+                "rule": "replaces_clamped_completion",
+                "card_rate_usd": "0.000004",
+                "provider_rate_usd": "0.000004",
+                "nominal_one_key_rate_usd": "0.0000042"
+              },
+              {
+                "name": "request",
+                "unit": "request",
+                "rule": "once_per_billable_attempt",
+                "card_rate_usd": "0.0001",
+                "provider_rate_usd": "0.0001",
+                "nominal_one_key_rate_usd": "0.000105"
+              },
+              {
+                "name": "web_search",
+                "unit": "search_request",
+                "rule": "per_reported_search_request",
+                "card_rate_usd": "0.002",
+                "provider_rate_usd": "0.002",
+                "nominal_one_key_rate_usd": "0.0021"
+              }
+            ],
+            "image_price_usd": "0.1"
+          },
+          {
+            "provider_id": "synthetic",
+            "catalog_source": "openrouter",
+            "model_id": "fixture/fallback",
+            "endpoint_id": "fixture-endpoint/fixture/fallback",
+            "upstream_provider": "",
+            "endpoint_status": 0,
+            "explicit_free": false,
+            "dimensions": [
+              {
+                "name": "uncached_input",
+                "unit": "token",
+                "rule": "prompt_minus_cache_unless_exclusive",
+                "card_rate_usd": "0.000002",
+                "provider_rate_usd": "0.000002",
+                "nominal_one_key_rate_usd": "0.0000021"
+              },
+              {
+                "name": "output",
+                "unit": "token",
+                "rule": "completion_minus_separately_priced_reasoning",
+                "card_rate_usd": "0.00001",
+                "provider_rate_usd": "0.00001",
+                "nominal_one_key_rate_usd": "0.0000105"
+              },
+              {
+                "name": "cache_read",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0.000002",
+                "nominal_one_key_rate_usd": "0.0000021"
+              },
+              {
+                "name": "cache_write",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0.000002",
+                "nominal_one_key_rate_usd": "0.0000021"
+              },
+              {
+                "name": "reasoning",
+                "unit": "token",
+                "rule": "included_in_output",
+                "card_rate_usd": "0",
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              },
+              {
+                "name": "request",
+                "unit": "request",
+                "rule": "once_per_billable_attempt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "web_search",
+                "unit": "search_request",
+                "rule": "not_quoted",
+                "card_rate_usd": null,
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              }
+            ]
+          },
+          {
+            "provider_id": "synthetic",
+            "catalog_source": "openrouter",
+            "model_id": "fixture/half",
+            "endpoint_id": "fixture-endpoint/fixture/half",
+            "upstream_provider": "",
+            "endpoint_status": 0,
+            "explicit_free": false,
+            "dimensions": [
+              {
+                "name": "uncached_input",
+                "unit": "token",
+                "rule": "prompt_minus_cache_unless_exclusive",
+                "card_rate_usd": "0.0000005",
+                "provider_rate_usd": "0.0000005",
+                "nominal_one_key_rate_usd": "0.000000525"
+              },
+              {
+                "name": "output",
+                "unit": "token",
+                "rule": "completion_minus_separately_priced_reasoning",
+                "card_rate_usd": "0.0000005",
+                "provider_rate_usd": "0.0000005",
+                "nominal_one_key_rate_usd": "0.000000525"
+              },
+              {
+                "name": "cache_read",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0.0000005",
+                "nominal_one_key_rate_usd": "0.000000525"
+              },
+              {
+                "name": "cache_write",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0.0000005",
+                "nominal_one_key_rate_usd": "0.000000525"
+              },
+              {
+                "name": "reasoning",
+                "unit": "token",
+                "rule": "included_in_output",
+                "card_rate_usd": "0",
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              },
+              {
+                "name": "request",
+                "unit": "request",
+                "rule": "once_per_billable_attempt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "web_search",
+                "unit": "search_request",
+                "rule": "not_quoted",
+                "card_rate_usd": null,
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              }
+            ]
+          },
+          {
+            "provider_id": "synthetic",
+            "catalog_source": "openrouter",
+            "model_id": "fixture/listed:free",
+            "endpoint_id": "fixture-endpoint/fixture/listed:free",
+            "upstream_provider": "",
+            "endpoint_status": 0,
+            "explicit_free": true,
+            "dimensions": [
+              {
+                "name": "uncached_input",
+                "unit": "token",
+                "rule": "prompt_minus_cache_unless_exclusive",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "output",
+                "unit": "token",
+                "rule": "completion_minus_separately_priced_reasoning",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "cache_read",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "cache_write",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "reasoning",
+                "unit": "token",
+                "rule": "included_in_output",
+                "card_rate_usd": "0",
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              },
+              {
+                "name": "request",
+                "unit": "request",
+                "rule": "once_per_billable_attempt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "web_search",
+                "unit": "search_request",
+                "rule": "not_quoted",
+                "card_rate_usd": null,
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              }
+            ]
+          },
+          {
+            "provider_id": "synthetic",
+            "catalog_source": "openrouter",
+            "model_id": "fixture/request",
+            "endpoint_id": "fixture-endpoint/fixture/request",
+            "upstream_provider": "",
+            "endpoint_status": 0,
+            "explicit_free": false,
+            "dimensions": [
+              {
+                "name": "uncached_input",
+                "unit": "token",
+                "rule": "prompt_minus_cache_unless_exclusive",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "output",
+                "unit": "token",
+                "rule": "completion_minus_separately_priced_reasoning",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "cache_read",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "cache_write",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "reasoning",
+                "unit": "token",
+                "rule": "included_in_output",
+                "card_rate_usd": "0",
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              },
+              {
+                "name": "request",
+                "unit": "request",
+                "rule": "once_per_billable_attempt",
+                "card_rate_usd": "0.04",
+                "provider_rate_usd": "0.04",
+                "nominal_one_key_rate_usd": "0.042"
+              },
+              {
+                "name": "web_search",
+                "unit": "search_request",
+                "rule": "not_quoted",
+                "card_rate_usd": null,
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              }
+            ]
+          },
+          {
+            "provider_id": "synthetic",
+            "catalog_source": "openrouter",
+            "model_id": "fixture/zero-input",
+            "endpoint_id": "fixture-endpoint/fixture/zero-input",
+            "upstream_provider": "",
+            "endpoint_status": 0,
+            "explicit_free": false,
+            "dimensions": [
+              {
+                "name": "uncached_input",
+                "unit": "token",
+                "rule": "prompt_minus_cache_unless_exclusive",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "output",
+                "unit": "token",
+                "rule": "completion_minus_separately_priced_reasoning",
+                "card_rate_usd": "0.000001",
+                "provider_rate_usd": "0.000001",
+                "nominal_one_key_rate_usd": "0.00000105"
+              },
+              {
+                "name": "cache_read",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "cache_write",
+                "unit": "token",
+                "rule": "fallback_to_prompt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "reasoning",
+                "unit": "token",
+                "rule": "included_in_output",
+                "card_rate_usd": "0",
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              },
+              {
+                "name": "request",
+                "unit": "request",
+                "rule": "once_per_billable_attempt",
+                "card_rate_usd": "0",
+                "provider_rate_usd": "0",
+                "nominal_one_key_rate_usd": "0"
+              },
+              {
+                "name": "web_search",
+                "unit": "search_request",
+                "rule": "not_quoted",
+                "card_rate_usd": null,
+                "provider_rate_usd": null,
+                "nominal_one_key_rate_usd": null
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

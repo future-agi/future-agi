@@ -107,7 +107,7 @@ test('OBS-E2E-053: without a licence, Ask a question opens the Instant eval upgr
   tag: ['@flow'],
   annotation: flowAnnotation({
     id: 'OBS-E2E-053', area: 'observe',
-    userGoal: 'Try Instant eval on a self-hosted install with no Enterprise licence and be shown its upgrade page instead of the feature (nothing stubbed)',
+    userGoal: "Try Instant eval on a self-hosted install with no Enterprise licence and be shown its upgrade page instead of the feature (nothing stubbed); the e2e test image changes only Error Feed's licence rule, so this Instant eval wall is the product's own",
     steps: ['create an Observe project through the API', 'open the project\'s Traces view and its Evaluate menu',
       'choose Ask a question', 'open the Ask page from a bookmarked link',
       'post an Instant eval estimate for the project through the API'],
@@ -169,7 +169,7 @@ test('OBS-E2E-058: without a licence, Find patterns opens the Insights upgrade p
   tag: ['@flow'],
   annotation: flowAnnotation({
     id: 'OBS-E2E-058', area: 'observe',
-    userGoal: 'Try Insights on a self-hosted install with no Enterprise licence and be shown its upgrade page instead of the feature (nothing stubbed)',
+    userGoal: "Try Insights on a self-hosted install with no Enterprise licence and be shown its upgrade page instead of the feature (nothing stubbed); the e2e test image changes only Error Feed's licence rule, so this Insights wall is the product's own",
     steps: ['create an Observe project through the API', 'open the project\'s Traces view and its Evaluate menu',
       'choose Find patterns', 'open the Insights page from a bookmarked link',
       'list the project\'s Insights reports through the API'],

@@ -51,12 +51,15 @@ func keyAuthExempt(path string) bool {
 	case "/healthz", "/readyz", "/livez", "/.well-known/agent.json":
 		return true
 	}
-	return strings.HasPrefix(path, "/-/")
+	// DEV CHANGE NOT KEPT: dev gates every other path. The line gates /v1 and
+	// its named roots only, and serves the public model price list under
+	// /public/ without a key.
+	return strings.HasPrefix(path, "/-/") || strings.HasPrefix(path, "/public/")
 }
 
-// registeredRoutes lists every route the server registered, with each path
+// keyAuthRegisteredRoutes lists every route the server registered, with each path
 // parameter filled by a probe value.
-func registeredRoutes(rt *Router) [][2]string {
+func keyAuthRegisteredRoutes(rt *Router) [][2]string {
 	var routes [][2]string
 	for key := range rt.static {
 		method, path, _ := strings.Cut(key, " ")
@@ -82,7 +85,7 @@ func registeredRoutes(rt *Router) [][2]string {
 func TestKeyAuthGuardsEveryRegisteredRoute(t *testing.T) {
 	srv := newKeyAuthRouteServer(t)
 	guarded := map[string]bool{}
-	for _, route := range registeredRoutes(srv.router) {
+	for _, route := range keyAuthRegisteredRoutes(srv.router) {
 		method, path := route[0], route[1]
 		if keyAuthExempt(path) {
 			continue
@@ -90,7 +93,9 @@ func TestKeyAuthGuardsEveryRegisteredRoute(t *testing.T) {
 		guarded[method+" "+path] = true
 		for _, key := range []string{"", routeTestAdminToken, "not-a-gateway-key"} {
 			response := serveRouteTest(srv, method, path, key)
-			if response.Code != http.StatusUnauthorized || !strings.Contains(response.Body.String(), "Invalid or missing API key") {
+			// The line's gate says what is wrong with the key (none sent, or
+			// not recognized) in place of dev's "Invalid or missing API key".
+			if response.Code != http.StatusUnauthorized || !strings.Contains(response.Body.String(), `"type":"authentication_error"`) {
 				t.Errorf("%s %s with key %q: got %d %s", method, path, key, response.Code, response.Body.String())
 			}
 		}
@@ -128,7 +133,10 @@ func TestUnregisteredPathsKeepTheirNotFound(t *testing.T) {
 		{"/admin/video/capabilities", routeTestAdminToken, http.StatusNotFound},
 		{"/admin/video/capabilities", routeTestKey, http.StatusNotFound},
 		{"/future-route", "", http.StatusNotFound},
-		{"/mcp/extra", "", http.StatusNotFound},
+		// DEV CHANGE NOT KEPT: dev leaves a path under /mcp that no route
+		// serves to its 404. The line gates /mcp and every path under it, as
+		// it gates /v1, so it asks for a key first.
+		{"/mcp/extra", "", http.StatusUnauthorized},
 		{"/v1/future-route", "", http.StatusUnauthorized},
 		{"/v1/future-route", routeTestAdminToken, http.StatusUnauthorized},
 		{"/v1/future-route", routeTestKey, http.StatusNotFound},

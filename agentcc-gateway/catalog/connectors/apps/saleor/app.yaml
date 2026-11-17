@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: saleor
+version: 1.0.0
+name: Saleor
+description: "Inspect Saleor Cloud products, orders, inventory and sales with read-only store tools."
+vendor:
+  name: Saleor
+  domains: [saleor.io, saleor.app, saleor.cloud]
+eeCategory: data
+group: other
+categories: [data]
+tags: [sales, automation]
+docsUrl: https://saleor.io/blog/saleor-mcp
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://saleor.io/blog/saleor-mcp
+    fetchedAt: 2026-11-09

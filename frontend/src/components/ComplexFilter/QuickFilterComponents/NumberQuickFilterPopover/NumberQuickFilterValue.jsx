@@ -7,6 +7,8 @@ import { RANGE_FILTER_OPS } from "src/api/contracts/filter-contract.generated";
 
 const RangeOperators = new Set(RANGE_FILTER_OPS);
 
+// Each field keeps a typed minus, so the form's own rule can say why a
+// negative is refused instead of quietly turning -5 into 5.
 const NumberQuickFilterValue = ({ control }) => {
   const operator = useWatch({ control, name: "operator" });
 
@@ -22,6 +24,7 @@ const NumberQuickFilterValue = ({ control }) => {
           fullWidth
           sx={{ width: "100px" }}
           fieldType="number"
+          allowNegative
         />
         <Box sx={{ pt: 1 }}>-</Box>
         <FormTextFieldV2
@@ -33,6 +36,7 @@ const NumberQuickFilterValue = ({ control }) => {
           fullWidth
           sx={{ maxWidth: "120px" }}
           fieldType="number"
+          allowNegative
         />
       </Stack>
     );
@@ -47,6 +51,7 @@ const NumberQuickFilterValue = ({ control }) => {
       size="small"
       fullWidth
       fieldType="number"
+      allowNegative
     />
   );
 };

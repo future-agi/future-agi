@@ -1,3 +1,6 @@
+// SELECTOR_RECHECK_AFTER_FE(FE-DSX-DATASETS-EVALS, FE-DSX-DEVELOP-DETAIL): WHOLE_FILE, not only conflict regions.
+// Recheck every selector, imported grid/picker helper, declaration and repeated use,
+// including all auto-merged hunks; change dependent references together after FE lands.
 import { test, expect } from '../../lib/fixtures';
 import { uploadFixture } from '../../lib/upload';
 import { POLL } from '../../lib/state-probe';
@@ -40,14 +43,23 @@ test('DATA-E2E-002: dataset discovery follows cell edits and column deletion', {
   const newValue = `catalog-north-${suffix}`;
 
   await page.goto('/dashboard/develop', { waitUntil: 'domcontentloaded' });
-  await page.getByRole('button', { name: /^add dataset$/i }).first().click();
-  await page.getByText('Upload a file (JSON, CSV)', { exact: true }).click();
-  const uploadDialog = page.getByRole('dialog').filter({ has: page.getByText('Upload a File', { exact: true }) });
+  // frontend/src/sections/develop/DevelopView.jsx:737-746 names the create button.
+  await page.getByRole('button', { name: 'New dataset', exact: true }).click();
+  // frontend/src/sections/develop/importOptions.js:27-32 supplies the chooser copy;
+  // frontend/src/sections/develop/AddDatasetDrawer/DatasetOptions.jsx:28,87-124 forms its button name.
+  await page.getByRole('button', {
+    name: 'Upload a file CSV, JSON or JSONL, up to 25 MB CSV format (opens in a new tab)', exact: true,
+  }).click();
+  // frontend/src/sections/develop/AddDatasetDrawer/UploadFileModal.jsx:381-408 names the dialog.
+  const uploadDialog = page.getByRole('dialog', { name: 'Upload a file', exact: true });
   await uploadFixture(uploadDialog.locator('input[type="file"]'), 'catalog-regions.csv');
-  await uploadDialog.getByPlaceholder('Dataset Name').fill(datasetName);
+  // frontend/src/sections/develop/AddDatasetDrawer/UploadFileModal.jsx:469-475 sets the name placeholder.
+  await uploadDialog.getByPlaceholder('Dataset name', { exact: true }).fill(datasetName);
   const uploaded = page.waitForResponse(r => new URL(r.url()).pathname === UPLOAD
     && r.request().method() === 'POST', { timeout: UI_READY });
-  await uploadDialog.getByRole('button', { name: 'Upload', exact: true }).click();
+  // frontend/src/sections/develop/AddDatasetDrawer/UploadFileModal.jsx:680-689 names the import action.
+  // catalog-regions.csv contains three data rows.
+  await uploadDialog.getByRole('button', { name: 'Import 3 rows', exact: true }).click();
   const uploadResponse = await uploaded;
   expect(uploadResponse.status()).toBe(200);
   const datasetId: string = (await uploadResponse.json()).result.dataset_id;
@@ -88,7 +100,7 @@ test('DATA-E2E-002: dataset discovery follows cell edits and column deletion', {
   expect(editResponse.request().postDataJSON()).toEqual({ column_id: columnId, row_id: editedCell.row_id, new_value: newValue });
 
   // EditColumnName.jsx / common.js menu: preserve the ID through a native rename.
-  await page.locator(`.ag-header-cell[col-id="${columnId}"]`).getByRole('button').click();
+  await page.locator(`.ag-header-cell[col-id="${columnId}"]`).getByRole('button', { name: 'region column menu', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Edit Column Name', exact: true }).click();
   const renameDialog = page.getByRole('dialog').filter({ has: page.getByText('Edit Column Name', { exact: true }) });
   await renameDialog.getByPlaceholder('Enter column name').fill(columnName);
@@ -153,10 +165,11 @@ test('DATA-E2E-002: dataset discovery follows cell edits and column deletion', {
     // Dataset filters are unsaved; reload resets them before testing removal.
     await page.reload({ waitUntil: 'domcontentloaded' });
     await expect(regionCells).toHaveText(['catalog-west', newValue, 'catalog-west'], { timeout: UI_READY });
-    await page.locator(`.ag-header-cell[col-id="${columnId}"]`).getByRole('button').click();
+    await page.locator(`.ag-header-cell[col-id="${columnId}"]`).getByRole('button', { name: `${columnName} column menu`, exact: true }).click();
     await page.getByRole('menuitem', { name: 'Delete Column', exact: true }).click();
+    // DeleteColumn.jsx titles its confirm with the column's name.
     const deleteColumnDialog = page.getByRole('dialog').filter({
-      has: page.getByText('Are you sure you want to delete this column?', { exact: true }) });
+      has: page.getByText(`Delete column “${columnName}”?`, { exact: true }) });
     const removed = page.waitForResponse(r => new URL(r.url()).pathname ===
       `/model-hub/develops/${datasetId}/delete_column/${columnId}/` && r.request().method() === 'DELETE', { timeout: UI_READY });
     await deleteColumnDialog.getByRole('button', { name: 'Delete', exact: true }).click();
@@ -175,10 +188,12 @@ test('DATA-E2E-002: dataset discovery follows cell edits and column deletion', {
     const remainingCatalog = { ...catalogParams, role: 'metric', search: quantityId };
     expect((await actor.api.post<MetricPage>(METRICS, remainingCatalog)).result.metrics.map(m => m.property_id))
       .toEqual([`dataset_column:${quantityId}`]);
-    await page.getByRole('button', { name: 'Configure', exact: true }).click();
-    const configureDialog = page.getByRole('dialog').filter({ has: page.getByText('Configure Dataset', { exact: true }) });
-    await configureDialog.getByRole('button', { name: 'Delete', exact: true }).click();
-    const deleteDatasetDialog = page.getByRole('dialog').filter({ has: page.getByText('Delete Dataset', { exact: true }) });
+    // DatasetHeaderBar.jsx: Delete is in More dataset actions. Its confirm
+    // (datasetList.js deleteConfirmCopy) hands the dataset to the list, which
+    // sends the delete once its 10 s Undo window ends.
+    await page.getByRole('button', { name: 'More dataset actions', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Delete', exact: true }).click();
+    const deleteDatasetDialog = page.getByRole('dialog', { name: `Delete "${datasetName}"?`, exact: true });
     const parentRemoved = page.waitForResponse(r => new URL(r.url()).pathname === DELETE_DATASET
       && r.request().method() === 'DELETE', { timeout: UI_READY });
     await deleteDatasetDialog.getByRole('button', { name: 'Delete', exact: true }).click();

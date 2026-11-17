@@ -87,6 +87,7 @@ class TestReconcileScenarioColumnOrder:
             scenarios=[s1, s2],
             call_executions=CallExecution.objects.none(),
             column_order=[],
+            organization_id=organization.id,
         )
 
         scenario_cols = [
@@ -115,6 +116,7 @@ class TestReconcileScenarioColumnOrder:
             scenarios=[s1],
             call_executions=CallExecution.objects.none(),
             column_order=seed,
+            organization_id=organization.id,
         )
 
         entry = next(
@@ -142,6 +144,7 @@ class TestReconcileScenarioColumnOrder:
             scenarios=[s1],
             call_executions=CallExecution.objects.none(),
             column_order=seed,
+            organization_id=organization.id,
         )
 
         types = [c["type"] for c in column_order]

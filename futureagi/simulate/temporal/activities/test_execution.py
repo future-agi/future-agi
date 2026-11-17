@@ -18,7 +18,6 @@ from asgiref.sync import sync_to_async
 from django.db import close_old_connections
 from temporalio import activity
 
-from simulate.services.agent_definition import resolve_api_key_for_version
 from simulate.temporal.types.activities import (
     CancelPendingCallsInput,
     CancelPendingCallsOutput,
@@ -54,6 +53,7 @@ async def setup_test_execution(input: SetupTestInput) -> SetupTestOutput:
 
         from simulate.models import Scenarios
         from simulate.models.test_execution import TestExecution
+        from simulate.services.test_executor import SAVED_ROWS_NONE_LEFT, TestExecutor
 
         # Fetch test execution with agent_version
         test_execution = await TestExecution.objects.select_related(
@@ -66,6 +66,15 @@ async def setup_test_execution(input: SetupTestInput) -> SetupTestOutput:
         # Mark as picked up (status remains PENDING until first slot is granted)
         test_execution.picked_up_by_executor = True
         await test_execution.asave(update_fields=["picked_up_by_executor"])
+
+        # The saved dataset rows that still exist run, by the legacy executor's
+        # rule; with no rows saved, every row runs. A run whose saved rows have
+        # all gone since it started makes no call.
+        selected_row_ids, skipped_row_count = await sync_to_async(
+            TestExecutor(initialize_voice_service=False)._saved_row_selection
+        )(test_execution.run_test)
+        if skipped_row_count and not selected_row_ids:
+            return SetupTestOutput(success=False, error=SAVED_ROWS_NONE_LEFT)
 
         # Load scenarios
         scenarios_data = []
@@ -96,6 +105,14 @@ async def setup_test_execution(input: SetupTestInput) -> SetupTestOutput:
                     deleted=False,
                 ).values_list("id", flat=True):
                     row_ids.append(str(row))
+                if selected_row_ids:
+                    row_ids = [
+                        row_id for row_id in row_ids if row_id in selected_row_ids
+                    ]
+                    if not row_ids:
+                        # None of this scenario's rows is saved: it makes no
+                        # call, rather than one call with no row.
+                        continue
                 scenario_dict["row_ids"] = row_ids
             else:
                 scenario_dict["row_ids"] = []
@@ -416,7 +433,8 @@ async def create_call_execution_records(
                         is_inbound = snapshot.get("inbound", True)
                         call_direction = "inbound" if is_inbound else "outbound"
 
-                        # Build metadata
+                        # Build metadata. It stores no provider key: the call's
+                        # agent version holds the credentials.
                         metadata = {
                             "run_test_id": str(test_execution.run_test_id),
                             "scenario_id": str(scenario.id),
@@ -439,11 +457,6 @@ async def create_call_execution_records(
                             "call_direction": call_direction,
                             "user_assistant_id": snapshot.get("assistant_id"),
                             "user_phone_number": call_execution_phone_number,
-                            "user_api_key": await sync_to_async(
-                                resolve_api_key_for_version
-                            )(agent_version)
-                            if agent_version
-                            else None,
                         }
 
                         # Build call_metadata for CallExecution
@@ -763,6 +776,7 @@ async def cancel_pending_calls(
 
         from simulate.models.run_test import CreateCallExecution
         from simulate.models.test_execution import CallExecution
+        from simulate.utils.ended_reason import EndedReasonSource, end_calls_with_reason
 
         # Find all calls that are not in a final state
         # Include ANALYZING: calls that finished voice but are still running evals
@@ -793,12 +807,13 @@ async def cancel_pending_calls(
             ).aupdate(status=TestExecution.ExecutionStatus.CANCELLED)
             return CancelPendingCallsOutput(cancelled_count=0)
 
-        # Bulk update CallExecution records
-        cancelled_count = await CallExecution.objects.filter(
-            id__in=call_ids_to_cancel,
-        ).aupdate(
+        # Update CallExecution records. input.reason is the workflow's fixed
+        # sentence (CancelPendingCallsInput).
+        cancelled_count = await sync_to_async(end_calls_with_reason)(
+            CallExecution.objects.filter(id__in=call_ids_to_cancel),
+            input.reason,
+            EndedReasonSource.FIXED,
             status=CallExecution.CallStatus.CANCELLED,
-            ended_reason=input.reason,
         )
 
         # Bulk update corresponding CreateCallExecution records

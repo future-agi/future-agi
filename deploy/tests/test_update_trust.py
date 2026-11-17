@@ -2032,7 +2032,7 @@ class FakeCosignCertificate:
 
 
 class WorkflowClaimsPinnedTests(TrustTestCase):
-    """Finding 2: the SAN names the called workflow file for every caller; the repository and ref are pinned too."""
+    """The SAN names the called workflow file for every caller; the repository and ref are pinned too."""
 
     REPOSITORY = "--certificate-github-workflow-repository"
     REF = "--certificate-github-workflow-ref"
@@ -2258,7 +2258,7 @@ class CosignContainerAccessTests(TrustTestCase):
 
 
 class CosignContainerProxyTests(TrustTestCase):
-    """Finding 29: keyless verification in the container fetches Sigstore's trusted root through the host's proxy."""
+    """Keyless verification in the container fetches Sigstore's trusted root through the host's proxy."""
 
     PROXIES = {"HTTPS_PROXY": "http://user:secret@proxy.internal:3128", "HTTP_PROXY": "http://proxy.internal:3128",
                "NO_PROXY": "localhost,.internal", "https_proxy": "http://proxy.internal:3128",
@@ -2305,7 +2305,7 @@ class CosignContainerProxyTests(TrustTestCase):
 
 
 class DockerRunFailureTests(TrustTestCase):
-    """Finding 30: `docker run` failing before cosign ran is not a failed signature."""
+    """`docker run` failing before cosign ran is not a failed signature."""
 
     ADVICE = ("Make sure Docker can pull and run that image, or install cosign v3 or later "
               "(https://docs.sigstore.dev/cosign/system_config/installation/)")

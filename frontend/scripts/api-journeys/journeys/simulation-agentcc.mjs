@@ -6679,17 +6679,15 @@ export const simulationAgentccJourneys = [
           query: { api_key_id: apiKeyId, export_format: "json" },
         },
       );
-      const jsonRows = String(jsonExport)
-        .trim()
-        .split("\n")
-        .filter(Boolean)
-        .map((line) => JSON.parse(line));
+      const jsonRows = Array.isArray(jsonExport)
+        ? jsonExport
+        : JSON.parse(String(jsonExport));
       assert(
         jsonRows.length === 3 &&
           jsonRows.some((row) => row.request_id === success.request_id) &&
           jsonRows.some((row) => row.request_id === error.request_id) &&
           jsonRows.some((row) => row.request_id === stream.request_id),
-        "Gateway request-log NDJSON export did not include all seeded rows.",
+        "Gateway request-log JSON export did not include all seeded rows.",
       );
 
       const emptyExportError = await expectApiError(

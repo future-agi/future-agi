@@ -1,0 +1,55 @@
+# PostHog's hosted MCP server with a personal API key as the bearer
+# ("Authorization: Bearer <key>"), made with the "MCP Server" key preset,
+# which scopes it to one project. PostHog recommends OAuth for clients that
+# can do it; PostHog's pages do not say whether its sign-in registers
+# clients dynamically or by a metadata document, so it is not in this
+# record yet. Requests reach the region (US or EU) of the account; an
+# account in each region needs a connection for each. PostHog's optional
+# read-only header (x-posthog-read-only) is not sent: the gateway lists a
+# server's tools at add with its key alone, so a fixed header part would
+# keep this provider from being added.
+schema: "connector-manifest/v1#provider"
+app: posthog
+id: api-key
+version: 1.1.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.posthog.com/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: Personal API key
+      help: "A PostHog personal API key made with the MCP Server preset, which scopes it to one project."
+      helpUrl: https://posthog.com/docs/model-context-protocol/faq
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://posthog.com/docs/model-context-protocol
+    fetchedAt: 2026-11-12
+  - fact: transport.url
+    url: https://posthog.com/docs/model-context-protocol/faq
+    fetchedAt: 2026-11-12
+  - fact: transport.variant
+    url: https://posthog.com/docs/model-context-protocol/claude-code
+    fetchedAt: 2026-11-12
+  - fact: auth.kind
+    url: https://posthog.com/docs/model-context-protocol/faq
+    fetchedAt: 2026-11-12
+  - fact: auth.credentialParts
+    url: https://posthog.com/docs/model-context-protocol/faq
+    fetchedAt: 2026-11-12

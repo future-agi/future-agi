@@ -57,6 +57,9 @@ class OrganizationMembership(BaseModel):
     # Whether this membership is active
     is_active = models.BooleanField(default=True)
 
+    # Explicit member removal, not invitation cancellation.
+    removed_at = models.DateTimeField(null=True, blank=True)
+
     class Meta:
         db_table = "accounts_organization_membership"
         constraints = [

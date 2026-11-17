@@ -3,12 +3,15 @@ import { Popover, MenuItem, Box, Button, MenuList } from "@mui/material";
 import SvgColor from "src/components/svg-color";
 import Iconify from "src/components/iconify";
 import { useNavigate } from "react-router";
+import { useSearchParams } from "react-router-dom";
 import PropTypes from "prop-types";
+import { getDefaultObserveListDateRangeForMode } from "../../dateRangeDefaults";
 
 const ActionsCellRenderer = (props) => {
   const [anchorEl, setAnchorEl] = useState(null);
   const buttonRef = useRef(null);
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
 
   const handleClick = (event) => {
     event.stopPropagation();
@@ -27,10 +30,19 @@ const ActionsCellRenderer = (props) => {
     // Route to the user detail page (not the project-level observe page).
     // CrossProjectUserDetailPage reads `userTab` to select the sub-view
     // and renders LLMTracingView / SessionsView in `mode="user"`, which
-    // already scopes the grid to this user.
+    // already scopes the grid to this user. The detail page defaults to
+    // Today, so carry the Users list's date window to both of its tabs.
     const userTab = action === "viewTraces" ? "traces" : "sessions";
+    const dateWindow =
+      searchParams.get("userDateFilter") ||
+      JSON.stringify(getDefaultObserveListDateRangeForMode(false));
+    const detailParams = new URLSearchParams({
+      userTab,
+      sessionDateFilter: dateWindow,
+      primaryTraceDateFilter: dateWindow,
+    });
     navigate(
-      `/dashboard/users/${encodeURIComponent(userId)}?userTab=${userTab}`,
+      `/dashboard/users/${encodeURIComponent(userId)}?${detailParams.toString()}`,
     );
   };
 

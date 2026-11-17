@@ -1,0 +1,20 @@
+# Fixture for the REST generator's tests, not catalog data (see ../gmail/app.yaml).
+schema: "connector-manifest/v1#app"
+id: slack
+version: 1.0.0
+name: Slack
+description: "Read channels and threads, find people, and post messages."
+vendor: { name: Slack, domains: [slack.com] }
+eeCategory: communication
+group: other
+categories: [communication, chat]
+tags: [chat, messaging]
+docsUrl: https://docs.slack.dev/apis/web-api/
+archetype: team-messaging
+defaultProvider: futureagi-rest
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://docs.slack.dev/apis/web-api/
+    fetchedAt: 2026-10-21
+x-omega: { ee: exclude, oss: exclude }

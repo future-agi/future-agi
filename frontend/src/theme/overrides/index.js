@@ -1,4 +1,6 @@
 import merge from "lodash/merge";
+import mergeWith from "lodash/mergeWith";
+import { dsFoundation } from "./ds-foundation";
 
 import { fab } from "./components/fab";
 import { card } from "./components/card";
@@ -94,5 +96,14 @@ export function componentsOverrides(theme) {
     loadingButton(theme),
   );
 
-  return components;
+  // Keep stateful Vel overrides when a v0.2 density rule is layered on top.
+  return mergeWith(components, dsFoundation(theme), (before, after) => {
+    if (typeof before === "function" || typeof after === "function") {
+      return (props) => [
+        typeof before === "function" ? before(props) : before,
+        typeof after === "function" ? after(props) : after,
+      ];
+    }
+    return undefined;
+  });
 }

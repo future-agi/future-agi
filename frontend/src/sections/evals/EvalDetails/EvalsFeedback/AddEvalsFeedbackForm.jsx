@@ -1,6 +1,7 @@
 import React from "react";
 import {
   alpha,
+  Alert,
   Box,
   Button,
   Checkbox,
@@ -36,8 +37,15 @@ const AddEvalsFeedbackForm = ({
   disabled,
   loading,
   isEdit = false,
+  blockedNote,
 }) => {
   const theme = useTheme();
+  const hasExplanation = Array.isArray(explanation)
+    ? explanation.length > 0
+    : typeof explanation === "string" && explanation.trim() !== "";
+  // An edit opened from the Feedback tab may not know the eval's explanation;
+  // leave it out rather than show the person's own note in its place.
+  const showExplanation = hasExplanation || !isEdit;
 
   const renderFeedbackValueInput = () => {
     switch (outputType) {
@@ -248,41 +256,44 @@ const AddEvalsFeedbackForm = ({
           height: "100%",
         }}
       >
-        <Box
-          sx={{
-            display: "flex",
-            flexDirection: "column",
-            gap: "8px",
-            overflowWrap: "break-word",
-          }}
-        >
-          <Typography fontWeight={500} fontSize={12} color="text.primary">
-            Explanation
-          </Typography>
+        {blockedNote && <Alert severity="info">{blockedNote}</Alert>}
+        {showExplanation && (
           <Box
             sx={{
-              border: `1px solid ${alpha(theme.palette.text.disabled, 0.2)}`,
-              padding: "16px",
-              borderRadius: "4px",
-              height: "240px",
-              overflowY: "auto",
+              display: "flex",
+              flexDirection: "column",
+              gap: "8px",
+              overflowWrap: "break-word",
             }}
           >
-            <Typography fontWeight={400} fontSize={12} color="text.primary">
-              {typeof explanation === "string" ? (
-                explanation?.trim() ? (
-                  <CellMarkdown spacing={0} text={explanation} />
-                ) : (
-                  "Unable to fetch Explanation"
-                )
-              ) : (
-                explanation?.map((item, index) => (
-                  <CellMarkdown key={index} spacing={0} text={item} />
-                ))
-              )}
+            <Typography fontWeight={500} fontSize={12} color="text.primary">
+              Explanation
             </Typography>
+            <Box
+              sx={{
+                border: `1px solid ${alpha(theme.palette.text.disabled, 0.2)}`,
+                padding: "16px",
+                borderRadius: "4px",
+                height: "240px",
+                overflowY: "auto",
+              }}
+            >
+              <Typography fontWeight={400} fontSize={12} color="text.primary">
+                {typeof explanation === "string" ? (
+                  explanation?.trim() ? (
+                    <CellMarkdown spacing={0} text={explanation} />
+                  ) : (
+                    "Unable to fetch Explanation"
+                  )
+                ) : (
+                  explanation?.map((item, index) => (
+                    <CellMarkdown key={index} spacing={0} text={item} />
+                  ))
+                )}
+              </Typography>
+            </Box>
           </Box>
-        </Box>
+        )}
         <Box>
           <Typography
             typography={"s1"}
@@ -384,7 +395,7 @@ const AddEvalsFeedbackForm = ({
           loading={loading}
           sx={{ width: "200px" }}
         >
-          {"Submit feedback"}
+          {isEdit ? "Save changes" : "Submit feedback"}
         </LoadingButton>
       </Box>
     </Box>
@@ -407,6 +418,7 @@ AddEvalsFeedbackForm.propTypes = {
   disabled: PropTypes.bool,
   retuneOptions: PropTypes.array,
   isEdit: PropTypes.bool,
+  blockedNote: PropTypes.string,
 };
 
 const RenderLabel = ({ title, description }) => {

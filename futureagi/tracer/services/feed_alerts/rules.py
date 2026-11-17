@@ -13,7 +13,11 @@ from integrations.models import (
     IntegrationConnection,
     IntegrationPlatform,
 )
-from integrations.services.credentials import CredentialManager
+from integrations.services.credentials import (
+    UNREADABLE_CREDENTIALS,
+    CredentialManager,
+    UnreadableCredentials,
+)
 from tfc.ee_gating import EEFeature, FeatureUnavailable, check_ee_feature
 from tracer.models.feed_alert import (
     ErrorFeedAlertDelivery,
@@ -111,7 +115,12 @@ def _channel(connection, channel_id: str, *, join_public: bool = False) -> str:
         raise FeedAlertError("Choose a Slack channel.", field="slack_channel_id")
     from integrations.services.slack_service import SlackApiError, SlackService
 
-    credentials = CredentialManager.decrypt(bytes(connection.encrypted_credentials))
+    try:
+        credentials = CredentialManager.decrypt(bytes(connection.encrypted_credentials))
+    except UnreadableCredentials as exc:
+        raise FeedAlertError(
+            UNREADABLE_CREDENTIALS, 409, "slack_connection_id"
+        ) from exc
     try:
         channel = SlackService().validate_channel(
             credentials, channel_id, join_public=join_public

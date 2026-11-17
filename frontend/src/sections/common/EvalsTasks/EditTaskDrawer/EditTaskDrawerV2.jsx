@@ -47,12 +47,13 @@ import {
 } from "../NewTaskDrawer/validation";
 import TaskFilterBar from "src/sections/tasks/components/TaskFilterBar";
 import ScheduledRuns from "../NewTaskDrawer/ScheduledRuns";
+import TaskWebhookFields, { webhookPayload } from "../TaskWebhookFields";
 import { getDefaultTaskValues, useGetTaskData } from "../common";
 import TaskConfirmDialog from "./TaskConfirmBox";
 import TaskLogsView from "../TaskLogsView";
 import { EvalPickerDrawer, serializeEvalConfig } from "../../EvalPicker";
 import { useTaskEvalAttributeInventory } from "../use_task_eval_attribute_inventory";
-import { getSafeActionErrorMessage } from "src/utils/errorUtils";
+import { getInlineLoadErrorMessage } from "src/utils/errorUtils";
 import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 import ContentSkeleton from "src/components/content-skeleton";
 
@@ -276,6 +277,7 @@ const EditTaskDrawerV2Content = ({
         // row_type intentionally omitted — immutable after task creation.
         // The BE serializer rejects it on PATCH; the picker is also
         // locked on edit (see TaskConfigPanel rowTypeLocked).
+        ...webhookPayload(data),
         sampling_rate: data.samplingRate,
         spans_limit: String(data.spansLimit),
         edit_type: editType,
@@ -515,6 +517,7 @@ const EditTaskDrawerV2Content = ({
                 <AccordionSummary>Scheduled Run</AccordionSummary>
                 <AccordionDetails>
                   <ScheduledRuns control={control} dayLimit="Custom" isEdit />
+                  <TaskWebhookFields control={control} disabled={!isEditing} />
                 </AccordionDetails>
               </Accordion>
 
@@ -622,6 +625,7 @@ const EditTaskDrawerV2Content = ({
       <TaskConfirmDialog
         title="Update Task"
         content="Select one of the options"
+        confirmText="Update and run task"
         onConfirm={onUpdateSubmit}
         open={confirmOpen}
         isLoading={isPending}
@@ -730,7 +734,7 @@ const EditTaskDrawerV2 = ({
           }
           sx={{ m: 2, flexShrink: 0 }}
         >
-          {getSafeActionErrorMessage(
+          {getInlineLoadErrorMessage(
             error,
             "Task details could not be loaded.",
           )}

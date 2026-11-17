@@ -6324,7 +6324,21 @@ def test_public_filtered_graph_runs_direct_raw_reader_inline_without_scheduling(
     assert result["query_sampled"] is False
     assert result["query_exact"] is False
     assert result["query_provenance"] == "bounded_candidates"
-    assert exact_calls[0]["filters"] == _exact_multi_filters(start, end)
+    # The Traffic chart counts root traces, so the reader also gets the one
+    # root-trace filter after the request's own filters.
+    assert exact_calls[0]["filters"] == [
+        *_exact_multi_filters(start, end),
+        {
+            "column_id": "observation_type",
+            "filter_config": {
+                "col_type": "INTERNAL_ROOT_METRIC",
+                "filter_type": "text",
+                "filter_op": "not_in",
+                "filter_value": [],
+            },
+            "_eval_task_trace_root": True,
+        },
+    ]
 
 
 @pytest.mark.unit

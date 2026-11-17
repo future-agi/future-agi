@@ -4,15 +4,44 @@ import django.contrib.postgres.fields
 from django.db import migrations, models
 from simulate.models.agent_definition import AgentDefinitionAuthenticationChoices
 
+UPDATE_SAFETY = {
+    "schema_version": 1,
+    "risk_classes": ["data_migration"],
+    "tables": ["postgres:simulate_agent_definition", "postgres:simulate_agent_version"],
+    "mitigation": (
+        "forward adds authentication_method (constant default 'api_key') and a "
+        "nullable languages array to simulate_agent_definition and alters its language "
+        "field (schema only). Its data step then, on the migration's own connection, "
+        "sets languages to [language] and saves every simulate_agent_definition row "
+        "that has a language, and rewrites configuration_snapshot on every "
+        "simulate_agent_version row: language becomes [language] when it is set, "
+        "otherwise languages is set to ['en'], and authentication_method is set to "
+        "'api_key'; each version is saved. Both loops load all rows with .all(). A "
+        "database that applied 1.58.0 already has this migration recorded and does not "
+        "run it again. On a fresh install both tables have no rows when it runs, so "
+        "nothing is written. The snapshot rewrite is not repeatable on rows it already "
+        "changed, because a second pass would wrap language in a list again; it relies "
+        "on running once. The migration is atomic, so a failed run rolls back whole "
+        "and a retry starts from the original rows, and a completed run is recorded "
+        "and never runs again. The data step has no reverse, so the migration cannot "
+        "be unapplied. Row scale: one save per agent definition with a language and "
+        "one per agent version; neither table is a registered high-volume table."
+    ),
+    "reviewer": "<actual-github-login>",
+    "review": "<actual-PR-review-discussion-permalink>",
+    "large_volume_rehearsal": True,
+}
+
+
 def populate_languages_and_auth_method_in_configuration_snapshot(apps, schema_editor):
     AgentVersion = apps.get_model('simulate','AgentVersion')
     AgentDefinition = apps.get_model('simulate','AgentDefinition')
-    for agent_definition in AgentDefinition.objects.all():
+    for agent_definition in AgentDefinition.objects.using(schema_editor.connection.alias).all():
         if agent_definition.language:
             agent_definition.languages = [agent_definition.language]
-            agent_definition.save()
+            agent_definition.save(using=schema_editor.connection.alias)
 
-    for version in AgentVersion.objects.all():
+    for version in AgentVersion.objects.using(schema_editor.connection.alias).all():
         snapshot = version.configuration_snapshot
         language = snapshot.get("language")
         if language:
@@ -20,7 +49,7 @@ def populate_languages_and_auth_method_in_configuration_snapshot(apps, schema_ed
         else:
             snapshot["languages"] = ["en"]
         snapshot['authentication_method'] = AgentDefinitionAuthenticationChoices.API_KEY
-        version.save()
+        version.save(using=schema_editor.connection.alias)
 
 
 class Migration(migrations.Migration):

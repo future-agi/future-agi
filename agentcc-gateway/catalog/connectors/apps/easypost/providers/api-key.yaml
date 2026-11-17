@@ -1,0 +1,46 @@
+# EasyPost's hosted MCP accepts production API keys as bearer tokens.
+# Test keys are not supported; purchases and metered calls incur real charges.
+schema: "connector-manifest/v1#provider"
+app: easypost
+id: api-key
+version: 1.1.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://app-api.easypost.com/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: Production API key
+      help: "Use a production key from your EasyPost API Keys settings, without the Bearer prefix. Test keys are unsupported. All MCP calls run in production; label purchases debit your postage wallet and metered operations may incur charges."
+      helpUrl: https://docs.easypost.com/guides/mcp-guide
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_metered
+  source: https://docs.easypost.com/guides/mcp-guide
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://docs.easypost.com/guides/mcp-guide
+    fetchedAt: 2026-11-09
+  - fact: transport.variant
+    url: https://docs.easypost.com/guides/mcp-guide
+    fetchedAt: 2026-11-09
+  - fact: auth.kind
+    url: https://docs.easypost.com/guides/mcp-guide
+    fetchedAt: 2026-11-09
+  - fact: auth.credentialParts
+    url: https://docs.easypost.com/guides/mcp-guide
+    fetchedAt: 2026-11-09

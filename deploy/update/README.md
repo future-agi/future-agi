@@ -67,6 +67,8 @@ observed conflict (see recovery below). This is preservation, not compare-and-sw
 
 Each run leaves a receipt in `.futureagi-updates/`.
 
+When an `apply` you run by hand succeeds (not `--stage`; scheduled and automatic updates do not run it), `bin/update` runs the harness versions backfill once and reports its state; a failure only warns. If the product's harness versioning progress still shows `not_started`, run it once by hand with the same one-shot `./bin/install` uses, in `app` (Standalone) or `backend` (Distributed): `docker compose exec -T -e SERVICE_TYPE=bootstrap -e STARTUP_DB_MUTATION_MODE=operator app python manage.py harness_versions_backfill --auto`.
+
 Before a mutating run, including recovery by `rollback` without `--yes`, the
 updater proves ownership under the checkout's update lock. Every container of
 the selected project must have coherent Compose provenance: the canonical
@@ -143,7 +145,11 @@ hand.
 
 Production installs are configured by `deploy/setup.sh`, and their bootstrap
 jobs only check the schema: the release's initialization jobs apply it, and
-they have to run on the new images before those images start. So a production
+they have to run on the new images before those images start. When
+`deploy/.env.production` has no `FI_API_SECRET_PEPPER` of its own (unset, empty,
+the published default or a `CHANGEME-` placeholder), `bin/update --production`
+refuses before planning: run `./deploy/setup.sh --skip-up`, which sets one and
+keeps the previous value in `FI_API_SECRET_PEPPERS_RETIRED`. So a production
 update has two steps around your initialization jobs:
 
 ```bash
@@ -155,6 +161,19 @@ git fetch --tags && git checkout v1.53.0
 ./bin/update --production apply           # restart onto the release and verify it
 ```
 
+A production install runs the Omega Hub only when its operator sets
+`COMPOSE_PROFILES=hub` in `deploy/.env.production` (a new file from
+`deploy/setup.sh` already has it). Without it the Hub is off: no checker runs,
+and uploads are refused even when the file holds a checker token. On a Hub
+install these commands need nothing more: bin/update adds
+`-f deploy/docker-compose.production.hub.yml` right after
+`-f deploy/docker-compose.production.yml` itself. Hub operators add
+`-f deploy/docker-compose.production.hub.yml` there to every production Compose
+command they run by hand. A Hub stack started before the Hub's settings moved to
+that file is refused (its containers name the older file list): start it once
+with the file, with the `up -d --no-build --wait` command the refusal prints, or
+re-run `deploy/setup.sh`, then run bin/update again.
+
 A plain `apply` with nothing staged is refused before the backup. Between the
 two steps the old release keeps running; do not run `docker compose up` or
 `deploy/setup.sh` then. The initialization jobs migrate the database, and the
@@ -163,14 +182,24 @@ after staging, or take a fresh backup first if the old release kept writing
 data in between. To abandon a staged update, roll it back.
 
 `apply --stage` and `check` print the Compose command to run the jobs with:
-it carries this install's `--env-file` and both compose files, which matters
+it carries this install's `--env-file` and its compose files (with
+`deploy/docker-compose.production.hub.yml` on a Hub install), which matters
 when your env file is not `deploy/.env.production` (the docs' `$COMPOSE`
 names that file). Run the jobs from a shell that does not export any key of
 the env file: Compose prefers a variable exported in your shell over the env
 file.
 
-`--production` uses `deploy/.env.production` (or `--env-file PATH`) and both
-production compose files. The Compose commands bin/update runs itself take
+`--production` uses `deploy/.env.production` (or `--env-file PATH`) and the
+production compose files: `docker-compose.distributed.yml` and
+`deploy/docker-compose.production.yml`, then
+`deploy/docker-compose.production.hub.yml` when COMPOSE_PROFILES (in that
+file, else exported in your shell) lists `hub` or `*` (each comma-separated
+entry stripped of spaces); `deploy/setup.sh` writes `COMPOSE_PROFILES=hub` into
+a new file. bin/update refuses to start when that file is missing from the
+checkout while the Hub is on. Hub operators add
+`-f deploy/docker-compose.production.hub.yml` after
+`-f deploy/docker-compose.production.yml` to every production Compose command
+they run by hand. The Compose commands bin/update runs itself take
 every key from that file even when your shell exports one; Compose commands
 you run by hand do not. Every later command needs the same
 flags (`check` prints them).
@@ -182,6 +211,11 @@ flags (`check` prints them).
 ./bin/update rollback --receipt PATH --yes     # undo a specific one
 ./bin/update --production rollback --yes       # a production install (and its --env-file, if any)
 ```
+
+A production rollback uses the compose files `check` does, so on a Hub install
+it adds `deploy/docker-compose.production.hub.yml` itself; Hub operators add
+`-f deploy/docker-compose.production.hub.yml` to the Compose commands they run
+by hand.
 
 Rollback puts back the version tags that ran before the update and checks
 that the images are the ones that ran then (by digest, or by image ID for an
@@ -462,9 +496,15 @@ Setup runs the same read-only state probes in every mode, so these apply to
 - **Published images.** Images built from the checkout (`--from-source`) are
   refused; the running images' registry digests must match the signed manifest
   of the release they report.
-- **The shipped layout.** No optional profile (`ml`, `sandbox`), no build
+- **The shipped layout.** No optional profile (`ml`, `sandbox`, `hub`), no build
   section, and no extra service, named volume or mount: every one must match
-  `deploy/update/automatic-layout.json`. The optional host-status overlay adds a
+  `deploy/update/automatic-layout.json`. Its `automatic_unsupported` list names,
+  each with a reason, the services that automatic updates do not cover yet; an
+  install that runs one is refused at setup with `unsupported_installation`, and
+  setup names those services and the manual ways to update (`./bin/update`, or
+  `git pull` and `./bin/install`, adding `--from-source` for a source build). In this release that includes `code-executor`, which runs by
+  default, so a default Standalone install is not yet eligible, and the `hub`
+  profile's `hub-checker` and `hub-runner`. The optional host-status overlay adds a
   mount that layout does not cover, so an install that uses it is refused with
   `unsupported_installation`.
 - **Restart policies `unless-stopped` or `no`.** The shipped file uses
@@ -771,8 +811,8 @@ verified but not qualified for this particular installation.
 | `transition_not_rehearsed` | The proof has no row for the exact installed version, topology and profiles. |
 | `platform_not_rehearsed` | The exact transition was not rehearsed on this host's platform (for example arm64). |
 | `deployment_files_mismatch` | The checkout's Compose or bootstrap files differ from the authenticated retained deployment or the enrolled baseline. |
-| `unsupported_installation`, `ownership_unconfirmed` | The topology, profiles, restart policy, mount/volume layout or Docker-project ownership is outside the supported contract or cannot be proved. |
-| `required_env_missing` | The install's env file lacks a setting required by the candidate release. |
+| `unsupported_installation`, `ownership_unconfirmed` | The topology, profiles, restart policy, mount/volume layout or Docker-project ownership is outside the supported contract or cannot be proved. When the install runs a service automatic updates do not cover (`automatic_unsupported` in `deploy/update/automatic-layout.json`), setup names it; update with `./bin/update` or `./bin/install`. |
+| `required_env_missing` | The install's env file lacks a setting required by the candidate release. An install that still uses the published API secret pepper (`FI_API_SECRET_PEPPER` unset, empty, the published default or a `CHANGEME-` placeholder) is refused this way before any backup, and nothing is changed: run `./bin/update apply` by hand once to give it its own. That manual apply also turns automatic updates off: it changes `.env`, so later automatic checks refuse with `configuration_changed`, and this release has no command that turns them back on (see "After setup, leave the checkout as it is" above). Until then, update with `./bin/update apply` by hand. |
 | `configuration_changed` | `.env`, the Compose configuration, the running images or the recorded setup changed since setup or the last automatic update. |
 | `image_digest_mismatch` | A running or prefetched image does not match the digest authenticated by the signed manifest. |
 | `running_versions_unknown`, `mixed_running_versions` | The updater cannot establish one coherent version for the running app images. |
@@ -1271,13 +1311,17 @@ schedule init, not schedule render or any later command. It selects exactly:
 
 1. `docker-compose.distributed.yml`
 2. `deploy/docker-compose.production.yml`
-3. `deploy/docker-compose.host-status.distributed.yml`
+3. `deploy/docker-compose.production.hub.yml`, only when COMPOSE_PROFILES lists
+   `hub` (or `*`)
+4. `deploy/docker-compose.host-status.distributed.yml`
 
 That order is recorded in compose_files and installation_fingerprint. Every
 running/stopped/one-off container must prove the same exact order in its Compose
 labels. Later run, download, status, check, apply and rollback derive the overlay
 only from this registration; neither labels nor ambient COMPOSE_FILE can enroll
-it. Without the flag, production keeps its original two-file identity. Without
+it. Without the flag, production keeps its two-file identity, or three files with
+the Hub's production file. Turning the Hub on or off after enrolling changes the
+identity, so it needs the same explicit re-enrollment as the overlay (below). Without
 registration, an overlay stack is refused with an enrollment hint, never adopted.
 Standalone and non-production Distributed continue using their existing
 COMPOSE_FILE selection, not this flag.

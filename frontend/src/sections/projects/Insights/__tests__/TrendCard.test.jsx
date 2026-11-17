@@ -1,6 +1,6 @@
 import React from "react";
 import { describe, expect, it, vi } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { ThemeProvider, createTheme } from "@mui/material/styles";
 import { palette } from "src/theme/palette";
 import { typography } from "src/theme/typography";
@@ -213,5 +213,63 @@ describe("TrendCard with one completed run", () => {
     ).toBeInTheDocument();
     expect(screen.queryByText(/completed so far/)).toBeNull();
     expect(screen.getByText(/Run 1 of 2/)).toBeInTheDocument();
+  });
+});
+
+// A report lists its newest runs only; the pager counts them
+// all and reaches the older ones through the open run's neighbours.
+describe("TrendCard pager past the listed runs", () => {
+  const pager = (runId, run) => {
+    const onSelectRun = vi.fn();
+    render(
+      <ThemeProvider theme={theme}>
+        <TrendCard
+          runs={runs}
+          runCount={55}
+          runId={runId}
+          run={run}
+          order={["a", "b", "c", "d"]}
+          onSelectRun={onSelectRun}
+          onCategory={() => {}}
+        />
+      </ThemeProvider>,
+    );
+    const nav = within(
+      screen.getByRole("navigation", { name: "Runs of this report" }),
+    );
+    return { nav, onSelectRun };
+  };
+
+  it("counts every run, not just the listed ones", () => {
+    const { nav } = pager("run-3");
+    expect(nav.getByText(/Run 55 of 55/)).toBeInTheDocument();
+  });
+
+  it("opens the run older than the oldest listed one", () => {
+    const { nav, onSelectRun } = pager("run-1", {
+      ...runs[2],
+      previous_run_id: "run-0",
+      next_run_id: "run-2",
+    });
+    expect(nav.getByText(/Run 53 of 55/)).toBeInTheDocument();
+    const older = nav.getByRole("button", { name: "Older" });
+    expect(older).toBeEnabled();
+    fireEvent.click(older);
+    expect(onSelectRun).toHaveBeenCalledWith("run-0");
+  });
+
+  it("keeps the pager on a run older than the listed ones", () => {
+    const { nav, onSelectRun } = pager("run-0", {
+      id: "run-0",
+      status: "completed",
+      created_at: "2026-10-27T05:28:00Z",
+      finished_at: "2026-10-27T05:31:00Z",
+      previous_run_id: null,
+      next_run_id: "run-1",
+    });
+    expect(nav.getByText(/One of 55 runs/)).toBeInTheDocument();
+    expect(nav.getByRole("button", { name: "Older" })).toBeDisabled();
+    fireEvent.click(nav.getByRole("button", { name: "Newer" }));
+    expect(onSelectRun).toHaveBeenCalledWith("run-1");
   });
 });

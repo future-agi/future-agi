@@ -38,7 +38,7 @@ _logs_initialized = False
 _logger_provider: Optional["LoggerProvider"] = None
 
 
-def _str_to_bool(val: Optional[str]) -> bool:
+def _str_to_bool(val: str | None) -> bool:
     """Convert string to boolean."""
     if val is None:
         return False  # Default to disabled for logs
@@ -74,28 +74,17 @@ def get_logs_endpoint() -> str:
 
 def _create_log_exporter():
     """Create the OTLP log exporter based on protocol."""
+    from .checkout_output import log_exporter
+
     protocol = os.getenv("OTEL_EXPORTER_OTLP_PROTOCOL", "grpc")
     endpoint = get_logs_endpoint()
-
     if protocol == "http/protobuf":
-        from opentelemetry.exporter.otlp.proto.http._log_exporter import (
-            OTLPLogExporter,
-        )
-
-        return OTLPLogExporter(endpoint=endpoint)
-    else:  # grpc (default)
-        from opentelemetry.exporter.otlp.proto.grpc._log_exporter import (
-            OTLPLogExporter,
-        )
-
-        return OTLPLogExporter(
-            endpoint=endpoint,
-            insecure=True,  # Use insecure for internal cluster communication
-        )
+        return log_exporter(protocol, endpoint=endpoint)
+    return log_exporter(protocol, endpoint=endpoint, insecure=True)
 
 
 def init_otel_logging(
-    service_name: Optional[str] = None,
+    service_name: str | None = None,
     log_level: int = logging.INFO,
 ) -> Optional["LoggerProvider"]:
     """

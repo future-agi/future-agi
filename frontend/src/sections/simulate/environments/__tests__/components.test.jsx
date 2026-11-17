@@ -6,23 +6,45 @@ import ContinueRow from "../components/ContinueRow";
 import PlatformLogo from "../components/PlatformLogo";
 import Field from "../components/Field";
 
-const PROVIDER_OPTIONS = [
-  { id: "github", name: "GitHub", icon: "eva:github-fill" },
-  { id: "gitlab", name: "GitLab", icon: "logos:gitlab", comingSoon: true },
-  { id: "bitbucket", name: "Bitbucket", icon: "logos:bitbucket", comingSoon: true },
-];
+// Use the real owner: it registers the provider icons before ProviderRow renders
+// and avoids a stale fixture glyph (logos:gitlab is now mdi:gitlab).
+import { REPO_PROVIDERS as PROVIDER_OPTIONS } from "../repoProviders";
+
+// No bundled logo is a wordmark today, so one is added here to check that a
+// wordmark shown without a text label still gives the platform's name.
+vi.mock("../components/platformLogos", async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    PLATFORM_LOGOS: {
+      ...actual.PLATFORM_LOGOS,
+      acme: {
+        svg: '<svg viewBox="0 0 40 8"><path d="M0 0h40v8H0z"/></svg>',
+        type: "wordmark",
+      },
+    },
+  };
+});
+
+const LINE = "Not available in this release";
 
 describe("ChipCard", () => {
-  it("coming soon: labelled and inert", () => {
+  it("unreleased: shows the line beside its name, reachable by keyboard, disabled and inert", () => {
     const onClick = vi.fn();
     render(<ChipCard label="GitLab" comingSoon onClick={onClick} />);
-    // The coming-soon chip sits alongside the label (not a wrapping tooltip).
-    expect(screen.getByLabelText("Coming soon")).toBeInTheDocument();
+    // The line is visible text inside the chip, not a tooltip alone.
     expect(screen.getByText("GitLab")).toBeInTheDocument();
-    const btn = screen.getByRole("button");
-    expect(btn).toHaveAttribute("tabindex", "-1");
+    expect(screen.getByText(LINE)).toBeInTheDocument();
+    expect(screen.queryByText(/coming soon/i)).toBeNull();
+    // Its name is its visible text: the choice, then why it cannot be chosen.
+    const btn = screen.getByRole("button", { name: `GitLab ${LINE}` });
+    expect(btn).toHaveAttribute("tabindex", "0");
+    expect(btn).toHaveAttribute("aria-disabled", "true");
+    expect(btn).toHaveTextContent(LINE);
     fireEvent.click(screen.getByText("GitLab"));
     fireEvent.keyDown(btn, { key: "Enter" });
+    // Space selects nothing and does not scroll the page either.
+    expect(fireEvent.keyDown(btn, { key: " " })).toBe(false);
     expect(onClick).not.toHaveBeenCalled();
   });
 
@@ -30,6 +52,7 @@ describe("ChipCard", () => {
     const onClick = vi.fn();
     render(<ChipCard label="GitHub" onClick={onClick} />);
     expect(screen.queryByLabelText("Coming soon")).toBeNull();
+    expect(screen.queryByText(LINE)).toBeNull();
     fireEvent.click(screen.getByText("GitHub"));
     expect(onClick).toHaveBeenCalledTimes(1);
   });
@@ -46,11 +69,20 @@ describe("ChipCard", () => {
 });
 
 describe("ProviderRow", () => {
-  it("gates coming-soon providers and forwards the live pick", () => {
+  it("disables unreleased providers with the line and forwards the live pick", () => {
     const onChange = vi.fn();
-    render(<ProviderRow options={PROVIDER_OPTIONS} value="github" onChange={onChange} />);
-    expect(screen.getAllByLabelText("Coming soon")).toHaveLength(2);
+    const { container } = render(
+      <ProviderRow
+        options={PROVIDER_OPTIONS}
+        value="github"
+        onChange={onChange}
+      />,
+    );
+    expect(container.querySelector("[data-missing-icon]")).toBeNull();
+    expect(screen.getAllByText(LINE)).toHaveLength(2);
+    expect(screen.queryByText(/coming soon/i)).toBeNull();
     fireEvent.click(screen.getByText("GitLab"));
+    fireEvent.click(screen.getByText("Bitbucket"));
     expect(onChange).not.toHaveBeenCalled();
     fireEvent.click(screen.getByText("GitHub"));
     expect(onChange).toHaveBeenCalledWith("github");
@@ -62,13 +94,17 @@ describe("ContinueRow", () => {
     const onClick = vi.fn();
     render(<ContinueRow disabled hint="Add a repository" onClick={onClick} />);
     expect(screen.getByText("Add a repository")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Build environment/ })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: /Build environment/ }),
+    ).toBeDisabled();
   });
 
   it("disabled explains the hint in a tooltip on the button", async () => {
     render(<ContinueRow disabled hint="Add a repository" onClick={vi.fn()} />);
     fireEvent.mouseOver(screen.getByTestId("continue-row-action"));
-    expect(await screen.findByRole("tooltip")).toHaveTextContent("Add a repository");
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "Add a repository",
+    );
   });
 
   it("enabled hides the hint and fires on click", () => {
@@ -91,6 +127,37 @@ describe("PlatformLogo", () => {
     render(<PlatformLogo id="openai_assistants" name="OpenAI Assistants" />);
     expect(screen.getByText("O")).toBeInTheDocument();
   });
+
+  it("hides a mark shown beside the name from screen readers", () => {
+    render(<PlatformLogo id="vapi" name="Vapi" decorative />);
+    expect(screen.getByLabelText("Vapi")).toHaveAttribute(
+      "aria-hidden",
+      "true",
+    );
+    expect(screen.queryByRole("img")).toBeNull();
+  });
+
+  it("hides a monogram shown beside the name from screen readers", () => {
+    render(
+      <PlatformLogo
+        id="openai_assistants"
+        name="OpenAI Assistants"
+        decorative
+      />,
+    );
+    expect(
+      screen.getByText("O").closest('[aria-hidden="true"]'),
+    ).not.toBeNull();
+  });
+
+  it("names a wordmark shown without a text label as an image", () => {
+    render(<PlatformLogo id="acme" name="Acme" />);
+    const logo = screen.getByLabelText("Acme");
+    expect(logo).toHaveAttribute("role", "img");
+    expect(logo).not.toHaveAttribute("aria-hidden");
+    expect(logo).toHaveAccessibleName("Acme");
+    expect(logo.querySelector("svg")).not.toBeNull();
+  });
 });
 
 describe("Field", () => {
@@ -98,7 +165,9 @@ describe("Field", () => {
     const onChange = vi.fn();
     render(<Field label="Repository" required value="" onChange={onChange} />);
     expect(screen.getByText("*")).toBeInTheDocument();
-    fireEvent.change(screen.getByRole("textbox"), { target: { value: "owner/repo" } });
+    fireEvent.change(screen.getByRole("textbox"), {
+      target: { value: "owner/repo" },
+    });
     expect(onChange).toHaveBeenCalledWith("owner/repo");
   });
 });

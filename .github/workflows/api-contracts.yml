@@ -40,6 +40,7 @@ on:
       - "futureagi/tracer/views/**"
       - "futureagi/model_hub/utils/annotation_queue_helpers.py"
       - "futureagi/tfc/utils/api_contracts.py"
+      - "futureagi/tfc/utils/success_envelope.py"
       - "futureagi/tfc/utils/general_methods.py"
       - "futureagi/tracer/services/clickhouse/query_builders/**"
       - "futureagi/tracer/utils/filter_operators.py"
@@ -89,6 +90,7 @@ on:
       - "futureagi/tracer/views/**"
       - "futureagi/model_hub/utils/annotation_queue_helpers.py"
       - "futureagi/tfc/utils/api_contracts.py"
+      - "futureagi/tfc/utils/success_envelope.py"
       - "futureagi/tfc/utils/general_methods.py"
       - "futureagi/tracer/services/clickhouse/query_builders/**"
       - "futureagi/tracer/utils/filter_operators.py"
@@ -226,8 +228,8 @@ jobs:
       CH25_DATABASE: test_tfc
       CH_USE_REPLICATED_ENGINES: "false"
       CH25_DROP_LEGACY_CDC_CHAIN: "true"
-      REDIS_URL: redis://localhost:6379/0
-      REDIS_LOCK_URL: redis://localhost:6379/2
+      REDIS_URL: redis://localhost:16379/0
+      REDIS_LOCK_URL: redis://localhost:16379/2
       TESTING: "false"
       EE_REPO_READ_TOKEN: ${{ secrets.EE_REPO_READ_TOKEN }}
       EE_REPO_BRANCH: ${{ github.head_ref || github.ref_name }}
@@ -352,6 +354,7 @@ jobs:
           ee/usage/tests/test_events_schema.py
           ee/cloud/tests/test_billing_api.py
           tfc/tests/test_api_contracts.py
+          tfc/tests/test_api_success_envelope.py
           tfc/tests/test_accounts_api_contract_debt.py
           tfc/tests/test_core_api_contract_debt.py
           tfc/tests/test_model_hub_api_contract_debt.py

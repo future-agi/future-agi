@@ -51,6 +51,7 @@ func TestShippedObservedConfigParsesAndPreservesEnablement(t *testing.T) {
 			t.Setenv(key, "")
 		}
 	}
+	t.Setenv("FI_API_SECRET_PEPPER", testPepper)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	cfg := loadConfig(log, path)
 	if err := applyEnvOverrides(log, &cfg); err != nil {

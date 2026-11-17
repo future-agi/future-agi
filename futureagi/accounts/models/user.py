@@ -9,6 +9,7 @@ from django.contrib.auth.models import (
 from django.db import models, transaction
 from django.utils import timezone
 
+from accounts.api_key_constants import LEGACY_ORG_KEY_TYPE
 from accounts.models.organization import Organization
 from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.workspace import Workspace
@@ -23,7 +24,9 @@ class CustomUserManager(BaseUserManager):
         email = self.normalize_email(email)
         user = self.model(email=email, **extra_fields)
         user.set_password(password)
-        user.save(using=self._db)
+        from accounts.services.identity_issuance import save_new_person
+
+        save_new_person(user, using=self._db or "default")
         return user
 
     def create_superuser(self, email, password=None, **extra_fields):
@@ -46,7 +49,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
     invited_by = models.ForeignKey(
-        "self", on_delete=models.CASCADE, null=True, default=None
+        "self", on_delete=models.CASCADE, null=True, blank=True, default=None
     )
 
     organization_role = models.CharField(
@@ -135,10 +138,11 @@ class User(AbstractBaseUser, PermissionsMixin):
             return membership.level_or_legacy
         # Fallback: legacy FK (only for users with no membership records for this org)
         # This covers truly legacy accounts created before the membership table existed.
-        # Users with deactivated memberships should NOT get this fallback.
+        # Users with deactivated or removed memberships should NOT get this fallback.
         if self.organization_id and self.organization_id == organization.id:
-            # Only use fallback if user has no membership records at all for this org
-            has_any_membership = OrganizationMembership.no_workspace_objects.filter(
+            # Only use fallback if user has no membership records at all for this
+            # org, in any state (the base manager keeps soft-deleted rows).
+            has_any_membership = OrganizationMembership._base_manager.filter(
                 user=self, organization=organization
             ).exists()
             if not has_any_membership:
@@ -174,10 +178,11 @@ class User(AbstractBaseUser, PermissionsMixin):
             return membership.role
 
         # Fallback: legacy field (only for truly legacy accounts)
-        # Users with deactivated memberships should NOT get this fallback.
+        # Users with deactivated or removed memberships should NOT get this fallback.
         if self.organization_id and self.organization_id == target_org.id:
-            # Only use fallback if user has no membership records at all for this org
-            has_any_membership = OrganizationMembership.no_workspace_objects.filter(
+            # Only use fallback if user has no membership records at all for this
+            # org, in any state (the base manager keeps soft-deleted rows).
+            has_any_membership = OrganizationMembership._base_manager.filter(
                 user=self, organization=target_org
             ).exists()
             if not has_any_membership:
@@ -302,26 +307,38 @@ class User(AbstractBaseUser, PermissionsMixin):
 
 
 class OrgApiKey(BaseModel):
+    # A null workspace is an explicit unpinned personal credential, never an
+    # invitation for request-local workspace signals to silently pin it.
+    disable_auto_workspace_assignment = True
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    name = models.CharField(max_length=100, default="system_org_key")
+    name = models.CharField(max_length=100, default="Personal API key")
     api_key = models.CharField(max_length=255, unique=True)
-    secret_key = models.CharField(max_length=255)
+    # Legacy plaintext column: empty once the secret is sealed (migration 0027,
+    # READINESS L03); see accounts/api_secrets.py. db_default keeps DEFAULT '' on
+    # the new columns, so a previous-release pod can insert keys during a rollout.
+    secret_key = models.CharField(max_length=255, blank=True, default="")
+    secret_key_hash = models.CharField(
+        max_length=128, blank=True, default="", db_default=""
+    )
+    secret_key_hint = models.CharField(
+        max_length=32, blank=True, default="", db_default=""
+    )
+    # System keys only: the platform presents them itself, so they stay recoverable.
+    secret_key_ciphertext = models.TextField(blank=True, default="", db_default="")
     organization = models.ForeignKey(
         Organization, on_delete=models.CASCADE, related_name="api_keys"
     )
 
     type = models.CharField(
         max_length=50,
-        default="system",
-        choices=[
-            ("system", "System"),
-            ("user", "User"),
-            ("mcp", "MCP"),
-            ("ingest", "Ingest"),
-            ("coding_agent", "Coding agent"),
-        ],
+        default="user",
+        choices=[("user", "User"), ("coding_agent", "Coding agent")],
     )
     enabled = models.BooleanField(default=True)
+    retired_at = models.DateTimeField(null=True, blank=True)
+    retired_reason = models.CharField(max_length=64, null=True, blank=True)
+    prior_enabled = models.BooleanField(null=True, blank=True)
     expires_at = models.DateTimeField(
         null=True,
         blank=True,
@@ -373,7 +390,7 @@ class OrgApiKey(BaseModel):
             ),
             models.UniqueConstraint(
                 fields=["organization", "type"],
-                condition=models.Q(type="system", deleted=False),
+                condition=models.Q(type=LEGACY_ORG_KEY_TYPE, deleted=False),
                 name="unique_system_api_key_per_org_not_deleted",
                 violation_error_message="Only one system API key is allowed per organization.",
             ),
@@ -401,10 +418,10 @@ class OrgApiKey(BaseModel):
         return self.expires_at is not None and self.expires_at <= timezone.now()
 
     def save(self, *args, **kwargs):
+        from accounts.api_key_lookup import seal_before_save
+
         if not self.api_key:
             self.api_key = self.generate_api_key()
-        if not self.secret_key:
-            self.secret_key = self.generate_secret_key()
         # Do not compare with a previous timestamp: concurrent full saves can
         # restore an old value, and every persisted expiry must evict snapshots.
         # Respect partial/deferred saves that do not write expires_at at all.
@@ -421,7 +438,15 @@ class OrgApiKey(BaseModel):
             if update_fields is None
             else "expires_at" in update_fields
         )
-        super().save(*args, **kwargs)
+        issued, written = seal_before_save(self)
+        if written and kwargs.get("update_fields") is not None:
+            kwargs["update_fields"] = {*kwargs["update_fields"], *written}
+        try:
+            super().save(*args, **kwargs)
+        finally:
+            # The issuing instance keeps the plaintext so its caller can show it once.
+            if issued:
+                self.secret_key = issued
         if writes_expiry:
             # A detached instance can force-update an existing row while its
             # pre-save _state.adding is True. Invalidate creates too: a caller
@@ -429,7 +454,9 @@ class OrgApiKey(BaseModel):
             from accounts.key_cache import publish_key_revocation
 
             # A partial save may leave generated or edited credentials only in
-            # memory. Evict the pair actually stored with the persisted expiry.
+            # memory. Evict the key actually stored with the persisted expiry.
+            # Its stored secret is sealed (empty), so the key is evicted by its
+            # public id; only the issuing instance still holds the plaintext.
             if update_fields is not None:
                 api_key, secret_key = (
                     type(self)
@@ -447,6 +474,23 @@ class OrgApiKey(BaseModel):
                 partial(publish_key_revocation, api_key, secret_key),
                 using=self._state.db,
             )
+
+    def reveal_secret(self) -> str:
+        """The plaintext secret: on the issuing instance, or a system key's decrypted copy.
+
+        Raises ``ApiSecretNotRecoverable`` for a stored user or MCP key.
+        """
+        from accounts.api_secrets import ApiSecretNotRecoverable as NotRecoverable
+        from accounts.api_secrets import decrypt_secret, stored_plaintext
+
+        plaintext = stored_plaintext(self.secret_key_hash, self.secret_key)
+        if plaintext:
+            return plaintext
+        if self.secret_key_ciphertext:
+            return decrypt_secret(self.secret_key_ciphertext)
+        raise NotRecoverable(
+            f"API key {self.pk} keeps no recoverable secret; it was shown once, when created."
+        )
 
     @staticmethod
     def generate_api_key():

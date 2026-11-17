@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: wix
+version: 1.0.0
+name: Wix
+description: "Manage Wix sites, call Wix APIs on a site and search the Wix developer docs."
+vendor:
+  name: Wix
+  domains: [wix.com]
+eeCategory: developer
+group: other
+categories: [developer, websites]
+tags: [websites, site-management]
+docsUrl: https://dev.wix.com/docs/overview/ai-the-wix-platform/the-wix-mcp
+defaultProvider: mcp
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://dev.wix.com/docs/overview/ai-the-wix-platform/the-wix-mcp
+    fetchedAt: 2026-10-21

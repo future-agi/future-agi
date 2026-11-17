@@ -1,0 +1,20 @@
+schema: "connector-manifest/v1#app"
+id: airtable
+version: 1.0.0
+name: Airtable
+description: "Bases, tables and records."
+vendor:
+  name: Airtable
+  domains: [airtable.com]
+eeCategory: data
+group: other
+categories: [data, spreadsheets]
+tags: [database, records]
+docsUrl: https://airtable.com/developers/agents/mcp/getting-started
+archetype: spreadsheet
+defaultProvider: pat
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://airtable.com/developers/agents/mcp/getting-started
+    fetchedAt: 2026-10-20

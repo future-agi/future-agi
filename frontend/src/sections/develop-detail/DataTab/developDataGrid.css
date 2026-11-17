@@ -28,3 +28,35 @@
 .develop-data-grid .ag-body-horizontal-scroll {
   bottom: 0px !important;
 }
+
+/* Versioned dataset grid (area-datasets G1, G4, G9, G10) */
+.versioned-grid .ag-row.active-row {
+  background-color: color-mix(in srgb, var(--primary-main) 8%, transparent);
+}
+.versioned-grid .ag-row.active-row .ag-cell[col-id="ag-Grid-SelectionColumn"] {
+  box-shadow: inset 3px 0 0 var(--primary-main);
+}
+.versioned-grid
+  .ag-row.row-pending-delete
+  .ag-cell:not([col-id="system:order"]):not(
+    [col-id="ag-Grid-SelectionColumn"]
+  ) {
+  opacity: 0.45;
+  text-decoration: line-through;
+}
+.versioned-grid .ag-row.row-pending-new {
+  background-color: color-mix(in srgb, var(--primary-main) 4%, transparent);
+}
+.versioned-grid.density-compact .ag-cell {
+  line-height: 20px;
+}
+.versioned-grid .ag-header-cell[col-id="system:order"] .ag-header-cell-label {
+  padding-left: 8px;
+}
+/* Wrap density: auto-height cells are measured from their content, so the
+   wrappers must not stretch to the row's current height. */
+.versioned-grid.density-wrap .ag-cell-auto-height,
+.versioned-grid.density-wrap .ag-cell-auto-height .ag-cell-wrapper,
+.versioned-grid.density-wrap .ag-cell-auto-height .ag-cell-wrapper > span {
+  height: auto !important;
+}

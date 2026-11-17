@@ -1,0 +1,7 @@
+{
+  "synthetic": true,
+  "liveValidated": false,
+  "deployment": "off",
+  "limitations": "Read sites, lists, items and columns. Delegated Sites.Read.All requires tenant admin consent.",
+  "scopeNotes": "Sites.Read.All: delegated; tenant admin consent required"
+}

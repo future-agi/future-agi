@@ -1,0 +1,86 @@
+[
+  {
+    "name": "mixed verdicts",
+    "values": [0, 1],
+    "score": {
+      "value": 0.5,
+      "n": 2,
+      "status": "assessed",
+      "rule": "assessed_trial_mean",
+      "total_trials": 2,
+      "error_trials": 0,
+      "trials": [false, true]
+    },
+    "outcome": {
+      "pass": 1,
+      "n": 2,
+      "tone": "flaky",
+      "label": "1/2 trials",
+      "dots": [false, true],
+      "verdicts": [false, true]
+    }
+  },
+  {
+    "name": "every try passed",
+    "values": [1, 1],
+    "score": {
+      "value": 1,
+      "n": 2,
+      "status": "assessed",
+      "rule": "assessed_trial_mean",
+      "total_trials": 2,
+      "error_trials": 0,
+      "trials": [true, true]
+    },
+    "outcome": {
+      "pass": 2,
+      "n": 2,
+      "tone": "pass",
+      "label": "2/2 trials",
+      "dots": [true, true],
+      "verdicts": [true, true]
+    }
+  },
+  {
+    "name": "an unassessed try between verdicts",
+    "values": [0, null, 1],
+    "score": {
+      "value": 0.5,
+      "n": 2,
+      "status": "assessed",
+      "rule": "assessed_trial_mean",
+      "total_trials": 3,
+      "error_trials": 0,
+      "trials": [false, null, true]
+    },
+    "outcome": {
+      "pass": 1,
+      "n": 2,
+      "tone": "flaky",
+      "label": "1/2 trials",
+      "dots": [false, true],
+      "verdicts": [false, null, true]
+    }
+  },
+  {
+    "name": "no assessed tries",
+    "values": [null, null],
+    "score": {
+      "value": null,
+      "n": 0,
+      "status": "not_assessed",
+      "rule": "assessed_trial_mean",
+      "total_trials": 2,
+      "error_trials": 0,
+      "trials": [null, null]
+    },
+    "outcome": {
+      "pass": 0,
+      "n": 0,
+      "tone": "none",
+      "label": "Not scored",
+      "dots": [],
+      "verdicts": [null, null]
+    }
+  }
+]

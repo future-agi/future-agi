@@ -27,10 +27,12 @@ import EvalLogSourceHost from "src/sections/evals/EvalDetails/EvalsLog/EvalLogSo
 import { sourceScopeKey } from "src/sections/evals/EvalDetails/EvalsLog/useEvalLogSourceNavigation";
 import { useOrganization } from "src/contexts/OrganizationContext";
 import { useWorkspace } from "src/contexts/WorkspaceContext";
+import EmptyState from "src/sections/common/ux/EmptyState";
 
 import PartialInputWarningDetails from "src/sections/common/EvalsTasks/PartialInputWarningDetails";
 
 import { useEvalUsageChart, useEvalUsageLogs } from "../hooks/useEvalUsage";
+import { RECORDED_VERSION_TOOLTIP } from "../Helpers/evalVersionCopy";
 import { isEditableElement } from "src/utils/keyboardUtils";
 import { getStorage, setStorage } from "src/hooks/use-local-storage";
 import UsageChart from "./UsageChart";
@@ -72,7 +74,7 @@ const EvalUsageTab = ({
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(25);
   const [searchQuery, setSearchQuery] = useState("");
-  const [detailIndex, setDetailIndex] = useState(null); // index in filteredLogs
+  const [detailId, setDetailId] = useState(null);
   // The scope (org, workspace, log) whose trace or call the source host
   // reported open; null once it closes.
   const [openSourceScope, setOpenSourceScope] = useState(null);
@@ -276,9 +278,14 @@ const EvalUsageTab = ({
     [currentColumnConfig, applyColumnConfig],
   );
 
+  // Clearing the field shows every row at once; typing still waits for the
+  // debounce.
+  const activeSearch = searchQuery.trim() ? debouncedSearch : "";
+
+  // Search covers the loaded page only (the field says so).
   const filteredLogs = useMemo(() => {
-    if (!debouncedSearch) return logItems;
-    const q = debouncedSearch.toLowerCase();
+    if (!activeSearch) return logItems;
+    const q = activeSearch.toLowerCase();
     return logItems.filter(
       (l) =>
         l.id?.toLowerCase?.().includes(q) ||
@@ -286,17 +293,22 @@ const EvalUsageTab = ({
         l.result?.toLowerCase?.().includes(q) ||
         l.reason?.toLowerCase?.().includes(q),
     );
-  }, [logItems, debouncedSearch]);
+  }, [logItems, activeSearch]);
+  const noPageMatches =
+    Boolean(activeSearch) && logItems.length > 0 && filteredLogs.length === 0;
 
   const columns = useColumns(currentColumnConfig);
   const handleRowClick = useCallback(
     (row) => {
-      const idx = filteredLogs.findIndex((l) => l.id === row.id);
-      setDetailIndex(idx >= 0 ? idx : 0);
+      setDetailId(filteredLogs.some((l) => l.id === row.id) ? row.id : null);
     },
     [filteredLogs],
   );
 
+  // The position may change after a refresh or filter; the selected run must not.
+  const selectedIndex =
+    detailId !== null ? filteredLogs.findIndex((l) => l.id === detailId) : -1;
+  const detailIndex = selectedIndex >= 0 ? selectedIndex : null;
   const detailRow = detailIndex !== null ? filteredLogs[detailIndex] : null;
   const detailSourceScope = sourceScopeKey(
     currentOrganizationId,
@@ -312,6 +324,20 @@ const EvalUsageTab = ({
   // True while the opened log's trace or call covers the page.
   const sourceOpen =
     openSourceScope !== null && openSourceScope === detailSourceScope;
+
+  React.useEffect(() => {
+    // Once a run leaves the results, reopening it requires an explicit selection.
+    if (detailId !== null && detailIndex === null) setDetailId(null);
+  }, [detailId, detailIndex]);
+
+  const handleDetailNavigate = useCallback(
+    (offset) => {
+      if (detailIndex === null) return;
+      const nextRow = filteredLogs[detailIndex + offset];
+      if (nextRow) setDetailId(nextRow.id);
+    },
+    [detailIndex, filteredLogs],
+  );
 
   const handleFeedbackSubmitted = useCallback(() => {
     queryClient.invalidateQueries({
@@ -332,17 +358,17 @@ const EvalUsageTab = ({
       if (sourceOpen) return;
       if (e.key === "k") {
         e.preventDefault();
-        setDetailIndex((i) => Math.max(0, (i ?? 0) - 1));
+        handleDetailNavigate(-1);
       } else if (e.key === "j") {
         e.preventDefault();
-        setDetailIndex((i) => Math.min(filteredLogs.length - 1, (i ?? 0) + 1));
+        handleDetailNavigate(1);
       } else if (e.key === "Escape") {
-        setDetailIndex(null);
+        setDetailId(null);
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [detailIndex, filteredLogs.length, sourceOpen]);
+  }, [detailIndex, handleDetailNavigate, sourceOpen]);
 
   return (
     <Box
@@ -527,6 +553,14 @@ const EvalUsageTab = ({
           >
             <Typography variant="body2" fontWeight={600}>
               Evaluation Logs
+              <Typography
+                component="span"
+                variant="caption"
+                color="text.secondary"
+                sx={{ ml: 1 }}
+              >
+                Newest first
+              </Typography>
               {logsFetching && (
                 <Typography
                   component="span"
@@ -563,7 +597,8 @@ const EvalUsageTab = ({
               <FormSearchField
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search..."
+                placeholder="Search this page"
+                inputProps={{ "aria-label": "Search this page" }}
                 size="small"
                 sx={{
                   minWidth: "120px",
@@ -607,6 +642,22 @@ const EvalUsageTab = ({
                 rowCount={totalLogs}
                 onRowClick={handleRowClick}
                 emptyMessage="No evaluation logs for this period"
+                emptyContent={
+                  noPageMatches ? (
+                    <EmptyState
+                      compact
+                      icon="mdi:magnify"
+                      title={`No logs on this page match "${activeSearch}"`}
+                      body="Search looks at this page only. Clear the search or go to another page."
+                      actions={[
+                        {
+                          label: "Clear search",
+                          onClick: () => setSearchQuery(""),
+                        },
+                      ]}
+                    />
+                  ) : undefined
+                }
               />
             )}
           </Box>
@@ -668,9 +719,7 @@ const EvalUsageTab = ({
                   <IconButton
                     size="small"
                     disabled={detailIndex === 0}
-                    onClick={() =>
-                      setDetailIndex((i) => Math.max(0, (i ?? 0) - 1))
-                    }
+                    onClick={() => handleDetailNavigate(-1)}
                   >
                     <Iconify icon="solar:arrow-up-linear" width={16} />
                   </IconButton>
@@ -681,11 +730,7 @@ const EvalUsageTab = ({
                   <IconButton
                     size="small"
                     disabled={detailIndex >= filteredLogs.length - 1}
-                    onClick={() =>
-                      setDetailIndex((i) =>
-                        Math.min(filteredLogs.length - 1, (i ?? 0) + 1),
-                      )
-                    }
+                    onClick={() => handleDetailNavigate(1)}
                   >
                     <Iconify icon="solar:arrow-down-linear" width={16} />
                   </IconButton>
@@ -746,7 +791,7 @@ const EvalUsageTab = ({
               <IconButton
                 size="small"
                 aria-label="Close log"
-                onClick={() => setDetailIndex(null)}
+                onClick={() => setDetailId(null)}
               >
                 <Iconify icon="solar:close-linear" width={16} />
               </IconButton>
@@ -755,6 +800,7 @@ const EvalUsageTab = ({
           {/* Content: Formatted / JSON toggle */}
           {detailRow && (
             <DetailPanelContent
+              key={detailRow.id}
               row={detailRow}
               isDark={isDark}
               templateId={templateId}
@@ -977,12 +1023,11 @@ const DetailPanelContent = ({
               />
               {row.version != null && row.version !== "" && (
                 <DetailRow
-                  label="Version"
+                  label="Recorded version"
                   value={
-                    typeof row.version === "number" ||
-                    !String(row.version).startsWith("v")
-                      ? `v${row.version}`
-                      : String(row.version)
+                    <span title={RECORDED_VERSION_TOOLTIP}>
+                      {`Recorded ${typeof row.version === "number" || !String(row.version).startsWith("v") ? `v${row.version}` : String(row.version)}`}
+                    </span>
                   }
                 />
               )}

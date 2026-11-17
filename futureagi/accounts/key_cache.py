@@ -9,6 +9,8 @@ from django.conf import settings
 from redis.backoff import NoBackoff
 from redis.retry import Retry
 
+from accounts.api_secrets import revocation_payloads
+
 logger = structlog.get_logger(__name__)
 FI_AUTH_REVOKE_CHANNEL = "fi:auth:revoke"
 
@@ -16,13 +18,20 @@ FI_AUTH_REVOKE_CHANNEL = "fi:auth:revoke"
 def publish_key_revocation(api_key: str, secret_key: str) -> None:
     """Evict this credential pair from collector authentication caches.
 
+    ``secret_key`` is the plaintext while the caller holds it (the instance that
+    issued the key). A stored key keeps only its sealed hash, so with an empty
+    ``secret_key`` the key is evicted by its public id instead.
+
     Best effort, and called synchronously after key saves commit (key creation,
     signup, expiry edits, disable and delete), so one attempt bounded by the
     same socket timeouts as the Django Redis cache: an unresponsive Redis
     delays the caller by at most those timeouts instead of indefinitely.
     """
     try:
-        cache_key = hashlib.sha256(f"{api_key}:{secret_key}".encode()).hexdigest()
+        if secret_key:
+            cache_key = hashlib.sha256(f"{api_key}:{secret_key}".encode()).hexdigest()
+        else:
+            cache_key = revocation_payloads(api_key)[0]
         limits: dict[str, Any] = {
             "socket_connect_timeout": getattr(
                 settings, "REDIS_CACHE_SOCKET_CONNECT_TIMEOUT_SECONDS", 1.0

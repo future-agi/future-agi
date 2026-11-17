@@ -1,4 +1,5 @@
 import {
+  Alert,
   Box,
   Skeleton,
   Stack,
@@ -20,7 +21,7 @@ import Divider from "@mui/material/Divider";
 import Iconify from "src/components/iconify";
 import { useLocation } from "react-router-dom";
 import { useForm, useWatch } from "react-hook-form";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { enqueueSnackbar } from "notistack";
 import { useNavigate } from "react-router";
@@ -50,6 +51,20 @@ import { SortIcon } from "src/components/custom-components/FilterChip";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import logger from "src/utils/logger";
 import { getRequestErrorMessage } from "src/utils/errorUtils";
+import { useChangeSetStore } from "src/sections/develop-detail/DataTab/Versions/changeSetStore";
+import { revealNewRows } from "src/sections/develop-detail/DataTab/DataGrid/newRowsReveal";
+import { toPendingOps } from "src/sections/develop/AddRowDrawer/fileImport";
+import { isSurfaceShown } from "src/launch/launchSwitch";
+import { huggingFaceImportDisabled } from "src/sections/develop/importOptions";
+import { CAPABILITY, useCapabilities } from "src/hooks/useCapabilities";
+import HuggingFaceUnavailable from "./HuggingFaceUnavailable";
+import { isPrototypeMode } from "src/utils/prototype";
+import {
+  hfConfigBody,
+  hfDirectAddToast,
+  hfRequestFields,
+  hfRequestReady,
+} from "./hfLaunchModel";
 
 const getDefaultValue = () => {
   return {
@@ -78,22 +93,27 @@ const HuggingFaceView = () => {
   const [rowCount, setRowCount] = useState([0, 1000000000]);
   const [tempRowCount, setTempRowCount] = useState([0, 1000000000]);
   const [mainFilter, setMainFilter] = useState("Main");
+  const [revision, setRevision] = useState("");
+  const debouncedRevision = useDebounce(revision.trim(), 500);
   const [selectedTask, setSelectedTask] = useState(null);
 
   // Add pagination state
   const [page, setPage] = useState(1); // Initialize page state here
   const itemsPerPage = 30; // Changed from 21 to 30
 
-  const validationSchema = location.state
+  const addTarget = location.state;
+  const revisionShown = isSurfaceShown("hf.revision");
+  const validationSchema = addTarget
     ? HuggingFaceDatasetValidationSchema2
     : HuggingFaceDatasetValidationSchema1;
 
-  const { control, handleSubmit, watch, reset } = useForm({
+  const { control, handleSubmit, watch, reset, setValue } = useForm({
     defaultValues: getDefaultValue(),
     resolver: zodResolver(validationSchema),
   });
   const navigate = useNavigate();
-  const datasetId = location?.state?.datasetId;
+  const queryClient = useQueryClient();
+  const datasetId = addTarget?.datasetId;
   const colors = seriesColors(theme);
 
   // Filter options
@@ -278,11 +298,15 @@ const HuggingFaceView = () => {
         headers: { "Content-Type": "multipart/form-data" },
       }),
     onSuccess: (data) => {
-      enqueueSnackbar("Dataset created successfully", {
-        variant: "success",
-      });
+      const result = data?.data?.result ?? {};
+      enqueueSnackbar(
+        result.note ? `Created at v1 · ${result.note}` : "Dataset created",
+        {
+          variant: "success",
+        },
+      );
       setShow(false);
-      navigate(`/dashboard/develop/${data?.data?.result?.dataset_id}`);
+      navigate(`/dashboard/develop/${result.dataset_id}?tab=data`);
     },
     meta: { errorHandled: true },
     onError: (error) => {
@@ -300,10 +324,41 @@ const HuggingFaceView = () => {
       axios.post(endpoints.huggingFace.addHuggingFaceRow(datasetId), data, {
         headers: { "Content-Type": "application/json" },
       }),
-    onSuccess: () => {
-      enqueueSnackbar("Dataset created successfully", {
-        variant: "success",
+    // W3-7: the rows land as pending changes (IM1 `huggingface` commit
+    // answers operations and writes nothing); Save version keeps them.
+    // L5 (hf:drawer): the real add_rows_from_huggingface writes the rows
+    // straight into the dataset, so the toast says that, never "pending".
+    onSuccess: (data, variables) => {
+      const result = data?.data?.result ?? {};
+      if (!isPrototypeMode()) {
+        // The grid serves a cached table until it is invalidated; the rows
+        // are in the dataset now, so it must read them again.
+        queryClient.invalidateQueries({
+          queryKey: ["dataset-detail", datasetId],
+        });
+        enqueueSnackbar(hfDirectAddToast(result, variables?.num_rows), {
+          variant: "success",
+        });
+        setShow(false);
+        navigate(`/dashboard/develop/${datasetId}?tab=data`);
+        return;
+      }
+      const pending = toPendingOps(result.operations ?? [], {
+        stamp: `hf-${Date.now().toString(36)}-`,
+        hint: result.description_hint,
       });
+      const cs = useChangeSetStore.getState();
+      pending.forEach((op) => cs.addOp(datasetId, op));
+      const added = pending.filter((o) => o.op === "add_row");
+      revealNewRows(
+        datasetId,
+        added.map((o) => o.temp_id),
+      );
+      enqueueSnackbar(
+        `${added.length} ${added.length === 1 ? "row" : "rows"} added to pending changes`,
+        { variant: "success" },
+      );
+      setShow(false);
       navigate(`/dashboard/develop/${datasetId}?tab=data`);
     },
     onError: (error) => {
@@ -331,14 +386,15 @@ const HuggingFaceView = () => {
 
   const {
     data: loadedDataset,
+    isFetching: isFetchingConfig,
     isError: isErrorFetchingHuggingFaceDatasetConfig,
     error: huggingFaceDatasetConfigError,
   } = useQuery({
-    queryKey: ["loadedDataset", selectedId],
+    queryKey: ["loadedDataset", selectedId, debouncedRevision],
     queryFn: () =>
       axios.post(
         endpoints.develop.getHuggingFaceDataset,
-        { dataset_path: selectedId },
+        hfConfigBody(selectedId, debouncedRevision),
         {
           headers: { "Content-Type": "multipart/form-data" },
         },
@@ -383,10 +439,18 @@ const HuggingFaceView = () => {
 
   const onDataSetClick = (id) => {
     setSelectedId(id);
+    setRevision("");
     setShow(true);
   };
+  const config = loadedDataset?.data?.result ?? null;
 
   const onSubmit = handleSubmit(async (data) => {
+    if (
+      isFetchingConfig ||
+      revision.trim() !== debouncedRevision ||
+      !hfRequestReady(config, debouncedRevision)
+    )
+      return;
     try {
       trackEvent(Events.datasetFromHuggingFaceSuccessful, {
         [PropertyName.name]: data?.name,
@@ -395,11 +459,12 @@ const HuggingFaceView = () => {
         [PropertyName.addSelectedRows]: data?.num_rows,
       });
 
-      if (location.state) {
+      if (addTarget) {
         createHuggingRow({
           ...data,
           huggingface_dataset_name:
             huggingFaceDetail?.data?.result?.dataset?.id,
+          ...hfRequestFields(config),
         });
       } else {
         createHuggingFaceDataset({
@@ -407,6 +472,7 @@ const HuggingFaceView = () => {
           num_rows: data?.num_rows,
           huggingface_dataset_name:
             huggingFaceDetail?.data?.result?.dataset?.id,
+          ...hfRequestFields(config),
           model_type: "GenerativeLLM",
         });
       }
@@ -829,7 +895,13 @@ const HuggingFaceView = () => {
                 sx={{ color: "text.primary" }}
               />
             }
-            onClick={() => navigate(paths.dashboard.develop)}
+            onClick={() =>
+              navigate(
+                datasetId
+                  ? `/dashboard/develop/${datasetId}?tab=data`
+                  : paths.dashboard.develop,
+              )
+            }
             sx={{
               border: "1px solid",
               borderColor: "action.hover",
@@ -1103,7 +1175,11 @@ const HuggingFaceView = () => {
                         boxSizing: "border-box",
                       }}
                     >
-                      <FaceItem onClick={() => onDataSetClick(item?.id)}>
+                      <FaceItem
+                        onClick={() => onDataSetClick(item?.id)}
+                        data-testid="hf-item"
+                        data-repo={item?.id}
+                      >
                         <Typography
                           flex={1}
                           fontSize="12px"
@@ -1116,6 +1192,21 @@ const HuggingFaceView = () => {
                         >
                           {item?.id}
                         </Typography>
+                        {item?.curated || item?.license ? (
+                          <Stack direction="row" gap="6px" mb={1}>
+                            {item?.curated ? (
+                              <Chip size="small" label="Benchmark" color="info" />
+                            ) : null}
+                            {item?.license ? (
+                              <Typography
+                                fontSize="11px"
+                                color="text.secondary"
+                              >
+                                {`licence ${item.license}`}
+                              </Typography>
+                            ) : null}
+                          </Stack>
+                        ) : null}
                         <Stack direction="row" gap="10px">
                           {item?.author && (
                             <Chip
@@ -1176,13 +1267,60 @@ const HuggingFaceView = () => {
           splitOptions={splitOptions}
           onSubmit={onSubmit}
           onClose={onClose}
-          isLoadingCreateDataset={isLoadingCreateDataset || isPending}
-          showNameField={!location.state}
-          huggingFaceDatasetConfigError={huggingFaceDatasetConfigError?.result}
+          isLoadingCreateDataset={
+            isLoadingCreateDataset ||
+            isPending ||
+            isFetchingConfig ||
+            revision.trim() !== debouncedRevision
+          }
+          showNameField={!addTarget}
+          huggingFaceDatasetConfigError={
+            isErrorFetchingHuggingFaceDatasetConfig
+              ? getRequestErrorMessage(
+                  huggingFaceDatasetConfigError,
+                  "Unable to load this revision",
+                )
+              : undefined
+          }
+          config={
+            revisionShown || !config ? config : { ...config, revisions: [] }
+          }
+          setValue={setValue}
+          revision={isPrototypeMode() ? config?.revision ?? revision : revision}
+          onRevision={revisionShown ? setRevision : undefined}
+          targetDatasetId={datasetId}
         />
       </FaceWrapper>
     </Box>
   );
 };
 
-export default HuggingFaceView;
+const HuggingFaceEntry = () => {
+  const { data, isLoading, isError, refetch } = useCapabilities();
+  const capability = data?.features?.[CAPABILITY.HUGGING_FACE_IMPORT];
+
+  if (isLoading) {
+    return (
+      <Stack sx={{ p: 2 }} role="status">
+        <Typography>Checking Hugging Face import availability.</Typography>
+      </Stack>
+    );
+  }
+  if (isError || typeof capability?.allowed !== "boolean") {
+    return (
+      <Stack spacing={2} sx={{ p: 2 }}>
+        <Alert severity="info">
+          Could not check Hugging Face import availability.
+        </Alert>
+        <Button onClick={() => refetch()}>Try again</Button>
+      </Stack>
+    );
+  }
+  return huggingFaceImportDisabled(capability) ? (
+    <HuggingFaceUnavailable />
+  ) : (
+    <HuggingFaceView />
+  );
+};
+
+export default HuggingFaceEntry;

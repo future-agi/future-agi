@@ -34,6 +34,7 @@ from simulate.serializers.hosted_harness_conversation import (
     HarnessConversationMessageCreateSerializer,
     HarnessConversationReadSerializer,
 )
+from simulate.services.github_app_tenancy import platform_github_app_refused
 from simulate.services.harness_credentials import (
     HOSTED_FILE_KEY_PREFIX,
     credential_file_ref,
@@ -370,4 +371,14 @@ class HarnessJobViewSet(viewsets.ViewSet):
 
     @action(detail=False, methods=["get"])
     def health(self, request):
-        return Response(get_harness_provider().health())
+        """The provider's health, and whether a private GitHub source is offered.
+
+        ``private_github_available`` is false exactly where job creation refuses a
+        private GitHub source, so the source panel can say so before a submit.
+        """
+        return Response(
+            {
+                **get_harness_provider().health(),
+                "private_github_available": not platform_github_app_refused(),
+            }
+        )

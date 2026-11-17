@@ -514,6 +514,91 @@ describe("InsightsView", () => {
     });
   });
 
+  // Deleting a trace or session a report read retires its
+  // run and removes the results. The report says so and offers Run again; it
+  // never reads as not run yet, and a link to a removed run says why.
+  describe("a report whose results were removed with the data it read", () => {
+    const REPORT_REMOVED =
+      "This report's results were removed because data it read was deleted or has expired. Run it again over current data.";
+    const RUN_REMOVED =
+      "This run's results were removed because data it read was deleted or has expired. Run the report again over current data.";
+    const SERVER =
+      "The report's source data expired or was deleted. Run it again over retained data.";
+    const removed = () =>
+      Promise.reject({
+        status: false,
+        code: "source_expired",
+        message: SERVER,
+        result: SERVER,
+        statusCode: 404,
+      });
+
+    it("says so on the page and in the rail, with Run again", async () => {
+      const retired = {
+        ...sessionsConfig.latest_run,
+        status: "failed",
+        stage: "expired",
+        analysed_count: 0,
+        excluded_count: 0,
+        failed_count: 0,
+        skipped_count: 0,
+        distribution: [],
+        error: SERVER,
+        error_code: "source_expired",
+      };
+      const config = { ...configDetail, latest_run: retired, runs: [] };
+      mocks.readQuery.mockImplementation((url) => {
+        if (url === "/tracer/insights/configs/")
+          return ok({ configs: [config] });
+        if (url === `/tracer/insights/configs/${CONFIG_ID}/`) return ok(config);
+        if (url === `/tracer/insights/runs/${RUN_ID}/`) return removed();
+        return ok({ units: [], total: 0 });
+      });
+      renderAt(`?report=${CONFIG_ID}`);
+      const alert = (await screen.findByText(REPORT_REMOVED)).closest(
+        '[role="alert"]',
+      );
+      const card = await screen.findByRole("link", {
+        name: `Open report ${config.name}`,
+      });
+      expect(within(card).getByText(/Results removed/)).toBeInTheDocument();
+      expect(
+        within(card).getByText("The data it read was deleted or has expired."),
+      ).toBeInTheDocument();
+      expect(
+        within(card).getByRole("button", { name: "Run again" }),
+      ).toBeEnabled();
+      expect(screen.queryByText("This report has not run yet.")).toBeNull();
+      expect(screen.queryByText(/Not run yet/)).toBeNull();
+      expect(screen.queryByText("This run could not be loaded.")).toBeNull();
+      expect(screen.queryByText("Failed before analysing")).toBeNull();
+      expect(screen.queryByText(/0 analysed/)).toBeNull();
+      expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+      const again = within(alert).getByRole("button", { name: "Run again" });
+      expect(again).toBeEnabled();
+      fireEvent.click(again);
+      expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    });
+
+    it("says why a link to a removed run can't open, with Run again", async () => {
+      const RETIRED_ID = "7d1e2c3b-5a4f-4e6d-9c8b-0a1b2c3d4e5f";
+      const base = mocks.readQuery.getMockImplementation();
+      mocks.readQuery.mockImplementation((url, options) =>
+        url === `/tracer/insights/runs/${RETIRED_ID}/`
+          ? removed()
+          : base(url, options),
+      );
+      renderAt(`?report=${CONFIG_ID}&run=${RETIRED_ID}`);
+      const alert = (await screen.findByText(RUN_REMOVED)).closest(
+        '[role="alert"]',
+      );
+      expect(screen.queryByText("This run could not be loaded.")).toBeNull();
+      expect(
+        within(alert).getByRole("button", { name: "Run again" }),
+      ).toBeEnabled();
+    });
+  });
+
   it.each(
     ["new", "rerun", "same rows"].flatMap((mode) =>
       ["HTTP error", "unavailable check"].map((failure) => [mode, failure]),
@@ -574,6 +659,77 @@ describe("InsightsView", () => {
       fireEvent.click(retry);
       await screen.findAllByText(/about 5 credits/);
       await waitFor(() => expect(run).toBeEnabled());
+      expect(postsTo("/tracer/insights/runs/")).toHaveLength(0);
+    },
+  );
+
+  // The estimate's answer when it can't read the scope: the error envelope
+  // the app's axios rejects with.
+  const refusedWith = (statusCode, code, reason) =>
+    Promise.reject({
+      status: false,
+      type: statusCode >= 500 ? "api_error" : "invalid_request_error",
+      code,
+      detail: reason,
+      message: reason,
+      error: reason,
+      result: reason,
+      statusCode,
+    });
+
+  it.each(
+    ["new", "rerun"].flatMap((mode) => [
+      [
+        mode,
+        422,
+        "population_unavailable",
+        "The Sessions view can't filter users that way.",
+      ],
+      [mode, 400, "invalid", 'The Users view can\'t filter on "model".'],
+      [
+        mode,
+        503,
+        "service_unavailable",
+        "The scope can't be read right now. Please retry.",
+      ],
+    ]),
+  )(
+    "says why a %s report's scope got a %s, and offers a cost retry only for a server fault",
+    async (mode, statusCode, code, reason) => {
+      mocks.post.mockImplementation((url) =>
+        url === "/tracer/insights/estimate/"
+          ? refusedWith(statusCode, code, reason)
+          : ok({ run_id: RUN_ID, config_id: CONFIG_ID }),
+      );
+      renderAt(mode === "new" ? "?new=1&lens=usage" : `?report=${CONFIG_ID}`);
+      if (mode !== "new")
+        fireEvent.click(await screen.findByRole("button", { name: "Run now" }));
+      const area =
+        mode === "new" ? screen : within(await screen.findByRole("dialog"));
+      const alert = await area.findByRole("alert");
+      const run = area.getByRole("button", {
+        name: mode === "new" ? "Run report" : "Run again",
+      });
+      expect(run).toBeDisabled();
+      if (statusCode >= 500) {
+        // Nothing wrong with the scope: another try may work.
+        expect(alert).toHaveTextContent(
+          "The report cost could not be checked. Try again in a moment.",
+        );
+        expect(
+          area.getByRole("button", { name: "Retry cost check" }),
+        ).toBeEnabled();
+        return;
+      }
+      // The server's reason, and what to change: the same scope is refused
+      // however often it is asked again.
+      expect(alert).toHaveTextContent(reason);
+      expect(alert).toHaveTextContent(/Change the date or filters/);
+      expect(area.queryAllByText(/cost could not be checked/)).toHaveLength(0);
+      expect(
+        area.queryByRole("button", { name: "Retry cost check" }),
+      ).not.toBeInTheDocument();
+      expect(run).toBeDisabled();
       expect(postsTo("/tracer/insights/runs/")).toHaveLength(0);
     },
   );
@@ -888,6 +1044,31 @@ describe("InsightsView", () => {
     expect(
       screen.queryByText(/This report could not be loaded/),
     ).not.toBeInTheDocument();
+  });
+
+  // The report lists its newest runs; deleting removes them all.
+  it("says deleting a report removes every run, not just the listed ones", async () => {
+    const base = mocks.readQuery.getMockImplementation();
+    mocks.readQuery.mockImplementation((url, options) =>
+      url === `/tracer/insights/configs/${CONFIG_ID}/`
+        ? ok({ ...configDetail, run_count: 55 })
+        : base(url, options),
+    );
+    renderAt(`?report=${CONFIG_ID}`);
+    fireEvent.click(
+      await screen.findByRole(
+        "button",
+        { name: "More report actions" },
+        { timeout: 5000 },
+      ),
+    );
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: "Delete report" }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    expect(
+      within(dialog).getByText(/and all 55 of its runs will be deleted/),
+    ).toBeInTheDocument();
   });
 
   it("shows why the reports didn't load in the page, with the rail closed", async () => {
@@ -1322,6 +1503,41 @@ describe("InsightsView", () => {
     );
   });
 
+  // On a laptop the tree, the nav and the fixed columns leave little room:
+  // the table scrolls sideways before the column a reader came for is
+  // squeezed to a few words.
+  it("keeps a category's Summary and First message columns wide enough to read", async () => {
+    mocks.enriched = true;
+    renderAt(`?report=${CONFIG_ID}&category=3ffe0720fc9b`);
+    expect(
+      await screen.findByText(/Coastline Rain Shell's material/),
+    ).toBeInTheDocument();
+    // What a table keeps for its one free column beside its fixed ones.
+    const roomFor = (header) => {
+      const table = screen
+        .getByRole("columnheader", { name: header })
+        .closest("table");
+      const fixed = [...table.querySelectorAll("thead th")].reduce(
+        (sum, cell) => sum + (parseFloat(getComputedStyle(cell).width) || 0),
+        0,
+      );
+      return (parseFloat(getComputedStyle(table).minWidth) || 0) - fixed;
+    };
+    expect(
+      screen.getByRole("columnheader", { name: "Attributes" }),
+    ).toBeInTheDocument();
+    expect(roomFor("Summary")).toBeGreaterThanOrEqual(320);
+    fireEvent.click(
+      within(screen.getByRole("group", { name: "Show" })).getByRole("button", {
+        name: "Sessions",
+      }),
+    );
+    expect(
+      await screen.findByRole("columnheader", { name: "First message" }),
+    ).toBeInTheDocument();
+    expect(roomFor("First message")).toBeGreaterThanOrEqual(320);
+  });
+
   it("keeps measured categories visible while labelling a failed summary partial", async () => {
     const base = mocks.readQuery.getMockImplementation();
     const incompleteRun = {
@@ -1656,6 +1872,54 @@ describe("InsightsView", () => {
     );
   });
 
+  // Rows handed over from a report's category keep the window
+  // the report read them in, for the run and its preview: a user's
+  // activity is read there, not over their whole history.
+  it("reads rows handed over from a report within the report's window", async () => {
+    const key = "seedwindow";
+    sessionStorage.setItem(
+      `observe-handoff:${key}`,
+      JSON.stringify({
+        unit: "users",
+        population: population
+          .slice(0, 12)
+          .map((row, i) => ({ id: `u${i}`, time: row.time, user_id: `u${i}` })),
+        question: "Within “Churned”, what distinct patterns are there?",
+        label: "Churned · Weekly users",
+        source: "Weekly users",
+        sourceWindow: [
+          "2026-10-01T00:00:00+00:00",
+          "2026-10-08T00:00:00+00:00",
+        ],
+      }),
+    );
+    renderAt(`?new=1&seed=${key}`);
+    expect(await screen.findByText("12 users")).toBeInTheDocument();
+    const scope = {
+      label: "Churned · Weekly users",
+      preset: "fixed",
+      window: ["2026-10-01T00:00:00.000Z", "2026-10-08T00:00:00.000Z"],
+    };
+    const preview = screen.getByRole("button", {
+      name: "Preview on 3 examples",
+    });
+    await waitFor(() => expect(preview).toBeEnabled());
+    fireEvent.click(preview);
+    await waitFor(() =>
+      expect(postsTo("/tracer/insights/preview/")).toHaveLength(1),
+    );
+    expect(postsTo("/tracer/insights/preview/")[0][1].scope).toEqual(scope);
+    const run = screen.getByRole("button", { name: "Run report" });
+    await waitFor(() => expect(run).toBeEnabled());
+    fireEvent.click(run);
+    await waitFor(() =>
+      expect(postsTo("/tracer/insights/runs/")).toHaveLength(1),
+    );
+    const [[, body]] = postsTo("/tracer/insights/runs/");
+    expect(body.scope).toEqual(scope);
+    expect(body.population).toHaveLength(12);
+  });
+
   it("opens a Users hand-over on the view's date, filters and search", async () => {
     // Users checked one by one are counted a few seconds at a time.
     const counts = [
@@ -1959,9 +2223,12 @@ describe("InsightsView", () => {
     fireEvent.click(
       await screen.findByRole("button", { name: "Measure with Jev" }),
     );
-    const key = Object.keys(sessionStorage).find((k) =>
-      k.startsWith("observe-handoff:"),
+    // Listed through the Storage API: the test setup's in-memory storage
+    // keeps its items off the object, where Object.keys can't see them.
+    const keys = Array.from({ length: sessionStorage.length }, (_, i) =>
+      sessionStorage.key(i),
     );
+    const key = keys.find((k) => k.startsWith("observe-handoff:"));
     const seed = JSON.parse(sessionStorage.getItem(key));
     const week = presetWindow("7D");
     expect(seed).toMatchObject({
@@ -2609,6 +2876,257 @@ describe("InsightsView", () => {
         "Where is the agent failing?",
       );
       await waitFor(() => expect(button).toBeEnabled());
+    });
+  });
+
+  describe("unsaved work", () => {
+    const NEW_TITLE = "Discard this report setup?";
+    const EDIT_TITLE = "Discard unsaved changes to this report?";
+    const gone = (name) =>
+      waitFor(() =>
+        expect(screen.queryByRole("dialog", { name })).not.toBeInTheDocument(),
+      );
+
+    it("asks before a template replaces a new report's typed question", async () => {
+      renderAt("?new=1&lens=usage");
+      fireEvent.change(await screen.findByLabelText(/Question/), {
+        target: { value: "Which refunds stall?" },
+      });
+      // The template already open keeps the form as it is.
+      fireEvent.click(
+        await screen.findByRole("button", {
+          name: "What are people asking for?",
+        }),
+      );
+      expect(
+        screen.queryByRole("dialog", { name: NEW_TITLE }),
+      ).not.toBeInTheDocument();
+      expect(screen.getByLabelText(/Question/)).toHaveValue(
+        "Which refunds stall?",
+      );
+
+      fireEvent.click(
+        screen.getByRole("button", { name: "Where is the agent failing?" }),
+      );
+      const dialog = await screen.findByRole("dialog", { name: NEW_TITLE });
+      expect(
+        within(dialog).getByText(
+          "Your question, instructions, attributes and AI draft will be lost.",
+        ),
+      ).toBeInTheDocument();
+      fireEvent.click(
+        within(dialog).getByRole("button", { name: "Keep editing" }),
+      );
+      await gone(NEW_TITLE);
+      expect(screen.getByLabelText(/Question/)).toHaveValue(
+        "Which refunds stall?",
+      );
+      expect(screen.getByTestId("location").textContent).toContain(
+        "lens=usage",
+      );
+
+      fireEvent.click(
+        screen.getByRole("button", { name: "Where is the agent failing?" }),
+      );
+      fireEvent.click(
+        within(
+          await screen.findByRole("dialog", { name: NEW_TITLE }),
+        ).getByRole("button", { name: "Discard" }),
+      );
+      await waitFor(() =>
+        expect(screen.getByLabelText(/Question/)).toHaveValue(
+          "Where is the agent failing?",
+        ),
+      );
+      expect(screen.getByTestId("location").textContent).toContain(
+        "lens=failures",
+      );
+    });
+
+    it("asks before the X or Cancel drops a paid AI draft", async () => {
+      const base = mocks.post.getMockImplementation();
+      mocks.post.mockImplementation((url, body) =>
+        url === "/tracer/insights/draft/"
+          ? ok({
+              name: "Stalled refunds",
+              question: "Where do refunds stall?",
+              attributes: [
+                {
+                  key: "refund_asked",
+                  type: "boolean",
+                  description: "The user asked for a refund",
+                },
+              ],
+            })
+          : base(url, body),
+      );
+      renderAt("?new=1&lens=failures");
+      await screen.findAllByText(/Analysing all 108 sessions/);
+      const draft = await screen.findByRole("button", {
+        name: "Draft with AI",
+      });
+      await waitFor(() => expect(draft).toBeEnabled());
+      fireEvent.click(draft);
+      expect(await screen.findByText(/Drafted from/)).toBeInTheDocument();
+      expect(screen.getByLabelText(/Question/)).toHaveValue(
+        "Where do refunds stall?",
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "Close new report" }));
+      fireEvent.click(
+        within(
+          await screen.findByRole("dialog", { name: NEW_TITLE }),
+        ).getByRole("button", { name: "Keep editing" }),
+      );
+      await gone(NEW_TITLE);
+      expect(screen.getByLabelText(/Question/)).toHaveValue(
+        "Where do refunds stall?",
+      );
+      expect(screen.getByLabelText("Attribute 1 key")).toHaveValue(
+        "refund_asked",
+      );
+      expect(screen.getByTestId("location").textContent).toContain("new=1");
+
+      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+      fireEvent.click(
+        within(
+          await screen.findByRole("dialog", { name: NEW_TITLE }),
+        ).getByRole("button", { name: "Discard" }),
+      );
+      await waitFor(() =>
+        expect(screen.getByTestId("location").textContent).not.toContain(
+          "new=1",
+        ),
+      );
+    });
+
+    it("leaves an untouched new report at once", async () => {
+      renderAt("?new=1&lens=usage");
+      // The last report's agent description fills in by itself: not an edit.
+      expect(
+        await screen.findByText(/Uses the agent description from/),
+      ).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+      await waitFor(() =>
+        expect(screen.getByTestId("location").textContent).not.toContain(
+          "new=1",
+        ),
+      );
+      expect(
+        screen.queryByRole("dialog", { name: NEW_TITLE }),
+      ).not.toBeInTheDocument();
+    });
+
+    // The server finishes and charges a draft or preview it was
+    // sent, so neither offers a Cancel that would only drop the result.
+    it.each([
+      ["draft", "Draft with AI", "/tracer/insights/draft/", /and drafting/],
+      [
+        "preview",
+        "Preview on 3 examples",
+        "/tracer/insights/preview/",
+        /Reading 3 examples/,
+      ],
+    ])("offers no Cancel for a %s in flight", async (_, name, url, busy) => {
+      const base = mocks.post.getMockImplementation();
+      mocks.post.mockImplementation((called, body) =>
+        called === url ? new Promise(() => {}) : base(called, body),
+      );
+      renderAt("?new=1&lens=failures");
+      await screen.findAllByText(/Analysing all 108 sessions/);
+      const button = await screen.findByRole("button", { name });
+      await waitFor(() => expect(button).toBeEnabled());
+      fireEvent.click(button);
+      expect(await screen.findByText(busy)).toBeInTheDocument();
+      // The footer's Cancel only, which asks before dropping the paid work.
+      expect(screen.getAllByRole("button", { name: "Cancel" })).toHaveLength(1);
+      expect(postsTo(url)).toHaveLength(1);
+    });
+
+    // The run may be started (and charged) before the server answers: the
+    // form stays until it does, as the rerun dialog does.
+    it("keeps the form while the report is starting", async () => {
+      const base = mocks.post.getMockImplementation();
+      mocks.post.mockImplementation((called, body) =>
+        called === "/tracer/insights/runs/"
+          ? new Promise(() => {})
+          : base(called, body),
+      );
+      renderAt("?new=1&lens=failures");
+      await screen.findAllByText(/Analysing all 108 sessions/);
+      const run = screen.getByRole("button", { name: "Run report" });
+      await waitFor(() => expect(run).toBeEnabled());
+      fireEvent.click(run);
+      expect(
+        await screen.findByText(/Starting the report/),
+      ).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
+      expect(
+        screen.getByRole("button", { name: "Close new report" }),
+      ).toBeDisabled();
+      expect(screen.getByTestId("location").textContent).toContain("new=1");
+    });
+
+    it("asks before the Edit drawer drops unsaved changes", async () => {
+      renderAt(`?report=${CONFIG_ID}`);
+      fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+      const drawer = await screen.findByRole("presentation");
+      fireEvent.change(within(drawer).getByLabelText(/Question/), {
+        target: { value: "Which refunds stall?" },
+      });
+
+      // A click on the dimmed page outside the drawer.
+      fireEvent.click(drawer.querySelector(".MuiBackdrop-root"));
+      fireEvent.click(
+        within(
+          await screen.findByRole("dialog", { name: EDIT_TITLE }),
+        ).getByRole("button", { name: "Keep editing" }),
+      );
+      await gone(EDIT_TITLE);
+      expect(drawer).toBeInTheDocument();
+      expect(within(drawer).getByLabelText(/Question/)).toHaveValue(
+        "Which refunds stall?",
+      );
+
+      fireEvent.keyDown(within(drawer).getByLabelText(/Question/), {
+        key: "Escape",
+      });
+      fireEvent.click(
+        within(
+          await screen.findByRole("dialog", { name: EDIT_TITLE }),
+        ).getByRole("button", { name: "Discard" }),
+      );
+      await waitFor(() => expect(drawer).not.toBeInTheDocument());
+      expect(mocks.patch).not.toHaveBeenCalled();
+    });
+
+    it("closes the Edit drawer at once with nothing unsaved", async () => {
+      mocks.patch.mockImplementation((url, body) =>
+        ok({ ...sessionsConfig, ...body }),
+      );
+      renderAt(`?report=${CONFIG_ID}`);
+      fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+      let drawer = await screen.findByRole("presentation");
+      fireEvent.click(
+        within(drawer).getAllByRole("button", { name: "Close" })[0],
+      );
+      await waitFor(() => expect(drawer).not.toBeInTheDocument());
+
+      // Saved changes are kept, so Close asks nothing.
+      fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+      drawer = await screen.findByRole("presentation");
+      fireEvent.change(within(drawer).getByLabelText("Name"), {
+        target: { value: "Stalled refunds" },
+      });
+      fireEvent.click(within(drawer).getByRole("button", { name: "Save" }));
+      expect(await within(drawer).findByText(/^Saved\./)).toBeInTheDocument();
+      fireEvent.click(
+        within(drawer).getAllByRole("button", { name: "Close" })[1],
+      );
+      await waitFor(() => expect(drawer).not.toBeInTheDocument());
+      expect(
+        screen.queryByRole("dialog", { name: EDIT_TITLE }),
+      ).not.toBeInTheDocument();
     });
   });
 });

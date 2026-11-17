@@ -3,3 +3,9 @@ test-results/
 playwright-report/
 blob-report/
 .auth/
+walk-results/
+value-free-publish/
+.value-free-publish-*/
+.mcp/
+walk-landed/
+walk-kit/

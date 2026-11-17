@@ -36,6 +36,7 @@ from model_hub.serializers.ai_filter import (
     AIFilterRequestSerializer,
     AIFilterResponseSerializer,
 )
+from model_hub.throttles import PlatformFeatureLimited, SmartFilterThrottle
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_serializers import ApiTextErrorResponseSerializer
 from tfc.utils.general_methods import GeneralMethods
@@ -1160,7 +1161,9 @@ def _validate_smart_filters(parsed_filters, schema, grounded_values_by_field):
     return out
 
 
-def _run_smart_agent(query, schema, fetch_values, *, deadline=None):
+def _run_smart_agent(
+    query, schema, fetch_values, *, deadline=None, organization=None, workspace=None
+):
     """Run the Haiku tool-use loop. Returns a list of validated filters.
 
     `fetch_values(field_id, search_query=...) -> list[str]` is the source-specific value
@@ -1172,8 +1175,8 @@ def _run_smart_agent(query, schema, fetch_values, *, deadline=None):
     routes through the Agentcc gateway with litellm fallback, so we don't
     talk to Bedrock directly here.
     """
-    from agentic_eval.core.llm.llm import LLM
-    from agentic_eval.core.utils.model_config import ModelConfigs
+    from agentic_eval.core.llm.platform_model import PlatformFeature
+    from model_hub.services.model_route import platform_llm
     from tracer.services.clickhouse.read_budget import (
         ReadDeadline,
         ReadDeadlineExceeded,
@@ -1187,11 +1190,10 @@ def _run_smart_agent(query, schema, fetch_values, *, deadline=None):
         except ReadDeadlineExceeded as exc:
             raise _grounding_unavailable() from exc
 
-    cfg = ModelConfigs.VERTEX_GEMINI_3_5_FLASH_LITE
-    llm = LLM(
-        provider=cfg.provider,
-        model_name=cfg.model_name,
-        temperature=0.0,
+    llm = platform_llm(
+        PlatformFeature.SMART_FILTER,
+        organization=organization,
+        workspace=workspace,
         max_tokens=800,
     )
 
@@ -1646,7 +1648,7 @@ def _authorize_smart_property_schema(
     return normalized
 
 
-class AIFilterView(APIView):
+class AIFilterView(PlatformFeatureLimited, APIView):
     """
     POST /model-hub/ai-filter/
 
@@ -1679,6 +1681,8 @@ class AIFilterView(APIView):
 
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
+    # Each POST runs the platform model: limited per organization and user.
+    platform_throttle = SmartFilterThrottle
 
     def dispatch(self, request, *args, **kwargs):
         """Own one wall from APIView dispatch through the finalized response."""
@@ -1707,7 +1711,12 @@ class AIFilterView(APIView):
 
     @validated_request(
         request_serializer=AIFilterRequestSerializer,
-        responses={200: AIFilterResponseSerializer, **ERROR_RESPONSES},
+        # 429 past the limit; ERROR_RESPONSES already has 503.
+        responses={
+            200: AIFilterResponseSerializer,
+            **ERROR_RESPONSES,
+            429: ERROR_RESPONSES[500],
+        },
         reject_unknown_fields=True,
     )
     def post(self, request, *args, **kwargs):
@@ -1846,6 +1855,9 @@ class AIFilterView(APIView):
                     schema,
                     fetch_values,
                     deadline=grounding_deadline,
+                    organization=getattr(request, "organization", None)
+                    or request.user.organization,
+                    workspace=getattr(request, "workspace", None),
                 )
                 _remaining_request_ms(request_deadline)
                 return self._gm.success_response({"filters": filters})
@@ -1883,14 +1895,14 @@ class AIFilterView(APIView):
 
             # Route through the in-house LLM wrapper (Agentcc gateway with
             # litellm fallback).
-            from agentic_eval.core.llm.llm import LLM
-            from agentic_eval.core.utils.model_config import ModelConfigs
+            from agentic_eval.core.llm.platform_model import PlatformFeature
+            from model_hub.services.model_route import platform_llm
 
-            cfg = ModelConfigs.VERTEX_GEMINI_3_5_FLASH_LITE
-            llm = LLM(
-                provider=cfg.provider,
-                model_name=cfg.model_name,
-                temperature=0.0,
+            llm = platform_llm(
+                PlatformFeature.SMART_FILTER,
+                organization=getattr(request, "organization", None)
+                or request.user.organization,
+                workspace=getattr(request, "workspace", None),
                 max_tokens=500,
             )
             raw_text = _bounded_completion_content(

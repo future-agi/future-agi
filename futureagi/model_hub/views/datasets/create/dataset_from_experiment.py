@@ -1,8 +1,8 @@
-import re
 import traceback
 import uuid
 
 import structlog
+from django.db import transaction
 from django.db.models import Q
 from django.forms import model_to_dict
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
@@ -15,24 +15,29 @@ from model_hub.models.evals_metric import UserEvalMetric
 from model_hub.models.experiments import ExperimentDatasetTable
 from model_hub.models.run_prompt import RunPrompter
 from model_hub.serializers.contracts import (
-    CreateDatasetFromExperimentRequestSerializer,
     MODEL_HUB_ERROR_RESPONSES,
+    CreateDatasetFromExperimentRequestSerializer,
 )
+from model_hub.serializers.develop_dataset import DatasetSerializer
 from model_hub.serializers.develop_dataset_contracts import (
     DevelopDatasetMessageResponseSerializer,
 )
-from model_hub.serializers.develop_dataset import DatasetSerializer
+from model_hub.utils.optimizer_prompt_text import (
+    OptimizerCopyRefused,
+    optimizer_column_references,
+    remap_optimizer_messages,
+)
+from model_hub.validators.dataset_validators import validate_dataset_name_unique
 from model_hub.views.eval_runner import EvaluationRunner
 from model_hub.views.utils.dataset_limit import dataset_add_refusal
-from model_hub.views.utils.utils import get_recommendations, update_column_id
-from model_hub.validators.dataset_validators import validate_dataset_name_unique
+from model_hub.views.utils.utils import get_recommendations
+from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 from tfc.middleware.workspace_context import get_current_workspace
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_serializers import DatasetLimitCheckFailedErrorSerializer
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.parse_errors import parse_serialized_errors
-from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 
 try:
     from ee.usage.utils.usage_entries import log_and_deduct_cost_for_resource_request
@@ -42,6 +47,10 @@ except ImportError:
 logger = structlog.get_logger(__name__)
 
 
+class EvaluationCopyFailed(Exception):
+    """A required evaluation binding could not be copied to the new dataset."""
+
+
 def _request_organization(request):
     return getattr(request, "organization", None) or request.user.organization
 
@@ -49,7 +58,9 @@ def _request_organization(request):
 def _request_workspace_filter(request, field_name="workspace"):
     workspace = getattr(request, "workspace", None) or get_current_workspace()
     if not workspace:
-        return Q()
+        from tfc.utils.workspace_scope import empty_workspace_filter
+
+        return empty_workspace_filter()
 
     if getattr(workspace, "is_default", False):
         return (
@@ -71,7 +82,9 @@ def _request_experiment_dataset_queryset(request):
     fk_scope = Q(experiment__dataset__organization=organization) & (
         _request_workspace_filter(request, field_name="experiment__dataset__workspace")
     )
-    legacy_scope = Q(experiments_datasets_created__dataset__organization=organization) & (
+    legacy_scope = Q(
+        experiments_datasets_created__dataset__organization=organization
+    ) & (
         _request_workspace_filter(
             request, field_name="experiments_datasets_created__dataset__workspace"
         )
@@ -82,11 +95,23 @@ def _request_experiment_dataset_queryset(request):
     ).distinct()
 
 
-def _experiment_for_dataset(experiment_dataset):
-    return (
-        experiment_dataset.experiment
-        or experiment_dataset.experiments_datasets_created.filter(deleted=False).first()
+def _experiment_for_dataset(experiment_dataset, request):
+    datasets = Dataset.no_workspace_objects.filter(
+        _request_workspace_filter(request),
+        organization=_request_organization(request),
+        deleted=False,
     )
+    if experiment_dataset.experiment_id:
+        experiment = experiment_dataset.experiment
+        if (
+            not experiment.deleted
+            and datasets.filter(id=experiment.dataset_id).exists()
+        ):
+            return experiment
+        return None
+    return experiment_dataset.experiments_datasets_created.filter(
+        dataset__in=datasets, deleted=False
+    ).first()
 
 
 class CreateDatasetFromExpView(APIView):
@@ -111,6 +136,7 @@ class CreateDatasetFromExpView(APIView):
         },
         reject_unknown_fields=True,
     )
+    @transaction.atomic
     def post(self, request, exp_dataset_id, *args, **kwargs):
         try:
             data = request.validated_data
@@ -128,9 +154,36 @@ class CreateDatasetFromExpView(APIView):
                     get_error_message("EXPERIMENT_DATASET_NOT_FOUND")
                 )
 
-            experiment = _experiment_for_dataset(experiment_dataset)
+            experiment = _experiment_for_dataset(experiment_dataset, request)
             if not experiment:
                 return self._gm.not_found(get_error_message("EXPERIMENT_NOT_FOUND"))
+
+            source_dataset_ids = {experiment.dataset_id}
+            if experiment.snapshot_dataset_id:
+                source_dataset_ids.add(experiment.snapshot_dataset_id)
+            # A legacy NULL-workspace source can have a default-workspace snapshot.
+            # Admit each independently, then bind reads to each exact ownership.
+            source_datasets = list(
+                Dataset.no_workspace_objects.filter(
+                    _request_workspace_filter(request),
+                    id__in=source_dataset_ids,
+                    organization=_org,
+                    deleted=False,
+                )
+            )
+            if {dataset.id for dataset in source_datasets} != source_dataset_ids:
+                raise OptimizerCopyRefused
+            source_scope = Q(dataset_id__in=[])
+            for source_dataset in source_datasets:
+                source_scope |= Q(
+                    dataset_id=source_dataset.id,
+                    dataset__organization_id=source_dataset.organization_id,
+                    dataset__workspace_id=source_dataset.workspace_id,
+                    dataset__deleted=False,
+                )
+            source_prompts = RunPrompter.no_workspace_objects.filter(
+                source_scope, deleted=False
+            )
 
             if not new_dataset_name:
                 new_dataset_name = experiment_dataset.name
@@ -165,18 +218,65 @@ class CreateDatasetFromExpView(APIView):
                 call_log_row_entry.status = APICallStatusChoices.SUCCESS.value
                 call_log_row_entry.save()
 
-            def handle_run_prompt(source_id, dataset):
-                source_run_prompter = RunPrompter.objects.get(id=source_id)
+            def resolve_run_prompt(column):
+                if column.dataset_id == experiment.snapshot_dataset_id:
+                    # Copied columns retain the original Column ID as provenance,
+                    # not the ID of its executable RunPrompter configuration.
+                    original_column = Column.no_workspace_objects.filter(
+                        source_scope,
+                        id=column.source_id,
+                        dataset_id=experiment.dataset_id,
+                        deleted=False,
+                    ).first()
+                    if original_column is not None:
+                        if original_column.source != SourceChoices.RUN_PROMPT.value:
+                            raise OptimizerCopyRefused
+                        prompt = source_prompts.get(
+                            id=original_column.source_id,
+                            dataset_id=experiment.dataset_id,
+                        )
+                        input_ids = Column.no_workspace_objects.filter(
+                            source_scope,
+                            dataset_id=experiment.dataset_id,
+                            id__in=optimizer_column_references(prompt.messages),
+                            deleted=False,
+                        ).values_list("id", flat=True)
+                        snapshot_inputs = dict(
+                            Column.no_workspace_objects.filter(
+                                source_scope,
+                                dataset_id=experiment.snapshot_dataset_id,
+                                source_id__in=[str(input_id) for input_id in input_ids],
+                                deleted=False,
+                            ).values_list("source_id", "id")
+                        )
+                        # Use captured input cells and keep the source prompt intact.
+                        return prompt, remap_optimizer_messages(
+                            prompt.messages, snapshot_inputs
+                        )
+                # Legacy columns and prompts created directly in the snapshot
+                # already carry a RunPrompter ID.
+                prompt = source_prompts.get(id=column.source_id)
+                return prompt, prompt.messages
+
+            def handle_run_prompt(column, dataset):
+                source_run_prompter, messages = resolve_run_prompt(column)
 
                 run_prompt_obj = RunPrompter.objects.create(
                     dataset=dataset,
                     **{
                         **model_to_dict(
                             source_run_prompter,
-                            exclude=["id", "dataset", "organization", "tools"],
+                            exclude=[
+                                "id",
+                                "dataset",
+                                "organization",
+                                "workspace",
+                                "tools",
+                            ],
                         ),
-                        "organization": getattr(request, "organization", None)
-                        or request.user.organization,
+                        "messages": messages,
+                        "organization": dataset.organization,
+                        "workspace": dataset.workspace,
                     },
                 )
 
@@ -221,13 +321,19 @@ class CreateDatasetFromExpView(APIView):
                                     "id",
                                     "dataset",
                                     "organization",
+                                    "workspace",
                                     "config",
                                     "template",
+                                    "pinned_version",
+                                    "eval_group",
+                                    "user",
                                 ],
                             ),
-                            "organization": getattr(request, "organization", None)
-                            or request.user.organization,
+                            "organization": dataset.organization,
+                            "workspace": dataset.workspace,
                             "template": source_eval_metric.template,
+                            "pinned_version_id": source_eval_metric.pinned_version_id,
+                            "eval_group_id": source_eval_metric.eval_group_id,
                             "config": source_eval_metric.config,
                             "user": request.user,
                         },
@@ -267,13 +373,19 @@ class CreateDatasetFromExpView(APIView):
                                     "id",
                                     "dataset",
                                     "organization",
+                                    "workspace",
                                     "config",
                                     "template",
+                                    "pinned_version",
+                                    "eval_group",
+                                    "user",
                                 ],
                             ),
-                            "organization": getattr(request, "organization", None)
-                            or request.user.organization,
+                            "organization": dataset.organization,
+                            "workspace": dataset.workspace,
                             "template": source_eval_metric.template,
+                            "pinned_version_id": source_eval_metric.pinned_version_id,
+                            "eval_group_id": source_eval_metric.eval_group_id,
                             "config": source_eval_metric.config,
                             "user": request.user,
                         },
@@ -286,7 +398,6 @@ class CreateDatasetFromExpView(APIView):
                     return None
 
             source_handlers = {
-                SourceChoices.RUN_PROMPT.value: handle_run_prompt,
                 SourceChoices.EVALUATION.value: handle_evaluation,
                 SourceChoices.EXPERIMENT_EVALUATION.value: handle_experiment_evaluation,
             }
@@ -316,44 +427,36 @@ class CreateDatasetFromExpView(APIView):
                 experiment.column
                 and experiment.column.source == SourceChoices.RUN_PROMPT.value
             ):
-                run_prompt = RunPrompter.objects.get(id=experiment.column.source_id)
-                # Extract all column UUIDs from messages
-                message_column_ids = []
-                for message in run_prompt.messages:
-                    content = message.get("content", None)
-
-                    if isinstance(content, list):
-                        for item in content:
-                            if item.get("type") == "text":
-                                content = item.get("text", "")
-                                column_ids = re.findall(r"\{\{([^}]*)\}\}", content)
-                                message_column_ids.extend(
-                                    [col_id.strip() for col_id in column_ids if col_id]
-                                )
-
-                    elif isinstance(content, str):
-                        # Find all UUIDs between {{ and }}
-                        column_ids = re.findall(r"\{\{([^}]*)\}\}", content)
-                        # Clean up any whitespace and add to list
-                        message_column_ids.extend(
-                            [col_id.strip() for col_id in column_ids if col_id]
-                        )
-
-                # Add unique column IDs to total_columns
+                _, messages = resolve_run_prompt(experiment.column)
                 total_columns.extend(
-                    [col_id for col_id in message_column_ids if col_id]
+                    str(column_id)
+                    for column_id in optimizer_column_references(messages)
                 )
 
             valid_total_columns = [s for s in total_columns if self.is_valid_uuid4(s)]
 
             columns_in_datasets = list(
-                Column.objects.filter(
+                Column.no_workspace_objects.filter(
+                    source_scope,
                     id__in=valid_total_columns,  # Convert UUIDs to strings
                     deleted=False,
-                    dataset=experiment.snapshot_dataset or experiment.dataset,
+                    dataset_id=experiment.snapshot_dataset_id or experiment.dataset_id,
                 ).order_by("created_at")
             )
-            experiment_columns = columns_in_experiment + columns_in_datasets
+            experiment_columns = list(
+                {
+                    column.id: column
+                    for column in columns_in_experiment + columns_in_datasets
+                }.values()
+            )
+            source_column_ids = {column.id for column in experiment_columns}
+            admitted_column_ids = set(
+                Column.no_workspace_objects.filter(
+                    source_scope, id__in=source_column_ids, deleted=False
+                ).values_list("id", flat=True)
+            )
+            if admitted_column_ids != source_column_ids:
+                raise OptimizerCopyRefused
             experiment_columns = [
                 experiment_column
                 for experiment_column in experiment_columns
@@ -370,6 +473,7 @@ class CreateDatasetFromExpView(APIView):
                     workspace=getattr(request, "workspace", None)
                 )
             except Exception:
+                transaction.set_rollback(True)
                 return self._gm.bad_request(
                     get_error_message("FAILED_TO_CREATE_DATASET_FROM_EXP")
                 )
@@ -386,18 +490,29 @@ class CreateDatasetFromExpView(APIView):
                     SourceChoices.EXPERIMENT_EVALUATION.value,
                 ]:
                     try:
-                        source_id = source_handlers[column.source](
-                            column.source_id, new_dataset
-                        )
+                        if column.source == SourceChoices.RUN_PROMPT.value:
+                            source_id = handle_run_prompt(column, new_dataset)
+                        else:
+                            source_id = source_handlers[column.source](
+                                column.source_id, new_dataset
+                            )
                         if source_id is None:
                             logger.warning(
                                 f"Source handler returned None for column {column.name} with source {column.source} and source_id {column.source_id}"
                             )
+                    except (OptimizerCopyRefused, RunPrompter.DoesNotExist):
+                        raise
                     except Exception as e:
                         logger.error(
                             f"Error calling source handler for column {column.name}: {str(e)}"
                         )
                         source_id = None
+
+                    if source_id is None and column.source in (
+                        SourceChoices.EVALUATION.value,
+                        SourceChoices.EXPERIMENT_EVALUATION.value,
+                    ):
+                        raise EvaluationCopyFailed
 
                 new_column = Column.objects.create(
                     id=new_column_id,
@@ -425,19 +540,28 @@ class CreateDatasetFromExpView(APIView):
 
             for column in experiment_columns:
                 if column.source == SourceChoices.RUN_PROMPT.value:
-                    new_column = Column.objects.get(
-                        id=column_id_mapping[str(column.id)]
+                    from model_hub.views.run_prompt import (
+                        _run_prompt_columns_belong_to_dataset,
                     )
-                    run_prompt_col = RunPrompter.objects.get(id=new_column.source_id)
-                    new_messages = []
-                    for message in run_prompt_col.messages:
-                        new_messages.append(
-                            update_column_id(
-                                message=message, column_mapping=column_id_mapping
-                            )
-                        )
+
+                    new_column = Column.objects.get(
+                        id=column_id_mapping[str(column.id)], dataset=new_dataset
+                    )
+                    run_prompt_col = RunPrompter.no_workspace_objects.get(
+                        id=new_column.source_id,
+                        dataset=new_dataset,
+                        organization_id=new_dataset.organization_id,
+                        workspace_id=new_dataset.workspace_id,
+                    )
+                    new_messages = remap_optimizer_messages(
+                        run_prompt_col.messages, column_id_mapping
+                    )
+                    if not _run_prompt_columns_belong_to_dataset(
+                        new_messages, new_dataset
+                    ):
+                        raise OptimizerCopyRefused
                     run_prompt_col.messages = new_messages
-                    run_prompt_col.save()
+                    run_prompt_col.save(update_fields=["messages"])
 
                 elif column.source in [
                     SourceChoices.EVALUATION.value,
@@ -445,17 +569,11 @@ class CreateDatasetFromExpView(APIView):
                 ]:
                     new_col = Column.objects.get(id=column_id_mapping[str(column.id)])
                     if new_col.source_id is None:
-                        logger.warning(
-                            f"Skipping column {column.name} because source_id is None"
-                        )
-                        continue
+                        raise EvaluationCopyFailed
                     try:
                         user_eval_col = UserEvalMetric.objects.get(id=new_col.source_id)
-                    except UserEvalMetric.DoesNotExist:
-                        logger.error(
-                            f"UserEvalMetric with id {new_col.source_id} does not exist for column {column.name}"
-                        )
-                        continue
+                    except UserEvalMetric.DoesNotExist as exc:
+                        raise EvaluationCopyFailed from exc
                     config = user_eval_col.config
                     new_mapping_column_ids = {}
                     mapping_column_ids_initial = config.get("mapping", {})
@@ -525,7 +643,16 @@ class CreateDatasetFromExpView(APIView):
             new_dataset.save(update_fields=["column_order", "column_config"])
             return self._gm.success_response(f"{new_dataset.name} has been created.")
 
+        except EvaluationCopyFailed:
+            transaction.set_rollback(True)
+            return self._gm.bad_request(
+                "Could not copy an evaluation binding. No dataset was created."
+            )
+        except (OptimizerCopyRefused, RunPrompter.DoesNotExist):
+            transaction.set_rollback(True)
+            return self._gm.not_found("Column or dataset not found")
         except Exception as e:
+            transaction.set_rollback(True)
             logger.error(traceback.format_exc())
             traceback.print_exc()
             logger.exception(f"Error in creating the dataset from experiment: {str(e)}")

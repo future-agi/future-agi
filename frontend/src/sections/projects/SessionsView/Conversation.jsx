@@ -8,7 +8,12 @@ import { useTraceDrawerStore } from "../TracesDrawer/useTraceDrawerStore";
 import { getVisiblePercentage } from "./common";
 import { throttle } from "lodash";
 
-const Conversation = ({ human, ai, activeSessionId }) => {
+// ConversationCard draws its copy button in the bubble's top-right corner
+// (24px small icon button). The role label row leaves room for it, so a short
+// reply such as "Yes." still shows its whole label beside the button.
+const ROLE_LABEL_ROW_SX = { pr: "32px" };
+
+const Conversation = ({ human, ai, activeSessionId, fields }) => {
   const { viewType } = useTraceDrawerStore();
   const containerRef = useRef(null);
   const humanRef = useRef(null);
@@ -92,6 +97,51 @@ const Conversation = ({ human, ai, activeSessionId }) => {
     });
   };
 
+  if (fields !== undefined) {
+    return (
+      <Stack
+        gap={2}
+        sx={{ height: "100%", overflowY: "auto", p: 2, minWidth: 0 }}
+      >
+        {fields.map((field, index) => (
+          <Box
+            key={`${field.path}-${index}`}
+            sx={{
+              position: "relative",
+              border: 1,
+              borderColor: "divider",
+              borderRadius: 1,
+              p: 1.5,
+              minWidth: 0,
+            }}
+          >
+            <Typography variant="subtitle2" sx={ROLE_LABEL_ROW_SX}>
+              {field.label}
+            </Typography>
+            {field.found ? (
+              <ConversationCard
+                value={{ cellValue: field.value }}
+                column={{
+                  headerName: field.label,
+                  dataType: typeof field.value,
+                }}
+              />
+            ) : (
+              <Typography variant="body2" color="text.secondary">
+                Unavailable in this turn
+              </Typography>
+            )}
+          </Box>
+        ))}
+        {fields.length === 0 && (
+          <Typography variant="body2" color="text.secondary">
+            No input or output fields selected.
+          </Typography>
+        )}
+      </Stack>
+    );
+  }
+
   return (
     <Box
       sx={{
@@ -158,7 +208,7 @@ const Conversation = ({ human, ai, activeSessionId }) => {
               minWidth: 0,
             }}
           >
-            <Stack gap={0} mb={1}>
+            <Stack gap={0} mb={1} sx={ROLE_LABEL_ROW_SX}>
               <Typography
                 sx={{
                   typography: "s1",
@@ -219,7 +269,7 @@ const Conversation = ({ human, ai, activeSessionId }) => {
               minWidth: 0,
             }}
           >
-            <Stack gap={0} mb={1}>
+            <Stack gap={0} mb={1} sx={ROLE_LABEL_ROW_SX}>
               <Typography
                 sx={{
                   typography: "s1",
@@ -289,6 +339,7 @@ const Conversation = ({ human, ai, activeSessionId }) => {
 };
 
 Conversation.propTypes = {
+  fields: PropTypes.array,
   human: PropTypes.any,
   ai: PropTypes.any,
   activeSessionId: PropTypes.string,

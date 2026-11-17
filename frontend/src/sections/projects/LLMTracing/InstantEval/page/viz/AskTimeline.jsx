@@ -1674,7 +1674,8 @@ export default function AskTimeline({
               onChange={(event) =>
                 onFocus?.({ configId: event.target.value, answer: null })
               }
-              sx={{ width: 260 }}
+              // Narrower than 260px on a narrow card, never past its edge.
+              sx={{ width: 260, maxWidth: "100%" }}
               SelectProps={{
                 renderValue: (value) =>
                   questions.find((q) => q.configId === value)?.question || "",

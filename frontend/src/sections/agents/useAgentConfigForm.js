@@ -109,6 +109,10 @@ export const useAgentSubmit = ({
         livekit_agent_name: data.livekitAgentName,
         livekit_config_json: data.livekitConfigJson,
         livekit_max_concurrency: data.livekitMaxConcurrency,
+        // Blank is dropped below and keeps the saved key; null removes it.
+        vapi_public_key: data.removeVapiPublicKey
+          ? null
+          : (data.vapiPublicKey ?? "").trim(),
       };
 
       // Only process and include voice-specific fields for voice agents
@@ -168,6 +172,11 @@ export const useAgentSubmit = ({
           }
         }
 
+        // Only a Vapi assistant has a public key.
+        if (data.provider !== "vapi") {
+          delete payload.vapi_public_key;
+        }
+
         voiceContactNumber = payload.contact_number;
       } else {
         // Remove voice-specific fields for non-voice agents
@@ -184,6 +193,7 @@ export const useAgentSubmit = ({
         delete payload.livekit_agent_name;
         delete payload.livekit_config_json;
         delete payload.livekit_max_concurrency;
+        delete payload.vapi_public_key;
       }
 
       if (payload?.authentication_method !== "api_key") {
@@ -237,7 +247,12 @@ export const useAgentSubmit = ({
         payload.description = data.description ?? "";
       }
 
-      const { livekit_api_key, livekit_api_secret, ...safePayload } = payload;
+      const {
+        livekit_api_key,
+        livekit_api_secret,
+        vapi_public_key,
+        ...safePayload
+      } = payload;
       trackEvent(Events.updateAgentDefClicked, {
         [PropertyName.id]: agentDefinitionId,
         [PropertyName.source]: "agent_def",
@@ -246,7 +261,15 @@ export const useAgentSubmit = ({
 
       const response = await mutateAsync(payload);
 
-      reset(data);
+      // Never keep a typed public key in the form after it is saved.
+      reset({
+        ...data,
+        vapiPublicKey: "",
+        removeVapiPublicKey: false,
+        hasVapiPublicKey: data.removeVapiPublicKey
+          ? false
+          : Boolean(data.hasVapiPublicKey || data.vapiPublicKey?.trim()),
+      });
 
       queryClient.invalidateQueries({
         queryKey: ["agent-definition-versions", agentDefinitionId],

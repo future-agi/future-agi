@@ -77,7 +77,13 @@ LLM_RETRY_POLICY = RetryPolicy(
     maximum_interval=timedelta(minutes=5),
     maximum_attempts=3,
     backoff_coefficient=2.0,
-    non_retryable_error_types=["ValueError"],
+    # A catalog miss and a missing provider key are ValueError subclasses;
+    # the names match exactly.
+    non_retryable_error_types=[
+        "ValueError",
+        "ModelNotInCatalog",
+        "MissingProviderKeyError",
+    ],
 )
 
 # For pure-transform activities (fast, minimal retries)

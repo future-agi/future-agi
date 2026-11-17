@@ -157,3 +157,84 @@ describe("the call limit field on the page", () => {
     expect(JSON.stringify(body.agent)).not.toContain("typed-value");
   });
 });
+
+// On Future AGI Cloud the LiveKit probe is not sent to a
+// customer URL, so its row is skipped (ok stays true and the run is not blocked).
+// The readiness panel must not show it as a success, nor as a rejected credential.
+describe("a LiveKit probe Future AGI Cloud did not send", () => {
+  const notVerified =
+    "LiveKit not verified on Future AGI Cloud: preflight does not contact customer LiveKit URLs; connection problems will show when the run connects.";
+
+  beforeEach(() => {
+    createHarnessJob.mockReset();
+    preflightHarnessJob.mockReset();
+    createHarnessJob.mockResolvedValue({ job: { job_id: "job-1" } });
+    preflightHarnessJob.mockResolvedValue({
+      ready_to_submit: true,
+      credentials: {
+        scanned_files: 0,
+        detected_connectors: ["livekit"],
+        requirements: [],
+        credential_choices: [],
+        probe: [
+          {
+            provider: "livekit",
+            label: "LiveKit",
+            aliases: ["LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET"],
+            ok: true,
+            skipped: true,
+            message: notVerified,
+          },
+          {
+            provider: "openai",
+            label: "OpenAI",
+            aliases: ["OPENAI_API_KEY"],
+            ok: true,
+            message: "OpenAI accepted OPENAI_API_KEY",
+          },
+        ],
+      },
+    });
+  });
+
+  it("reads as information, not success or a rejection, and the run can start", async () => {
+    render(
+      <HelmetProvider>
+        <QueryClientProvider
+          client={
+            new QueryClient({ defaultOptions: { queries: { retry: false } } })
+          }
+        >
+          <HarnessCreate />
+        </QueryClientProvider>
+      </HelmetProvider>,
+    );
+    await userEvent.click(
+      screen.getByRole("radio", { name: /GitHub repository/i }),
+    );
+    await userEvent.type(
+      screen.getByLabelText(/Repository URL/i),
+      "https://github.com/future-agi/example-agent",
+    );
+    await userEvent.click(screen.getByRole("button", { name: /^Preflight$/ }));
+
+    const skipped = (await screen.findByText(notVerified)).closest(
+      ".MuiAlert-root",
+    );
+    expect(skipped).toHaveClass("MuiAlert-outlinedInfo");
+    expect(skipped).not.toHaveClass("MuiAlert-outlinedSuccess");
+    expect(skipped).not.toHaveClass("MuiAlert-outlinedError");
+    // A probe that really ran keeps its success tone.
+    expect(
+      screen
+        .getByText("OpenAI accepted OPENAI_API_KEY")
+        .closest(".MuiAlert-root"),
+    ).toHaveClass("MuiAlert-outlinedSuccess");
+    expect(screen.queryByText(/rejected/i)).toBeNull();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: /Run end to end/i }),
+    );
+    await vi.waitFor(() => expect(createHarnessJob).toHaveBeenCalled());
+  });
+});

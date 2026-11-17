@@ -1,6 +1,6 @@
 import React from "react";
 import PropTypes from "prop-types";
-import { Button } from "@mui/material";
+import { Button, Tooltip } from "@mui/material";
 import Iconify from "src/components/iconify";
 import PageHeader from "src/components/page-header";
 
@@ -21,21 +21,34 @@ const SectionHeader = ({
     actions={
       actions || children ? (
         <>
-          {actions?.map((action, idx) => (
-            <Button
-              key={action.label || idx}
-              variant={action.variant || "outlined"}
-              size={action.size || "small"}
-              color={action.color || "primary"}
-              startIcon={
-                action.icon ? <Iconify icon={action.icon} width={16} /> : undefined
-              }
-              onClick={action.onClick}
-              disabled={action.disabled}
-            >
-              {action.label}
-            </Button>
-          ))}
+          {actions?.map((action, idx) => {
+            const button = (
+              <Button
+                key={action.label || idx}
+                variant={action.variant || "outlined"}
+                size={action.size || "small"}
+                color={action.color || "primary"}
+                startIcon={
+                  action.icon ? (
+                    <Iconify icon={action.icon} width={16} />
+                  ) : undefined
+                }
+                onClick={action.onClick}
+                disabled={action.disabled}
+              >
+                {action.label}
+              </Button>
+            );
+            // A disabled button fires no events, so a tooltip that says why
+            // (e.g. "Owner or Admin only") sits on a wrapping span.
+            return action.tooltip ? (
+              <Tooltip key={action.label || idx} title={action.tooltip}>
+                <span style={{ display: "inline-flex" }}>{button}</span>
+              </Tooltip>
+            ) : (
+              button
+            );
+          })}
           {children}
         </>
       ) : undefined
@@ -57,6 +70,7 @@ SectionHeader.propTypes = {
       icon: PropTypes.string,
       onClick: PropTypes.func,
       disabled: PropTypes.bool,
+      tooltip: PropTypes.string,
     }),
   ),
   statusChip: PropTypes.node,

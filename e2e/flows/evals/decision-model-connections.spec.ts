@@ -40,16 +40,27 @@ async function openPicker(page: Page) {
 }
 
 async function saveSyntheticKey(page: Page, provider: 'OpenAI' | 'OpenRouter') {
-  const drawer = page.locator('.MuiDrawer-paper').filter({ has: page.getByPlaceholder('Search API provider') });
+  // frontend/src/components/custom-model-dropdown/KeysDrawer.jsx:194-203,443-479 identifies the drawer by its close control.
+  const closeDrawer = page.getByRole('button', { name: 'Close API key configuration', exact: true });
+  const drawer = page.locator('.MuiDrawer-paper').filter({ has: closeDrawer });
   await ui(drawer).toBeVisible();
-  // Provider display-name casing is legacy Openai for native, OpenRouter is pinned.
-  const card = drawer.locator('form').filter({ has: page.getByText(provider === 'OpenAI' ? /^Openai$/ : /^OpenRouter$/) });
+  // frontend/src/components/custom-model-dropdown/KeysDrawer.jsx:222-227 gives the search textbox only a placeholder.
+  const search = drawer.getByRole('textbox')
+    .and(drawer.getByPlaceholder('Search API provider', { exact: true }));
+  await search.fill(provider);
+  // frontend/src/sections/develop-detail/Common/ConfigureKeys/KeyCard.jsx:366-393 renders an unnamed form and provider text.
+  // frontend/src/components/custom-model-dropdown/KeysHelper.js:145-160 normalizes that text to OpenAI or OpenRouter.
+  const card = drawer.locator('form').filter({ has: page.getByText(provider, { exact: true }) });
   await ui(card).toHaveCount(1);
-  await card.getByLabel('API Key', { exact: true }).fill(`e2e-decision-${provider.toLowerCase()}-key`);
+  // frontend/src/components/custom-model-dropdown/APIKeyForm.jsx:18,43-58 labels the text input API Key.
+  await card.getByRole('textbox', { name: 'API Key', exact: true }).fill(`e2e-decision-${provider.toLowerCase()}-key`);
   const write = page.waitForResponse(r => new URL(r.url()).pathname === KEYS && r.request().method() === 'POST', { timeout: UI_READY });
+  // frontend/src/sections/develop-detail/Common/ConfigureKeys/KeyCard.jsx:432-442 names the Add/Save button save.
   await card.getByRole('button', { name: 'save', exact: true }).click();
   const response = await write;
   expect(response.status()).toBe(200);
+  // frontend/src/sections/evals/components/ModelSelector.jsx:800-812,2112-2121 selects the pending route and closes the drawer.
+  await ui(closeDrawer).toBeHidden();
   // Never attach the key request/response. Only the nonsecret record ID is useful.
   return ((await response.json()) as { result: { id: string } }).result.id;
 }
@@ -118,7 +129,8 @@ test('EVAL-E2E-012: a decision evaluator runs through the chosen direct or OpenR
   const page = await context.newPage();
   page.setDefaultTimeout(UI_READY);
   const suffix = `${testInfo.workerIndex}-${Date.now().toString(36)}`;
-  const name = `e2e-decision12-${suffix}`;
+  // frontend/src/sections/evals/components/createNameError.js:31-43 accepts lowercase letters, digits, hyphens and underscores.
+  const name = `e2e_decision12_${suffix.replace(/-/g, '_')}`;
   const criteria = { criteria_true: `Explicit confirmation ${suffix}`, criteria_false: `No confirmation ${suffix}` };
   const input = `e2e-decision:pass ${suffix}`;
   let id = '';
@@ -139,7 +151,8 @@ test('EVAL-E2E-012: a decision evaluator runs through the chosen direct or OpenR
       id = ((await response.json()) as Created).result.id;
       await testInfo.attach('created-template', { contentType: 'application/json', body: JSON.stringify({ id, name, organizationId: actor.organizationId, workspaceId: actor.workspaceId }) });
       await page.getByRole('tab', { name: 'LLM-As-A-Judge', exact: true }).click();
-      await page.getByPlaceholder('Eg: Hallucination detector').fill(name);
+      // frontend/src/sections/evals/components/EvalCreatePage.jsx:1135-1147 gives the field an id, but no associated label.
+      await page.locator('#eval-create-name').fill(name);
       await page.locator('.ql-editor[contenteditable="true"]').first().fill('Does {{input}} explicitly confirm the requested action?');
       const picker = await openPicker(page);
       const selector = picker.getByRole('combobox', { name: `Connection for ${LABEL}`, exact: true });
@@ -201,7 +214,7 @@ test('EVAL-E2E-012: a decision evaluator runs through the chosen direct or OpenR
       expect((await saved).status()).toBe(200);
       // EvalTemplateVersionManager.create_version makes the new version default
       // atomically; there is no second Set as Default action for an already-default row.
-      await ui(page.getByText('Default', { exact: true })).toBeVisible();
+      await ui(page.getByText('Recorded default', { exact: true })).toBeVisible();
     }, { timeout: UI_READY });
     await test.step('backend check5: reload, API and default version retain the selected connection', async () => {
       await page.goto(`${E2E.appUrl}/dashboard/evaluations/${id}`, { waitUntil: 'domcontentloaded' });

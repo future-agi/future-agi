@@ -333,7 +333,9 @@ class InitiateCallInput:
     phone_number: Optional[str] = None  # Acquired phone number string
     provider_phone_id: Optional[str] = None  # Provider-specific phone ID
 
-    # For outbound calls - user credentials to initiate call
+    # For outbound calls - user credentials to initiate call.
+    # user_api_key is accept-only: a set value is used as it is; when empty,
+    # the activity reads the customer's key by call id.
     user_api_key: Optional[str] = None
     user_assistant_id: Optional[str] = None
     user_phone_number: Optional[str] = None  # User's phone to call from
@@ -438,6 +440,8 @@ class FetchClientCallInput:
     """
 
     call_id: str
+    # Accept-only: a set value is used as it is; when empty, the activity reads
+    # the customer's key by call id.
     client_api_key: Optional[str] = ""
     client_assistant_id: Optional[str] = ""
     client_provider: Optional[str] = "vapi"
@@ -538,13 +542,16 @@ class RunBridgeInput:
     call_id: str
     room_name: str
     connection_type: str  # "web_vapi", "web_retell", "web_livekit_bridge"
-    customer_api_key: str
-    customer_assistant_id: str
+    # Accept-only: set values are used as they are; when customer_api_key and
+    # the LiveKit key and secret are all empty, the activity reads them by
+    # call id.
+    customer_api_key: str = ""
+    customer_assistant_id: str = ""
     max_duration_seconds: int = 2100
     # LiveKit bridge-specific fields
     customer_livekit_url: str = ""
-    customer_livekit_api_key: str = ""
-    customer_livekit_api_secret: str = ""
+    customer_livekit_api_key: str = ""  # accept-only, as above
+    customer_livekit_api_secret: str = ""  # accept-only, as above
 
 
 @dataclass

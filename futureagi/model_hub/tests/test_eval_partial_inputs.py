@@ -19,7 +19,9 @@ Covers the Phase 1 safety net for custom evals (see
 
 from __future__ import annotations
 
+import json
 import uuid
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -490,3 +492,82 @@ class TestFormatResponseInjectsWarning:
 
         assert response.get("warnings"), "warning should be on response"
         assert response["warnings"][0]["empty_keys"] == ["context"]
+
+
+class _AgentRanOnTheManagedModel:
+    """An agent run whose client ran on the managed model: its result names the
+    configured model, and only the evaluator knows the model it ran on."""
+
+    ran_on_model = "falcon_ai"
+    cost = {"total_cost": 0.0}
+    token_usage = {}
+
+    def run(self, **_kwargs):
+        return SimpleNamespace(
+            eval_results=[
+                {
+                    "data": {"result": "Pass"},
+                    "failure": False,
+                    "reason": "grounded",
+                    "runtime": 42,
+                    "model": "gpt-4o",
+                    "metrics": [{"id": "agent_eval_score", "value": "Pass"}],
+                    "metadata": json.dumps(
+                        {
+                            "usage": {"total_tokens": 150},
+                            "agent_metadata": {"model_used": "gpt-4o"},
+                        }
+                    ),
+                }
+            ]
+        )
+
+
+@pytest.mark.django_db
+def test_cell_value_infos_do_not_show_the_model_an_agent_ran_on(
+    dataset_with_two_columns,
+    custom_eval_template,
+    organization,
+    user,
+    workspace,
+):
+    """The cell stores json.dumps of the formatted response (_create_cell), so
+    the run and the format below are the ones _process_eval_result makes."""
+    ds = dataset_with_two_columns
+    ds["cell_a"].value = "Paris"
+    ds["cell_a"].save()
+    ds["cell_b"].value = "The capital of France"
+    ds["cell_b"].save()
+    runner, _ = _make_runner(
+        custom_eval_template, ds["dataset"], user, workspace, organization
+    )
+    mappings = {"content": str(ds["col_a"].id), "context": str(ds["col_b"].id)}
+
+    with (
+        patch.object(
+            runner, "_create_eval_instance", return_value=_AgentRanOnTheManagedModel()
+        ),
+        patch.object(runner, "_prepare_eval_config", return_value=None),
+        patch.object(
+            runner,
+            "map_fields",
+            side_effect=lambda required_field, mapping, **_: {
+                k: mapping[i] for i, k in enumerate(required_field)
+            },
+        ),
+        patch(
+            "evaluations.engine.preprocessing.preprocess_inputs",
+            side_effect=lambda _name, mapped: mapped,
+        ),
+    ):
+        eval_result, *_, partial_input_warning = runner._run_evaluation(
+            ds["row"], mappings, config={}
+        )
+    response = runner._format_response(
+        eval_result, partial_input_warning=partial_input_warning
+    )
+
+    value_infos = json.dumps(response)
+    assert "ran_on_model" not in value_infos
+    assert "falcon_ai" not in value_infos
+    assert "gpt-4o" in value_infos

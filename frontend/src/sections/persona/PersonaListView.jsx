@@ -10,15 +10,17 @@ import {
   Tooltip,
   Typography,
 } from "@mui/material";
-import { formatDistanceToNow } from "date-fns";
+import { format, formatDistanceToNow } from "date-fns";
 import PropTypes from "prop-types";
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { enqueueSnackbar } from "src/components/snackbar";
 import Iconify from "src/components/iconify";
 import ListToolbar from "src/components/list-toolbar";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import { DataTable, DataTablePagination } from "src/components/data-table";
+import OverflowCellText from "src/components/data-table/OverflowCellText";
 import { ObjectFilterPanel } from "src/components/filter";
+import CustomTooltip from "src/components/tooltip";
 import { useDebounce } from "src/hooks/use-debounce";
 import {
   useBulkDeletePersonas,
@@ -90,9 +92,9 @@ const PersonaListView = ({
   const [typeFilter, setTypeFilter] = useState(lockedType);
   const [simulationFilter, setSimulationFilter] =
     useState(lockedSimulationType);
-  const [rowSelection, setRowSelection] = useState({});
+  const [selectedPersonaIds, setSelectedPersonaIds] = useState(() => new Set());
   const [columnVisibility, setColumnVisibility] = useState({});
-  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleteDialog, setDeleteDialog] = useState(null);
   const [columnsAnchorEl, setColumnsAnchorEl] = useState(null);
   const [filterAnchorEl, setFilterAnchorEl] = useState(null);
 
@@ -122,28 +124,44 @@ const PersonaListView = ({
 
   const bulkDelete = useBulkDeletePersonas();
 
-  // In picker mode, derive rowSelection from the externally-controlled
-  // `selectedPersonas` prop so selection is preserved across pages.
+  // Catalog selection belongs to persona IDs, not positions in a refreshed
+  // page. Only the picker keeps selections across pages (via its parent).
+  useEffect(() => {
+    if (isSelectable || !data || isLoading || isFetching) return;
+    const availableIds = new Set(items.map((item) => item.id));
+    setSelectedPersonaIds((previous) => {
+      const next = new Set([...previous].filter((id) => availableIds.has(id)));
+      return next.size === previous.size ? previous : next;
+    });
+  }, [isSelectable, data, items, isLoading, isFetching]);
+
+  // Both catalog and picker selections use the shared table's stable ID keys.
+  // The picker still owns its cross-page selection through its parent.
   const effectiveRowSelection = useMemo(() => {
-    if (!isSelectable) return rowSelection;
-    const selectedIds = new Set(selectedPersonas.map((p) => p.id));
+    const selectedIds = isSelectable
+      ? new Set(selectedPersonas.map((p) => p.id))
+      : selectedPersonaIds;
     const map = {};
-    items.forEach((item, idx) => {
-      if (selectedIds.has(item.id)) map[idx] = true;
+    items.forEach((item) => {
+      if (selectedIds.has(item.id)) map[item.id] = true;
     });
     return map;
-  }, [isSelectable, selectedPersonas, items, rowSelection]);
+  }, [isSelectable, selectedPersonas, items, selectedPersonaIds]);
 
   const handleRowSelectionChange = useCallback(
     (next) => {
       if (!isSelectable) {
-        setRowSelection(next);
+        setSelectedPersonaIds(
+          new Set(
+            items.filter((item) => next?.[item.id]).map((item) => item.id),
+          ),
+        );
         return;
       }
       const selectedIds = new Set(selectedPersonas.map((p) => p.id));
-      items.forEach((item, idx) => {
+      items.forEach((item) => {
         const wasSelected = selectedIds.has(item.id);
-        const nowSelected = Boolean(next?.[idx]);
+        const nowSelected = Boolean(next?.[item.id]);
         if (wasSelected !== nowSelected) {
           onToggleSelect?.(item, nowSelected);
         }
@@ -153,12 +171,8 @@ const PersonaListView = ({
   );
 
   const selectedItems = useMemo(
-    () =>
-      Object.keys(rowSelection)
-        .filter((key) => rowSelection[key])
-        .map((key) => items[parseInt(key, 10)])
-        .filter(Boolean),
-    [rowSelection, items],
+    () => items.filter((item) => selectedPersonaIds.has(item.id)),
+    [selectedPersonaIds, items],
   );
 
   const deletableSelected = useMemo(
@@ -167,17 +181,17 @@ const PersonaListView = ({
   );
 
   const handleCancelSelection = useCallback(() => {
-    setRowSelection({});
+    setSelectedPersonaIds(new Set());
   }, []);
 
   const handleDeleteConfirm = useCallback(async () => {
-    const ids = deletableSelected.map((p) => p.id);
+    const ids = deleteDialog?.personas.map((p) => p.id) || [];
     if (!ids.length) {
-      setDeleteDialogOpen(false);
+      setDeleteDialog(null);
       return;
     }
     const { deleted, failed } = await bulkDelete.mutateAsync(ids);
-    setDeleteDialogOpen(false);
+    setDeleteDialog(null);
     handleCancelSelection();
     if (deleted > 0) {
       enqueueSnackbar(`${deleted} persona${deleted !== 1 ? "s" : ""} deleted`, {
@@ -190,7 +204,7 @@ const PersonaListView = ({
         { variant: "error" },
       );
     }
-  }, [deletableSelected, bulkDelete, handleCancelSelection]);
+  }, [deleteDialog, bulkDelete, handleCancelSelection]);
 
   const columns = useMemo(
     () => [
@@ -199,16 +213,20 @@ const PersonaListView = ({
         accessorKey: "name",
         header: "Name",
         meta: { flex: 1.5 },
-        minSize: 220,
+        // Every column's minimum, the checkbox's 50 included (950 px), fits
+        // the 1040 px a 1280 px window leaves the table (1280 - 200 menu -
+        // 2 x 16 padding, less the 8 px bar when the rows scroll). At 1024
+        // it scrolls sideways under a drawn bar, with the row actions
+        // pinned to the right edge.
+        // A long name ends in an ellipsis and shows whole on hover or when
+        // its cell takes focus.
+        minSize: 180,
         enableSorting: false,
         cell: ({ row }) => (
-          <Typography
-            variant="body2"
-            noWrap
+          <OverflowCellText
+            text={row.original?.name}
             sx={{ fontWeight: 500, fontSize: "12px" }}
-          >
-            {row.original?.name}
-          </Typography>
+          />
         ),
       },
       {
@@ -216,25 +234,21 @@ const PersonaListView = ({
         accessorKey: "description",
         header: "Description",
         meta: { flex: 2 },
-        minSize: 240,
+        minSize: 160,
         enableSorting: false,
+        // Cut short, it shows whole on hover or when its cell takes focus.
         cell: ({ getValue }) => (
-          <Tooltip title={getValue() || ""} placement="top" arrow>
-            <Typography
-              variant="body2"
-              noWrap
-              sx={{ fontSize: "12px", color: "text.secondary" }}
-            >
-              {getValue() || "—"}
-            </Typography>
-          </Tooltip>
+          <OverflowCellText
+            text={getValue() || "—"}
+            sx={{ fontSize: "12px", color: "text.secondary" }}
+          />
         ),
       },
       {
         id: "simulationType",
         accessorKey: "simulationType",
         header: "Agent Type",
-        size: 110,
+        size: 90,
         enableSorting: false,
         cell: ({ getValue }) => {
           const type = getValue();
@@ -268,13 +282,18 @@ const PersonaListView = ({
         accessorKey: "id",
         header: "Attributes",
         meta: { flex: 1.4 },
-        minSize: 200,
+        minSize: 130,
         enableSorting: false,
         cell: ({ row }) => {
           const tags = extractTagsFromPersona(row.original);
           if (!tags.length) return null;
           const displayed = tags.slice(0, 2);
           const remaining = tags.length - displayed.length;
+          const every = tags.join(" · ");
+          // The first two, ending in an ellipsis where the column is narrow,
+          // then how many more there are. With more, every attribute shows
+          // on hover of either or when the cell takes focus; without, a cut
+          // pair shows whole.
           return (
             <Box
               sx={{
@@ -284,25 +303,32 @@ const PersonaListView = ({
                 overflow: "hidden",
               }}
             >
-              <Typography
-                variant="body2"
-                noWrap
+              <OverflowCellText
+                text={displayed.join(" · ")}
+                detail={remaining > 0 ? every : undefined}
                 sx={{ fontSize: "12px", color: "text.primary" }}
-              >
-                {displayed.join(" · ")}
-              </Typography>
+              />
               {remaining > 0 && (
-                <Typography
-                  variant="body2"
-                  sx={{
-                    fontSize: "12px",
-                    color: "text.tertiary",
-                    flexShrink: 0,
-                    fontVariantNumeric: "tabular-nums",
-                  }}
+                <CustomTooltip
+                  show
+                  title={every}
+                  placement="top"
+                  arrow
+                  size="small"
+                  describeChild
                 >
-                  {`+${remaining}`}
-                </Typography>
+                  <Typography
+                    variant="body2"
+                    sx={{
+                      fontSize: "12px",
+                      color: "text.tertiary",
+                      flexShrink: 0,
+                      fontVariantNumeric: "tabular-nums",
+                    }}
+                  >
+                    {`+${remaining}`}
+                  </Typography>
+                </CustomTooltip>
               )}
             </Box>
           );
@@ -312,7 +338,7 @@ const PersonaListView = ({
         id: "createdBy",
         accessorKey: "isDefault",
         header: "Created By",
-        size: 170,
+        size: 110,
         enableSorting: false,
         cell: ({ row }) => {
           const isSystem = row.original?.isDefault;
@@ -352,35 +378,43 @@ const PersonaListView = ({
         id: "lastUpdated",
         accessorKey: "updatedAt",
         header: "Last updated",
-        size: 140,
+        // "less than a minute ago", whole.
+        size: 150,
         enableSorting: false,
         cell: ({ row }) => {
           const val = row.original?.updatedAt || row.original?.updated_at;
           if (!val) return null;
           try {
+            const date = new Date(val);
+            // How long ago, whole; the exact time on hover or when the cell
+            // takes focus.
             return (
-              <Typography variant="body2" noWrap sx={{ fontSize: "12px" }}>
-                {formatDistanceToNow(new Date(val), { addSuffix: true })}
-              </Typography>
+              <OverflowCellText
+                text={formatDistanceToNow(date, { addSuffix: true })}
+                detail={format(date, "dd-MM-yyyy, h:mm a")}
+                sx={{ fontSize: "12px" }}
+              />
             );
           } catch {
             return null;
           }
         },
       },
-      ...(isSelectable
+      // Duplicate and Edit, only for someone who can use them: a viewer's
+      // empty cells drew an empty pinned strip down the right edge.
+      ...(isSelectable || !canCreate
         ? []
         : [
             {
               id: "actions",
               accessorKey: "id",
               header: "",
-              size: 88,
+              // Duplicate and Edit, two 28 px buttons.
+              size: 80,
               enableSorting: false,
               cell: ({ row }) => {
                 const persona = row.original;
-                const canEdit = !persona?.isDefault && canCreate;
-                if (!canCreate) return null;
+                const canEdit = !persona?.isDefault;
                 return (
                   <Box
                     sx={{ display: "flex", alignItems: "center", gap: 0.25 }}
@@ -519,12 +553,17 @@ const PersonaListView = ({
         minHeight: 0,
       }}
     >
-      {/* Toolbar: search, segmented toggle, filter selects, spacer, actions */}
-      <ListToolbar sx={framed ? undefined : { pt: 0 }}>
+      {/* Toolbar: search, segmented toggle, filter selects, actions. It wraps
+          when the pane is narrow (1024) instead of squeezing its controls. */}
+      <ListToolbar
+        useFlexGap
+        flexWrap="wrap"
+        sx={framed ? undefined : { pt: 0 }}
+      >
         <FormSearchField
           size="small"
           placeholder="Search personas"
-          sx={{ width: 280 }}
+          sx={{ flex: "1 1 180px", maxWidth: 280 }}
           searchQuery={searchQuery}
           onChange={(e) => {
             setSearchQuery(e.target.value);
@@ -596,40 +635,60 @@ const PersonaListView = ({
           Columns
         </Button>
 
-        <Box sx={{ flex: 1 }} />
-
-        {!isSelectable && selectedItems.length > 0 ? (
-          <PersonasBulkActionsBar
-            selectedCount={selectedItems.length}
-            deletableCount={deletableSelected.length}
-            onDelete={() => setDeleteDialogOpen(true)}
-            onCancel={handleCancelSelection}
-          />
-        ) : (
-          <>
-            {toolbarActions}
-            <Button
-              size="small"
-              variant="contained"
-              color="primary"
-              disabled={!canCreate}
-              startIcon={<Iconify icon="solar:add-linear" width={16} />}
-              onClick={() => {
-                if (onCreatePersona) {
-                  onCreatePersona();
-                  return;
-                }
-                setEditDrawer({
-                  mode: "create",
-                  persona: null,
-                  personaCreateEditType: null,
-                });
-              }}
-            >
-              Create persona
-            </Button>
-          </>
-        )}
+        {/* ml: auto keeps the actions right-aligned on whichever line they
+            land, which a flex: 1 spacer cannot do once the row wraps. */}
+        <Box
+          sx={{
+            display: "flex",
+            alignItems: "center",
+            gap: 1,
+            ml: "auto",
+            flexShrink: 0,
+          }}
+        >
+          {!isSelectable && selectedItems.length > 0 ? (
+            <PersonasBulkActionsBar
+              selectedCount={selectedItems.length}
+              deletableCount={deletableSelected.length}
+              onDelete={() =>
+                // Snapshot both the names shown and the IDs submitted so a
+                // refresh while confirmation is open cannot change its targets.
+                setDeleteDialog({
+                  personas: deletableSelected.map(({ id, name }) => ({
+                    id,
+                    name,
+                  })),
+                  skippedCount: selectedItems.length - deletableSelected.length,
+                })
+              }
+              onCancel={handleCancelSelection}
+            />
+          ) : (
+            <>
+              {toolbarActions}
+              <Button
+                size="small"
+                variant="contained"
+                color="primary"
+                disabled={!canCreate}
+                startIcon={<Iconify icon="solar:add-linear" width={16} />}
+                onClick={() => {
+                  if (onCreatePersona) {
+                    onCreatePersona();
+                    return;
+                  }
+                  setEditDrawer({
+                    mode: "create",
+                    persona: null,
+                    personaCreateEditType: null,
+                  });
+                }}
+              >
+                Create persona
+              </Button>
+            </>
+          )}
+        </Box>
       </ListToolbar>
 
       {/* Table */}
@@ -639,6 +698,21 @@ const PersonaListView = ({
         isLoading={isLoading || isFetching}
         rowCount={total}
         rowSelection={effectiveRowSelection}
+        selectionScope={
+          isSelectable
+            ? undefined
+            : [
+                page,
+                pageSize,
+                searchQuery,
+                debouncedSearch,
+                typeFilter,
+                simulationFilter,
+                lockedType,
+                lockedSimulationType,
+              ]
+        }
+        preserveSelectionOnUnmount={isSelectable}
         onRowSelectionChange={handleRowSelectionChange}
         columnVisibility={columnVisibility}
         onColumnVisibilityChange={setColumnVisibility}
@@ -652,6 +726,8 @@ const PersonaListView = ({
         }}
         getRowId={(row) => row.id}
         enableSelection
+        showScrollbar
+        pinnedRight={canCreate && !isSelectable ? "actions" : undefined}
         emptyMessage={
           typeFilter === "custom"
             ? "You haven't created any custom personas yet"
@@ -695,11 +771,12 @@ const PersonaListView = ({
 
       {/* Delete confirmation */}
       <PersonasBulkDeleteDialog
-        open={deleteDialogOpen}
-        count={deletableSelected.length}
-        skippedCount={selectedItems.length - deletableSelected.length}
+        open={Boolean(deleteDialog)}
+        count={deleteDialog?.personas.length || 0}
+        personas={deleteDialog?.personas || []}
+        skippedCount={deleteDialog?.skippedCount || 0}
         onConfirm={handleDeleteConfirm}
-        onCancel={() => setDeleteDialogOpen(false)}
+        onCancel={() => setDeleteDialog(null)}
         isLoading={bulkDelete.isPending}
       />
 

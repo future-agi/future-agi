@@ -88,8 +88,12 @@ TEMPORAL_ACTIVITY_MODULES = [
     "integrations.transformers.langfuse_transformer",
     # billing tasks (Phase 4.6 — budget catch-up)
     "tfc.temporal.schedules.billing",
+    # FA -> Omega EE revocation events (READINESS 1.2a)
+    "tfc.temporal.schedules.omega_host_events",
     # Self-hosted deployment registration and usage heartbeat
     "tfc.temporal.schedules.deployment_telemetry",
+    # Omega Hub durable outbox, lease reaper, retention and rules notices
+    "omega_hub.temporal",
     # Deployment telemetry receiver-side integrations (PostHog, HubSpot, Slack)
     "ee.cloud.telemetry.deployment_telemetry_integrations",
     # Bounded SAML login-state retention.
@@ -540,6 +544,17 @@ def _ensure_workflows_registered() -> None:
         get_logger(__name__).warning(
             "could_not_load_monthly_closing_workflow", error=str(e)
         )
+
+    # Webhooks dispatcher loops (webhooks DESIGN.md section 13.1)
+    try:
+        from webhooks.temporal import QUEUE as WEBHOOKS_QUEUE
+        from webhooks.temporal import get_workflows as get_webhooks_workflows
+
+        register_for_queues(queues=[WEBHOOKS_QUEUE], workflows=get_webhooks_workflows())
+    except ImportError as e:
+        from tfc.logging.temporal import get_logger
+
+        get_logger(__name__).warning("could_not_load_webhooks_workflows", error=str(e))
 
     _workflows_registered = True
 
@@ -1004,6 +1019,17 @@ def _ensure_activities_registered() -> None:
 
     # Register usage metering activities (consumer, sync, monthly reset)
     _register_usage_temporal_activities(log)
+
+    # Webhooks dispatcher activities (webhooks DESIGN.md section 13.1)
+    try:
+        from webhooks.temporal import QUEUE as WEBHOOKS_QUEUE
+        from webhooks.temporal import get_activities as get_webhooks_activities
+
+        webhooks_activities = get_webhooks_activities()
+        register_for_queues(queues=[WEBHOOKS_QUEUE], activities=webhooks_activities)
+        log.info("registered_webhooks_activities", count=len(webhooks_activities))
+    except ImportError as e:
+        log.warning("could_not_load_webhooks_activities", error=str(e))
 
     _activities_registered = True
 

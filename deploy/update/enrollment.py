@@ -34,7 +34,7 @@ from .host_facts import HostInstallation, installation_binding, safe_path, valid
 from .httpcache import HttpCache
 from .install import COMPONENT_VARIABLES, ComposeCommand, resolve_compose_command
 from .manifest import canonical_json, is_version, parse_image_ref
-from .orchestrator import check_binding, check_deployment, require, registered_installation
+from .orchestrator import NotCovered, check_binding, check_deployment, require, registered_installation
 from .processes import ProcessSupervisor
 from .receipt import StateDir
 from .runner_state import LauncherConfig, Registration, StoreError, StaleGeneration, _wire
@@ -82,6 +82,10 @@ def qualify_restart_policies(installation):
         supported = layout['services']
         model = installation.config()['services']
         require(bool(model) and set(model) <= set(supported), ReasonCode.UNSUPPORTED_INSTALLATION)
+        # Services the layout names as not covered by automatic updates yet refuse at setup.
+        not_covered = set(layout['automatic_unsupported']['services']) & set(model)
+        if not_covered:
+            raise NotCovered(not_covered)
         require(all(row['restart'] in ('unless-stopped', 'no') for row in supported.values()),
                 ReasonCode.UNSUPPORTED_INSTALLATION)
         require(all(row.get('restart', 'no') in ('unless-stopped', 'no') for row in model.values()),

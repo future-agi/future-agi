@@ -22,10 +22,49 @@ from simulate.services.test_executor import (
     TestExecutor,
 )
 from simulate.services.types.chat import ChatProviderChoices
+from simulate.utils.ended_reason import EndedReasonSource, set_ended_reason
 from simulate.utils.test_execution_utils import generate_simulator_agent_prompt
 from simulate.utils.websocket_notifications import notify_simulation_update
 
 logger = structlog.get_logger(__name__)
+
+
+class ChatUsageRefused(ValueError):
+    """The usage check did not allow a chat to start: a limit, a budget pause,
+    unpaid invoices, an empty or frozen balance, or a check that failed.
+    Callers answer with their own sentence for this case."""
+
+
+# What a failed chat's call shows as the reason it ended. The error itself
+# goes to the server log.
+CHAT_COULD_NOT_START = "The chat could not start because of an error. Re-run it."
+CHAT_STOPPED = "The chat stopped because of an error. Re-run it."
+# The chat service's own fixed reasons for refusing a message
+# (services/futureagi_chat/service.py). A call keeps these as written.
+SEND_REFUSAL_REASONS = frozenset(
+    {
+        "Session not found",
+        "Chat has already ended",
+        "Simulator returned an empty message twice",
+    }
+)
+
+
+class ChatSendRefused(Exception):
+    """The chat service refused a message with one of its own fixed reasons."""
+
+    def __init__(self, reason: str):
+        super().__init__(f"Failed to send message: {reason}")
+        self.reason = reason
+
+
+def _stopped_reason(error: BaseException) -> str:
+    """The reason a stopped chat's call shows: the chat service's own fixed
+    refusal when that is what stopped it, otherwise CHAT_STOPPED."""
+    for cause in (error, error.__cause__):
+        if isinstance(cause, ChatSendRefused):
+            return cause.reason
+    return CHAT_STOPPED
 
 
 def _get_chat_service(
@@ -106,8 +145,9 @@ def initiate_chat(
     Initiate a chat
     """
     try:
-        # Step 1 : Check if balance is there to initiate the chat
-        test_executor = TestExecutor()
+        # Step 1 : Check if balance is there to initiate the chat. A chat never
+        # reaches a voice provider, so it builds no voice services.
+        test_executor = TestExecutor(initialize_voice_service=False)
         (
             has_sufficient_balance,
             current_balance,
@@ -119,11 +159,13 @@ def initiate_chat(
 
         if not has_sufficient_balance:
             call_execution.status = CallExecution.CallStatus.FAILED
-            call_execution.ended_reason = balance_error
+            set_ended_reason(call_execution, balance_error, EndedReasonSource.USAGE)
             call_execution.ended_at = timezone.now()
-            call_execution.save(update_fields=["status", "ended_reason", "ended_at"])
+            call_execution.save(
+                update_fields=["status", "ended_reason", "call_metadata", "ended_at"]
+            )
 
-            raise ValueError(
+            raise ChatUsageRefused(
                 f"Insufficient balance for call {call_execution.id}: {balance_error}"
             )
 
@@ -237,6 +279,7 @@ def initiate_chat(
                 from ee.agenthub.traceerroragent.token_utils import (
                     estimate_tokens_text,
                 )
+
                 initial_tokens = estimate_tokens_text(initial_msg_text)
             except ImportError:
                 # OSS fallback: token count is informational; carry on with 0.
@@ -282,16 +325,29 @@ def initiate_chat(
 
     except ValueError as e:
         call_execution.status = CallExecution.CallStatus.FAILED
-        call_execution.ended_reason = str(e)
+        if not isinstance(e, ChatUsageRefused):
+            # A refusal has already stored the usage check's own reason.
+            logger.warning(
+                "chat_start_failed",
+                call_execution_id=str(call_execution.id),
+                error=str(e),
+            )
+            set_ended_reason(
+                call_execution, CHAT_COULD_NOT_START, EndedReasonSource.FIXED
+            )
         call_execution.ended_at = timezone.now()
-        call_execution.save(update_fields=["status", "ended_reason", "ended_at"])
+        call_execution.save(
+            update_fields=["status", "ended_reason", "call_metadata", "ended_at"]
+        )
         raise ValueError(f"Error initiating chat: {str(e)}") from e
 
     except Exception as e:
         call_execution.status = CallExecution.CallStatus.FAILED
-        call_execution.ended_reason = str(e)
+        set_ended_reason(call_execution, CHAT_COULD_NOT_START, EndedReasonSource.FIXED)
         call_execution.ended_at = timezone.now()
-        call_execution.save(update_fields=["status", "ended_reason", "ended_at"])
+        call_execution.save(
+            update_fields=["status", "ended_reason", "call_metadata", "ended_at"]
+        )
         logger.exception(f"Error initiating chat: {str(e)}")
         raise Exception(f"Error initiating chat: {str(e)}") from e
 
@@ -320,12 +376,10 @@ def run_prompt_based_conversation(
     """
     from simulate.pydantic_schemas.chat import ChatMessage, ChatRole
     from simulate.services.prompt_based_agent_adapter import (
-        create_adapter_from_run_test,
+        create_adapter_from_call_execution,
     )
 
     try:
-        run_test = call_execution.test_execution.run_test
-
         # Create the prompt-based agent adapter
         # Get variable values from scenario row data if available
         variable_values = {}
@@ -333,8 +387,8 @@ def run_prompt_based_conversation(
             row_data = call_execution.call_metadata.get("row_data", {})
             variable_values.update(row_data)
 
-        adapter = create_adapter_from_run_test(
-            run_test,
+        adapter = create_adapter_from_call_execution(
+            call_execution,
             organization_id=organization.id,
             workspace_id=workspace.id if workspace else None,
             variable_values=variable_values,
@@ -484,9 +538,13 @@ def run_prompt_based_conversation(
             error=str(e),
         )
         call_execution.status = CallExecution.CallStatus.FAILED
-        call_execution.ended_reason = str(e)
+        # The metadata as stored now, so stamps other code wrote are kept.
+        call_execution.refresh_from_db(fields=["call_metadata"])
+        set_ended_reason(call_execution, _stopped_reason(e), EndedReasonSource.FIXED)
         call_execution.ended_at = timezone.now()
-        call_execution.save(update_fields=["status", "ended_reason", "ended_at"])
+        call_execution.save(
+            update_fields=["status", "ended_reason", "call_metadata", "ended_at"]
+        )
         return False
 
 
@@ -522,6 +580,8 @@ def send_message_to_chat(
         )
 
         if not send_result.success:
+            if send_result.error in SEND_REFUSAL_REASONS:
+                raise ChatSendRefused(send_result.error)
             raise Exception(f"Failed to send message: {send_result.error}")
 
         # Extract usage metrics from send_result if available
@@ -578,11 +638,15 @@ def send_message_to_chat(
         if send_result.has_chat_ended:
             call_execution.status = CallExecution.CallStatus.ANALYZING
             call_execution.completed_at = timezone.now()
+            update_fields = ["status", "completed_at", "ended_reason"]
             if send_result.ended_reason:
-                call_execution.ended_reason = send_result.ended_reason
-            call_execution.save(
-                update_fields=["status", "completed_at", "ended_reason"]
-            )
+                set_ended_reason(
+                    call_execution,
+                    send_result.ended_reason,
+                    EndedReasonSource.SIMULATOR,
+                )
+                update_fields.append("call_metadata")
+            call_execution.save(update_fields=update_fields)
 
         if store_sync:
             result = store_chat_messages(*store_args)
@@ -639,9 +703,13 @@ def send_message_to_chat(
     except Exception as e:
         logger.exception(f"Error sending message to chat: {str(e)}")
         call_execution.status = CallExecution.CallStatus.FAILED
-        call_execution.ended_reason = str(e)
+        # The metadata as stored now, so stamps other code wrote are kept.
+        call_execution.refresh_from_db(fields=["call_metadata"])
+        set_ended_reason(call_execution, _stopped_reason(e), EndedReasonSource.FIXED)
         call_execution.ended_at = timezone.now()
-        call_execution.save(update_fields=["status", "ended_reason", "ended_at"])
+        call_execution.save(
+            update_fields=["status", "ended_reason", "call_metadata", "ended_at"]
+        )
         raise Exception(f"Error sending message to chat: {str(e)}") from e
 
 

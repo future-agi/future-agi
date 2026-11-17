@@ -8,6 +8,11 @@ export const E2E = {
   gatewayUrl: process.env.E2E_GATEWAY_URL ?? 'http://localhost:28090',
   googleMockUrl: process.env.E2E_GOOGLE_MOCK_URL ?? 'https://localhost:28443',
   slackMockUrl: process.env.E2E_SLACK_MOCK_URL ?? 'http://localhost:28081',
+  // Harness reads of the gateway-flow sinks (README "Gateway harness pieces"):
+  // the scoped mock LLM's request record, the webhook sink, the SMTP sink's API.
+  mockLlmUrl: process.env.E2E_MOCK_LLM_URL ?? 'http://localhost:28082',
+  webhookSinkUrl: process.env.E2E_WEBHOOK_SINK_URL ?? 'http://localhost:28083',
+  mailSinkUrl: process.env.E2E_MAIL_SINK_URL ?? 'http://localhost:28025',
   chUrl: process.env.E2E_CH_URL ?? 'http://localhost:28123',
   chDatabase: process.env.E2E_CH_DB ?? 'default',
   // The managed stacks' CH_PASSWORD (e2e/stack/*.env), for user `default`.

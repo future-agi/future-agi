@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: jina-ai
+version: 1.0.0
+name: Jina AI
+description: "Search the web, read pages and PDFs, rerank results, and deduplicate text and images."
+vendor:
+  name: Jina AI
+  domains: [jina.ai]
+eeCategory: research
+group: other
+categories: [research, web-search]
+tags: [search, extraction, parsing]
+docsUrl: https://github.com/jina-ai/MCP
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://github.com/jina-ai/MCP
+    fetchedAt: 2026-11-09

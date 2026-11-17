@@ -34,6 +34,7 @@ func TestTelnyxGateway(t *testing.T) {
 			key := t.Name()
 			t.Setenv("TELNYX_TEST_API_KEY", key)
 			t.Setenv("AGENTCC_INTERNAL_API_KEY", "")
+			os.Unsetenv("AGENTCC_INTERNAL_API_KEY") // no internal key; the gateway refuses one set but empty
 			t.Setenv("AGENTCC_AUTH_ENABLED", "false")
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				// Pinned to Telnyx's OpenAI Chat API, not the preset under test.
@@ -100,14 +101,20 @@ func TestTelnyxGateway(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if resp.StatusCode != tc.status {
-				t.Fatalf("gateway status = %d, want %d", resp.StatusCode, tc.status)
-			}
 			if tc.status != http.StatusOK {
-				if !bytes.Contains(data, []byte("synthetic upstream rejection")) {
-					t.Error("gateway did not preserve upstream error message")
+				// The provider rejected the gateway's credential, not the
+				// caller's: a 502 provider_auth_failed in the gateway's own
+				// words, carrying none of the provider's text.
+				if resp.StatusCode != http.StatusBadGateway || !bytes.Contains(data, []byte(`"code":"provider_auth_failed"`)) {
+					t.Fatalf("gateway answered %d %s, want 502 provider_auth_failed", resp.StatusCode, data)
+				}
+				if bytes.Contains(data, []byte("synthetic upstream rejection")) {
+					t.Errorf("the answer carries the provider's text: %s", data)
 				}
 				return
+			}
+			if resp.StatusCode != tc.status {
+				t.Fatalf("gateway status = %d, want %d", resp.StatusCode, tc.status)
 			}
 			if tc.stream {
 				if !strings.HasPrefix(resp.Header.Get("Content-Type"), "text/event-stream") || !bytes.Contains(data, []byte(`"content":"telnyx-synthetic-ok"`)) || !bytes.Contains(data, []byte("data: [DONE]")) {

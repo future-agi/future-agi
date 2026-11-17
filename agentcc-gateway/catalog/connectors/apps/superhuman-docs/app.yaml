@@ -1,0 +1,34 @@
+schema: "connector-manifest/v1#app"
+# Superhuman Docs, formerly Coda, has one app identity in this catalog.
+# Its API-key provider connects to the vendor-hosted MCP server.
+id: superhuman-docs
+version: 1.0.0
+name: Superhuman Docs
+description: "Read, create and update documents, pages and tables in Superhuman Docs."
+vendor:
+  name: Superhuman
+  domains: [superhuman.com, coda.io]
+  githubOrgs: [coda]
+eeCategory: productivity
+group: other
+categories: [productivity, knowledge-base]
+archetype: workspace-docs
+docsUrl: https://help.superhuman.com/hc/en-us/articles/46210076980365-Connect-to-the-Superhuman-Docs-MCP
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: name
+    url: https://help.superhuman.com/hc/en-us/articles/46210093285773-What-s-changing-Coda-becomes-Superhuman-Docs
+    fetchedAt: 2026-11-16
+  - fact: description
+    url: https://help.superhuman.com/hc/en-us/articles/46210102879629-Using-the-Superhuman-Docs-MCP
+    fetchedAt: 2026-11-16
+  - fact: vendor.name
+    url: https://help.superhuman.com/hc/en-us/articles/46210093285773-What-s-changing-Coda-becomes-Superhuman-Docs
+    fetchedAt: 2026-11-16
+  - fact: vendor.domains
+    url: https://help.superhuman.com/hc/en-us/articles/46210093285773-What-s-changing-Coda-becomes-Superhuman-Docs
+    fetchedAt: 2026-11-16
+  - fact: vendor.githubOrgs
+    url: https://github.com/coda
+    fetchedAt: 2026-11-16

@@ -1,5 +1,5 @@
 /* eslint-disable react/prop-types */
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useId, useState } from "react";
 import {
   Box,
   Button,
@@ -9,16 +9,33 @@ import {
   IconButton,
   LinearProgress,
   Stack,
+  Switch,
+  TextField,
+  ToggleButton,
+  ToggleButtonGroup,
   Tooltip,
   Typography,
   ButtonBase,
 } from "@mui/material";
+import { useParams } from "react-router";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import axios, { endpoints } from "src/utils/axios";
+import { enqueueSnackbar } from "notistack";
+import { useAuthContext } from "src/auth/hooks";
+import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
+import {
+  useEditDatasetEvalConfig,
+  useSetExperimentDefaults,
+} from "src/api/develop/analysis";
+import { getUserEvalListKey } from "./getEvalsList";
 import PropTypes from "prop-types";
 import Iconify from "src/components/iconify";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import { useEvaluationContext } from "./context/EvaluationContext";
 import { formatDistanceToNow } from "date-fns";
 import { canonicalEntries, canonicalValues } from "src/utils/utils";
+import { isSurfaceShown } from "src/launch/launchSwitch";
+import NotInReleaseChip from "src/components/NotInRelease/NotInReleaseChip";
 
 // ── Constants ──
 
@@ -76,7 +93,185 @@ const resolveColumnName = (value, allColumns) => {
 
 // ── Row ──
 
+const isScoreEval = (item) =>
+  ["percentage", "score", "numeric"].includes(
+    String(item.output_type ?? "").toLowerCase(),
+  );
+
+const versionNo = (v) => Number(String(v ?? "").replace(/^v/i, "")) || 0;
+
+/**
+ * L7c g7 (expdrawer:open): the output chip of an eval's output type: a
+ * score eval (`percentage`, `score`, `numeric`) reads Scoring, never
+ * Choices; an unknown type shows no chip.
+ */
+export function outputChipOf(type) {
+  const t = String(type ?? "").toLowerCase();
+  if (t === "pass_fail" || t === "pass/fail")
+    return { label: "Pass/fail", icon: "mdi:check-decagram" };
+  if (["percentage", "score", "numeric"].includes(t))
+    return { label: "Scoring", icon: "mdi:percent" };
+  if (t === "choices" || t === "deterministic")
+    return { label: "Choices", icon: "mdi:format-list-bulleted" };
+  return null;
+}
+/** L7c g7: the newer of two version labels ("v3"), or the one given. */
+export const newestOf = (a, b) =>
+  versionNo(b) > versionNo(a) ? b : a ?? b ?? null;
+
+/**
+ * `↑ Higher is better · Pass ≥ 0.70 · v3` (threshold only for score evals),
+ * with an amber `v2 → v3 available` when a newer version exists. HO D11: an
+ * eval added with a pinned version (`pinned_version_id`) reads `v3 · pinned`.
+ */
+export function evalDefinitionLine(item) {
+  if (item.higher_is_better == null && !item.version) return null;
+  const lower = item.higher_is_better === false;
+  const parts = [lower ? "↓ Lower is better" : "↑ Higher is better"];
+  if (isScoreEval(item) && item.pass_threshold != null)
+    parts.push(
+      `Pass ${lower ? "≤" : "≥"} ${Number(item.pass_threshold).toFixed(2)}`,
+    );
+  if (item.version) parts.push(item.version);
+  if (item.pinned_version_id) parts.push("pinned");
+  const newer =
+    item.latest_version &&
+    item.version &&
+    versionNo(item.latest_version) > versionNo(item.version)
+      ? `${item.version} → ${item.latest_version} available`
+      : null;
+  return { text: parts.join(" · "), newer };
+}
+
+const thresholdText = (v) => Number(v).toFixed(2);
+
+/**
+ * The pass threshold of a dataset eval. Saves through edit_and_run_user_eval
+ * with run:false; runs, the Summary, the leaderboard and Choose winner read
+ * it. Direction is not built: a run passes a score at or above the
+ * threshold, and nothing stores or reads another rule. So the direction
+ * control shows that rule, disabled, with the shared line.
+ */
+const ScoringEditor = ({ item, disabled, onSave, busy }) => {
+  const score = isScoreEval(item);
+  const directionLineId = useId();
+  const [threshold, setThreshold] = useState(
+    item.pass_threshold == null ? "" : String(item.pass_threshold),
+  );
+  const t = threshold.trim() === "" ? null : Number(threshold);
+  const invalid = score && (t == null || !Number.isFinite(t) || t < 0 || t > 1);
+  const changed = score && t !== (item.pass_threshold ?? null);
+  return (
+    <Box
+      sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap" }}
+    >
+      <ToggleButtonGroup
+        exclusive
+        size="small"
+        value="higher"
+        disabled
+        sx={{
+          "& .MuiToggleButton-root": {
+            py: 0.25,
+            px: 1,
+            fontSize: "11px",
+            textTransform: "none",
+          },
+        }}
+      >
+        <ToggleButton value="higher" aria-describedby={directionLineId}>
+          ↑ Higher is better
+        </ToggleButton>
+        <ToggleButton value="lower" aria-describedby={directionLineId}>
+          ↓ Lower is better
+        </ToggleButton>
+      </ToggleButtonGroup>
+      <Box
+        component="span"
+        id={directionLineId}
+        sx={{ display: "inline-flex" }}
+      >
+        <NotInReleaseChip />
+      </Box>
+      {score && (
+        <TextField
+          size="small"
+          label="Pass threshold"
+          value={threshold}
+          disabled={disabled}
+          onChange={(e) => setThreshold(e.target.value)}
+          error={invalid}
+          helperText={invalid ? "Between 0 and 1" : undefined}
+          inputProps={{ inputMode: "decimal", "aria-label": "Pass threshold" }}
+          sx={{ width: 120, "& input": { py: 0.6, fontSize: "12px" } }}
+        />
+      )}
+      <Button
+        size="small"
+        variant="contained"
+        disabled={disabled || !changed || invalid || busy}
+        onClick={() => onSave(item, { passThreshold: t })}
+        sx={{ fontSize: "11px", py: 0.25, minWidth: 0 }}
+      >
+        Save
+      </Button>
+    </Box>
+  );
+};
+
+/**
+ * The Save request's body besides the new threshold. It is the evaluation
+ * as stored: get_evals_list returns the saved config itself, so its run
+ * settings, mapping, params, notes and reason column go back unchanged and
+ * the server only sets the threshold sent in pass_threshold. The version
+ * it runs goes back too (null when it follows the default), so the server
+ * saves no new version. model and name are left out: the server keeps the
+ * stored ones, and a name may be longer than the request allows.
+ */
+const scoringSavePayload = (item) => {
+  const stored =
+    item.config &&
+    typeof item.config === "object" &&
+    !Array.isArray(item.config)
+      ? item.config
+      : {};
+  return {
+    config: {
+      ...stored,
+      // The server turns a missing setting on; every reader treats a missing
+      // one as off, so off is what was stored.
+      reason_column: Object.hasOwn(stored, "reason_column")
+        ? stored.reason_column
+        : false,
+    },
+    pinned_version_id: item.pinned_version_id ?? null,
+    ...(typeof item.error_localizer === "boolean"
+      ? { error_localizer: item.error_localizer }
+      : {}),
+    save_as_template: false,
+  };
+};
+
+// The evaluation as the server now reports it (null when the list no longer
+// has it). Its pass_threshold is the one runs apply.
+const readSavedEval = (datasetId, evalId) =>
+  axios
+    .get(endpoints.develop.eval.getEvalsList(datasetId), {
+      params: { eval_type: "user" },
+    })
+    .then(
+      (r) =>
+        (r?.data?.result?.evals ?? []).find(
+          (e) => String(e?.id) === String(evalId),
+        ) ?? null,
+    );
+
+const sameThreshold = (a, b) =>
+  a != null && b != null && Math.abs(Number(a) - Number(b)) < 1e-9;
+
 const EvalRow = ({
+  defaultSwitch,
+  scoring,
   item,
   selected,
   onToggle,
@@ -85,15 +280,60 @@ const EvalRow = ({
   onEdit,
   onDelete,
   showRun,
+  selectable,
   hideStatus,
   isProjectEvals,
   allColumns,
   disableDelete,
   disableDeleteReason,
+  confirmRun = true,
 }) => {
   const [open, setOpen] = useState(false);
   const [confirmAction, setConfirmAction] = useState(null); // "run" | "delete" | null
   const isComposite = (item.template_type || item.templateType) === "composite";
+  // The version / pass-rule line and the newer-version notice are the
+  // dataset.evalVersionNotice surface. Where the build hides it, the row
+  // neither shows them nor reads the template's versions for them.
+  const noticeShown = isSurfaceShown("dataset.evalVersionNotice");
+  // L7c g7 (ver:saved-list-notice): the template's newest version, read
+  // now (GET …/versions/), so a version saved in the editor shows here as
+  // `v2 → v3 available` without the list being written again.
+  const templateId = item.template_id ?? item.eval_template_id ?? null;
+  const { data: newest } = useQuery({
+    // Under the template's detail key: a saved version invalidates it.
+    queryKey: ["evals", "detail", templateId, "versions"],
+    queryFn: () =>
+      axios
+        .get(endpoints.develop.eval.getEvalVersions(templateId))
+        .then((r) => {
+          const list = r.data?.result?.versions ?? [];
+          const n = Math.max(
+            0,
+            ...list.map((v) => Number(v.version_number) || 0),
+          );
+          return n ? `v${n}` : null;
+        }),
+    enabled: Boolean(noticeShown && templateId && item.version && !isComposite),
+    staleTime: 10_000,
+  });
+  const { data: templateDetail } = useQuery({
+    queryKey: ["evals", "detail", templateId],
+    queryFn: () =>
+      axios
+        .get(endpoints.develop.eval.getEvalDetail(templateId))
+        .then((r) => r.data?.result ?? null),
+    enabled: Boolean(open && templateId),
+    staleTime: 30_000,
+  });
+  const tags = Array.isArray(templateDetail?.tags)
+    ? templateDetail.tags
+    : item.eval_template_tags ?? [];
+  const definition = noticeShown
+    ? evalDefinitionLine({
+        ...item,
+        latest_version: newestOf(item.latest_version, newest),
+      })
+    : null;
   const t = isComposite
     ? {
         label: "Composite",
@@ -106,6 +346,8 @@ const EvalRow = ({
   // NotStarted means "queued — worker will pick it up" so treat as running
   const isRunning = rawStatus === "running" || rawStatus === "notstarted";
   const isCompleted = rawStatus === "completed";
+  const isFailed = rawStatus === "failed";
+  // Stop retains the legacy Error status; execution failures use Failed.
   const isError = rawStatus === "error";
   // CANCELLED is set by StopUserEvalView — render it as a stopped state so
   // the row shows "Stopped" instead of no indicator.
@@ -122,7 +364,10 @@ const EvalRow = ({
   const rc = item.run_config || {};
   const isSystem =
     (item.owner || item.eval_owner) === "system" ||
-    (!isComposite && item.template_name && item.eval_template_tags); // heuristic fallback
+    ((item.owner ?? item.eval_owner) == null &&
+      !isComposite &&
+      item.template_name &&
+      item.eval_template_tags); // heuristic fallback
 
   // Build mapping display pairs
   const mappingPairs = hasMappingNames
@@ -131,6 +376,7 @@ const EvalRow = ({
 
   return (
     <Box
+      data-testid="saved-eval-row"
       sx={{
         borderRadius: "8px",
         border: "1px solid",
@@ -153,12 +399,13 @@ const EvalRow = ({
           py: 0.85,
         }}
       >
-        {showRun && !isProjectEvals && (
+        {selectable && !isProjectEvals && (
           <Checkbox
             size="small"
             checked={selected}
             onClick={(e) => e.stopPropagation()}
             onChange={() => onToggle(item)}
+            inputProps={{ "aria-label": `Select ${item.name}` }}
             sx={{ p: 0 }}
           />
         )}
@@ -170,15 +417,45 @@ const EvalRow = ({
           sx={{ color: t.color, flexShrink: 0 }}
         />
 
-        {/* Name */}
-        <Typography
-          variant="body2"
-          fontWeight={600}
-          noWrap
-          sx={{ fontSize: "12px", flex: 1, minWidth: 0 }}
-        >
-          {item.name}
-        </Typography>
+        {/* Name + definition line */}
+        <Box sx={{ flex: 1, minWidth: 0 }}>
+          <Typography
+            variant="body2"
+            fontWeight={600}
+            noWrap
+            sx={{ fontSize: "12px" }}
+          >
+            {item.name}
+          </Typography>
+          {definition && (
+            <Typography
+              data-testid="saved-eval-definition"
+              noWrap
+              sx={{
+                fontSize: "11px",
+                color: "text.secondary",
+                lineHeight: 1.4,
+              }}
+            >
+              {definition.text}
+            </Typography>
+          )}
+          {/* L7c g7 (ver:saved-list-notice): the newer version on its own
+              line, so a narrow drawer never cuts it off. */}
+          {definition?.newer && (
+            <Typography
+              data-testid="saved-eval-newer-version"
+              sx={{
+                fontSize: "11px",
+                lineHeight: 1.4,
+                color: "warning.dark",
+                fontWeight: 600,
+              }}
+            >
+              {definition.newer}
+            </Typography>
+          )}
+        </Box>
 
         {/* Type badge */}
         <Box
@@ -231,8 +508,8 @@ const EvalRow = ({
             </Box>
           </Tooltip>
         )}
-        {isError && (
-          <Tooltip title="Error" arrow>
+        {(isFailed || isError) && (
+          <Tooltip title={isFailed ? "Failed" : "Stopped"} arrow>
             <Box sx={{ display: "flex" }}>
               <Iconify
                 icon="solar:danger-circle-linear"
@@ -256,30 +533,95 @@ const EvalRow = ({
 
         {/* Actions */}
         <Box
-          sx={{ display: "flex", gap: 0.25, ml: 0.25, flexShrink: 0 }}
+          sx={{
+            display: "flex",
+            alignItems: "center",
+            gap: 0.25,
+            ml: 0.25,
+            flexShrink: 0,
+          }}
           onClick={(e) => e.stopPropagation()}
         >
+          {defaultSwitch && (
+            <Tooltip
+              arrow
+              title={
+                defaultSwitch.disabled
+                  ? "You need edit access to this dataset"
+                  : defaultSwitch.checked
+                    ? "Preselected when you create an experiment on this dataset"
+                    : "Not preselected in new experiments"
+              }
+            >
+              <Box
+                component="label"
+                sx={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 0.25,
+                  mr: 0.5,
+                  cursor: defaultSwitch.disabled ? "default" : "pointer",
+                }}
+              >
+                <Switch
+                  size="small"
+                  checked={defaultSwitch.checked}
+                  disabled={defaultSwitch.disabled || defaultSwitch.busy}
+                  onChange={(e) => defaultSwitch.onChange(e.target.checked)}
+                  inputProps={{
+                    "aria-label": `Use ${item.name} in new experiments`,
+                  }}
+                />
+                <Typography
+                  sx={{
+                    fontSize: "11px",
+                    color: "text.secondary",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  Use in new experiments
+                </Typography>
+              </Box>
+            </Tooltip>
+          )}
           {showRun &&
             !isProjectEvals &&
             (isRunning ? (
-              <Tooltip title="Stop" arrow>
-                <IconButton
+              // SVP-4.4: the red icon says what it does.
+              <Tooltip
+                title={`${item.name} is still scoring rows. Stop it; rows already scored keep their scores.`}
+                arrow
+              >
+                <Button
                   size="small"
+                  color="error"
+                  variant="text"
                   onClick={() => onStop?.(item)}
-                  sx={{ p: 0.4 }}
+                  startIcon={
+                    <Iconify icon="solar:stop-circle-linear" width={15} />
+                  }
+                  aria-label={`Stop scoring with ${item.name}`}
+                  sx={{
+                    minWidth: 0,
+                    px: 0.75,
+                    py: 0.25,
+                    fontSize: "11px",
+                    textTransform: "none",
+                    "& .MuiButton-startIcon": { mr: 0.25 },
+                  }}
                 >
-                  <Iconify
-                    icon="solar:stop-circle-linear"
-                    width={16}
-                    sx={{ color: "error.main" }}
-                  />
-                </IconButton>
+                  Stop
+                </Button>
               </Tooltip>
             ) : (
               <Tooltip title={isCompleted ? "Re-run" : "Run"} arrow>
                 <IconButton
                   size="small"
-                  onClick={() => setConfirmAction("run")}
+                  // W1-2: an experiment's Run opens the re-score confirm
+                  // (cost and new runs) instead of the inline one.
+                  onClick={() =>
+                    confirmRun ? setConfirmAction("run") : onRun?.(item)
+                  }
                   sx={{ p: 0.4 }}
                 >
                   <Iconify
@@ -481,6 +823,16 @@ const EvalRow = ({
           }}
         >
           <Stack spacing={1.25}>
+            {scoring && (
+              <Sec title="Scoring">
+                <ScoringEditor
+                  item={item}
+                  disabled={scoring.disabled}
+                  busy={scoring.busy}
+                  onSave={scoring.onSave}
+                />
+              </Sec>
+            )}
             {/* ── Mapping (full) ── */}
             {canonicalEntries(mapping).length > 0 && (
               <Sec title="Variable Mapping">
@@ -543,22 +895,10 @@ const EvalRow = ({
                       }
                     />
                   )}
-                  {item.output_type && (
+                  {outputChipOf(item.output_type) && (
                     <CChip
-                      icon={
-                        item.output_type === "pass_fail"
-                          ? "solar:check-circle-bold"
-                          : item.output_type === "percentage"
-                            ? "mdi:percent"
-                            : "solar:list-linear"
-                      }
-                      label={
-                        item.output_type === "pass_fail"
-                          ? "Pass/fail"
-                          : item.output_type === "percentage"
-                            ? "Scoring"
-                            : "Choices"
-                      }
+                      icon={outputChipOf(item.output_type).icon}
+                      label={outputChipOf(item.output_type).label}
                     />
                   )}
                 </Box>
@@ -600,24 +940,29 @@ const EvalRow = ({
                   }
                 />
                 <Row label="Owner" value={isSystem ? "System" : "User"} />
-                {item.evalGroup && <Row label="Group" value={item.evalGroup} />}
+                {(item.evalGroup ?? item.eval_group) && (
+                  <Row
+                    label="Group"
+                    value={item.evalGroup ?? item.eval_group}
+                  />
+                )}
                 {item.description && (
                   <Row label="About" value={item.description} />
                 )}
               </Box>
             </Sec>
 
-            {/* ── Tags ── */}
-            {item.eval_template_tags?.length > 0 && (
+            {/* ── Tags ── (L7c g7: the template's own, read when open) */}
+            {tags?.length > 0 && (
               <Sec title="Tags">
                 <Typography sx={{ fontSize: "12px", color: "text.primary" }}>
-                  {item.eval_template_tags.slice(0, 8).join(" · ")}
-                  {item.eval_template_tags.length > 8 && (
+                  {tags.slice(0, 8).join(" · ")}
+                  {tags.length > 8 && (
                     <Box
                       component="span"
                       sx={{ color: "text.tertiary", ml: 0.75 }}
                     >
-                      +{item.eval_template_tags.length - 8}
+                      +{tags.length - 8}
                     </Box>
                   )}
                 </Typography>
@@ -705,16 +1050,151 @@ const SavedEvalsList = ({
   onAddClick,
   isProjectEvals = false,
   showRun = true,
+  // Checkboxes follow showRun unless a caller that runs evals itself asks
+  // for them alone and reads the choice through onSelectionChange.
+  selectable = showRun,
+  onSelectionChange,
   hideStatus = false,
   hideHeader = false,
   allColumns,
   onClose,
   disableDelete = false,
   disableDeleteReason,
+  onRunEvalsClick,
+  onBulkRunClick,
+  headerExtra = null,
   autoSelectRequests,
   onAutoSelectApplied,
 }) => {
   const { setVisibleSection, setCurrentTab } = useEvaluationContext();
+  // `Use in new experiments` (§3.15): dataset evals only (the dataset route).
+  const { dataset: datasetId } = useParams();
+  const { role } = useAuthContext();
+  const canEdit = Boolean(
+    RolePermission.DATASETS?.[PERMISSIONS.UPDATE]?.[role] ?? true,
+  );
+  const queryClient = useQueryClient();
+  const [defaultOverrides, setDefaultOverrides] = useState({});
+  const setDefaults = useSetExperimentDefaults(datasetId);
+  const isDefault = (e) => defaultOverrides[e.id] ?? e.is_experiment_default;
+  const toggleDefault = (item, checked) => {
+    const ids = evals
+      .filter((e) => (e.id === item.id ? checked : isDefault(e)))
+      .map((e) => e.id);
+    setDefaultOverrides((p) => ({ ...p, [item.id]: checked }));
+    setDefaults.mutate(ids, {
+      onSuccess: () => {
+        enqueueSnackbar(
+          checked
+            ? `${item.name} will be preselected in new experiments`
+            : `${item.name} won't be preselected in new experiments`,
+          { variant: "success" },
+        );
+        queryClient.invalidateQueries({
+          queryKey: getUserEvalListKey("dataset", datasetId),
+        });
+      },
+      onError: () => {
+        setDefaultOverrides((p) => ({ ...p, [item.id]: !checked }));
+        enqueueSnackbar("Couldn't update the experiment defaults", {
+          variant: "error",
+        });
+      },
+    });
+  };
+  const editScoring = useEditDatasetEvalConfig(datasetId);
+  const [confirmingScoring, setConfirmingScoring] = useState(false);
+  // Saves the threshold, then reads the evaluation back: the success line
+  // shows only when the server reports the threshold that was typed and the
+  // version the row showed.
+  const saveScoring = async (item, { passThreshold }) => {
+    try {
+      await editScoring.mutateAsync({
+        evalId: item.id,
+        // No direction is sent: nothing stores or applies one.
+        higherIsBetter: undefined,
+        passThreshold,
+        extra: scoringSavePayload(item),
+      });
+    } catch (err) {
+      enqueueSnackbar(
+        err?.result || err?.message || "Couldn't save the pass threshold",
+        { variant: "error" },
+      );
+      return;
+    }
+    setConfirmingScoring(true);
+    try {
+      const saved = await readSavedEval(datasetId, item.id);
+      if (!saved) {
+        enqueueSnackbar(
+          `${item.name}: couldn't confirm the pass threshold was saved. Reopen the evaluations to check.`,
+          { variant: "warning" },
+        );
+      } else if (!sameThreshold(saved.pass_threshold, passThreshold)) {
+        enqueueSnackbar(
+          saved.pass_threshold == null
+            ? `${item.name}: the pass threshold wasn't saved.`
+            : `${item.name}: the pass threshold wasn't saved. Runs still use Pass ≥ ${thresholdText(saved.pass_threshold)}.`,
+          { variant: "error" },
+        );
+      } else if (
+        (saved.pinned_version_id ?? null) !== (item.pinned_version_id ?? null)
+      ) {
+        enqueueSnackbar(
+          `${item.name}: the pass threshold is saved, but the version it runs changed. Check the evaluation's version.`,
+          { variant: "warning" },
+        );
+      } else {
+        enqueueSnackbar(
+          `${item.name}: pass threshold saved (Pass ≥ ${thresholdText(passThreshold)})`,
+          { variant: "success" },
+        );
+      }
+    } catch {
+      enqueueSnackbar(
+        `${item.name}: couldn't confirm the pass threshold was saved. Reopen the evaluations to check.`,
+        { variant: "warning" },
+      );
+    } finally {
+      setConfirmingScoring(false);
+      queryClient.invalidateQueries({
+        queryKey: getUserEvalListKey("dataset", datasetId),
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["evals-summary", datasetId],
+      });
+    }
+  };
+  // The Scoring editor saves the pass threshold and keeps the rest of the
+  // stored evaluation (scoringSavePayload); its direction control is
+  // disabled. "Use in new experiments" shows wherever the backend reports
+  // is_experiment_default (it stores it).
+  const scoringFor = (e) =>
+    isSurfaceShown("dataset.evalScoring") &&
+    datasetId &&
+    !isProjectEvals &&
+    typeof e.is_experiment_default === "boolean"
+      ? {
+          disabled: !canEdit,
+          busy: editScoring.isPending || confirmingScoring,
+          onSave: saveScoring,
+        }
+      : null;
+  // L5 merge note 1c: the switch only preselects evals in New experiment,
+  // so it shows only where L6's dataset.experimentDefaults surface does.
+  const defaultSwitchFor = (e) =>
+    isSurfaceShown("dataset.experimentDefaults") &&
+    datasetId &&
+    !isProjectEvals &&
+    typeof e.is_experiment_default === "boolean"
+      ? {
+          checked: Boolean(isDefault(e)),
+          disabled: !canEdit,
+          busy: setDefaults.isPending,
+          onChange: (checked) => toggleDefault(e, checked),
+        }
+      : null;
   const handleAddClick = () => {
     if (onAddClick) {
       onAddClick();
@@ -742,6 +1222,9 @@ const SavedEvalsList = ({
     });
     onAutoSelectApplied(applied.map(({ token }) => token));
   }, [evals, autoSelectRequests, onAutoSelectApplied]);
+  useEffect(() => {
+    onSelectionChange?.(Array.from(sel));
+  }, [sel, onSelectionChange]);
   const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
   const toggle = (item) =>
     setSel((p) => {
@@ -786,12 +1269,13 @@ const SavedEvalsList = ({
             gap: 0.75,
           }}
         >
-          {showRun && !isProjectEvals && evals.length > 0 && (
+          {selectable && !isProjectEvals && evals.length > 0 && (
             <Checkbox
               size="small"
               checked={sel.size === evals.length && evals.length > 0}
               indeterminate={hasSel && sel.size < evals.length}
               onChange={toggleAll}
+              inputProps={{ "aria-label": "Select all evaluations" }}
               sx={{ p: 0 }}
             />
           )}
@@ -804,6 +1288,7 @@ const SavedEvalsList = ({
               ? `${sel.size} of ${evals.length} selected`
               : `Evals (${evals.length})`}
           </Typography>
+          {headerExtra}
           <Button
             variant="outlined"
             size="small"
@@ -832,13 +1317,21 @@ const SavedEvalsList = ({
           <EvalRow
             key={e.id}
             item={e}
+            defaultSwitch={defaultSwitchFor(e)}
+            scoring={scoringFor(e)}
             selected={sel.has(e.id)}
             onToggle={toggle}
-            onRun={onRunEvalClick}
+            onRun={
+              onRunEvalsClick
+                ? (item) => onRunEvalsClick([item])
+                : onRunEvalClick
+            }
+            confirmRun={!onRunEvalsClick}
             onStop={onStopEvalClick}
             onEdit={onEditEvalClick}
             onDelete={onDeleteEvalClick}
             showRun={showRun}
+            selectable={selectable}
             hideStatus={hideStatus}
             isProjectEvals={isProjectEvals}
             allColumns={allColumns}
@@ -891,13 +1384,24 @@ const SavedEvalsList = ({
             startIcon={<Iconify icon="solar:play-circle-linear" width={16} />}
             onClick={async () => {
               const toRun = hasSel ? selected : evals;
-              await Promise.all(toRun.map((e) => onRunEvalClick?.(e)));
+              // W1-2: a door that runs several evals in one request (an
+              // experiment's re-score) confirms first; Cancel keeps the list.
+              if (onRunEvalsClick) {
+                const out = await onRunEvalsClick(toRun);
+                if (out?.cancelled) return;
+              } else if (onBulkRunClick) {
+                // One request carrying every evaluation in the list; each
+                // row's Run keeps its own confirm and request.
+                await onBulkRunClick(toRun);
+              } else {
+                await Promise.all(toRun.map((e) => onRunEvalClick?.(e)));
+              }
               onClose?.();
             }}
           >
             {hasSel
-              ? `Run Selected (${sel.size})`
-              : `Run All (${evals.length})`}
+              ? `Run selected (${sel.size})`
+              : `Run all (${evals.length})`}
           </Button>
         </Box>
       )}
@@ -933,12 +1437,17 @@ SavedEvalsList.propTypes = {
   onAddClick: PropTypes.func,
   isProjectEvals: PropTypes.bool,
   showRun: PropTypes.bool,
+  selectable: PropTypes.bool,
+  onSelectionChange: PropTypes.func,
   hideStatus: PropTypes.bool,
   hideHeader: PropTypes.bool,
   allColumns: PropTypes.array,
   onClose: PropTypes.func,
   disableDelete: PropTypes.bool,
   disableDeleteReason: PropTypes.string,
+  onRunEvalsClick: PropTypes.func,
+  onBulkRunClick: PropTypes.func,
+  headerExtra: PropTypes.node,
   autoSelectRequests: PropTypes.arrayOf(
     PropTypes.shape({
       name: PropTypes.string.isRequired,

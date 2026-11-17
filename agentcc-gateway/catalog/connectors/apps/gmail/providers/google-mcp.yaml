@@ -1,0 +1,229 @@
+# Google's Gmail MCP server.
+# A Developer Preview: membership in the Google Workspace Developer Preview
+# Program is a prerequisite, and its terms say a member "may not grant end
+# users access, outside my domain or company, to developer applications that
+# have been built using APIs prior to their GA announcement" (term iv). Until
+# GA it serves only an organization that is itself a member, through that
+# organization's own OAuth client: hence the client group
+# google-workspace-mcp, which has no FutureAGI platform client, and
+# clientApproval. clientApproval.approvedAt stays unset until Google
+# announces GA: FutureAGI's own membership in the program never sets it
+# (terms ii and iv). The client must have "Use this client for an
+# AI-powered agent" selected, or the server rejects its requests.
+#
+# The scopes are the ones Google's setup lists (both restricted, which
+# matters only for an External client). The tools are the ones Google's tool
+# reference publishes that work under them, with its annotations and the
+# narrowest scope it names for each. label_message, label_thread,
+# unlabel_message and unlabel_thread need gmail.modify, and create_label
+# names no scope, so they are left out: defaultPosture deny refuses them,
+# and any tool not listed here.
+#
+# include_granted_scopes is left out of the authorize request, so each
+# connection's token carries only these scopes, not the ones the same
+# client was granted for another Google app.
+#
+# Not emitted to Omega until GA: EE may give a google-group app its shared
+# Google client, and OSS's registry entry cannot say "members only".
+#
+# Revoking a token "removes all OAuth 2.0 scopes previously granted to a
+# project": it ends the user's other connections made with clients of the
+# same Cloud project.
+schema: "connector-manifest/v1#provider"
+app: gmail
+id: google-mcp
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus:
+  label: preview
+  source: https://developers.google.com/workspace/guides/configure-mcp-servers
+transport:
+  kind: http
+  url: https://gmailmcp.googleapis.com/mcp/v1
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent, user]
+auth:
+  kind: oauth2
+  oauth2:
+    authorizeUrl: https://accounts.google.com/o/oauth2/v2/auth
+    tokenUrl: https://oauth2.googleapis.com/token
+    scopes:
+      - https://www.googleapis.com/auth/gmail.readonly
+      - https://www.googleapis.com/auth/gmail.compose
+    pkce: true
+    tokenBody: form
+    clientAuth: body
+    extraAuthorizeParams:
+      access_type: offline
+      prompt: consent
+    refresh: { supported: true, rotates: false }
+    revocation:
+      url: https://oauth2.googleapis.com/revoke
+      method: POST
+      tokenBody: form
+      tokenField: token
+      clientAuth: body
+    registration: [preregistered]
+    clientGroup: google-workspace-mcp
+  clientApproval:
+    required: true
+    program: "Google Workspace Developer Preview Program membership; until GA, the member's own domain only"
+    url: https://developers.google.com/workspace/preview
+    source: https://developers.google.com/workspace/guides/configure-mcp-servers
+tools:
+  source: upstream_mcp
+  defaultPosture: deny
+  items:
+    - name: search_threads
+      title: Search threads
+      description: "List the email threads that match a Gmail search query, with each message's subject and a snippet."
+      annotations:
+        readOnlyHint: true
+        destructiveHint: false
+        idempotentHint: true
+        openWorldHint: false
+      posture: ask
+      scopes:
+        - https://www.googleapis.com/auth/gmail.readonly
+    - name: get_thread
+      title: Get thread
+      description: "Read one email thread and its messages, by thread ID."
+      annotations:
+        readOnlyHint: true
+        destructiveHint: false
+        idempotentHint: true
+        openWorldHint: false
+      posture: ask
+      scopes:
+        - https://www.googleapis.com/auth/gmail.readonly
+    - name: get_message
+      title: Get message
+      description: "Read one email message, by message ID."
+      annotations:
+        readOnlyHint: true
+        destructiveHint: false
+        idempotentHint: true
+        openWorldHint: false
+      posture: ask
+      scopes:
+        - https://www.googleapis.com/auth/gmail.readonly
+    - name: list_labels
+      title: List labels
+      description: "List the user's own labels and their IDs."
+      annotations:
+        readOnlyHint: true
+        destructiveHint: false
+        idempotentHint: true
+        openWorldHint: false
+      posture: ask
+      scopes:
+        - https://www.googleapis.com/auth/gmail.readonly
+    - name: list_drafts
+      title: List drafts
+      description: "List draft emails, optionally filtered by a query."
+      annotations:
+        readOnlyHint: true
+        destructiveHint: false
+        idempotentHint: false
+        openWorldHint: false
+      posture: ask
+      scopes:
+        - https://www.googleapis.com/auth/gmail.readonly
+    - name: create_draft
+      title: Create draft
+      description: "Create a draft email, optionally as a reply to a message. The draft is not sent."
+      annotations:
+        readOnlyHint: false
+        destructiveHint: false
+        idempotentHint: false
+        openWorldHint: false
+      posture: ask
+      scopes:
+        - https://www.googleapis.com/auth/gmail.compose
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://developers.google.com/workspace/guides/configure-mcp-servers
+    fetchedAt: 2026-10-21
+  - fact: transport.variant
+    url: https://developers.google.com/workspace/guides/configure-mcp-servers
+    fetchedAt: 2026-10-21
+  - fact: auth.kind
+    url: https://developers.google.com/workspace/guides/configure-mcp-servers
+    fetchedAt: 2026-10-21
+  - fact: auth.kind
+    url: https://gmailmcp.googleapis.com/.well-known/oauth-protected-resource/mcp/v1
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.authorizeUrl
+    url: https://developers.google.com/identity/protocols/oauth2/web-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.authorizeUrl
+    url: https://accounts.google.com/.well-known/openid-configuration
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.tokenUrl
+    url: https://developers.google.com/identity/protocols/oauth2/web-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.tokenUrl
+    url: https://accounts.google.com/.well-known/openid-configuration
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.scopes
+    url: https://developers.google.com/workspace/guides/configure-mcp-servers
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.scopes
+    url: https://developers.google.com/workspace/gmail/api/auth/scopes
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.pkce
+    url: https://accounts.google.com/.well-known/openid-configuration
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.clientAuth
+    url: https://accounts.google.com/.well-known/openid-configuration
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.extraAuthorizeParams
+    url: https://developers.google.com/workspace/guides/configure-mcp-servers
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.extraAuthorizeParams
+    url: https://developers.google.com/identity/protocols/oauth2/web-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.refresh
+    url: https://developers.google.com/identity/protocols/oauth2/web-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.revocation.url
+    url: https://developers.google.com/identity/protocols/oauth2/web-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.revocation.url
+    url: https://accounts.google.com/.well-known/openid-configuration
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.registration
+    url: https://developers.google.com/workspace/guides/configure-mcp-servers
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.registration
+    url: https://accounts.google.com/.well-known/openid-configuration
+    fetchedAt: 2026-10-21
+  - fact: tools.items
+    url: https://developers.google.com/workspace/gmail/api/reference/mcp
+    fetchedAt: 2026-10-21
+  - fact: tools.items
+    url: https://developers.google.com/workspace/gmail/api/reference/mcp/tools_list/search_threads
+    fetchedAt: 2026-10-21
+  - fact: tools.items
+    url: https://developers.google.com/workspace/gmail/api/reference/mcp/tools_list/get_thread
+    fetchedAt: 2026-10-21
+  - fact: tools.items
+    url: https://developers.google.com/workspace/gmail/api/reference/mcp/tools_list/get_message
+    fetchedAt: 2026-10-21
+  - fact: tools.items
+    url: https://developers.google.com/workspace/gmail/api/reference/mcp/tools_list/list_labels
+    fetchedAt: 2026-10-21
+  - fact: tools.items
+    url: https://developers.google.com/workspace/gmail/api/reference/mcp/tools_list/list_drafts
+    fetchedAt: 2026-10-21
+  - fact: tools.items
+    url: https://developers.google.com/workspace/gmail/api/reference/mcp/tools_list/create_draft
+    fetchedAt: 2026-10-21
+x-omega: { ee: exclude, oss: exclude }

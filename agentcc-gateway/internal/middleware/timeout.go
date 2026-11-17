@@ -5,8 +5,24 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 )
+
+// ErrRequestTimeLimit is the cause of a context that the request's own time
+// limit ended: the client's timeout header (here), or its x-agentcc-deadline-ms
+// (the server's attempt contexts). context.Cause reads it, so the gateway can
+// tell that limit from its own timeouts for a model. It is a
+// context.DeadlineExceeded to errors.Is and reads the same, so a caller that
+// sees it where it saw the bare deadline error decides as before.
+var ErrRequestTimeLimit error = requestTimeLimit{}
+
+type requestTimeLimit struct{}
+
+func (requestTimeLimit) Error() string   { return context.DeadlineExceeded.Error() }
+func (requestTimeLimit) Unwrap() error   { return context.DeadlineExceeded }
+func (requestTimeLimit) Timeout() bool   { return true }
+func (requestTimeLimit) Temporary() bool { return true }
 
 // RequestTimeoutHeader reads the timeout a client asked for on this request.
 // x-agentcc-timeout takes a Go duration ("30s", "500ms"); x-agentcc-request-timeout
@@ -36,22 +52,72 @@ func RequestTimeoutHeader(r *http.Request) (time.Duration, bool) {
 // maximum. An envelope at the default would silently truncate a longer
 // per-model timeout, which is what it used to do on every route except
 // /v1/chat/completions.
-func Timeout(maxTimeout time.Duration) func(http.Handler) http.Handler {
+//
+// Paths listed in skipPaths get no deadline at all (see TimeoutSkipping).
+func Timeout(maxTimeout time.Duration, skipPaths ...string) func(http.Handler) http.Handler {
+	return TimeoutSkipping(maxTimeout, skipPaths, nil)
+}
+
+// TimeoutSkipping is Timeout with two kinds of skip: exact paths, and path
+// prefixes for routes that bound each call themselves or hold a stream open
+// (the MCP endpoint and its OAuth metadata). A prefix ending in "/" skips
+// every path below it; any other prefix skips the path itself and every path
+// below it, so "/mcp" skips "/mcp" and "/mcp/v/x" but not "/mcpx". Every
+// other path is held at maxTimeout, or at the client's header when that asks
+// for less.
+func TimeoutSkipping(maxTimeout time.Duration, exact []string, prefixes []string) func(http.Handler) http.Handler {
+	skip := make(map[string]struct{}, len(exact))
+	for _, p := range exact {
+		skip[p] = struct{}{}
+	}
+	var under []string
+	for _, p := range prefixes {
+		if p == "" {
+			continue
+		}
+		if !strings.HasSuffix(p, "/") {
+			skip[p] = struct{}{}
+			p += "/"
+		}
+		under = append(under, p)
+	}
+
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if skipped(r.URL.Path, skip, under) {
+				next.ServeHTTP(w, r)
+				return
+			}
+
 			timeout := maxTimeout
+			// The client's own limit, when it asks for less than the
+			// ceiling, ends the context with ErrRequestTimeLimit as its cause.
+			var cause error
 			if d, ok := RequestTimeoutHeader(r); ok && d < timeout {
 				timeout = d
+				cause = ErrRequestTimeLimit
 			}
 
 			setWriteDeadline(w, timeout)
 
-			ctx, cancel := context.WithTimeout(r.Context(), timeout)
+			ctx, cancel := context.WithTimeoutCause(r.Context(), timeout, cause)
 			defer cancel()
 
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
+}
+
+func skipped(path string, exact map[string]struct{}, under []string) bool {
+	if _, ok := exact[path]; ok {
+		return true
+	}
+	for _, p := range under {
+		if strings.HasPrefix(path, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // writeGrace is how long after the request's own deadline the response may

@@ -3,10 +3,10 @@ import { Box } from "@mui/material";
 import PropTypes from "prop-types";
 import React from "react";
 import { FormSelectField } from "src/components/FormSelectField";
-import { NumericLabelDisplayTypes } from "./common";
+import { getNumericLabelDisplayTypes } from "./common";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 
-const NumericLabelForm = ({ control }) => {
+const NumericLabelForm = ({ control, storedDisplayType }) => {
   return (
     <>
       <FormSelectField
@@ -14,7 +14,7 @@ const NumericLabelForm = ({ control }) => {
         size="small"
         control={control}
         fieldName="settings.displayType"
-        options={NumericLabelDisplayTypes}
+        options={getNumericLabelDisplayTypes(storedDisplayType)}
         sx={{
           "& .MuiSvgIcon-root.MuiSelect-icon": {
             height: "20px",
@@ -33,6 +33,7 @@ const NumericLabelForm = ({ control }) => {
             placeholder="Enter min value"
             fullWidth
             fieldType="number"
+            allowNegative
           />
         </Box>
         <Box sx={{ flex: 1 }}>
@@ -45,6 +46,7 @@ const NumericLabelForm = ({ control }) => {
             placeholder="Enter max value"
             fullWidth
             fieldType="number"
+            allowNegative
           />
         </Box>
       </Box>
@@ -64,6 +66,7 @@ const NumericLabelForm = ({ control }) => {
 
 NumericLabelForm.propTypes = {
   control: PropTypes.any,
+  storedDisplayType: PropTypes.string,
 };
 
 export default NumericLabelForm;

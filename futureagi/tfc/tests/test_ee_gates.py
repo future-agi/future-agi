@@ -11,7 +11,8 @@ through the capability service (`_turing_denied_off_cloud`) rather than a raw
 - self-hosted allows when it is licensed,
 - early-startup falls back to the deployment probe,
 - the public `turing_oss_gate_response` / `strip_turing_from_config_options`
-  honour that decision.
+  honour that decision,
+- a provider-prefixed model id is treated as its base model.
 """
 
 from __future__ import annotations
@@ -197,6 +198,53 @@ def test_strip_handles_empty_and_missing_model_key():
         assert ee_gates.strip_turing_from_config_options(None) == {}
         passthrough = {"temperature": [0.0, 1.0]}
         assert ee_gates.strip_turing_from_config_options(passthrough) is passthrough
+
+
+# ── provider-prefixed model ids ──────────────────────────────────────────
+# A provider-prefixed model id is treated as its base model by the check,
+# the gate and the option filter alike.
+def test_is_turing_model_treats_a_prefixed_id_as_its_base_model():
+    assert ee_gates.is_turing_model("x/turing_small") is True
+    assert ee_gates.is_turing_model("vertex_ai/turing_flash") is True
+    assert ee_gates.is_turing_model("x/protect_flash") is True
+
+
+def test_is_turing_model_keeps_plain_names_unchanged():
+    for name in ("turing_small", "turing_large", "TURING_FLASH", "protect"):
+        assert ee_gates.is_turing_model(name) is True, name
+    for name in ("gpt-4o", "", None):
+        assert ee_gates.is_turing_model(name) is False, name
+
+
+def test_a_prefixed_non_turing_id_is_not_turing():
+    assert ee_gates.is_turing_model("openai/gpt-4o") is False
+    with patch("tfc.ee_gates._turing_denied_off_cloud", return_value=True):
+        assert ee_gates.turing_oss_gate_response("openai/gpt-4o") is None
+
+
+def test_gate_refuses_a_prefixed_turing_id_where_it_refuses_the_plain_one():
+    with patch("tfc.ee_gates._turing_denied_off_cloud", return_value=True):
+        for model in ("turing_small", "x/turing_small"):
+            resp = ee_gates.turing_oss_gate_response(model)
+            assert resp is not None, model
+            assert resp.status_code == 402
+            assert resp.data["feature"] == "turing"
+            assert resp.data["code"] == "ENTITLEMENT_DENIED"
+            combined = ee_gates.ee_model_gate_for_template(model)
+            assert combined is not None, model
+            assert combined.status_code == 402
+
+
+def test_gate_passes_a_prefixed_turing_id_when_not_denied():
+    with patch("tfc.ee_gates._turing_denied_off_cloud", return_value=False):
+        assert ee_gates.turing_oss_gate_response("x/turing_small") is None
+
+
+def test_strip_removes_a_prefixed_turing_id_when_denied():
+    opts = {"model": ["gpt-4o", "x/turing_small", "openai/gpt-4o"]}
+    with patch("tfc.ee_gates._turing_denied_off_cloud", return_value=True):
+        out = ee_gates.strip_turing_from_config_options(opts)
+    assert out["model"] == ["gpt-4o", "openai/gpt-4o"]
 
 
 # ── voice_sim_oss_gate_response() ─────────────────────────────────────────

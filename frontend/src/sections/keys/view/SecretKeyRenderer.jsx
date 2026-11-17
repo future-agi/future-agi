@@ -1,56 +1,38 @@
-import { Box, IconButton } from "@mui/material";
+import { Box } from "@mui/material";
 import React from "react";
 import PropTypes from "prop-types";
-import { enqueueSnackbar } from "notistack";
-import { copyToClipboard } from "src/utils/utils";
-import SvgColor from "src/components/svg-color";
-import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 
-const maskString = (str) => {
-  const value = String(str || "");
-  if (!value) return "-";
-  if (value.includes("*")) return value;
-  const start = value.slice(0, 4);
-  const end = value.slice(-4);
-  return start + "**********" + end;
-};
+const EIGHT_STARS = "********";
 
-const SecretKeyRenderer = ({ value }) => {
-  const rawValue = String(value || "");
-  const isMasked = rawValue.includes("*");
+// A list cell shows exactly the masked hint the server sent, which always
+// holds a star. Any other value shows eight stars: the list never builds a
+// hint of its own and never shows a full secret. A list cell has no copy
+// action; the full secret is copied only in the one-time reveal after create.
+const listText = (value) =>
+  typeof value === "string" && value.includes("*") ? value : EIGHT_STARS;
 
-  return (
+const SecretKeyRenderer = ({ value }) => (
+  <Box
+    sx={{
+      display: "flex",
+      alignItems: "center",
+      height: "100%",
+      minWidth: 0,
+    }}
+  >
     <Box
+      component="span"
       sx={{
-        display: "flex",
-        alignItems: "center",
-        height: "100%",
-        gap: "12px",
+        minWidth: 0,
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
       }}
     >
-      {maskString(value)}
-      {!isMasked && rawValue && (
-        <IconButton
-          onClick={() => {
-            copyToClipboard(value);
-            trackEvent(Events.apikeyCopied, {
-              [PropertyName.click]: "copied",
-            });
-            enqueueSnackbar("Copied to clipboard", {
-              variant: "success",
-            });
-          }}
-          size="small"
-        >
-          <SvgColor
-            src="/assets/icons/ic_copy.svg"
-            sx={{ width: "16px", height: "16px", color: "text.primary" }}
-          />
-        </IconButton>
-      )}
+      {listText(value)}
     </Box>
-  );
-};
+  </Box>
+);
 
 SecretKeyRenderer.propTypes = {
   value: PropTypes.string,

@@ -165,7 +165,8 @@ class InstantEvalLimitErrorSerializer(serializers.Serializer):
 
 class InstantEvalRefusalField(StringOrObjectField):
     """A refusal's text, or for a question on Jev without the organization's
-    TypeSafe key {"message", "error_code": "JEV_KEY_MISSING", "settings_path"}."""
+    TypeSafe key {"message", "error_code": "JEV_KEY_MISSING", "settings_path"}
+    ("JEV_KEY_UNREADABLE" when the key is saved but can't be read)."""
 
     class Meta:
         swagger_schema_fields = {
@@ -784,6 +785,11 @@ def _busy_response(gm, runs):
 
 
 JEV_KEY_MISSING = "JEV_KEY_MISSING"
+JEV_KEY_UNREADABLE = "JEV_KEY_UNREADABLE"
+JEV_KEY_UNREADABLE_MESSAGE = (
+    "The TypeSafe key saved for this workspace can't be read. Enter that key "
+    "again in Settings > AI Providers."
+)
 AI_PROVIDERS_SETTINGS_PATH = "/dashboard/settings/ai-providers"
 
 
@@ -794,8 +800,9 @@ def _questions(task):
 
 def _jev_key_missing(gm, project, configs):
     """400 when a question runs on Jev and the organization has no TypeSafe
-    key saved (the lookup the engine makes for every answer): every row would
-    fail on it, so the run doesn't start. None when it can run."""
+    key saved, or one this deployment can't read (the lookup the engine makes
+    for every answer): every row would fail on it, so the run doesn't start.
+    None when it can run."""
     from model_hub.utils.jev_templates import binding_model
     from tfc.ee_gates import is_jev_model
 
@@ -811,6 +818,7 @@ def _jev_key_missing(gm, project, configs):
         MissingProviderKeyError,
     )
     from evaluations.engine.instance import _get_typesafe_api_key
+    from model_hub.services.key_at_rest import KeyUnreadable
     from tfc.middleware.workspace_context import (
         get_current_workspace,
         set_workspace_context,
@@ -845,6 +853,18 @@ def _jev_key_missing(gm, project, configs):
                 "settings_path": AI_PROVIDERS_SETTINGS_PATH,
             },
             code=JEV_KEY_MISSING,
+        )
+    except KeyUnreadable:
+        # Saved but not readable here: a plain sentence, never the lookup's
+        # own text, which names a deployment setting.
+        return gm.custom_error_response(
+            400,
+            {
+                "message": JEV_KEY_UNREADABLE_MESSAGE,
+                "error_code": JEV_KEY_UNREADABLE,
+                "settings_path": AI_PROVIDERS_SETTINGS_PATH,
+            },
+            code=JEV_KEY_UNREADABLE,
         )
     finally:
         set_workspace_context(workspace=scope)
@@ -1020,14 +1040,16 @@ class InstantEvalStartView(InstantEvalLicenseRequired, APIView):
             return self._gm.not_found("Project not found")
         org = _org(request)
         unit = data["unit"]
-        wanted = [str(c) for c in data["config_ids"]]
+        # A task answers each config once, even if several editors reused it.
+        # Price and track exactly that same ordered set of questions.
+        wanted = list(dict.fromkeys(str(c) for c in data["config_ids"]))
         configs = {
             str(c.id): c
             for c in CustomEvalConfig.objects.filter(
                 id__in=wanted, project=project, deleted=False
             ).select_related("eval_template")
         }
-        if len(configs) != len(set(wanted)) or not all(
+        if len(configs) != len(wanted) or not all(
             (c.config or {}).get("instant_eval") for c in configs.values()
         ):
             return self._gm.bad_request("Those questions aren't saved in this project.")
@@ -1088,7 +1110,7 @@ class InstantEvalStartView(InstantEvalLicenseRequired, APIView):
             not data.get("confirm") or (confirmed is not None and rows > confirmed)
         ):
             return _confirm_response(self._gm, f"Reading {rows:,} rows", rows, credits)
-        ordered = [configs[c] for c in dict.fromkeys(wanted)]
+        ordered = [configs[c] for c in wanted]
         first = _question(ordered[0])["question"]
         filters = {
             "project_id": str(project.id),

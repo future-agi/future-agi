@@ -1,0 +1,71 @@
+# Linear's MCP server with a token from a Linear OAuth application, which
+# Linear's MCP page says the server accepts as the bearer. EE's built-in
+# Linear app uses this flow.
+schema: "connector-manifest/v1#provider"
+app: linear
+id: oauth-app
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.linear.app/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent, user]
+auth:
+  kind: oauth2
+  oauth2:
+    authorizeUrl: https://linear.app/oauth/authorize
+    tokenUrl: https://api.linear.app/oauth/token
+    scopes: [read, write]
+    pkce: true
+    tokenBody: form
+    clientAuth: body
+    refresh: { supported: true, rotates: true }
+    revocation:
+      url: https://api.linear.app/oauth/revoke
+      method: POST
+      tokenBody: form
+      tokenField: token
+      clientAuth: body
+    registration: [preregistered]
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://linear.app/docs/mcp
+    fetchedAt: 2026-10-20
+  - fact: transport.variant
+    url: https://linear.app/docs/mcp
+    fetchedAt: 2026-10-20
+  - fact: auth.kind
+    url: https://linear.app/docs/mcp
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.authorizeUrl
+    url: https://linear.app/developers/oauth-2-0-authentication
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.tokenUrl
+    url: https://linear.app/developers/oauth-2-0-authentication
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.scopes
+    url: https://linear.app/developers/oauth-2-0-authentication
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.pkce
+    url: https://linear.app/developers/oauth-2-0-authentication
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.refresh
+    url: https://linear.app/developers/oauth-2-0-authentication
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.revocation.url
+    url: https://linear.app/developers/oauth-2-0-authentication
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.registration
+    url: https://linear.app/developers/oauth-2-0-authentication
+    fetchedAt: 2026-10-20
+x-omega: { oss: exclude }

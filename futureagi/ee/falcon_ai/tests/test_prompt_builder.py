@@ -52,6 +52,22 @@ def test_cost_workflow_uses_portable_tools():
     assert "get_usage_overview" not in section
 
 
+def test_built_prompt_lists_api_keys_without_advertising_creation(monkeypatch):
+    monkeypatch.setattr("ee.falcon_ai.prompt_builder.timezone.now", lambda: FIXED_NOW)
+    built = PromptBuilder().build(
+        mode="general",
+        skill=None,
+        memories=[],
+        tools=[SimpleNamespace(name="list_users")],
+        context=None,
+        workspace_name="Default Workspace",
+        user_email="qa@futureagi.com",
+    )
+
+    assert "list_api_keys" in built
+    assert "create_api_key" not in built
+
+
 def test_rejected_shorthand_is_named_explicitly(prompt):
     """The three forms seen failing against the live catalog."""
     assert "7d" in prompt or "7D" in prompt

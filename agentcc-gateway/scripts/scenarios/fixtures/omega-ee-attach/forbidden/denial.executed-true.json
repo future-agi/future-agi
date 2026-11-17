@@ -1,0 +1,40 @@
+{
+  "http": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    }
+  },
+  "body": {
+    "jsonrpc": "2.0",
+    "id": 3,
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "tool \"github__create_issue\" is not allowed for this caller [tool_denied]"
+        }
+      ],
+      "isError": true,
+      "_meta": {
+        "io.futureagi/error": {
+          "type": "permission_error",
+          "code": "tool_denied",
+          "message": "tool \"github__create_issue\" is not allowed for this caller",
+          "param": null,
+          "metadata": {
+            "rule": "access.rules[0]",
+            "virtual_server": "vs_01K7CN5EEAGENTM0DE00000001"
+          }
+        },
+        "io.futureagi/tool_call": {
+          "tool_call_id": "tc_01K7CN5TC00000000000000007",
+          "executed": true,
+          "billing_mode": "byok",
+          "billed_usd": 0,
+          "latency_ms": 4
+        }
+      }
+    }
+  }
+}

@@ -4,6 +4,7 @@ import { Box, Stack, Typography, Button, Tab } from "@mui/material";
 
 import Iconify from "src/components/iconify";
 import { CustomTabs } from "src/components/tabs/tabs";
+import NotInReleaseChip from "src/components/NotInRelease/NotInReleaseChip";
 import { CAPABILITY, useFeatureAllowed } from "src/hooks/useCapabilities";
 import SideDrawer from "../../../../components/SideDrawer";
 import {
@@ -20,7 +21,7 @@ import ImaginePane from "./ImaginePane";
  * Opened by the run header's "Debug failures" button. Opening it requests the
  * run's Omega diagnosis once (`debug-analysis`); the DiagnosisPane shows the
  * issues it found and hands their calls back to the table. A second "Imagine"
- * tab is present but gated (no backend).
+ * tab opens an inert pane: it is not built in this release and says so.
  *
  * The drawer uses the shared `SideDrawer`, which already paints the single
  * close-X — so this content deliberately does NOT add its own, or the two would
@@ -140,11 +141,16 @@ export default function FixMyAgentDrawer({
           </Box>
         </Stack>
 
-        {/* Tab bar — Diagnosis (real) and Imagine (gated). */}
+        {/* Tab bar — Diagnosis (built) and Imagine (not in this release). */}
         <CustomTabs
           value={tab}
           onChange={(_, v) => setTab(v)}
-          sx={{ boxShadow: "none", borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}
+          sx={{
+            boxShadow: "none",
+            borderBottom: "1px solid",
+            borderColor: "divider",
+            flexShrink: 0,
+          }}
         >
           <Tab
             value="diagnosis"
@@ -154,7 +160,12 @@ export default function FixMyAgentDrawer({
           />
           <Tab
             value="imagine"
-            label="Imagine"
+            label={
+              <Stack direction="row" alignItems="center" spacing={0.75}>
+                <span>Imagine</span>
+                <NotInReleaseChip />
+              </Stack>
+            }
             icon={<Iconify icon="solar:magic-stick-3-linear" width={14} />}
             iconPosition="start"
           />

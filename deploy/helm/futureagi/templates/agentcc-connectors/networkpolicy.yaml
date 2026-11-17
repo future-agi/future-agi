@@ -1,0 +1,62 @@
+{{- if include "futureagi.agentccConnectors.enabled" . }}
+{{- $ctx := dict "root" . "component" "agentcc-connectors" -}}
+# Rendered whatever networkPolicy.enabled says. In: only this release's gateway
+# pods, on the runtime's port. Out: DNS, and public addresses only, the ranges
+# the runtime's own SSRF guard (netguard) treats as public: never the cluster's
+# networks, loopback, link-local or a cloud metadata service. The runtime
+# itself still requires HTTPS.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "futureagi.component" $ctx }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "futureagi.componentLabels" $ctx | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "futureagi.selectorLabels" $ctx | nindent 6 }}
+  policyTypes: ["Ingress", "Egress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "futureagi.selectorLabels" (dict "root" . "component" "agentcc-gateway") | nindent 14 }}
+      ports:
+        - port: {{ include "futureagi.agentccConnectors.port" . }}
+          protocol: TCP
+  egress:
+    # DNS, to any resolver: 53, and 5353 where the cluster DNS listens there
+    # behind its Service (OpenShift).
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+        - port: 5353
+          protocol: UDP
+        - port: 5353
+          protocol: TCP
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 0.0.0.0/8
+              - 10.0.0.0/8
+              - 100.64.0.0/10
+              - 127.0.0.0/8
+              - 168.63.129.16/32
+              - 169.254.0.0/16
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 224.0.0.0/4
+              - 255.255.255.255/32
+        - ipBlock:
+            cidr: "::/0"
+            except:
+              - "::/128"
+              - "::1/128"
+              - "fc00::/7"
+              - "fe80::/10"
+              - "ff00::/8"
+{{- end }}

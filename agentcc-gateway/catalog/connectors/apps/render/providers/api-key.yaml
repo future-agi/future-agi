@@ -1,0 +1,46 @@
+# Render API keys grant access to the account's workspaces and services.
+# Resource provisioning and deployments can incur Render infrastructure charges.
+schema: "connector-manifest/v1#provider"
+app: render
+id: api-key
+version: 1.1.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.render.com/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: Render API key
+      help: "Create an API key from Render Account Settings. It grants MCP access to your workspaces and services, including potentially destructive deploy and environment-variable operations. Supply the key without the Bearer prefix."
+      helpUrl: https://render.com/docs/mcp-server
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_metered
+  source: https://render.com/pricing
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://render.com/docs/mcp-server.md
+    fetchedAt: 2026-11-09
+  - fact: transport.variant
+    url: https://render.com/changelog/connect-to-the-official-render-mcp-server-over-http
+    fetchedAt: 2026-11-09
+  - fact: auth.kind
+    url: https://render.com/docs/mcp-server.md
+    fetchedAt: 2026-11-09
+  - fact: auth.credentialParts
+    url: https://render.com/docs/mcp-server.md
+    fetchedAt: 2026-11-09

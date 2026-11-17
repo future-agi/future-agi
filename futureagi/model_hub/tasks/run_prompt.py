@@ -25,7 +25,6 @@ run_prompt_tracker.key_prefix = "running_prompt:"
 def process_not_started_prompt(run_prompt_id):
     """Process a newly created run prompt with distributed tracking."""
     close_old_connections()
-    tracking_key = f"prompt_{run_prompt_id}"
 
     logger.info(
         "process_not_started_prompt_starting",
@@ -118,7 +117,7 @@ def process_not_started_prompt(run_prompt_id):
         close_old_connections()
 
 
-def process_editing_prompt(run_prompt_id):
+def process_editing_prompt(run_prompt_id, row_ids=None):
     """Process an edited/re-run prompt with distributed tracking."""
     close_old_connections()
 
@@ -172,7 +171,10 @@ def process_editing_prompt(run_prompt_id):
                     run_prompt_id=str(run_prompt_id),
                 )
                 runner = RunPrompts(run_prompt_id=run_prompt_id)
-                runner.run_prompt(edit_mode=True)
+                if row_ids is None:
+                    runner.run_prompt(edit_mode=True)
+                else:
+                    runner.run_prompt(edit_mode=True, row_ids=row_ids)
                 logger.info(
                     "process_editing_prompt_completed",
                     run_prompt_id=str(run_prompt_id),
@@ -263,7 +265,10 @@ def process_prompts_single(prompt):
         if prompt_type == "not_started":
             process_not_started_prompt(prompt_id)
         elif prompt_type == "editing":
-            process_editing_prompt(prompt_id)
+            if "row_ids" in prompt:
+                process_editing_prompt(prompt_id, row_ids=prompt["row_ids"])
+            else:
+                process_editing_prompt(prompt_id)
         else:
             logger.error(
                 "process_prompts_single_unknown_type",
@@ -318,9 +323,7 @@ def recover_stuck_run_prompts():
         stuck_prompts = RunPrompter.objects.filter(
             status=StatusType.RUNNING.value,
             updated_at__lt=threshold,
-        ).values_list("id", flat=True)[
-            :20
-        ]  # Process max 20 at a time
+        ).values_list("id", flat=True)[:20]  # Process max 20 at a time
 
         stuck_count = len(stuck_prompts)
         if stuck_count == 0:

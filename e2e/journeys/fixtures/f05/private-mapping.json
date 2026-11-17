@@ -1,0 +1,298 @@
+{
+  "schema": "f05-private-mapping/v1",
+  "candidateHead": "a0372df842d35c91c0c6fa9a98a96c6199ccd436",
+  "candidateRepository": "<local checkout of candidateHead>",
+  "publicContractSha256": "0a68726266f903edc8a92d5ad36922197d06ba09ac9814a4d67a17bf45839aaf",
+  "publicReviewSha256": "b16e0ffc0cc4834fc705cc6d0081cefba82b8a95d42c2d27dbf794d01fb81fd7",
+  "publicReaderHead": "8034fcdfc25d6cbb1e416e4febc89ef2cfa372b1",
+  "publicSourceHead": "da4c81cc623f909ce38f53e01b557ee8374d5adb",
+  "status": "SOURCE_MAPPED_PARTIAL_REVIEW_OWED",
+  "execution": "NOT_RUN",
+  "runtimeReady": false,
+  "productAccepted": false,
+  "namespace": {
+    "entry": "\"${databaseSchema}\".\"usage_managedcreditentry\"",
+    "account": "\"${databaseSchema}\".\"usage_managedcreditaccount\"",
+    "basis": [
+      "futureagi/ee/usage/apps.py:8-14",
+      "futureagi/ee/usage/models/managed_credits.py:68-155,164-343",
+      "futureagi/ee/usage/migrations/0030_managed_credit_ledger.py:19-80"
+    ],
+    "rule": "Django app label usage plus lowercase model name, with no db_table override. Schema is deployment-bound, not assumed public. Read pg_catalog for required column names/types and global nondeferrable idempotency uniqueness; check usage migrations 0030..0033 in the same read-only snapshot. Scope head/schema declarations do not establish measured runtime identity."
+  },
+  "transaction": {
+    "entryPoint": "capturePrivateLedger(scope, PRIVATE_PROJECTION, admittedLocalPool)",
+    "begin": "BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY",
+    "connection": "One dedicated pool.connect lease; never StateProbe.pg or pool.query. Numeric loopback host, e2e_ database, no connectionString/env/discovery/custom stream. External guard and actual role/schema/tuple ownership admission remain owed.",
+    "snapshot": "txid_current_snapshot, backend PID, current database, transaction_read_only and isolation checked before/after; all metadata/account/entry SELECTs within that snapshot. Successful and failed paths ROLLBACK and release; failed leases destroyed.",
+    "writeControl": "SAVEPOINT then a fixed zero-row account UPDATE WHERE false must be refused with SQLSTATE 25006; ROLLBACK TO SAVEPOINT. It never changes any balance, even if read-only is broken; unexpected success fails the whole capture. Native PostgreSQL control NOT_RUN.",
+    "amounts": "Every int8/int4/UUID selected as SQL text before driver decoding, timestamps as six-place UTC text. Never row_to_json, JSON money numbers, Number or parseFloat. NULL preserved. Full isolated-org history limited to 10001 overflow sentinel; >10000 fails rather than truncates. No DISTINCT/grouping or hidden duplicates.",
+    "limits": "5s statement timeout, 1s lock timeout, 10000 accepted ledger rows. Timeouts local to transaction. Query/rollback/schema errors fail closed with fixed codes, no raw SQL error or row logging."
+  },
+  "mapping": [
+    {
+      "field": "request_identity",
+      "status": "MAPPED_LEGACY_EXPLICIT_ONLY",
+      "columns": [
+        "id",
+        "organization_id",
+        "request_id",
+        "source_kind",
+        "source_ref"
+      ],
+      "types": ["uuid", "uuid", "varchar(255)", "varchar(32)", "varchar(255)"],
+      "model": "futureagi/ee/usage/models/managed_credits.py:180-192,248-249",
+      "migration": [
+        "futureagi/ee/usage/migrations/0030_managed_credit_ledger.py:42,46,74",
+        "futureagi/ee/usage/migrations/0031_ledger_phase2a.py:320-329"
+      ],
+      "semantics": "Durable row UUID is not request or dispatch identity. settle_spend stores actual record.request_id and source_ref=request_id, source_kind=model_call. Preserve full org history. requestEntries uses exact equality with scope.requestIds only, never strips/parses suffixes.",
+      "service": "futureagi/ee/usage/services/managed_credits.py:596-651"
+    },
+    {
+      "field": "per_request_debit",
+      "status": "MAPPED",
+      "columns": [
+        "id",
+        "organization_id",
+        "request_id",
+        "kind",
+        "amount_micros"
+      ],
+      "types": [
+        "uuid",
+        "uuid",
+        "varchar(255)",
+        "varchar(16)",
+        "signed bigint micros"
+      ],
+      "model": "futureagi/ee/usage/models/managed_credits.py:164-189,277-294",
+      "migration": [
+        "futureagi/ee/usage/migrations/0030_managed_credit_ledger.py:42-46,74,78",
+        "futureagi/ee/usage/migrations/0031_ledger_phase2a.py:355-359,372-374"
+      ],
+      "semantics": "spend and usage_debit are negative effects; billed_micros is -amount_micros for spend. All row identities and multiplicity retained. Refund/dispute_release is a separate ledger effect, never a reservation release."
+    },
+    {
+      "field": "release",
+      "status": "ABSENT_AT_CANDIDATE_FAIL_CLOSED",
+      "columns": [],
+      "model": "futureagi/ee/usage/models/managed_credits.py:167-178,180-273",
+      "migration": [
+        "futureagi/ee/usage/migrations/0030_managed_credit_ledger.py:39-80",
+        "futureagi/ee/usage/migrations/0031_ledger_phase2a.py:240-359"
+      ],
+      "semantics": "No hold/release/void/terminal column or relation in this model/migration. Generation_id and hold_micros explicitly have no column. Drain ACKs void with a counter only, no durable entry. No zero, refund, disappeared hold or empty query can stand for a protected release/fence.",
+      "service": [
+        "futureagi/ee/usage/services/managed_credits.py:92-106",
+        "futureagi/ee/usage/services/managed_settlement.py:15-19,226-239"
+      ],
+      "owed": "F02 read-only Redis and composed durable terminal/journal producer; independent review of protected unresolved/full-H behavior. No product model changes are authorized by this fixture lane."
+    },
+    {
+      "field": "settlement",
+      "status": "MAPPED_COMMITTED_SPEND_ONLY",
+      "columns": [
+        "id",
+        "kind",
+        "amount_micros",
+        "idempotency_key",
+        "occurred_at",
+        "created_at"
+      ],
+      "model": "futureagi/ee/usage/models/managed_credits.py:180-189,228-229",
+      "migration": [
+        "futureagi/ee/usage/migrations/0030_managed_credit_ledger.py:42-45,71-72"
+      ],
+      "service": [
+        "futureagi/ee/usage/services/managed_credits.py:639-651,953-994",
+        "futureagi/ee/usage/services/managed_settlement.py:248-281"
+      ],
+      "semantics": "A visible spend row proves only its committed durable monetary entry in this snapshot. No persisted worker ACK, outbox stream ID, void terminal or settlement_state column. Actual commit-before-ACK and retry/race observations remain independent F03/F08 runtime obligations."
+    },
+    {
+      "field": "idempotency_key",
+      "status": "MAPPED",
+      "columns": ["idempotency_key", "id", "organization_id", "kind"],
+      "types": ["globally unique varchar(200)", "uuid", "uuid", "varchar(16)"],
+      "model": "futureagi/ee/usage/models/managed_credits.py:180-189,313-318",
+      "migration": [
+        "futureagi/ee/usage/migrations/0030_managed_credit_ledger.py:45",
+        "futureagi/ee/usage/migrations/0031_ledger_phase2a.py:380-382"
+      ],
+      "service": [
+        "futureagi/ee/usage/services/managed_credits.py:639,986-994,1255-1267,1613-1629",
+        "futureagi/ee/usage/services/managed_settlement.py:270-281"
+      ],
+      "semantics": "Spend formatter is spend:<actual request_id>, globally unique, NOT a composite tenant uniqueness constraint. Caller grants are grant:<org UUID>:<caller key>. Always observe actual stored key; do not infer from public attempts. _verified checks org and kind, not amount/full payload; drain only logs billed mismatch then ACKs. assertReplayPayload fails such discrepancies rather than claiming product refusal or repairing records."
+    },
+    {
+      "field": "snapshot",
+      "status": "MAPPED_STORED_CONTEXT_NOT_COMPLETE_DISPATCH_JOURNAL",
+      "columns": [
+        "catalog_snapshot_id",
+        "policy_version",
+        "price_catalog_version"
+      ],
+      "types": ["varchar(32)", "varchar(64)", "varchar(32)"],
+      "model": "futureagi/ee/usage/models/managed_credits.py:208-209,252-254",
+      "migration": [
+        "futureagi/ee/usage/migrations/0030_managed_credit_ledger.py:61-62",
+        "futureagi/ee/usage/migrations/0031_ledger_phase2a.py:295-299"
+      ],
+      "semantics": "First two copied from settlement record. price_catalog_version is rating catalogue at occurred time, not gateway routing catalogue and not PostgreSQL transaction snapshot. Blank remains blank; never fill with current settings.",
+      "service": "futureagi/ee/usage/services/managed_credits.py:92-106,627-637,1684-1689"
+    },
+    {
+      "field": "provider",
+      "status": "MAPPED",
+      "columns": ["provider", "served_upstream_provider", "model"],
+      "types": ["varchar(255)", "varchar(64)", "varchar(255)"],
+      "model": "futureagi/ee/usage/models/managed_credits.py:194-197",
+      "migration": [
+        "futureagi/ee/usage/migrations/0030_managed_credit_ledger.py:48-51"
+      ],
+      "semantics": "Configured and actually served provider stored separately. Never select upstream_key_id, fees, landed costs or nested attempts JSON."
+    },
+    {
+      "field": "cost_source",
+      "status": "MAPPED",
+      "columns": ["cost_source", "usage_estimated"],
+      "types": ["varchar(32) blank permitted", "boolean"],
+      "model": "futureagi/ee/usage/models/managed_credits.py:206-207",
+      "migration": [
+        "futureagi/ee/usage/migrations/0030_managed_credit_ledger.py:59-60"
+      ],
+      "semantics": "Preserve blank; do not equate blank, NULL and unpriced. usage_estimated is the authoritative per-entry statement grouping field, not copied from compacted public attempts."
+    },
+    {
+      "field": "markup",
+      "status": "MAPPED",
+      "columns": [
+        "amount_micros",
+        "upstream_cost_micros",
+        "markup_micros",
+        "markup_bps"
+      ],
+      "types": [
+        "signed bigint micros",
+        "nullable bigint micros",
+        "nullable bigint micros",
+        "nullable integer bps"
+      ],
+      "model": "futureagi/ee/usage/models/managed_credits.py:188,198,204-205",
+      "migration": [
+        "futureagi/ee/usage/migrations/0030_managed_credit_ledger.py:44,52,57-58"
+      ],
+      "semantics": "SQL text to BigInt, NULL preserved, bps denominator 10000. Never derive bps from ratio/current global markup. Exact financial oracle must compare admitted price/usage with these private values; wallet float display comparison is not that oracle."
+    },
+    {
+      "field": "immutable_attribution",
+      "status": "MAPPED_STORED_IDS_PERSON_ABSENT",
+      "columns": [
+        "organization_id",
+        "request_id",
+        "api_key_id",
+        "agent_run_id",
+        "agent_id",
+        "workspace_id"
+      ],
+      "types": [
+        "uuid FK PROTECT",
+        "varchar(255)",
+        "varchar(255)",
+        "varchar(128)",
+        "varchar(128)",
+        "nullable uuid without FK"
+      ],
+      "model": "futureagi/ee/usage/models/managed_credits.py:181-192,210-211,243-246,29-38,348-356",
+      "migration": [
+        "futureagi/ee/usage/migrations/0030_managed_credit_ledger.py:46,63-64,74",
+        "futureagi/ee/usage/migrations/0031_ledger_phase2a.py:240-244,350-354"
+      ],
+      "service": [
+        "futureagi/ee/usage/services/managed_credits.py:92-106,636,1684-1689",
+        "futureagi/ee/usage/services/managed_settlement.py:88-113"
+      ],
+      "semantics": "IDs stored at insertion, immutable through model save/update/delete guards, NOT a claim of a database append-only trigger. Mutable key current run binding never used. workspace_id is derived from request log by drain, not immutable dispatch authority. No person_id exists; created_by is nullable grant actor with SET_NULL and is NOT spend caller. Genuine final-733 person-to-key-at-dispatch witness remains owed. Only test-owned opaque IDs may be captured, never key values."
+    },
+    {
+      "field": "immutable_financial_id",
+      "status": "SUPPLEMENTARY_R14_DESIGN_ONLY",
+      "columns": [],
+      "model": "futureagi/ee/usage/models/managed_credits.py:180-273",
+      "migration": [
+        "futureagi/ee/usage/migrations/0030_managed_credit_ledger.py:39-80",
+        "futureagi/ee/usage/migrations/0031_ledger_phase2a.py:240-359"
+      ],
+      "supplementaryHead": "2356ffce78a4d85c561f54cd7500941ab70aaaab",
+      "supplementarySource": "agentcc-gateway/internal/models/attempt.go:119-125,217-225,238-243 at supplementaryHead only, per independently confirmed PUBLIC contract",
+      "semantics": "R14 request_id plus monotonic uint64 dispatch sequence is supplementary DARK design; no financial_id column or complete dispatch journal is inferred on r2. A composed explicit public-row/journal/ledger tuple mapping must be separately admitted. NEVER derive from request.index or compacted 16-slot attempts, never suffix-match to claim complete coverage."
+    },
+    {
+      "field": "refund",
+      "status": "MAPPED_SEPARATE_EFFECT",
+      "columns": ["kind", "amount_micros", "related_entry_id"],
+      "model": "futureagi/ee/usage/models/managed_credits.py:171,255-263",
+      "migration": [
+        "futureagi/ee/usage/migrations/0030_managed_credit_ledger.py:43-44",
+        "futureagi/ee/usage/migrations/0031_ledger_phase2a.py:315-319"
+      ],
+      "semantics": "Refund/reversal/dispute-release remain separate effects. related_entry_id is nullable; preserve absence. A refund is never evidence of an original reservation release."
+    },
+    {
+      "field": "account",
+      "status": "MAPPED",
+      "columns": [
+        "organization_id",
+        "granted_total_micros",
+        "settled_spend_micros",
+        "platform_spend_micros",
+        "version",
+        "gateway_acked_version",
+        "entry_seq",
+        "gateway_push_state",
+        "gateway_push_state_at",
+        "updated_at"
+      ],
+      "model": "futureagi/ee/usage/models/managed_credits.py:76-85,101-105,116-121",
+      "migration": [
+        "futureagi/ee/usage/migrations/0030_managed_credit_ledger.py:22-26,36",
+        "futureagi/ee/usage/migrations/0031_ledger_phase2a.py:195-199,205-219"
+      ],
+      "semantics": "One row required, text micros/version/seq and exact UTC timestamps. Stored push state/time not proof gateway currently agrees or live Redis holds. Whole account and full ledger history read in same snapshot. Grants are only non-dispatchable grantPlan -> existing ledger service, never direct balance changes."
+    }
+  ],
+  "joins": [
+    {
+      "public": "wallet.result.entries[].id",
+      "private": "entry.id",
+      "extra": ["organization context", "request_id", "kind"],
+      "precision": "amount_usd/markup_usd DISPLAY_ONLY; exact assertions use private text micros"
+    },
+    {
+      "public": "agentcc_request_log.(organization_id,request_id)",
+      "private": "entry.(organization_id,request_id)",
+      "extra": ["all matching entry IDs/kinds, multiplicity preserved"],
+      "restriction": "Legacy exact identity only, not one-to-one globally; capability/R14 owned-dispatch requires an explicit composed mapping, no suffix inference."
+    },
+    {
+      "public": "agentcc_request_attempt.(organization_id,request_id,attempt_id,index)",
+      "private": "NO authoritative per-dispatch join on this candidate",
+      "restriction": "Display attempt identity is compactable. Never derive immutable financial identity from it."
+    },
+    {
+      "public": "statement.(month,currency,credits_by_kind,spend_by_model)",
+      "private": "full org ledger history, UTC pre-month/month windows; groups (model,usage_estimated)",
+      "precision": "public totals DISPLAY_ONLY; private integer totals authoritative; all kinds including platform usage_debit contribute closing"
+    }
+  ],
+  "sourceLimits": [
+    "Projection code and source map are not independently reviewed yet; independent G10/G12 review owed.",
+    "Only admitted real pooled PG connection/role plus exact final tuple/image/migrations and guard may supply evidence; in-process object brands are accidental-misuse protection, not authenticity.",
+    "The public reader pins an older source head; rebind/review its unchanged mappings against the composed candidate before integrated use. It also uses independent queries; no cross-store atomic snapshot is claimed.",
+    "Public wallet/statement Decimal-to-float loss occurs on server. Token-preserving parsers cannot fix it. Display comparison NEVER enables exact-money use of public numbers.",
+    "Durable release/void/person/complete immutable dispatch journal are absent in inspected model/migrations. These are explicit product/composition debts, not columns for the fixture to invent.",
+    "Grant route remains non-dispatchable ledger-service plan. No payment, key issuance, balance setter, worker replay, outbox ACK or provider call is supplied."
+  ]
+}

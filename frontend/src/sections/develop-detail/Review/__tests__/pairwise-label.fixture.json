@@ -1,0 +1,14 @@
+{
+  "name": "Overall preference",
+  "type": "categorical",
+  "description": "Which response is better for the customer?",
+  "settings": {
+    "kind": "pairwise",
+    "options": [{ "label": "A" }, { "label": "Tie" }, { "label": "B" }],
+    "multi_choice": false,
+    "higher_is_better": true,
+    "rule_prompt": "",
+    "auto_annotate": false,
+    "strategy": null
+  }
+}

@@ -248,7 +248,12 @@ async function main() {
         response.url().includes(`/falcon-ai/skills/${skillId}/`) &&
         response.request().method() === "DELETE" &&
         response.status() < 400,
-      () => clickVisibleButtonText(page, "Delete"),
+      async () => {
+        // Customize asks first; the DELETE goes out on the confirm.
+        await clickVisibleButtonText(page, "Delete");
+        await waitForVisibleText(page, "Delete skill?", { exact: true });
+        await clickVisibleButtonText(page, "Delete skill");
+      },
     );
     await waitForNoVisibleText(page, skillName, { timeout: 15000 });
 

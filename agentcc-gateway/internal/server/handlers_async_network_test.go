@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/async"
 	"github.com/futureagi/agentcc-gateway/internal/auth"
@@ -44,17 +45,21 @@ func asyncNetworkTestServer(t *testing.T, global config.IPACLConfig, org *tenant
 	return s
 }
 
-// asyncNetworkJob submits a job as the configured key and returns its id. The
-// cancel flag reports whether the job's cancel callback ran.
+// asyncNetworkJob stores a finished job with the owner a submit by key gives
+// it, and returns its id: the key's org and principal, or the single tenant
+// when key auth is off. On the line the key gate checks the submitter's
+// address too, so the job is stored for the test rather than submitted from
+// one. The cancel flag reports whether the job's cancel callback ran.
 func asyncNetworkJob(t *testing.T, h *Handlers, key string) (string, *bool) {
 	t.Helper()
-	id := asyncCallerSubmit(t, h, key)
+	job := &async.Job{ID: async.GenerateJobID(), Status: async.StatusCompleted, ExpiresAt: time.Now().Add(time.Hour)}
+	if h.keyStore != nil && key == asyncNetworkKey {
+		job.OrgID, job.Principal = "network-org", "org:network-org"
+	}
 	cancelled := false
-	h.asyncStore.Update(id, func(j *async.Job) {
-		j.Status = async.StatusCompleted
-		j.CancelFn = func() { cancelled = true }
-	})
-	return id, &cancelled
+	job.CancelFn = func() { cancelled = true }
+	h.asyncStore.Put(job)
+	return job.ID, &cancelled
 }
 
 func TestAsyncResultHonoursNetworkRules(t *testing.T) {
@@ -83,10 +88,8 @@ func TestAsyncResultHonoursNetworkRules(t *testing.T) {
 				// Neither caller metadata nor a forwarded-for entry chooses the address.
 				r.Header.Set("x-agentcc-metadata", `{"org_id":"forged","client_ip":"192.0.2.10"}`)
 				r.Header.Set("X-Forwarded-For", "192.0.2.10")
-				call := h.GetAsyncJob
-				if method == http.MethodDelete {
-					call = h.DeleteAsyncJob
-				}
+				// Through the server's router and key gate, as a client reaches it.
+				call := s.httpServer.Handler.ServeHTTP
 				w := httptest.NewRecorder()
 				call(w, r)
 				if w.Code != http.StatusForbidden {
@@ -116,20 +119,20 @@ func TestAsyncResultUnknownSourceAndOrgRuleChange(t *testing.T) {
 	for _, source := range []string{"unknown", "", "[2001:db8::2]:1234"} {
 		r.RemoteAddr = source
 		w := httptest.NewRecorder()
-		h.GetAsyncJob(w, r)
+		s.httpServer.Handler.ServeHTTP(w, r)
 		if w.Code != http.StatusForbidden {
 			t.Errorf("unknown or unmatched source %q got %d", source, w.Code)
 		}
 	}
 	r.RemoteAddr = "192.0.2.10:1234"
 	w := httptest.NewRecorder()
-	h.GetAsyncJob(w, r)
+	s.httpServer.Handler.ServeHTTP(w, r)
 	if w.Code != http.StatusOK {
 		t.Fatalf("initial allowed: %d", w.Code)
 	}
 	s.TenantStore.Set("network-org", &tenant.OrgConfig{IPACL: &tenant.IPACLConfig{Enabled: true, Deny: []string{"192.0.2.10"}}})
 	w = httptest.NewRecorder()
-	h.GetAsyncJob(w, r)
+	s.httpServer.Handler.ServeHTTP(w, r)
 	if w.Code != http.StatusForbidden {
 		t.Errorf("updated org rule got %d; want 403", w.Code)
 	}
@@ -156,7 +159,9 @@ func TestBatchRoutesHonourGlobalNetworkRules(t *testing.T) {
 				r.RemoteAddr = "192.0.2.11:1234"
 				r.Header.Set("Authorization", "Bearer "+credential)
 				want := http.StatusUnauthorized
-				if credential == "synthetic-network-admin" {
+				// The line refuses an administrator's bearer on a batch submit
+				// before any network rule (401); get and cancel apply them.
+				if credential == "synthetic-network-admin" && route.path != "/-/batches" {
 					want = http.StatusForbidden
 				}
 				if w := call(r); w.Code != want {
@@ -169,7 +174,9 @@ func TestBatchRoutesHonourGlobalNetworkRules(t *testing.T) {
 			r.Header.Set("Authorization", "Bearer synthetic-network-admin")
 			want := http.StatusNotFound
 			if route.path == "/-/batches" {
-				want = http.StatusBadRequest
+				// The submit refuses the administrator's bearer itself (401),
+				// on any network.
+				want = http.StatusUnauthorized
 			}
 			if w := call(r); w.Code != want {
 				t.Errorf("allowed admin got %d want %d: %s", w.Code, want, w.Body.String())

@@ -1,0 +1,25 @@
+# Fixture for the manifest validator tests, not catalog data. Facts are
+# illustrative; the catalog itself lives in agentcc-gateway/catalog/connectors.
+schema: "connector-manifest/v1#app"
+id: github
+version: 1.0.0
+name: GitHub
+description: "Issues, pull requests and code in your repositories."
+vendor:
+  name: GitHub
+  domains: [github.com, githubcopilot.com]
+  githubOrgs: [github]
+eeCategory: developer
+group: other
+categories: [developer]
+docsUrl: https://github.com/github/github-mcp-server
+archetype: code-host
+defaultProvider: remote
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://github.com/github/github-mcp-server
+    fetchedAt: 2026-10-19
+  - fact: vendor.githubOrgs
+    url: https://github.com/github/github-mcp-server
+    fetchedAt: 2026-10-19

@@ -102,14 +102,13 @@ test(
             body: JSON.stringify({ traces, sessions }),
             contentType: "application/json",
           });
-          const costLabel =
-            stage.cost === 0
-              ? "Observed-only · $0.00"
-              : "Observed-only · Unknown";
+          const costValue = stage.cost === 0 ? "$0.00" : "Unknown";
+          const costLabel = `${costValue}*`;
           const tokenLabel =
-            stage.tokens === 0
-              ? "Observed-only · 0 tokens"
-              : "Observed-only · 43,071 tokens";
+            stage.tokens === 0 ? "0 tokens*" : "43,071 tokens*";
+          const received = stage.count
+            ? `Counts only the ${stage.count} model call${(stage.count as number) === 1 ? "" : "s"} we received.`
+            : "We haven't received any model calls.";
           for (const [path, rowId, costCol, tokenCol] of [
             ["llm-tracing?tab=traces", stage.traceId, "cost", "total_tokens"],
             ["sessions", stage.sessionId, "total_cost", "total_tokens"],
@@ -171,7 +170,7 @@ test(
             ).toHaveText(tokenLabel, { timeout: UI_READY });
             await cost.getByText(costLabel, { exact: true }).hover();
             await expect(page.getByRole("tooltip")).toHaveText(
-              `${costLabel}. Capture coverage unknown. ${stage.count} observed requests. Source summaries are nonadditive; observed amounts do not prove complete capture.`,
+              `${costValue}. ${received} The agent's own run summary isn't added, so the real total may be higher.`,
               { timeout: UI_READY },
             );
             await shot(page, testInfo, `capture-${stage.stage}-${costCol}`);
@@ -315,20 +314,21 @@ test(
             )
             .innerText();
 
-          // CostCell.jsx: amounts 0.01..0.99 render four decimals, unlike the drawer.
+          // CostCell.jsx draws formatExactMoney: two decimals minimum, every
+          // further stored digit kept (0.6 -> $0.60, 0.05 -> $0.05).
           const gridExpected =
             c.cost === null
               ? "-"
               : c.cost === 0
                 ? "$0.00"
                 : c.cost === 0.6
-                  ? "$0.6000"
+                  ? "$0.60"
                   : c.cost === 0.5
-                    ? "$0.5000"
-                    : "$0.0500";
+                    ? "$0.50"
+                    : "$0.05";
           expect(text, c.key).toBe(
             c.key.startsWith("copilot")
-              ? `Observed-only · ${c.cost === null ? "Unknown" : gridExpected}`
+              ? `${c.cost === null ? "Unknown" : gridExpected}*`
               : gridExpected,
           );
         }

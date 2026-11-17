@@ -642,3 +642,35 @@ describe("Annotation queue ContentPanel", () => {
     });
   });
 });
+
+describe("Pairwise content preview", () => {
+  it("renders both sources in labeled A and B panes using existing previews", () => {
+    renderWithQuery(<ContentPanel item={{
+      source_type: "pairwise",
+      source_a: { source_type: "dataset_row", source_id: "row-a" },
+      source_b: { source_type: "dataset_row", source_id: "row-b" },
+      source_content: {
+        type: "pairwise",
+        source_a: { fields: { response: "First candidate" } },
+        source_b: { fields: { response: "Second candidate" } },
+      },
+    }} />);
+    expect(screen.getByRole("region", { name: "A" })).toHaveTextContent("First candidate");
+    expect(screen.getByRole("region", { name: "B" })).toHaveTextContent("Second candidate");
+  });
+
+  it("keeps the surviving source visible when the other source was deleted", () => {
+    renderWithQuery(<ContentPanel item={{
+      source_type: "pairwise",
+      source_a: { source_type: "dataset_row", source_id: "row-a" },
+      source_b: { source_type: "dataset_row", source_id: "row-b" },
+      source_content: {
+        type: "pairwise",
+        source_a: { deleted: true },
+        source_b: { fields: { response: "Surviving candidate" } },
+      },
+    }} />);
+    expect(screen.getByRole("region", { name: "A" })).toHaveTextContent("Source item has been deleted.");
+    expect(screen.getByRole("region", { name: "B" })).toHaveTextContent("Surviving candidate");
+  });
+});

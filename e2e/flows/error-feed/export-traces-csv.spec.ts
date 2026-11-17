@@ -231,15 +231,15 @@ test(
     const datasetName = `e2e-err4-dataset-${suffix}`;
     await page.goto("/dashboard/develop", { waitUntil: "domcontentloaded" });
     await page
-      .getByRole("button", { name: /^add dataset$/i })
+      .getByRole("button", { name: /^new dataset$/i })
       .first()
       .click({ timeout: UI_READY });
     await page
-      .getByText("Upload a file (JSON, CSV)", { exact: true })
+      .getByText("Upload a file", { exact: true })
       .click({ timeout: UI_READY });
     const dialog = page
       .getByRole("dialog")
-      .filter({ has: page.getByText("Upload a File", { exact: true }) });
+      .filter({ has: page.getByText("Upload a file", { exact: true }) });
     // The dropzone accepts .csv / text/csv only and download.path() has no
     // extension, so send the downloaded bytes under the suggested name.
     await dialog.locator('input[type="file"]').setInputFiles(
@@ -250,12 +250,12 @@ test(
       },
       { timeout: UI_READY },
     );
-    await dialog.getByPlaceholder("Dataset Name").fill(datasetName);
+    await dialog.getByPlaceholder("Dataset name").fill(datasetName);
     const uploaded = page.waitForResponse(
       (r) => r.url().endsWith(UPLOAD_PATH) && r.request().method() === "POST",
       { timeout: UI_READY },
     );
-    await dialog.getByRole("button", { name: "Upload", exact: true }).click();
+    await dialog.getByRole("button", { name: /^Import/ }).click();
     const response = await uploaded;
     expect(response.status()).toBe(200);
     const datasetId: string = (await response.json()).result.dataset_id;

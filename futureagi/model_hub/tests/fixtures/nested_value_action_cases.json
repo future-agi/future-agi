@@ -1,0 +1,276 @@
+{
+  "column_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  "panel_roundtrip": {
+    "before": [
+      {
+        "column_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa::customer.score",
+        "filter_config": {
+          "filter_type": "text",
+          "filter_op": "equals",
+          "filter_value": "12"
+        }
+      },
+      {
+        "column_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        "property_id": "dataset_column:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        "filter_config": {
+          "filter_type": "number",
+          "filter_op": "greater_than",
+          "filter_value": 0
+        }
+      }
+    ],
+    "after": [
+      {
+        "column_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa::customer.score",
+        "filter_config": {
+          "filter_type": "text",
+          "filter_op": "in",
+          "filter_value": ["12"]
+        }
+      },
+      {
+        "column_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        "property_id": "dataset_column:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        "filter_config": {
+          "filter_type": "number",
+          "filter_op": "greater_than",
+          "filter_value": 5
+        }
+      }
+    ]
+  },
+  "cases": [
+    {
+      "name": "space in key",
+      "keys": ["customer", "display name"],
+      "value": "Ada",
+      "path": "customer[\"display name\"]",
+      "request": {
+        "column_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa::customer[\"display name\"]",
+        "filter_config": {
+          "filter_type": "text",
+          "filter_op": "equals",
+          "filter_value": "Ada"
+        }
+      }
+    },
+    {
+      "name": "hyphen in key",
+      "keys": ["customer", "first-name"],
+      "value": "Ada",
+      "path": "customer[\"first-name\"]",
+      "request": {
+        "column_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa::customer[\"first-name\"]",
+        "filter_config": {
+          "filter_type": "text",
+          "filter_op": "equals",
+          "filter_value": "Ada"
+        }
+      }
+    },
+    {
+      "name": "dot in key",
+      "keys": ["customer", "first.name"],
+      "value": "Ada",
+      "path": "customer[\"first.name\"]",
+      "request": {
+        "column_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa::customer[\"first.name\"]",
+        "filter_config": {
+          "filter_type": "text",
+          "filter_op": "equals",
+          "filter_value": "Ada"
+        }
+      }
+    },
+    {
+      "name": "brackets in key",
+      "keys": ["customer", "first[name]"],
+      "value": "Ada",
+      "path": "customer[\"first[name]\"]",
+      "request": {
+        "column_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa::customer[\"first[name]\"]",
+        "filter_config": {
+          "filter_type": "text",
+          "filter_op": "equals",
+          "filter_value": "Ada"
+        }
+      }
+    },
+    {
+      "name": "quote in key",
+      "keys": ["customer", "first\"name"],
+      "value": "Ada",
+      "path": "customer[\"first\\\"name\"]",
+      "request": {
+        "column_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa::customer[\"first\\\"name\"]",
+        "filter_config": {
+          "filter_type": "text",
+          "filter_op": "equals",
+          "filter_value": "Ada"
+        }
+      }
+    },
+    {
+      "name": "backslash in key",
+      "keys": ["customer", "first\\name"],
+      "value": "Ada",
+      "path": "customer[\"first\\\\name\"]",
+      "request": {
+        "column_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa::customer[\"first\\\\name\"]",
+        "filter_config": {
+          "filter_type": "text",
+          "filter_op": "equals",
+          "filter_value": "Ada"
+        }
+      }
+    },
+    {
+      "name": "escaped control in key",
+      "keys": ["customer", "first\nname"],
+      "value": "Ada",
+      "path": "customer[\"first\\nname\"]",
+      "request": {
+        "column_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa::customer[\"first\\nname\"]",
+        "filter_config": {
+          "filter_type": "text",
+          "filter_op": "equals",
+          "filter_value": "Ada"
+        }
+      }
+    },
+    {
+      "name": "empty key",
+      "keys": ["customer", ""],
+      "value": "Ada",
+      "path": "customer[\"\"]",
+      "request": {
+        "column_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa::customer[\"\"]",
+        "filter_config": {
+          "filter_type": "text",
+          "filter_op": "equals",
+          "filter_value": "Ada"
+        }
+      }
+    },
+    {
+      "name": "separator in quoted key",
+      "keys": ["customer", "first::name"],
+      "value": "Ada",
+      "path": "customer[\"first::name\"]",
+      "request": {
+        "column_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa::customer[\"first::name\"]",
+        "filter_config": {
+          "filter_type": "text",
+          "filter_op": "equals",
+          "filter_value": "Ada"
+        }
+      }
+    },
+    {
+      "name": "quoted root and nested keys",
+      "keys": ["display name", "first-name"],
+      "value": "Ada",
+      "path": "[\"display name\"][\"first-name\"]",
+      "request": {
+        "column_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa::[\"display name\"][\"first-name\"]",
+        "filter_config": {
+          "filter_type": "text",
+          "filter_op": "equals",
+          "filter_value": "Ada"
+        }
+      }
+    },
+    {
+      "name": "integral float",
+      "text_value": "12",
+      "keys": ["customer", "score"],
+      "value": 12.0,
+      "path": "customer.score",
+      "request": {
+        "column_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa::customer.score",
+        "filter_config": {
+          "filter_type": "text",
+          "filter_op": "equals",
+          "filter_value": "12"
+        }
+      }
+    },
+    {
+      "name": "negative exponent",
+      "text_value": "1e-7",
+      "keys": ["customer", "score"],
+      "value": 1e-7,
+      "path": "customer.score",
+      "request": {
+        "column_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa::customer.score",
+        "filter_config": {
+          "filter_type": "text",
+          "filter_op": "equals",
+          "filter_value": "1e-7"
+        }
+      }
+    },
+    {
+      "name": "small decimal notation boundary",
+      "text_value": "0.000001",
+      "keys": ["customer", "score"],
+      "value": 1e-6,
+      "path": "customer.score",
+      "request": {
+        "column_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa::customer.score",
+        "filter_config": {
+          "filter_type": "text",
+          "filter_op": "equals",
+          "filter_value": "0.000001"
+        }
+      }
+    },
+    {
+      "name": "large decimal notation boundary",
+      "text_value": "100000000000000000000",
+      "keys": ["customer", "score"],
+      "value": 1e20,
+      "path": "customer.score",
+      "request": {
+        "column_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa::customer.score",
+        "filter_config": {
+          "filter_type": "text",
+          "filter_op": "equals",
+          "filter_value": "100000000000000000000"
+        }
+      }
+    },
+    {
+      "name": "positive exponent",
+      "string_leaf": "1000000000000000000000",
+      "text_value": "1e+21",
+      "keys": ["customer", "score"],
+      "value": 1e21,
+      "path": "customer.score",
+      "request": {
+        "column_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa::customer.score",
+        "filter_config": {
+          "filter_type": "text",
+          "filter_op": "equals",
+          "filter_value": "1e+21"
+        }
+      }
+    },
+    {
+      "name": "negative zero",
+      "text_value": "0",
+      "keys": ["customer", "score"],
+      "value": -0.0,
+      "path": "customer.score",
+      "request": {
+        "column_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa::customer.score",
+        "filter_config": {
+          "filter_type": "text",
+          "filter_op": "equals",
+          "filter_value": "0"
+        }
+      }
+    }
+  ]
+}

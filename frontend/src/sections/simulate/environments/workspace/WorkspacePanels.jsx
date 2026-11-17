@@ -78,13 +78,12 @@ export default function WorkspacePanels({
   // Improvements appears once the environment has a fix, the same way Runs does.
   const { count: fixCount, isLoading: fixesLoading } = useEnvironmentFixRuns(env?.id);
   const showImprovements = fixCount > 0 || (fixesLoading && tab === "improvements");
-  // Versions appears only while versioning is switched on for this environment.
-  const showVersions = Boolean(env?.versioning?.enabled);
+  // Versions is always in the rail: while versioning is off or being enabled,
+  // its panel says so (VersionsPanel) rather than the tab disappearing.
   const tabs = WORKSPACE_TABS.filter(
     (t) =>
       (t.id !== "runs" || showRuns) &&
-      (t.id !== "improvements" || showImprovements) &&
-      (t.id !== "versions" || showVersions),
+      (t.id !== "improvements" || showImprovements),
   );
 
   // Default landing is the Overview, which is also the first tab in the rail.
@@ -160,6 +159,9 @@ export default function WorkspacePanels({
             backedWorld={overviewWorld}
             onFork={onFork}
             buildMode={buildMode}
+            onStartRun={onStartRun}
+            canRun={canRun}
+            runBlockedReason={runBlockedReason}
           />
         );
     }

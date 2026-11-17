@@ -17,8 +17,13 @@ const STATUS_KEY = {
 };
 const STATUS_ROLE = { Completed: "success" };
 
+// v2.1 g8 (kb:page): a knowledge base with a file that failed is not
+// processing; it says that some files failed (the files list names them).
+export const kbStatusLabel = (value) =>
+  value === "PartialCompleted" ? "Some files failed" : value;
+
 export const ProcessingStatusCell = ({ value, data }) => {
-  const status = value === "PartialCompleted" ? "Processing" : value;
+  const status = value === "PartialCompleted" ? "Failed" : value;
 
   return (
     <Box
@@ -34,7 +39,7 @@ export const ProcessingStatusCell = ({ value, data }) => {
       <StatusBadge
         status={STATUS_KEY[status] || "queued"}
         role={STATUS_ROLE[status]}
-        label={status}
+        label={kbStatusLabel(value)}
       />
       {status === "Failed" && data?.error && (
         <CustomTooltip show={true} title={data.error} arrow>

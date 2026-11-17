@@ -47,7 +47,7 @@ import {
   humanizeValue,
 } from "./insightsFormat";
 import { useCancellable } from "./insightsHooks";
-import { unitLink, unitsGridLink } from "./insightsLinks";
+import { GRID_LINK_MAX, unitLink, unitsGridLink } from "./insightsLinks";
 import { askSeed } from "./insightsScope";
 import {
   notableDirection,
@@ -637,6 +637,25 @@ const tableSx = {
   "& tbody tr": { cursor: "pointer" },
 };
 
+// The fixed columns; Summary and Input take the rest of the row.
+const SUMMARY_WIDTHS = { outcome: 124, sentiment: 84, failure: 190 };
+const ATTRIBUTES_WIDTH = 180;
+const ITEM_WIDTHS = {
+  time: 128,
+  user: 140,
+  turns: 60,
+  latency: 80,
+  cost: 72,
+  errors: 64,
+  open: 36,
+};
+// Summary and Input keep at least this much: below it the table scrolls
+// sideways, as the report's table does, rather than squeezing them to a few
+// words.
+const CONTENT_MIN_WIDTH = 320;
+const tableMinWidth = (...widths) =>
+  widths.reduce((sum, width) => sum + width, CONTENT_MIN_WIDTH);
+
 const clamp = (lines) => ({
   display: "-webkit-box",
   WebkitLineClamp: lines,
@@ -649,17 +668,26 @@ function SummariesTable({ units, onOpen }) {
     (u) => Object.keys(u.facets?.attributes || {}).length > 0,
   );
   return (
-    <Table size="small" sx={tableSx}>
+    <Table
+      size="small"
+      sx={{
+        ...tableSx,
+        minWidth: tableMinWidth(
+          ...Object.values(SUMMARY_WIDTHS),
+          hasAttributes ? ATTRIBUTES_WIDTH : 0,
+        ),
+      }}
+    >
       <TableHead>
         <TableRow>
           <TableCell>Summary</TableCell>
-          <TableCell sx={{ width: 124 }}>Outcome</TableCell>
-          <TableCell align="right" sx={{ width: 84 }}>
+          <TableCell sx={{ width: SUMMARY_WIDTHS.outcome }}>Outcome</TableCell>
+          <TableCell align="right" sx={{ width: SUMMARY_WIDTHS.sentiment }}>
             Sentiment
           </TableCell>
-          <TableCell sx={{ width: 190 }}>Failure</TableCell>
+          <TableCell sx={{ width: SUMMARY_WIDTHS.failure }}>Failure</TableCell>
           {hasAttributes && (
-            <TableCell sx={{ width: 180 }}>Attributes</TableCell>
+            <TableCell sx={{ width: ATTRIBUTES_WIDTH }}>Attributes</TableCell>
           )}
         </TableRow>
       </TableHead>
@@ -764,25 +792,31 @@ SummariesTable.propTypes = {
 
 function ItemsTable({ units, unit, onOpen }) {
   return (
-    <Table size="small" sx={tableSx}>
+    <Table
+      size="small"
+      sx={{
+        ...tableSx,
+        minWidth: tableMinWidth(...Object.values(ITEM_WIDTHS)),
+      }}
+    >
       <TableHead>
         <TableRow>
-          <TableCell sx={{ width: 128 }}>Time</TableCell>
-          <TableCell sx={{ width: 140 }}>User</TableCell>
+          <TableCell sx={{ width: ITEM_WIDTHS.time }}>Time</TableCell>
+          <TableCell sx={{ width: ITEM_WIDTHS.user }}>User</TableCell>
           <TableCell>{unit === "traces" ? "Input" : "First message"}</TableCell>
-          <TableCell align="right" sx={{ width: 60 }}>
+          <TableCell align="right" sx={{ width: ITEM_WIDTHS.turns }}>
             Turns
           </TableCell>
-          <TableCell align="right" sx={{ width: 80 }}>
+          <TableCell align="right" sx={{ width: ITEM_WIDTHS.latency }}>
             Latency
           </TableCell>
-          <TableCell align="right" sx={{ width: 72 }}>
+          <TableCell align="right" sx={{ width: ITEM_WIDTHS.cost }}>
             Cost
           </TableCell>
-          <TableCell align="right" sx={{ width: 64 }}>
+          <TableCell align="right" sx={{ width: ITEM_WIDTHS.errors }}>
             Errors
           </TableCell>
-          <TableCell sx={{ width: 36 }} />
+          <TableCell sx={{ width: ITEM_WIDTHS.open }} />
         </TableRow>
       </TableHead>
       <TableBody>
@@ -862,8 +896,19 @@ ItemsTable.propTypes = {
 
 // ─── Explorer ───────────────────────────────────────────────────────────────
 
-function MoreMenu({ disabled, busy, onPatterns, onGrid, canGrid }) {
+function MoreMenu({
+  disabled,
+  busy,
+  onPatterns,
+  onGrid,
+  canGrid,
+  count = 0,
+  unit,
+}) {
   const [anchor, setAnchor] = useState(null);
+  // The grid link holds at most GRID_LINK_MAX ids: a bigger category opens
+  // only its first ones, and the item says so.
+  const partial = count > GRID_LINK_MAX;
   return (
     <>
       <IconButton
@@ -912,8 +957,16 @@ function MoreMenu({ disabled, busy, onPatterns, onGrid, canGrid }) {
               <Iconify icon="mdi:table-large" width={18} />
             </ListItemIcon>
             <ListItemText
-              primary="Open all in grid"
-              secondary="The Traces view filtered to these"
+              primary={
+                partial
+                  ? `Open first ${GRID_LINK_MAX} in grid`
+                  : "Open all in grid"
+              }
+              secondary={
+                partial
+                  ? `This category has ${formatCount(count)} ${unitWord(unit, count)}; the grid opens the first ${GRID_LINK_MAX}.`
+                  : "The Traces view filtered to these"
+              }
               secondaryTypographyProps={{ variant: "caption" }}
             />
           </MenuItem>
@@ -929,6 +982,8 @@ MoreMenu.propTypes = {
   onPatterns: PropTypes.func.isRequired,
   onGrid: PropTypes.func.isRequired,
   canGrid: PropTypes.bool,
+  count: PropTypes.number,
+  unit: PropTypes.string,
 };
 
 /**
@@ -1021,6 +1076,9 @@ export default function CategoryExplorer({
           question: `Within “${category.name}”, what distinct patterns are there and what causes them?`,
           label: `${category.name} · ${reportName}`,
           source: reportName,
+          // The dates this report read: the new one reads each item (a
+          // user's activity) within them too, not its whole history.
+          ...(run.scope?.window ? { sourceWindow: run.scope.window } : {}),
         }),
       );
       return all.length;
@@ -1262,6 +1320,8 @@ export default function CategoryExplorer({
             onPatterns={findPatterns}
             onGrid={openGrid}
             canGrid={unit !== "users"}
+            count={stats.count || 0}
+            unit={unit}
           />
         </Stack>
         {collecting.state.status === "error" && (
@@ -1296,17 +1356,15 @@ export default function CategoryExplorer({
               No {plural} in this category.
             </Typography>
           ) : (
-            <Box
-              sx={{
-                opacity: units.isPlaceholderData ? 0.6 : 1,
-                overflowX: "auto",
-              }}
-            >
-              {view === "summaries" ? (
-                <SummariesTable units={rows} onOpen={report.openExample} />
-              ) : (
-                <ItemsTable units={rows} unit={unit} onOpen={openItem} />
-              )}
+            <Box sx={{ opacity: units.isPlaceholderData ? 0.6 : 1 }}>
+              {/* Only the table scrolls sideways; the pager stays in view. */}
+              <Box sx={{ overflowX: "auto" }}>
+                {view === "summaries" ? (
+                  <SummariesTable units={rows} onOpen={report.openExample} />
+                ) : (
+                  <ItemsTable units={rows} unit={unit} onOpen={openItem} />
+                )}
+              </Box>
               <Pager
                 offset={offset}
                 count={rows.length}

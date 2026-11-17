@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: cockroachdb-cloud
+version: 1.0.0
+name: CockroachDB Cloud
+description: "Explore clusters and schemas, run SQL queries and create databases, tables and rows."
+vendor:
+  name: Cockroach Labs
+  domains: [cockroachlabs.com, cockroachlabs.cloud]
+eeCategory: data
+group: other
+categories: [data, developer]
+tags: [sql, database]
+docsUrl: https://docs.cockroachlabs.com/docs/cockroachcloud/connect-to-the-cockroachdb-cloud-mcp-server
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://docs.cockroachlabs.com/docs/cockroachcloud/connect-to-the-cockroachdb-cloud-mcp-server
+    fetchedAt: 2026-11-09

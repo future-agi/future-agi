@@ -2,7 +2,10 @@
 
 from types import SimpleNamespace
 
+import pytest
+
 from common.utils.pagination import MAX_PAGE_SIZE, paginate_queryset
+from tfc.utils.pagination import PageSizeTooLarge
 
 
 def _request(**query_params):
@@ -39,7 +42,8 @@ class _SliceRecordingSequence:
 def test_huge_page_size_is_clamped_to_max_and_does_not_return_whole_queryset():
     items = _SliceRecordingSequence(250)
 
-    page, meta = paginate_queryset(items, _request(page_size="100000000"))
+    # The largest size the shared cap admits (tfc.utils.pagination, 5000).
+    page, meta = paginate_queryset(items, _request(page_size="5000"))
 
     assert meta["page_size"] == MAX_PAGE_SIZE
     assert meta["total_count"] == 250
@@ -60,3 +64,14 @@ def test_page_size_at_max_is_not_reduced():
 
     assert meta["page_size"] == MAX_PAGE_SIZE
     assert list(page) == list(range(MAX_PAGE_SIZE))
+
+
+def test_a_page_size_above_the_shared_cap_is_refused_before_any_row_is_read():
+    # Above the shared cap the request is refused (400), not clamped, and the
+    # queryset is never sliced.
+    items = _SliceRecordingSequence(250)
+
+    with pytest.raises(PageSizeTooLarge):
+        paginate_queryset(items, _request(page_size="100000000"))
+
+    assert items.slices == []

@@ -42,6 +42,8 @@ import { evalDetailQuery } from "src/sections/evals/hooks/useEvalDetail";
 import { useEvalPickerData } from "./hooks/useEvalPickerData";
 import { useEvalPickerContext } from "./context/EvalPickerContext";
 import { useCompositeDetail } from "src/sections/evals/hooks/useCompositeEval";
+import { typedEvalLabel } from "src/sections/common/EvalTypes/typedEvalTypes";
+import TypedEvalPickerSummary from "src/sections/common/EvalTypes/TypedEvalPickerSummary";
 
 function getInitials(name) {
   if (!name) return "?";
@@ -373,9 +375,19 @@ const EvalDetailPanel = ({ evalData }) => {
         {model && <LabeledValue label="Model" value={model} />}
         <LabeledValue
           label="Kind"
-          value={evalType === "agent" ? "Agent" : "LLM-as-a-judge"}
+          value={
+            typedEvalLabel(evalType) ??
+            (evalType === "agent" ? "Agent" : "LLM-as-a-judge")
+          }
         />
       </Box>
+      {/* integration S9: a typed eval's definition, read-only. It gets the
+          description shown below, so a tree described by its own summary
+          line says it once (M10, W7 review SF6). */}
+      <TypedEvalPickerSummary
+        evalType={evalType}
+        evalData={configData && { ...configData, description }}
+      />
 
       {description && (
         <Typography
@@ -666,6 +678,7 @@ const EvalPickerList = ({ onSelectEval }) => {
     onToggleSelect,
     addedEvals,
     addedEvalAction,
+    formatEvalName,
   } = useEvalPickerContext();
   const useScopedEvals = source === "dataset" || source === "experiment";
   const {
@@ -734,6 +747,8 @@ const EvalPickerList = ({ onSelectEval }) => {
     if (filters.eval_type?.length) count += filters.eval_type.length;
     if (filters.output_type?.length) count += filters.output_type.length;
     if (filters.owner) count += 1;
+    if (filters.template_type) count += 1;
+    if (filters.search) count += 1;
     if (filters.tags?.length) count += filters.tags.length;
     return count;
   }, [filters]);
@@ -995,6 +1010,9 @@ const EvalPickerList = ({ onSelectEval }) => {
                           checked={added || !!selectedIds?.has(evalItem.id)}
                           onClick={(e) => e.stopPropagation()}
                           onChange={() => onToggleSelect?.(evalItem)}
+                          inputProps={{
+                            "aria-label": `Select ${evalItem.name}`,
+                          }}
                           sx={{ p: 0.25 }}
                         />
                       </TableCell>
@@ -1051,7 +1069,9 @@ const EvalPickerList = ({ onSelectEval }) => {
                           noWrap
                           sx={{ fontWeight: 500, fontSize: "12px" }}
                         >
-                          {evalItem.name}
+                          {formatEvalName
+                            ? formatEvalName(evalItem.name)
+                            : evalItem.name}
                         </Typography>
                         {evalItem.current_version &&
                           !evalItem.is_draft &&

@@ -207,6 +207,22 @@
       "migrations": true
     },
     {
+      "label": "omega_hub",
+      "module": "omega_hub",
+      "source_root": "omega_hub",
+      "location": "backend",
+      "condition": "if_present",
+      "migrations": true
+    },
+    {
+      "label": "omega_rollout",
+      "module": "omega_rollout",
+      "source_root": "omega_rollout",
+      "location": "backend",
+      "condition": "if_present",
+      "migrations": true
+    },
+    {
       "label": "prism",
       "module": "agentcc",
       "source_root": "agentcc",
@@ -298,6 +314,14 @@
       "label": "usage",
       "module": "ee.usage",
       "source_root": "ee/usage",
+      "location": "backend",
+      "condition": "if_present",
+      "migrations": true
+    },
+    {
+      "label": "webhooks",
+      "module": "webhooks",
+      "source_root": "webhooks",
       "location": "backend",
       "condition": "if_present",
       "migrations": true

@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://futureagi.com/contracts/gateway/examples/tool-call-blocked-v1.schema.json",
+  "title": "tool-call-blocked-v1",
+  "description": "422 tool_call_blocked. The call is still billed. action is what the gateway did with the call, following guardrails.tool_calls.on_block. Under content mode none, tool and reason carry no tool names or arguments.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["error"],
+  "properties": {
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "code", "message", "param", "metadata"],
+      "properties": {
+        "type": { "type": "string", "minLength": 1 },
+        "code": { "const": "tool_call_blocked" },
+        "message": { "type": "string", "minLength": 1 },
+        "param": { "type": "null" },
+        "metadata": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "tool",
+            "tool_call_id",
+            "check",
+            "action",
+            "reason",
+            "remedy_hint"
+          ],
+          "properties": {
+            "tool": { "type": "string" },
+            "tool_call_id": { "type": "string" },
+            "check": { "type": "string", "minLength": 1 },
+            "action": { "type": "string", "enum": ["error", "strip"] },
+            "reason": { "type": "string" },
+            "remedy_hint": { "type": "string" }
+          }
+        }
+      }
+    }
+  }
+}

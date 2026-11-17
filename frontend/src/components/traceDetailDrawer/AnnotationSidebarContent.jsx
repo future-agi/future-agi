@@ -13,10 +13,15 @@ import {
   Typography,
 } from "@mui/material";
 import { alpha } from "@mui/material/styles";
+import { enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
 import { useQueueItemsForSource } from "src/api/annotation-queues/annotation-queues";
 import { useBulkCreateScores } from "src/api/scores/scores";
 import LabelInput from "src/sections/annotations/queues/annotate/label-input";
+import {
+  labelProblems,
+  problemsText,
+} from "src/sections/annotations/queues/utils/label-rules";
 import ContentSkeleton from "src/components/content-skeleton";
 
 const SOURCE_TYPE_LABELS = {
@@ -412,12 +417,25 @@ function QueueAnnotationSection({
   } = queueEntry;
 
   const [values, setValues] = useState({});
+  const valuesRef = useRef({});
+  // The answers the item was opened with. An answer still equal to its loaded
+  // one is not checked against limits its label gained since it was saved.
+  const loadedRef = useRef({});
+  // Labels whose answer was refused, shown as errors until changed.
+  const [errorLabels, setErrorLabels] = useState(() => new Set());
+  // The server's reason for each label it did not save, by label id; shown
+  // under that label until it is changed or the labels are sent again.
+  const [failedReasons, setFailedReasons] = useState({});
+  const textFlushRefs = useRef({});
   const [notes, setNotes] = useState("");
   const [notesTouched, setNotesTouched] = useState(false);
   const [labelNotes, setLabelNotes] = useState({});
   const [showNotes, setShowNotes] = useState(false);
   const [focusedIndex, setFocusedIndex] = useState(0);
-  const { mutate: bulkCreate, isPending: isSaving } = useBulkCreateScores();
+  // The labels name the ones the server did not save in the save message.
+  const { mutate: bulkCreate, isPending: isSaving } = useBulkCreateScores({
+    labels,
+  });
   const isCompleted = item?.status === "completed";
   const containerRef = useRef(null);
   const hasInitializedScoresRef = useRef(false);
@@ -440,7 +458,11 @@ function QueueAnnotationSection({
   useEffect(() => {
     hasInitializedScoresRef.current = false;
     hasInitializedNotesRef.current = false;
-    setValues({});
+    valuesRef.current = {};
+    loadedRef.current = {};
+    setValues(valuesRef.current);
+    setErrorLabels(new Set());
+    setFailedReasons({});
     setLabelNotes({});
     setNotes("");
     setNotesTouched(false);
@@ -455,6 +477,8 @@ function QueueAnnotationSection({
       Object.keys(existingScores).length > 0
     ) {
       hasInitializedScoresRef.current = true;
+      valuesRef.current = existingScores;
+      loadedRef.current = { ...existingScores };
       setValues(existingScores);
       if (existingLabelNotes && Object.keys(existingLabelNotes).length > 0) {
         setLabelNotes(existingLabelNotes);
@@ -469,7 +493,21 @@ function QueueAnnotationSection({
   }, [existingScores, existingNotes, existingLabelNotes]);
 
   const handleChange = useCallback((labelId, value) => {
-    setValues((prev) => ({ ...prev, [labelId]: value }));
+    // Flush can publish several labels before React processes state updates.
+    valuesRef.current = { ...valuesRef.current, [labelId]: value };
+    setValues(valuesRef.current);
+    setErrorLabels((prev) => {
+      if (!prev.has(labelId)) return prev;
+      const next = new Set(prev);
+      next.delete(labelId);
+      return next;
+    });
+    setFailedReasons((prev) => {
+      if (!(labelId in prev)) return prev;
+      const next = { ...prev };
+      delete next[labelId];
+      return next;
+    });
   }, []);
 
   const hasValues = useMemo(
@@ -481,7 +519,24 @@ function QueueAnnotationSection({
   );
 
   const handleSubmit = useCallback(() => {
-    const scores = Object.entries(values)
+    Object.values(textFlushRefs.current).forEach((input) => input?.flush?.());
+
+    // The queue's rule: an answer that breaks its label's limits is refused,
+    // unless it is the answer the item was opened with. A label left empty is
+    // not refused here; the sidebar saves the labels that have answers.
+    const problems = labelProblems(
+      labels,
+      valuesRef.current,
+      {},
+      loadedRef.current,
+    ).filter((problem) => problem.kind !== "empty");
+    if (problems.length > 0) {
+      enqueueSnackbar(problemsText(problems), { variant: "warning" });
+      setErrorLabels(new Set(problems.map((problem) => problem.label_id)));
+      return;
+    }
+
+    const scores = Object.entries(valuesRef.current)
       .filter(([_, v]) => v !== null && v !== undefined)
       .map(([labelId, value]) => ({
         label_id: labelId,
@@ -491,6 +546,8 @@ function QueueAnnotationSection({
 
     if (scores.length === 0) return;
 
+    setErrorLabels(new Set());
+    setFailedReasons({});
     // Send queue_item_id so the bulk score write lands in *this* queue's
     // review context. Without it the backend falls back to the source's
     // default queue, and every section in this drawer would write to the
@@ -511,13 +568,21 @@ function QueueAnnotationSection({
         projectId: projectMap[itemSourceType],
       },
       {
-        onSuccess: () => {
+        onSuccess: (response) => {
+          // A refused label keeps what was entered, with the server's reason
+          // under it, so it can be fixed and sent again.
+          const result = response?.data?.result || {};
+          const failedLabels = (result.failed_labels || []).map(String);
+          if (failedLabels.length > 0) {
+            setErrorLabels(new Set(failedLabels));
+            setFailedReasons({ ...(result.failed_reasons ?? {}) });
+          }
           onScoresChanged?.();
         },
       },
     );
   }, [
-    values,
+    labels,
     notes,
     notesTouched,
     existingNotes,
@@ -695,7 +760,17 @@ function QueueAnnotationSection({
                 allow_notes: label.allow_notes ?? false,
               }}
               value={values[label.id] || null}
+              loadedValue={loadedRef.current[label.id]}
+              hasError={errorLabels.has(label.id)}
               onChange={(val) => handleChange(label.id, val)}
+              textFlushRef={
+                label.type === "text"
+                  ? (input) => {
+                      if (input) textFlushRefs.current[label.id] = input;
+                      else delete textFlushRefs.current[label.id];
+                    }
+                  : undefined
+              }
               index={i}
               focused={focusedIndex === i}
               labelNotes={labelNotes[label.id] || ""}
@@ -703,6 +778,16 @@ function QueueAnnotationSection({
                 handleLabelNotesChange(label.id, val)
               }
             />
+            {failedReasons[label.id] && (
+              <Typography
+                component="p"
+                variant="caption"
+                color="error.main"
+                sx={{ mt: 0.5 }}
+              >
+                {failedReasons[label.id]}
+              </Typography>
+            )}
           </Box>
         ))}
 

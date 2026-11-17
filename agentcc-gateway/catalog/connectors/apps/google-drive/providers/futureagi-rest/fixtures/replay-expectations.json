@@ -1,0 +1,78 @@
+{
+  "schema": "k2-replay-expectations/v1",
+  "app": "google-drive",
+  "source": "V10 synthetic catalog fixtures; not live acceptance",
+  "test_account": "v10-synthetic-unverified-google-drive",
+  "tools": 8,
+  "vendor_404": "Google www.googleapis.com 404",
+  "drive_checks": [
+    {
+      "name": "first_tool_read_only",
+      "jq": ".tools[] | select(.name == \"list_files\") | .annotations.readOnlyHint",
+      "want": "true"
+    },
+    {
+      "name": "fixture_resource_returned",
+      "jq": ".calls[0].result.content[0].text | contains(\"fixture\")",
+      "want": "true"
+    },
+    {
+      "name": "typed_first_projection",
+      "jq": ".calls[0].result.content[0].text | fromjson | .files[0].id",
+      "want": "file-fixture"
+    },
+    {
+      "name": "list_files_annotations",
+      "jq": ".tools[] | select(.name == \"list_files\") | .annotations | [.readOnlyHint, .destructiveHint, .idempotentHint, .openWorldHint] | map(tostring) | join(\" \")",
+      "want": "true false true false"
+    },
+    {
+      "name": "get_file_annotations",
+      "jq": ".tools[] | select(.name == \"get_file\") | .annotations | [.readOnlyHint, .destructiveHint, .idempotentHint, .openWorldHint] | map(tostring) | join(\" \")",
+      "want": "true false true false"
+    },
+    {
+      "name": "copy_file_annotations",
+      "jq": ".tools[] | select(.name == \"copy_file\") | .annotations | [.readOnlyHint, .destructiveHint, .idempotentHint, .openWorldHint] | map(tostring) | join(\" \")",
+      "want": "false false false false"
+    },
+    {
+      "name": "create_file_annotations",
+      "jq": ".tools[] | select(.name == \"create_file\") | .annotations | [.readOnlyHint, .destructiveHint, .idempotentHint, .openWorldHint] | map(tostring) | join(\" \")",
+      "want": "false false false false"
+    },
+    {
+      "name": "rename_file_annotations",
+      "jq": ".tools[] | select(.name == \"rename_file\") | .annotations | [.readOnlyHint, .destructiveHint, .idempotentHint, .openWorldHint] | map(tostring) | join(\" \")",
+      "want": "false false false false"
+    },
+    {
+      "name": "delete_file_annotations",
+      "jq": ".tools[] | select(.name == \"delete_file\") | .annotations | [.readOnlyHint, .destructiveHint, .idempotentHint, .openWorldHint] | map(tostring) | join(\" \")",
+      "want": "false true true false"
+    },
+    {
+      "name": "list_permissions_annotations",
+      "jq": ".tools[] | select(.name == \"list_permissions\") | .annotations | [.readOnlyHint, .destructiveHint, .idempotentHint, .openWorldHint] | map(tostring) | join(\" \")",
+      "want": "true false true false"
+    },
+    {
+      "name": "list_revisions_annotations",
+      "jq": ".tools[] | select(.name == \"list_revisions\") | .annotations | [.readOnlyHint, .destructiveHint, .idempotentHint, .openWorldHint] | map(tostring) | join(\" \")",
+      "want": "true false true false"
+    }
+  ],
+  "vendor_request_checks": [
+    {
+      "name": "documented_first_request",
+      "index": 0,
+      "want": "GET /drive/v3/files?pageSize=10&q=trashed+%3D+false"
+    }
+  ],
+  "every_vendor_request": [
+    {
+      "name": "documented_api_prefix",
+      "jq": ".path | startswith(\"/drive/v3/\")"
+    }
+  ]
+}

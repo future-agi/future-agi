@@ -1,0 +1,8 @@
+[
+  {
+    "uri": "mock://docs/readme",
+    "name": "readme",
+    "mimeType": "text/plain",
+    "text": "agentcc-mcpmock fixture resource."
+  }
+]

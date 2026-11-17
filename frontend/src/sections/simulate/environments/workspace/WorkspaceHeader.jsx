@@ -60,7 +60,10 @@ export default function WorkspaceHeader({
   // body, which the mutation writes back into the §6 cache; the workspace
   // overlays that name onto `env`, so the header reflects the new name at once.
   // Gate on `backed` (like Delete) — a forked/template env has no row to PATCH.
-  const canRename = backed && !locked;
+  // A failed/canceled build keeps its name here (only Delete is offered): the
+  // build page reads the name from the job, so a rename would not show.
+  const canRename =
+    backed && !locked && env?.buildStatus !== BUILD_STATUS.FAILED;
   // Delete (§2) is live today, but only a real backend-backed env has a row to
   // remove — a forked/template env has none, so it is offered only when backed.
   const canDelete = backed && !locked;

@@ -17,8 +17,9 @@ from ee.falcon_ai.modes import (
     load_tools_for_mode,
 )
 from ee.falcon_ai.prompt_builder import PromptBuilder
+from ee.falcon_ai.tool_scope import authenticated_tool_scope, workspace_access_allowed
 from ee.licensing.activation_client import ManagedServiceError
-from tfc.middleware.workspace_context import workspace_context
+from tfc.utils.tenant_scope import acts_in_organization
 
 logger = structlog.get_logger(__name__)
 
@@ -144,10 +145,12 @@ class AgentLoop:
         """Load MCP connector tools (sync, called via database_sync_to_async)."""
         from ee.falcon_ai.mcp_tools import load_mcp_tools
 
-        return load_mcp_tools(
-            organization=self.tool_context.organization,
-            workspace=self.tool_context.workspace,
-        )
+        with authenticated_tool_scope(self.tool_context):
+            return load_mcp_tools(
+                organization=self.tool_context.organization,
+                workspace=self.tool_context.workspace,
+                user=self.tool_context.user,
+            )
 
     async def _load_mcp_tools(self):
         """Load external MCP connector tools for this org/workspace."""
@@ -170,6 +173,36 @@ class AgentLoop:
         system_prompt_override=None,
         tools_override=None,
     ):
+        from tracer.services.background_transport import analysis_transport_scope
+
+        guard = getattr(self.tool_context, "background_analysis", None)
+        with analysis_transport_scope(guard):
+            return await self._run(
+                user_message,
+                history_messages,
+                send_callback,
+                context_page,
+                context_info,
+                file_images,
+                precontent_blocks,
+                skill,
+                system_prompt_override,
+                tools_override,
+            )
+
+    async def _run(
+        self,
+        user_message,
+        history_messages,
+        send_callback,
+        context_page="",
+        context_info=None,
+        file_images=None,
+        precontent_blocks=None,
+        skill=None,
+        system_prompt_override=None,
+        tools_override=None,
+    ):
         """Execute the agent loop with mode detection, parallel tool execution, and retry.
 
         Args:
@@ -178,6 +211,14 @@ class AgentLoop:
             tools_override: If provided, replaces the mode-detected tools list.
                 Used by AgentEvaluator to restrict available tools.
         """
+
+        from tracer.services.background_transport import current_guard
+
+        background_guard = (
+            getattr(self.tool_context, "background_analysis", None) or current_guard()
+        )
+        if background_guard is not None:
+            self.tool_context = await background_guard.checkpoint()
 
         # 0. Cluster-RCA delegation. When the cluster-rca skill is active on the
         # first turn, hand off to the dedicated cluster-analysis agent: it streams
@@ -191,7 +232,8 @@ class AgentLoop:
             m.get("role") == "assistant" for m in (history_messages or [])
         )
         if (
-            skill is not None
+            background_guard is None
+            and skill is not None
             and getattr(skill, "slug", None) == "cluster-rca"
             and _is_first_turn
         ):
@@ -208,13 +250,18 @@ class AgentLoop:
 
         # 1. Detect mode and load tools
         self.mode = detect_mode(context_page, user_message)
-        if tools_override is not None:
+        if background_guard is not None:
+            from ai_tools.background import background_tools
+
+            # Neither a mode, a skill nor tools_override may broaden this job.
+            self.tools = background_tools(tool_registry, self.tool_context)
+        elif tools_override is not None:
             self.tools = tools_override
         else:
             self.tools = load_tools_for_mode(self.mode)
 
-        # 1b. Load external MCP connector tools (skip when tools are overridden)
-        if tools_override is None:
+        # Background analysis never discovers connectors or acquires OAuth state.
+        if tools_override is None and background_guard is None:
             mcp_tools = await self._load_mcp_tools()
             if mcp_tools:
                 seen = {t.name for t in self.tools}
@@ -227,7 +274,8 @@ class AgentLoop:
         # Tier 1: Always-loaded tools — sent to API in every request
         # Tier 2: Deferred tools — only names in system prompt, loaded via tool_search
         total_tools_available = len(self.tools)
-        self._all_tools = list(self.tools)  # Keep full list for tool_search
+        if background_guard is None:
+            self._all_tools = list(self.tools)  # Interactive tool_search only
 
         # Extract recent tool names for continuity
         recent_tool_names = set()
@@ -237,9 +285,10 @@ class AgentLoop:
                     recent_tool_names.add(tc["tool_name"])
 
         # Filter to ~40 active tools (sent to API with full schemas)
-        self.tools = filter_tools_for_message(
-            self.tools, user_message, recent_tool_names, max_tools=40
-        )
+        if background_guard is None:
+            self.tools = filter_tools_for_message(
+                self.tools, user_message, recent_tool_names, max_tools=40
+            )
         self._cached_openai_tools = None
 
         # Send mode_detected event
@@ -292,10 +341,11 @@ class AgentLoop:
             )
 
         # 3. Context compaction — multi-tier: light strip or full LLM summarization
-        self.conversation, history_messages = (
-            await self.context_manager.compact_if_needed(
-                self.conversation, history_messages, self.llm_client
-            )
+        (
+            self.conversation,
+            history_messages,
+        ) = await self.context_manager.compact_if_needed(
+            self.conversation, history_messages, self.llm_client
         )
 
         # 4. Build messages with context management
@@ -326,6 +376,8 @@ class AgentLoop:
         consecutive_errors = 0
 
         for iteration in range(self.MAX_ITERATIONS):
+            if background_guard is not None:
+                self.tool_context = await background_guard.checkpoint()
             # Force wrap-up when approaching the limit
             # Token-budget-based warning — more natural than iteration count
             turn_tokens = self.total_input_tokens + self.total_output_tokens
@@ -480,6 +532,8 @@ class AgentLoop:
                 )
                 break
 
+            if background_guard is not None:
+                self.tool_context = await background_guard.checkpoint()
             full_content += current_content
             self.partial_content = full_content
             self.partial_tool_calls = all_tool_calls_log
@@ -529,7 +583,11 @@ class AgentLoop:
                 if not tool:
                     tool = next((t for t in self.tools if t.name == tool_name), None)
                 # Deferred tool loading: if not in active tools, check full list
-                if not tool and hasattr(self, "_all_tools"):
+                if (
+                    background_guard is None
+                    and not tool
+                    and hasattr(self, "_all_tools")
+                ):
                     tool = next(
                         (t for t in self._all_tools if t.name == tool_name), None
                     )
@@ -575,13 +633,18 @@ class AgentLoop:
 
             # Execute all tool calls in parallel
             async def _run_tool(exec_info):
+                if background_guard is not None:
+                    self.tool_context = await background_guard.checkpoint()
                 if exec_info["tool"]:
                     try:
                         tool = exec_info["tool"]
+                        from ai_tools.background import background_tool_denial
+
+                        denial = background_tool_denial(tool, self.tool_context)
+                        if denial is not None:
+                            return denial.content, denial.is_error
                         # MCP tools: use async path directly (no thread pool blocking)
                         if hasattr(tool, "async_execute"):
-                            from ai_tools.base import ToolResult as _TR
-
                             try:
                                 params = tool.input_model.model_validate(
                                     exec_info["args"] or {}
@@ -598,7 +661,7 @@ class AgentLoop:
                                 self._execute_tool(tool, exec_info["args"]),
                                 timeout=30,
                             )
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         return (
                             f"Tool '{exec_info['tool_name']}' timed out after 30s",
                             True,
@@ -615,14 +678,21 @@ class AgentLoop:
                         hint += f" Did you mean: {', '.join(suggestions)}?"
                     return hint, True
 
-            results = await asyncio.gather(
-                *[_run_tool(ei) for ei in tool_executions],
-                return_exceptions=True,
-            )
+            if background_guard is not None:
+                # A revoked background job must not launch remaining siblings or
+                # feed a terminal authorization outcome back to the model.
+                results = []
+                for ei in tool_executions:
+                    results.append(await _run_tool(ei))
+            else:
+                results = await asyncio.gather(
+                    *[_run_tool(ei) for ei in tool_executions],
+                    return_exceptions=True,
+                )
 
             # Process results and send tool_call_result events
             iteration_errors = 0
-            for exec_info, result in zip(tool_executions, results):
+            for exec_info, result in zip(tool_executions, results, strict=False):
                 if isinstance(result, Exception):
                     logger.error(
                         "tool_execution_exception",
@@ -923,14 +993,50 @@ class AgentLoop:
     @database_sync_to_async
     def _execute_tool(self, tool, params):
         """Execute a tool synchronously (tools use Django ORM)."""
+        from accounts.models.user import User
+        from ee.falcon_ai.mcp_tools import MCPToolWrapper
+
+        context = self.tool_context
+        background_guard = getattr(context, "background_analysis", None)
+        if background_guard is not None:
+            # Check inside the executing thread, not before queueing it. Keep
+            # terminal failures outside the tool-error catch/retry path below.
+            context = background_guard.check()
+        from ai_tools.background import background_tool_denial
+
+        denial = background_tool_denial(tool, context)
+        if denial is not None:
+            return denial
         try:
-            with workspace_context(
-                self.tool_context.workspace,
-                organization=self.tool_context.organization,
-                user=self.tool_context.user,
-            ):
-                return tool.run(params, self.tool_context)
+            with authenticated_tool_scope(context):
+                # Cached socket contexts are not proof of current access. MCP
+                # wrappers retain their own live connector gate and error shape.
+                # Background jobs can carry a user without acting as that user.
+                if context.interactive_falcon_socket and not isinstance(
+                    tool, MCPToolWrapper
+                ):
+                    # Recheck after turn admission: a tool can deactivate the
+                    # cached user while leaving their memberships active.
+                    active_user = (
+                        context.user is not None
+                        and User.objects.filter(
+                            pk=context.user.pk, is_active=True
+                        ).exists()
+                    )
+                    allowed = active_user and (
+                        workspace_access_allowed(context, context.workspace)
+                        if context.workspace is not None
+                        else acts_in_organization(context.user, context.organization)
+                    )
+                    if not allowed:
+                        return ToolResult.error(
+                            "Access to this workspace has been revoked.",
+                            error_code="workspace_access_revoked",
+                        )
+                return tool.run(params, context)
         except Exception as e:
+            if background_guard is not None:
+                background_guard.check()
             logger.error("tool_execution_error", tool=tool.name, error=str(e))
             return ToolResult.error(str(e))
 
@@ -1060,11 +1166,6 @@ class AgentLoop:
                 "title": "Error Feed alert created",
                 "action_label": "Go to Error Feed alerts",
                 "path_prefix": "/dashboard/error-feed/alerts",
-            },
-            "create_api_key": {
-                "title": "API key created",
-                "action_label": "Go to keys",
-                "path_prefix": "/dashboard/keys/",
             },
             "create_workspace": {
                 "title": "Workspace created",

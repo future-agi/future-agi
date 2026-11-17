@@ -75,7 +75,7 @@ const PromtLeftSidebar = ({
         { name: titleName.name, id: titleName.id },
         ...prev,
       ]);
-      navigate(`/dashboard/prompt/add/${data?.data?.result?.rootTemplate}`);
+      navigate(`/dashboard/prompt/add/${data?.data?.result?.root_template}`);
     },
   });
 

@@ -34,7 +34,11 @@ PII_ENTITY_TYPES = [
     {"id": "BANK_ACCOUNT", "label": "Bank Account Number", "category": "financial"},
     {"id": "MEDICAL_RECORD", "label": "Medical Record Number", "category": "health"},
     {"id": "AWS_KEY", "label": "AWS Access Key", "category": "technical"},
-    {"id": "API_KEY", "label": "API Key / Secret", "category": "technical"},
+    {
+        "id": "API_KEY",
+        "label": "API key with an sk, key or token prefix and - or _ (not prefix-less Future AGI keys)",
+        "category": "technical",
+    },
 ]
 
 TOPIC_CATEGORIES = [

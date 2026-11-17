@@ -1,0 +1,46 @@
+# Mailchimp's Transactional Messaging MCP, not its Marketing API or docs MCP.
+# The official configuration selects HTTP and authenticates with a Mandrill key.
+schema: "connector-manifest/v1#provider"
+app: mailchimp
+id: api-key
+version: 1.1.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mandrillapp.com/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: Transactional API key
+      help: "Create a key in Mailchimp Transactional Settings > API Keys. Unrestricted keys work by default; restricted keys must enable the AI Agents group and the actions needed. Sending requires an authenticated domain; SMS requires a configured number."
+      helpUrl: https://mailchimp.com/developer/transactional/guides/how-to-use-mailchimps-transactional-messaging-mcp
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_metered
+  source: https://mailchimp.com/pricing/transactional-email/
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://mailchimp.com/developer/transactional/guides/how-to-use-mailchimps-transactional-messaging-mcp
+    fetchedAt: 2026-11-09
+  - fact: transport.variant
+    url: https://mailchimp.com/developer/transactional/guides/how-to-use-mailchimps-transactional-messaging-mcp
+    fetchedAt: 2026-11-09
+  - fact: auth.kind
+    url: https://mailchimp.com/developer/transactional/guides/how-to-use-mailchimps-transactional-messaging-mcp
+    fetchedAt: 2026-11-09
+  - fact: auth.credentialParts
+    url: https://mailchimp.com/developer/transactional/guides/how-to-use-mailchimps-transactional-messaging-mcp
+    fetchedAt: 2026-11-09

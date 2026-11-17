@@ -75,13 +75,17 @@ def _resolve_projects_via_ch(span_items, trace_items, session_items):
             )
 
             for session_id, fields in resolve_session_fields(
-                list(session_items)
+                list(session_items), include_overlay=False
             ).items():
                 project_id = fields.get("project_id")
                 if project_id:
                     for item in session_items.get(str(session_id), []):
                         resolved[item.id] = str(project_id)
-        except Exception:
+        except Exception as exc:
+            print(
+                "queueitem_project_backfill: session resolution failed "
+                f"({type(exc).__name__}); rows remain unresolved; see warning"
+            )
             logger.warning(
                 "queueitem_project_backfill: ClickHouse session resolve failed",
                 exc_info=True,
@@ -89,7 +93,7 @@ def _resolve_projects_via_ch(span_items, trace_items, session_items):
     return resolved
 
 
-def _process_batch(QueueItem, Project, batch, stats):  # noqa: N803
+def _process_batch(QueueItem, Project, batch, stats, alias):  # noqa: N803
     span_items, trace_items, session_items = {}, {}, {}
     for item in batch:
         source_type = item.source_type
@@ -108,7 +112,7 @@ def _process_batch(QueueItem, Project, batch, stats):  # noqa: N803
     project_org = (
         {
             str(pid): org_id
-            for pid, org_id in Project.objects.filter(
+            for pid, org_id in Project.objects.using(alias).filter(
                 id__in=resolved_pids
             ).values_list("id", "organization_id")
         }
@@ -129,15 +133,16 @@ def _process_batch(QueueItem, Project, batch, stats):  # noqa: N803
         to_update.append(item)
 
     if to_update:
-        QueueItem.objects.bulk_update(to_update, ["project"], batch_size=len(to_update))
+        QueueItem.objects.using(alias).bulk_update(to_update, ["project"], batch_size=len(to_update))
     stats["stamped"] += len(to_update)
 
 
 def backfill_queueitem_project(apps, schema_editor):
+    alias = schema_editor.connection.alias
     QueueItem = apps.get_model("model_hub", "QueueItem")  # noqa: N806
     Project = apps.get_model("tracer", "Project")  # noqa: N806
 
-    base_qs = QueueItem.objects.filter(
+    base_qs = QueueItem.objects.using(alias).filter(
         project__isnull=True, source_type__in=_TRACER_KINDS
     ).only(
         "id",
@@ -163,7 +168,7 @@ def backfill_queueitem_project(apps, schema_editor):
         if not batch:
             break
         last_id = batch[-1].id
-        _process_batch(QueueItem, Project, batch, stats)
+        _process_batch(QueueItem, Project, batch, stats, alias)
 
     if any(stats.values()):
         logger.info(

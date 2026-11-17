@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: render
+version: 1.0.0
+name: Render
+description: "Inspect services, logs and metrics; create cloud resources and trigger deployments."
+vendor:
+  name: Render
+  domains: [render.com]
+eeCategory: developer
+group: other
+categories: [developer, hosting]
+tags: [deployments, projects, logs]
+docsUrl: https://render.com/docs/mcp-server
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://render.com/docs/mcp-server.md
+    fetchedAt: 2026-11-09

@@ -1,4 +1,5 @@
-import { test as base, expect, type Route } from "@playwright/test";
+import { type Route } from "@playwright/test";
+import { test as base, expect } from "../../lib/trace-hygiene/fixture";
 import { flowAnnotation } from "../../lib/flow-meta";
 import {
   SHARED_ISSUE,
@@ -7,7 +8,6 @@ import {
   TRACE_A_DETAIL,
   TRACE_B,
 } from "./shared-issue.payload";
-
 // Deliberately NOT using lib/fixtures: a shared link is opened by someone who
 // is not signed in, so the flow starts from a clean, unauthenticated context.
 //

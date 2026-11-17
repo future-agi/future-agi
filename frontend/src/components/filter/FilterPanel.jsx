@@ -83,6 +83,7 @@ FilterPanel.propTypes = {
       options: PropTypes.array,
       operators: PropTypes.arrayOf(PropTypes.string),
       category: PropTypes.string,
+      allowCustomValue: PropTypes.bool,
     }),
   ).isRequired,
   value: PropTypes.array,

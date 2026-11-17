@@ -37,13 +37,13 @@ from agent_playground.models import (
     NodeTemplate,
     Port,
 )
-from agent_playground.models.node_connection import NodeConnection
 from agent_playground.models.choices import (
     GraphVersionStatus,
     NodeType,
     PortDirection,
     PortMode,
 )
+from agent_playground.models.node_connection import NodeConnection
 from agent_playground.services.engine.node_runner import (
     BaseNodeRunner,
     clear_runners,
@@ -691,9 +691,15 @@ def llm_prompt_template(db):
             "description": "Test LLM prompt template",
             "categories": ["testing"],
             "input_definition": [],
-            "output_definition": [],
+            "output_definition": [
+                {
+                    "key": "response",
+                    "data_schema": {},
+                    "schema_source": "prompt_version",
+                }
+            ],
             "input_mode": PortMode.DYNAMIC,
-            "output_mode": PortMode.DYNAMIC,
+            "output_mode": PortMode.STRICT,
             "config_schema": {},
         },
     )
@@ -725,9 +731,7 @@ def single_node_graph(db, organization, workspace, user, llm_prompt_template):
         name="LLM Node",
         config={},
     )
-    # llm_prompt template is DYNAMIC mode: port `key` must be "custom", and
-    # the user-facing name goes in `display_name` (per agent_playground Port
-    # validator — see agent_playground/models/port.py).
+    # Inputs are dynamic (custom + display_name); the strict output is response.
     Port.no_workspace_objects.create(
         node=node,
         key="custom",
@@ -737,7 +741,7 @@ def single_node_graph(db, organization, workspace, user, llm_prompt_template):
     )
     Port.no_workspace_objects.create(
         node=node,
-        key="custom",
+        key="response",
         display_name="response",
         direction=PortDirection.OUTPUT,
         data_schema={"type": "string"},
@@ -775,8 +779,8 @@ def two_node_graph(db, organization, workspace, user, llm_prompt_template):
         name="Summarizer",
         config={},
     )
-    # llm_prompt template is DYNAMIC mode: port `key` must be "custom".
-    p1_in = Port.no_workspace_objects.create(
+    # Inputs are dynamic (custom + display_name); the strict output is response.
+    Port.no_workspace_objects.create(
         node=node1,
         key="custom",
         display_name="query",
@@ -785,7 +789,7 @@ def two_node_graph(db, organization, workspace, user, llm_prompt_template):
     )
     p1_out = Port.no_workspace_objects.create(
         node=node1,
-        key="custom",
+        key="response",
         display_name="response",
         direction=PortDirection.OUTPUT,
         data_schema={"type": "string"},
@@ -806,9 +810,9 @@ def two_node_graph(db, organization, workspace, user, llm_prompt_template):
         direction=PortDirection.INPUT,
         data_schema={"type": "string"},
     )
-    p2_out = Port.no_workspace_objects.create(
+    Port.no_workspace_objects.create(
         node=node2,
-        key="custom",
+        key="response",
         display_name="response",
         direction=PortDirection.OUTPUT,
         data_schema={"type": "string"},

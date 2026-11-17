@@ -936,6 +936,9 @@ def actual_producer():
         {"gc": NS(collect=lambda: None)},
     )
     response = extract(ROOT / "evaluations/engine/formatting.py", "extract_raw_result")
+    choice_config = extract(
+        ROOT / "evaluations/engine/version_choices.py", "version_choice_config"
+    )
     django_spec = find_spec("django")
     assert django_spec is not None and django_spec.origin, (
         "installed Django is required"
@@ -969,7 +972,13 @@ def actual_producer():
         )
         metadata = response(NS(eval_results=[{"data": data}]), template)
         with patch.dict(sys.modules, {"model_hub.utils.scoring": scoring}):
-            value = formatter(NS(eval_template=template), metadata, row=object())
+            # The runner reads the template's own choices when no saved
+            # version or binding names others.
+            runner = NS(
+                eval_template=template,
+                _effective_choice_config=lambda: choice_config(template),
+            )
+            value = formatter(runner, metadata, row=object())
         return {
             "val": scope["to_python"](None, value),
             "choice_value_infos": json.dumps(json.dumps(metadata)),

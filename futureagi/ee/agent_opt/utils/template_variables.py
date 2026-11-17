@@ -191,3 +191,48 @@ def repair_template_variables(
         "(missing vars will be evaluated as-is)"
     )
     return candidate_prompt
+
+
+def build_jinja_template_instruction(original_prompt: str) -> str:
+    """Tell candidate generators to optimize prose without rewriting Jinja logic."""
+    return (
+        "\n\nCRITICAL CONSTRAINT - Jinja Template Preservation:\n"
+        "Improve only the surrounding prose. Preserve every Jinja expression "
+        "{{ ... }} and control block {% ... %}, including property access, filters, "
+        "loop variables, nesting, order, and whitespace-control markers. "
+        "Do not replace dynamic expressions with example values or bare variables.\n"
+        f"Original Jinja template:\n{original_prompt}"
+    )
+
+
+def validate_jinja_template(
+    original_prompt: str, candidate_prompt: str
+) -> tuple[bool, str]:
+    """Allow prose edits, but require the same ordered Jinja program.
+
+    Comparing lexer tokens (not a placeholder regex) preserves nested properties,
+    loops, conditions and loop-local variables, while allowing expression spacing.
+    Syntax is checked by the shared renderer after its spaced-column preprocessing.
+    This also permits the spaced column names supported by Run Prompt.
+    """
+    from jinja2 import TemplateError
+    from jinja2.sandbox import SandboxedEnvironment
+
+    env = SandboxedEnvironment()
+    ignored = {"data", "whitespace", "comment_begin", "comment", "comment_end"}
+
+    def program(prompt):
+        return [
+            (kind, value)
+            for _, kind, value in env.lex(prompt)
+            if kind not in ignored
+        ]
+
+    try:
+        if program(original_prompt) == program(candidate_prompt):
+            return True, ""
+    except TemplateError:
+        return False, "Invalid Jinja template in optimization candidate."
+    return False, (
+        "Optimization candidate must preserve all Jinja expressions and control blocks."
+    )

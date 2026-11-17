@@ -68,7 +68,11 @@ test('AUTH-E2E-005: Google sign-in accepts only verified identities including ro
           const location = response.headers().location;
           const query = new URL(location).searchParams;
           if (succeeds) {
-            expect(query.has('sso_token')).toBe(true);
+            expect(Boolean(query.get('code')?.trim())).toBe(true);
+            expect(query.get('kind') === 'sso').toBe(true);
+            expect(query.has('reason')).toBe(false);
+            expect(query.has('denied')).toBe(false);
+            expect(query.has('sso_token')).toBe(false);
             expect(query.get('is_new_user')).toBe('false');
             const identity = await (await userInfo!).json();
             expect(identity.organization.id).toBe(actor.organizationId);
@@ -79,6 +83,7 @@ test('AUTH-E2E-005: Google sign-in accepts only verified identities including ro
           } else {
             expect(query.get('denied')).toBe('true');
             expect(query.has('sso_token')).toBe(false);
+            expect(query.has('code')).toBe(false);
             await expect(page.getByText('Unable to process OAuth callback', { exact: true })).toBeVisible({ timeout: UI_READY });
             expect(await page.evaluate(() => localStorage.getItem('accessToken'))).toBeNull();
             expect((await tokens()).length - before.length, 'rejected callback AuthToken delta').toBe(0);

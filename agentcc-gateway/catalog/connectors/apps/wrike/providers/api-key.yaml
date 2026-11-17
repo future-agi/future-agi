@@ -1,0 +1,45 @@
+# Wrike MCP v2 supports a user-generated Permanent Access Token for headless clients.
+schema: "connector-manifest/v1#provider"
+app: wrike
+id: api-key
+version: 1.1.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.wrike.com/v2
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: Permanent access token
+      help: "In Wrike, open Apps & Integrations > API, create or select an app, and generate its Permanent access token. API permissions are required. The token inherits your Wrike permissions. Supply it without the Bearer prefix."
+      helpUrl: https://developers.wrike.com/docs/mcp-legacy-authentication-pat
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_plan
+  source: https://developers.wrike.com/docs/wrike-mcp-server-overview
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://developers.wrike.com/docs/wrike-mcp-server-overview
+    fetchedAt: 2026-11-09
+  - fact: transport.variant
+    url: https://developers.wrike.com/docs/wrike-mcp-server-overview
+    fetchedAt: 2026-11-09
+  - fact: auth.kind
+    url: https://developers.wrike.com/docs/mcp-legacy-authentication-pat
+    fetchedAt: 2026-11-09
+  - fact: auth.credentialParts
+    url: https://developers.wrike.com/docs/mcp-legacy-authentication-pat
+    fetchedAt: 2026-11-09

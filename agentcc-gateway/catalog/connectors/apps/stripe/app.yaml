@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: stripe
+version: 1.0.0
+name: Stripe
+description: "Payments data: customers, invoices, products and balances."
+vendor:
+  name: Stripe
+  domains: [stripe.com]
+eeCategory: data
+group: other
+categories: [data, payments]
+tags: [payments, billing]
+docsUrl: https://docs.stripe.com/mcp
+defaultProvider: agent-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://docs.stripe.com/mcp
+    fetchedAt: 2026-10-20

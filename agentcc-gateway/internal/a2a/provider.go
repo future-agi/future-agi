@@ -70,6 +70,10 @@ func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletio
 // StreamChatCompletion is not supported for A2A agents (they use task-based async).
 // Returns a single chunk with the full response.
 func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCompletionRequest) (<-chan models.StreamChunk, <-chan error) {
+	// Capture routing fields before returning, not after the goroutine starts.
+	// Nested payloads remain read-only for the call's lifetime.
+	snapshot := *req
+	req = &snapshot
 	chunks := make(chan models.StreamChunk, 2)
 	errCh := make(chan error, 1)
 

@@ -1,0 +1,4 @@
+# Applied only to the one-off Python test container, not the serving backend.
+services:
+  backend:
+    image: futureagi/blank-grid-tests:local

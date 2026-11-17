@@ -1,0 +1,22 @@
+{
+  "http": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    }
+  },
+  "body": {
+    "jsonrpc": "2.0",
+    "id": 2,
+    "result": {
+      "tools": [
+        {
+          "name": "github__create_issue_with_labels_assignees_milestone_and_project_v2",
+          "inputSchema": {
+            "type": "object"
+          }
+        }
+      ]
+    }
+  }
+}

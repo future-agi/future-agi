@@ -244,8 +244,8 @@ def test_progressing_response_stops_at_deadline(slow_url_server, path):
     result = fetch_url_content(f"{slow_url_server.url}{path}", timeout=0.35)
     elapsed = time.monotonic() - started
 
-    assert result.startswith("[Failed to fetch URL:"), result
-    assert "deadline" in result.lower(), result
+    not_fetched = f"[This link could not be fetched: {slow_url_server.url}{path}]"
+    assert result == not_fetched, result
     assert elapsed < 0.8, elapsed
     # Timeout must close the actual transport, not just abandon a future while
     # the socket continues occupying a worker in the background.
@@ -257,8 +257,8 @@ def test_redirect_chain_shares_one_deadline(slow_url_server):
     result = fetch_url_content(f"{slow_url_server.url}/redirect/3", timeout=0.35)
     elapsed = time.monotonic() - started
 
-    assert result.startswith("[Failed to fetch URL:"), result
-    assert "deadline" in result.lower(), result
+    redirect = f"{slow_url_server.url}/redirect/3"
+    assert result == f"[This link could not be fetched: {redirect}]", result
     assert elapsed < 0.8, elapsed
     assert "/fast" not in slow_url_server.paths
     assert len(slow_url_server.paths) <= 3
@@ -297,7 +297,8 @@ def test_dns_wait_stops_at_deadline(monkeypatch):
         started = time.monotonic()
         try:
             result = fetch_url_content("http://public.example/fast", timeout=0.1)
-            assert "deadline" in result.lower(), result
+            not_fetched = "[This link could not be fetched: http://public.example/fast]"
+            assert result == not_fetched, result
             assert time.monotonic() - started < 0.5
         finally:
             release.set()
@@ -369,8 +370,12 @@ def test_chat_url_dispatch_does_not_wait_for_model_stream_executor(
         lambda message: "Fetched context",
     )
     consumer = FalconAIConsumer()
-    consumer._save_user_message = AsyncMock(return_value=None)
+    # The user's message is saved: a turn whose message is not saved ends.
+    consumer._save_user_message = AsyncMock(return_value=Mock())
     consumer.send_json = AsyncMock()
+    # The chat turn's workspace and conversation checks pass for this user.
+    consumer._chat_access_allowed = AsyncMock(return_value=True)
+    consumer._owns_conversation = AsyncMock(return_value=True)
 
     async def chat():
         loop = asyncio.get_running_loop()
@@ -405,8 +410,12 @@ async def test_slow_fetch_does_not_occupy_database_executor(monkeypatch):
 
     monkeypatch.setattr("ee.falcon_ai.url_fetcher.fetch_urls_from_message", fetch)
     consumer = FalconAIConsumer()
-    consumer._save_user_message = AsyncMock(return_value=None)
+    # The user's message is saved: a turn whose message is not saved ends.
+    consumer._save_user_message = AsyncMock(return_value=Mock())
     consumer.send_json = AsyncMock()
+    # The chat turn's workspace and conversation checks pass for this user.
+    consumer._chat_access_allowed = AsyncMock(return_value=True)
+    consumer._owns_conversation = AsyncMock(return_value=True)
     chat = asyncio.create_task(
         consumer._handle_chat(
             {

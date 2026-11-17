@@ -11,7 +11,7 @@ import {
   ListItemText,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
-import CustomTooltip from "src/components/tooltip";
+import NotInReleaseButton from "src/components/NotInRelease/NotInReleaseButton";
 import DataTablePagination from "src/components/data-table/DataTablePagination";
 import { RUNS_PAGE_SIZE } from "src/api/simulate-environments/runs";
 import SectionCard from "../../../components/SectionCard";
@@ -25,13 +25,10 @@ import RunCompare from "./RunCompare";
 import { COMPARE_COPY } from "../../workspace.constants";
 import { LoadingScreen } from "src/components/loading-screen";
 
-const RUN_COMPARE_ENABLED = false;
-
 // The Runs tab: every run of the environment as one summary — the eval-score
-// trend graph over the runs table. With versioning on, two finished runs can
-// be ticked and compared. Choosing a winner is a later phase,
-// surfaced as "coming soon" so the shell matches the design without faking the
-// behaviour.
+// trend graph over the runs table. Two finished runs can be ticked and
+// compared. Choosing a winner is not built in this release, so it is shown
+// disabled with the shared line rather than faking the behaviour.
 // Title, legend, graph and the runs bar (~440px) plus ~320px of table rows.
 const MIN_SUMMARY_PX = 760;
 // How many eval lines the graph draws before the user picks their own.
@@ -52,8 +49,6 @@ export default function RunsSummary({
   // The selected rows themselves, so a selection survives paging.
   const [selected, setSelected] = useState([]);
   const [comparing, setComparing] = useState(false);
-  // TODO: compare is hidden until its place in the product is decided.
-  const canCompare = RUN_COMPARE_ENABLED && !!env?.versioning?.enabled;
   const selectedIds = selected.map((r) => r.executionId);
   const canSelect = (row) =>
     selected.length < 2 && !!row.executionId && row.runState === "finished";
@@ -235,39 +230,35 @@ export default function RunsSummary({
             across {scenarioCount}{" "}
             {scenarioCount === 1 ? "scenario" : "scenarios"}
           </Typography>
-          {canCompare && (
-            <>
-              <Typography
-                sx={{
-                  typography: "s2",
-                  color: "text.secondary",
-                  flexShrink: 0,
-                }}
-              >
-                {selected.length
-                  ? COMPARE_COPY.picked(selected.length)
-                  : COMPARE_COPY.pick}
-              </Typography>
-              {selected.length > 0 && (
-                <Button
-                  size="small"
-                  onClick={() => setSelected([])}
-                  sx={{ flexShrink: 0 }}
-                >
-                  {COMPARE_COPY.clear}
-                </Button>
-              )}
-              <Button
-                variant="outlined"
-                size="small"
-                disabled={!comparable}
-                onClick={() => setComparing(true)}
-                sx={{ flexShrink: 0 }}
-              >
-                {COMPARE_COPY.compare}
-              </Button>
-            </>
+          <Typography
+            sx={{
+              typography: "s2",
+              color: "text.secondary",
+              flexShrink: 0,
+            }}
+          >
+            {selected.length
+              ? COMPARE_COPY.picked(selected.length)
+              : COMPARE_COPY.pick}
+          </Typography>
+          {selected.length > 0 && (
+            <Button
+              size="small"
+              onClick={() => setSelected([])}
+              sx={{ flexShrink: 0 }}
+            >
+              {COMPARE_COPY.clear}
+            </Button>
           )}
+          <Button
+            variant="outlined"
+            size="small"
+            disabled={!comparable}
+            onClick={() => setComparing(true)}
+            sx={{ flexShrink: 0 }}
+          >
+            {COMPARE_COPY.compare}
+          </Button>
           <Button
             variant="outlined"
             size="small"
@@ -277,34 +268,22 @@ export default function RunsSummary({
           >
             Add evals
           </Button>
-          <CustomTooltip
-            show
-            arrow
+          <NotInReleaseButton
+            variant="outlined"
             size="small"
-            title="Choosing a winner is coming soon"
+            startIcon={<Iconify icon="solar:cup-star-linear" width={15} />}
           >
-            <span>
-              <Button
-                variant="outlined"
-                size="small"
-                disabled
-                startIcon={<Iconify icon="solar:cup-star-linear" width={15} />}
-              >
-                Choose winner
-              </Button>
-            </span>
-          </CustomTooltip>
+            Choose winner
+          </NotInReleaseButton>
         </Stack>
 
         <SummaryTable
           rows={rows}
           evals={evals}
           onOpenRun={onOpenRun}
-          {...(canCompare && {
-            selectedIds,
-            canSelect,
-            onToggleSelect: toggleSelect,
-          })}
+          selectedIds={selectedIds}
+          canSelect={canSelect}
+          onToggleSelect={toggleSelect}
         />
         {count > RUNS_PAGE_SIZE && (
           <Box
@@ -344,7 +323,6 @@ RunsSummary.propTypes = {
   env: PropTypes.shape({
     id: PropTypes.string,
     name: PropTypes.string,
-    versioning: PropTypes.object,
   }).isRequired,
   envState: PropTypes.shape({ scenarios: PropTypes.array }).isRequired,
   scenarioCount: PropTypes.number,

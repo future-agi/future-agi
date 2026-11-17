@@ -1,6 +1,7 @@
 from django.contrib import admin
 
 from integrations.models import IntegrationConnection, SyncLog
+from integrations.services.disconnect import disconnect_integration
 
 
 @admin.register(IntegrationConnection)
@@ -18,6 +19,10 @@ class IntegrationConnectionAdmin(admin.ModelAdmin):
     list_filter = ("platform", "status", "backfill_completed")
     search_fields = ("display_name", "external_project_name")
     readonly_fields = ("encrypted_credentials",)
+
+    def delete_queryset(self, request, queryset):
+        for connection in queryset.iterator():
+            disconnect_integration(connection)
 
 
 @admin.register(SyncLog)

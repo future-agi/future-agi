@@ -1,5 +1,6 @@
 # Register your models here.
 
+from django import forms
 from django.contrib import admin
 
 from model_hub.models.ai_model import AIModel
@@ -40,6 +41,11 @@ from model_hub.models.optimize_dataset import OptimizeDataset
 from model_hub.models.performance_report import PerformanceReport
 from model_hub.models.prompt import Prompt
 from model_hub.models.prompt_label import PromptLabel
+from model_hub.services import key_at_rest
+from model_hub.utils.model_endpoints import (
+    INVALID_MODEL_CONFIGURATION,
+    submitted_config_not_valid,
+)
 
 
 class AIModelAdmin(admin.ModelAdmin):
@@ -331,6 +337,20 @@ class DatasetAdmin(admin.ModelAdmin):
     search_fields = ("name", "organization__name")
     readonly_fields = ("created_at", "updated_at")
 
+    def save_model(self, request, obj, form, change):
+        if not change:
+            return super().save_model(request, obj, form, change)
+
+        # Opt in to edited metadata without replaying any unedited stale fields.
+        # M2M and non-model form fields are not part of this model UPDATE.
+        changed_fields = set(form.changed_data)
+        update_fields = {
+            field.name
+            for field in obj._meta.concrete_fields
+            if not field.primary_key and field.name in changed_fields
+        }
+        obj.save(update_fields=update_fields | {"updated_at"})
+
 
 @admin.register(KnowledgeBaseFile)
 class KnowledgeBaseFileAdmin(admin.ModelAdmin):
@@ -356,8 +376,55 @@ class AnnotationsLabelsAdmin(admin.ModelAdmin):
     readonly_fields = ("created_at", "updated_at")
 
 
+class PlatformValueRefusingForm(forms.ModelForm):
+    """An admin form for a model configuration: a key or setting entered here
+    that holds a non-literal value, a configuration that sets one of the
+    reserved identity fields, or one that may not be a
+    model's Google credential, is refused with the same sentence as
+    everywhere else (``INVALID_MODEL_CONFIGURATION``), and nothing of it is
+    repeated. A stored value the form sends back unchanged is checked in the
+    clear, like a value entered here (one this deployment cannot decrypt is
+    checked as stored)."""
+
+    configuration_fields = ()
+
+    def _as_checked(self, name):
+        value = self.cleaned_data.get(name)
+        loaded = self.instance._stored_snapshot().get(name)
+        try:
+            return key_at_rest.reveal_tree(value, name, loaded=loaded)
+        except key_at_rest.KeyUnreadable:
+            return value
+
+    def clean(self):
+        cleaned = super().clean()
+        if submitted_config_not_valid(
+            [self._as_checked(name) for name in self.configuration_fields],
+            provider=cleaned.get("provider"),
+        ):
+            raise forms.ValidationError(INVALID_MODEL_CONFIGURATION)
+        return cleaned
+
+
+class CustomAIModelAdminForm(PlatformValueRefusingForm):
+    configuration_fields = ("key_config",)
+
+    class Meta:
+        model = CustomAIModel
+        fields = "__all__"
+
+
+class ApiKeyAdminForm(PlatformValueRefusingForm):
+    configuration_fields = ("key", "config_json")
+
+    class Meta:
+        model = ApiKey
+        fields = "__all__"
+
+
 @admin.register(CustomAIModel)
 class CustomAIModelAdmin(admin.ModelAdmin):
+    form = CustomAIModelAdminForm
     list_display = ("id", "user_model_id", "provider", "organization", "created_at")
     list_filter = ("provider", "organization", "created_at")
     search_fields = ("user_model_id", "organization__name")
@@ -369,7 +436,16 @@ class ExperimentsTableAdmin(admin.ModelAdmin):
     list_display = ("id", "name", "status", "created_at")
     list_filter = ("status", "created_at")
     search_fields = ("name", "description")
-    readonly_fields = ("created_at", "updated_at")
+    # Never expose the raw JSON widget or replace the server-owned snapshot on
+    # an admin save. Other fields remain editable; metadata is a public read.
+    exclude = ("run_metadata",)
+    readonly_fields = ("created_at", "updated_at", "public_metadata")
+
+    @admin.display(description="Metadata")
+    def public_metadata(self, obj):
+        from model_hub.services.run_metadata_public import public_run_metadata
+
+        return public_run_metadata(obj.run_metadata)
 
 
 @admin.register(ExperimentDatasetTable)
@@ -398,6 +474,7 @@ class OptimizationDatasetAdmin(admin.ModelAdmin):
 
 @admin.register(ApiKey)
 class ApiKeyAdmin(admin.ModelAdmin):
+    form = ApiKeyAdminForm
     list_display = ("id", "provider", "organization", "created_at")
     list_filter = ("provider", "organization", "created_at")
     search_fields = ("provider", "organization__name")

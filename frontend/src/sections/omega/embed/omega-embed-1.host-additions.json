@@ -1,0 +1,17 @@
+{
+  "protocol": "omega-embed/1",
+  "about": "Future AGI host validation constraints, separate from the byte-identical OSS canonical fixture and EE Console additions. These bounds also apply to embed.open hrefs.",
+  "path": {
+    "maxLength": 2048,
+    "rule": "A string that starts with exactly one '/', with no scheme, backslash or control character."
+  },
+  "doc": {
+    "type": "string",
+    "bytes": 16,
+    "pattern": "^[A-Za-z0-9_-]{21}[AQgw]$",
+    "on": ["embed.hello", "embed.gate", "embed.key", "embed.proof"],
+    "admission": "eager-hello-load-probe",
+    "retirement": "bridge-lifetime",
+    "rule": "RL 1275A: the framed document's nonce, base64url without padding of 16 random bytes, drawn once per document load (the EE Console's DOC_PATTERN). A hello or gate whose doc is present but not exactly of this shape is invalid; doc-bearing hello/gate and proof messages also reject unknown fields and malformed optional additions. A surface that requires it (the Console) ignores a hello or gate without one, echoes the accepted hello's or proof's doc on every key of the answer, and counts a gate only for the current document. A previously unseen, non-retired hello replaces the current document immediately, aborts its mint before reporting the change, and receives keys without waiting for load. Every iframe load suspends readiness without retiring the candidate nonce, cancels its pending mint and invalidates any prior proof or challenge. Only a fresh, one-use embed.probe challenge answered by embed.proof from the frame's own window at its exact expected origin resumes that candidate; queued hello/gate cannot resume it. Proof ready is retained across failed remints but restores readiness only after a successful remint; newer gates update that verdict during and between attempts. A new document or frame element retires its predecessor for the bridge lifetime, with no eviction. Load, reset and disposal abort the document's mint context; stateful minters must ignore both success and failure from an aborted context. Studio does not participate in probe/proof. Neither doc, token nor challenge is ever put in a URL, a log line, telemetry, the page, status or any event the host reports."
+  }
+}

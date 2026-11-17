@@ -9,22 +9,41 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/config"
 )
 
+// testGatedRoots are the roots server.go gates besides /v1 with MCP and A2A
+// on: the native Google API, the speech vendors' relays, /mcp and /a2a.
+func testGatedRoots() []string {
+	return append([]string{GenAIRoot, "/mcp", "/a2a"}, SpeechRelayRoots()...)
+}
+
 func TestKeyAuthFailsClosedForNonPublicRoutes(t *testing.T) {
 	keyStore := auth.NewKeyStore(config.AuthConfig{Keys: []config.AuthKeyConfig{{
 		Name: "test",
 		Key:  "valid-key",
 	}}})
-	handler := KeyAuth(keyStore, true)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	handler := KeyAuth(keyStore, true, nil, testGatedRoots()...)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 
-	for _, path := range []string{"/v1/models", "/mcp", "/a2a", "/future-route"} {
+	for _, tc := range []struct {
+		path string
+		want int
+	}{
+		{"/v1/models", http.StatusUnauthorized},
+		{"/mcp", http.StatusUnauthorized},
+		{"/a2a", http.StatusUnauthorized},
+		// DEV CHANGE NOT KEPT: dev gates every path that is not public. The
+		// line gates its served API roots (/v1, /v1beta, the speech relays,
+		// /mcp, /a2a), so a path outside them reaches the next handler; the
+		// server answers it 404 (TestUnregisteredPathsKeepTheirNotFound).
+		{"/future-route", http.StatusNoContent},
+	} {
+		path := tc.path
 		t.Run(path, func(t *testing.T) {
 			request := httptest.NewRequest(http.MethodGet, path, nil)
 			response := httptest.NewRecorder()
 			handler.ServeHTTP(response, request)
-			if response.Code != http.StatusUnauthorized {
-				t.Fatalf("expected 401 for %s, got %d", path, response.Code)
+			if response.Code != tc.want {
+				t.Fatalf("expected %d for %s, got %d", tc.want, path, response.Code)
 			}
 		})
 	}
@@ -32,7 +51,7 @@ func TestKeyAuthFailsClosedForNonPublicRoutes(t *testing.T) {
 
 func TestKeyAuthExplicitBypasses(t *testing.T) {
 	keyStore := auth.NewKeyStore(config.AuthConfig{})
-	handler := KeyAuth(keyStore, true)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	handler := KeyAuth(keyStore, true, nil, testGatedRoots()...)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 
@@ -53,7 +72,7 @@ func TestKeyAuthAcceptsValidKeyOnMCP(t *testing.T) {
 		Name: "test",
 		Key:  "valid-key",
 	}}})
-	handler := KeyAuth(keyStore, true)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	handler := KeyAuth(keyStore, true, nil, testGatedRoots()...)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 
@@ -71,7 +90,7 @@ func TestKeyAuthAcceptsValidGeminiAPIKey(t *testing.T) {
 		Name: "test",
 		Key:  "valid-key",
 	}}})
-	handler := KeyAuth(keyStore, true)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	handler := KeyAuth(keyStore, true, nil, testGatedRoots()...)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 

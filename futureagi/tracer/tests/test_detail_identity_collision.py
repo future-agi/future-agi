@@ -156,9 +156,19 @@ def replayed_trace(user, workspace, monkeypatch):
         created_by=user,
     )
     foreign = _project(foreign_org, foreign_workspace, "foreign")
+    other_workspace = Workspace.no_workspace_objects.create(
+        name="Other Workspace",
+        organization=user.organization,
+        is_default=False,
+        is_active=True,
+        created_by=user,
+    )
+    outside_workspace = _project(user.organization, other_workspace, "outside")
     trace_id = str(uuid.uuid4())
     rows = []
-    for project, version in ((older, 10), (newer, 20), (foreign, 30)):
+    for project, version in (
+        (older, 10), (newer, 20), (foreign, 30), (outside_workspace, 40)
+    ):
         rows.append(_copy(project, trace_id, "root", version=version))
         rows.append(
             _copy(
@@ -185,6 +195,7 @@ def replayed_trace(user, workspace, monkeypatch):
         newer=newer,
         empty=empty,
         foreign=foreign,
+        outside_workspace=outside_workspace,
         analytics=analytics,
     )
 
@@ -330,26 +341,35 @@ def test_trace_detail_still_rejects_a_malformed_project_pin(
 
 @pytest.mark.django_db
 @pytest.mark.parametrize("endpoint", _ENDPOINTS)
-@pytest.mark.parametrize("pin", ["foreign", "unknown", "empty"])
+@pytest.mark.parametrize("pin", ["foreign", "outside_workspace", "unknown", "empty"])
 def test_pin_outside_scope_or_without_the_id_answers_like_a_missing_id(
     auth_client, replayed_trace, endpoint, pin
 ):
     project_id = {
         "foreign": str(replayed_trace.foreign.id),
+        "outside_workspace": str(replayed_trace.outside_workspace.id),
         "unknown": str(uuid.uuid4()),
         "empty": str(replayed_trace.empty.id),
     }[pin]
-    missing = _get(auth_client, endpoint, None)
+    missing_id = str(uuid.uuid4()) if endpoint == "trace" else None
+    missing = _get(auth_client, endpoint, missing_id)
     replayed_trace.analytics.calls.clear()
 
     response = _get(
         auth_client, endpoint, replayed_trace.trace_id, project_id=project_id
     )
 
-    assert missing.status_code in (
-        status.HTTP_400_BAD_REQUEST,
-        status.HTTP_404_NOT_FOUND,
-    )
+    if endpoint == "trace":
+        # A valid absent ID and a scoped-hidden ID must not form an oracle.
+        assert response.status_code == missing.status_code == status.HTTP_404_NOT_FOUND
+        assert response.data == missing.data
+        assert missing.data["code"] == "not_found"
+        assert missing.data["type"] == "not_found"
+    else:
+        assert missing.status_code in (
+            status.HTTP_400_BAD_REQUEST,
+            status.HTTP_404_NOT_FOUND,
+        )
     assert (response.status_code, response.data) == (
         missing.status_code,
         missing.data,

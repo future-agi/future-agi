@@ -23,8 +23,9 @@ import {
   isAbsentChartPoint,
   getSeriesScalar,
   getSuggestedUnitConfig,
-  getUnitRendering,
+  getSeriesFormatConfig,
   getYAxisRangeWarning,
+  getTopSeriesIndices,
   getVisibleIndices,
   resolveWidgetAxisPlan,
   groupPieSeries,
@@ -218,19 +219,25 @@ export default function WidgetChart({
   const [acknowledgedRequest, setAcknowledgedRequest] = useState(() =>
     queryMutation.data ? { signature: querySignature, refreshRequestId } : null,
   );
-  const previousSignatureRef = useRef(null);
   const previousRefreshRequestRef = useRef(refreshRequestId);
+  // The manual refresh this widget still owes the dashboard an answer for.
+  const unsettledManualRefreshRef = useRef(null);
   const onQuerySettledRef = useRef(onQuerySettled);
   onQuerySettledRef.current = onQuerySettled;
 
   useEffect(() => {
     if (!queryConfig?.metrics?.length) return undefined;
 
-    const signatureChanged = previousSignatureRef.current !== querySignature;
+    // A manual relative-range refresh also changes the query signature. A
+    // query replaced before its manual refresh settled (the date range changed
+    // mid-refresh) hands that refresh on, or the dashboard waits for it forever.
     const isManualRefresh =
-      !signatureChanged && refreshRequestId > previousRefreshRequestRef.current;
-    previousSignatureRef.current = querySignature;
+      refreshRequestId > previousRefreshRequestRef.current ||
+      unsettledManualRefreshRef.current === refreshRequestId;
     previousRefreshRequestRef.current = refreshRequestId;
+    unsettledManualRefreshRef.current = isManualRefresh
+      ? refreshRequestId
+      : null;
     let active = true;
     let pollTimer = null;
     let requestTimer = null;
@@ -253,6 +260,7 @@ export default function WidgetChart({
       }
       requestController?.abort();
       requestController = null;
+      if (isManualRefresh) unsettledManualRefreshRef.current = null;
       onQuerySettledRef.current?.({
         dashboardId,
         widgetId: widget.id,
@@ -462,7 +470,7 @@ export default function WidgetChart({
     acknowledgedRequest?.signature === querySignature &&
     acknowledgedRequest?.refreshRequestId === refreshRequestId;
 
-  // Auto-select top 10 series by total value when there are many breakdown series
+  // Auto-select the top 10 series by period value when there are many breakdown series
   const MAX_CHART_SERIES = 10;
   const [visibleSeries, setVisibleSeries] = useState(null); // null = all visible
 
@@ -481,20 +489,13 @@ export default function WidgetChart({
       return;
     }
 
-    if (series.length <= MAX_CHART_SERIES) {
+    // Group-by SQL already returns top N plus Other. Do not drop that final
+    // bucket when N=10; the existing legend/table can display every series.
+    if (queryConfig?.group_by || series.length <= MAX_CHART_SERIES) {
       if (visibleSeries !== null) setVisibleSeries(null);
       return;
     }
-    const ranked = series
-      .map((s, i) => ({
-        i,
-        total: s.data.reduce((sum, pt) => sum + (pt.y || 0), 0),
-      }))
-      .sort((a, b) => b.total - a.total);
-    const topIndices = new Set(
-      ranked.slice(0, MAX_CHART_SERIES).map((r) => r.i),
-    );
-    setVisibleSeries(topIndices);
+    setVisibleSeries(getTopSeriesIndices(series, MAX_CHART_SERIES));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [series, savedVisibleKey]);
 
@@ -707,6 +708,8 @@ export default function WidgetChart({
   // Metric card — also the fallback for a pie with nothing to slice by, where
   // each metric would otherwise render as a meaningless 100%-full circle.
   if (isMetricCard || (isPie && !pieHasBreakdown)) {
+    // Pie ignores selections inherited from other chart types.
+    const metricSeries = isPie ? series : chartSeries;
     return (
       <Box
         ref={containerRef}
@@ -731,11 +734,13 @@ export default function WidgetChart({
           alignItems="center"
           sx={{ flex: 1, minHeight: 0 }}
         >
-          {series.map((s, i) => {
-            const value = getSeriesScalar(s.data, s.aggregation);
-            const cellConfig = s.unit
-              ? { ...leftAxisFormatConfig, ...getUnitRendering(s.unit) }
-              : leftAxisFormatConfig;
+          {metricSeries.map((s, i) => {
+            const value = getSeriesScalar(
+              s.data,
+              s.aggregation,
+              s.aggregateValue,
+            );
+            const cellConfig = getSeriesFormatConfig(s, leftAxisFormatConfig);
             return (
               <Box key={i} sx={{ textAlign: "center" }}>
                 <Typography variant="h3" sx={{ color: colorFor(s.name) }}>
@@ -761,7 +766,7 @@ export default function WidgetChart({
     // Time as rows, Segments as columns
     // One row per bucket becomes thousands of rows at minute granularity, so
     // empty buckets are dropped and the remainder capped (TH-7757).
-    const bucketPlan = getTableBucketPlan(series);
+    const bucketPlan = getTableBucketPlan(chartSeries);
     const granLabel = (queryConfig?.granularity || "day").toLowerCase();
     const dateFmt =
       granLabel === "minute"
@@ -831,7 +836,7 @@ export default function WidgetChart({
                   </Box>
                 )}
               </th>
-              {series.map((s, i) => (
+              {chartSeries.map((s, i) => (
                 <th
                   key={i}
                   style={{
@@ -874,7 +879,10 @@ export default function WidgetChart({
                             queryConfig?.metrics?.[0]?.name ||
                             "Total"
                           : s.name;
-                      const unit = s.unit || leftAxisFormatConfig?.unit;
+                      const { unit } = getSeriesFormatConfig(
+                        s,
+                        leftAxisFormatConfig,
+                      );
                       return unit ? `${label} (${unit})` : label;
                     })()}
                   </span>
@@ -884,11 +892,11 @@ export default function WidgetChart({
           </thead>
           <tbody>
             {bucketPlan.indices.map((ri) => {
-              // The plan is sized by the widest series, so a shorter series[0]
-              // must not drop a row another series still reports (TH-7757 review).
-              const pt = series.find((s) => s?.data?.[ri])?.data?.[ri];
+              // The plan is sized by the widest visible series, so a shorter first
+              // series must not drop a row another visible series reports (TH-7757).
+              const pt = chartSeries.find((s) => s?.data?.[ri])?.data?.[ri];
               if (!pt) return null;
-              const hasNonZero = series.some(
+              const hasNonZero = chartSeries.some(
                 (s) => s.data[ri]?.y != null && s.data[ri].y !== 0,
               );
               return (
@@ -914,11 +922,12 @@ export default function WidgetChart({
                   >
                     {format(new Date(pt.x), dateFmt)}
                   </td>
-                  {series.map((s, si) => {
+                  {chartSeries.map((s, si) => {
                     const val = s.data[ri]?.y;
-                    const cellConfig = s.unit
-                      ? { ...leftAxisFormatConfig, ...getUnitRendering(s.unit) }
-                      : leftAxisFormatConfig;
+                    const cellConfig = getSeriesFormatConfig(
+                      s,
+                      leftAxisFormatConfig,
+                    );
                     return (
                       <td
                         key={si}
@@ -978,7 +987,7 @@ export default function WidgetChart({
     const barRows = chartSeries.map((s) => {
       // Same aggregation-aware value the metric card, table and pie use, so
       // one widget cannot read differently per chart type.
-      const value = getSeriesScalar(s.data, s.aggregation);
+      const value = getSeriesScalar(s.data, s.aggregation, s.aggregateValue);
       return {
         value,
         numericValue: value == null ? 0 : value,
@@ -1462,10 +1471,10 @@ export default function WidgetChart({
             formatter: (val, { seriesIndex, dataPointIndex, w } = {}) => {
               if (isAbsentChartPoint(w, seriesIndex, dataPointIndex))
                 return "-";
-              const seriesUnit = chartSeries[seriesIndex]?.unit;
-              const cfg = seriesUnit
-                ? { ...leftAxisFormatConfig, ...getUnitRendering(seriesUnit) }
-                : leftAxisFormatConfig;
+              const cfg = getSeriesFormatConfig(
+                chartSeries[seriesIndex],
+                leftAxisFormatConfig,
+              );
               return makeFormatter(cfg)(val);
             },
           },
@@ -1484,10 +1493,10 @@ export default function WidgetChart({
               dataPointIndex > 0 ? s[seriesIndex]?.[dataPointIndex - 1] : null;
             const ts = w.globals.seriesX[seriesIndex]?.[dataPointIndex];
             const dateStr = ts ? format(new Date(ts), "MMM dd, yyyy") : "";
-            const seriesUnit = chartSeries[seriesIndex]?.unit;
-            const perSeriesCfg = seriesUnit
-              ? { ...leftAxisFormatConfig, ...getUnitRendering(seriesUnit) }
-              : leftAxisFormatConfig;
+            const perSeriesCfg = getSeriesFormatConfig(
+              chartSeries[seriesIndex],
+              leftAxisFormatConfig,
+            );
             const fmtVal = makeFormatter(perSeriesCfg)(val);
             const bg = theme.palette.background.paper;
             const border = theme.palette.divider;

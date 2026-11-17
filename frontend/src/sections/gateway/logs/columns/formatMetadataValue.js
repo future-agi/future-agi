@@ -3,6 +3,8 @@
 // Output is always a JS string placed as a React text child. No HTML, Markdown,
 // link detection or regex evaluation happens here or in the cell.
 
+import { EMPTY } from "../../utils/formatters";
+
 // CSS usually clips first, but does not shorten DOM text. This separate limit
 // bounds every cell's text while preserving ordinary grapheme boundaries.
 export const PREVIEW_LIMIT = 80;
@@ -12,7 +14,8 @@ export const TOOLTIP_LIMIT = 2000;
 // safety ceiling for values such as an unbounded combining-mark run.
 export const PREVIEW_UTF16_LIMIT = 512;
 export const MAX_VALUE_UTF16_LENGTH = 4096;
-export const EMPTY_TEXT = "-";
+// A missing value: the gateway's one empty mark.
+export const EMPTY_TEXT = EMPTY;
 // Leads the tooltip, so a scrolled tooltip still shows it.
 const TRUNCATED_PREFIX = "[truncated] ";
 const ELLIPSIS = "…";

@@ -3,7 +3,7 @@
 
 export function isImageAttrPath(path) {
   if (typeof path !== "string") return false;
-  return /\.(image|image_url\.url)$/i.test(path);
+  return /\.(image|image\.url|image_url\.url)$/i.test(path);
 }
 
 export function isAudioAttrPath(path) {

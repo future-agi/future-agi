@@ -27,6 +27,10 @@ const GROUP_OPTIONS = [
 
 const ROW_HEIGHT_OPTIONS = ["Short", "Medium", "Large", "Extra Large"];
 
+// Shown on "Share with project" when a view neither shares its view nor
+// says why (setDefaultDisabledReason).
+const NOT_IN_RELEASE = "Not available in this release";
+
 const SectionHeader = ({ children }) => (
   <Typography
     variant="overline"
@@ -82,32 +86,73 @@ PanelRow.propTypes = {
 };
 
 // `icon` is intentionally ignored — see PanelRow comment above.
-const PanelCheck = ({ label, checked, onChange }) => (
-  <Box sx={{ px: 2, py: 0.25 }}>
-    <FormControlLabel
-      control={
-        <Checkbox
-          size="small"
-          checked={checked}
-          onChange={onChange}
-          sx={{ p: 0.5 }}
-        />
-      }
-      label={
-        <Typography variant="body2" sx={{ fontSize: 12 }}>
-          {label}
-        </Typography>
-      }
-      sx={{ ml: 0 }}
-    />
-  </Box>
-);
+// With `disabledReason` the box stays unchecked, takes no input and explains
+// why on hover and on keyboard focus (aria-disabled keeps it focusable).
+const PanelCheck = ({ label, checked, onChange, disabledReason }) => {
+  const row = (
+    <Box
+      sx={{
+        px: 2,
+        py: 0.25,
+        ...(disabledReason && { cursor: "not-allowed" }),
+      }}
+    >
+      <FormControlLabel
+        control={
+          disabledReason ? (
+            <Checkbox
+              size="small"
+              checked={false}
+              disableRipple
+              inputProps={{ "aria-disabled": true }}
+              sx={{ p: 0.5, opacity: 0.5, cursor: "not-allowed" }}
+            />
+          ) : (
+            <Checkbox
+              size="small"
+              checked={checked}
+              onChange={onChange}
+              sx={{ p: 0.5 }}
+            />
+          )
+        }
+        label={
+          <Typography
+            variant="body2"
+            sx={{
+              fontSize: 12,
+              ...(disabledReason && { color: "text.disabled" }),
+            }}
+          >
+            {label}
+          </Typography>
+        }
+        sx={{ ml: 0, ...(disabledReason && { cursor: "not-allowed" }) }}
+      />
+    </Box>
+  );
+
+  if (!disabledReason) return row;
+  return (
+    <CustomTooltip
+      show
+      describeChild
+      title={disabledReason}
+      size="small"
+      arrow
+      placement="left"
+    >
+      {row}
+    </CustomTooltip>
+  );
+};
 
 PanelCheck.propTypes = {
   icon: PropTypes.string,
   label: PropTypes.string.isRequired,
   checked: PropTypes.bool,
   onChange: PropTypes.func,
+  disabledReason: PropTypes.string,
 };
 
 // ---------------------------------------------------------------------------
@@ -158,8 +203,15 @@ const DisplayPanel = ({
   // Graph
   onCompareToggle,
   isCompareActive,
+  // Set when the view draws no graphs: the box stays listed but disabled.
+  compareDisabledReason,
   onResetView,
   onSetDefaultView,
+  // Set when the view cannot share its view (e.g. no project to share with):
+  // "Share with project" stays listed but disabled, with this reason.
+  setDefaultDisabledReason,
+  // The action's label, for a caller whose action saves without sharing.
+  setDefaultLabel = "Share with project",
   // Voice / Simulator
   isSimulator,
   excludeSimulationCalls,
@@ -170,7 +222,7 @@ const DisplayPanel = ({
   const isSessions = mode === "sessions";
   // Standalone users page: /dashboard/users (no observeId in params).
   // Users tab inside observe: /dashboard/observe/:observeId/users — keep
-  // Group + Graph visible there so users can switch groupings and compare.
+  // Group visible there so users can switch groupings.
   const { observeId } = useParams();
   const isStandaloneUsersPage = isUsers && !observeId;
   const hiddenCount = columns?.filter((c) => !c.isVisible)?.length || 0;
@@ -357,9 +409,8 @@ const DisplayPanel = ({
         </>
       )}
 
-      {/* GROUP + GRAPH — hidden only on the standalone users page; kept
-       * on the users tab inside observe since the user can still group
-       * by trace/span/sessions and toggle compare from there. */}
+      {/* GROUP — hidden only on the standalone users page; project users
+       * can still switch to trace/span/sessions groupings. */}
       {!isStandaloneUsersPage && (
         <>
           <Divider sx={{ my: 0.5 }} />
@@ -410,16 +461,24 @@ const DisplayPanel = ({
               );
             })}
           </Popover>
+        </>
+      )}
 
+      {/* GRAPH section — hidden only on the standalone users page, like
+       * GROUP. Traces, sessions and project users draw a Compare graph with
+       * its own date/filters; a view that draws no graphs passes
+       * compareDisabledReason and the box stays visible but disabled. */}
+      {!isStandaloneUsersPage && (
+        <>
           <Divider sx={{ my: 0.5 }} />
 
-          {/* GRAPH section */}
           <SectionHeader>GRAPH</SectionHeader>
           <PanelCheck
             icon="solar:graph-up-linear"
             label="Compare graph"
             checked={isCompareActive}
             onChange={onCompareToggle}
+            disabledReason={compareDisabledReason}
           />
         </>
       )}
@@ -452,20 +511,50 @@ const DisplayPanel = ({
         >
           Reset
         </ButtonBase>
-        <ButtonBase
-          onClick={() => {
-            onSetDefaultView?.();
-            onClose();
-          }}
-          sx={{
-            fontSize: 12,
-            fontFamily: "'IBM Plex Sans', sans-serif",
-            color: "text.link",
-            py: 0.5,
-          }}
-        >
-          Set default for everyone
-        </ButtonBase>
+        {onSetDefaultView && (
+          <ButtonBase
+            onClick={() => {
+              onSetDefaultView?.();
+              onClose();
+            }}
+            sx={{
+              fontSize: 12,
+              fontFamily: "'IBM Plex Sans', sans-serif",
+              color: "text.link",
+              py: 0.5,
+            }}
+          >
+            {setDefaultLabel}
+          </ButtonBase>
+        )}
+        {/* A view that cannot share its view (Traces or Sessions on a user's
+            page, the standalone users page) is kept visible but disabled,
+            with its reason and no click path. Traces shows it only with a
+            reason: its other mounts without a handler offer no sharing. */}
+        {!onSetDefaultView && (!isTraces || setDefaultDisabledReason) && (
+          <CustomTooltip
+            show
+            describeChild
+            title={setDefaultDisabledReason || NOT_IN_RELEASE}
+            size="small"
+            arrow
+            placement="top"
+          >
+            <ButtonBase
+              aria-disabled
+              disableRipple
+              sx={{
+                fontSize: 12,
+                fontFamily: "'IBM Plex Sans', sans-serif",
+                color: "text.disabled",
+                py: 0.5,
+                cursor: "not-allowed",
+              }}
+            >
+              {setDefaultLabel}
+            </ButtonBase>
+          </CustomTooltip>
+        )}
       </Box>
     </Popover>
   );
@@ -498,8 +587,11 @@ DisplayPanel.propTypes = {
   hiddenGroupByOptions: PropTypes.arrayOf(PropTypes.string),
   onCompareToggle: PropTypes.func,
   isCompareActive: PropTypes.bool,
+  compareDisabledReason: PropTypes.string,
   onResetView: PropTypes.func,
   onSetDefaultView: PropTypes.func,
+  setDefaultDisabledReason: PropTypes.string,
+  setDefaultLabel: PropTypes.string,
   isSimulator: PropTypes.bool,
   excludeSimulationCalls: PropTypes.bool,
   onToggleSimulationCalls: PropTypes.func,

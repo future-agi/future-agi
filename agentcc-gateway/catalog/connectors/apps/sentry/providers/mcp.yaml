@@ -1,0 +1,64 @@
+# Sentry's MCP server: "All connections use OAuth", from its own
+# authorization server, which registers clients dynamically or by a client ID
+# metadata document. EE takes pre-registered clients only, so it gets none.
+schema: "connector-manifest/v1#provider"
+app: sentry
+id: mcp
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.sentry.dev/mcp
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent, user]
+auth:
+  kind: oauth2
+  oauth2:
+    authorizeUrl: https://mcp.sentry.dev/oauth/authorize
+    tokenUrl: https://mcp.sentry.dev/oauth/token
+    scopes:
+      ["org:read", "project:write", "team:write", "event:write", "alerts:write"]
+    pkce: true
+    tokenBody: form
+    clientAuth: body
+    revocation:
+      url: https://mcp.sentry.dev/oauth/token
+      method: POST
+      tokenBody: form
+      tokenField: token
+      clientAuth: body
+    registration: [cimd, dcr]
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://mcp.sentry.dev/
+    fetchedAt: 2026-10-20
+  - fact: auth.kind
+    url: https://mcp.sentry.dev/
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.authorizeUrl
+    url: https://mcp.sentry.dev/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.tokenUrl
+    url: https://mcp.sentry.dev/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.scopes
+    url: https://mcp.sentry.dev/.well-known/oauth-protected-resource/mcp
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.pkce
+    url: https://mcp.sentry.dev/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.revocation.url
+    url: https://mcp.sentry.dev/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.registration
+    url: https://mcp.sentry.dev/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-20
+x-omega: { ossId: sentry-remote, ee: exclude }

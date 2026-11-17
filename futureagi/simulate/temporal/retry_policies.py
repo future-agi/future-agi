@@ -25,6 +25,10 @@ DB_RETRY_POLICY = RetryPolicy(
     # Don't retry on validation errors
     non_retryable_error_types=[
         "ValueError",
+        # A catalog miss and a missing provider key are ValueError
+        # subclasses; the names match exactly.
+        "ModelNotInCatalog",
+        "MissingProviderKeyError",
         "ValidationError",
         "HostedRunnerBuildError",
     ],
@@ -50,6 +54,10 @@ PROVIDER_RETRY_POLICY = RetryPolicy(
         "ProviderValidationError",
         "InsufficientBalanceError",
         "ValueError",
+        # A catalog miss and a missing provider key are ValueError
+        # subclasses; the names match exactly.
+        "ModelNotInCatalog",
+        "MissingProviderKeyError",
     ],
 )
 

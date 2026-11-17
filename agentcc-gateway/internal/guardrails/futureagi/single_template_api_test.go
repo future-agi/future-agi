@@ -90,7 +90,7 @@ func newSingleTemplateCheck(t *testing.T, verdicts map[string]string, ids ...str
 	for i, id := range ids {
 		evalIDs[i] = id
 	}
-	return New("protect", map[string]interface{}{
+	return NewConfigFileRule("protect", map[string]interface{}{
 		"provider":   "futureagi",
 		"eval_ids":   evalIDs,
 		"api_key":    "synthetic",

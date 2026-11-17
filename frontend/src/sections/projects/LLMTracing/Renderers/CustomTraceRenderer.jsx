@@ -143,7 +143,7 @@ const CustomTraceRenderer = (params) => {
   }
 
   if (RENDERER_CONFIG.tokenColumns.includes(colId)) {
-    return <TokenCell value={value} data={data} />;
+    return <TokenCell value={value} data={data} colId={colId} />;
   }
 
   // Default cell renderer
@@ -155,6 +155,9 @@ const CustomTraceRenderer = (params) => {
       color={color}
       alignRight={alignRight}
       applyQuickFilters={params.applyQuickFilters}
+      // Set by the Traces and Spans grids (defaultColDef.cellRendererParams);
+      // other grids leave it off and keep the funnel at the tooltip level.
+      quickFilterBelowDrawers={params.quickFilterBelowDrawers}
       onCellClick={() => {
         if (params.context?.disableCellNavigation) return;
         if (colId === CELL_TYPES.TRACE_ID) {

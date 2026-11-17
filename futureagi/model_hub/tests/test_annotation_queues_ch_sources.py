@@ -536,10 +536,25 @@ class TestExportEvalMetrics:
         queue = _queue(organization, workspace, user, project)
         item = _span_item(organization, workspace, queue, span, project)
 
-        # A PG EvalLogger row keyed to the span (span target → span + trace set).
+        # F3 + W1F-CONFIGLESS-EXPORT: mirror Langfuse's persisted source FKs;
+        # a config-less log cannot borrow ownership from a CH-only id.
+        from tracer.models.observation_span import ObservationSpan
+        from tracer.models.trace import Trace
+
+        trace = Trace.no_workspace_objects.create(
+            id=span.trace_id, project=project, name="Imported trace"
+        )
+        pg_span = ObservationSpan.no_workspace_objects.create(
+            id=span.id,
+            project=project,
+            trace=trace,
+            name=span.name,
+            observation_type=span.observation_type,
+            status="OK",
+        )
         EvalLogger.objects.create(
-            observation_span_id=span.id,
-            trace_id=span.trace_id,
+            observation_span=pg_span,
+            trace=trace,
             eval_type_id="toxicity",
             output_float=0.9,
         )

@@ -19,6 +19,7 @@ const DefaultCell = memo(
     alignRight,
     applyQuickFilters,
     onCellClick,
+    quickFilterBelowDrawers,
   }) => {
     const colId = column?.id;
 
@@ -99,9 +100,16 @@ const DefaultCell = memo(
     );
 
     if (showQuickFilter) {
+      // On the page grids (Traces, Spans) the funnel stacks under side
+      // drawers, like the name cell's: a cell that stays hovered after the
+      // click that opens the trace drawer no longer floats its funnel over it.
       return (
         <div style={wrapperStyle}>
-          <QuickFilter show={showQuickFilter} onClick={handleQuickFilterClick}>
+          <QuickFilter
+            show={showQuickFilter}
+            onClick={handleQuickFilterClick}
+            belowDrawers={quickFilterBelowDrawers}
+          >
             {cellContent}
           </QuickFilter>
         </div>
@@ -122,6 +130,7 @@ DefaultCell.propTypes = {
   alignRight: PropTypes.bool,
   applyQuickFilters: PropTypes.func,
   onCellClick: PropTypes.func,
+  quickFilterBelowDrawers: PropTypes.bool,
 };
 
 export default DefaultCell;

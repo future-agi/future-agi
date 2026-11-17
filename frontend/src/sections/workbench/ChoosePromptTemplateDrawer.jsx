@@ -156,7 +156,7 @@ const TemplateCard = ({ name, description, createdBy, onClick, onDelete }) => {
         <Typography
           typography={"s3"}
           fontWeight={"fontWeightRegular"}
-          color={"text.disabled"}
+          color={"text.tertiary"}
           marginTop="auto"
         >
           By {createdBy}
@@ -393,13 +393,13 @@ export const ChoosePromptTemplateDrawer = ({ open, onClose, importMode }) => {
             color="text.secondary"
             fontWeight={"fontWeightRegular"}
           >
-            Browse and discover curated prompt templates for writing,
-            coding,research and more.
+            Browse and discover curated prompt templates for writing, coding,
+            research and more.
           </Typography>
         </Box>
 
         <Box>
-          <IconButton onClick={handleClose}>
+          <IconButton onClick={handleClose} aria-label="Close">
             <Iconify color="text.primary" icon="solar:close-linear" />
           </IconButton>
         </Box>
@@ -457,7 +457,7 @@ export const ChoosePromptTemplateDrawer = ({ open, onClose, importMode }) => {
 
           <Box>
             <Typography
-              color={"text.disabled"}
+              color={"text.secondary"}
               typography={"s2"}
               fontWeight={"fontWeightMedium"}
               marginBottom={1}

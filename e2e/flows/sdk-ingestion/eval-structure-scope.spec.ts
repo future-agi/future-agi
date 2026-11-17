@@ -12,6 +12,8 @@ const UI_READY = 60_000;
 interface Template { id: string; eval_id: number; name: string; criteria: string;
   organization_id: string; workspace_id: string }
 
+test.skip(process.env.E2E_STACK === 'standalone', 'The legacy-eval seeder is served by the Distributed backend image only (e2e/stack/backend/urls_e2e.py)');
+
 test('SDK-E2E-001: SDK returns a saved evaluator structure only in its own workspace', {
   tag: ['@flow'],
   annotation: flowAnnotation({

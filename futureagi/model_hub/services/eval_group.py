@@ -3,10 +3,14 @@ import json
 from django.db.models import Q
 from django.utils import timezone
 
-from model_hub.models.choices import OwnerChoices, StatusType
+from model_hub.models.choices import ModelChoices, OwnerChoices, StatusType
 from model_hub.models.develop_dataset import Dataset
 from model_hub.models.eval_groups import EvalGroup, History
-from model_hub.models.evals_metric import EvalTemplate, UserEvalMetric
+from model_hub.models.evals_metric import (
+    EvalTemplate,
+    EvalTemplateVersion,
+    UserEvalMetric,
+)
 from model_hub.models.experiments import ExperimentsTable
 from model_hub.models.run_prompt import PromptEvalConfig, PromptTemplate
 from model_hub.schema.eval_group import PageType
@@ -15,6 +19,10 @@ from model_hub.utils.function_eval_params import (
     get_function_params_schema,
     normalize_eval_runtime_config,
     params_with_defaults_for_response,
+)
+from model_hub.utils.workspace_scope import (
+    explicit_workspace_filter,
+    knowledge_base_id_for,
 )
 from model_hub.views.utils.utils import (
     fetch_required_keys_for_eval_template,
@@ -77,7 +85,178 @@ def _accessible_eval_template_filter(organization, workspace):
 
 
 def filter_eval_templates_for_group_scope(queryset, organization, workspace):
-    return queryset.filter(_accessible_eval_template_filter(organization, workspace))
+    # External templates (SRV-5) are scored by the caller and never executed,
+    # so they are never added to a group or applied from one.
+    from model_hub.models.evals_metric import EXTERNAL_EVAL_TYPE
+
+    return queryset.filter(
+        _accessible_eval_template_filter(organization, workspace)
+    ).exclude(eval_type=EXTERNAL_EVAL_TYPE)
+
+
+# Short names older templates keep for the Turing models, read the way the
+# evaluation detail reads them (views/separate_evals.py).
+_SHORT_TURING_NAMES = {
+    "small": ModelChoices.TURING_SMALL.value,
+    "large": ModelChoices.TURING_LARGE.value,
+    "flash": ModelChoices.TURING_FLASH.value,
+}
+
+
+def _model_name(value):
+    if not isinstance(value, str) or not value.strip():
+        return None
+    name = value.strip()
+    return _SHORT_TURING_NAMES.get(name, name)
+
+
+def template_model(eval_template):
+    """The model an evaluation's own template is configured with, or None.
+
+    Read in the order Add evaluation's picker reads it: the template's config
+    (its default version's when the template keeps none), then the
+    template's model, then its default version's model.
+    """
+    version = EvalTemplateVersion.objects.get_default(eval_template)
+    config = eval_template.config or (version.config_snapshot if version else None)
+    candidates = (
+        config.get("model") if isinstance(config, dict) else None,
+        eval_template.model,
+        version.model if version else None,
+    )
+    for candidate in candidates:
+        name = _model_name(candidate)
+        if name:
+            return name
+    return None
+
+
+#: The model a group member would be stored with can't run on this
+#: deployment. ``model`` is the model as the Apply dialog names an added
+#: member's (model_display_name).
+MODEL_CANT_RUN = "its model, {model}, can't run on this deployment."
+#: Why a group member is left out; ``change`` names the one place with a
+#: control for that model.
+GROUP_MEMBER_MODEL_REASON = MODEL_CANT_RUN + " {change}, then apply again."
+#: The model came from the evaluation: its own template's model, or Add
+#: evaluation's default when it names none. The evaluation's page sets it.
+CHANGE_EVALUATION_MODEL = "Change the evaluation's model"
+#: The model came with the request: the Language Model field of the
+#: Evaluations drawer where the group is applied.
+CHANGE_GROUP_MODEL = "Change the group's model"
+#: A built-in evaluation (its page reads "Read-only (system eval)") with no
+#: model sent: its own model can't be changed on its page. The reason alone;
+#: each place adds the action it offers, by the refusal's code.
+BUILT_IN_MEMBER_REASON = "it uses {model}, which can't run here."
+#: After Apply, a member that was left out (the toast has no row, so it names
+#: the evaluation).
+GROUP_MEMBER_NOT_ADDED = "{evaluation} was not added: {reason}"
+#: Before Apply, under the member's row in the Apply dialog.
+GROUP_MEMBER_WONT_BE_ADDED = "Won't be added: {reason}"
+
+#: What a refusal is, sent beside its sentence so a place tells a built-in
+#: evaluation's refusal apart by this code, never by the sentence's words.
+REFUSAL_BUILT_IN = "built_in"
+#: Any other refusal: the group's model or the evaluation's model to change.
+REFUSAL_MODEL = "model"
+
+# The Turing models by the names the Apply dialog gives an added member (the
+# model selector's, frontend evaluatorModels.js); any other model, Protect,
+# Protect Flash and Turing Large XL among them, by its id.
+_MODEL_DISPLAY_NAMES = {
+    ModelChoices.TURING_LARGE.value: "Turing Large",
+    ModelChoices.TURING_SMALL.value: "Turing Small",
+    ModelChoices.TURING_FLASH.value: "Turing Flash",
+}
+
+
+def model_display_name(model):
+    return _MODEL_DISPLAY_NAMES.get(model, model)
+
+
+class GroupMembersRefused(ValueError):
+    """Every member of a group apply was refused. The message joins each
+    member's sentence; ``refused`` lists them, each with its code."""
+
+    def __init__(self, refused):
+        super().__init__(" ".join(refusal["reason"] for refusal in refused))
+        self.refused = refused
+
+
+def group_member_model(eval_template, sent_model=None):
+    """The model a group member is applied with: ``(model, None, None)``, or
+    ``(None, reason, code)`` when the member is refused, ``reason`` being the
+    clause the two sentences share and ``code`` what kind of refusal it is.
+
+    The model is the one the caller sends; without one, the template's own
+    model; without that, Add evaluation's default. Whichever it is, the model
+    that would be stored is checked by the rule Add evaluation applies to the
+    model it receives, in its order: the Jev check, then the Turing check
+    (ee_model_gate_for_template). Where that rule refuses it, the member is
+    refused; no other model is put in its place.
+
+    The reason, in this order: a model the request sent, the group's model to
+    change; a built-in evaluation, that it uses a model which can't run here;
+    anything else, a blank model included, the evaluation's model to change.
+    """
+    from tfc.ee_gates import ee_model_gate_for_template
+
+    model = (
+        sent_model or template_model(eval_template) or ModelChoices.TURING_LARGE.value
+    )
+    refusal = ee_model_gate_for_template(model, eval_type=eval_template.eval_type)
+    if refusal is None:
+        return model, None, None
+    name = model_display_name(model)
+    if sent_model:
+        reason = GROUP_MEMBER_MODEL_REASON.format(model=name, change=CHANGE_GROUP_MODEL)
+        return None, reason, REFUSAL_MODEL
+    if eval_template.owner == OwnerChoices.SYSTEM.value:
+        return None, BUILT_IN_MEMBER_REASON.format(model=name), REFUSAL_BUILT_IN
+    reason = GROUP_MEMBER_MODEL_REASON.format(
+        model=name, change=CHANGE_EVALUATION_MODEL
+    )
+    return None, reason, REFUSAL_MODEL
+
+
+def group_member_preview(eval_template):
+    """What the group read says per member, before Apply sends no model:
+    ``(model, None, None)``, or ``(None, "Won't be added: ...", code)``."""
+    model, reason, code = group_member_model(eval_template)
+    if reason is None:
+        return model, None, None
+    return None, GROUP_MEMBER_WONT_BE_ADDED.format(reason=reason), code
+
+
+def _members_with_models(eval_templates, filters, refused):
+    """Each member to apply, with its model.
+
+    A refused member is left out and recorded in ``refused`` with its code.
+    When every member is refused nothing is applied, and GroupMembersRefused
+    is raised with each of them.
+    """
+    members, refusals = [], []
+    for eval_template in eval_templates:
+        model, reason, code = group_member_model(eval_template, filters.get("model"))
+        if reason is None:
+            members.append((eval_template, model))
+            continue
+        refusals.append(
+            {
+                "eval_template_id": str(eval_template.id),
+                "name": eval_template.name,
+                "reason": GROUP_MEMBER_NOT_ADDED.format(
+                    evaluation=eval_template.name, reason=reason
+                ),
+                "code": code,
+            }
+        )
+    if refused is not None:
+        refused.extend(refusals)
+    if refusals and not members:
+        # Every member is named, each with why.
+        raise GroupMembersRefused(refusals)
+    return members
 
 
 def get_accessible_eval_templates_by_ids(eval_template_ids, organization, workspace):
@@ -135,7 +314,7 @@ def create_eval_group(name, description, eval_template_ids, user, workspace):
             action="ADD",
             action_by=user,
             organization=_org,
-            workspace=workspace,
+            workspace=eval_group.workspace,
             reference_id=str(eval_template.id),
         )
         history_records.append(history_record)
@@ -286,8 +465,12 @@ def apply_eval_group(
     workspace,
     deselected_evals,
     params=None,
+    refused=None,
 ):
-    """Apply an eval group based on the page_id using handler registry."""
+    """Apply an eval group based on the page_id using handler registry.
+
+    Members refused for want of a model are added to ``refused``.
+    """
     handler_name = EVAL_GROUP_HANDLERS.get(PageType(page_id))
     if not handler_name:
         raise ValueError(f"Unknown page_id: {page_id}. Valid: {list(PageType)}")
@@ -301,11 +484,19 @@ def apply_eval_group(
         deselected_evals,
         workspace,
         params or {},
+        refused=refused,
     )
 
 
 def apply_eval_group_to_observation_span(
-    eval_group, filters, mapping, user, deselected_evals, workspace, params
+    eval_group,
+    filters,
+    mapping,
+    user,
+    deselected_evals,
+    workspace,
+    params,
+    refused=None,
 ):
     _org = get_current_organization() or user.organization
 
@@ -321,14 +512,15 @@ def apply_eval_group_to_observation_span(
     eval_templates = _get_eval_templates_for_group(eval_group, deselected_evals)
 
     kb_id = filters.get("kb_id", None)
-    model = filters.get("model", None)
     error_localizer = filters.get("error_localizer", False)
+    members = _members_with_models(eval_templates, filters, refused)
 
     # Pre-fetch existing configs for deduplication by template_id + mapping
+    # + model
     existing_configs = CustomEvalConfig.objects.filter(
         eval_group=eval_group,
         kb_id__id=kb_id,
-        model=model,
+        model__in={model for _eval_template, model in members},
         error_localizer=error_localizer,
         project=project,
     ).select_related("eval_template")
@@ -337,6 +529,7 @@ def apply_eval_group_to_observation_span(
         (
             cfg.eval_template_id,
             json.dumps(cfg.mapping, sort_keys=True) if cfg.mapping else "",
+            cfg.model,
         ): cfg
         for cfg in existing_configs
     }
@@ -353,14 +546,14 @@ def apply_eval_group_to_observation_span(
     existing_configs_list = []
     custom_eval_configs = []
 
-    for eval_template in eval_templates:
+    for eval_template, model in members:
         parsed_mapping = fetch_specific_mapping_for_specific_eval_template(
             mapping, eval_template
         )
         mapping_key = (
             json.dumps(parsed_mapping, sort_keys=True) if parsed_mapping else ""
         )
-        lookup_key = (eval_template.id, mapping_key)
+        lookup_key = (eval_template.id, mapping_key, model)
 
         if lookup_key in existing_configs_lookup:
             existing_configs_list.append(existing_configs_lookup[lookup_key])
@@ -405,8 +598,17 @@ def apply_eval_group_to_observation_span(
 
 
 def apply_eval_group_to_prompt_template(
-    eval_group, filters, mapping, user, deselected_evals, workspace, params
+    eval_group,
+    filters,
+    mapping,
+    user,
+    deselected_evals,
+    workspace,
+    params,
+    refused=None,
 ):
+    # A prompt's evaluation config keeps no model of its own, so no member
+    # of the group is refused here.
     _org = get_current_organization() or user.organization
 
     prompt_template_id = filters.get("prompt_template_id", None)
@@ -512,16 +714,33 @@ def apply_eval_group_to_prompt_template(
 
 
 def apply_eval_group_to_dataset(
-    eval_group, filters, mapping, user, deselected_evals, workspace, params
+    eval_group,
+    filters,
+    mapping,
+    user,
+    deselected_evals,
+    workspace,
+    params,
+    refused=None,
 ):
     dataset_id = filters.get("dataset_id", None)
     if not dataset_id:
         raise Exception("Dataset id is required")
 
+    organization = get_current_organization() or user.organization
     try:
-        dataset = Dataset.objects.get(id=dataset_id)
+        dataset = Dataset.no_workspace_objects.filter(
+            explicit_workspace_filter(workspace),
+            organization=organization,
+            deleted=False,
+        ).get(id=dataset_id)
     except Dataset.DoesNotExist as e:
-        raise Exception("Dataset not found") from e
+        raise ValueError("Dataset not found") from e
+    if (
+        filters.get("kb_id")
+        and knowledge_base_id_for(organization, workspace, filters["kb_id"]) is None
+    ):
+        raise ValueError("Knowledge base not found")
 
     eval_templates = _get_eval_templates_for_group(eval_group, deselected_evals)
 
@@ -535,11 +754,11 @@ def apply_eval_group_to_dataset(
         template_names_count[tid] = template_names_count.get(tid, 0) + 1
 
     kb_id = filters.get("kb_id", None)
-    model = filters.get("model", None)
     error_localizer = filters.get("error_localizer", False)
+    members = _members_with_models(eval_templates, filters, refused)
 
     user_eval_metrics = []
-    for eval_template in eval_templates:
+    for eval_template, model in members:
         parsed_mapping = fetch_specific_mapping_for_specific_eval_template(
             mapping, eval_template
         )
@@ -581,7 +800,14 @@ def apply_eval_group_to_dataset(
 
 
 def apply_eval_group_to_simulate(
-    eval_group, filters, mapping, user, deselected_evals, workspace, params
+    eval_group,
+    filters,
+    mapping,
+    user,
+    deselected_evals,
+    workspace,
+    params,
+    refused=None,
 ):
     _org = get_current_organization() or user.organization
 
@@ -606,12 +832,12 @@ def apply_eval_group_to_simulate(
         template_names_count[tid] = template_names_count.get(tid, 0) + 1
 
     kb_id = filters.get("kb_id", None)
-    model = filters.get("model", None)
     error_localizer = filters.get("error_localizer", False)
     simulate_config_filters = filters.get("filters", [])
+    members = _members_with_models(eval_templates, filters, refused)
 
     simulate_eval_metrics = []
-    for eval_template in eval_templates:
+    for eval_template, model in members:
         parsed_mapping = fetch_specific_mapping_for_specific_eval_template(
             mapping, eval_template
         )
@@ -651,7 +877,14 @@ def apply_eval_group_to_simulate(
 
 
 def apply_eval_group_to_experiment(
-    eval_group, filters, mapping, user, deselected_evals, workspace, params
+    eval_group,
+    filters,
+    mapping,
+    user,
+    deselected_evals,
+    workspace,
+    params,
+    refused=None,
 ):
     _org = get_current_organization() or user.organization
     experiment_id = filters.get("experiment_id", None)
@@ -670,12 +903,21 @@ def apply_eval_group_to_experiment(
     except Dataset.DoesNotExist as e:
         raise ValueError("Experiment not found") from e
     experiment.dataset = dataset
+    # As Add evaluation does: an experiment with a snapshot evaluates on it,
+    # with the mapping's dataset columns read as their snapshot copies.
+    from model_hub.views.experiments import (
+        _build_column_mapping_from_snapshot,
+        _translate_eval_mapping,
+    )
+
+    eval_dataset = experiment.snapshot_dataset or experiment.dataset
+    snapshot_columns = _build_column_mapping_from_snapshot(experiment.snapshot_dataset)
 
     eval_templates = _get_eval_templates_for_group(eval_group, deselected_evals)
 
     # Count existing configs per template for versioning
     current_metrics = UserEvalMetric.objects.filter(
-        dataset=experiment.dataset,
+        dataset_id__in={experiment.dataset_id, eval_dataset.id},
         eval_group=eval_group,
         source_id=experiment.id,
         deleted=False,
@@ -686,13 +928,14 @@ def apply_eval_group_to_experiment(
         template_names_count[tid] = template_names_count.get(tid, 0) + 1
 
     kb_id = filters.get("kb_id", None)
-    model = filters.get("model", None)
     error_localizer = filters.get("error_localizer", False)
+    members = _members_with_models(eval_templates, filters, refused)
 
     user_eval_metrics = []
-    for eval_template in eval_templates:
-        parsed_mapping = fetch_specific_mapping_for_specific_eval_template(
-            mapping, eval_template
+    for eval_template, model in members:
+        parsed_mapping = _translate_eval_mapping(
+            fetch_specific_mapping_for_specific_eval_template(mapping, eval_template),
+            snapshot_columns,
         )
         name = _generate_config_name(
             eval_template,
@@ -704,7 +947,7 @@ def apply_eval_group_to_experiment(
             UserEvalMetric(
                 name=name,
                 organization=experiment.dataset.organization,
-                dataset=experiment.dataset,
+                dataset=eval_dataset,
                 template=eval_template,
                 config=normalize_eval_runtime_config(
                     eval_template.config,
@@ -730,4 +973,58 @@ def apply_eval_group_to_experiment(
 
     created_metrics = UserEvalMetric.objects.bulk_create(user_eval_metrics)
     experiment.user_eval_template_ids.add(*created_metrics)
+    if created_metrics and experiment.snapshot_dataset_id:
+        run = _run_added_experiment_evaluations(
+            experiment, [str(metric.id) for metric in created_metrics]
+        )
+        return {"run": run}
     return
+
+
+def _run_added_experiment_evaluations(experiment, metric_ids):
+    """Start the experiment's run for evaluations just added, as Add
+    evaluation with Run does (model_hub/views/experiments.py).
+
+    Returns "started", "run_going" or "not_started". While a run of the
+    experiment is going, starting another would stop it, so the evaluations
+    are only added: they stay pending, with no columns yet, until they are
+    run (Run evaluations sets up their columns). A run that cannot be
+    started also leaves them pending until they are run again."""
+    import structlog
+
+    from model_hub.views.experiment_runner import ExperimentRunner
+    from model_hub.views.experiments import _build_and_save_v2_column_order
+
+    if experiment.status in (StatusType.RUNNING.value, StatusType.QUEUED.value):
+        return "run_going"
+    status_before = experiment.status
+    experiment.status = StatusType.RUNNING.value
+    experiment.save(update_fields=["status"])
+    experiment_runner = ExperimentRunner(experiment_id=experiment.id)
+    experiment_runner.load_experiment()
+    experiment_runner.empty_or_create_evals_column(eval_template_ids=metric_ids)
+    # The column setup loads each evaluation, which marks it running; the
+    # run marks it again when it starts, so until then it stays pending.
+    experiment.user_eval_template_ids.filter(id__in=metric_ids).update(
+        status=StatusType.EXPERIMENT_EVALUATION.value
+    )
+    _build_and_save_v2_column_order(experiment, experiment.snapshot_dataset)
+    try:
+        from tfc.temporal.experiments import start_experiment_v2_workflow
+
+        start_experiment_v2_workflow(
+            experiment_id=str(experiment.id),
+            rerun_eval_template_ids=metric_ids,
+        )
+    except Exception as wf_err:
+        structlog.get_logger(__name__).warning(
+            "Failed to start eval workflow for eval group",
+            experiment_id=str(experiment.id),
+            error=str(wf_err),
+        )
+        # No run started, so the experiment is not running.
+        ExperimentsTable.objects.filter(
+            id=experiment.id, status=StatusType.RUNNING.value
+        ).update(status=status_before)
+        return "not_started"
+    return "started"

@@ -99,7 +99,7 @@ test(
         });
         await shot(page, testInfo, 'sessions-multi-turn');
         expect(
-          await drawer.getByText('Observed Cost: $1.20', { exact: true }).isVisible(),
+          await drawer.getByText('Total Cost: $1.20*', { exact: true }).isVisible(),
           'known two-turn session cost must be $1.20',
         ).toBe(true);
         const trace = page.waitForResponse(
@@ -133,7 +133,7 @@ test(
           expect(typeof label).toBe('string');
           const cell = page.locator(`.ag-row[row-id="${session.trace_session_id}"] [col-id="total_cost"]:visible`);
           await expect(cell).toHaveText(members[0].key.startsWith('copilot')
-            ? `Observed-only · ${cost === null ? 'Unknown' : label}` : label, { timeout: UI_READY });
+            ? `${cost === null ? 'Unknown' : label}*` : label, { timeout: UI_READY });
           const row = sessionList.table.find((s) => s.session_id === session.trace_session_id)!;
           if (cost === null) expect(row.total_cost).toBeNull();
           else expect(row.total_cost).toBeCloseTo(cost, 8);
@@ -169,7 +169,7 @@ test(
             .filter({ has: page.getByRole('tablist', { name: 'session drawer tabs' }) });
           // TracesDrawer.jsx deliberately labels null session cost N/A, not $0.
           await expect(
-            drawer.getByText(`${key.startsWith('copilot') ? 'Observed Cost' : 'Total Cost'}: ${c.cost === null ? 'N/A' : c.display}`, { exact: true }),
+            drawer.getByText(`Total Cost: ${c.cost === null ? 'N/A' : c.display}${key.startsWith('copilot') ? '*' : ''}`, { exact: true }),
           ).toBeVisible({ timeout: UI_READY });
           // ShowTrace is a Grid container with the history card's View Trace button.
           // The auto-selected detail panel repeats this ID outside that card.

@@ -1,0 +1,53 @@
+# Axiom's documented PAT path requires both the bearer and an organization ID.
+# The organization ID is customer-supplied routing context, not a secret.
+schema: "connector-manifest/v1#provider"
+app: axiom
+id: api-key
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.axiom.co/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: Personal access token
+      help: "Create a PAT in Settings > Profile > Personal tokens > New token. It has your account's full permissions and cannot be narrowed like an API token. Supply the organization ID separately. This is Axiom's US MCP endpoint; query costs apply."
+      helpUrl: https://axiom.co/docs/reference/tokens
+    - in: header
+      name: x-axiom-org-id
+      secret: false
+      label: Organization ID
+      help: "Enter the organization ID from Settings > General > ID. Axiom requires it alongside a personal access token on each MCP request."
+      helpUrl: https://axiom.co/docs/reference/tokens
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_metered
+  source: https://axiom.co/docs/console/intelligence/mcp-server
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://axiom.co/docs/console/intelligence/mcp-server
+    fetchedAt: 2026-11-09
+  - fact: transport.variant
+    url: https://axiom.co/docs/console/intelligence/mcp-server
+    fetchedAt: 2026-11-09
+  - fact: auth.kind
+    url: https://axiom.co/docs/console/intelligence/mcp-server
+    fetchedAt: 2026-11-09
+  - fact: auth.credentialParts
+    url: https://axiom.co/docs/console/intelligence/mcp-server
+    fetchedAt: 2026-11-09
+x-omega: { oss: exclude }

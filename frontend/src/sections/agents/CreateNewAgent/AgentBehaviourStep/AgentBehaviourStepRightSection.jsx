@@ -181,7 +181,7 @@ const AgentBehaviourStepRightSection = ({ control }) => {
 
   const formatValue = (field, value) => {
     if (field === "observabilityEnabled") {
-      return value ? "ON" : "OFF";
+      return "Calls imported from connected voice providers and spans from agents run in hosted sandboxes aren't stored in Observe in this release.";
     }
 
     if (field === "languages") {

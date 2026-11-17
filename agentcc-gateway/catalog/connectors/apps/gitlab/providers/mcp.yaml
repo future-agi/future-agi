@@ -1,0 +1,38 @@
+# GitLab's built-in MCP server on GitLab.com with MCP OAuth: an access token
+# with the mcp scope, from a client that registers itself dynamically or
+# from a pre-registered GitLab OAuth application. The client finds the
+# authorization server at connect time. EE takes only a declared oauth2
+# spec, so it gets none. OSS is left out until omega mcp login can register
+# a client itself (DCR), or until this record declares GitLab's OAuth
+# endpoints and mcp scope for a public PKCE application, which OSS's
+# sign-in needs and this record does not state.
+schema: "connector-manifest/v1#provider"
+app: gitlab
+id: mcp
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus:
+  label: ga
+  source: https://docs.gitlab.com/user/model_context_protocol/mcp_server/
+transport:
+  kind: http
+  url: https://gitlab.com/api/v4/mcp
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent, user]
+auth:
+  kind: mcp_oauth
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://docs.gitlab.com/user/model_context_protocol/mcp_server/
+    fetchedAt: 2026-10-21
+  - fact: auth.kind
+    url: https://docs.gitlab.com/user/model_context_protocol/mcp_server/
+    fetchedAt: 2026-10-21
+x-omega: { oss: exclude }

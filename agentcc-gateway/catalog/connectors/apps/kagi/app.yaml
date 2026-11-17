@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: kagi
+version: 1.0.0
+name: Kagi
+description: "Search the web with Kagi and extract page content for research and agent workflows."
+vendor:
+  name: Kagi
+  domains: [kagi.com]
+eeCategory: research
+group: other
+categories: [research, web-search]
+tags: [search, extraction]
+docsUrl: https://kagi.com/api/docs
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://kagi.com/api/docs
+    fetchedAt: 2026-11-09

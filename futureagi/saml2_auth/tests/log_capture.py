@@ -9,6 +9,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from unittest.mock import Mock, patch
 
+import structlog
 from django.conf import settings
 from django.test.utils import override_settings
 
@@ -61,6 +62,10 @@ def capture_security_logging() -> Iterator[SecurityLogCapture]:
 
     The helper reuses the real LOGGING dictionary and live structlog setup; it
     deliberately does not use ``structlog.testing.capture_logs``.
+
+    Loggers stay uncached while it runs, and on exit structlog gets back the
+    configuration it had on entry, so a module logger first used inside the
+    capture still reaches ``capture_logs`` in later tests.
     """
 
     from contextlib import contextmanager
@@ -73,8 +78,9 @@ def capture_security_logging() -> Iterator[SecurityLogCapture]:
 
         logging_config = get_logging_config(str(settings.BASE_DIR))
         original_states = _logger_states()
+        original_structlog = structlog.get_config()
         logging.config.dictConfig(logging_config)
-        configure_structlog()
+        configure_structlog(cache_logger_on_first_use=False)
         root_stream = io.StringIO()
         saml_stream = io.StringIO()
         root_logger = logging.getLogger()
@@ -114,5 +120,6 @@ def capture_security_logging() -> Iterator[SecurityLogCapture]:
             _restore_logger_states(
                 original_states, list(logging_config.get("loggers", {}))
             )
+            structlog.configure(**original_structlog)
 
     return _capture()

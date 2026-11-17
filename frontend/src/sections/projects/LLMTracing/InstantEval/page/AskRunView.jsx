@@ -24,7 +24,7 @@ import Iconify from "src/components/iconify";
 import TraceDetailDrawerV2 from "src/components/traceDetail/TraceDetailDrawerV2";
 import { CAPABILITY, useFeatureDenied } from "src/hooks/useCapabilities";
 import { paths } from "src/routes/paths";
-import { getSafeActionErrorMessage } from "src/utils/errorUtils";
+import { getInlineActionErrorMessage } from "src/utils/errorUtils";
 import { insightsReportLink } from "src/sections/projects/observeHandoff";
 import {
   VIEWER_CANT_RUN,
@@ -117,6 +117,16 @@ const cancelWords = (answers) =>
 const doneWords = (questions) =>
   questions === 2 ? "done with both questions" : `done with all ${questions}`;
 
+// "Read all 5,800 · about 288 credits": where answers are billed, a control
+// that starts reading says what that click bills (the summary's
+// `action_credits`, priced as the server bills it).
+const withCost = (label, credits) =>
+  credits == null ? label : `${label} · ${creditWords(credits)}`;
+
+// "Retry 5 rows".
+const retryWords = (failed) =>
+  `Retry ${failed.toLocaleString()} ${failed === 1 ? "row" : "rows"}`;
+
 function StatusLine({ run, unit, creating }) {
   const meta = unitMeta(unit);
   const live = LIVE_STATES.has(run.status);
@@ -191,12 +201,17 @@ function StatusLine({ run, unit, creating }) {
         : null;
   return (
     <Stack spacing={0.75} sx={{ width: "100%" }}>
-      <Stack direction="row" spacing={1} alignItems="center">
+      {/* The status wraps on a narrow page (the history rail open), so the
+          failed-rows note at its end is never cut off; the dot stays beside
+          its first line. */}
+      <Stack direction="row" spacing={1} alignItems="flex-start">
         <Box
           aria-hidden
           sx={{
             width: 8,
             height: 8,
+            // Centred on the first 18px line of body2.
+            mt: "5px",
             borderRadius: "50%",
             flexShrink: 0,
             bgcolor:
@@ -218,7 +233,6 @@ function StatusLine({ run, unit, creating }) {
         <Typography
           variant="body2"
           aria-live="polite"
-          noWrap
           title={[text, failedRows].filter(Boolean).join(" · ")}
           sx={{
             fontVariantNumeric: "tabular-nums",
@@ -320,8 +334,10 @@ function RunControls({ run, onControl, onCancel, busy, retryElsewhere }) {
             startIcon={<Iconify icon="mdi:refresh" width={16} />}
             onClick={() => onControl("retry_failed")}
           >
-            Retry {run.failed.toLocaleString()}{" "}
-            {run.failed === 1 ? "row" : "rows"}
+            {withCost(
+              retryWords(run.failed),
+              run.summary?.action_credits?.retry_failed,
+            )}
           </Button>
         )}
     </Stack>
@@ -365,6 +381,7 @@ function SampleBanner({ run, unit, question, focusAnswer, onControl, busy }) {
     ? unansweredBounds(run, question, estimate.labels)
     : null;
   const wide = bounds && bounds.share > UNANSWERED_BOUND_SHARE;
+  const costs = run.summary?.action_credits;
   return (
     <Section
       variant="panel"
@@ -429,8 +446,7 @@ function SampleBanner({ run, unit, question, focusAnswer, onControl, busy }) {
                 startIcon={<Iconify icon="mdi:refresh" width={16} />}
                 onClick={() => onControl("retry_failed")}
               >
-                Retry {run.failed.toLocaleString()}{" "}
-                {run.failed === 1 ? "row" : "rows"}
+                {withCost(retryWords(run.failed), costs?.retry_failed)}
               </Button>
             )}
           </Stack>
@@ -458,7 +474,8 @@ function SampleBanner({ run, unit, question, focusAnswer, onControl, busy }) {
               : ""}
           </Typography>
           {remaining > 0 && !cancelled && !resumeFirst && (
-            <Stack direction="row" spacing={1}>
+            // Priced, the two labels outgrow a narrow row: they wrap.
+            <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
               {sample.next_size > 0 && sample.next_size < remaining && (
                 <Button
                   size="small"
@@ -469,17 +486,29 @@ function SampleBanner({ run, unit, question, focusAnswer, onControl, busy }) {
                     onControl("read_more", { more: sample.next_size })
                   }
                 >
-                  Read {sample.next_size.toLocaleString()} more
+                  {withCost(
+                    `Read ${sample.next_size.toLocaleString()} more`,
+                    costs?.read_more,
+                  )}
                 </Button>
               )}
               <Button
                 size="small"
                 variant="outlined"
-                disabled={busy || live || !sample.can_extend}
-                title={live ? "When this run finishes" : undefined}
+                disabled={busy || live || !sample.can_read_all}
+                title={
+                  live
+                    ? "When this run finishes"
+                    : sample.can_extend && !sample.can_read_all
+                      ? "This view exceeds the per-run row limit. Read a smaller increment or narrow the view."
+                      : undefined
+                }
                 onClick={() => onControl("read_more", {})}
               >
-                Read all {sample.population.toLocaleString()}
+                {withCost(
+                  `Read all ${sample.population.toLocaleString()}`,
+                  costs?.read_all,
+                )}
               </Button>
             </Stack>
           )}
@@ -700,12 +729,18 @@ export default function AskRunView({
   // Its users' sessions are the most it can read, not a count.
   const upTo = unit === "users" ? "up to " : "";
   const { questions, records, summary } = run;
+  // What each control that reads more bills; none where answers aren't.
+  const costs = summary?.action_credits;
   const [focus, setFocus] = useState({ configId: null, answer: null });
   // {filter, label} from a chart, or {ids, label} from a chart that still
   // selects rows by id (it has every row).
   const [selection, setSelection] = useState(null);
   const [opened, setOpened] = useState(null);
   const [copied, setCopied] = useState(false);
+  // The CSV export under way ("rows" or "sessions"), and what the last one
+  // saved.
+  const [exporting, setExporting] = useState(null);
+  const [exported, setExported] = useState(null);
   const [acting, setActing] = useState(false);
   const [actionError, setActionError] = useState(null);
   const [confirmMore, setConfirmMore] = useState(null);
@@ -888,7 +923,10 @@ export default function AskRunView({
         setActionError(
           known instanceof AskBusy || known instanceof AskRefused
             ? known.message
-            : getSafeActionErrorMessage(error, "That didn't work. Try again."),
+            : getInlineActionErrorMessage(
+                error,
+                "That didn't work. Try again.",
+              ),
         );
     } finally {
       setActing(false);
@@ -951,7 +989,10 @@ export default function AskRunView({
               );
             } catch (error) {
               setActionError(
-                getSafeActionErrorMessage(error, "The rows couldn't be read."),
+                getInlineActionErrorMessage(
+                  error,
+                  "The rows couldn't be read.",
+                ),
               );
             } finally {
               setHanding(false);
@@ -996,7 +1037,7 @@ export default function AskRunView({
               );
           } catch (error) {
             setActionError(
-              getSafeActionErrorMessage(error, "The rows couldn't be read."),
+              getInlineActionErrorMessage(error, "The rows couldn't be read."),
             );
           }
         };
@@ -1034,6 +1075,9 @@ export default function AskRunView({
     else if (selected) setSelection({ filter: selected, label });
     else setSelection(null);
   };
+  // The Heatmap's Read more reads the sample's size again, else the rest.
+  const heatmapMoreCost =
+    run.sample?.next_size > 0 ? costs?.read_more : costs?.read_all;
   const chartProps = {
     summary,
     records: records || undefined,
@@ -1051,7 +1095,15 @@ export default function AskRunView({
   };
 
   // A user question exports its users, or with `sessions` their sessions.
+  // The whole file arrives before the browser saves it, which on a large run
+  // takes a while: its button shows it is under way until then, a second
+  // click starts nothing, and a line says when it is saved.
   const exportCsv = async ({ sessions = false } = {}) => {
+    if (exporting) return;
+    setExporting(sessions ? "sessions" : "rows");
+    setExported(null);
+    // An export that works never sits beside an earlier failure's alert.
+    setActionError(null);
     try {
       await downloadRowsCsv({
         projectId,
@@ -1063,8 +1115,11 @@ export default function AskRunView({
           .slice(0, 40)
           .replace(/[^\w]+/g, "-")}${sessions ? "-sessions" : ""}.csv`,
       });
+      setExported(sessions ? "Sessions exported." : "CSV exported.");
     } catch (error) {
-      setActionError(getSafeActionErrorMessage(error, "The export failed."));
+      setActionError(getInlineActionErrorMessage(error, "The export failed."));
+    } finally {
+      setExporting(null);
     }
   };
 
@@ -1163,9 +1218,10 @@ export default function AskRunView({
                     ? "Starting…"
                     : needsEvaluator
                       ? "Recreate question"
-                      : failedBeforeAnswering
-                        ? "Retry"
-                        : "Run again"}
+                      : withCost(
+                          failedBeforeAnswering ? "Retry" : "Run again",
+                          costs?.run_again,
+                        )}
                 </Button>
               )}
               {(unit === "traces" || unit === "spans") &&
@@ -1319,8 +1375,7 @@ export default function AskRunView({
                   startIcon={<Iconify icon="mdi:refresh" width={16} />}
                   onClick={() => control("retry_failed")}
                 >
-                  Retry {run.failed.toLocaleString()}{" "}
-                  {run.failed === 1 ? "row" : "rows"}
+                  {withCost(retryWords(run.failed), costs?.retry_failed)}
                 </Button>
               </Stack>
             }
@@ -1337,6 +1392,12 @@ export default function AskRunView({
             Link copied. It opens this run with its answers.
           </Alert>
         )}
+        {exported && (
+          <Alert severity="success" onClose={() => setExported(null)}>
+            {exported}
+          </Alert>
+        )}
+        {/* A refusal the workspace recovery handles shows one calm line. */}
         {actionError && (
           <Alert severity="error" onClose={() => setActionError(null)}>
             {actionError}
@@ -1494,6 +1555,11 @@ export default function AskRunView({
                   (PAUSED_STATES.has(run.status) &&
                     run.pending + run.notRead > 0)
                 }
+                readMoreCost={
+                  heatmapMoreCost == null
+                    ? undefined
+                    : creditWords(heatmapMoreCost)
+                }
               />
             </AskChartBoundary>
             <AskRowsTable
@@ -1505,13 +1571,16 @@ export default function AskRunView({
               onClearFilter={clearFilter}
               total={tableTotal}
               runTotal={run.total}
-              loading={!selectedRecords && rows.isLoading}
+              // Until the run's summary arrives its rows aren't read yet: a
+              // run still being created, or one opened by its link.
+              loading={!selectedRecords && (!summary || rows.isLoading)}
               error={!selectedRecords && rows.isError}
               onRetry={rows.refetch}
               hasMore={!selectedRecords && rows.hasMore}
               loadingMore={rows.isFetchingMore}
               onLoadMore={rows.loadMore}
               onExport={run.taskId ? exportCsv : undefined}
+              exporting={exporting}
             />
           </>
         )}

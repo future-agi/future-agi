@@ -1,0 +1,46 @@
+# Hex's hosted MCP server (beta, Team and Enterprise plans) with OAuth: each
+# person approves the connection with Hex's authentication provider and
+# picks a workspace; the knowledge tools need the Explorer role and the
+# project editing tools the Editor role. Single-tenant, EU and HIPAA
+# workspaces have their own Hex host, so the org picks it: {hexHost} admits
+# only hosts under hex.tech. EE takes only a declared oauth2 spec, so it
+# gets none.
+schema: "connector-manifest/v1#provider"
+app: hex
+id: mcp
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus:
+  label: beta
+  source: https://learn.hex.tech/docs/api-integrations/mcp-server
+transport:
+  kind: http
+  url: https://{hexHost}/mcp
+  urlVariables:
+    hexHost:
+      description: "Your Hex host: app.hex.tech, or your workspace's own host such as eu.hex.tech, hc.hex.tech or your-company.hex.tech."
+      pattern: '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.hex\.tech$'
+      default: app.hex.tech
+      scope: org
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent, user]
+auth:
+  kind: mcp_oauth
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://learn.hex.tech/docs/api-integrations/mcp-server
+    fetchedAt: 2026-10-21
+  - fact: transport.urlVariables.hexHost
+    url: https://learn.hex.tech/docs/api-integrations/mcp-server
+    fetchedAt: 2026-10-21
+  - fact: auth.kind
+    url: https://learn.hex.tech/docs/api-integrations/mcp-server
+    fetchedAt: 2026-10-21
+x-omega: { oss: exclude }

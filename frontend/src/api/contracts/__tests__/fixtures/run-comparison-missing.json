@@ -1,0 +1,93 @@
+{
+  "status": true,
+  "result": {
+    "baseline_run_id": "df519046-6ec3-4733-952b-0bae12147f34",
+    "candidate_run_id": "65dae7e6-357a-41bd-951e-4cd1cdf02417",
+    "dataset_version_id": "80c23026-7613-471e-bb9c-2b8c56e6ae67",
+    "metric_id": "7ee5eb5c-39a4-4608-99fe-c82354c150f9",
+    "evaluator_version_id": "ed94e7ac-c7d3-41a8-87b9-73acbb8a7556",
+    "comparison": {
+      "baseline": {
+        "item_count": 0,
+        "completed_count": 0,
+        "failed_count": 0,
+        "score_count": 0,
+        "score_average": null,
+        "score_min": null,
+        "score_max": null,
+        "pass_count": null,
+        "pass_rate": null,
+        "status_counts": {},
+        "score_status_counts": {}
+      },
+      "candidate": {
+        "item_count": 0,
+        "completed_count": 0,
+        "failed_count": 0,
+        "score_count": 0,
+        "score_average": null,
+        "score_min": null,
+        "score_max": null,
+        "pass_count": null,
+        "pass_rate": null,
+        "status_counts": {},
+        "score_status_counts": {}
+      },
+      "cases": [],
+      "status_counts": {},
+      "comparable_count": 0
+    },
+    "baseline_counts": {
+      "expected": 2,
+      "recorded": 0,
+      "missing": 2,
+      "completed": 0,
+      "failed": 0,
+      "assessed": 0
+    },
+    "candidate_counts": {
+      "expected": 2,
+      "recorded": 0,
+      "missing": 2,
+      "completed": 0,
+      "failed": 0,
+      "assessed": 0
+    },
+    "missing_by_side": {
+      "baseline": [
+        {
+          "example_id": "7a3df7c1-3c36-482b-b9d4-a06ecfb0a5ee",
+          "trial_number": 1
+        },
+        {
+          "example_id": "ea4e8848-87c3-4dfc-aa53-c8157a0feabd",
+          "trial_number": 1
+        }
+      ],
+      "candidate": [
+        {
+          "example_id": "7a3df7c1-3c36-482b-b9d4-a06ecfb0a5ee",
+          "trial_number": 1
+        },
+        {
+          "example_id": "ea4e8848-87c3-4dfc-aa53-c8157a0feabd",
+          "trial_number": 1
+        }
+      ]
+    },
+    "trace_refs": [
+      {
+        "example_id": "7a3df7c1-3c36-482b-b9d4-a06ecfb0a5ee",
+        "trial_number": 1,
+        "baseline": null,
+        "candidate": null
+      },
+      {
+        "example_id": "ea4e8848-87c3-4dfc-aa53-c8157a0feabd",
+        "trial_number": 1,
+        "baseline": null,
+        "candidate": null
+      }
+    ]
+  }
+}

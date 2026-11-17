@@ -39,6 +39,10 @@ import { useSelectedScenariosStore } from "src/sections/test/TestRuns/states";
 import { AGENT_TYPES } from "../../../../agents/constants";
 import SvgColor from "../../../../../components/svg-color";
 import ModalWrapper from "../../../../../components/ModalWrapper/ModalWrapper";
+import {
+  skippedSavedRowCount,
+  skippedSavedRowsMessage,
+} from "src/sections/test/skippedSavedRows";
 
 const SimulationDetailHeader = ({ onBack }) => {
   const theme = useTheme();
@@ -202,10 +206,14 @@ const SimulationDetailHeader = ({ onBack }) => {
         {},
       );
     },
-    onSuccess: () => {
+    onSuccess: (response) => {
       enqueueSnackbar("Simulation started successfully", {
         variant: "success",
       });
+      const skippedRows = skippedSavedRowsMessage(
+        skippedSavedRowCount(response?.data),
+      );
+      if (skippedRows) enqueueSnackbar(skippedRows, { variant: "info" });
       refreshGrid();
     },
     onError: (error) => {
@@ -403,7 +411,7 @@ const SimulationDetailHeader = ({ onBack }) => {
                   <Iconify
                     icon="solar:magnifier-linear"
                     width={16}
-                    sx={{ color: "text.disabled" }}
+                    sx={{ color: "text.secondary" }}
                   />
                 </InputAdornment>
               ),

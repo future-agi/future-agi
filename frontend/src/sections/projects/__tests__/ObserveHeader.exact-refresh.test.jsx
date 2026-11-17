@@ -11,6 +11,8 @@ import {
 const h = vi.hoisted(() => ({
   invalidateQueries: vi.fn(),
   useMutation: vi.fn(),
+  post: vi.fn(),
+  get: vi.fn(),
   getStorage: vi.fn(() => false),
   setStorage: vi.fn(),
   observeId: "project-1",
@@ -51,9 +53,10 @@ vi.mock("../LLMTracing/states", () => ({
   resetTraceGridStore: vi.fn(),
   resetSpanGridStore: vi.fn(),
 }));
-vi.mock("src/utils/axios", () => ({
-  default: { get: vi.fn() },
-  endpoints: { project: {} },
+// Keep the real endpoint registry; only the HTTP transport is replaced.
+vi.mock("src/utils/axios", async (importOriginal) => ({
+  ...(await importOriginal()),
+  default: { get: h.get, post: h.post },
 }));
 vi.mock("notistack", () => ({ enqueueSnackbar: vi.fn() }));
 vi.mock("src/components/iconify", () => ({
@@ -90,12 +93,31 @@ const renderHeader = (refreshData = vi.fn()) => {
 describe("ObserveHeader exact aggregation refresh state", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // clearAllMocks keeps queued once-responses; a test that stops early
+    // would hand its unread status responses to the next test's poll.
+    h.get.mockReset();
+    h.post.mockReset();
     h.getStorage.mockReturnValue(false);
     h.observeId = "project-1";
     h.pathname = "/dashboard/observe/project-1/llm-tracing";
   });
 
   afterEach(() => vi.useRealTimers());
+
+  it("passes the grid attribute projection through to export creation", async () => {
+    h.post.mockResolvedValue({ data: { id: "job", status: "failed" } });
+    render(<ObserveHeader
+      text="LLM Tracing" selectedTab="trace" filterTrace={[]}
+      traceAttributeKeys={["metadata.path,with-comma"]}
+    />);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Export all rows" }));
+    });
+    expect(h.post).toHaveBeenCalledWith("/tracer/bulk-exports/", {
+      project_id: "project-1", row_type: "traces", format: "csv",
+      filters: { filters: [], attribute_keys: ["metadata.path,with-comma"] },
+    });
+  });
 
   it("shows last updated only after an exact completion event", () => {
     renderHeader();
@@ -272,23 +294,62 @@ describe("ObserveHeader exact aggregation refresh state", () => {
   });
 
   it.each([
-    ["LLM Tracing", "/dashboard/observe/project-1/llm-tracing"],
-    ["Sessions", "/dashboard/observe/project-1/sessions"],
-  ])(
-    "keeps the %s exact CSV export unavailable without creating a request path",
-    (text, pathname) => {
-      h.pathname = pathname;
-      render(<ObserveHeader text={text} refreshData={vi.fn()} />);
+    ["LLM Tracing", "traces", "traces", "/dashboard/observe/project-1/llm-tracing"],
+    ["LLM Tracing", "spans", "spans", "/dashboard/observe/project-1/llm-tracing"],
+    ["Sessions", "sessions", "sessions", "/dashboard/observe/project-1/sessions"],
+  ])("exports every filtered %s row through a job (%s)", async (text, selectedTab, rowType, pathname) => {
+    vi.useFakeTimers();
+    h.pathname = pathname;
+    const filters = [{ column_id: "status", value: "OK" }];
+    h.post.mockResolvedValue({ data: { id: "job-1", status: "queued" } });
+    h.get.mockResolvedValueOnce({ data: { id: "job-1", status: "running" } })
+      .mockResolvedValueOnce({ data: { id: "job-1", status: "completed", download_url: "/exports/job-1.csv" } });
+    render(<ObserveHeader text={text} selectedTab={selectedTab} filterTrace={filters} filterSpan={filters} filterSession={filters} refreshData={vi.fn()} />);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Export all rows" }));
+    });
+    expect(h.post).toHaveBeenCalledWith("/tracer/bulk-exports/", {
+      project_id: "project-1", row_type: rowType, format: "csv",
+      filters: { filters, ...(rowType === "traces" ? { attribute_keys: [] } : {}) },
+    });
+    await act(async () => { await vi.advanceTimersByTimeAsync(4000); });
+    // The download re-signs on click (BulkExportButton.test covers the fetch),
+    // so the completed job offers a button rather than a cached link.
+    expect(h.get).toHaveBeenCalledWith("/tracer/bulk-exports/job-1/");
+    expect(screen.getByRole("button", { name: "Download export" })).toBeEnabled();
+    expect(screen.queryByRole("link", { name: "Download export" })).not.toBeInTheDocument();
+  });
 
-      const exportButton = screen.getByRole("button", {
-        name: "Exact CSV export is temporarily unavailable",
-      });
-      expect(exportButton).toBeDisabled();
+  it("shows a failed export without offering a partial download", async () => {
+    vi.useFakeTimers();
+    h.post.mockResolvedValue({ data: { id: "job-failed", status: "queued" } });
+    h.get.mockResolvedValue({ data: { id: "job-failed", status: "failed", row_count: 100 } });
+    renderHeader();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Export all rows" }));
+    });
+    await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
+    expect(screen.getByRole("alert")).toHaveTextContent("Export could not be completed");
+    expect(screen.queryByRole("button", { name: "Download export" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Export all rows" })).toBeEnabled();
+  });
 
-      fireEvent.click(exportButton);
-      expect(h.useMutation).not.toHaveBeenCalled();
-    },
-  );
+  it("retries polling the same job after a status request fails", async () => {
+    vi.useFakeTimers();
+    h.post.mockResolvedValue({ data: { id: "job-retry", status: "queued" } });
+    h.get.mockRejectedValueOnce(new Error("status unavailable"))
+      .mockResolvedValueOnce({ data: { id: "job-retry", status: "completed", download_url: "/exports/job-retry.csv" } });
+    renderHeader();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Export all rows" }));
+    });
+    await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
+    fireEvent.click(screen.getByRole("button", { name: "Retry export status" }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
+    expect(h.post).toHaveBeenCalledTimes(1);
+    expect(h.get).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole("button", { name: "Download export" })).toBeEnabled();
+  });
 
   it("keeps the Users export control hidden", () => {
     h.pathname = "/dashboard/observe/project-1/users";
@@ -296,7 +357,7 @@ describe("ObserveHeader exact aggregation refresh state", () => {
 
     expect(
       screen.queryByRole("button", {
-        name: "Exact CSV export is temporarily unavailable",
+        name: "Export all rows",
       }),
     ).not.toBeInTheDocument();
   });

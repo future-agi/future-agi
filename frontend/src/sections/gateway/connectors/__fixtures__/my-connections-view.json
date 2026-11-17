@@ -1,0 +1,122 @@
+{
+  "connected": {
+    "cleanup_pending": false,
+    "connected": true,
+    "connected_at": "2026-10-27T13:04:57.072479Z",
+    "disconnect_url": "/agentcc/mcp/connect/issues/",
+    "rotated_at": null,
+    "server_id": "issues",
+    "start": {
+      "reason": "org_oauth_app",
+      "state": "ready"
+    },
+    "start_url": "/agentcc/mcp/connect/issues/start/",
+    "status": "active",
+    "upstream_revocation": null
+  },
+  "connected_unknown_readiness": {
+    "cleanup_pending": false,
+    "connected": true,
+    "connected_at": "2026-10-27T13:04:57.111674Z",
+    "disconnect_url": "/agentcc/mcp/connect/moved-away/",
+    "rotated_at": null,
+    "server_id": "moved-away",
+    "start": {
+      "reason": "client_not_confirmed",
+      "state": "unknown"
+    },
+    "start_url": null,
+    "status": "active",
+    "upstream_revocation": null
+  },
+  "disconnect_response": {
+    "result": {
+      "cleanup_pending": false,
+      "disconnected": true,
+      "gateway_synced": true,
+      "server_id": "issues",
+      "upstream_revocation": "confirmed"
+    },
+    "status": true
+  },
+  "list_envelope_keys": ["result", "status"],
+  "list_result_keys": ["connections"],
+  "needs_admin_unreadable": {
+    "cleanup_pending": false,
+    "connected": false,
+    "connected_at": null,
+    "disconnect_url": null,
+    "rotated_at": null,
+    "server_id": "broken-app",
+    "start": {
+      "reason": "oauth_client_unreadable",
+      "state": "needs_admin"
+    },
+    "start_url": null,
+    "status": null,
+    "upstream_revocation": null
+  },
+  "ready_never_connected": {
+    "cleanup_pending": false,
+    "connected": false,
+    "connected_at": null,
+    "disconnect_url": null,
+    "rotated_at": null,
+    "server_id": "issues",
+    "start": {
+      "reason": "org_oauth_app",
+      "state": "ready"
+    },
+    "start_url": "/agentcc/mcp/connect/issues/start/",
+    "status": null,
+    "upstream_revocation": null
+  },
+  "revoked": {
+    "cleanup_pending": false,
+    "connected": false,
+    "connected_at": "2026-10-27T13:04:57.072479Z",
+    "disconnect_url": null,
+    "rotated_at": null,
+    "server_id": "issues",
+    "start": {
+      "reason": "org_oauth_app",
+      "state": "ready"
+    },
+    "start_url": "/agentcc/mcp/connect/issues/start/",
+    "status": "revoked",
+    "upstream_revocation": "confirmed"
+  },
+  "server_changed_still_active": {
+    "cleanup_pending": false,
+    "connected": false,
+    "connected_at": "2026-10-27T13:04:57.111674Z",
+    "disconnect_url": "/agentcc/mcp/connect/moved-away/",
+    "rotated_at": null,
+    "server_id": "moved-away",
+    "start": {
+      "reason": "server_changed",
+      "state": "unavailable"
+    },
+    "start_url": null,
+    "status": "active",
+    "upstream_revocation": null
+  },
+  "start_envelope_keys": ["result", "status"],
+  "start_expires_in": 600,
+  "start_result_keys": ["authorize_url", "expires_in"],
+  "unknown_no_org_app": {
+    "cleanup_pending": false,
+    "connected": false,
+    "connected_at": null,
+    "disconnect_url": null,
+    "rotated_at": null,
+    "server_id": "tickets",
+    "start": {
+      "reason": "client_not_confirmed",
+      "state": "unknown"
+    },
+    "start_url": null,
+    "status": null,
+    "upstream_revocation": null
+  }
+}

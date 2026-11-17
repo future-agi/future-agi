@@ -4,6 +4,7 @@
  * and the shared Filter panel's rows `{ field, fieldType, operator, value }`.
  * Used by the dataset Data tab and the Evals logs filter.
  */
+import { format, parse } from "date-fns";
 import { getRandomId } from "src/utils/utils";
 
 // Dataset column data_type → panel fieldType (normalized)
@@ -28,7 +29,8 @@ const PANEL_TYPE_TO_STORE_TYPE = {
 const formatDateInputValue = (value) => {
   if (!value) return "";
   if (value instanceof Date && !Number.isNaN(value.getTime())) {
-    return value.toISOString().slice(0, 16);
+    // datetime-local is parsed as local time when the filter is applied.
+    return format(value, "yyyy-MM-dd'T'HH:mm");
   }
   const stringValue = String(value);
   if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(stringValue)) {
@@ -72,14 +74,38 @@ const valueStoreToPanel = (val, panelType) => {
   return val;
 };
 
+// A day without a time ('yyyy-MM-dd') is that day in the user's time zone;
+// `new Date` would read it as UTC midnight. As a range's upper bound it covers
+// the whole day (23:59, the last minute the date + time inputs can show).
+const DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const parseDateInputValue = (value, { endOfDay = false } = {}) => {
+  if (typeof value === "string" && DATE_ONLY_PATTERN.test(value.trim())) {
+    return parse(
+      `${value.trim()}T${endOfDay ? "23:59" : "00:00"}`,
+      "yyyy-MM-dd'T'HH:mm",
+      new Date(),
+    );
+  }
+  return new Date(value);
+};
+
 const isNullish = (v) => v === undefined || v === null;
 const valuePanelToStore = (val, panelType, operator) => {
-  if (panelType === "boolean") return val === "true" || val === true;
+  if (panelType === "boolean") {
+    // Query tokens wrap scalar boolean values in a singleton array.
+    const booleanInput = Array.isArray(val) && val.length === 1 ? val[0] : val;
+    return booleanInput === "true" || booleanInput === true;
+  }
   if (panelType === "date") {
     if (Array.isArray(val)) {
-      return val.map((item) => (item ? new Date(item) : item));
+      const isRange = operator === "between" || operator === "not_between";
+      return val.map((item, index) =>
+        item
+          ? parseDateInputValue(item, { endOfDay: isRange && index === 1 })
+          : item,
+      );
     }
-    return val ? new Date(val) : "";
+    return val ? parseDateInputValue(val) : "";
   }
   if (Array.isArray(val)) {
     if (operator === "in" || operator === "not_in") {

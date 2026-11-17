@@ -117,18 +117,18 @@ class TestOtherSnapshotsUntouched:
         e1 = ExperimentsTable.objects.create(name="E1", dataset=d, snapshot_dataset=s1)
         e2 = ExperimentsTable.objects.create(name="E2", dataset=d, snapshot_dataset=s2)
         m = _apply_group(e1, organization, workspace, user)
-        assert m.dataset_id == d.id
+        assert m.dataset_id == s1.id
         e2.user_eval_template_ids.add(m)  # worst case: other experiment links it
         c_s1 = _seed(s1, e1.id, m)
         c_s2 = _seed(s2, e2.id, m)
         c_u = _seed(u, e1.id, m)
         c_d = _seed(d, e1.id, m)
         n = mark_eval_cells_stopped(m, reason="Evaluation failed")
-        assert _statuses(c_s1) == [ERROR] * 3  # positive control
-        assert _statuses(c_d) == [ERROR] * 3  # metric's own dataset
+        assert _statuses(c_s1) == [ERROR] * 3  # metric's own snapshot
+        assert _statuses(c_d) == [RUNNING] * 3  # experiment's source dataset
         assert _statuses(c_s2) == [RUNNING] * 3
         assert _statuses(c_u) == [RUNNING] * 3
-        assert n == 6
+        assert n == 3
 
     def test_unlinked_other_experiment_same_source_api(
         self, auth_client, organization, workspace, user
@@ -177,10 +177,14 @@ class TestOtherSnapshotsUntouched:
             name="E1", dataset=d, snapshot_dataset=foreign
         )
         m = _apply_group(e1, organization, workspace, user)
+        assert m.dataset_id == foreign.id
         c_f = _seed(foreign, e1.id, m)
         c_d = _seed(d, e1.id, m)
-        mark_eval_cells_stopped(m, reason="Evaluation failed")
-        assert _statuses(c_d) == [ERROR] * 3
+        n = mark_eval_cells_stopped(m, reason="Evaluation failed")
+        # Nothing here is marked; the positive control for the same stop is
+        # test_linked_other_experiment_same_source_direct (n == 3).
+        assert n == 0
+        assert _statuses(c_d) == [RUNNING] * 3
         assert _statuses(c_f) == [RUNNING] * 3
 
     def test_deleted_experiment_snapshot_not_included(
@@ -188,11 +192,18 @@ class TestOtherSnapshotsUntouched:
     ):
         d = _ds("D", organization, workspace)
         s1 = _snap("S1", organization, workspace)
+        # The home experiment has no snapshot, so the group's metric lives on
+        # D, and only the deleted experiment E1 links D to snapshot S1.
+        e0 = ExperimentsTable.objects.create(name="E0", dataset=d)
         e1 = ExperimentsTable.objects.create(name="E1", dataset=d, snapshot_dataset=s1)
-        m = _apply_group(e1, organization, workspace, user)
+        m = _apply_group(e0, organization, workspace, user)
+        assert m.dataset_id == d.id
+        e1.user_eval_template_ids.add(m)
+        c_d = _seed(d, e0.id, m)
         c_s1 = _seed(s1, e1.id, m)
         assert ExperimentsTable.objects.filter(id=e1.id).update(deleted=True) == 1
         mark_eval_cells_stopped(m, reason="Evaluation failed")
+        assert _statuses(c_d) == [ERROR] * 3  # the metric's own dataset
         assert _statuses(c_s1) == [RUNNING] * 3
 
 

@@ -8,10 +8,15 @@ import {
   Tabs,
   Tab,
   Skeleton,
+  Tooltip,
+  Alert,
+  Button,
 } from "@mui/material";
 import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 import PropTypes from "prop-types";
 import Iconify from "src/components/iconify";
+import ErrorState from "src/components/error-state";
+import { getRequestErrorMessage } from "src/utils/errorUtils";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { readQuery, endpoints } from "src/utils/axios";
 import { useScrollEnd } from "src/hooks/use-scroll-end";
@@ -23,6 +28,8 @@ import { format, parseISO } from "date-fns";
 import SvgColor from "src/components/svg-color";
 import Header from "./Header";
 import Filters from "./Filters";
+import SessionTurnFieldsDialog from "../SessionsView/SessionTurnFieldsDialog";
+import useSessionTurnFields from "../SessionsView/useSessionTurnFields";
 import { useParams } from "react-router";
 import { useTraceDrawerStore } from "./useTraceDrawerStore";
 import { formatMs } from "src/utils/utils";
@@ -30,6 +37,7 @@ import InlineAnnotator from "src/components/InlineAnnotator";
 import { CaptureCoverageNotice } from "src/components/traceDetail/TraceDetailPanel";
 import { useWorkspace } from "src/contexts/WorkspaceContext";
 import { formatCost } from "../LLMTracing/formatters";
+import { observedUsageExplanation } from "../LLMTracing/Renderers/ObservedUsageValue";
 
 function a11yProps(index) {
   return {
@@ -44,6 +52,7 @@ const TracesDrawer = ({
   rowData,
   userIdForUserMode,
   navigationContext,
+  turnFieldPreferences,
 }) => {
   const theme = useTheme();
   const { projectId, observeId } = useParams();
@@ -73,6 +82,9 @@ const TracesDrawer = ({
     data: queryData,
     isPlaceholderData,
     isLoading,
+    isError,
+    error,
+    refetch,
     fetchNextPage,
     isFetchingNextPage,
     isFetching,
@@ -87,19 +99,16 @@ const TracesDrawer = ({
     ],
     queryFn: ({ pageParam }) => {
       if (!contextInScope) throw new Error("Session list workspace changed");
-      return readQuery(
-        endpoints.project.traceSessionQuery(activeSessionId),
-        {
-          params: {
-            page_number: pageParam,
-            page_size: 10,
-            ...(userIdForUserMode ? { user_id: userIdForUserMode } : {}),
-            ...(navigationContext !== undefined
-              ? { navigation_context: JSON.stringify(navigationContext) }
-              : {}),
-          },
+      return readQuery(endpoints.project.traceSessionQuery(activeSessionId), {
+        params: {
+          page_number: pageParam,
+          page_size: 10,
+          ...(userIdForUserMode ? { user_id: userIdForUserMode } : {}),
+          ...(navigationContext !== undefined
+            ? { navigation_context: JSON.stringify(navigationContext) }
+            : {}),
         },
-      );
+      });
     },
     getNextPageParam: (page, _, pageParams) => {
       return page.data?.result?.next ? pageParams + 1 : null;
@@ -142,6 +151,23 @@ const TracesDrawer = ({
       return [...acc, ...page.data.result.response];
     }, []) || [];
 
+  // Cross-project user drawers obtain the real project from the loaded turn,
+  // never from a workspace-wide saved-view fallback or the previous row.
+  const loadedProjectId = traceDetail[0]?.system_metrics?.project_id;
+  const preferenceProjectId = projectIdToUse || loadedProjectId;
+  const inheritedPreferences =
+    turnFieldPreferences?.projectId === preferenceProjectId
+      ? turnFieldPreferences
+      : null;
+  const drawerPreferences = useSessionTurnFields(
+    inheritedPreferences || !open || !contextInScope
+      ? null
+      : preferenceProjectId,
+  );
+  const preferences = inheritedPreferences || drawerPreferences;
+  const [turnFieldsDialogScope, setTurnFieldsDialogScope] =
+    React.useState(null);
+
   const handleTraceNavigation = (direction) => {
     const sessionIdKey =
       direction === "next" ? "next_session_id" : "previous_session_id";
@@ -161,10 +187,16 @@ const TracesDrawer = ({
     setCurrentSessionId(null);
     setNavigationDirection(null);
     setActiveTab(0);
+    setTurnFieldsDialogScope(null);
   };
 
-  // Separate loading states
-  const isInitialLoading = isLoading && !_traceDetail;
+  // Separate loading states. A Retry after a failed read with no rows
+  // counts as loading too, so the button never looks inert.
+  const isInitialLoading =
+    (isLoading || (isError && isFetching)) && !_traceDetail;
+  // A failed read with nothing loaded is an error, not an empty session.
+  // Loaded rows stay visible when only a later page fails.
+  const isLoadFailed = isError && !isFetching && !_traceDetail;
   const isNavigationLoading =
     isFetching && !isFetchingNextPage && !sessionMetadata;
   const isNextLoading = isNavigationLoading && navigationDirection === "next";
@@ -178,12 +210,14 @@ const TracesDrawer = ({
     }
   }, [isFetching, navigationDirection]);
 
+  // The drawer stops short of the left edge on purpose (click there to
+  // close), so it keeps the theme's backdrop: the strip of page left showing
+  // is dimmed, not a live-looking slice of the sidebar.
   return (
     <Drawer
       anchor="right"
       open={open}
       onClose={handleClose}
-      BackdropProps={{ invisible: true }}
       sx={{
         ...coveredDrawerSx(covered),
         width: "97.5vw",
@@ -290,10 +324,35 @@ const TracesDrawer = ({
                       sx={{ color: "text.primary" }}
                       fontWeight={"fontWeightRegular"}
                     >
-                      {captureCoverage ? "Observed Cost: " : "Total Cost: "}
+                      {"Total Cost: "}
                       {sessionMetadata?.total_cost == null
                         ? "N/A"
                         : formatCost(sessionMetadata.total_cost)}
+                      {captureCoverage?.coverage_unknown && "*"}
+                      {captureCoverage?.coverage_unknown && (
+                        <Tooltip
+                          title={observedUsageExplanation(
+                            captureCoverage.request_count,
+                          )}
+                          arrow
+                          placement="bottom"
+                        >
+                          <Box
+                            component="span"
+                            sx={{
+                              display: "inline-flex",
+                              verticalAlign: "middle",
+                              ml: 0.5,
+                            }}
+                          >
+                            <Iconify
+                              icon="solar:question-circle-linear"
+                              width={14}
+                              color="text.secondary"
+                            />
+                          </Box>
+                        </Tooltip>
+                      )}
                     </Typography>
                   }
                   icon={
@@ -412,7 +471,8 @@ const TracesDrawer = ({
               aria-label="session drawer tabs"
               textColor="primary"
               indicatorColor="primary"
-              sx={{ boxShadow: "none",
+              sx={{
+                boxShadow: "none",
                 "& .MuiTab-root": {
                   paddingX: 1.75,
                 },
@@ -448,7 +508,41 @@ const TracesDrawer = ({
             </Box>
           )}
           {activeTab === 0 && (
-            <Filters viewType={viewType} setViewType={setViewType} />
+            <>
+              <Box
+                sx={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 1,
+                  flexWrap: "wrap",
+                }}
+              >
+                <Filters viewType={viewType} setViewType={setViewType} />
+                <Button
+                  size="small"
+                  variant="outlined"
+                  disabled={!preferences.ready || !contextInScope}
+                  onClick={() => setTurnFieldsDialogScope(preferences.scopeKey)}
+                >
+                  Turn fields
+                </Button>
+                {!preferenceProjectId && (
+                  <Typography variant="caption" color="text.secondary">
+                    Turn fields are available when the session project loads.
+                  </Typography>
+                )}
+              </Box>
+              {preferences.error && (
+                <Alert
+                  severity="error"
+                  action={
+                    <Button onClick={() => preferences.retry()}>Retry</Button>
+                  }
+                >
+                  Turn fields could not be loaded. Retry before saving changes.
+                </Alert>
+              )}
+            </>
           )}
         </Box>
         <Box
@@ -458,9 +552,18 @@ const TracesDrawer = ({
           }}
           ref={scrollRef}
         >
-          {activeTab === 0 ? (
+          {activeTab === 0 && isLoadFailed ? (
+            <ErrorState
+              role="alert"
+              title="Failed to load session"
+              detail={getRequestErrorMessage(error, "Please try again.")}
+              onRetry={() => refetch()}
+              sx={{ height: "auto", flexGrow: 0 }}
+            />
+          ) : activeTab === 0 ? (
             <SessionHistory
               traceDetail={traceDetail}
+              turnFields={preferences.fields}
               loading={isInitialLoading}
               isFetchingNextPage={isFetchingNextPage}
               activeSessionId={activeSessionId}
@@ -470,6 +573,19 @@ const TracesDrawer = ({
           )}
         </Box>
       </Box>
+      {open &&
+        preferences.ready &&
+        turnFieldsDialogScope === preferences.scopeKey && (
+          <SessionTurnFieldsDialog
+            key={preferences.scopeKey}
+            open
+            fields={preferences.fields}
+            sample={traceDetail[0]}
+            saveDescription={preferences.saveDescription}
+            onSave={preferences.save}
+            onClose={() => setTurnFieldsDialogScope(null)}
+          />
+        )}
     </Drawer>
   );
 };
@@ -480,6 +596,7 @@ TracesDrawer.propTypes = {
   rowData: PropTypes.object,
   userIdForUserMode: PropTypes.string,
   navigationContext: PropTypes.object,
+  turnFieldPreferences: PropTypes.object,
 };
 
 export default TracesDrawer;

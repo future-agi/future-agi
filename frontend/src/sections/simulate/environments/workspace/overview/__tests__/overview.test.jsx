@@ -256,11 +256,13 @@ describe("OverviewPanel", () => {
       );
     });
 
-    it("offers nothing while versioning is off", () => {
+    it("shows Manage versions disabled, with the reason, while versioning is off", () => {
       renderPanel({ env: { ...versioned, versioning: { enabled: false } } });
-      expect(manage()).toBeNull();
-      renderPanel();
-      expect(manage()).toBeNull();
+      expect(manage()).toBeDisabled();
+      expect(manage()).toHaveAccessibleDescription(
+        "Versioning is off for this install, so this isn't available.",
+      );
+      expect(screen.queryByTestId("agent-versions-panel")).toBeNull();
     });
 
     it("offers nothing on a locked template", () => {

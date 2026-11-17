@@ -1,0 +1,8 @@
+Hello {{ name }},
+
+Confirm that {{ email }} is your address to like, report and create publishers on the Omega Hub:
+
+{{ link }}
+
+Open the link while you are signed in to Future AGI as {{ email }}. It expires in 24 hours.
+If you did not ask for this, ignore this email; nothing changes on your account.

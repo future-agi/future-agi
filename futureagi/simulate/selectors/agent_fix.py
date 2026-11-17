@@ -68,10 +68,15 @@ from simulate.pydantic_schemas.agent_fix import (
 )
 from simulate.selectors.runs import user_executions
 from simulate.services.agent_fix_agents import AgentKind, agent_kind
+from simulate.services.github_app_tenancy import platform_github_app_refused
 from simulate.services.harness_environment import environment_name
 from simulate.services.harness_github import short_ref
 from simulate.services.harness_usage import check_harness_action
 from simulate.services.hosted_harness import HostedHarnessError
+from simulate.services.hosted_harness_gateway import (
+    PRIVATE_GITHUB_ENVIRONMENT_MESSAGE,
+    PRIVATE_GITHUB_UNAVAILABLE_CODE,
+)
 from simulate.services.run_compare import REGRESSED, verdict
 from simulate.services.run_results_v3_scoring import (
     LiveEvals,
@@ -474,7 +479,8 @@ def scenario_results(source_run: HostedHarnessJob) -> list[LaunchScenario]:
 def with_spend(runs: QuerySet[AgentFixRun]) -> QuerySet[AgentFixRun]:
     """Each fix's spend in billed US dollars. ``fix_spent_usd`` is the engine's model calls
     plus every check run whose usage is sealed. ``committed_usd`` also holds a worst case for
-    each check run still unsealed; it is what the fix's limit is held against."""
+    each check run still unsealed and in-flight model calls; it is what the fix's
+    limit is held against."""
     live = Q(check_runs__deleted=False)
     money = DecimalField(max_digits=12, decimal_places=4)
     sealed = Coalesce(
@@ -493,14 +499,14 @@ def with_spend(runs: QuerySet[AgentFixRun]) -> QuerySet[AgentFixRun]:
     return runs.annotate(
         fix_spent_usd=ExpressionWrapper(F("spent_usd") + sealed, output_field=money),
         committed_usd=ExpressionWrapper(
-            F("spent_usd") + sealed + unsealed * worst_case, output_field=money
+            F("spent_usd") + F("model_reserved_usd") + sealed + unsealed * worst_case,
+            output_field=money,
         ),
     )
 
 
 def committed_usd(fix_run: AgentFixRun) -> Decimal:
-    """What the fix's limit is held against: its spend, and a worst case for each check run
-    whose usage is not sealed yet."""
+    """Spend plus model-call holds and worst cases for unsealed check runs."""
     return (
         with_spend(AgentFixRun.no_workspace_objects.filter(id=fix_run.id))
         .values_list("committed_usd", flat=True)
@@ -574,7 +580,7 @@ def fix_runs_for_read(runs: QuerySet[AgentFixRun]) -> QuerySet[AgentFixRun]:
             ),
         )
         .select_related(
-            "source_run",
+            "source_run__environment_version",
             "environment__environment_version",
             "base_agent_version__agent_definition",
             "base_agent_version__harness_runtime",
@@ -679,15 +685,15 @@ def base_check_runs(fix_run: AgentFixRun) -> list[HostedHarnessJob]:
     earlier = fix_lineage(fix_run)[1:]
     if not earlier:
         return runs
-    labels = {run.fix_label for run in runs}
+    seen = {run.fix_label for run in runs}
     for run in HostedHarnessJob.no_workspace_objects.filter(
         fix_run_id__in=earlier,
         agent_version_id=base,
         state=HostedHarnessJob.State.COMPLETED,
         deleted=False,
     ).order_by("-created_at"):
-        if run.fix_label not in labels:
-            labels.add(run.fix_label)
+        if run.fix_label not in seen:
+            seen.add(run.fix_label)
             runs.append(run)
     return runs
 
@@ -791,6 +797,18 @@ def default_max_minutes(cases: int) -> int:
     return min(MAX_MINUTES_MAX, max(DEFAULT_MAX_MINUTES, 60 + 4 * cases))
 
 
+def _private_github_refused(source_run: HostedHarnessJob) -> bool:
+    """Whether a fix from this run would first read a private GitHub repository this
+    deployment no longer reaches: the source the run ran, which the fix reads, under
+    the check the installation token mint makes."""
+    source = (source_run.payload or {}).get("source") or {}
+    return (
+        source.get("kind") == "github"
+        and source.get("visibility") == "private"
+        and platform_github_app_refused()
+    )
+
+
 def launch_blocker(
     source_run: HostedHarnessJob, *, usage: bool = True
 ) -> HostedHarnessError | None:
@@ -804,6 +822,12 @@ def launch_blocker(
         agent_kind(source_run.environment).require_available()
     except HostedHarnessError as exc:
         return exc
+    if _private_github_refused(source_run):
+        return HostedHarnessError(
+            PRIVATE_GITHUB_UNAVAILABLE_CODE,
+            PRIVATE_GITHUB_ENVIRONMENT_MESSAGE,
+            status_code=422,
+        )
     if AgentFixRun.no_workspace_objects.filter(
         environment=source_run.environment, state__in=AgentFixRun.ACTIVE_STATES
     ).exists():

@@ -1,0 +1,91 @@
+{
+  "schema": "omega-hub/v1",
+  "id": "first-agent",
+  "version": "1.0.0",
+  "title": "Your first agent in one file",
+  "tagline": "One tool, one model, one runAgent call: a weather agent that asks for the tool and answers from its result.",
+  "kind": "agent",
+  "cover": {
+    "emoji": "👋",
+    "from": "blue",
+    "to": "indigo"
+  },
+  "author": {
+    "github": "future-agi",
+    "name": "Future AGI",
+    "kind": "maintainer"
+  },
+  "tags": [
+    "starter",
+    "tool",
+    "first-run"
+  ],
+  "difficulty": "starter",
+  "license": "Apache-2.0",
+  "added": "2026-10-08",
+  "models": {
+    "keyless": "scripted",
+    "live": [
+      {
+        "model": "openai:gpt-4o-mini",
+        "keys": [
+          "OPENAI_API_KEY"
+        ]
+      },
+      {
+        "model": "anthropic:claude-sonnet-4-6",
+        "keys": [
+          "ANTHROPIC_API_KEY"
+        ]
+      },
+      {
+        "model": "vertex:gemini-3.5-flash",
+        "keys": [
+          "OMEGA_VERTEX_CREDS"
+        ]
+      }
+    ],
+    "maxCalls": 2
+  },
+  "keys": [
+    {
+      "name": "OPENAI_API_KEY",
+      "why": "The model behind the agent, on OpenAI.",
+      "get": "https://platform.openai.com/api-keys",
+      "for": "live",
+      "secret": true
+    },
+    {
+      "name": "ANTHROPIC_API_KEY",
+      "why": "The model behind the agent, on Anthropic.",
+      "get": "https://console.anthropic.com/settings/keys",
+      "for": "live",
+      "secret": true
+    },
+    {
+      "name": "OMEGA_VERTEX_CREDS",
+      "why": "The model behind the agent, on Vertex AI.",
+      "get": "https://cloud.google.com/vertex-ai/docs/start/cloud-environment",
+      "for": "live",
+      "secret": true
+    }
+  ],
+  "run": {
+    "keyless": [
+      "node",
+      "main.mjs"
+    ]
+  },
+  "test": "main.test.mjs",
+  "demo": {
+    "cast": "demo.cast"
+  },
+  "disclosure": {
+    "summary": "Calls one model vendor to answer a weather question with one tool.",
+    "network": "Keyless: none. Live: your chosen model vendor only (OpenAI, Anthropic or Vertex AI).",
+    "files": "Writes a run log in a temporary folder and removes it when done.",
+    "shell": "None.",
+    "background": "None. It exits when the answer is printed.",
+    "credentials": "Reads the one model key named under Keys needed for a live run. Stores nothing."
+  }
+}

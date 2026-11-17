@@ -29,6 +29,7 @@ from rest_framework.test import APIClient
 from accounts.models.auth_token import AuthToken
 from accounts.models.organization import Organization
 from accounts.models.user import User
+from accounts.services.handoff_exchange import redeem
 from saml2_auth import views
 
 CLIENT_ID = "synthetic-google-client"
@@ -150,6 +151,9 @@ def identity_server(signing_keys, settings, monkeypatch, tmp_path):
                         "displayName": PROFILE,
                         "email": EMAIL,
                         "mail": EMAIL,
+                        # A team test's setup changes: a Microsoft account is
+                        # mapped only from userPrincipalName, so /me gives one.
+                        "userPrincipalName": EMAIL,
                     },
                 )
             else:
@@ -230,6 +234,14 @@ def _callback():
     return client, response
 
 
+def _redeemed_session(response):
+    """The session the redirect's one-time handoff code redeems to, as the
+    app redeems it (accounts.services.handoff_exchange.redeem, kind sso)."""
+    codes = parse_qs(urlparse(response["Location"]).query).get("code")
+    assert codes and len(codes) == 1, response["Location"]
+    return redeem(codes[0], "sso")["access"]
+
+
 def _assert_denied(client, response, before):
     assert response.status_code == 302
     query = parse_qs(urlparse(response["Location"]).query)
@@ -254,7 +266,10 @@ def test_google_callback_signs_in_with_google_issuer(
     _, response = _callback()
     query = parse_qs(urlparse(response["Location"]).query)
     assert response.status_code == 302
-    assert query["sso_token"]
+    # A team test's expected value changes: the redirect carries a one-time
+    # handoff code (kind sso) instead of sso_token, and the code redeems to
+    # the session.
+    assert _redeemed_session(response)
     assert query["is_new_user"] == ["false"]
     assert (
         AuthToken.objects.filter(user=google_user, is_active=True).count() == before + 1
@@ -297,7 +312,7 @@ def test_google_callback_keeps_secrets_out_of_logs(
     before = AuthToken.objects.count()
     client, response = _callback()
     if exchange_status == 200:
-        assert "sso_token=" in response["Location"]
+        assert _redeemed_session(response)
         request = identity_server["requests"][-1]
         assert request[1] == "/userinfo?alt=json"
         assert request[2]["Authorization"] == f"Bearer {ACCESS_TOKEN}"
@@ -319,19 +334,19 @@ def test_google_keys_are_cached_and_refetched_on_rotation(
 ):
     for _ in range(2):
         _, response = _callback()
-        assert "sso_token=" in response["Location"]
+        assert _redeemed_session(response)
     assert sum(r[1] == "/certs" for r in identity_server["requests"]) == 1
     identity_server["keys"] = [signing_keys[1][1]]
     identity_server["issue"](key=1)
     _, response = _callback()
-    assert "sso_token=" in response["Location"]
+    assert _redeemed_session(response)
     assert sum(r[1] == "/certs" for r in identity_server["requests"]) == 2
 
 
 @pytest.mark.django_db
 def test_google_unknown_key_refetches_once_then_denies(identity_server, google_user):
     _, response = _callback()
-    assert "sso_token=" in response["Location"]
+    assert _redeemed_session(response)
     identity_server["issue"](key=1)
     before = AuthToken.objects.count()
     client, response = _callback()
@@ -436,7 +451,7 @@ def test_other_oauth_callbacks_do_not_log_secrets(
     if failure:
         _assert_denied(client, response, before)
     else:
-        assert "sso_token=" in response["Location"]
+        assert _redeemed_session(response)
         assert AuthToken.objects.filter(user=google_user).count() == before + 1
     for marker in (
         CODE,
@@ -484,7 +499,7 @@ def test_google_marketplace_callback_preserves_organization(
     )
     if valid:
         query = parse_qs(urlparse(response["Location"]).query)
-        assert query["sso_token"]
+        assert _redeemed_session(response)
         assert query["is_new_user"] == ["true"]
         user = User.objects.get(email=EMAIL)
         assert user.organization_id == org.id
@@ -566,7 +581,7 @@ def test_production_callback_logging_redacts_query_and_signed_claims(
         file_log = (tmp_path / "logs" / "wsgi.log").read_text()
     if valid:
         assert response.status_code == 302
-        assert "sso_token=" in response["Location"]
+        assert _redeemed_session(response)
         assert AuthToken.objects.filter(user=google_user).count() == before + 1
     else:
         _assert_denied(client, response, before)

@@ -2,7 +2,6 @@ package topic
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
@@ -50,7 +49,7 @@ func (g *TopicGuardrail) Check(ctx context.Context, input *guardrails.CheckInput
 		return &guardrails.CheckResult{Pass: true}
 	}
 
-	text := extractAllText(input)
+	text := extractAllText(ctx, input)
 	if text == "" {
 		return &guardrails.CheckResult{Pass: true}
 	}
@@ -126,11 +125,13 @@ func parseTopics(v interface{}) []topicMatcher {
 	return topics
 }
 
-func extractAllText(input *guardrails.CheckInput) string {
+func extractAllText(ctx context.Context, input *guardrails.CheckInput) string {
 	var parts []string
 	if input.Request != nil {
-		for _, m := range input.Request.Messages {
-			if t, ok := extractContentText(m.Content); ok {
+		// Each message's text and its tool calls' arguments
+		// (guardrails.MessageText).
+		for i := range input.Request.Messages {
+			if t, ok := guardrails.MessageText(ctx, &input.Request.Messages[i]); ok {
 				parts = append(parts, t)
 			}
 		}
@@ -138,13 +139,3 @@ func extractAllText(input *guardrails.CheckInput) string {
 	return strings.Join(parts, " ")
 }
 
-func extractContentText(raw json.RawMessage) (string, bool) {
-	if len(raw) == 0 {
-		return "", false
-	}
-	var s string
-	if err := json.Unmarshal(raw, &s); err == nil {
-		return s, true
-	}
-	return "", false
-}

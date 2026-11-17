@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: telnyx
+version: 1.0.0
+name: Telnyx
+description: "Use Telnyx API tools to manage communications resources and perform account actions."
+vendor:
+  name: Telnyx
+  domains: [telnyx.com]
+eeCategory: communication
+group: other
+categories: [communication]
+tags: [messages, automation]
+docsUrl: https://developers.telnyx.com/docs/mcp/remote-mcp
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://developers.telnyx.com/docs/mcp/remote-mcp
+    fetchedAt: 2026-11-09

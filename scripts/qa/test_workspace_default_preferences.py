@@ -6,6 +6,8 @@ this proves resolver control flow, not HTTP dispatch or database permissions.
 Run directly with Python/unittest, not the backend pytest bootstrap.
 """
 
+from __future__ import annotations
+
 import ast
 import re
 import unittest
@@ -14,12 +16,18 @@ from datetime import UTC, datetime
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from unittest.mock import MagicMock, patch
+from uuid import UUID
 
 SOURCE = Path(__file__).resolve().parents[2] / "futureagi/accounts/authentication.py"
+LANDING = SOURCE.parent / "services/workspace_landing.py"
 
 
 class PermissionDenied(Exception):
     status_code = 403
+
+    def __init__(self, detail=None, code=None):
+        super().__init__(detail)
+        self.code = code
 
 
 class AuthenticationFailed(Exception):
@@ -38,6 +46,73 @@ class InterfaceError(Exception):
     pass
 
 
+# The API-key admission path, run from its own source files next to SOURCE.
+KEY_DEFINITIONS = {
+    "api_key_constants.py": {"LEGACY_ORG_KEY_TYPE", "RETIRED_KEY_TYPES"},
+    "api_secrets.py": {"MAX_SECRET_LENGTH"},
+    "api_key_lookup.py": {"find_api_key"},
+    "api_key_policy.py": {
+        "is_retired_key",
+        "live_membership",
+        "membership_role",
+        "admit_api_key",
+        "authenticate_api_key",
+    },
+}
+
+
+def verify_synthetic_secret(stored_hash, stored_plaintext, presented):
+    """Crypto boundary: only the synthetic secret matches its synthetic hash."""
+    matches = (stored_hash, presented) == ("synthetic-hash", "synthetic-secret")
+    return SimpleNamespace(ok=matches and not stored_plaintext, needs_rehash=False)
+
+
+class Rows:
+    """ORM boundary: a query over rows held in memory, in the database's order."""
+
+    def __init__(self, rows):
+        self.rows = list(rows)
+
+    def filter(self, **lookup):
+        return Rows(
+            row
+            for row in self.rows
+            if all(getattr(row, name, None) == value for name, value in lookup.items())
+        )
+
+    def select_related(self, *fields):
+        return self
+
+    def annotate(self, **expressions):
+        return self
+
+    def order_by(self, *keys):
+        return self
+
+    def first(self):
+        return self.rows[0] if self.rows else None
+
+    def iterator(self):
+        return iter(self.rows)
+
+
+def defined_name(node):
+    if isinstance(node, ast.Assign) and len(node.targets) == 1:
+        return getattr(node.targets[0], "id", None)
+    return getattr(node, "name", None)
+
+
+def run_definitions(path, names, namespace):
+    """Run the named top-level definitions of ``path``, unchanged, in ``namespace``."""
+    tree = ast.parse(path.read_text(), filename=str(path))
+    nodes = [node for node in tree.body if defined_name(node) in names]
+    assert sorted(map(defined_name, nodes)) == sorted(names)
+    # Annotations name models that setUp binds later, so they stay unevaluated.
+    module = ast.Module(body=nodes, type_ignores=[])
+    code = compile(module, str(path), "exec", flags=annotations.compiler_flag)
+    exec(code, namespace)
+
+
 def load_auth_definitions():
     """Compile real source bodies without importing application startup code."""
     names = {
@@ -46,6 +121,8 @@ def load_auth_definitions():
         "_resolve_view_class",
         "_is_workspace_write_exempt_view",
         "_is_annotation_queue_role_scoped_write_path",
+        "_refuse_unavailable_workspace",
+        "_is_workspace_write",
     }
     tree = ast.parse(SOURCE.read_text(), filename=str(SOURCE))
     definitions = [node for node in tree.body if getattr(node, "name", None) in names]
@@ -71,6 +148,13 @@ def load_auth_definitions():
         "traceback": MagicMock(),
         "AUTH_TOKEN_EXPIRATION_TIME_IN_MINUTES": 60,
         "timezone": SimpleNamespace(now=lambda: datetime(2026, 9, 9, tzinfo=UTC)),
+        # Reads already go to the one database these doubles stand for.
+        "primary_required": lambda function: function,
+        # Landing parses saved workspace ids as UUIDs and orders rows in the database.
+        "UUID": UUID,
+        "F": MagicMock(),
+        "OuterRef": MagicMock(),
+        "Subquery": MagicMock(),
     }
     exec(
         compile(
@@ -80,14 +164,17 @@ def load_auth_definitions():
         ),
         namespace,
     )
+    run_definitions(LANDING, {"resolve_user_workspace"}, namespace)
+    for name, defined in KEY_DEFINITIONS.items():
+        run_definitions(SOURCE.parent / name, defined, namespace)
     return namespace
 
 
 class WorkspaceDefaultPreferencesTests(unittest.TestCase):
     def setUp(self):
         self.ns = load_auth_definitions()
-        self.org = SimpleNamespace(id="org-a")
-        self.foreign_org = SimpleNamespace(id="org-b")
+        self.org = SimpleNamespace(id="org-a", pk="org-a")
+        self.foreign_org = SimpleNamespace(id="org-b", pk="org-b")
         self.a1 = SimpleNamespace(id="a1", organization=self.org, is_active=True)
         self.a2 = SimpleNamespace(id="a2", organization=self.org, is_active=True)
         self.foreign = SimpleNamespace(
@@ -141,6 +228,17 @@ class WorkspaceDefaultPreferencesTests(unittest.TestCase):
             raise DoesNotExist()
 
         self.workspaces.get.side_effect = get_workspace
+
+        def list_workspaces(**lookup):
+            # The database lists a workspace the person joined first, then by id.
+            joined = self.memberships.filter.return_value.select_related.return_value
+            member_of = getattr(joined.first.return_value, "workspace", None)
+            world = (self.a1, self.a2, self.foreign, self.inactive, self.denied)
+            ordered = sorted(world, key=lambda ws: (ws is not member_of, ws.id))
+            return Rows(ordered).filter(**lookup)
+
+        self.listed = MagicMock()
+        self.listed.filter.side_effect = list_workspaces
         self.memberships = MagicMock()
         self.memberships.filter.return_value.select_related.return_value.first.return_value = SimpleNamespace(
             workspace=self.a2
@@ -160,30 +258,58 @@ class WorkspaceDefaultPreferencesTests(unittest.TestCase):
         self.cache = MagicMock()
         self.cache_entry = {"user": self.user, "token": "existing-token"}
         self.cache.get.side_effect = lambda _key: self.cache_entry
+        self.person_rows = MagicMock()
+        self.person_rows.filter.return_value.first.return_value = self.user
+        membership = SimpleNamespace(level=None, role="Owner")
+        self.live_memberships = MagicMock()
+        self.live_memberships.filter.return_value.first.return_value = membership
+        self.workspace_member_rows = MagicMock()
+        self.workspace_member_rows.filter.return_value.exists.return_value = True
+        self.verify_secret = MagicMock(side_effect=verify_synthetic_secret)
+        org_membership = SimpleNamespace(
+            no_workspace_objects=self.org_memberships,
+            _base_manager=self.live_memberships,
+        )
         self.ns.update(
-            User=SimpleNamespace(objects=self.users),
+            User=SimpleNamespace(objects=self.users, _base_manager=self.person_rows),
             Workspace=SimpleNamespace(
-                objects=self.workspaces, DoesNotExist=DoesNotExist
+                objects=self.workspaces,
+                no_workspace_objects=self.listed,
+                DoesNotExist=DoesNotExist,
             ),
-            WorkspaceMembership=SimpleNamespace(no_workspace_objects=self.memberships),
-            Organization=SimpleNamespace(objects=self.orgs, DoesNotExist=DoesNotExist),
-            OrgApiKey=SimpleNamespace(objects=self.keys, DoesNotExist=DoesNotExist),
+            WorkspaceMembership=SimpleNamespace(
+                no_workspace_objects=self.memberships,
+                _base_manager=self.workspace_member_rows,
+            ),
+            Organization=SimpleNamespace(
+                objects=self.orgs,
+                DoesNotExist=DoesNotExist,
+                _meta=SimpleNamespace(pk=SimpleNamespace(to_python=str)),
+            ),
+            OrganizationMembership=org_membership,
+            OrgApiKey=SimpleNamespace(
+                objects=self.keys, _base_manager=self.keys, DoesNotExist=DoesNotExist
+            ),
             AuthToken=SimpleNamespace(objects=self.tokens),
             cache=self.cache,
+            verify_secret=self.verify_secret,
             decrypt_message=MagicMock(
                 return_value={"id": "old-token-id", "user_id": "owner"}
             ),
         )
         self.context = MagicMock()
+        tenant_check = MagicMock(side_effect=AssertionError("unexpected tenant check"))
         modules = {}
         for name, members in {
             "accounts.models": {"User": self.ns["User"]},
             "accounts.models.organization_membership": {
-                "OrganizationMembership": SimpleNamespace(
-                    no_workspace_objects=self.org_memberships
-                ),
+                "OrganizationMembership": org_membership,
             },
             "tfc.middleware.workspace_context": {"set_workspace_context": self.context},
+            "tfc.utils.tenant_scope": {
+                "acts_in_organization": tenant_check,
+                "align_legacy_organization": tenant_check,
+            },
         }.items():
             module = ModuleType(name)
             module.__dict__.update(members)
@@ -316,11 +442,20 @@ class WorkspaceDefaultPreferencesTests(unittest.TestCase):
             organization=self.org,
             organization_id=self.org.id,
             workspace=self.a2,
+            workspace_id=self.a2.id,
             enabled=True,
+            deleted=False,
             type="user",
             user=self.user,
+            user_id=self.user.id,
+            retired_at=None,
+            retired_reason="",
+            secret_key="",
+            secret_key_hash="synthetic-hash",
         )
-        self.keys.select_related.return_value.get.return_value = key
+        rows = self.keys.select_related.return_value
+        rows.filter.return_value.first.return_value = key
+        rows.exclude.return_value.filter.return_value.first.return_value = key
         request = self.request(workspace="b1", query={"workspace_id": "a1"})
         request.META = {}
         request.headers.update(
@@ -330,18 +465,26 @@ class WorkspaceDefaultPreferencesTests(unittest.TestCase):
                 "X-Secret-Key": "synthetic-secret",
             }
         )
-        self.assertEqual(self.auth.authenticate(request), (self.user, None))
-        self.assertIs(request.organization, self.org)
-        self.assertIs(request.workspace, self.a2)
+        # A key request that names another organization is refused.
+        with self.assertRaises(PermissionDenied) as raised:
+            self.auth.authenticate(request)
+        self.assertEqual(raised.exception.code, "organization_unavailable")
+        # The refused request is bound to no organization.
+        self.assertIsNone(getattr(request, "organization", None))
+        # The refused request is bound to no workspace.
+        self.assertIsNone(getattr(request, "workspace", None))
         self.users.filter.assert_not_called()
         self.orgs.get.assert_not_called()
         self.cache.get.assert_not_called()
-        self.keys.select_related.return_value.get.assert_called_once_with(
-            api_key="synthetic-key",
-            secret_key="synthetic-secret",
-            enabled=True,
-            deleted=False,
+        # The key is found by its public id; its secret is checked by its hash.
+        rows.exclude.return_value.filter.assert_called_once_with(
+            api_key="synthetic-key"
         )
+        self.verify_secret.assert_called_once_with(
+            "synthetic-hash", "", "synthetic-secret"
+        )
+        for step in self.keys.mock_calls:
+            self.assertNotIn("synthetic-secret", (*step.args, *step.kwargs.values()))
 
     def test_unusable_persisted_preferences_use_only_active_own_membership(self):
         for preference in ("b1", "inactive", "denied", "missing", "malformed"):
@@ -412,14 +555,11 @@ class WorkspaceDefaultPreferencesTests(unittest.TestCase):
 
     def test_missing_membership_keeps_existing_last_resort_call(self):
         self.memberships.filter.return_value.select_related.return_value.first.return_value = None
-        self.auth._get_or_create_default_workspace.side_effect = None
-        self.auth._get_or_create_default_workspace.return_value = self.a1
         self.assertIs(
             self.auth._get_user_default_workspace(self.user, self.org), self.a1
         )
-        self.auth._get_or_create_default_workspace.assert_called_once_with(
-            self.user, self.org
-        )
+        # The person lands on a workspace they can use; nothing is created.
+        self.auth._get_or_create_default_workspace.assert_not_called()
 
     def test_failed_config_read_does_not_fall_back_to_cached_authorization_context(
         self,

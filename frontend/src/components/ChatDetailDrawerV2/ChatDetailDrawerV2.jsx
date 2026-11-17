@@ -11,21 +11,25 @@ import ConfirmDialog from "src/components/custom-dialog/confirm-dialog";
 import { ShareDialog } from "src/components/share-dialog";
 import AddTagsPopover from "src/components/traceDetail/AddTagsPopover";
 import AddToQueueDialog from "src/sections/annotations/queues/components/add-to-queue-dialog";
-import AddDataset from "src/components/traceDetailDrawer/addToDataset/add-dataset";
-import { LLM_TABS } from "src/sections/projects/LLMTracing/common";
+import { openAddData } from "src/sections/common/AddData/addDataStore";
 import useImagineStore from "src/components/imagine/useImagineStore";
 import {
   useGetSavedViews,
   useDeleteSavedView,
   useReorderSavedViews,
 } from "src/api/project/saved-views";
+import { useGetTraceDetail } from "src/api/project/trace-detail";
 
 import VoiceDrawerHeader from "src/components/VoiceDetailDrawerV2/VoiceDrawerHeader";
 import { shareResourceFor } from "src/components/VoiceDetailDrawerV2/shareResource";
 import ChatLeftPanel from "./ChatLeftPanel";
 import ChatRightPanel from "./ChatRightPanel";
 import ChatCompareView from "./Compare/ChatCompareView";
-import { CHAT_IMAGINE_PROMPTS, CHAT_EXPORT_FIELDS } from "./constants";
+import {
+  CHAT_IMAGINE_PROMPTS,
+  CHAT_EXPORT_FIELDS,
+  DRAWER_MODULE,
+} from "./constants";
 import ContentSkeleton from "src/components/content-skeleton";
 
 // Chat-specific peer of VoiceDetailDrawerV2 — content-only drawer body
@@ -67,8 +71,22 @@ const ChatDetailDrawerV2 = ({
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
   const [tagsAnchorEl, setTagsAnchorEl] = useState(null);
   const [queueAnchorEl, setQueueAnchorEl] = useState(null);
-  const [datasetDrawerOpen, setDatasetDrawerOpen] = useState(false);
   const [deleteTabId, setDeleteTabId] = useState(null);
+
+  // Observe chat payloads carry no tags, and Add tags saves the whole list,
+  // so the popover must start from the trace's stored tags. Same query and
+  // key as ChatDetailsBar's tag row, so this adds no request.
+  const traceTagsId =
+    data?.module === DRAWER_MODULE.OBSERVE ? data?.trace_id : null;
+  const { data: traceDetail } = useGetTraceDetail(traceTagsId, {
+    projectId: data?.project_id,
+  });
+  const chatTags =
+    traceDetail?.trace?.tags ||
+    traceDetail?.tags ||
+    data?.tags ||
+    data?.trace?.tags ||
+    [];
 
   // ── Saved views / Imagine tabs ───────────────────────────────────────
   const { data: savedViewsData } = useGetSavedViews(projectId);
@@ -255,13 +273,21 @@ const ChatDetailDrawerV2 = ({
           break;
         }
         case "dataset":
-          setDatasetDrawerOpen(true);
+          // R2 (P5): one way in; the global Add-data sheet.
+          if (data?.trace_id)
+            openAddData({
+              source: {
+                kind: "traces",
+                trace_ids: [data.trace_id],
+                project_id: projectId,
+              },
+            });
           break;
         default:
           break;
       }
     },
-    [onAnnotate, handleDownload],
+    [onAnnotate, handleDownload, data?.trace_id, projectId],
   );
 
   return (
@@ -506,7 +532,7 @@ const ChatDetailDrawerV2 = ({
           open={Boolean(tagsAnchorEl)}
           onClose={() => setTagsAnchorEl(null)}
           traceId={data.trace_id}
-          currentTags={data?.tags || data?.trace?.tags || []}
+          currentTags={chatTags}
           onSuccess={() =>
             queryClient.invalidateQueries({ queryKey: ["chatCallDetail"] })
           }
@@ -522,16 +548,6 @@ const ChatDetailDrawerV2 = ({
         sourceType={data?.trace_id ? "trace" : "call_execution"}
         sourceIds={data?.trace_id ? [data.trace_id] : data?.id ? [data.id] : []}
         itemName={data?.customer_name || "Chat"}
-      />
-
-      {/* Move to dataset — gated by ChatDetailsBar (action is hidden
-          when there's no trace_id). The drawer still mounts the dialog
-          unconditionally so opening it always works. */}
-      <AddDataset
-        handleClose={() => setDatasetDrawerOpen(false)}
-        actionToDataset={datasetDrawerOpen}
-        currentTab={LLM_TABS.TRACE}
-        selectedTraces={data?.trace_id ? [data.trace_id] : []}
       />
 
       {/* Delete saved-view confirmation */}

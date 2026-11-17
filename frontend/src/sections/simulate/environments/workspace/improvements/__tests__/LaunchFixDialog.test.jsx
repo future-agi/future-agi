@@ -6,8 +6,10 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { SnackbarProvider } from "notistack";
 
 import {
+  FIX_RUN_FIXTURES,
   fixtureLaunchOptions,
   resetFixRunFixtures,
+  updateFixtureFixRun,
 } from "src/api/simulate-environments/__tests__/fixtures/fixRuns";
 
 vi.mock("src/utils/axios", async (importOriginal) => {
@@ -16,6 +18,12 @@ vi.mock("src/utils/axios", async (importOriginal) => {
   );
   return withFakeFixRunsApi(await importOriginal());
 });
+
+// Fix my agent is on, so the environment's fix list answers.
+vi.mock("src/hooks/useCapabilities", async (importOriginal) => ({
+  ...(await importOriginal()),
+  useFeatureAllowed: () => ({ allowed: true, isLoading: false }),
+}));
 
 const navigate = vi.fn();
 vi.mock("react-router-dom", async (importOriginal) => ({
@@ -261,13 +269,126 @@ describe("LaunchFixDialog", () => {
       ...fixtureLaunchOptions("te-run-6"),
       blocked: {
         code: "fix_run_active",
-        message: "A fix is already running in this environment.",
+        message: "this environment already has a fix in progress",
       },
     });
     renderDialog();
     expect(
-      await screen.findByText("A fix is already running in this environment."),
+      await screen.findByText(
+        "Improvement 15 is still running in this environment. One runs at a time.",
+      ),
     ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Start improvement" }),
+    ).toBeDisabled();
+  });
+
+  it("links a launch refused by a running fix to that fix", async () => {
+    pinOptions({
+      ...fixtureLaunchOptions("te-run-6"),
+      blocked: {
+        code: "fix_run_active",
+        message: "this environment already has a fix in progress",
+      },
+    });
+    renderDialog();
+    const open = await screen.findByRole("link", {
+      name: "Open Improvement 15",
+    });
+    expect(open).toHaveAttribute(
+      "href",
+      "/dashboard/simulate/environments/env-1/improvements/fix-queued",
+    );
+    expect(
+      screen.queryByText("this environment already has a fix in progress"),
+    ).toBeNull();
+    await userEvent.setup().click(open);
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it("links to the improvements list when the running fix is not listed", async () => {
+    axios.get.mockClear();
+    FIX_RUN_FIXTURES.forEach((f) =>
+      updateFixtureFixRun(f.id, (fix) => ({ ...fix, state: "ready" })),
+    );
+    pinOptions({
+      ...fixtureLaunchOptions("te-run-6"),
+      blocked: {
+        code: "fix_run_active",
+        message: "this environment already has a fix in progress",
+      },
+    });
+    renderDialog();
+    await waitFor(() =>
+      expect(axios.get).toHaveBeenCalledWith("/simulate/api/agent-fix-runs/", {
+        params: { environment_id: "env-1", page: 1, limit: 25 },
+      }),
+    );
+    expect(
+      await screen.findByText(
+        "Another improvement is still running in this environment. One runs at a time.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "Open improvements" }),
+    ).toHaveAttribute(
+      "href",
+      "/dashboard/simulate/environments/env-1?tab=improvements",
+    );
+  });
+
+  it("points a launch refused for credits at usage", async () => {
+    pinOptions({
+      ...fixtureLaunchOptions("te-run-6"),
+      blocked: { code: "usage_limit", message: "AI credits are used up" },
+    });
+    renderDialog();
+    expect(
+      await screen.findByText("You are out of AI credits."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("AI credits are used up")).toBeNull();
+    expect(screen.getByRole("link", { name: "View usage" })).toHaveAttribute(
+      "href",
+      "/dashboard/settings/usage-summary",
+    );
+    expect(
+      screen.getByRole("button", { name: "Start improvement" }),
+    ).toBeDisabled();
+  });
+
+  it("says when to come back while the run is still finishing", async () => {
+    pinOptions({
+      ...fixtureLaunchOptions("te-run-6"),
+      blocked: {
+        code: "fix_source_running",
+        message: "wait for the run to finish",
+      },
+    });
+    renderDialog();
+    expect(
+      await screen.findByText(
+        "Wait for this run to finish, then start the improvement.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("wait for the run to finish")).toBeNull();
+  });
+
+  it("shows any other refusal as the platform gives it", async () => {
+    pinOptions({
+      ...fixtureLaunchOptions("te-run-6"),
+      blocked: {
+        code: "fix_unavailable",
+        message:
+          "Fix my agent needs agent versions and new version builds turned on",
+      },
+    });
+    renderDialog();
+    expect(
+      await screen.findByText(
+        "Fix my agent needs agent versions and new version builds turned on",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("link")).toBeNull();
     expect(
       screen.getByRole("button", { name: "Start improvement" }),
     ).toBeDisabled();

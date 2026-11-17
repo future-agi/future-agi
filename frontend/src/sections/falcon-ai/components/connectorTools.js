@@ -1,14 +1,32 @@
+import {
+  CONNECTOR_AUTH_REQUIRED,
+  CONNECTOR_AUTH_REQUIRED_MESSAGE,
+  connectorErrorText,
+} from "./connectorErrors";
+
 /**
  * Pull a human-readable reason out of a failed connector request. Shared with
  * ConnectorSettingsPage so the two surfaces don't drift out of sync.
+ *
+ * An action on a connector whose saved credential can't be read here is
+ * refused with a code and no words. The code arrives as the refusal's code
+ * (on the error itself, where the shared client spreads the response body,
+ * or in a raw response's body) and as its message. Either way the person
+ * reads the shared sentence for that state, never the code.
  */
 export function toolActionErrorMessage(error, fallback) {
-  return (
+  if (
+    error?.code === CONNECTOR_AUTH_REQUIRED ||
+    error?.response?.data?.code === CONNECTOR_AUTH_REQUIRED
+  ) {
+    return CONNECTOR_AUTH_REQUIRED_MESSAGE;
+  }
+  return connectorErrorText(
     error?.response?.data?.detail ||
-    error?.response?.data?.error ||
-    error?.response?.data?.message ||
-    error?.message ||
-    fallback
+      error?.response?.data?.error ||
+      error?.response?.data?.message ||
+      error?.message ||
+      fallback,
   );
 }
 

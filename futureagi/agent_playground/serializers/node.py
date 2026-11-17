@@ -349,7 +349,10 @@ class PromptTemplateDataSerializer(serializers.Serializer):
         required=False, allow_null=True, allow_blank=True, default=None
     )
     template_format = serializers.CharField(
-        required=False, allow_null=True, allow_blank=True, default=None,
+        required=False,
+        allow_null=True,
+        allow_blank=True,
+        default=None,
         help_text="Template format: 'mustache' or 'jinja'",
     )
     save_prompt_version = serializers.BooleanField(required=False, default=False)
@@ -442,6 +445,23 @@ class NodeWriteSerializer(serializers.Serializer):
         return value
 
     def validate(self, attrs):
+        from django.core.exceptions import ValidationError as DjangoValidationError
+
+        from agent_playground.services.engine.output_sinks.scope import (
+            validate_node_sinks,
+        )
+
+        graph = self.context.get("graph")
+        config = attrs.get("config", {})
+        if isinstance(config, dict) and "_output_sinks" in config:
+            if graph is None:
+                raise serializers.ValidationError(
+                    {"config": "Graph scope is required for output sinks."}
+                )
+            try:
+                validate_node_sinks(config, graph)
+            except DjangoValidationError as exc:
+                raise serializers.ValidationError({"config": exc.messages}) from exc
         version_status = self.context.get("version_status")
         if version_status == GraphVersionStatus.DRAFT:
             return attrs

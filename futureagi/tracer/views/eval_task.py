@@ -8,6 +8,7 @@ from itertools import islice
 
 import structlog
 from django.conf import settings
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import DatabaseError, connection, models, transaction
 from django.db.models import (
     Count,
@@ -21,7 +22,9 @@ from django.db.models import (
     Sum,
     Value,
 )
+from django.db.models.fields.json import KT
 from django.db.models.functions import Cast, Coalesce, Left, Length, NullIf
+from django.http import Http404
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from drf_yasg.utils import swagger_auto_schema
@@ -35,6 +38,8 @@ from rest_framework.response import Response
 from rest_framework.utils.urls import replace_query_param
 from rest_framework.viewsets import ModelViewSet
 
+from evaluations.ran_on import ran_on_label
+from evaluations.run_settings import run_settings
 from model_hub.models.evals_metric import EvalTemplate
 from model_hub.utils.eval_input_validation import (
     PARTIAL_INPUT_MESSAGE,
@@ -52,6 +57,7 @@ from tfc.utils.api_serializers import (
 from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
+from tfc.utils.tenant_scope import caller_organization, set_related_queryset
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.eval_task import (
     RESUMABLE_TASK_STATUSES,
@@ -100,6 +106,7 @@ from tracer.services.filter_principal_context import (
     FilterPrincipalContextError,
     bind_request_my_annotations_principal,
 )
+from tracer.services.instant_eval_rows import RUN_MARKER as INSTANT_RUN_MARKER
 from tracer.services.postgres_read_policy import application_postgres_reads
 from tracer.utils.eval import (
     GROUND_TRUTH_NOT_APPLIED_MESSAGE,
@@ -792,6 +799,32 @@ def _bounded_eval_task_error_groups_queryset(queryset):
             sample_length=Max("usage_error_source_length"),
         )
         .order_by("-count", "normalized")
+    )
+
+
+def _bounded_eval_task_skipped_groups_queryset(queryset):
+    """Group skipped entries by their reason, keeping every reason finite."""
+
+    reason_source = Coalesce(
+        "skipped_reason",
+        Value("", output_field=models.TextField()),
+        output_field=models.TextField(),
+    )
+    return (
+        queryset.filter(
+            status=EvalEntryStatus.SKIPPED,
+            deleted=False,
+        )
+        .annotate(
+            skip_text=Left(reason_source, _EVAL_TASK_ERROR_TEXT_MAX_CHARS),
+            skip_text_length=Length(reason_source),
+        )
+        .values("skip_text")
+        .annotate(
+            count=Count("id"),
+            text_length=Max("skip_text_length"),
+        )
+        .order_by("-count", "skip_text")
     )
 
 
@@ -1619,7 +1652,15 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
     def retrieve(self, request, *args, **kwargs):
         """Return one task without unbounded JSON or relation hydration."""
 
-        queryset = self.filter_queryset(self.get_queryset())
+        try:
+            queryset = self.filter_queryset(self.get_queryset())
+        except DjangoValidationError as exc:
+            # get_queryset filters on the URL id, and Django's UUIDField
+            # refuses one that is not a UUID. It names no task: the same 404
+            # as an id that names nothing, never a 500.
+            raise Http404(
+                f"No {EvalTask._meta.object_name} matches the given query."
+            ) from exc
         lookup_url_kwarg = self.lookup_url_kwarg or self.lookup_field
         lookup_value = self.kwargs[lookup_url_kwarg]
         preflight_queryset = (
@@ -1687,16 +1728,12 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
         )
 
     def _get_request_organization(self):
-        # Returns None for unauthenticated requests (e.g. drf-yasg's fake view
-        # during OpenAPI generation) instead of raising on AnonymousUser, which
-        # would otherwise silently drop request bodies from the generated schema.
-        org = getattr(self.request, "organization", None)
-        if org is not None:
-            return org
-        user = getattr(self.request, "user", None)
-        if user is None or not user.is_authenticated:
-            return None
-        return getattr(user, "organization", None)
+        # The organization authentication resolved, None included (a user
+        # whose memberships are all inactive has none). Returns None for
+        # unauthenticated requests (e.g. drf-yasg's fake view during OpenAPI
+        # generation) instead of raising on AnonymousUser, which would
+        # otherwise silently drop request bodies from the generated schema.
+        return caller_organization(self.request)
 
     def _project_workspace_scope_q(self, organization_id):
         return project_workspace_scope_q(
@@ -1768,12 +1805,14 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
         if not fields:
             return serializer
         if "project" in fields:
-            fields["project"].queryset = self._scope_project_queryset(
-                Project.objects.all()
+            set_related_queryset(
+                fields["project"],
+                self._scope_project_queryset(Project.objects.all()),
             )
         if "evals" in fields:
-            fields["evals"].queryset = self._scope_custom_eval_config_queryset(
-                CustomEvalConfig.objects.all()
+            set_related_queryset(
+                fields["evals"],
+                self._scope_custom_eval_config_queryset(CustomEvalConfig.objects.all()),
             )
         return serializer
 
@@ -1871,7 +1910,10 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
             }
         return tasks
 
-    @validated_request(request_serializer=EvalTaskSerializer)
+    @validated_request(
+        request_serializer=EvalTaskSerializer,
+        serializer_context=lambda request: {"request": request},
+    )
     def update(self, request, *args, **kwargs):
         return super().update(request, *args, **kwargs)
 
@@ -1879,6 +1921,7 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
         request_serializer=EvalTaskSerializer,
         partial_request_validation=True,
         strict_request_validation=False,
+        serializer_context=lambda request: {"request": request},
     )
     def partial_update(self, request, *args, **kwargs):
         kwargs["partial"] = True
@@ -1896,6 +1939,7 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
 
     @validated_request(
         request_serializer=EvalTaskSerializer,
+        serializer_context=lambda request: {"request": request},
         responses={
             200: EvalTaskCreateResponseSerializer,
             400: ApiErrorResponseSerializer,
@@ -2164,6 +2208,20 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
                 for row in error_group_rows[: self._ERROR_GROUPS_LIMIT]
             )
 
+            # Skipped runs never reached the evaluator; each keeps the one
+            # sentence saying why, so the logs can show it beside the count.
+            skipped_groups = [
+                {
+                    "reason": _bounded_usage_preview(
+                        row["skip_text"], row["text_length"]
+                    ),
+                    "count": row["count"],
+                }
+                for row in _bounded_eval_task_skipped_groups_queryset(
+                    EvalLogger.objects.filter(eval_task_id=eval_task_id)
+                )[: self._ERROR_GROUPS_LIMIT]
+            ]
+
             warning_rows = list(
                 _bounded_eval_task_warning_rows_queryset(
                     EvalLogger.objects.filter(eval_task_id=eval_task_id)
@@ -2197,6 +2255,7 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
                 "total_count": counts["total_count"],
                 "target_count": counts["target_count"],
                 "error_groups": error_groups,
+                "skipped_groups": skipped_groups,
                 "warning_groups": warning_groups,
                 # Indicates whether we capped at _ERROR_GROUPS_LIMIT — the
                 # frontend can show a "showing top 50 error types" hint.
@@ -2431,6 +2490,19 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
             # JSON is deliberately projected in one separate PK-IN query below,
             # so a page never transfers each span's unrestricted attribute map.
             logs_qs = _bounded_usage_logs_queryset(period_qs)
+            show_ran_on = getattr(settings, "EVAL_RAN_ON_LABEL_ENABLED", True) is True
+            if show_ran_on:
+                logs_qs = logs_qs.annotate(
+                    usage_ran_on_model=Left(
+                        KT("output_metadata__ran_on_model"),
+                        _USAGE_DETAIL_TEXT_MAX_CHARS,
+                    ),
+                    # The model an agent evaluator was given for this run.
+                    usage_agent_model=Left(
+                        KT("output_metadata__agent_metadata__model_used"),
+                        _USAGE_DETAIL_TEXT_MAX_CHARS,
+                    ),
+                )
 
             page_number = query_data["page"]
             offset = (page_number - 1) * page_size
@@ -2639,6 +2711,14 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
                         },
                     }
                 )
+                if show_ran_on:
+                    run_detail = log_items[-1]["detail"]
+                    # An agent run's own record wins: the eval's model may
+                    # have been edited since the run.
+                    run_detail["model"] = log.usage_agent_model or run_detail["model"]
+                    run_detail["ran_on_label"] = ran_on_label(
+                        log.usage_ran_on_model, run_detail["model"]
+                    )
 
             next_url = (
                 replace_query_param(
@@ -3017,7 +3097,9 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
                 return self._gm.bad_request("Eval task ID is required")
 
             # Validate input data
-            serializer = EditEvalTaskSerializer(data=self.request.data)
+            serializer = EditEvalTaskSerializer(
+                data=self.request.data, context={"request": request}
+            )
             if not serializer.is_valid():
                 logger.error(
                     f"Invalid data for eval task update {eval_task_id}: {serializer.errors}"
@@ -3049,6 +3131,14 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
                     )
                 except EvalTask.DoesNotExist:
                     return self._gm.bad_request("Eval task not found")
+
+                # An Instant eval run reads the rows its Ask page sampled, not a
+                # filter query. Any edit here replaces its filters, so a rerun
+                # would delete its answers and evaluate other rows instead.
+                if (eval_task.filters or {}).get(INSTANT_RUN_MARKER):
+                    return self._gm.bad_request(
+                        "This is an Instant eval run. Ask it again from its Ask page."
+                    )
 
                 # Validate task state
                 if eval_task.status == EvalTaskStatus.RUNNING:
@@ -3141,6 +3231,13 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
                 # Write the desired config (evals are an m2m the serializer sets).
                 update_fields["status"] = EvalTaskStatus.PENDING
                 update_fields["last_run"] = timezone.now()
+                if (
+                    original_run_type == RunType.HISTORICAL
+                    and new_run_type == RunType.CONTINUOUS
+                ):
+                    # The historical run start is not the new continuous floor.
+                    # Set it at conversion; later workflow starts preserve it.
+                    update_fields["start_time"] = update_fields["last_run"]
                 task_serializer = self.get_serializer(
                     eval_task, data=update_fields, partial=True
                 )
@@ -3218,6 +3315,8 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
             "filters",
             "sampling_rate",
             "sampling_policy",
+            "webhook_url",
+            "webhook_condition",
             "spans_limit",
             "evals",
             "run_type",
@@ -3226,7 +3325,8 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
         for field in allowed_fields:
             value = validated_data.get(field)
             if value is not None or (
-                field == "sampling_policy" and field in validated_data
+                field in ("sampling_policy", "webhook_condition")
+                and field in validated_data
             ):
                 update_fields[field] = value
 
@@ -3280,7 +3380,7 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
                         "templateId": str(template.id) if template else None,
                         "mapping": eval_config.mapping or {},
                         "model": eval_config.model,
-                        "config": eval_config.config or {},
+                        "config": run_settings(eval_config.config or {}),
                         "error_localizer": eval_config.error_localizer,
                         "evalType": template.eval_type if template else None,
                         "templateType": (
@@ -3304,6 +3404,8 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
                 "spans_limit": queryset.spans_limit,
                 "sampling_rate": queryset.sampling_rate,
                 "sampling_policy": queryset.sampling_policy,
+                "webhook_url": queryset.webhook_url,
+                "webhook_condition": queryset.webhook_condition,
                 "last_run": queryset.last_run,
                 "run_type": queryset.run_type,
                 "row_type": queryset.row_type,

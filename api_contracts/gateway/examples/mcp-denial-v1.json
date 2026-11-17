@@ -1,0 +1,190 @@
+{
+  "results": [
+    {
+      "content": [
+        {
+          "type": "text",
+          "text": "Your organization has no managed credits left. Add credits or connect your own credential for this tool. [managed_credits_exhausted]"
+        }
+      ],
+      "isError": true,
+      "resultType": "complete",
+      "_meta": {
+        "io.futureagi/error": {
+          "type": "payment_required",
+          "code": "managed_credits_exhausted",
+          "message": "Your organization has no managed credits left. Add credits or connect your own credential for this tool.",
+          "param": null,
+          "metadata": {
+            "limit_source": "agentcc_credits",
+            "remedy_hint": "add_credits",
+            "required_usd": 0.00525,
+            "available_usd": 0.0,
+            "scope": "org",
+            "resets_at": null
+          }
+        },
+        "io.futureagi/tool_call": {
+          "tool_call_id": "tc_01M4ZF0B1C2D3E4F5G6H7J8K9M",
+          "executed": false,
+          "billing_mode": "managed",
+          "billed_usd": 0,
+          "latency_ms": 3
+        }
+      }
+    },
+    {
+      "content": [
+        {
+          "type": "text",
+          "text": "This tool is not allowed by your organization's tool policy. [tool_denied]"
+        }
+      ],
+      "isError": true,
+      "resultType": "complete",
+      "_meta": {
+        "io.futureagi/error": {
+          "type": "permission_denied",
+          "code": "tool_denied",
+          "message": "This tool is not allowed by your organization's tool policy.",
+          "param": null,
+          "metadata": {
+            "rule": "policy:no-prod-deletes",
+            "virtual_server": "engineering",
+            "reason": "Deletes in production need a human."
+          }
+        },
+        "io.futureagi/tool_call": {
+          "tool_call_id": "tc_01M4ZF0B1C2D3E4F5G6H7J8K9N",
+          "executed": false,
+          "billing_mode": "byok",
+          "billed_usd": 0,
+          "latency_ms": 3
+        }
+      }
+    },
+    {
+      "content": [
+        {
+          "type": "text",
+          "text": "This tool call needs an approval before it runs. [approval_required]"
+        }
+      ],
+      "isError": true,
+      "resultType": "complete",
+      "_meta": {
+        "io.futureagi/error": {
+          "type": "approval_required",
+          "code": "approval_required",
+          "message": "This tool call needs an approval before it runs.",
+          "param": null,
+          "metadata": {
+            "approval_id": "apr_01M4ZF0B1C2D3E4F5G6H7J8K9P",
+            "status": "pending",
+            "approve_url": "https://app.futureagi.com/dashboard/gateway/mcp?tab=approvals&id=apr_01M4ZF0B1C2D3E4F5G6H7J8K9P",
+            "poll_url": "https://gateway.futureagi.com/mcp/v/vs_01M4ZEB9E0J3AADR85Z4T4428X/approvals/apr_01M4ZF0B1C2D3E4F5G6H7J8K9P",
+            "expires_at": "2026-10-16T09:25:12Z"
+          }
+        },
+        "io.futureagi/tool_call": {
+          "tool_call_id": "tc_01M4ZF0B1C2D3E4F5G6H7J8K9Q",
+          "executed": false,
+          "billing_mode": "byok",
+          "billed_usd": 0,
+          "latency_ms": 3
+        }
+      }
+    },
+    {
+      "content": [
+        {
+          "type": "text",
+          "text": "Connect your account for this server to use its tools. [auth_required]"
+        }
+      ],
+      "isError": true,
+      "resultType": "complete",
+      "_meta": {
+        "io.futureagi/error": {
+          "type": "auth_required",
+          "code": "auth_required",
+          "message": "Connect your account for this server to use its tools.",
+          "param": null,
+          "metadata": {
+            "server_id": "issues",
+            "connect_url": "https://app.futureagi.com/agentcc/mcp/connect/issues/start/",
+            "reason": "needs_reauth"
+          }
+        },
+        "io.futureagi/tool_call": {
+          "tool_call_id": "tc_01M4ZF0B1C2D3E4F5G6H7J8K9R",
+          "executed": false,
+          "billing_mode": "byok",
+          "billed_usd": 0,
+          "latency_ms": 3
+        }
+      }
+    },
+    {
+      "content": [
+        {
+          "type": "text",
+          "text": "This run has used its tool-call budget. [tool_budget_exhausted]"
+        }
+      ],
+      "isError": true,
+      "resultType": "complete",
+      "_meta": {
+        "io.futureagi/error": {
+          "type": "payment_required",
+          "code": "tool_budget_exhausted",
+          "message": "This run has used its tool-call budget.",
+          "param": null,
+          "metadata": {
+            "limit_source": "agentcc_tool_budget",
+            "remedy_hint": "raise_run_budget",
+            "scope": "run:run_R1",
+            "resets_at": null,
+            "kind": "calls",
+            "remaining": 0
+          }
+        },
+        "io.futureagi/tool_call": {
+          "tool_call_id": "tc_01M4ZF0B1C2D3E4F5G6H7J8K9S",
+          "executed": false,
+          "billing_mode": "byok",
+          "billed_usd": 0,
+          "latency_ms": 3
+        }
+      }
+    },
+    {
+      "content": [
+        {
+          "type": "text",
+          "text": "The MCP server did not answer in time. [upstream_error]"
+        }
+      ],
+      "isError": true,
+      "resultType": "complete",
+      "_meta": {
+        "io.futureagi/error": {
+          "type": "upstream_error",
+          "code": "upstream_error",
+          "message": "The MCP server did not answer in time.",
+          "param": null,
+          "metadata": {
+            "attribution": "timeout"
+          }
+        },
+        "io.futureagi/tool_call": {
+          "tool_call_id": "tc_01M4ZF0B1C2D3E4F5G6H7J8K9T",
+          "executed": true,
+          "billing_mode": "managed",
+          "billed_usd": 0.00525,
+          "latency_ms": 30002
+        }
+      }
+    }
+  ]
+}

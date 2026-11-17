@@ -1,0 +1,84 @@
+# Ashby's hosted MCP server (beta) with OAuth from Ashby's authorization
+# server (issuer https://mcp-auth.ashbyhq.com/oidc), which registers clients
+# dynamically and lists "none" among its token endpoint auth methods, so a
+# public client registers itself. It advertises no client ID metadata
+# document. Each connection acts as the Ashby user who signs in, within that
+# user's permissions. An Org Admin turns the server on first, and only
+# Elevated Access users can connect. Ashby limits requests to 120 a minute
+# per token and tool calls to 120 budget units a minute per user and
+# organization. The endpoints below are recorded from the metadata, not
+# pinned: each sign-in discovers them again, and goes on only where the
+# server's protected-resource metadata names this server as its resource and
+# the issuer as its authorization server, the issuer's metadata names
+# itself, PKCE S256 is supported and every endpoint is https. No metadata
+# fetch follows a redirect, and the callback checks the iss the issuer
+# returns. The scopes are the ones the server advertised on 2026-11-12; the
+# sign-in asks only for those of them the metadata still lists. EE reads a
+# pre-registered client from its environment and cannot register one, so it
+# gets none.
+schema: "connector-manifest/v1#provider"
+app: ashby
+id: mcp
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus:
+  label: beta
+  source: https://docs.ashbyhq.com/ashby-mcp-server-beta
+transport:
+  kind: http
+  url: https://mcp.ashbyhq.com/mcp/v1
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent, user]
+auth:
+  kind: oauth2
+  help: "An Ashby Org Admin must first turn on MCP Server under Admin > Organization Setup > Opt-In Features. Then Elevated Access users can connect their own account."
+  oauth2:
+    authorizeUrl: https://mcp-auth.ashbyhq.com/oidc/auth
+    tokenUrl: https://mcp-auth.ashbyhq.com/oidc/token
+    scopes: [openid, mcp, offline_access]
+    pkce: true
+    tokenBody: form
+    clientAuth: body
+    registration: [dcr]
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://docs.ashbyhq.com/ashby-mcp-server-beta
+    fetchedAt: 2026-11-12
+  - fact: transport.url
+    url: https://mcp.ashbyhq.com/.well-known/oauth-protected-resource/mcp/v1
+    fetchedAt: 2026-11-12
+  - fact: auth.kind
+    url: https://docs.ashbyhq.com/ashby-mcp-server-beta
+    fetchedAt: 2026-11-12
+  - fact: auth.help
+    url: https://docs.ashbyhq.com/ashby-mcp-server-beta
+    fetchedAt: 2026-11-12
+  - fact: auth.oauth2.authorizeUrl
+    url: https://mcp-auth.ashbyhq.com/.well-known/oauth-authorization-server/oidc
+    fetchedAt: 2026-11-12
+  - fact: auth.oauth2.tokenUrl
+    url: https://mcp-auth.ashbyhq.com/.well-known/oauth-authorization-server/oidc
+    fetchedAt: 2026-11-12
+  - fact: auth.oauth2.scopes
+    url: https://mcp.ashbyhq.com/.well-known/oauth-protected-resource/mcp/v1
+    fetchedAt: 2026-11-12
+  - fact: auth.oauth2.pkce
+    url: https://mcp-auth.ashbyhq.com/.well-known/oauth-authorization-server/oidc
+    fetchedAt: 2026-11-12
+  - fact: auth.oauth2.clientAuth
+    url: https://mcp-auth.ashbyhq.com/.well-known/oauth-authorization-server/oidc
+    fetchedAt: 2026-11-12
+  - fact: auth.oauth2.registration
+    url: https://mcp-auth.ashbyhq.com/.well-known/oauth-authorization-server/oidc
+    fetchedAt: 2026-11-12
+  - fact: auth.oauth2.registration
+    url: https://docs.ashbyhq.com/ashby-mcp-server-beta
+    fetchedAt: 2026-11-12
+x-omega: { ee: exclude }

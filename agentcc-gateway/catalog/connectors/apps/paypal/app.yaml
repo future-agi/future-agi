@@ -1,0 +1,32 @@
+schema: "connector-manifest/v1#app"
+# PayPal's catalog identity; the default provider runs its MCP server locally.
+id: paypal
+version: 1.0.0
+name: PayPal
+description: "Process payments for mobile and web applications with PayPal."
+vendor:
+  name: PayPal
+  domains: [paypal.com]
+  githubOrgs: [paypal]
+eeCategory: data
+group: other
+categories: [payments, commerce]
+docsUrl: https://developer.paypal.com/ai-tools/mcp-server
+defaultProvider: local
+lifecycle: { status: active }
+sources:
+  - fact: name
+    url: https://github.com/paypal
+    fetchedAt: 2026-11-16
+  - fact: description
+    url: https://github.com/paypal
+    fetchedAt: 2026-11-16
+  - fact: vendor.name
+    url: https://github.com/paypal
+    fetchedAt: 2026-11-16
+  - fact: vendor.domains
+    url: https://github.com/paypal
+    fetchedAt: 2026-11-16
+  - fact: vendor.githubOrgs
+    url: https://github.com/paypal
+    fetchedAt: 2026-11-16

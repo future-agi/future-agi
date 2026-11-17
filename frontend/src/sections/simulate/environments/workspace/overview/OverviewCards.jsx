@@ -1,18 +1,22 @@
 import PropTypes from "prop-types";
+import { useNavigate } from "react-router-dom";
 import { Box, Stack, Typography, Button } from "@mui/material";
 import Iconify from "src/components/iconify";
+import { paths } from "src/routes/paths";
 import { ROW_HEIGHT } from "src/theme/sizes";
 import SectionCard from "../../components/SectionCard";
 import MockBadge from "../../components/MockBadge";
+import { ENTRY_TAB } from "../../environmentOptions";
 import { ENV_SHAPE, OVERVIEW_COPY, ruleRowsFor } from "./overview.constants";
 
 const MONO = "ui-monospace, Menlo, monospace";
 
 // Tools declared by the connected agent, with the arguments each really takes.
 // Before an agent connects the world has no tool inventory, so a slim empty row
-// stands in — its "Connect agent" affordance is deferred (there is no agent tab
-// yet), so it renders disabled.
+// stands in. An agent is set when an environment is built, so its "Build from an
+// agent" button opens the Build tab, which makes a new environment from it.
 export function ToolsCard({ env, agentConnected }) {
+  const navigate = useNavigate();
   const tools = env.tools || [];
   return (
     <SectionCard
@@ -27,10 +31,17 @@ export function ToolsCard({ env, agentConnected }) {
             <Typography sx={{ typography: "s1", fontWeight: "fontWeightMedium" }}>{OVERVIEW_COPY.noToolsTitle}</Typography>
             <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{OVERVIEW_COPY.noToolsBody}</Typography>
           </Box>
+          {/* An agent is set when an environment is built: this opens the Build
+              tab, which makes a new environment from the agent. */}
           <Button
-            size="small" variant="outlined" color="inherit" disabled aria-label={OVERVIEW_COPY.connectAgent}
+            size="small"
+            variant="outlined"
+            color="inherit"
+            onClick={() =>
+              navigate(`${paths.dashboard.simulate.environments.root}?tab=${ENTRY_TAB.BUILD}`)
+            }
           >
-            {OVERVIEW_COPY.connectAgent}
+            {OVERVIEW_COPY.buildFromAgent}
           </Button>
         </Stack>
       ) : (

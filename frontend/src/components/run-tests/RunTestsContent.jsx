@@ -8,6 +8,7 @@ import {
   Menu,
   MenuItem,
   Popover,
+  Stack,
   Tooltip,
   Typography,
   useTheme,
@@ -24,6 +25,7 @@ import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import Iconify from "src/components/iconify";
 import SvgColor from "src/components/svg-color";
 import { DataTable, DataTablePagination } from "src/components/data-table";
+import OverflowCellText from "src/components/data-table/OverflowCellText";
 import { ShowComponent } from "src/components/show";
 import CustomDialog from "src/sections/develop-detail/Common/CustomDialog/CustomDialog";
 
@@ -88,7 +90,14 @@ function HoverChipList({ items, label, emptyText, getLabel, getTooltip }) {
         {remaining > 0 && (
           <Typography
             variant="caption"
-            sx={{ color: "text.subtitle", fontSize: "11px", pl: 0.5 }}
+            sx={{
+              color: "text.subtitle",
+              fontSize: "11px",
+              pl: 0.5,
+              // The first name gives way; the count stays whole.
+              flexShrink: 0,
+              whiteSpace: "nowrap",
+            }}
           >
             +{remaining} other{remaining > 1 ? "s" : ""}
           </Typography>
@@ -339,7 +348,7 @@ const RunTestsContent = ({
     return params;
   }, [page, pageSize, debouncedSearchQuery, simulationType, promptTemplateId]);
 
-  const { isPending, data } = useQuery({
+  const { isPending, isError, isFetching, refetch, data } = useQuery({
     queryKey: [
       "run-tests",
       simulationType,
@@ -355,10 +364,13 @@ const RunTestsContent = ({
 
   const items = useMemo(() => data?.results ?? [], [data]);
   const total = data?.count ?? 0;
-  const hasData = items.length > 0;
 
   const showEmptyScreen =
     !isPending && data && total === 0 && debouncedSearchQuery === "";
+  // A failed list must read as an error, not as "No tests found". A failed
+  // refresh keeps the list already on screen; only a failed read with nothing
+  // to show gets the error line and Try again.
+  const showError = isError && data === undefined;
 
   const canManage =
     RolePermission.SIMULATION_AGENT[PERMISSIONS.UPDATE][role] &&
@@ -371,23 +383,27 @@ const RunTestsContent = ({
         accessorKey: "name",
         header: "Name",
         meta: { flex: 1.4 },
-        minSize: 180,
+        // Every column's minimum (778 px) fits the 784 px a 1024 px window
+        // leaves the table (1024 - 200 menu - 2 x 16 padding, less the 8 px
+        // bar when the rows scroll), settings button included; wider
+        // windows give the room to the four name columns. A long name ends
+        // in an ellipsis and shows whole on hover or when its cell takes
+        // focus.
+        minSize: 148,
         enableSorting: false,
         cell: ({ getValue }) => (
-          <Typography
-            variant="body2"
-            noWrap
+          <OverflowCellText
+            text={getValue()}
             sx={{ fontWeight: 500, color: "text.primary" }}
-          >
-            {getValue()}
-          </Typography>
+          />
         ),
       },
       {
         id: "agent",
         accessorKey: "agent_definition_detail",
         header: "Agent",
-        size: 200,
+        meta: { flex: 1 },
+        minSize: 124,
         enableSorting: false,
         cell: ({ row }) => {
           const agent = row.original.agent_definition_detail;
@@ -427,7 +443,8 @@ const RunTestsContent = ({
         id: "scenarios",
         accessorKey: "scenarios_detail",
         header: "Scenarios",
-        size: 240,
+        meta: { flex: 1.2 },
+        minSize: 140,
         enableSorting: false,
         cell: ({ row }) => (
           <HoverChipList
@@ -458,7 +475,8 @@ const RunTestsContent = ({
         id: "evals",
         accessorKey: "evals_detail",
         header: "Evals",
-        size: 240,
+        meta: { flex: 1.2 },
+        minSize: 124,
         enableSorting: false,
         cell: ({ row }) => (
           <HoverChipList
@@ -483,6 +501,7 @@ const RunTestsContent = ({
         id: "last_run_at",
         accessorKey: "last_run_at",
         header: "Last Run",
+        // "less than a minute ago" (127.5 px at 12 px/400 Inter), whole.
         size: 150,
         enableSorting: false,
         cell: ({ row }) => {
@@ -491,6 +510,7 @@ const RunTestsContent = ({
             <Typography
               variant="body2"
               color="text.secondary"
+              noWrap
               sx={{ fontSize: 12 }}
             >
               {v ? formatDistanceToNow(new Date(v), { addSuffix: true }) : "-"}
@@ -504,7 +524,8 @@ const RunTestsContent = ({
         id: "actions",
         accessorKey: "id",
         header: "",
-        size: 100,
+        // The 71 px settings button.
+        size: 92,
         enableSorting: false,
         cell: ({ row }) => (
           <Box
@@ -607,67 +628,104 @@ const RunTestsContent = ({
               <ShowComponent condition={!showSearch}>
                 <Box />
               </ShowComponent>
-              <ShowComponent condition={hasData || debouncedSearchQuery !== ""}>
-                <Box sx={{ display: "flex", gap: 1.5, alignItems: "center" }}>
-                  <ShowComponent condition={showHeader}>
-                    <Button
-                      variant="outlined"
-                      size="small"
-                      sx={{
-                        color: "text.primary",
-                        borderColor: "divider",
-                      }}
-                      startIcon={
-                        <SvgColor src="/assets/icons/ic_docs_single.svg" />
-                      }
-                      component="a"
-                      href="https://docs.futureagi.com/docs/simulation"
-                      target="_blank"
-                    >
-                      View Docs
-                    </Button>
-                  </ShowComponent>
+              <Box sx={{ display: "flex", gap: 1.5, alignItems: "center" }}>
+                <ShowComponent condition={showHeader}>
                   <Button
-                    variant="contained"
-                    startIcon={<Iconify icon="solar:add-linear" />}
-                    onClick={handleAddRunTest}
+                    variant="outlined"
+                    size="small"
                     sx={{
-                      bgcolor: "primary.main",
-                      color: "primary.contrastText",
-                      "&:hover": { bgcolor: "primary.dark" },
+                      color: "text.primary",
+                      borderColor: "divider",
                     }}
-                    disabled={
-                      !RolePermission.SIMULATION_AGENT[PERMISSIONS.CREATE][role]
+                    startIcon={
+                      <SvgColor src="/assets/icons/ic_docs_single.svg" />
                     }
+                    component="a"
+                    href="https://docs.futureagi.com/docs/simulation"
+                    target="_blank"
                   >
-                    {createButtonText}
+                    View Docs
                   </Button>
-                </Box>
-              </ShowComponent>
+                </ShowComponent>
+                <Button
+                  variant="contained"
+                  startIcon={<Iconify icon="solar:add-linear" />}
+                  onClick={handleAddRunTest}
+                  sx={{
+                    bgcolor: "primary.main",
+                    color: "primary.contrastText",
+                    "&:hover": { bgcolor: "primary.dark" },
+                  }}
+                  disabled={
+                    !RolePermission.SIMULATION_AGENT[PERMISSIONS.CREATE][role]
+                  }
+                >
+                  {createButtonText}
+                </Button>
+              </Box>
             </Box>
 
-            {/* Table */}
-            <DataTable
-              columns={columns}
-              data={items}
-              isLoading={isPending}
-              rowCount={total}
-              onRowClick={handleRowClick}
-              getRowId={(row) => row.id}
-              rowHeight={ROW_HEIGHT.default}
-              emptyMessage="No tests found"
-            />
+            {showError ? (
+              <Box
+                sx={{
+                  flex: 1,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                <Stack spacing={1.5} alignItems="center">
+                  <Stack spacing={0.5} alignItems="center">
+                    <Typography
+                      sx={{ typography: "s2", color: "text.secondary" }}
+                    >
+                      Couldn&apos;t load your simulations.
+                    </Typography>
+                    <Typography
+                      sx={{ typography: "s3", color: "text.subtitle" }}
+                    >
+                      Something went wrong loading the list.
+                    </Typography>
+                  </Stack>
+                  <Button
+                    variant="contained"
+                    color="primary"
+                    size="small"
+                    disabled={isFetching}
+                    onClick={() => refetch()}
+                  >
+                    Try again
+                  </Button>
+                </Stack>
+              </Box>
+            ) : (
+              <>
+                {/* Table */}
+                <DataTable
+                  columns={columns}
+                  data={items}
+                  isLoading={isPending}
+                  rowCount={total}
+                  onRowClick={handleRowClick}
+                  getRowId={(row) => row.id}
+                  rowHeight={ROW_HEIGHT.default}
+                  showScrollbar
+                  pinnedRight="actions"
+                  emptyMessage="No tests found"
+                />
 
-            <DataTablePagination
-              page={page}
-              pageSize={pageSize}
-              total={total}
-              onPageChange={setPage}
-              onPageSizeChange={(size) => {
-                setPageSize(size);
-                setPage(0);
-              }}
-            />
+                <DataTablePagination
+                  page={page}
+                  pageSize={pageSize}
+                  total={total}
+                  onPageChange={setPage}
+                  onPageSizeChange={(size) => {
+                    setPageSize(size);
+                    setPage(0);
+                  }}
+                />
+              </>
+            )}
           </>
         )}
       </Box>

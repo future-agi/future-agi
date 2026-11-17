@@ -10,16 +10,22 @@ deployment" via the capability service; ``_provider_for_user_model()`` maps
 the user-selected model to a native provider for the fallback path. Both are
 static and side-effect free (no DB, no LLM calls) — the capability service is
 patched at its module seam.
+
+The client the evaluator picks is also the model the agent runs on. The
+evaluator exposes it as ``ran_on_model`` for its callers' stored records, while
+its result keeps naming the configured model.
 """
 
+import json
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from ee.evals.llm.agent_evaluator.evaluator import (
     AgentEvaluator,
     ManagedGatewayRequiredError,
 )
+from ee.falcon_ai.llm_client import FalconLLMClient
 from tfc.licensing.types import DeploymentLocation
 
 
@@ -130,3 +136,144 @@ def test_managed_ai_available_false_when_self_hosted_denies_falcon():
     ):
         assert AgentEvaluator._managed_ai_available() is False
     check.assert_called_once_with("falcon_ai")
+
+
+# ── The model the agent's client ran on ──────────────────────────────────
+_VERDICT = '{"result": "Pass", "explanation": "The answer is grounded."}'
+_MULTIMODAL_MODEL = "stub-multimodal-model"
+
+
+def _run_agent_choosing_its_client(evaluator, llm_override, location):
+    """Run ``_run_agent`` with the evaluator choosing and building its client.
+
+    The loop starts on the default client ``AgentLoop.__init__`` builds. Only
+    the loop's run, the tool registry, the tool context and the deployment
+    location are stubbed. Returns the agent result and the client it ran on.
+    """
+    agent = MagicMock()
+    agent.llm_client = FalconLLMClient()
+    agent.run = AsyncMock(
+        return_value={
+            "content": _VERDICT,
+            "tool_calls": [],
+            "input_tokens": 120,
+            "output_tokens": 30,
+        }
+    )
+    with (
+        patch("ee.falcon_ai.agent.AgentLoop", return_value=agent),
+        patch("ai_tools.registry.registry"),
+        patch.object(evaluator, "_build_tool_context", return_value=MagicMock()),
+        patch(
+            "tfc.capabilities.service.get_deployment_location",
+            return_value=location,
+        ),
+        patch(
+            "tfc.capabilities.service.check",
+            return_value=SimpleNamespace(allowed=False),
+        ),
+    ):
+        result = evaluator._run_agent(
+            "Judge whether the answer is grounded.", llm_override=llm_override
+        )
+    return result, agent.llm_client
+
+
+@pytest.mark.parametrize(
+    "model,media,location,ran_on",
+    [
+        ("gpt-4o", None, DeploymentLocation.CLOUD, "falcon_ai"),
+        ("turing_small", None, DeploymentLocation.CLOUD, "turing_small"),
+        ("turing_small", "pdf", DeploymentLocation.CLOUD, "turing_large_xl"),
+        ("gpt-4o", "audio", DeploymentLocation.CLOUD, _MULTIMODAL_MODEL),
+        ("gpt-4o", None, DeploymentLocation.SELF_HOSTED, "gpt-4o"),
+    ],
+    ids=[
+        "managed-default-in-cloud",
+        "turing-alias",
+        "turing-with-pdf",
+        "other-model-with-audio",
+        "self-hosted-direct",
+    ],
+)
+def test_the_evaluator_exposes_the_model_its_client_ran_on(
+    model, media, location, ran_on, monkeypatch
+):
+    """In cloud a configured gpt-4o runs on the managed model falcon_ai and a
+    Turing alias on itself. Audio or PDF moves a Turing model to
+    turing_large_xl and any other model to the multimodal setting's model. A
+    self-hosted install without managed AI runs the configured model."""
+    monkeypatch.setenv("FALCON_MULTIMODAL_PROVIDER", "openai")
+    monkeypatch.setenv("FALCON_MULTIMODAL_MODEL", _MULTIMODAL_MODEL)
+    evaluator = AgentEvaluator(
+        rule_prompt="Is the answer grounded?", model=model, output_type="Pass/Fail"
+    )
+    evaluator._current_eval_id = "eval-1"
+    # The client override _evaluate hands to _run_agent for this input.
+    llm_override = (
+        evaluator._build_llm_override(evaluator._model_cfg)
+        if evaluator._is_turing
+        else None
+    )
+    if media:
+        llm_override = evaluator._resolve_multimodal_override(media)
+
+    agent_result, client = _run_agent_choosing_its_client(
+        evaluator, llm_override, location
+    )
+    eval_result = evaluator._build_result(agent_result, runtime_ms=5)
+
+    assert client.model == ran_on
+    assert getattr(evaluator, "ran_on_model", None) == ran_on
+    # The result and its metadata name the configured model, as before.
+    assert eval_result["model"] == model
+    metadata = json.loads(eval_result["metadata"])
+    assert set(metadata) == {
+        "usage",
+        "cost",
+        "response_time",
+        "explanation",
+        "agent_metadata",
+    }
+    assert metadata["agent_metadata"]["model_used"] == model
+    assert set(metadata["agent_metadata"]) == {
+        "model_used",
+        "mode",
+        "iterations",
+        "tool_calls_count",
+        "tools_used",
+    }
+    assert "ran_on_model" not in json.dumps(eval_result)
+    if ran_on != model:
+        assert ran_on not in json.dumps(eval_result)
+
+
+def test_a_protect_run_after_an_agent_run_exposes_no_model_its_client_ran_on():
+    """An evaluator that ran an agent evaluation can run again. A Protect
+    evaluation makes a single gateway call and builds no agent client, so after
+    it the evaluator exposes no model rather than the earlier run's model."""
+    evaluator = AgentEvaluator(
+        rule_prompt="Is the answer grounded?", model="gpt-4o", output_type="Pass/Fail"
+    )
+    evaluator._current_eval_id = "eval-1"
+    _run_agent_choosing_its_client(evaluator, None, DeploymentLocation.CLOUD)
+    assert evaluator.ran_on_model == "falcon_ai"
+
+    gateway = MagicMock()
+    gateway._try_gateway_completion.return_value = SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(
+                    content="<label>Passed</label>"
+                    "<explanation>The text is polite.</explanation>"
+                )
+            )
+        ]
+    )
+    with patch("agentic_eval.core.llm.llm.LLM", return_value=gateway):
+        batch = evaluator.run(
+            call_type="protect", eval_name="toxicity", input="Have a nice day."
+        )
+
+    assert batch.eval_results[0]["output"] == "Passed"
+    assert evaluator.ran_on_model is None

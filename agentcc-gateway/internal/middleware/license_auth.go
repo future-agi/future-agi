@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/futureagi/agentcc-gateway/internal/auth"
 	"github.com/futureagi/agentcc-gateway/internal/config"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/redisstate"
@@ -58,7 +59,11 @@ func LicenseAuth(cfg config.LicenseAuthConfig, store *redisstate.LicenseStore) f
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if !cfg.Enabled || !strings.HasPrefix(r.URL.Path, "/v1/") {
+			// Gate on the canonical path, like KeyAuth; see isV1Path. The
+			// native Google API is gated as /v1 is, its token read as its
+			// handler reads its key.
+			genAI := isGenAIPath(r.URL.Path)
+			if !cfg.Enabled || !(genAI || isV1Path(r.URL.Path)) {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -67,7 +72,19 @@ func LicenseAuth(cfg config.LicenseAuthConfig, store *redisstate.LicenseStore) f
 				return
 			}
 
+			// A verified in-process delegation takes the same path as a
+			// non-JWT API key. Do not set licenseAuthContextKey: KeyAuth and
+			// the pipeline must still check the principal's expiry/IP/ACLs.
+			// No network header can install this unexported context value.
+			if auth.DelegatedPrincipal(r.Context()) != nil {
+				next.ServeHTTP(w, r)
+				return
+			}
+
 			rawToken := extractBearerToken(r)
+			if genAI {
+				rawToken = GenAIRequestAPIKey(r)
+			}
 			if rawToken == "" {
 				if isManagedEndpoint(r) {
 					models.WriteError(w, models.ErrUnauthorized("Missing managed service token"))
@@ -119,6 +136,8 @@ func LicenseAuth(cfg config.LicenseAuthConfig, store *redisstate.LicenseStore) f
 	}
 }
 
+// isManagedEndpoint is an exact match on the raw path on purpose: a managed
+// token is scoped to one endpoint, and no other spelling of it is honoured.
 func isManagedEndpoint(r *http.Request) bool {
 	return r.Method == http.MethodPost && r.URL.Path == "/v1/chat/completions"
 }

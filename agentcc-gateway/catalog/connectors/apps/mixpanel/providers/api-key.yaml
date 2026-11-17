@@ -1,0 +1,79 @@
+# Fixed US endpoint only; EU and IN use different documented endpoints.
+# Beta applies to service-account authentication, not all Mixpanel authentication.
+# Supply base64(username:secret), not a project token or a prefixed header value.
+# The gateway adds exactly "Bearer Basic ", including the trailing space.
+# Treat the encoded credential as a password; never hardcode it.
+# Creating a service account requires Owner or Admin permissions. The account
+# can access only projects it has been added to, and MCP must be enabled by an
+# org admin in Settings > Org > Overview (enabled by default for free and growth
+# accounts created after August 1, 2026).
+# Connected assistants receive Mixpanel data; review the AI provider's data policies.
+schema: "connector-manifest/v1#provider"
+app: mixpanel
+id: api-key
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus:
+  label: beta
+  source: https://docs.mixpanel.com/docs/mcp
+transport:
+  kind: http
+  url: https://mcp.mixpanel.com/mcp
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer Basic "
+      secret: true
+      label: "base64(service-account username:secret)"
+      help: "Enter base64(service-account username:secret) only; the gateway adds 'Bearer Basic '. The AI assistant can read and write Mixpanel data on your behalf. Data is sent to the connected AI provider; review its data policies. Free plans may have Query API access limits."
+      helpUrl: https://docs.mixpanel.com/docs/mcp
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_plan
+  notes: "Free plans can be subject to Query API access limits, please refer to our pricing page for more information."
+  source: https://docs.mixpanel.com/docs/mcp
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: kind
+    url: https://docs.mixpanel.com/docs/mcp
+    fetchedAt: 2026-11-16
+  - fact: publisher
+    url: https://docs.mixpanel.com/docs/mcp
+    fetchedAt: 2026-11-16
+  - fact: vendorStatus.label
+    url: https://docs.mixpanel.com/docs/mcp
+    fetchedAt: 2026-11-16
+  - fact: transport.kind
+    url: https://docs.mixpanel.com/docs/mcp
+    fetchedAt: 2026-11-16
+  - fact: transport.url
+    url: https://docs.mixpanel.com/docs/mcp
+    fetchedAt: 2026-11-16
+  - fact: hosted
+    url: https://docs.mixpanel.com/docs/mcp
+    fetchedAt: 2026-11-16
+  - fact: accountModes
+    url: https://docs.mixpanel.com/docs/mcp
+    fetchedAt: 2026-11-16
+  - fact: auth.kind
+    url: https://docs.mixpanel.com/docs/mcp
+    fetchedAt: 2026-11-16
+  - fact: auth.credentialParts
+    url: https://docs.mixpanel.com/docs/mcp
+    fetchedAt: 2026-11-16
+  - fact: tools.source
+    url: https://docs.mixpanel.com/docs/mcp
+    fetchedAt: 2026-11-16
+  - fact: pricing.model
+    url: https://docs.mixpanel.com/docs/mcp
+    fetchedAt: 2026-11-16
+  - fact: pricing.notes
+    url: https://docs.mixpanel.com/docs/mcp
+    fetchedAt: 2026-11-16

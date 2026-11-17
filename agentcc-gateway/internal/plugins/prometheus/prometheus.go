@@ -8,6 +8,7 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/metrics"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/pipeline"
+	"github.com/futureagi/agentcc-gateway/internal/providers/admission"
 )
 
 // Plugin is a pipeline plugin that records per-request metrics into a Prometheus registry.
@@ -16,16 +17,75 @@ type Plugin struct {
 	enabled  bool
 }
 
-// New creates a new Prometheus metrics plugin.
+// New creates a new Prometheus metrics plugin. An enabled plugin also
+// exports the upstream slots of every provider entry (ProviderSaturation).
 func New(registry *metrics.Registry, enabled bool) *Plugin {
+	if enabled && registry != nil {
+		registry.SetCollector("provider_saturation", ProviderSaturation)
+	}
 	return &Plugin{
 		registry: registry,
 		enabled:  enabled,
 	}
 }
 
-func (p *Plugin) Name() string     { return "prometheus" }
-func (p *Plugin) Priority() int    { return 998 }
+// Provider saturation metrics, one series per provider entry (label
+// provider): a config.yaml provider name or an org instance's ID.
+const (
+	MetricProviderInFlight      = "agentcc_provider_in_flight"
+	MetricProviderMaxConcurrent = "agentcc_provider_max_concurrent"
+	MetricProviderQueued        = "agentcc_provider_queued"
+	MetricProviderSaturated     = "agentcc_provider_saturated"
+	MetricProviderBusyTotal     = "agentcc_provider_busy_total"
+	MetricProviderQueueWait     = "agentcc_provider_queue_wait_ms"
+)
+
+// ProviderSaturation is the upstream slots of every provider entry
+// (admission.Snapshot): in-flight calls, max_concurrent and calls waiting
+// for a slot, summed over the entry's live instances, whether it is
+// saturated, busy refusals since start, and the wait for a slot.
+func ProviderSaturation() []metrics.Family {
+	snapshot := admission.Snapshot()
+	inFlight := metrics.Family{Name: MetricProviderInFlight, Type: "gauge",
+		Help: "Upstream calls in flight per provider entry"}
+	maxConcurrent := metrics.Family{Name: MetricProviderMaxConcurrent, Type: "gauge",
+		Help: "Upstream slots (max_concurrent) per provider entry"}
+	queued := metrics.Family{Name: MetricProviderQueued, Type: "gauge",
+		Help: "Calls waiting for an upstream slot per provider entry"}
+	saturated := metrics.Family{Name: MetricProviderSaturated, Type: "gauge",
+		Help: "1 while a provider entry is saturated: a call waits, every slot is taken, or a call was refused busy in the last 10s"}
+	busy := metrics.Family{Name: MetricProviderBusyTotal, Type: "counter",
+		Help: "Calls refused provider_busy (no slot within queue_timeout) per provider entry"}
+	wait := metrics.Family{Name: MetricProviderQueueWait, Type: "histogram",
+		Help: "Wait for an upstream slot in milliseconds per provider entry, refused calls included"}
+	for _, st := range snapshot {
+		lbl := map[string]string{"provider": st.Entry}
+		if st.Live {
+			sat := 0.0
+			if st.Saturated {
+				sat = 1
+			}
+			inFlight.Samples = append(inFlight.Samples, metrics.Sample{Labels: lbl, Value: float64(st.InFlight)})
+			maxConcurrent.Samples = append(maxConcurrent.Samples, metrics.Sample{Labels: lbl, Value: float64(st.MaxConcurrent)})
+			queued.Samples = append(queued.Samples, metrics.Sample{Labels: lbl, Value: float64(st.Queued)})
+			saturated.Samples = append(saturated.Samples, metrics.Sample{Labels: lbl, Value: sat})
+		}
+		busy.Samples = append(busy.Samples, metrics.Sample{Labels: lbl, Value: float64(st.BusyRefusals)})
+		for i, bound := range st.Wait.BoundsMs {
+			wait.Samples = append(wait.Samples, metrics.Sample{Suffix: "_bucket",
+				Labels: map[string]string{"provider": st.Entry, "le": strconv.FormatFloat(bound, 'f', -1, 64)},
+				Value:  float64(st.Wait.Cumulative[i])})
+		}
+		wait.Samples = append(wait.Samples,
+			metrics.Sample{Suffix: "_bucket", Labels: map[string]string{"provider": st.Entry, "le": "+Inf"}, Value: float64(st.Wait.Count)},
+			metrics.Sample{Suffix: "_sum", Labels: lbl, Value: st.Wait.SumMs},
+			metrics.Sample{Suffix: "_count", Labels: lbl, Value: float64(st.Wait.Count)})
+	}
+	return []metrics.Family{inFlight, maxConcurrent, queued, saturated, busy, wait}
+}
+
+func (p *Plugin) Name() string         { return "prometheus" }
+func (p *Plugin) Priority() int        { return 998 }
 func (p *Plugin) IsPostParallel() bool { return true } // Counter updates, safe to parallelize.
 
 // ProcessRequest is a no-op for the Prometheus plugin.

@@ -29,6 +29,7 @@ import { useDebounce } from "src/hooks/use-debounce";
 import { RESPONSE_CODES } from "src/utils/constants";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import { useBeforeUnload } from "src/hooks/useBeforeUnload";
+import { isPrototypeMode } from "src/utils/prototype";
 import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const tabItems = [
@@ -79,7 +80,7 @@ const CreateKnowledgeBaseDrawerChild = ({
   });
 
   const deleteFile = (index, status) => {
-    if (status === "success") {
+    if (status === "success" && files?.file?.[index]?.id) {
       // @ts-ignore
       handleDelete({ ids: files?.file[index]?.id, index });
     } else {
@@ -126,7 +127,7 @@ const CreateKnowledgeBaseDrawerChild = ({
     onError: (data) => {
       if (data?.statusCode == RESPONSE_CODES.LIMIT_REACHED) return;
 
-      // Handle file upload errors - update file statuses and don't show generic error
+      // The whole batch was rejected before persistence; all files remain local.
       if (data?.result?.not_uploaded || data?.result?.notUploaded) {
         const file = data?.result?.files ?? [];
         setValue("file", {
@@ -141,7 +142,8 @@ const CreateKnowledgeBaseDrawerChild = ({
                     statusReason: result?.error,
                   }
                 : {
-                    status: "success",
+                    status: "not_started",
+                    statusReason: "",
                   }),
             };
           }),
@@ -190,11 +192,16 @@ const CreateKnowledgeBaseDrawerChild = ({
     setShowSdkInfo(false);
   };
 
+  // L7b absent-sweep (absent:sdk-doors): prototype builds have no SDK, so
+  // an oversized file only gets the `File size is too large` toast; no SDK
+  // dialog, no Python tab.
   const handleShowSdkInfo = () => {
+    if (isPrototypeMode()) return;
     setShowSdkInfo(true);
   };
 
   const handleOpenSDKTab = () => {
+    if (isPrototypeMode()) return;
     setCurrentTab("ImprortfromSDK");
     handleCloseSdkInfo();
   };
@@ -215,6 +222,7 @@ const CreateKnowledgeBaseDrawerChild = ({
         },
       }),
     select: (d) => d?.data?.result,
+    enabled: !isPrototypeMode(),
   });
 
   return (
@@ -323,16 +331,26 @@ const CreateKnowledgeBaseDrawerChild = ({
                   onChange={(e, value) => {
                     setCurrentTab(value);
                   }}
-                  sx={{ boxShadow: "none", borderBottom: "1px solid", borderColor: "divider" }}
+                  sx={{
+                    boxShadow: "none",
+                    borderBottom: "1px solid",
+                    borderColor: "divider",
+                  }}
                 >
-                  {tabItems.map((tab) => (
-                    <Tab
-                      disabled={tab.disabled}
-                      key={tab.value}
-                      label={tab.label}
-                      value={tab.value}
-                    />
-                  ))}
+                  {/* Prototype builds have no SDK: its import tab is absent. */}
+                  {tabItems
+                    .filter(
+                      (tab) =>
+                        !isPrototypeMode() || tab.value !== "ImprortfromSDK",
+                    )
+                    .map((tab) => (
+                      <Tab
+                        disabled={tab.disabled}
+                        key={tab.value}
+                        label={tab.label}
+                        value={tab.value}
+                      />
+                    ))}
                 </Tabs>
               </Box>
             </Box>
@@ -345,7 +363,7 @@ const CreateKnowledgeBaseDrawerChild = ({
                     control={control}
                   />
                 )}
-                {currentTab === "ImprortfromSDK" && (
+                {currentTab === "ImprortfromSDK" && !isPrototypeMode() && (
                   <UploadKnowledgeBaseSDK
                     pythonCode={sdkCode?.code}
                     action={knowledgeId ? "update" : "add"}
@@ -358,11 +376,7 @@ const CreateKnowledgeBaseDrawerChild = ({
                   fontWeight={"fontWeightMedium"}
                   color="text.disabled"
                 >
-                  Files uploaded:{" "}
-                  {files?.file?.length -
-                    (files?.file?.filter((file) => file?.status === "error")
-                      ?.length || 0)}
-                  /{files?.file?.length}
+                  Files selected: {files?.file?.length}
                 </Typography>
               )}
             </Box>
@@ -435,11 +449,13 @@ const CreateKnowledgeBaseDrawerChild = ({
           </Box>
         )}
       </Box>
-      <SdkInfoDialog
-        onSubmit={handleOpenSDKTab}
-        open={showSdkInfo}
-        onClose={handleCloseSdkInfo}
-      />
+      {!isPrototypeMode() && (
+        <SdkInfoDialog
+          onSubmit={handleOpenSDKTab}
+          open={showSdkInfo}
+          onClose={handleCloseSdkInfo}
+        />
+      )}
       <ConfirmDialog
         content="Are you sure you want to close? Your work will be lost"
         action={

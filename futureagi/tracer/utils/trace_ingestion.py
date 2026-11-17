@@ -240,18 +240,35 @@ def _bulk_create_with_copy(model: models.Model, objects: list[models.Model]):
                 copy.write_row(row)
 
 
+def _is_batch_trace(trace: Trace, batch_projects: dict[uuid.UUID, set]) -> bool:
+    """True when the trace is live and its project sends spans under it here."""
+    return not trace.deleted and trace.project_id in batch_projects[trace.id]
+
+
 def _fetch_or_create_traces(
     parsed_data_list: list[dict[str, Any]],
 ) -> dict[uuid.UUID, Trace]:
     """
     Fetches existing traces or creates new ones for the given spans,
     returning a dictionary of all relevant traces.
+
+    An existing trace is returned only when it is live and its own project
+    sends spans under it in this batch. A trace id that a trace of another
+    project or a deleted trace keeps is left out and not created again, so
+    the batch stores nothing under it.
     """
-    trace_ids = {uuid.UUID(d["trace"]) for d in parsed_data_list if d.get("trace")}
-    if not trace_ids:
+    batch_projects: dict[uuid.UUID, set] = defaultdict(set)
+    for d in parsed_data_list:
+        if d.get("trace"):
+            batch_projects[uuid.UUID(d["trace"])].add(d["project"].id)
+    if not batch_projects:
         return {}
 
-    existing_traces = {t.id: t for t in Trace.objects.filter(id__in=trace_ids)}
+    # The trace id alone is the table key, so one read of every stored row,
+    # deleted rows included, tells an id this batch may write from a new one.
+    held = list(Trace.all_objects.filter(id__in=list(batch_projects)))
+    held_ids = {t.id for t in held}
+    existing_traces = {t.id: t for t in held if _is_batch_trace(t, batch_projects)}
 
     unique_new_traces = {}
     for d in parsed_data_list:
@@ -260,7 +277,7 @@ def _fetch_or_create_traces(
             continue
         try:
             trace_id = uuid.UUID(trace_id_str)
-            if trace_id not in existing_traces and trace_id not in unique_new_traces:
+            if trace_id not in held_ids and trace_id not in unique_new_traces:
                 unique_new_traces[trace_id] = {
                     "project": d["project"],
                     "project_version": d.get("project_version"),
@@ -294,15 +311,50 @@ def _fetch_or_create_traces(
                 # Race condition: another worker inserted the same trace(s) — re-fetch
                 refetched = {
                     t.id: t
-                    for t in Trace.objects.filter(
+                    for t in Trace.all_objects.filter(
                         id__in=[t.id for t in new_traces_to_create]
                     )
+                    if _is_batch_trace(t, batch_projects)
                 }
                 existing_traces.update(refetched)
             else:
                 raise
 
     return existing_traces
+
+
+def _drop_spans_of_refused_traces(
+    parsed_data_list: list[dict[str, Any]], all_traces: dict[uuid.UUID, Trace]
+) -> list[dict[str, Any]]:
+    """Keeps the spans whose trace belongs to the span's own project.
+
+    A span whose trace id a trace of another project or a deleted trace keeps
+    is not stored, and no trace takes its input, output or session. The other
+    traces of the request are stored as usual. One log line counts the trace
+    ids and spans that are not stored.
+    """
+    kept = []
+    refused_trace_ids = set()
+    for d in parsed_data_list:
+        try:
+            trace_id = uuid.UUID(d["trace"])
+        except (KeyError, TypeError, ValueError):
+            # _prepare_observation_spans_and_trace_updates reports this span.
+            kept.append(d)
+            continue
+        trace = all_traces.get(trace_id)
+        if trace is None or trace.project_id != d["project"].id:
+            refused_trace_ids.add(trace_id)
+            continue
+        kept.append(d)
+
+    if refused_trace_ids:
+        logger.warning(
+            "bulk_ingest_trace_ids_refused",
+            refused_traces=len(refused_trace_ids),
+            refused_spans=len(parsed_data_list) - len(kept),
+        )
+    return kept
 
 
 def _resolve_session_ids(
@@ -879,16 +931,25 @@ def bulk_create_observation_span_task(
             # 1.6. PII scrubbing (per-project, after normalization)
 
             project_names = {
-                s.get("project_name") for s in otel_data_list if s.get("project_name")
+                (s.get("project_name"), s.get("project_type"))
+                for s in otel_data_list if s.get("project_name")
             }
+            resolved_projects = {}
             if project_names:
                 pii_settings = get_pii_settings_for_projects(
-                    project_names, str(organization_id)
+                    project_names, str(organization_id), include_modes=True,
+                    workspace_id=workspace_id, user_id=user_id,
+                    resolved_projects=resolved_projects,
                 )
                 scrub_pii_in_span_batch(otel_data_list, pii_settings)
 
             parsed_data_list = bulk_convert_otel_spans_to_observation_spans(
-                otel_data_list, organization_id, user_id, workspace_id
+                otel_data_list, organization_id, user_id, workspace_id,
+                projects={
+                    (name, organization_id, trace_type): project
+                    for (name, trace_type), project in resolved_projects.items()
+                    if name and trace_type  # Match the converter's project-key extraction.
+                },
             )
             if not parsed_data_list:
                 return
@@ -898,6 +959,14 @@ def bulk_create_observation_span_task(
             # P3b flip computes their DETERMINISTIC ids (no PG create) and the
             # curated rows go to CH only.
             all_traces = _fetch_or_create_traces(parsed_data_list)
+
+            # A span is stored only under a trace of its own project; the
+            # request's other spans are stored as usual.
+            parsed_data_list = _drop_spans_of_refused_traces(
+                parsed_data_list, all_traces
+            )
+            if not parsed_data_list:
+                return
 
             # Resolve deterministic end-user / session ids (id map drives the
             # column stamp; the CuratedEndUser/CuratedSession lists are the CH

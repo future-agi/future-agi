@@ -125,9 +125,9 @@ func TestStreamedPostGuardrailSeesTrajectoryContext(t *testing.T) {
 		t.Fatalf("post-stage guardrail ran %d times inside Process for a stream", ranEarly)
 	}
 
-	if err := engine.RunPostPlugins(context.Background(), rc); err != nil {
-		t.Fatalf("RunPostPlugins() error = %v", err)
-	}
+	// The line's RunPostPlugins returns nothing: a post-stage refusal is
+	// recorded on rc, which this stream's checks do not refuse.
+	engine.RunPostPlugins(context.Background(), rc)
 	if got := post.seen(t); got == nil || *got != wantTrajectory {
 		t.Errorf("post-stage guardrail saw %#v, want %#v", got, wantTrajectory)
 	}

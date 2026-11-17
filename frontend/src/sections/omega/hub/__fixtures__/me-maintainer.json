@@ -1,0 +1,29 @@
+{
+  "user": {
+    "id": "6f8a2c30-6c7e-45e1-b564-e6d8a7687a52",
+    "email": "omega-hub-b@futureagi.local",
+    "name": "Hub maintainer B"
+  },
+  "publishers": [
+    {
+      "handle": "future-agi",
+      "displayName": "Future AGI",
+      "kind": "organization",
+      "tier": "official",
+      "bio": "Official Omega Hub entries, written and reviewed by Future AGI.",
+      "website": "https://futureagi.com",
+      "githubLogin": null,
+      "avatarUrl": null,
+      "verifiedAt": null,
+      "firstPublishedAt": "2026-10-14",
+      "entryCount": 0,
+      "likes": 0,
+      "installs30d": 0,
+      "id": "a793617c-1076-403e-adf0-7b41b1d4855f",
+      "organizationId": "edb10212-9736-4420-9c50-dc52f968cfd0",
+      "verificationRequested": false,
+      "suspended": false
+    }
+  ],
+  "isMaintainer": true
+}

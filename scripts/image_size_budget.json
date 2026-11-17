@@ -7,10 +7,7 @@
     "Before the patches (v1.41, amd64, measured): future-agi 770.5, frontend 89.0, serving 3613 (arm64 650), code-executor 331 (arm64 319), fi-collector 22.6, agentcc-gateway 7.2; postgres:16 160.3, clickhouse-server:25.3-alpine 175.3.",
     "enforce=false: measured and reported, never fails."
   ],
-  "arches": [
-    "amd64",
-    "arm64"
-  ],
+  "arches": ["amd64", "arm64"],
   "images": [
     {
       "image": "futureagi/future-agi",
@@ -35,9 +32,10 @@
     },
     {
       "image": "futureagi/frontend",
-      "budget_mb": 42,
+      "budget_mb": 48,
       "projected_mb": 38,
-      "measured_mb": 37.6
+      "measured_mb": 43.5,
+      "reason": "Raised from 42 to 48 on 2026-11-12: this release's front end measured 43.2 MB (linux/amd64) and 43.5 MB (linux/arm64) compressed in the standalone CI size check (registry layer bytes), against 37.5 and 37.9 MB for the previously published image read the same way. It now serves from its own origin what it loaded from third-party hosts at runtime (the Monaco editor from monaco-editor 0.43.0, its Iconify icons and the provider logos, with their licence notices), adds IBM Plex Sans, and carries this release's screens; the budget is the larger leg, 43.5 MB, plus 10%, rounded up to a whole MB."
     },
     {
       "image": "futureagi/fi-collector",
@@ -47,10 +45,11 @@
     },
     {
       "image": "futureagi/agentcc-gateway",
-      "budget_mb": 9,
+      "budget_mb": 13,
       "projected_mb": 8.0,
-      "measured_mb": 6.5,
-      "note": "projected 7.2 + 0.8: the static HEALTHCHECK probe (/usr/local/bin/healthcheck, 0.79 MB gzip on amd64; scratch has no shell or wget). fi-collector carries the same probe within its budget."
+      "measured_mb": 11.8,
+      "note": "projected 7.2 + 0.8: the static HEALTHCHECK probe (/usr/local/bin/healthcheck, 0.79 MB gzip on amd64; scratch has no shell or wget). fi-collector carries the same probe within its budget.",
+      "reason": "Raised from 11 to 13 on 2026-11-12: this release's gateway measured 11.8 MB (linux/amd64) and 10.7 MB (linux/arm64) compressed in the standalone CI size check (registry layer bytes), against 10.0 MB at the 2026-10-24 release head, with the same Dockerfile, build flags and Go modules. The binary now links the MCP and connector catalogue code (the Go source compiled into it grew from 3.9 MB to 6.2 MB) and embeds 2.0 MB more data (the litellm pricing catalogue, 2.3 to 3.5 MB, and the 0.8 MB connector catalogue); the budget is the larger leg, 11.8 MB, plus 10%, rounded up to a whole MB. Earlier: Raised from 9 to 11 on 2026-10-23: the gateway is now compiled with go.mod's toolchain (go1.26.10, the Go its release is built and tested with), whose binary of the release code then measured 28.5 MB against 22.2 MB with go1.25 (28.6 MB at the release head now, with the same budget). Measured as this check reads it, from a registry push of agentcc-gateway/Dockerfile's image (already -trimpath -ldflags=\"-s -w\", byte-identical to the release binary): 10.0 MB compressed on linux/amd64 (9,961,833 bytes of layers), 8.9 MB on linux/arm64. The budget is the amd64 size plus 10%, rounded up to a whole MB."
     },
     {
       "image": "futureagi/serving",
@@ -66,9 +65,7 @@
     {
       "image": "futureagi/serving",
       "tag_suffix": "-gpu",
-      "arches": [
-        "amd64"
-      ],
+      "arches": ["amd64"],
       "budget_mb": 3800,
       "projected_mb": 3340
     },
@@ -78,10 +75,22 @@
       "projected_mb": 185
     },
     {
+      "image": "futureagi/omega-hub-checker",
+      "budget_mb": 117,
+      "projected_mb": 106.4,
+      "measured_mb": 106.4,
+      "note": "node:22-bookworm-slim, the docker CLI and the vendored @omega/hub judge with its one dependency (typescript). Measured 2026-10-20 on linux/arm64 from this branch, `docker save | gzip -6`."
+    },
+    {
+      "image": "futureagi/omega-hub-runner-host",
+      "budget_mb": 317,
+      "projected_mb": 287.8,
+      "measured_mb": 287.8,
+      "note": "docker:27.5.1-dind plus gVisor 20261005.0 (runsc, its shim and sidecars, about 110 MB of it). Measured 2026-10-20 on linux/arm64 from this branch, `docker save | gzip -6`."
+    },
+    {
       "image": "futureagi/future-agi-simulation-runner",
-      "arches": [
-        "amd64"
-      ],
+      "arches": ["amd64"],
       "budget_mb": 1525,
       "projected_mb": 1325,
       "enforce": false,
@@ -90,13 +99,10 @@
   ],
   "standalone_install": {
     "app": "futureagi/standalone",
-    "with": [
-      "postgres:16",
-      "clickhouse/clickhouse-server:25.3-alpine"
-    ],
-    "budget_mb": 934,
-    "projected_mb": 909,
-    "measured_mb": 908.6,
-    "note": "TH-8685: 884 + 50 MB, the same slim-backend dependency layer counted once in the fresh-install total, not a datastore allowance. Run 39617644021: amd64 908.6 MB, arm64 877.9 MB. Postgres and ClickHouse images are unchanged."
+    "with": ["futureagi/code-executor", "postgres:16", "clickhouse/clickhouse-server:25.3-alpine"],
+    "budget_mb": 1092,
+    "projected_mb": 1020,
+    "measured_mb": 992,
+    "reason": "Raised from 884 to 1092 on 2026-11-12: code-executor is a default service of docker-compose.yml (no profile), so a fresh install downloads futureagi/code-executor too, read at the :latest tag docker-compose.yml defaults to. measured_mb 992 is the four images' distinct layers from Docker Hub's :latest tags on 2026-11-12 (linux/amd64 992.2 MB; linux/arm64 956.1 MB; standalone, postgres and clickhouse alone 859.4 MB), and budget_mb is that plus 10%, rounded up, as before. projected_mb 1020 = 834.6 (standalone 499 + postgres 160.3 + clickhouse 175.3) + code-executor 185; a layer code-executor shares with standalone is downloaded, and counted, once."
   }
 }

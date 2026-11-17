@@ -1,0 +1,45 @@
+# Arize AX's global/US hosted MCP accepts user or service API keys as bearers.
+# EU and Canada accounts require their separate regional endpoints.
+schema: "connector-manifest/v1#provider"
+app: arize
+id: api-key
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://api.arize.com/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: Arize API key
+      help: "Create a user or service API key in Arize AX Settings > API Keys. Use a global/US account; EU and Canada keys need their regional endpoints. Calls inherit the key's role, including writes and deletes. Supply the key without the Bearer prefix."
+      helpUrl: https://arize.com/docs/api-clients/mcp/authentication
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://arize.com/docs/api-clients/mcp/endpoints
+    fetchedAt: 2026-11-09
+  - fact: transport.variant
+    url: https://arize.com/docs/api-clients/mcp/endpoints
+    fetchedAt: 2026-11-09
+  - fact: auth.kind
+    url: https://arize.com/docs/api-clients/mcp/authentication
+    fetchedAt: 2026-11-09
+  - fact: auth.credentialParts
+    url: https://arize.com/docs/api-clients/mcp/connect
+    fetchedAt: 2026-11-09
+x-omega: { oss: exclude }

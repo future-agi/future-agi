@@ -1,4 +1,5 @@
 import { test, type APIRequestContext } from '@playwright/test';
+import { requirePublicationAdmission } from './value-free';
 
 type Method = 'get' | 'head' | 'post' | 'put' | 'patch' | 'delete';
 
@@ -55,6 +56,9 @@ export class ApiClient {
 
   private async send<T>(method: Method, path: string,
                         opts: { params?: Record<string, string | number>; data?: unknown } = {}): Promise<T> {
+    // HR-JRN-01 structural S3: in value-free mode, no request before the publication is admitted (lib/value-free.ts).
+    // Once per send, before the first attempt; the transport retry below never re-asks.
+    await requirePublicationAdmission('the API client');
     const request = () => this.req[method](`${this.baseURL}${path}`, {
       headers: this.headers,
       params: opts.params,

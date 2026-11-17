@@ -5,7 +5,12 @@ import { useController } from "react-hook-form";
 
 // Keep the task's required Project picker on MUI's combobox/listbox keyboard
 // path without changing the shared search-select primitive's other consumers.
-export default function TaskProjectField({ control, options, onChange }) {
+export default function TaskProjectField({
+  control,
+  options,
+  onChange,
+  noOptionsText = "No projects available",
+}) {
   const { field, fieldState } = useController({ control, name: "project" });
   const [open, setOpen] = useState(false);
   const selected = options.find((option) => option.value === field.value);
@@ -20,7 +25,7 @@ export default function TaskProjectField({ control, options, onChange }) {
       }
       isOptionEqualToValue={(option, value) => option.value === value.value}
       getOptionLabel={(option) => option.label}
-      noOptionsText="No projects available"
+      noOptionsText={noOptionsText}
       open={open}
       onOpen={() => setOpen(true)}
       onClose={() => setOpen(false)}
@@ -61,4 +66,5 @@ TaskProjectField.propTypes = {
     }),
   ).isRequired,
   onChange: PropTypes.func.isRequired,
+  noOptionsText: PropTypes.string,
 };

@@ -12,7 +12,7 @@ export default function CardWrapper({
   iconColor,
   hideOrder = false,
   bgColor = "background.neutral",
-  textColor = "text.disabled",
+  textColor = "text.secondary",
   titleSx = {},
   sx = {},
 }) {

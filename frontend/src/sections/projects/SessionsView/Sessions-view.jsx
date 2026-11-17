@@ -1,7 +1,8 @@
 import { getDateRangeDisplayEnd } from "src/components/custom-datepicker/dateRange";
-import { Box } from "@mui/material";
+import { Box, useTheme } from "@mui/material";
 import PropTypes from "prop-types";
 import {
+  useSetProjectDefaultView,
   useUpdateSavedView,
   useUpdateWorkspaceSavedView,
 } from "src/api/project/saved-views";
@@ -32,7 +33,10 @@ import { useLLMTracingFilters } from "../LLMTracing/useLLMTracingFilters";
 import { buildAddEvalsDraft } from "../LLMTracing/buildAddEvalsDraft";
 import SelectAllBanner from "../LLMTracing/SelectAllBanner";
 import { getSelectionCountState } from "../LLMTracing/listTotalMetadata";
-import { singleProjectIdFromFilters } from "../LLMTracing/GraphSection/graphFilterUtils";
+import {
+  selectPanelGraphFilters,
+  singleProjectIdFromFilters,
+} from "../LLMTracing/GraphSection/graphFilterUtils";
 import { toBackendFilters } from "../LLMTracing/common";
 import { askLink, insightsReportLink } from "../observeHandoff";
 import { SESSION_FILTER_FIELDS } from "../observeFilterConfig";
@@ -47,16 +51,34 @@ const AddToQueueDialog = lazy(
     import("src/sections/annotations/queues/components/add-to-queue-dialog"),
 );
 
+import { openAddData } from "src/sections/common/AddData/addDataStore";
+const AddDataset = lazy(
+  () => import("src/components/traceDetailDrawer/addToDataset/add-dataset"),
+);
+
 const SESSION_BULK_ACTIONS = [
   {
     id: REPLAY_ACTION_ID,
     label: "Replay Sessions",
     icon: "solar:play-linear",
+    tooltip: "Replay as simulation scenarios",
+  },
+  // R2 (P5): sessions into a dataset through the global Add-data sheet.
+  {
+    id: "add_to_dataset",
+    label: "Add to dataset",
+    icon: "mdi:folder-plus-outline",
+    tooltip: "Add to a dataset to run experiments on",
   },
   {
     id: "annotation-queue",
     label: "Add to annotation queue",
     icon: "solar:clipboard-list-linear",
+  },
+  {
+    id: "dataset",
+    label: "Add whole sessions to dataset",
+    icon: "solar:move-to-folder-linear",
   },
 ];
 
@@ -82,7 +104,7 @@ import {
   columnStateToOrder,
   isColumnOrderDirty,
 } from "../LLMTracing/savedViewColumns";
-import { filtersContentEqual } from "../saved-view-utils";
+import { dateFilterEqual, filtersContentEqual } from "../saved-view-utils";
 import {
   DEFAULT_OBSERVE_LIST_DATE_OPTION,
   getDefaultObserveListDateRangeForMode,
@@ -91,11 +113,27 @@ import { useCursorAttributeInventory } from "../LLMTracing/useCursorAttributeInv
 import { useWorkspace } from "src/contexts/WorkspaceContext";
 import { useRestrictSimulateToEnvironments } from "src/hooks/useRestrictSimulateToEnvironments";
 import { isGridApiLive, withLiveGridApi } from "src/utils/gridApi";
+import useSessionTurnFields from "./useSessionTurnFields";
+import { normalizeSessionTurnFields } from "./sessionTurnFields";
 
 const getLiveSessionGridApi = (gridRef) => {
   const api = gridRef?.current?.api;
   return isGridApiLive(api) ? api : null;
 };
+
+// A Compare window in the URL (a shared link) wins over the one stored for
+// the default tab: the stored window applies only when the URL has none.
+const urlHoldsCompareDate = () =>
+  new URLSearchParams(window.location.search).has("sessionCompareDateFilter");
+
+// Sort precedence is independent of the displayed column order.
+const sessionSortSignature = (columnState) =>
+  JSON.stringify(
+    (columnState || [])
+      .filter((column) => column.sort === "asc" || column.sort === "desc")
+      .sort((a, b) => (a.sortIndex ?? Infinity) - (b.sortIndex ?? Infinity))
+      .map(({ colId, sort }) => ({ colId, sort })),
+  );
 
 // Build filter fields dynamically from session columns + base fields
 const buildSessionFilterFields = (sessionColumns) => {
@@ -156,32 +194,88 @@ export const getDateLabel = (dateFilter) => {
   return `${start.toLocaleDateString()} - ${end.toLocaleDateString()}`;
 };
 
+const USER_MODE_REPLAY_REASON =
+  "Replay needs a project. Open the session from its project to replay it.";
+
+// A user's page draws no session graphs, so it has nothing to compare.
+const USER_MODE_COMPARE_REASON =
+  "Compare graph needs a project. Open the sessions from their project.";
+
+// A user's page has no project to share a view with.
+const USER_MODE_SET_DEFAULT_REASON =
+  "Shared views need a project. Open the sessions from their project.";
+
+// The Traces Compare graph's colours, so a comparison reads the same on
+// every Observe tab.
+const COMPARE_GRAPH_COLORS = {
+  dark: {
+    line: "rgba(245, 166, 147, 0.85)",
+    bar: "rgba(220, 160, 130, 0.30)",
+  },
+  light: {
+    line: "rgba(230, 120, 100, 0.70)",
+    bar: "rgba(230, 170, 147, 0.25)",
+  },
+};
+
 // No-op extra properties for session filters (no reverse eval logic needed)
 const noopExtraProperties = () => ({});
 
 const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
   const restrictSimulateToEnvironments = useRestrictSimulateToEnvironments();
+  const isUserMode = mode === "user";
   const sessionBulkActions = useMemo(
     () =>
       withoutReplayForRestrictedOrgs(
-        SESSION_BULK_ACTIONS,
+        SESSION_BULK_ACTIONS.map((action) =>
+          action.id === "dataset" && isUserMode
+            ? {
+                ...action,
+                disabled: true,
+                disabledReason: "Open a project's Sessions to add conversations to a dataset.",
+              }
+            : action,
+        ),
         restrictSimulateToEnvironments,
+      ).map(
+        // Replay needs a project-hosted flow, not a cross-project user view:
+        // listed but disabled there, with the reason (handleBulkAction also
+        // refuses a replay without a project).
+        (action) =>
+          isUserMode && action.id === REPLAY_ACTION_ID
+            ? {
+                ...action,
+                disabled: true,
+                disabledReason: USER_MODE_REPLAY_REASON,
+              }
+            : action,
       ),
-    [restrictSimulateToEnvironments],
+    [restrictSimulateToEnvironments, isUserMode],
   );
-  const isUserMode = mode === "user";
   const { currentWorkspaceId } = useWorkspace();
   const { observeId: routeObserveId } = useParams();
   const observeId = isUserMode ? null : routeObserveId;
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const sessionGridApiRef = useRef(null);
+  const [sortSignature, setSortSignature] = useState(null);
+  const sortSubscriptionRef = useRef(null);
+  useEffect(() => () => sortSubscriptionRef.current?.(), []);
   const {
     setHeaderConfig,
     activeViewConfig,
     setActiveViewConfig,
     registerGetViewConfig,
   } = useObserveHeader();
+
+  const activeViewTabId = useMemo(() => {
+    const params = new URLSearchParams(window.location.search);
+    const key = isUserMode ? params.get("userTab") : params.get("tab");
+    return key?.startsWith("view-") ? key.slice(5) : null;
+  }, [activeViewConfig, isUserMode]);
+  const turnFieldPreferences = useSessionTurnFields(observeId, {
+    activeViewId: isUserMode ? null : activeViewTabId,
+  });
 
   // --- Filter & date state (reuse trace filter hook) ---
   const defaultDateFilter = useMemo(
@@ -190,17 +284,38 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
   );
   const [sessionColumns, setSessionColumns] = useState([]);
 
-  const { validatedFilters, setDateFilter, dateFilter } = useLLMTracingFilters(
+  const { setFilters, validatedFilters, setDateFilter, dateFilter } =
+    useLLMTracingFilters(
+      defaultFilterBase,
+      defaultDateFilter,
+      "sessionFilter",
+      "sessionDateFilter",
+      sessionColumns,
+      noopExtraProperties,
+    );
+
+  // The Compare graph's own date window, defaulting like the primary one
+  // (Traces' compareTrace pair). Its column filters are never set, so
+  // sessionCompareFilter is only read; the graph's Filter pill edits
+  // compareExtraFilters below.
+  const {
+    validatedFilters: compareValidatedFilters,
+    setDateFilter: setCompareDateFilter,
+    dateFilter: compareDateFilter,
+  } = useLLMTracingFilters(
     defaultFilterBase,
     defaultDateFilter,
-    "sessionFilter",
-    "sessionDateFilter",
+    "sessionCompareFilter",
+    "sessionCompareDateFilter",
     sessionColumns,
     noopExtraProperties,
   );
 
   // --- Extra filters from TraceFilterPanel (popover) ---
   const [extraFilters, setExtraFilters] = useState([]);
+  const [compareExtraFilters, setCompareExtraFilters] = useState([]);
+  // Which graph's filters the panel edits while compare is on.
+  const [filterTarget, setFilterTarget] = useState("primary");
   const [isFilterOpen, setIsFilterOpen] = useUrlState(
     "sessionFilterOpen",
     false,
@@ -233,6 +348,32 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
   const [showCompare, setShowCompare] = useUrlState(
     "sessionShowCompare",
     false,
+  );
+  // A user's page draws no graphs, so a restored flag there compares nothing.
+  const compareOn = showCompare && !isUserMode;
+  const panelFilterTarget = compareOn ? filterTarget : "primary";
+  const theme = useTheme();
+  const compareColors =
+    COMPARE_GRAPH_COLORS[theme.palette.mode === "dark" ? "dark" : "light"];
+  const compareGraphFilters = useMemo(
+    () => [...compareValidatedFilters, ...compareExtraFilters],
+    [compareValidatedFilters, compareExtraFilters],
+  );
+
+  // With compare on, each graph's Filter pill opens the panel on that
+  // graph's filters; a second click closes it (as on Traces).
+  const handleGraphFilterToggle = useCallback(
+    (e, target) => {
+      if (isFilterOpen) {
+        setIsFilterOpen(false);
+        setExternalFilterAnchor(null);
+        return;
+      }
+      setFilterTarget(target);
+      setExternalFilterAnchor(e?.currentTarget || null);
+      setIsFilterOpen(true);
+    },
+    [isFilterOpen, setIsFilterOpen],
   );
 
   // In user mode expose an extra "Project" filter so the user can narrow
@@ -356,10 +497,17 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
       activeViewConfig.extra_filters,
     );
     const baselineDisplay = activeViewConfig.display || {};
-    const baselineDateOption = baselineDisplay.dateFilter?.dateOption ?? null;
+    if (
+      turnFieldPreferences.ready &&
+      JSON.stringify(turnFieldPreferences.fields) !==
+        JSON.stringify(
+          normalizeSessionTurnFields(baselineDisplay.sessionTurnFields),
+        )
+    )
+      return true;
 
     if (!filtersContentEqual(extraFilters, baselineExtraFilters)) return true;
-    if ((dateFilter?.dateOption ?? null) !== baselineDateOption) return true;
+    if (!dateFilterEqual(dateFilter, baselineDisplay.dateFilter)) return true;
     if (
       baselineDisplay.cellHeight !== undefined &&
       baselineDisplay.cellHeight !== cellHeight
@@ -371,6 +519,29 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
       baselineDisplay.showCompare !== showCompare
     ) {
       return true;
+    }
+    // Compare state is saved only while compare is on (as on Traces), so
+    // only edits made with it on can diverge from the saved view.
+    if (compareOn) {
+      if (
+        !filtersContentEqual(
+          compareExtraFilters,
+          hydrateStoredFilterList(activeViewConfig.compare_extra_filters),
+        )
+      ) {
+        return true;
+      }
+      // A view saved with compare off has no compare_date_filter; the
+      // default window is not an edit then.
+      if (
+        activeViewConfig.compare_date_filter &&
+        !dateFilterEqual(
+          compareDateFilter,
+          activeViewConfig.compare_date_filter,
+        )
+      ) {
+        return true;
+      }
     }
     // Column visibility — prefer the saved baseline (`display.visibleColumns`),
     // fall back to the snapshot taken when the view was loaded so older views
@@ -404,6 +575,12 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
     for (let i = 0; i < currentCustomIds.length; i += 1) {
       if (currentCustomIds[i] !== baselineCustomIds[i]) return true;
     }
+    if (
+      sortSignature !== null &&
+      sortSignature !== sessionSortSignature(baselineDisplay.columnState)
+    ) {
+      return true;
+    }
     // Did the user reorder columns (or move the custom-columns group)?
     if (isColumnOrderDirty(sessionColumns, baselineDisplay.columnState)) {
       return true;
@@ -415,8 +592,14 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
     dateFilter,
     cellHeight,
     showCompare,
+    compareOn,
+    compareExtraFilters,
+    compareDateFilter,
     updateObj,
     sessionColumns,
+    sortSignature,
+    turnFieldPreferences.ready,
+    turnFieldPreferences.fields,
   ]);
 
   // Deferred so the button doesn't flicker while filter state and the baseline
@@ -434,8 +617,13 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
     const customColumns = (sessionColumns || []).filter(
       (c) => c.groupBy === "Custom Columns",
     );
-    return {
+    const config = {
+      ...activeViewConfig,
       display: {
+        ...activeViewConfig?.display,
+        ...(turnFieldPreferences.ready
+          ? { sessionTurnFields: turnFieldPreferences.fields }
+          : {}),
         cellHeight,
         showCompare,
         dateFilter,
@@ -445,9 +633,26 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
       },
       extra_filters: extraFilters || [],
     };
+    // Top-level keys, as on Traces: the serializer whitelists and validates
+    // compare_date_filter and compare_extra_filters.
+    if (compareOn) {
+      config.compare_date_filter = compareDateFilter;
+      config.compare_extra_filters = compareExtraFilters;
+    } else {
+      delete config.compare_date_filter;
+      delete config.compare_extra_filters;
+    }
+    if (!customColumns.length) delete config.display.customColumns;
+    return config;
   }, [
+    activeViewConfig,
+    turnFieldPreferences.ready,
+    turnFieldPreferences.fields,
     cellHeight,
     showCompare,
+    compareOn,
+    compareDateFilter,
+    compareExtraFilters,
     dateFilter,
     extraFilters,
     updateObj,
@@ -462,12 +667,7 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
   const { mutate: updateSavedView } = useUpdateSavedView(observeId);
   const { mutate: updateWorkspaceSavedView } =
     useUpdateWorkspaceSavedView(USER_DETAIL_TAB_TYPE);
-
-  const activeViewTabId = useMemo(() => {
-    const params = new URLSearchParams(window.location.search);
-    const key = isUserMode ? params.get("userTab") : params.get("tab");
-    return key?.startsWith("view-") ? key.slice(5) : null;
-  }, [activeViewConfig, isUserMode]);
+  const setProjectDefaultView = useSetProjectDefaultView(observeId);
 
   const displayStorageKey = isUserMode
     ? `user-sessions-display-${userIdForUserMode}`
@@ -486,6 +686,7 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
     const payload = {
       cellHeight,
       showCompare,
+      ...(compareOn ? { compare_date_filter: compareDateFilter } : {}),
       ...(updateObj && Object.keys(updateObj).length > 0
         ? { visibleColumns: updateObj }
         : {}),
@@ -496,7 +697,15 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
     } catch {
       /* quota exceeded */
     }
-  }, [displayStorageKey, cellHeight, showCompare, updateObj, sessionColumns]);
+  }, [
+    displayStorageKey,
+    cellHeight,
+    showCompare,
+    compareOn,
+    compareDateFilter,
+    updateObj,
+    sessionColumns,
+  ]);
 
   useEffect(() => {
     if (activeViewTabId) return;
@@ -510,6 +719,9 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
       if (saved.cellHeight) setCellHeight(saved.cellHeight);
       if (typeof saved.showCompare === "boolean") {
         setShowCompare(saved.showCompare);
+      }
+      if (saved.compare_date_filter && !urlHoldsCompareDate()) {
+        setCompareDateFilter(saved.compare_date_filter);
       }
       if (saved.visibleColumns && typeof saved.visibleColumns === "object") {
         setUpdateObj(saved.visibleColumns);
@@ -564,6 +776,37 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
     setActiveViewConfig,
   ]);
 
+  // "Share with project" (project mode only): shares this view with the
+  // project as its "Default sessions view" tab. A new one opens as the active
+  // tab, as on Traces; a shared open view takes this config as its baseline.
+  const handleSetDefaultView = useCallback(() => {
+    const config = buildViewConfig();
+    setProjectDefaultView({
+      tabType: "sessions",
+      config,
+      activeViewId: activeViewTabId,
+      onSaved: (view, { created }) => {
+        if (created) {
+          if (view?.id) {
+            navigate(
+              `/dashboard/observe/${observeId}/sessions?tab=view-${view.id}`,
+              { replace: true },
+            );
+          }
+          return;
+        }
+        if (activeViewTabId) setActiveViewConfig(view?.config ?? config);
+      },
+    });
+  }, [
+    activeViewTabId,
+    buildViewConfig,
+    navigate,
+    observeId,
+    setActiveViewConfig,
+    setProjectDefaultView,
+  ]);
+
   // Drained in the api-ready effect below once sessionGridApiRef populates.
   const pendingColumnStateRef = useRef(null);
   // Canonical order, to restore default when leaving a saved view.
@@ -586,6 +829,7 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
       // state reverts via useUrlState; the rest lives in useState / AG Grid
       // and needs explicit reset.
       setExtraFilters((prev) => (prev.length === 0 ? prev : []));
+      setCompareExtraFilters((prev) => (prev.length === 0 ? prev : []));
       viewLoadedUpdateObjRef.current = null;
       setUpdateObj(initialVisibility);
       const api = getLiveSessionGridApi(sessionGridApiRef);
@@ -623,6 +867,9 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
           if (typeof saved.showCompare === "boolean") {
             setShowCompare(saved.showCompare);
           }
+          if (saved.compare_date_filter && !urlHoldsCompareDate()) {
+            setCompareDateFilter(saved.compare_date_filter);
+          }
           if (
             saved.visibleColumns &&
             typeof saved.visibleColumns === "object"
@@ -653,6 +900,9 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
     }
     if (display.dateFilter) {
       setDateFilter(display.dateFilter);
+    }
+    if (activeViewConfig.compare_date_filter) {
+      setCompareDateFilter(activeViewConfig.compare_date_filter);
     }
     // Push visibility into AG Grid directly when the api is available so
     // the display matches without waiting for re-render. Done before the
@@ -730,6 +980,16 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
       if (filtersContentEqual(prev, nextExtraFilters)) return prev;
       return nextExtraFilters;
     });
+    // Always replaced, like extra_filters: a view without compare filters
+    // clears the previous view's.
+    const nextCompareExtraFilters = hydrateStoredFilterList(
+      activeViewConfig.compare_extra_filters,
+    );
+    setCompareExtraFilters((prev) =>
+      filtersContentEqual(prev, nextCompareExtraFilters)
+        ? prev
+        : nextCompareExtraFilters,
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeViewConfig]);
 
@@ -771,9 +1031,10 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
     const idsFromNodes = nodes
       .map((n) => n.data?.session_id || n.data?.id)
       .filter(Boolean);
-    const toggled =
-      Array.isArray(ssState.toggledNodes) && ssState.toggledNodes.length > 0
-        ? ssState.toggledNodes
+    const toggled = Array.isArray(ssState.toggledNodes)
+      ? ssState.toggledNodes
+      : ssState.selectAll
+        ? []
         : idsFromNodes;
     useSessionsGridStore.setState({
       toggledNodes: toggled,
@@ -794,6 +1055,7 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
   const selectedCount = selectedCountState.count;
 
   const [queueAnchorEl, setQueueAnchorEl] = useState(null);
+  const [openAddDataset, setOpenAddDataset] = useState(false);
   // Opt-in for filter-mode bulk add — set when the SelectAllBanner is
   // clicked; reset on select-all clear, project change, or filter change.
   const [sessionFilterSelectionMode, setSessionFilterSelectionMode] =
@@ -811,11 +1073,14 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
   const handleBulkAction = useCallback(
     (action, event) => {
       if (action === REPLAY_ACTION_ID) {
+        if (!observeId) return;
         const replayData = {
           project_id: observeId,
           replay_type: REPLAY_MODULES.SESSIONS,
-          ids: toggledNodes,
+          ids: selectAll ? [] : toggledNodes,
           select_all: selectAll,
+          exclude_ids: selectAll ? toggledNodes : [],
+          filters: toBackendFilters(finalFilters),
         };
         createReplaySessions(replayData, {
           onSuccess: (data) => {
@@ -827,6 +1092,17 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
             enqueueSnackbar("Failed to start replay", { variant: "error" });
           },
         });
+      } else if (action === "add_to_dataset") {
+        openAddData({
+          source: {
+            kind: "sessions",
+            project_id: observeId,
+            session_ids: toggledNodes,
+            ...(selectAll && { select_all: true }),
+          },
+        });
+      } else if (action === "dataset") {
+        if (observeId) setOpenAddDataset(true);
       } else if (action === "annotation-queue") {
         // Choosing the queue action is an explicit request to operate on the
         // header's inverted select-all set. Switch to the server-side filter
@@ -841,6 +1117,7 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
       observeId,
       toggledNodes,
       selectAll,
+      finalFilters,
       sessionFilterSelectionMode,
       createReplaySessions,
       setCreatedReplay,
@@ -894,7 +1171,19 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
   const onGridReady = useCallback(
     (params) => {
       if (!isGridApiLive(params.api)) return;
+      sortSubscriptionRef.current?.();
       sessionGridApiRef.current = params;
+      const syncSort = () => {
+        if (isGridApiLive(params.api)) {
+          setSortSignature(sessionSortSignature(params.api.getColumnState?.()));
+        }
+      };
+      params.api.addEventListener?.("sortChanged", syncSort);
+      sortSubscriptionRef.current = () => {
+        if (isGridApiLive(params.api)) {
+          params.api.removeEventListener?.("sortChanged", syncSort);
+        }
+      };
       setHeaderConfig((prev) => ({ ...prev, gridApi: params.api }));
       // Drain any saved-view columnState that arrived before the grid mounted.
       if (pendingColumnStateRef.current && params.api?.applyColumnState) {
@@ -904,6 +1193,7 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
         });
         pendingColumnStateRef.current = null;
       }
+      syncSort();
       // Drain a queued refresh request — fires when the saved-view apply
       // effect ran before the grid mounted (hard refresh into a saved
       // view URL). Without this drain the queued custom-col ref would
@@ -1002,6 +1292,67 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
     );
   }, []);
 
+  const handleResetView = useCallback(() => {
+    // Keep the saved baseline so Reset is an editable, saveable change.
+    // Disarm late hydration before removing customs or changing column defs.
+    pendingColumnStateRef.current = null;
+    pendingSessionOrderRef.current = null;
+    appliedSessionIdSetRef.current = null;
+    sessionUserReorderedRef.current = false;
+    pendingCustomColumnsRef.current = [];
+    pendingRefreshRef.current = false;
+    setFilters(defaultFilterBase);
+    setExtraFilters([]);
+    setDateFilter(getDefaultObserveListDateRangeForMode(isUserMode));
+    setCellHeight("Short");
+    setShowCompare(false);
+    setCompareDateFilter(getDefaultObserveListDateRangeForMode(isUserMode));
+    setCompareExtraFilters([]);
+    setFilterTarget("primary");
+    setAutoSizeOn(false);
+    setUpdateObj(initialVisibility);
+    // Default-tab visibility is also stored on the project. Reset that source
+    // too, or the next session-list response hides the columns again.
+    if (!isUserMode && !activeViewTabId) {
+      updateSessionListColumnVisibility(initialVisibility, {
+        onSuccess: () =>
+          getLiveSessionGridApi(sessionGridApiRef)?.refreshServerSide?.({
+            purge: true,
+          }),
+      });
+    }
+    setSessionColumns((prev) =>
+      reorderColumns(
+        prev
+          .filter((col) => col.groupBy !== "Custom Columns")
+          .map((col) => ({
+            ...col,
+            isVisible: initialVisibility[col.id] ?? col.isVisible,
+          })),
+        canonicalOrderRef.current,
+      ),
+    );
+    const api = getLiveSessionGridApi(sessionGridApiRef);
+    api?.resetColumnState?.();
+    api?.setColumnsVisible?.(Object.keys(initialVisibility), true);
+    setSortSignature(sessionSortSignature(api?.getColumnState?.()));
+    try {
+      localStorage.removeItem(displayStorageKey);
+    } catch {
+      /* storage is optional */
+    }
+  }, [
+    isUserMode,
+    activeViewTabId,
+    updateSessionListColumnVisibility,
+    setFilters,
+    setDateFilter,
+    setCellHeight,
+    setShowCompare,
+    setCompareDateFilter,
+    displayStorageKey,
+  ]);
+
   // --- Column configure dropdown ---
   const [openColumnConfigure, setOpenColumnConfigure] = useState(false);
   const columnConfigureRef = useRef(null);
@@ -1025,17 +1376,30 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
         hasActiveFilter={hasActiveFilter}
         canSaveView={canSaveViewDeferred}
         onSaveView={handleSaveView}
-        graphFilters={extraFilters}
+        onResetView={handleResetView}
+        onSetDefaultView={isUserMode ? undefined : handleSetDefaultView}
+        setDefaultDisabledReason={
+          isUserMode ? USER_MODE_SET_DEFAULT_REASON : undefined
+        }
+        graphFilters={selectPanelGraphFilters(
+          panelFilterTarget,
+          extraFilters,
+          compareExtraFilters,
+        )}
         isFilterOpen={isFilterOpen}
         externalFilterAnchor={externalFilterAnchor}
         onFilterToggle={() => {
           // Clear any chip-row anchor so the popover re-anchors to the
-          // toolbar Filter button on the next open.
+          // toolbar Filter button on the next open. The toolbar edits the
+          // primary filters, so a Compare Graph edit hands the target back.
+          setFilterTarget("primary");
           setExternalFilterAnchor(null);
           setIsFilterOpen(!isFilterOpen);
         }}
         filterFields={sessionFilterFields}
         onApplyExtraFilters={setExtraFilters}
+        filterTarget={panelFilterTarget}
+        onApplyCompareExtraFilters={setCompareExtraFilters}
         // Columns
         columns={displayColumns}
         onColumnVisibilityChange={(e) => {
@@ -1050,6 +1414,9 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
         // Compare
         isCompareActive={showCompare}
         onCompareToggle={() => setShowCompare(!showCompare)}
+        compareDisabledReason={
+          isUserMode ? USER_MODE_COMPARE_REASON : undefined
+        }
         // Group
         groupBy="sessions"
         hiddenGroupByOptions={isUserMode ? ["users"] : []}
@@ -1058,8 +1425,21 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
         onGroupByChange={(key) => {
           if (isUserMode) {
             if (key !== "none" && key !== "trace" && key !== "span") return;
+            setActiveViewConfig(null);
             const params = new URLSearchParams({ userTab: "traces" });
             if (key === "span") params.set("selectedTab", "spans");
+            // Regrouping keeps the investigated window. Trace and Span each
+            // read their own date key, which otherwise opens at the default.
+            // Sessions keeps its key too, as the tab bar does, so a later
+            // Sessions tab click returns to this window.
+            const windowParam = JSON.stringify(dateFilter);
+            params.set("sessionDateFilter", windowParam);
+            params.set(
+              key === "span"
+                ? "primarySpanDateFilter"
+                : "primaryTraceDateFilter",
+              windowParam,
+            );
             navigate({
               pathname: `/dashboard/users/${encodeURIComponent(
                 userIdForUserMode,
@@ -1068,6 +1448,8 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
             });
             return;
           }
+          if (!["none", "trace", "span", "users"].includes(key)) return;
+          setActiveViewConfig(null);
           switch (key) {
             case "none":
             case "trace":
@@ -1110,6 +1492,23 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
       />
 
       <Suspense fallback={null}>
+        {openAddDataset && (
+          <AddDataset
+            handleClose={() => setOpenAddDataset(false)}
+            actionToDataset={openAddDataset}
+            currentTab="sessions"
+            selectedSessions={toggledNodes || []}
+            selectAll={selectAll}
+            sessionFilters={toBackendFilters(finalFilters)}
+            onSuccess={() => {
+              setSessionFilterSelectionMode(false);
+              withLiveGridApi(getLiveSessionGridApi(sessionGridApiRef), (api) =>
+                api.deselectAll?.(),
+              );
+              useSessionsGridStore.setState({ toggledNodes: [], selectAll: false });
+            }}
+          />
+        )}
         <AddToQueueDialog
           anchorEl={queueAnchorEl}
           onClose={() => setQueueAnchorEl(null)}
@@ -1136,93 +1535,148 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
         />
       </Suspense>
 
-      {/* Filter chips. Inject `display_name` so chips render the column's
-          human-readable label instead of the raw snake_case / UUID id. */}
-      <FilterChips
-        extraFilters={extraFilters.map((f) => ({
-          ...f,
-          display_name:
-            f.display_name ||
-            sessionFilterFields.find((c) => c.id === f.column_id)?.name,
-        }))}
-        fieldLabelMap={filterChipLabelMap}
-        onRemoveFilter={(idx) => {
-          // Chips are keyed by array index, so any removal re-mounts the
-          // later chips and invalidates a chip-anchored popover ref.
-          setExternalFilterAnchor(null);
-          setExtraFilters((prev) => prev.filter((_, i) => i !== idx));
-        }}
-        onClearAll={() => {
-          setExternalFilterAnchor(null);
-          setExtraFilters([]);
-        }}
-        onAddFilter={(anchorEl) => {
-          setExternalFilterAnchor(anchorEl || null);
-          setIsFilterOpen(true);
-        }}
-        onChipClick={(_idx, anchorEl) => {
-          setExternalFilterAnchor(anchorEl || null);
-          setIsFilterOpen(true);
-        }}
-      />
-
-      {/* Graph — hidden in user mode (no project context) */}
-      {!isUserMode && (
-        <Box sx={{ px: 2 }}>
-          <Suspense fallback={null}>
-            <PrimaryGraph
-              filters={finalFilters}
-              dateFilter={dateFilter}
-              graphEndpoint={endpoints.project.getSessionGraphData()}
-              defaultMetric="latency"
-              graphLabel="Session Metrics"
-              trafficLabel="sessions"
-            />
-          </Suspense>
-        </Box>
-      )}
-
-      <SelectAllBanner
-        visible={selectAll && !sessionFilterSelectionMode}
-        visibleCount={
-          getLiveSessionGridApi(sessionGridApiRef)?.getDisplayedRowCount?.() ||
-          0
-        }
-        totalMatching={
-          totalRowCountIsLowerBound
-            ? totalRowCountLowerBound || 0
-            : totalRowCount || 0
-        }
-        totalMatchingIsLowerBound={totalRowCountIsLowerBound}
-        noun="session"
-        onSelectAll={() => setSessionFilterSelectionMode(true)}
-      />
-
-      {/* Content */}
-      <Box
-        display="flex"
-        flexDirection="column"
-        sx={{ flex: 1, height: "100%" }}
-      >
-        <SessionGrid
-          columns={sessionColumns}
-          setColumns={setSessionColumns}
-          onUserReorder={() => {
-            sessionUserReorderedRef.current = true;
+      {/* Chips, graph and grid share the tab's height: the grid takes what
+          the chips and graph leave, so its pagination footer stays on screen
+          (as on the Trace tab). A grid sized to the whole tab sat below the
+          graph and pushed the footer under the fold. */}
+      <Box sx={{ display: "flex", flexDirection: "column", height: "100%" }}>
+        {/* Filter chips. Inject `display_name` so chips render the column's
+            human-readable label instead of the raw snake_case / UUID id. */}
+        <FilterChips
+          extraFilters={extraFilters.map((f) => ({
+            ...f,
+            display_name:
+              f.display_name ||
+              sessionFilterFields.find((c) => c.id === f.column_id)?.name,
+          }))}
+          fieldLabelMap={filterChipLabelMap}
+          onRemoveFilter={(idx) => {
+            // Chips are keyed by array index, so any removal re-mounts the
+            // later chips and invalidates a chip-anchored popover ref.
+            setExternalFilterAnchor(null);
+            setExtraFilters((prev) => prev.filter((_, i) => i !== idx));
           }}
-          ref={sessionGridApiRef}
-          updateObj={updateObj}
-          filters={finalFilters}
-          projectId={observeId}
-          cellHeight={cellHeight}
-          onSelectionChanged={onSelectionChanged}
-          className={shouldDisable ? "ag-grid-disabled" : ""}
-          onGridReady={onGridReady}
-          pendingCustomColumnsRef={pendingCustomColumnsRef}
-          canonicalOrderRef={canonicalOrderRef}
-          isOnSavedView={Boolean(activeViewConfig)}
-          userIdForUserMode={userIdForUserMode}
+          onClearAll={() => {
+            setExternalFilterAnchor(null);
+            setExtraFilters([]);
+          }}
+          onAddFilter={(anchorEl) => {
+            setFilterTarget("primary");
+            setExternalFilterAnchor(anchorEl || null);
+            setIsFilterOpen(true);
+          }}
+          onChipClick={(_idx, anchorEl) => {
+            setFilterTarget("primary");
+            setExternalFilterAnchor(anchorEl || null);
+            setIsFilterOpen(true);
+          }}
         />
+
+        {/* Graphs — hidden in user mode (no project context). With compare
+            on the toolbar hides its date and Filter, so each graph carries
+            its own, as on Traces. */}
+        {!isUserMode && (
+          <Box sx={{ px: 2, flexShrink: 0 }}>
+            <Suspense fallback={null}>
+              <PrimaryGraph
+                filters={finalFilters}
+                dateFilter={dateFilter}
+                // Only with compare on: given a setter, the chart's
+                // drag-to-zoom also rewrites the date window.
+                setDateFilter={compareOn ? setDateFilter : undefined}
+                showDateFilter={compareOn}
+                onFilterToggle={
+                  compareOn
+                    ? (e) => handleGraphFilterToggle(e, "primary")
+                    : undefined
+                }
+                hasActiveFilter={compareOn && extraFilters.length > 0}
+                graphEndpoint={endpoints.project.getSessionGraphData()}
+                defaultMetric="latency"
+                graphLabel="Session Metrics"
+                trafficLabel="sessions"
+              />
+              {compareOn && (
+                <PrimaryGraph
+                  filters={compareGraphFilters}
+                  dateFilter={compareDateFilter}
+                  setDateFilter={setCompareDateFilter}
+                  showDateFilter
+                  onFilterToggle={(e) => handleGraphFilterToggle(e, "compare")}
+                  hasActiveFilter={compareExtraFilters.length > 0}
+                  graphEndpoint={endpoints.project.getSessionGraphData()}
+                  defaultMetric="latency"
+                  graphLabel="Compare Graph"
+                  trafficLabel="sessions"
+                  lineColorOverride={compareColors.line}
+                  barColorOverride={compareColors.bar}
+                />
+              )}
+            </Suspense>
+          </Box>
+        )}
+
+        <SelectAllBanner
+          visible={selectAll && !sessionFilterSelectionMode}
+          visibleCount={
+            getLiveSessionGridApi(
+              sessionGridApiRef,
+            )?.getDisplayedRowCount?.() || 0
+          }
+          totalMatching={
+            totalRowCountIsLowerBound
+              ? totalRowCountLowerBound || 0
+              : totalRowCount || 0
+          }
+          totalMatchingIsLowerBound={totalRowCountIsLowerBound}
+          noun="session"
+          onSelectAll={() => setSessionFilterSelectionMode(true)}
+        />
+
+        {/* Content */}
+        <Box
+          sx={{
+            display: "flex",
+            flexDirection: "column",
+            flex: 1,
+            minHeight: 0,
+          }}
+        >
+          <SessionGrid
+            columns={sessionColumns}
+            setColumns={setSessionColumns}
+            onUserReorder={() => {
+              sessionUserReorderedRef.current = true;
+            }}
+            ref={sessionGridApiRef}
+            updateObj={updateObj}
+            filters={finalFilters}
+            projectId={observeId}
+            cellHeight={cellHeight}
+            onSelectionChanged={onSelectionChanged}
+            className={shouldDisable ? "ag-grid-disabled" : ""}
+            onGridReady={onGridReady}
+            pendingCustomColumnsRef={pendingCustomColumnsRef}
+            canonicalOrderRef={canonicalOrderRef}
+            isOnSavedView={Boolean(activeViewConfig)}
+            userIdForUserMode={userIdForUserMode}
+            turnFieldPreferences={
+              isUserMode
+                ? undefined
+                : {
+                    ...turnFieldPreferences,
+                    save: async (fields) => {
+                      const result = await turnFieldPreferences.save(
+                        fields,
+                        buildViewConfig(),
+                      );
+                      if (result?.savedActiveView)
+                        setActiveViewConfig(result.config);
+                    },
+                  }
+            }
+          />
+        </Box>
       </Box>
 
       {/* Column configure dropdown */}

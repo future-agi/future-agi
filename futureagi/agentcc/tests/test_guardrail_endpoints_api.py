@@ -1,10 +1,13 @@
 """Coverage for the guardrail-policies, guardrail-configs helpers, blocklists, and guardrail-feedback endpoints."""
 
+from unittest.mock import patch
+
 import pytest
 
 from agentcc.models.blocklist import AgentccBlocklist
 from agentcc.models.guardrail_feedback import AgentccGuardrailFeedback
 from agentcc.models.guardrail_policy import AgentccGuardrailPolicy
+from agentcc.models.org_config import AgentccOrgConfig
 from agentcc.models.request_log import AgentccRequestLog
 
 
@@ -68,9 +71,7 @@ class TestGuardrailPolicyCRUD:
 
     def test_retrieve_returns_policy(self, auth_client, user):
         policy = _make_policy(user, name="retrieve-me")
-        response = auth_client.get(
-            f"/agentcc/guardrail-policies/{policy.id}/"
-        )
+        response = auth_client.get(f"/agentcc/guardrail-policies/{policy.id}/")
         assert response.status_code == 200
         assert response.json()["result"]["id"] == str(policy.id)
 
@@ -103,9 +104,7 @@ class TestGuardrailPolicyCRUD:
 
     def test_destroy_soft_deletes_policy(self, auth_client, user):
         policy = _make_policy(user, name="destroy-me")
-        response = auth_client.delete(
-            f"/agentcc/guardrail-policies/{policy.id}/"
-        )
+        response = auth_client.delete(f"/agentcc/guardrail-policies/{policy.id}/")
         assert response.status_code in (200, 204)
         policy.refresh_from_db()
         assert policy.deleted is True
@@ -114,12 +113,18 @@ class TestGuardrailPolicyCRUD:
 @pytest.mark.integration
 @pytest.mark.api
 class TestGuardrailPolicySync:
-    def test_sync_endpoint_returns_ok(self, auth_client, user):
+    def test_sync_without_active_config_reports_not_synced(self, auth_client, user):
         _make_policy(user, name="synceable", is_active=True)
-        response = auth_client.post("/agentcc/guardrail-policies/sync/")
+        assert not AgentccOrgConfig.no_workspace_objects.filter(
+            organization=user.organization
+        ).exists()
+        with patch("agentcc.services.config_push.push_org_config") as push_mock:
+            response = auth_client.post("/agentcc/guardrail-policies/sync/")
         assert response.status_code == 200
         result = response.json()["result"]
-        assert result["synced"] is True
+        assert result["synced"] is False
+        assert result["gateway_synced"] is False
+        push_mock.assert_not_called()
 
 
 @pytest.mark.integration
@@ -174,41 +179,37 @@ class TestBlocklistRemaining:
         assert response.status_code == 200
         assert response.json()["result"]["id"] == str(block.id)
 
-    def test_put_updates_words(self, auth_client, user):
-        block = _make_blocklist(user, name="put", words=["old"])
-        response = auth_client.put(
-            f"/agentcc/blocklists/{block.id}/",
-            {"name": "put", "words": ["new-one", "new-two"]},
-            format="json",
-        )
-        assert response.status_code == 200, response.json()
-        block.refresh_from_db()
-        assert set(block.words) == {"new-one", "new-two"}
+    # docs-agentcc-711, item 1: a stored blocklist never reaches the gateway,
+    # so every write answers 501 and the stored list stays as it was.
+    @pytest.mark.parametrize(
+        "method, suffix, body",
+        [
+            ("post", "", {"name": "new-list", "words": ["w"]}),
+            ("put", "{id}/", {"name": "put", "words": ["new-one", "new-two"]}),
+            ("patch", "{id}/", {"description": "now with a description"}),
+            ("delete", "{id}/", None),
+            ("post", "{id}/add-words/", {"words": ["added"]}),
+            ("post", "{id}/remove-words/", {"words": ["drop-me"]}),
+        ],
+        ids=["create", "put", "patch", "delete", "add-words", "remove-words"],
+    )
+    def test_every_write_answers_501_and_changes_nothing(
+        self, auth_client, user, method, suffix, body
+    ):
+        block = _make_blocklist(user, name="stored", words=["keep-1", "drop-me"])
+        url = "/agentcc/blocklists/" + suffix.format(id=block.id)
+        if body is None:
+            response = getattr(auth_client, method)(url)
+        else:
+            response = getattr(auth_client, method)(url, body, format="json")
 
-    def test_patch_updates_description(self, auth_client, user):
-        block = _make_blocklist(user, name="patch")
-        response = auth_client.patch(
-            f"/agentcc/blocklists/{block.id}/",
-            {"description": "now with a description"},
-            format="json",
-        )
-        assert response.status_code == 200
+        assert response.status_code == 501, response.json()
+        assert response.json()["code"] == "blocklists_not_supported"
         block.refresh_from_db()
-        assert block.description == "now with a description"
-
-    def test_remove_words_strips_specified_words(self, auth_client, user):
-        block = _make_blocklist(
-            user, name="remove", words=["keep-1", "drop-me", "keep-2"]
-        )
-        response = auth_client.post(
-            f"/agentcc/blocklists/{block.id}/remove-words/",
-            {"words": ["drop-me"]},
-            format="json",
-        )
-        assert response.status_code == 200, response.json()
-        block.refresh_from_db()
-        assert "drop-me" not in block.words
-        assert "keep-1" in block.words
+        assert block.words == ["keep-1", "drop-me"]
+        assert block.description == ""
+        assert block.deleted is False
+        assert not AgentccBlocklist.all_objects.filter(name="new-list").exists()
 
 
 @pytest.mark.integration
@@ -227,9 +228,7 @@ class TestGuardrailFeedbackCRUD:
         log = _make_request_log(user)
         fb = _make_feedback(user, log)
 
-        response = auth_client.get(
-            f"/agentcc/guardrail-feedback/{fb.id}/"
-        )
+        response = auth_client.get(f"/agentcc/guardrail-feedback/{fb.id}/")
         assert response.status_code == 200
         assert response.json()["result"]["id"] == str(fb.id)
 
@@ -267,9 +266,7 @@ class TestGuardrailFeedbackCRUD:
         log = _make_request_log(user)
         fb = _make_feedback(user, log)
 
-        response = auth_client.delete(
-            f"/agentcc/guardrail-feedback/{fb.id}/"
-        )
+        response = auth_client.delete(f"/agentcc/guardrail-feedback/{fb.id}/")
         assert response.status_code in (200, 204)
         fb.refresh_from_db()
         assert fb.deleted is True

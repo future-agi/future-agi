@@ -9,31 +9,25 @@ import {
   Typography,
 } from "@mui/material";
 import { Controller } from "react-hook-form";
-import { enqueueSnackbar } from "notistack";
-
-const MAX_VALUE = 10;
+import {
+  NUMERIC_BUTTON_CHOICES_MESSAGE,
+  hasTooManyButtonChoices,
+} from "../numeric-button-choices";
 
 NumericSettings.propTypes = {
   control: PropTypes.object.isRequired,
 };
 
-const handleNumberChange =
-  (field, max = Infinity) =>
-  (e) => {
-    const raw = e.target.value;
-    const cleaned = raw.replace(/^(-?)0+(?=\d)/, "$1");
-    if (cleaned !== raw) e.target.value = cleaned;
-    if (cleaned === "") {
-      field.onChange("");
-      return;
-    }
-    const num = Number(cleaned);
-    if (num > max) {
-      enqueueSnackbar(`Maximum value is ${max}`, { variant: "warning" });
-      return;
-    }
-    field.onChange(num);
-  };
+const handleNumberChange = (field) => (e) => {
+  const raw = e.target.value;
+  const cleaned = raw.replace(/^(-?)0+(?=\d)/, "$1");
+  if (cleaned !== raw) e.target.value = cleaned;
+  if (cleaned === "") {
+    field.onChange("");
+    return;
+  }
+  field.onChange(Number(cleaned));
+};
 
 export default function NumericSettings({ control }) {
   return (
@@ -45,7 +39,7 @@ export default function NumericSettings({ control }) {
           rules={{
             required: "Required",
             validate: (value) =>
-              Number(value) >= 0 || "Minimum cannot be negative",
+              Number(value) >= 0 || "Enter a value of 0 or more",
           }}
           render={({ field, fieldState }) => (
             <TextField
@@ -58,7 +52,7 @@ export default function NumericSettings({ control }) {
               error={!!fieldState.error}
               helperText={fieldState.error?.message}
               onChange={handleNumberChange(field)}
-              inputProps={{ min: 0 }}
+              inputProps={{ min: 0, step: "any" }}
             />
           )}
         />
@@ -67,9 +61,10 @@ export default function NumericSettings({ control }) {
           control={control}
           rules={{
             required: "Required",
-            max: { value: MAX_VALUE, message: `Maximum is ${MAX_VALUE}` },
             validate: (value, formValues) => {
-              if (Number(value) < 0) return "Maximum cannot be negative";
+              // The sign comes first, so a Maximum of 0 asks for a value
+              // above 0 before comparing it with the Minimum.
+              if (Number(value) <= 0) return "Enter a value above 0";
               return (
                 Number(value) > Number(formValues.settings?.min) ||
                 "Max must be greater than min"
@@ -86,8 +81,8 @@ export default function NumericSettings({ control }) {
               fullWidth
               error={!!fieldState.error}
               helperText={fieldState.error?.message}
-              onChange={handleNumberChange(field, MAX_VALUE)}
-              inputProps={{ min: 0, max: MAX_VALUE }}
+              onChange={handleNumberChange(field)}
+              inputProps={{ min: 0, step: "any" }}
             />
           )}
         />
@@ -98,8 +93,20 @@ export default function NumericSettings({ control }) {
         control={control}
         rules={{
           required: "Required",
-          validate: (value) =>
-            Number(value) > 0 || "Step size must be positive",
+          validate: (value, formValues) => {
+            if (!(Number(value) > 0)) return "Enter a value above 0";
+            // A button scale shows at most 11 choices; a label saved earlier
+            // with more still draws, but an edit to it is refused until the
+            // step or the display type changes.
+            const settings = formValues.settings ?? {};
+            if (
+              settings.display_type === "button" &&
+              hasTooManyButtonChoices(settings.min, settings.max, value)
+            ) {
+              return NUMERIC_BUTTON_CHOICES_MESSAGE;
+            }
+            return true;
+          },
         }}
         render={({ field, fieldState }) => (
           <TextField

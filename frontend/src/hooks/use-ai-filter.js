@@ -1,6 +1,7 @@
 import { useCallback, useState } from "react";
 import axios, { endpoints } from "src/utils/axios";
 import { ANALYTICS_REQUEST_TIMEOUT_MS } from "src/config/runtime_limits";
+import { getThrottledMessage } from "src/utils/errorUtils";
 
 export const SMART_AI_FILTER_TIMEOUT_MS = ANALYTICS_REQUEST_TIMEOUT_MS;
 
@@ -57,6 +58,8 @@ const schemaPropertyId = (fieldSchema) =>
 export function useAIFilter(schema) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  // The server's sentence when the smart filter's limit refused the request.
+  const [limitMessage, setLimitMessage] = useState(null);
 
   const callBackend = useCallback(async (payload, config) => {
     const { data } = await axios.post(
@@ -84,6 +87,7 @@ export function useAIFilter(schema) {
 
       setLoading(true);
       setError(null);
+      setLimitMessage(null);
 
       const startedAt = Date.now();
       const controller = new AbortController();
@@ -224,6 +228,7 @@ export function useAIFilter(schema) {
         setError(
           typeof message === "string" ? message : JSON.stringify(message),
         );
+        setLimitMessage(getThrottledMessage(err));
         throw err;
       } finally {
         clearTimeout(deadlineTimer);
@@ -234,5 +239,5 @@ export function useAIFilter(schema) {
     [schema, callBackend],
   );
 
-  return { parseQuery, loading, error };
+  return { parseQuery, loading, error, limitMessage };
 }

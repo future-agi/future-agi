@@ -40,6 +40,17 @@ def mock_organization_id():
 
 
 @pytest.fixture
+def mock_no_custom_model_row():
+    """Model a missing custom row while preserving factory routing."""
+    from model_hub.models.custom_models import CustomAIModel
+
+    with patch.object(
+        CustomAIModel.objects, "get", side_effect=CustomAIModel.DoesNotExist
+    ):
+        yield
+
+
+@pytest.fixture
 def mock_workspace_id():
     """Returns a mock workspace ID."""
     return str(uuid4())
@@ -332,7 +343,7 @@ class TestModelHandlerFactory:
         assert isinstance(handler, LLMHandler)
 
     def test_factory_routes_to_image_handler(
-        self, mock_organization_id, image_prompt_messages
+        self, mock_organization_id, image_prompt_messages, mock_no_custom_model_row
     ):
         """Test factory routes image generation models to ImageHandler."""
         from agentic_eval.core_evals.run_prompt.runprompt_handlers import (
@@ -355,7 +366,9 @@ class TestModelHandlerFactory:
 
         assert isinstance(handler, ImageHandler)
 
-    def test_factory_routes_to_tts_handler(self, mock_organization_id, tts_messages):
+    def test_factory_routes_to_tts_handler(
+        self, mock_organization_id, tts_messages, mock_no_custom_model_row
+    ):
         """Test factory routes TTS models to TTSHandler."""
         from agentic_eval.core_evals.run_prompt.runprompt_handlers import (
             ModelHandlerFactory,
@@ -378,7 +391,9 @@ class TestModelHandlerFactory:
 
         assert isinstance(handler, TTSHandler)
 
-    def test_factory_routes_to_stt_handler(self, mock_organization_id, audio_messages):
+    def test_factory_routes_to_stt_handler(
+        self, mock_organization_id, audio_messages, mock_no_custom_model_row
+    ):
         """Test factory routes STT models to STTHandler."""
         from agentic_eval.core_evals.run_prompt.runprompt_handlers import (
             ModelHandlerFactory,
@@ -401,7 +416,7 @@ class TestModelHandlerFactory:
         assert isinstance(handler, STTHandler)
 
     def test_factory_routes_gpt_image_models(
-        self, mock_organization_id, image_prompt_messages
+        self, mock_organization_id, image_prompt_messages, mock_no_custom_model_row
     ):
         """Test factory routes gpt-image models to ImageHandler."""
         from agentic_eval.core_evals.run_prompt.runprompt_handlers import (
@@ -425,7 +440,7 @@ class TestModelHandlerFactory:
         assert isinstance(handler, ImageHandler)
 
     def test_factory_routes_vertex_ai_imagen(
-        self, mock_organization_id, image_prompt_messages
+        self, mock_organization_id, image_prompt_messages, mock_no_custom_model_row
     ):
         """Test factory routes Vertex AI Imagen to ImageHandler."""
         from agentic_eval.core_evals.run_prompt.runprompt_handlers import (
@@ -994,7 +1009,11 @@ class TestFullFlowIntegration:
             assert response.response == "This is a test response."
 
     def test_full_flow_image_generation(
-        self, mock_organization_id, image_prompt_messages, mock_image_response
+        self,
+        mock_organization_id,
+        image_prompt_messages,
+        mock_image_response,
+        mock_no_custom_model_row,
     ):
         """Test full flow for image generation."""
         from agentic_eval.core_evals.run_prompt.runprompt_handlers import (

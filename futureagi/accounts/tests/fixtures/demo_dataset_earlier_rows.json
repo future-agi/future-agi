@@ -1,0 +1,2252 @@
+{
+ "about": "Three rows of an earlier demo seed file, copied whole (dataset row and experiment row) with the position they were seeded at.",
+ "rows": [
+  {
+   "position": 6,
+   "table": {
+    "row_id": "54723221-333f-4262-b8dc-944167f8a095",
+    "order": 6,
+    "caa28acb-df8b-4702-8878-271a4514ec85": {
+     "cell_value": "['yes']",
+     "metadata": {
+      "response_time_ms": null,
+      "token_count": null,
+      "annotation": "auto"
+     },
+     "status": "pass",
+     "value_infos": [],
+     "feedback_info": {
+      "annotation": {
+       "label_id": "f90e2208-acad-4903-83de-7ebdfae8f262",
+       "verified": false,
+       "explanation": "The context is only loosely related to the question.",
+       "annotation_id": "a33dfba8-d878-4a8d-9b47-77c03baabdfe",
+       "auto_annotate": true
+      }
+     }
+    },
+    "95693a5a-1a6b-4051-916d-9b757a62ea2c": {
+     "cell_value": "The response only uses facts that are stated in the context.",
+     "metadata": {
+      "response_time_ms": 20703,
+      "token_count": 2946,
+      "annotation": null
+     },
+     "status": "pass",
+     "value_infos": {
+      "name": "Groundedness",
+      "data": [
+       "Passed"
+      ],
+      "failure": false,
+      "reason": "The response only uses facts that are stated in the context.",
+      "runtime": 20703,
+      "model": "openai/gpt-4o-mini-2024-07-18",
+      "metrics": [
+       {
+        "id": 1,
+        "value": [
+         "Passed"
+        ]
+       }
+      ],
+      "metadata": {
+       "usage": {
+        "completion_tokens": 827,
+        "prompt_tokens": 2119,
+        "total_tokens": 2946
+       },
+       "cost": {
+        "total_cost": 0.000814,
+        "prompt_cost": 0.000318,
+        "completion_cost": 0.000496
+       },
+       "response_time": 20703,
+       "explanation": "The response only uses facts that are stated in the context.",
+       "data": {
+        "inputs": [
+         "How long should the tomato soup simmer before blending?",
+         "Simmer the soup for about twenty minutes, then blend it until smooth."
+        ],
+        "rule_prompt": "Check if the response is grounded in the provided context -- {{variable_1}} -- {{variable_2}}",
+        "choices": [
+         "Passed",
+         "Failed"
+        ],
+        "multi_choice": false,
+        "input_type": [
+         "text",
+         "text"
+        ]
+       }
+      },
+      "output": "Pass/Fail"
+     },
+     "feedback_info": {}
+    },
+    "ad4b782d-950a-41b1-a030-0b5d08b5b7ad": {
+     "cell_value": "Passed",
+     "metadata": {
+      "response_time_ms": 20703,
+      "token_count": 2946,
+      "annotation": null
+     },
+     "status": "pass",
+     "value_infos": {
+      "name": "Groundedness",
+      "data": [
+       "Passed"
+      ],
+      "failure": false,
+      "reason": "The response only uses facts that are stated in the context.",
+      "runtime": 20703,
+      "model": "openai/gpt-4o-mini-2024-07-18",
+      "metrics": [
+       {
+        "id": 1,
+        "value": [
+         "Passed"
+        ]
+       }
+      ],
+      "metadata": {
+       "usage": {
+        "completion_tokens": 827,
+        "prompt_tokens": 2119,
+        "total_tokens": 2946
+       },
+       "cost": {
+        "total_cost": 0.000814,
+        "prompt_cost": 0.000318,
+        "completion_cost": 0.000496
+       },
+       "response_time": 20703,
+       "explanation": "The response only uses facts that are stated in the context.",
+       "data": {
+        "inputs": [
+         "How long should the tomato soup simmer before blending?",
+         "Simmer the soup for about twenty minutes, then blend it until smooth."
+        ],
+        "rule_prompt": "Check if the response is grounded in the provided context -- {{variable_1}} -- {{variable_2}}",
+        "choices": [
+         "Passed",
+         "Failed"
+        ],
+        "multi_choice": false,
+        "input_type": [
+         "text",
+         "text"
+        ]
+       },
+       "error_analysis": {
+        "input1": []
+       },
+       "selected_input_key": "input_1",
+       "input_type": {
+        "input1": "text",
+        "input2": "text"
+       }
+      },
+      "output": "Pass/Fail"
+     },
+     "feedback_info": {}
+    },
+    "6753effc-70b0-49f1-97cf-764e4e52f834": {
+     "cell_value": "The response closely matches the expected answer, with small differences in wording.",
+     "metadata": {
+      "response_time_ms": null,
+      "token_count": null,
+      "annotation": null
+     },
+     "status": "pass",
+     "value_infos": {
+      "name": "Answer Similarity",
+      "data": {
+       "response": "Simmer the soup for about twenty minutes, then blend it until smooth.",
+       "expected_response": "About twenty minutes."
+      },
+      "failure": false,
+      "reason": "The response closely matches the expected answer, with small differences in wording.",
+      "runtime": 0,
+      "model": null,
+      "metrics": [
+       {
+        "id": "similarity_score",
+        "value": 0.8394339701512576
+       }
+      ],
+      "metadata": null,
+      "output": "score"
+     },
+     "feedback_info": {}
+    },
+    "a8b7e149-2048-4521-98ec-2341b67fd646": {
+     "cell_value": "0.8394339701512576",
+     "metadata": {
+      "response_time_ms": null,
+      "token_count": null,
+      "annotation": null
+     },
+     "status": "pass",
+     "value_infos": {
+      "name": "Answer Similarity",
+      "data": {
+       "response": "Simmer the soup for about twenty minutes, then blend it until smooth.",
+       "expected_response": "About twenty minutes."
+      },
+      "failure": false,
+      "reason": "The response closely matches the expected answer, with small differences in wording.",
+      "runtime": 0,
+      "model": null,
+      "metrics": [
+       {
+        "id": "similarity_score",
+        "value": 0.8394339701512576
+       }
+      ],
+      "metadata": {
+       "error_analysis": {
+        "input1": []
+       },
+       "selected_input_key": "response",
+       "input_type": {
+        "response": "text",
+        "expected_response": "text"
+       }
+      },
+      "output": "score"
+     },
+     "feedback_info": {}
+    },
+    "5114b3d5-21be-4932-b0af-293083ca894e": {
+     "cell_value": "1.0",
+     "metadata": {
+      "response_time_ms": 20444,
+      "token_count": 4493,
+      "annotation": null
+     },
+     "status": "pass",
+     "value_infos": {
+      "name": "Factual Accuracy",
+      "data": {
+       "input": "How long should the tomato soup simmer before blending?",
+       "output": "Let it simmer for twenty minutes before you blend it.",
+       "context": "To make a simple tomato soup, soften one chopped onion in olive oil for five minutes, add two crushed garlic cloves, then add 800 grams of chopped tomatoes and 500 millilitres of vegetable stock. Simmer for twenty minutes, blend until smooth, and season with salt, pepper and a little sugar if the tomatoes are sharp.",
+       "few_shots": [],
+       "criteria": "Check if the provided output is factually accurate based on the given information or the absence thereof.",
+       "eval_name": "Factual Accuracy"
+      },
+      "failure": false,
+      "reason": "Every fact in the output agrees with the context.",
+      "runtime": 20444,
+      "model": "anthropic.claude-3-5-sonnet-20240620-v1:0",
+      "metrics": [
+       {
+        "id": "OutputEvaluator",
+        "value": 1.0
+       }
+      ],
+      "metadata": {
+       "usage": {
+        "completion_tokens": 672,
+        "prompt_tokens": 3821,
+        "total_tokens": 4493
+       },
+       "cost": {
+        "total_cost": 0.000976,
+        "prompt_cost": 0.000573,
+        "completion_cost": 0.000403
+       },
+       "response_time": 20444
+      },
+      "output": "score"
+     },
+     "feedback_info": {}
+    },
+    "75faf354-d038-409c-a1ba-2810d863c3c8": {
+     "cell_value": "1.0",
+     "metadata": {
+      "response_time_ms": 21816,
+      "token_count": 4570,
+      "annotation": null
+     },
+     "status": "pass",
+     "value_infos": {
+      "name": "Factual Accuracy",
+      "data": {
+       "input": "How long should the tomato soup simmer before blending?",
+       "output": "About twenty minutes.",
+       "context": "To make a simple tomato soup, soften one chopped onion in olive oil for five minutes, add two crushed garlic cloves, then add 800 grams of chopped tomatoes and 500 millilitres of vegetable stock. Simmer for twenty minutes, blend until smooth, and season with salt, pepper and a little sugar if the tomatoes are sharp.",
+       "few_shots": [],
+       "criteria": "Check if the provided output is factually accurate based on the given information or the absence thereof.",
+       "eval_name": "Factual Accuracy"
+      },
+      "failure": false,
+      "reason": "Every fact in the output agrees with the context.",
+      "runtime": 21816,
+      "model": "anthropic.claude-3-5-sonnet-20240620-v1:0",
+      "metrics": [
+       {
+        "id": "OutputEvaluator",
+        "value": 1.0
+       }
+      ],
+      "metadata": {
+       "usage": {
+        "completion_tokens": 758,
+        "prompt_tokens": 3812,
+        "total_tokens": 4570
+       },
+       "cost": {
+        "total_cost": 0.001027,
+        "prompt_cost": 0.000572,
+        "completion_cost": 0.000455
+       },
+       "response_time": 21816
+      },
+      "output": "score"
+     },
+     "feedback_info": {}
+    },
+    "a882962e-9f50-4e2c-9c58-868471f4903f": {
+     "cell_value": "About twenty minutes.",
+     "metadata": {
+      "response_time_ms": null,
+      "token_count": null,
+      "annotation": null
+     },
+     "status": "pass",
+     "value_infos": {
+      "metadata": {}
+     },
+     "feedback_info": {}
+    },
+    "2ecba19c-20de-4431-840e-74aac636f155": {
+     "cell_value": "Let it simmer for twenty minutes before you blend it.",
+     "metadata": {
+      "response_time_ms": null,
+      "token_count": null,
+      "annotation": null
+     },
+     "status": "pass",
+     "value_infos": [],
+     "feedback_info": {}
+    },
+    "4a502202-ad6e-4cea-a295-426cf977dfb4": {
+     "cell_value": "Simmer the soup for about twenty minutes, then blend it until smooth.",
+     "metadata": {
+      "response_time_ms": 2355.593681335449,
+      "token_count": 1102,
+      "annotation": null
+     },
+     "status": "pass",
+     "value_infos": {
+      "name": null,
+      "data": {
+       "response": "Simmer the soup for about twenty minutes, then blend it until smooth."
+      },
+      "failure": null,
+      "reason": "Simmer the soup for about twenty minutes, then blend it until smooth.",
+      "runtime": 2355.593681335449,
+      "model": "gpt-4o-mini-2024-07-18",
+      "metrics": [],
+      "metadata": {
+       "usage": {
+        "completion_tokens": 58,
+        "prompt_tokens": 1044,
+        "total_tokens": 1102
+       },
+       "cost": {
+        "total_cost": 0.000192,
+        "prompt_cost": 0.000157,
+        "completion_cost": 3.5e-05
+       },
+       "response_time": 2355.593681335449
+      },
+      "output": null
+     },
+     "feedback_info": {}
+    },
+    "2e25aa95-7fb0-4804-8319-219cb7981c63": {
+     "cell_value": "To make a simple tomato soup, soften one chopped onion in olive oil for five minutes, add two crushed garlic cloves, then add 800 grams of chopped tomatoes and 500 millilitres of vegetable stock. Simmer for twenty minutes, blend until smooth, and season with salt, pepper and a little sugar if the tomatoes are sharp.",
+     "metadata": {
+      "response_time_ms": null,
+      "token_count": null,
+      "annotation": null
+     },
+     "status": "pass",
+     "value_infos": {
+      "metadata": {}
+     },
+     "feedback_info": {}
+    },
+    "6ed50ca8-4aeb-48db-a68d-7a570e3a92ac": {
+     "cell_value": "About twenty minutes.",
+     "metadata": {
+      "response_time_ms": null,
+      "token_count": null,
+      "annotation": null
+     },
+     "status": "pass",
+     "value_infos": {
+      "metadata": {}
+     },
+     "feedback_info": {}
+    },
+    "cf635e5b-92af-460d-a62b-8b22c64287d9": {
+     "cell_value": "How long should the tomato soup simmer before blending?",
+     "metadata": {
+      "response_time_ms": null,
+      "token_count": null,
+      "annotation": null
+     },
+     "status": "pass",
+     "value_infos": {
+      "metadata": {}
+     },
+     "feedback_info": {}
+    }
+   },
+   "experiment": {
+    "row_id": "54723221-333f-4262-b8dc-944167f8a095",
+    "2e25aa95-7fb0-4804-8319-219cb7981c63": {
+     "cell_value": "To make a simple tomato soup, soften one chopped onion in olive oil for five minutes, add two crushed garlic cloves, then add 800 grams of chopped tomatoes and 500 millilitres of vegetable stock. Simmer for twenty minutes, blend until smooth, and season with salt, pepper and a little sugar if the tomatoes are sharp.",
+     "status": "pass",
+     "metadata": {
+      "response_time_ms": 0,
+      "token_count": 0,
+      "cost": {},
+      "cell_metadata": {},
+      "reason": null
+     }
+    },
+    "cf635e5b-92af-460d-a62b-8b22c64287d9": {
+     "cell_value": "How long should the tomato soup simmer before blending?",
+     "status": "pass",
+     "metadata": {
+      "response_time_ms": 0,
+      "token_count": 0,
+      "cost": {},
+      "cell_metadata": {},
+      "reason": null
+     }
+    },
+    "6ed50ca8-4aeb-48db-a68d-7a570e3a92ac": {
+     "cell_value": "About twenty minutes.",
+     "status": "pass",
+     "metadata": {
+      "response_time_ms": 0,
+      "token_count": 0,
+      "cost": {},
+      "cell_metadata": {},
+      "reason": null
+     }
+    },
+    "4a502202-ad6e-4cea-a295-426cf977dfb4": {
+     "cell_value": "Simmer the soup for about twenty minutes, then blend it until smooth.",
+     "status": "pass",
+     "metadata": {
+      "response_time_ms": 2355.593681335449,
+      "token_count": 1102,
+      "cost": {
+       "total_cost": 0.000192,
+       "prompt_cost": 0.000157,
+       "completion_cost": 3.5e-05
+      },
+      "cell_metadata": {
+       "usage": {
+        "completion_tokens": 58,
+        "prompt_tokens": 1044,
+        "total_tokens": 1102
+       },
+       "cost": {
+        "total_cost": 0.000192,
+        "prompt_cost": 0.000157,
+        "completion_cost": 3.5e-05
+       },
+       "response_time": 2355.593681335449
+      },
+      "reason": "Simmer the soup for about twenty minutes, then blend it until smooth."
+     }
+    },
+    "a8b7e149-2048-4521-98ec-2341b67fd646": {
+     "cell_value": "0.8394339701512576",
+     "status": "pass",
+     "metadata": {
+      "response_time_ms": 0,
+      "token_count": 0,
+      "cost": {},
+      "cell_metadata": {
+       "error_analysis": {
+        "input1": []
+       },
+       "selected_input_key": "response",
+       "input_type": {
+        "response": "text",
+        "expected_response": "text"
+       }
+      },
+      "reason": "The response closely matches the expected answer, with small differences in wording."
+     }
+    },
+    "6753effc-70b0-49f1-97cf-764e4e52f834": {
+     "cell_value": "The response closely matches the expected answer, with small differences in wording.",
+     "status": "pass",
+     "metadata": {
+      "response_time_ms": 0,
+      "token_count": 0,
+      "cost": {},
+      "cell_metadata": {},
+      "reason": "The response closely matches the expected answer, with small differences in wording."
+     }
+    },
+    "ad4b782d-950a-41b1-a030-0b5d08b5b7ad": {
+     "cell_value": "Passed",
+     "status": "pass",
+     "metadata": {
+      "response_time_ms": 20703,
+      "token_count": 2946,
+      "cost": {
+       "total_cost": 0.000814,
+       "prompt_cost": 0.000318,
+       "completion_cost": 0.000496
+      },
+      "cell_metadata": {
+       "usage": {
+        "completion_tokens": 827,
+        "prompt_tokens": 2119,
+        "total_tokens": 2946
+       },
+       "cost": {
+        "total_cost": 0.000814,
+        "prompt_cost": 0.000318,
+        "completion_cost": 0.000496
+       },
+       "response_time": 20703,
+       "explanation": "The response only uses facts that are stated in the context.",
+       "data": {
+        "inputs": [
+         "How long should the tomato soup simmer before blending?",
+         "Simmer the soup for about twenty minutes, then blend it until smooth."
+        ],
+        "rule_prompt": "Check if the response is grounded in the provided context -- {{variable_1}} -- {{variable_2}}",
+        "choices": [
+         "Passed",
+         "Failed"
+        ],
+        "multi_choice": false,
+        "input_type": [
+         "text",
+         "text"
+        ]
+       },
+       "error_analysis": {
+        "input1": []
+       },
+       "selected_input_key": "input_1",
+       "input_type": {
+        "input1": "text",
+        "input2": "text"
+       }
+      },
+      "reason": "The response only uses facts that are stated in the context."
+     }
+    },
+    "95693a5a-1a6b-4051-916d-9b757a62ea2c": {
+     "cell_value": "The response only uses facts that are stated in the context.",
+     "status": "pass",
+     "metadata": {
+      "response_time_ms": 20703,
+      "token_count": 2946,
+      "cost": {
+       "total_cost": 0.000814,
+       "prompt_cost": 0.000318,
+       "completion_cost": 0.000496
+      },
+      "cell_metadata": {
+       "usage": {
+        "completion_tokens": 827,
+        "prompt_tokens": 2119,
+        "total_tokens": 2946
+       },
+       "cost": {
+        "total_cost": 0.000814,
+        "prompt_cost": 0.000318,
+        "completion_cost": 0.000496
+       },
+       "response_time": 20703,
+       "explanation": "The response only uses facts that are stated in the context.",
+       "data": {
+        "inputs": [
+         "How long should the tomato soup simmer before blending?",
+         "Simmer the soup for about twenty minutes, then blend it until smooth."
+        ],
+        "rule_prompt": "Check if the response is grounded in the provided context -- {{variable_1}} -- {{variable_2}}",
+        "choices": [
+         "Passed",
+         "Failed"
+        ],
+        "multi_choice": false,
+        "input_type": [
+         "text",
+         "text"
+        ]
+       }
+      },
+      "reason": "The response only uses facts that are stated in the context."
+     }
+    },
+    "8f5c9cec-1979-4bad-91f3-16c12f914dd2": {
+     "cell_value": "The response closely matches the expected answer, with small differences in wording.",
+     "status": "pass",
+     "metadata": {
+      "response_time_ms": 0,
+      "token_count": 0,
+      "cost": {},
+      "cell_metadata": {},
+      "reason": "The response closely matches the expected answer, with small differences in wording."
+     },
+     "value_infos": {
+      "reason": "The response closely matches the expected answer, with small differences in wording."
+     }
+    },
+    "060040e2-611d-4e54-a5c1-c8efec3c77a1": {
+     "cell_value": "0.8329517575430142",
+     "status": "pass",
+     "metadata": {
+      "response_time_ms": 0,
+      "token_count": 0,
+      "cost": {},
+      "cell_metadata": {},
+      "reason": "The response closely matches the expected answer, with small differences in wording."
+     },
+     "value_infos": {
+      "reason": "The response closely matches the expected answer, with small differences in wording."
+     }
+    },
+    "0edbd24d-e3b4-4cec-997d-4d2f8ef41acf": {
+     "cell_value": "The response only uses facts that are stated in the context.",
+     "status": "pass",
+     "metadata": {
+      "response_time_ms": 21019,
+      "token_count": 2941,
+      "cost": {
+       "total_cost": 0.000813,
+       "prompt_cost": 0.000317,
+       "completion_cost": 0.000496
+      },
+      "cell_metadata": {
+       "usage": {
+        "completion_tokens": 826,
+        "prompt_tokens": 2115,
+        "total_tokens": 2941
+       },
+       "cost": {
+        "total_cost": 0.000813,
+        "prompt_cost": 0.000317,
+        "completion_cost": 0.000496
+       },
+       "response_time": 21019,
+       "explanation": "The response only uses facts that are stated in the context.",
+       "data": {
+        "inputs": [
+         "How long should the tomato soup simmer before blending?",
+         "Let it simmer for twenty minutes before you blend it."
+        ],
+        "rule_prompt": "Check if the response is grounded in the provided context -- {{variable_1}} -- {{variable_2}}",
+        "choices": [
+         "Passed",
+         "Failed"
+        ],
+        "multi_choice": false,
+        "input_type": [
+         "text",
+         "text"
+        ]
+       }
+      },
+      "reason": "The response only uses facts that are stated in the context."
+     },
+     "value_infos": {
+      "reason": "The response only uses facts that are stated in the context."
+     }
+    },
+    "8b64215e-d754-4a3e-ac75-7acc4127a10f": {
+     "cell_value": "Passed",
+     "status": "pass",
+     "metadata": {
+      "response_time_ms": 21019,
+      "token_count": 2941,
+      "cost": {
+       "total_cost": 0.000813,
+       "prompt_cost": 0.000317,
+       "completion_cost": 0.000496
+      },
+      "cell_metadata": {
+       "usage": {
+        "completion_tokens": 826,
+        "prompt_tokens": 2115,
+        "total_tokens": 2941
+       },
+       "cost": {
+        "total_cost": 0.000813,
+        "prompt_cost": 0.000317,
+        "completion_cost": 0.000496
+       },
+       "response_time": 21019,
+       "explanation": "The response only uses facts that are stated in the context.",
+       "data": {
+        "inputs": [
+         "How long should the tomato soup simmer before blending?",
+         "Let it simmer for twenty minutes before you blend it."
+        ],
+        "rule_prompt": "Check if the response is grounded in the provided context -- {{variable_1}} -- {{variable_2}}",
+        "choices": [
+         "Passed",
+         "Failed"
+        ],
+        "multi_choice": false,
+        "input_type": [
+         "text",
+         "text"
+        ]
+       }
+      },
+      "reason": "The response only uses facts that are stated in the context."
+     },
+     "value_infos": {
+      "reason": "The response only uses facts that are stated in the context."
+     }
+    },
+    "67a09509-ed10-4dee-bb39-6e62d5e41f5c": {
+     "cell_value": "Let it simmer for twenty minutes before you blend it.",
+     "status": "pass",
+     "metadata": {
+      "response_time_ms": 2879.993200302124,
+      "token_count": 1452,
+      "cost": {
+       "total_cost": 0.007263,
+       "prompt_cost": 0.003387,
+       "completion_cost": 0.003876
+      },
+      "cell_metadata": {
+       "usage": {
+        "completion_tokens": 323,
+        "prompt_tokens": 1129,
+        "total_tokens": 1452
+       },
+       "cost": {
+        "total_cost": 0.007263,
+        "prompt_cost": 0.003387,
+        "completion_cost": 0.003876
+       },
+       "response_time": 2879.993200302124
+      },
+      "reason": "Let it simmer for twenty minutes before you blend it."
+     },
+     "value_infos": {
+      "reason": "Let it simmer for twenty minutes before you blend it."
+     }
+    }
+   }
+  },
+  {
+   "position": 7,
+   "table": {
+    "row_id": "7944ae2f-40df-4b2e-903e-52d1d996a395",
+    "order": 7,
+    "caa28acb-df8b-4702-8878-271a4514ec85": {
+     "cell_value": "['yes']",
+     "metadata": {
+      "response_time_ms": null,
+      "token_count": null,
+      "annotation": "auto"
+     },
+     "status": "pass",
+     "value_infos": [],
+     "feedback_info": {
+      "annotation": {
+       "label_id": "f90e2208-acad-4903-83de-7ebdfae8f262",
+       "verified": false,
+       "explanation": "The context is only loosely related to the question.",
+       "annotation_id": "a33dfba8-d878-4a8d-9b47-77c03baabdfe",
+       "auto_annotate": true
+      }
+     }
+    },
+    "95693a5a-1a6b-4051-916d-9b757a62ea2c": {
+     "cell_value": "The response only uses facts that are stated in the context.",
+     "metadata": {
+      "response_time_ms": 16727,
+      "token_count": 2781,
+      "annotation": null
+     },
+     "status": "pass",
+     "value_infos": {
+      "name": "Groundedness",
+      "data": [
+       "Passed"
+      ],
+      "failure": false,
+      "reason": "The response only uses facts that are stated in the context.",
+      "runtime": 16727,
+      "model": "openai/gpt-4o-mini-2024-07-18",
+      "metrics": [
+       {
+        "id": 1,
+        "value": [
+         "Passed"
+        ]
+       }
+      ],
+      "metadata": {
+       "usage": {
+        "completion_tokens": 756,
+        "prompt_tokens": 2025,
+        "total_tokens": 2781
+       },
+       "cost": {
+        "total_cost": 0.000758,
+        "prompt_cost": 0.000304,
+        "completion_cost": 0.000454
+       },
+       "response_time": 16727,
+       "explanation": "The response only uses facts that are stated in the context.",
+       "data": {
+        "inputs": [
+         "Which gas do plants release during photosynthesis?",
+         "Oxygen."
+        ],
+        "rule_prompt": "Check if the response is grounded in the provided context -- {{variable_1}} -- {{variable_2}}",
+        "choices": [
+         "Passed",
+         "Failed"
+        ],
+        "multi_choice": false,
+        "input_type": [
+         "text",
+         "text"
+        ]
+       }
+      },
+      "output": "Pass/Fail"
+     },
+     "feedback_info": {}
+    },
+    "ad4b782d-950a-41b1-a030-0b5d08b5b7ad": {
+     "cell_value": "Passed",
+     "metadata": {
+      "response_time_ms": 16727,
+      "token_count": 2781,
+      "annotation": null
+     },
+     "status": "pass",
+     "value_infos": {
+      "name": "Groundedness",
+      "data": [
+       "Passed"
+      ],
+      "failure": false,
+      "reason": "The response only uses facts that are stated in the context.",
+      "runtime": 16727,
+      "model": "openai/gpt-4o-mini-2024-07-18",
+      "metrics": [
+       {
+        "id": 1,
+        "value": [
+         "Passed"
+        ]
+       }
+      ],
+      "metadata": {
+       "usage": {
+        "completion_tokens": 756,
+        "prompt_tokens": 2025,
+        "total_tokens": 2781
+       },
+       "cost": {
+        "total_cost": 0.000758,
+        "prompt_cost": 0.000304,
+        "completion_cost": 0.000454
+       },
+       "response_time": 16727,
+       "explanation": "The response only uses facts that are stated in the context.",
+       "data": {
+        "inputs": [
+         "Which gas do plants release during photosynthesis?",
+         "Oxygen."
+        ],
+        "rule_prompt": "Check if the response is grounded in the provided context -- {{variable_1}} -- {{variable_2}}",
+        "choices": [
+         "Passed",
+         "Failed"
+        ],
+        "multi_choice": false,
+        "input_type": [
+         "text",
+         "text"
+        ]
+       },
+       "error_analysis": {
+        "input1": []
+       },
+       "selected_input_key": "input_1",
+       "input_type": {
+        "input1": "text",
+        "input2": "text"
+       }
+      },
+      "output": "Pass/Fail"
+     },
+     "feedback_info": {}
+    },
+    "6753effc-70b0-49f1-97cf-764e4e52f834": {
+     "cell_value": "The response closely matches the expected answer, with small differences in wording.",
+     "metadata": {
+      "response_time_ms": null,
+      "token_count": null,
+      "annotation": null
+     },
+     "status": "pass",
+     "value_infos": {
+      "name": "Answer Similarity",
+      "data": {
+       "response": "Oxygen.",
+       "expected_response": "Oxygen."
+      },
+      "failure": false,
+      "reason": "The response closely matches the expected answer, with small differences in wording.",
+      "runtime": 0,
+      "model": null,
+      "metrics": [
+       {
+        "id": "similarity_score",
+        "value": 0.9999999999999999
+       }
+      ],
+      "metadata": null,
+      "output": "score"
+     },
+     "feedback_info": {}
+    },
+    "a8b7e149-2048-4521-98ec-2341b67fd646": {
+     "cell_value": "0.9999999999999999",
+     "metadata": {
+      "response_time_ms": null,
+      "token_count": null,
+      "annotation": null
+     },
+     "status": "pass",
+     "value_infos": {
+      "name": "Answer Similarity",
+      "data": {
+       "response": "Oxygen.",
+       "expected_response": "Oxygen."
+      },
+      "failure": false,
+      "reason": "The response closely matches the expected answer, with small differences in wording.",
+      "runtime": 0,
+      "model": null,
+      "metrics": [
+       {
+        "id": "similarity_score",
+        "value": 0.9999999999999999
+       }
+      ],
+      "metadata": {
+       "error_analysis": {
+        "input1": []
+       },
+       "selected_input_key": "response",
+       "input_type": {
+        "response": "text",
+        "expected_response": "text"
+       }
+      },
+      "output": "score"
+     },
+     "feedback_info": {}
+    },
+    "75faf354-d038-409c-a1ba-2810d863c3c8": {
+     "cell_value": "1.0",
+     "metadata": {
+      "response_time_ms": 22658,
+      "token_count": 2988,
+      "annotation": null
+     },
+     "status": "pass",
+     "value_infos": {
+      "name": "Factual Accuracy",
+      "data": {
+       "input": "Which gas do plants release during photosynthesis?",
+       "output": "Oxygen.",
+       "context": "Photosynthesis is the process plants use to turn light into chemical energy. In the chloroplasts, light energy splits water molecules, releasing oxygen, and the energy is used to build glucose from carbon dioxide. The green pigment chlorophyll absorbs mostly red and blue light and reflects green light.",
+       "few_shots": [],
+       "criteria": "Check if the provided output is factually accurate based on the given information or the absence thereof.",
+       "eval_name": "Factual Accuracy"
+      },
+      "failure": false,
+      "reason": "Every fact in the output agrees with the context.",
+      "runtime": 22658,
+      "model": "anthropic.claude-3-5-sonnet-20240620-v1:0",
+      "metrics": [
+       {
+        "id": "OutputEvaluator",
+        "value": 1.0
+       }
+      ],
+      "metadata": {
+       "usage": {
+        "completion_tokens": 748,
+        "prompt_tokens": 2240,
+        "total_tokens": 2988
+       },
+       "cost": {
+        "total_cost": 0.000785,
+        "prompt_cost": 0.000336,
+        "completion_cost": 0.000449
+       },
+       "response_time": 22658
+      },
+      "output": "score"
+     },
+     "feedback_info": {}
+    },
+    "5114b3d5-21be-4932-b0af-293083ca894e": {
+     "cell_value": "0.8",
+     "metadata": {
+      "response_time_ms": 19749,
+      "token_count": 2899,
+      "annotation": null
+     },
+     "status": "pass",
+     "value_infos": {
+      "name": "Factual Accuracy",
+      "data": {
+       "input": "Which gas do plants release during photosynthesis?",
+       "output": "Oxygen.",
+       "context": "Photosynthesis is the process plants use to turn light into chemical energy. In the chloroplasts, light energy splits water molecules, releasing oxygen, and the energy is used to build glucose from carbon dioxide. The green pigment chlorophyll absorbs mostly red and blue light and reflects green light.",
+       "few_shots": [],
+       "criteria": "Check if the provided output is factually accurate based on the given information or the absence thereof.",
+       "eval_name": "Factual Accuracy"
+      },
+      "failure": false,
+      "reason": "Most facts in the output agree with the context, but one detail is not stated in it.",
+      "runtime": 19749,
+      "model": "anthropic.claude-3-5-sonnet-20240620-v1:0",
+      "metrics": [
+       {
+        "id": "OutputEvaluator",
+        "value": 1.0
+       }
+      ],
+      "metadata": {
+       "usage": {
+        "completion_tokens": 700,
+        "prompt_tokens": 2199,
+        "total_tokens": 2899
+       },
+       "cost": {
+        "total_cost": 0.00075,
+        "prompt_cost": 0.00033,
+        "completion_cost": 0.00042
+       },
+       "response_time": 19749
+      },
+      "output": "score"
+     },
+     "feedback_info": {}
+    },
+    "a882962e-9f50-4e2c-9c58-868471f4903f": {
+     "cell_value": "Oxygen.",
+     "metadata": {
+      "response_time_ms": null,
+      "token_count": null,
+      "annotation": null
+     },
+     "status": "pass",
+     "value_infos": {
+      "metadata": {}
+     },
+     "feedback_info": {}
+    },
+    "2ecba19c-20de-4431-840e-74aac636f155": {
+     "cell_value": "Oxygen.",
+     "metadata": {
+      "response_time_ms": null,
+      "token_count": null,
+      "annotation": null
+     },
+     "status": "pass",
+     "value_infos": [],
+     "feedback_info": {}
+    },
+    "4a502202-ad6e-4cea-a295-426cf977dfb4": {
+     "cell_value": "Oxygen.",
+     "metadata": {
+      "response_time_ms": 1123.563528060913,
+      "token_count": 387,
+      "annotation": null
+     },
+     "status": "pass",
+     "value_infos": {
+      "name": null,
+      "data": {
+       "response": "Oxygen."
+      },
+      "failure": null,
+      "reason": "Oxygen.",
+      "runtime": 1123.563528060913,
+      "model": "gpt-4o-mini-2024-07-18",
+      "metrics": [],
+      "metadata": {
+       "usage": {
+        "completion_tokens": 31,
+        "prompt_tokens": 356,
+        "total_tokens": 387
+       },
+       "cost": {
+        "total_cost": 7.2e-05,
+        "prompt_cost": 5.3e-05,
+        "completion_cost": 1.9e-05
+       },
+       "response_time": 1123.563528060913
+      },
+      "output": null
+     },
+     "feedback_info": {}
+    },
+    "2e25aa95-7fb0-4804-8319-219cb7981c63": {
+     "cell_value": "Photosynthesis is the process plants use to turn light into chemical energy. In the chloroplasts, light energy splits water molecules, releasing oxygen, and the energy is used to build glucose from carbon dioxide. The green pigment chlorophyll absorbs mostly red and blue light and reflects green light.",
+     "metadata": {
+      "response_time_ms": null,
+      "token_count": null,
+      "annotation": null
+     },
+     "status": "pass",
+     "value_infos": {
+      "metadata": {}
+     },
+     "feedback_info": {}
+    },
+    "cf635e5b-92af-460d-a62b-8b22c64287d9": {
+     "cell_value": "Which gas do plants release during photosynthesis?",
+     "metadata": {
+      "response_time_ms": null,
+      "token_count": null,
+      "annotation": null
+     },
+     "status": "pass",
+     "value_infos": {
+      "metadata": {}
+     },
+     "feedback_info": {}
+    },
+    "6ed50ca8-4aeb-48db-a68d-7a570e3a92ac": {
+     "cell_value": "Oxygen.",
+     "metadata": {
+      "response_time_ms": null,
+      "token_count": null,
+      "annotation": null
+     },
+     "status": "pass",
+     "value_infos": {
+      "metadata": {}
+     },
+     "feedback_info": {}
+    }
+   },
+   "experiment": {
+    "row_id": "7944ae2f-40df-4b2e-903e-52d1d996a395",
+    "2e25aa95-7fb0-4804-8319-219cb7981c63": {
+     "cell_value": "Photosynthesis is the process plants use to turn light into chemical energy. In the chloroplasts, light energy splits water molecules, releasing oxygen, and the energy is used to build glucose from carbon dioxide. The green pigment chlorophyll absorbs mostly red and blue light and reflects green light.",
+     "status": "pass",
+     "metadata": {
+      "response_time_ms": 0,
+      "token_count": 0,
+      "cost": {},
+      "cell_metadata": {},
+      "reason": null
+     }
+    },
+    "cf635e5b-92af-460d-a62b-8b22c64287d9": {
+     "cell_value": "Which gas do plants release during photosynthesis?",
+     "status": "pass",
+     "metadata": {
+      "response_time_ms": 0,
+      "token_count": 0,
+      "cost": {},
+      "cell_metadata": {},
+      "reason": null
+     }
+    },
+    "6ed50ca8-4aeb-48db-a68d-7a570e3a92ac": {
+     "cell_value": "Oxygen.",
+     "status": "pass",
+     "metadata": {
+      "response_time_ms": 0,
+      "token_count": 0,
+      "cost": {},
+      "cell_metadata": {},
+      "reason": null
+     }
+    },
+    "4a502202-ad6e-4cea-a295-426cf977dfb4": {
+     "cell_value": "Oxygen.",
+     "status": "pass",
+     "metadata": {
+      "response_time_ms": 1123.563528060913,
+      "token_count": 387,
+      "cost": {
+       "total_cost": 7.2e-05,
+       "prompt_cost": 5.3e-05,
+       "completion_cost": 1.9e-05
+      },
+      "cell_metadata": {
+       "usage": {
+        "completion_tokens": 31,
+        "prompt_tokens": 356,
+        "total_tokens": 387
+       },
+       "cost": {
+        "total_cost": 7.2e-05,
+        "prompt_cost": 5.3e-05,
+        "completion_cost": 1.9e-05
+       },
+       "response_time": 1123.563528060913
+      },
+      "reason": "Oxygen."
+     }
+    },
+    "a8b7e149-2048-4521-98ec-2341b67fd646": {
+     "cell_value": "0.9999999999999999",
+     "status": "pass",
+     "metadata": {
+      "response_time_ms": 0,
+      "token_count": 0,
+      "cost": {},
+      "cell_metadata": {
+       "error_analysis": {
+        "input1": []
+       },
+       "selected_input_key": "response",
+       "input_type": {
+        "response": "text",
+        "expected_response": "text"
+       }
+      },
+      "reason": "The response closely matches the expected answer, with small differences in wording."
+     }
+    },
+    "6753effc-70b0-49f1-97cf-764e4e52f834": {
+     "cell_value": "The response closely matches the expected answer, with small differences in wording.",
+     "status": "pass",
+     "metadata": {
+      "response_time_ms": 0,
+      "token_count": 0,
+      "cost": {},
+      "cell_metadata": {},
+      "reason": "The response closely matches the expected answer, with small differences in wording."
+     }
+    },
+    "ad4b782d-950a-41b1-a030-0b5d08b5b7ad": {
+     "cell_value": "Passed",
+     "status": "pass",
+     "metadata": {
+      "response_time_ms": 16727,
+      "token_count": 2781,
+      "cost": {
+       "total_cost": 0.000758,
+       "prompt_cost": 0.000304,
+       "completion_cost": 0.000454
+      },
+      "cell_metadata": {
+       "usage": {
+        "completion_tokens": 756,
+        "prompt_tokens": 2025,
+        "total_tokens": 2781
+       },
+       "cost": {
+        "total_cost": 0.000758,
+        "prompt_cost": 0.000304,
+        "completion_cost": 0.000454
+       },
+       "response_time": 16727,
+       "explanation": "The response only uses facts that are stated in the context.",
+       "data": {
+        "inputs": [
+         "Which gas do plants release during photosynthesis?",
+         "Oxygen."
+        ],
+        "rule_prompt": "Check if the response is grounded in the provided context -- {{variable_1}} -- {{variable_2}}",
+        "choices": [
+         "Passed",
+         "Failed"
+        ],
+        "multi_choice": false,
+        "input_type": [
+         "text",
+         "text"
+        ]
+       },
+       "error_analysis": {
+        "input1": []
+       },
+       "selected_input_key": "input_1",
+       "input_type": {
+        "input1": "text",
+        "input2": "text"
+       }
+      },
+      "reason": "The response only uses facts that are stated in the context."
+     }
+    },
+    "95693a5a-1a6b-4051-916d-9b757a62ea2c": {
+     "cell_value": "The response only uses facts that are stated in the context.",
+     "status": "pass",
+     "metadata": {
+      "response_time_ms": 16727,
+      "token_count": 2781,
+      "cost": {
+       "total_cost": 0.000758,
+       "prompt_cost": 0.000304,
+       "completion_cost": 0.000454
+      },
+      "cell_metadata": {
+       "usage": {
+        "completion_tokens": 756,
+        "prompt_tokens": 2025,
+        "total_tokens": 2781
+       },
+       "cost": {
+        "total_cost": 0.000758,
+        "prompt_cost": 0.000304,
+        "completion_cost": 0.000454
+       },
+       "response_time": 16727,
+       "explanation": "The response only uses facts that are stated in the context.",
+       "data": {
+        "inputs": [
+         "Which gas do plants release during photosynthesis?",
+         "Oxygen."
+        ],
+        "rule_prompt": "Check if the response is grounded in the provided context -- {{variable_1}} -- {{variable_2}}",
+        "choices": [
+         "Passed",
+         "Failed"
+        ],
+        "multi_choice": false,
+        "input_type": [
+         "text",
+         "text"
+        ]
+       }
+      },
+      "reason": "The response only uses facts that are stated in the context."
+     }
+    },
+    "8f5c9cec-1979-4bad-91f3-16c12f914dd2": {
+     "cell_value": "The response closely matches the expected answer, with small differences in wording.",
+     "status": "pass",
+     "metadata": {
+      "response_time_ms": 0,
+      "token_count": 0,
+      "cost": {},
+      "cell_metadata": {},
+      "reason": "The response closely matches the expected answer, with small differences in wording."
+     },
+     "value_infos": {
+      "reason": "The response closely matches the expected answer, with small differences in wording."
+     }
+    },
+    "060040e2-611d-4e54-a5c1-c8efec3c77a1": {
+     "cell_value": "0.8625819491779427",
+     "status": "pass",
+     "metadata": {
+      "response_time_ms": 0,
+      "token_count": 0,
+      "cost": {},
+      "cell_metadata": {},
+      "reason": "The response closely matches the expected answer, with small differences in wording."
+     },
+     "value_infos": {
+      "reason": "The response closely matches the expected answer, with small differences in wording."
+     }
+    },
+    "0edbd24d-e3b4-4cec-997d-4d2f8ef41acf": {
+     "cell_value": "The response only uses facts that are stated in the context.",
+     "status": "pass",
+     "metadata": {
+      "response_time_ms": 21008,
+      "token_count": 2850,
+      "cost": {
+       "total_cost": 0.000787,
+       "prompt_cost": 0.000308,
+       "completion_cost": 0.000479
+      },
+      "cell_metadata": {
+       "usage": {
+        "completion_tokens": 799,
+        "prompt_tokens": 2051,
+        "total_tokens": 2850
+       },
+       "cost": {
+        "total_cost": 0.000787,
+        "prompt_cost": 0.000308,
+        "completion_cost": 0.000479
+       },
+       "response_time": 21008,
+       "explanation": "The response only uses facts that are stated in the context.",
+       "data": {
+        "inputs": [
+         "Which gas do plants release during photosynthesis?",
+         "Oxygen is released when water molecules are split."
+        ],
+        "rule_prompt": "Check if the response is grounded in the provided context -- {{variable_1}} -- {{variable_2}}",
+        "choices": [
+         "Passed",
+         "Failed"
+        ],
+        "multi_choice": false,
+        "input_type": [
+         "text",
+         "text"
+        ]
+       }
+      },
+      "reason": "The response only uses facts that are stated in the context."
+     },
+     "value_infos": {
+      "reason": "The response only uses facts that are stated in the context."
+     }
+    },
+    "8b64215e-d754-4a3e-ac75-7acc4127a10f": {
+     "cell_value": "Passed",
+     "status": "pass",
+     "metadata": {
+      "response_time_ms": 21008,
+      "token_count": 2850,
+      "cost": {
+       "total_cost": 0.000787,
+       "prompt_cost": 0.000308,
+       "completion_cost": 0.000479
+      },
+      "cell_metadata": {
+       "usage": {
+        "completion_tokens": 799,
+        "prompt_tokens": 2051,
+        "total_tokens": 2850
+       },
+       "cost": {
+        "total_cost": 0.000787,
+        "prompt_cost": 0.000308,
+        "completion_cost": 0.000479
+       },
+       "response_time": 21008,
+       "explanation": "The response only uses facts that are stated in the context.",
+       "data": {
+        "inputs": [
+         "Which gas do plants release during photosynthesis?",
+         "Oxygen is released when water molecules are split."
+        ],
+        "rule_prompt": "Check if the response is grounded in the provided context -- {{variable_1}} -- {{variable_2}}",
+        "choices": [
+         "Passed",
+         "Failed"
+        ],
+        "multi_choice": false,
+        "input_type": [
+         "text",
+         "text"
+        ]
+       }
+      },
+      "reason": "The response only uses facts that are stated in the context."
+     },
+     "value_infos": {
+      "reason": "The response only uses facts that are stated in the context."
+     }
+    },
+    "67a09509-ed10-4dee-bb39-6e62d5e41f5c": {
+     "cell_value": "Oxygen is released when water molecules are split.",
+     "status": "pass",
+     "metadata": {
+      "response_time_ms": 2034.6689224243164,
+      "token_count": 630,
+      "cost": {
+       "total_cost": 0.004041,
+       "prompt_cost": 0.001173,
+       "completion_cost": 0.002868
+      },
+      "cell_metadata": {
+       "usage": {
+        "completion_tokens": 239,
+        "prompt_tokens": 391,
+        "total_tokens": 630
+       },
+       "cost": {
+        "total_cost": 0.004041,
+        "prompt_cost": 0.001173,
+        "completion_cost": 0.002868
+       },
+       "response_time": 2034.6689224243164
+      },
+      "reason": "Oxygen is released when water molecules are split."
+     },
+     "value_infos": {
+      "reason": "Oxygen is released when water molecules are split."
+     }
+    }
+   }
+  },
+  {
+   "position": 11,
+   "table": {
+    "row_id": "1ee53caa-fd5f-4c87-9ec7-4f9b09dca72a",
+    "order": 11,
+    "caa28acb-df8b-4702-8878-271a4514ec85": {
+     "cell_value": "['yes']",
+     "metadata": {
+      "response_time_ms": null,
+      "token_count": null,
+      "annotation": "auto"
+     },
+     "status": "pass",
+     "value_infos": [],
+     "feedback_info": {
+      "annotation": {
+       "label_id": "f90e2208-acad-4903-83de-7ebdfae8f262",
+       "verified": false,
+       "explanation": "The context is only loosely related to the question.",
+       "annotation_id": "a33dfba8-d878-4a8d-9b47-77c03baabdfe",
+       "auto_annotate": true
+      }
+     }
+    },
+    "95693a5a-1a6b-4051-916d-9b757a62ea2c": {
+     "cell_value": "The response only uses facts that are stated in the context.",
+     "metadata": {
+      "response_time_ms": 19540,
+      "token_count": 3308,
+      "annotation": null
+     },
+     "status": "pass",
+     "value_infos": {
+      "name": "Groundedness",
+      "data": [
+       "Passed"
+      ],
+      "failure": false,
+      "reason": "The response only uses facts that are stated in the context.",
+      "runtime": 19540,
+      "model": "openai/gpt-4o-mini-2024-07-18",
+      "metrics": [
+       {
+        "id": 1,
+        "value": [
+         "Passed"
+        ]
+       }
+      ],
+      "metadata": {
+       "usage": {
+        "completion_tokens": 845,
+        "prompt_tokens": 2463,
+        "total_tokens": 3308
+       },
+       "cost": {
+        "total_cost": 0.000876,
+        "prompt_cost": 0.000369,
+        "completion_cost": 0.000507
+       },
+       "response_time": 19540,
+       "explanation": "The response only uses facts that are stated in the context.",
+       "data": {
+        "inputs": [
+         "What are Saturn's rings made of?",
+         "Saturn's rings are made mostly of ice particles, mixed with smaller amounts of rock and dust. They orbit the planet in a thin, wide disc."
+        ],
+        "rule_prompt": "Check if the response is grounded in the provided context -- {{variable_1}} -- {{variable_2}}",
+        "choices": [
+         "Passed",
+         "Failed"
+        ],
+        "multi_choice": false,
+        "input_type": [
+         "text",
+         "text"
+        ]
+       }
+      },
+      "output": "Pass/Fail"
+     },
+     "feedback_info": {}
+    },
+    "ad4b782d-950a-41b1-a030-0b5d08b5b7ad": {
+     "cell_value": "Passed",
+     "metadata": {
+      "response_time_ms": 19540,
+      "token_count": 3308,
+      "annotation": null
+     },
+     "status": "pass",
+     "value_infos": {
+      "name": "Groundedness",
+      "data": [
+       "Passed"
+      ],
+      "failure": false,
+      "reason": "The response only uses facts that are stated in the context.",
+      "runtime": 19540,
+      "model": "openai/gpt-4o-mini-2024-07-18",
+      "metrics": [
+       {
+        "id": 1,
+        "value": [
+         "Passed"
+        ]
+       }
+      ],
+      "metadata": {
+       "usage": {
+        "completion_tokens": 845,
+        "prompt_tokens": 2463,
+        "total_tokens": 3308
+       },
+       "cost": {
+        "total_cost": 0.000876,
+        "prompt_cost": 0.000369,
+        "completion_cost": 0.000507
+       },
+       "response_time": 19540,
+       "explanation": "The response only uses facts that are stated in the context.",
+       "data": {
+        "inputs": [
+         "What are Saturn's rings made of?",
+         "Saturn's rings are made mostly of ice particles, mixed with smaller amounts of rock and dust. They orbit the planet in a thin, wide disc."
+        ],
+        "rule_prompt": "Check if the response is grounded in the provided context -- {{variable_1}} -- {{variable_2}}",
+        "choices": [
+         "Passed",
+         "Failed"
+        ],
+        "multi_choice": false,
+        "input_type": [
+         "text",
+         "text"
+        ]
+       },
+       "error_analysis": {
+        "input1": []
+       },
+       "selected_input_key": "input_1",
+       "input_type": {
+        "input1": "text",
+        "input2": "text"
+       }
+      },
+      "output": "Pass/Fail"
+     },
+     "feedback_info": {}
+    },
+    "6753effc-70b0-49f1-97cf-764e4e52f834": {
+     "cell_value": "The response only partly matches the expected answer; it adds or changes details.",
+     "metadata": {
+      "response_time_ms": null,
+      "token_count": null,
+      "annotation": null
+     },
+     "status": "pass",
+     "value_infos": {
+      "name": "Answer Similarity",
+      "data": {
+       "response": "Saturn's rings are made mostly of ice particles, mixed with smaller amounts of rock and dust. They orbit the planet in a thin, wide disc.",
+       "expected_response": "Mostly ice particles, with some rock and dust."
+      },
+      "failure": false,
+      "reason": "The response only partly matches the expected answer; it adds or changes details.",
+      "runtime": 0,
+      "model": null,
+      "metrics": [
+       {
+        "id": "similarity_score",
+        "value": 0.5417363388859614
+       }
+      ],
+      "metadata": null,
+      "output": "score"
+     },
+     "feedback_info": {}
+    },
+    "a8b7e149-2048-4521-98ec-2341b67fd646": {
+     "cell_value": "0.5417363388859614",
+     "metadata": {
+      "response_time_ms": null,
+      "token_count": null,
+      "annotation": null
+     },
+     "status": "pass",
+     "value_infos": {
+      "name": "Answer Similarity",
+      "data": {
+       "response": "Saturn's rings are made mostly of ice particles, mixed with smaller amounts of rock and dust. They orbit the planet in a thin, wide disc.",
+       "expected_response": "Mostly ice particles, with some rock and dust."
+      },
+      "failure": false,
+      "reason": "The response only partly matches the expected answer; it adds or changes details.",
+      "runtime": 0,
+      "model": null,
+      "metrics": [
+       {
+        "id": "similarity_score",
+        "value": 0.5417363388859614
+       }
+      ],
+      "metadata": {
+       "error_analysis": {
+        "input1": []
+       },
+       "selected_input_key": "response",
+       "input_type": {
+        "response": "text",
+        "expected_response": "text"
+       }
+      },
+      "output": "score"
+     },
+     "feedback_info": {}
+    },
+    "75faf354-d038-409c-a1ba-2810d863c3c8": {
+     "cell_value": "1.0",
+     "metadata": {
+      "response_time_ms": 24054,
+      "token_count": 4346,
+      "annotation": null
+     },
+     "status": "pass",
+     "value_infos": {
+      "name": "Factual Accuracy",
+      "data": {
+       "input": "What are Saturn's rings made of?",
+       "output": "Saturn's rings are made mostly of ice particles, mixed with smaller amounts of rock and dust. They orbit the planet in a thin, wide disc.",
+       "context": "Saturn is the sixth planet from the Sun and the second largest in the solar system. Its rings are made mostly of ice particles with some rock and dust. Saturn has more than one hundred known moons; the largest, Titan, has a thick nitrogen atmosphere and lakes of liquid methane on its surface.",
+       "few_shots": [],
+       "criteria": "Check if the provided output is factually accurate based on the given information or the absence thereof.",
+       "eval_name": "Factual Accuracy"
+      },
+      "failure": false,
+      "reason": "Every fact in the output agrees with the context.",
+      "runtime": 24054,
+      "model": "anthropic.claude-3-5-sonnet-20240620-v1:0",
+      "metrics": [
+       {
+        "id": "OutputEvaluator",
+        "value": 1.0
+       }
+      ],
+      "metadata": {
+       "usage": {
+        "completion_tokens": 775,
+        "prompt_tokens": 3571,
+        "total_tokens": 4346
+       },
+       "cost": {
+        "total_cost": 0.001001,
+        "prompt_cost": 0.000536,
+        "completion_cost": 0.000465
+       },
+       "response_time": 24054
+      },
+      "output": "score"
+     },
+     "feedback_info": {}
+    },
+    "5114b3d5-21be-4932-b0af-293083ca894e": {
+     "cell_value": "1.0",
+     "metadata": {
+      "response_time_ms": 21338,
+      "token_count": 4350,
+      "annotation": null
+     },
+     "status": "pass",
+     "value_infos": {
+      "name": "Factual Accuracy",
+      "data": {
+       "input": "What are Saturn's rings made of?",
+       "output": "The rings consist mainly of ice, with some rock and dust mixed in.",
+       "context": "Saturn is the sixth planet from the Sun and the second largest in the solar system. Its rings are made mostly of ice particles with some rock and dust. Saturn has more than one hundred known moons; the largest, Titan, has a thick nitrogen atmosphere and lakes of liquid methane on its surface.",
+       "few_shots": [],
+       "criteria": "Check if the provided output is factually accurate based on the given information or the absence thereof.",
+       "eval_name": "Factual Accuracy"
+      },
+      "failure": false,
+      "reason": "Every fact in the output agrees with the context.",
+      "runtime": 21338,
+      "model": "anthropic.claude-3-5-sonnet-20240620-v1:0",
+      "metrics": [
+       {
+        "id": "OutputEvaluator",
+        "value": 1.0
+       }
+      ],
+      "metadata": {
+       "usage": {
+        "completion_tokens": 744,
+        "prompt_tokens": 3606,
+        "total_tokens": 4350
+       },
+       "cost": {
+        "total_cost": 0.000987,
+        "prompt_cost": 0.000541,
+        "completion_cost": 0.000446
+       },
+       "response_time": 21338
+      },
+      "output": "score"
+     },
+     "feedback_info": {}
+    },
+    "a882962e-9f50-4e2c-9c58-868471f4903f": {
+     "cell_value": "Saturn's rings are made mostly of ice particles, mixed with smaller amounts of rock and dust. They orbit the planet in a thin, wide disc.",
+     "metadata": {
+      "response_time_ms": null,
+      "token_count": null,
+      "annotation": null
+     },
+     "status": "pass",
+     "value_infos": {
+      "metadata": {}
+     },
+     "feedback_info": {}
+    },
+    "2ecba19c-20de-4431-840e-74aac636f155": {
+     "cell_value": "The rings consist mainly of ice, with some rock and dust mixed in.",
+     "metadata": {
+      "response_time_ms": null,
+      "token_count": null,
+      "annotation": null
+     },
+     "status": "pass",
+     "value_infos": [],
+     "feedback_info": {}
+    },
+    "4a502202-ad6e-4cea-a295-426cf977dfb4": {
+     "cell_value": "Saturn's rings are made mostly of ice particles, mixed with smaller amounts of rock and dust. They orbit the planet in a thin, wide disc.",
+     "metadata": {
+      "response_time_ms": 3158.2300662994385,
+      "token_count": 1036,
+      "annotation": null
+     },
+     "status": "pass",
+     "value_infos": {
+      "name": null,
+      "data": {
+       "response": "Saturn's rings are made mostly of ice particles, mixed with smaller amounts of rock and dust. They orbit the planet in a thin, wide disc."
+      },
+      "failure": null,
+      "reason": "Saturn's rings are made mostly of ice particles, mixed with smaller amounts of rock and dust. They orbit the planet in a thin, wide disc.",
+      "runtime": 3158.2300662994385,
+      "model": "gpt-4o-mini-2024-07-18",
+      "metrics": [],
+      "metadata": {
+       "usage": {
+        "completion_tokens": 158,
+        "prompt_tokens": 878,
+        "total_tokens": 1036
+       },
+       "cost": {
+        "total_cost": 0.000227,
+        "prompt_cost": 0.000132,
+        "completion_cost": 9.5e-05
+       },
+       "response_time": 3158.2300662994385
+      },
+      "output": null
+     },
+     "feedback_info": {}
+    },
+    "2e25aa95-7fb0-4804-8319-219cb7981c63": {
+     "cell_value": "Saturn is the sixth planet from the Sun and the second largest in the solar system. Its rings are made mostly of ice particles with some rock and dust. Saturn has more than one hundred known moons; the largest, Titan, has a thick nitrogen atmosphere and lakes of liquid methane on its surface.",
+     "metadata": {
+      "response_time_ms": null,
+      "token_count": null,
+      "annotation": null
+     },
+     "status": "pass",
+     "value_infos": {
+      "metadata": {}
+     },
+     "feedback_info": {}
+    },
+    "cf635e5b-92af-460d-a62b-8b22c64287d9": {
+     "cell_value": "What are Saturn's rings made of?",
+     "metadata": {
+      "response_time_ms": null,
+      "token_count": null,
+      "annotation": null
+     },
+     "status": "pass",
+     "value_infos": {
+      "metadata": {}
+     },
+     "feedback_info": {}
+    },
+    "6ed50ca8-4aeb-48db-a68d-7a570e3a92ac": {
+     "cell_value": "Mostly ice particles, with some rock and dust.",
+     "metadata": {
+      "response_time_ms": null,
+      "token_count": null,
+      "annotation": null
+     },
+     "status": "pass",
+     "value_infos": {
+      "metadata": {}
+     },
+     "feedback_info": {}
+    }
+   },
+   "experiment": {
+    "row_id": "1ee53caa-fd5f-4c87-9ec7-4f9b09dca72a",
+    "2e25aa95-7fb0-4804-8319-219cb7981c63": {
+     "cell_value": "Saturn is the sixth planet from the Sun and the second largest in the solar system. Its rings are made mostly of ice particles with some rock and dust. Saturn has more than one hundred known moons; the largest, Titan, has a thick nitrogen atmosphere and lakes of liquid methane on its surface.",
+     "status": "pass",
+     "metadata": {
+      "response_time_ms": 0,
+      "token_count": 0,
+      "cost": {},
+      "cell_metadata": {},
+      "reason": null
+     }
+    },
+    "cf635e5b-92af-460d-a62b-8b22c64287d9": {
+     "cell_value": "What are Saturn's rings made of?",
+     "status": "pass",
+     "metadata": {
+      "response_time_ms": 0,
+      "token_count": 0,
+      "cost": {},
+      "cell_metadata": {},
+      "reason": null
+     }
+    },
+    "6ed50ca8-4aeb-48db-a68d-7a570e3a92ac": {
+     "cell_value": "Mostly ice particles, with some rock and dust.",
+     "status": "pass",
+     "metadata": {
+      "response_time_ms": 0,
+      "token_count": 0,
+      "cost": {},
+      "cell_metadata": {},
+      "reason": null
+     }
+    },
+    "4a502202-ad6e-4cea-a295-426cf977dfb4": {
+     "cell_value": "Saturn's rings are made mostly of ice particles, mixed with smaller amounts of rock and dust. They orbit the planet in a thin, wide disc.",
+     "status": "pass",
+     "metadata": {
+      "response_time_ms": 3158.2300662994385,
+      "token_count": 1036,
+      "cost": {
+       "total_cost": 0.000227,
+       "prompt_cost": 0.000132,
+       "completion_cost": 9.5e-05
+      },
+      "cell_metadata": {
+       "usage": {
+        "completion_tokens": 158,
+        "prompt_tokens": 878,
+        "total_tokens": 1036
+       },
+       "cost": {
+        "total_cost": 0.000227,
+        "prompt_cost": 0.000132,
+        "completion_cost": 9.5e-05
+       },
+       "response_time": 3158.2300662994385
+      },
+      "reason": "Saturn's rings are made mostly of ice particles, mixed with smaller amounts of rock and dust. They orbit the planet in a thin, wide disc."
+     }
+    },
+    "a8b7e149-2048-4521-98ec-2341b67fd646": {
+     "cell_value": "0.5417363388859614",
+     "status": "pass",
+     "metadata": {
+      "response_time_ms": 0,
+      "token_count": 0,
+      "cost": {},
+      "cell_metadata": {
+       "error_analysis": {
+        "input1": []
+       },
+       "selected_input_key": "response",
+       "input_type": {
+        "response": "text",
+        "expected_response": "text"
+       }
+      },
+      "reason": "The response only partly matches the expected answer; it adds or changes details."
+     }
+    },
+    "6753effc-70b0-49f1-97cf-764e4e52f834": {
+     "cell_value": "The response only partly matches the expected answer; it adds or changes details.",
+     "status": "pass",
+     "metadata": {
+      "response_time_ms": 0,
+      "token_count": 0,
+      "cost": {},
+      "cell_metadata": {},
+      "reason": "The response only partly matches the expected answer; it adds or changes details."
+     }
+    },
+    "ad4b782d-950a-41b1-a030-0b5d08b5b7ad": {
+     "cell_value": "Passed",
+     "status": "pass",
+     "metadata": {
+      "response_time_ms": 19540,
+      "token_count": 3308,
+      "cost": {
+       "total_cost": 0.000876,
+       "prompt_cost": 0.000369,
+       "completion_cost": 0.000507
+      },
+      "cell_metadata": {
+       "usage": {
+        "completion_tokens": 845,
+        "prompt_tokens": 2463,
+        "total_tokens": 3308
+       },
+       "cost": {
+        "total_cost": 0.000876,
+        "prompt_cost": 0.000369,
+        "completion_cost": 0.000507
+       },
+       "response_time": 19540,
+       "explanation": "The response only uses facts that are stated in the context.",
+       "data": {
+        "inputs": [
+         "What are Saturn's rings made of?",
+         "Saturn's rings are made mostly of ice particles, mixed with smaller amounts of rock and dust. They orbit the planet in a thin, wide disc."
+        ],
+        "rule_prompt": "Check if the response is grounded in the provided context -- {{variable_1}} -- {{variable_2}}",
+        "choices": [
+         "Passed",
+         "Failed"
+        ],
+        "multi_choice": false,
+        "input_type": [
+         "text",
+         "text"
+        ]
+       },
+       "error_analysis": {
+        "input1": []
+       },
+       "selected_input_key": "input_1",
+       "input_type": {
+        "input1": "text",
+        "input2": "text"
+       }
+      },
+      "reason": "The response only uses facts that are stated in the context."
+     }
+    },
+    "95693a5a-1a6b-4051-916d-9b757a62ea2c": {
+     "cell_value": "The response only uses facts that are stated in the context.",
+     "status": "pass",
+     "metadata": {
+      "response_time_ms": 19540,
+      "token_count": 3308,
+      "cost": {
+       "total_cost": 0.000876,
+       "prompt_cost": 0.000369,
+       "completion_cost": 0.000507
+      },
+      "cell_metadata": {
+       "usage": {
+        "completion_tokens": 845,
+        "prompt_tokens": 2463,
+        "total_tokens": 3308
+       },
+       "cost": {
+        "total_cost": 0.000876,
+        "prompt_cost": 0.000369,
+        "completion_cost": 0.000507
+       },
+       "response_time": 19540,
+       "explanation": "The response only uses facts that are stated in the context.",
+       "data": {
+        "inputs": [
+         "What are Saturn's rings made of?",
+         "Saturn's rings are made mostly of ice particles, mixed with smaller amounts of rock and dust. They orbit the planet in a thin, wide disc."
+        ],
+        "rule_prompt": "Check if the response is grounded in the provided context -- {{variable_1}} -- {{variable_2}}",
+        "choices": [
+         "Passed",
+         "Failed"
+        ],
+        "multi_choice": false,
+        "input_type": [
+         "text",
+         "text"
+        ]
+       }
+      },
+      "reason": "The response only uses facts that are stated in the context."
+     }
+    },
+    "8f5c9cec-1979-4bad-91f3-16c12f914dd2": {
+     "cell_value": "The response only partly matches the expected answer; it adds or changes details.",
+     "status": "pass",
+     "metadata": {
+      "response_time_ms": 0,
+      "token_count": 0,
+      "cost": {},
+      "cell_metadata": {},
+      "reason": "The response only partly matches the expected answer; it adds or changes details."
+     },
+     "value_infos": {
+      "reason": "The response only partly matches the expected answer; it adds or changes details."
+     }
+    },
+    "060040e2-611d-4e54-a5c1-c8efec3c77a1": {
+     "cell_value": "0.5265704664254983",
+     "status": "pass",
+     "metadata": {
+      "response_time_ms": 0,
+      "token_count": 0,
+      "cost": {},
+      "cell_metadata": {},
+      "reason": "The response only partly matches the expected answer; it adds or changes details."
+     },
+     "value_infos": {
+      "reason": "The response only partly matches the expected answer; it adds or changes details."
+     }
+    },
+    "0edbd24d-e3b4-4cec-997d-4d2f8ef41acf": {
+     "cell_value": "The response only uses facts that are stated in the context.",
+     "status": "pass",
+     "metadata": {
+      "response_time_ms": 18813,
+      "token_count": 2891,
+      "cost": {
+       "total_cost": 0.000809,
+       "prompt_cost": 0.000309,
+       "completion_cost": 0.0005
+      },
+      "cell_metadata": {
+       "usage": {
+        "completion_tokens": 833,
+        "prompt_tokens": 2058,
+        "total_tokens": 2891
+       },
+       "cost": {
+        "total_cost": 0.000809,
+        "prompt_cost": 0.000309,
+        "completion_cost": 0.0005
+       },
+       "response_time": 18813,
+       "explanation": "The response only uses facts that are stated in the context.",
+       "data": {
+        "inputs": [
+         "What are Saturn's rings made of?",
+         "The rings consist mainly of ice, with some rock and dust mixed in."
+        ],
+        "rule_prompt": "Check if the response is grounded in the provided context -- {{variable_1}} -- {{variable_2}}",
+        "choices": [
+         "Passed",
+         "Failed"
+        ],
+        "multi_choice": false,
+        "input_type": [
+         "text",
+         "text"
+        ]
+       }
+      },
+      "reason": "The response only uses facts that are stated in the context."
+     },
+     "value_infos": {
+      "reason": "The response only uses facts that are stated in the context."
+     }
+    },
+    "8b64215e-d754-4a3e-ac75-7acc4127a10f": {
+     "cell_value": "Passed",
+     "status": "pass",
+     "metadata": {
+      "response_time_ms": 18813,
+      "token_count": 2891,
+      "cost": {
+       "total_cost": 0.000809,
+       "prompt_cost": 0.000309,
+       "completion_cost": 0.0005
+      },
+      "cell_metadata": {
+       "usage": {
+        "completion_tokens": 833,
+        "prompt_tokens": 2058,
+        "total_tokens": 2891
+       },
+       "cost": {
+        "total_cost": 0.000809,
+        "prompt_cost": 0.000309,
+        "completion_cost": 0.0005
+       },
+       "response_time": 18813,
+       "explanation": "The response only uses facts that are stated in the context.",
+       "data": {
+        "inputs": [
+         "What are Saturn's rings made of?",
+         "The rings consist mainly of ice, with some rock and dust mixed in."
+        ],
+        "rule_prompt": "Check if the response is grounded in the provided context -- {{variable_1}} -- {{variable_2}}",
+        "choices": [
+         "Passed",
+         "Failed"
+        ],
+        "multi_choice": false,
+        "input_type": [
+         "text",
+         "text"
+        ]
+       }
+      },
+      "reason": "The response only uses facts that are stated in the context."
+     },
+     "value_infos": {
+      "reason": "The response only uses facts that are stated in the context."
+     }
+    },
+    "67a09509-ed10-4dee-bb39-6e62d5e41f5c": {
+     "cell_value": "The rings consist mainly of ice, with some rock and dust mixed in.",
+     "status": "pass",
+     "metadata": {
+      "response_time_ms": 2044.1970825195312,
+      "token_count": 1219,
+      "cost": {
+       "total_cost": 0.005826,
+       "prompt_cost": 0.002934,
+       "completion_cost": 0.002892
+      },
+      "cell_metadata": {
+       "usage": {
+        "completion_tokens": 241,
+        "prompt_tokens": 978,
+        "total_tokens": 1219
+       },
+       "cost": {
+        "total_cost": 0.005826,
+        "prompt_cost": 0.002934,
+        "completion_cost": 0.002892
+       },
+       "response_time": 2044.1970825195312
+      },
+      "reason": "The rings consist mainly of ice, with some rock and dust mixed in."
+     },
+     "value_infos": {
+      "reason": "The rings consist mainly of ice, with some rock and dust mixed in."
+     }
+    }
+   }
+  }
+ ]
+}

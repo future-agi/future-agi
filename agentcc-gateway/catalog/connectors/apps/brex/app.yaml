@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: brex
+version: 1.0.0
+name: Brex
+description: "Inspect expenses, bills, card metadata and banking transactions, and update expense details."
+vendor:
+  name: Brex
+  domains: [brex.com]
+eeCategory: data
+group: other
+categories: [data, payments]
+tags: [payments, billing]
+docsUrl: https://developer.brex.com/docs/mcp
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://developer.brex.com/docs/mcp
+    fetchedAt: 2026-11-09

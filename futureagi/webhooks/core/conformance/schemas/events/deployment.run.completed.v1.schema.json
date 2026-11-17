@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:futureagi:webhooks:v1:deployment.run.completed",
+  "title": "deployment.run.completed, api_version v1 (B8-EVENT-CONTRACT.md section 6.4 and DESIGN.md section 14.4)",
+  "allOf": [{"$ref": "urn:futureagi:webhooks:v1:envelope"}, {"$ref": "urn:futureagi:webhooks:v1:deployment.run"}],
+  "type": "object",
+  "properties": {
+    "type": {"const": "deployment.run.completed"},
+    "data": {
+      "type": "object",
+      "properties": {
+        "run": {
+          "type": "object",
+          "properties": {"status": {"const": "succeeded"}, "error": {"type": "null"}}
+        }
+      }
+    }
+  }
+}

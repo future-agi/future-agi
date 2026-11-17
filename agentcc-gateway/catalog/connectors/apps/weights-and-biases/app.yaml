@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: weights-and-biases
+version: 1.0.0
+name: Weights & Biases
+description: "Query training runs and Weave traces, compare experiments, and create reports."
+vendor:
+  name: Weights & Biases
+  domains: [wandb.ai, withwandb.com, coreweave.com]
+eeCategory: developer
+group: other
+categories: [developer, observability]
+tags: [tracing, datasets, evaluations]
+docsUrl: https://docs.coreweave.com/products/wandb/platform/ai-assistants
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://docs.coreweave.com/products/wandb/platform/ai-assistants
+    fetchedAt: 2026-11-09

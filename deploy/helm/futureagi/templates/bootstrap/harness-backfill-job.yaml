@@ -1,0 +1,100 @@
+{{- if not .Values.hosted.enabled -}}
+{{- /*
+`python manage.py harness_versions_backfill --auto`, once after every install
+and upgrade: existing environments get their harness versions. It needs the
+schema the bootstrap job migrates, so it runs after it (post-install and
+post-upgrade, a later weight), as the same one-shot operator process: the
+bootstrap job's image, service account, security context and environment,
+with the operator pair the startup guard authorizes
+(SERVICE_TYPE=bootstrap, STARTUP_DB_MUTATION_MODE=operator).
+
+The script always exits 0: after the command's own output, whose last line is
+its result (`Harness versions backfill: state=...`), or after a warning when
+the command fails. A failed backfill never fails the release; the next
+upgrade runs it again. Argo CD runs it once per sync, in PostSync.
+*/ -}}
+{{- $bs := .Values.bootstrap -}}
+{{- $b := .Values.backend -}}
+{{- $ctx := dict "root" . "component" "harness-backfill" -}}
+{{- $extraVolumes := $bs.extraVolumes | default $b.extraVolumes -}}
+{{- $extraVolumeMounts := $bs.extraVolumeMounts | default $b.extraVolumeMounts -}}
+{{- /* The operator pair, plus the explicit mode every chart Job carries
+(with "direct" below: PostgreSQL directly, never a pooler or replica). No
+schedule registration, no first admin. config.extraEnvFrom cannot supply the
+Omega variables (futureagi.omega.envFromPins), as for the bootstrap job. */ -}}
+{{- $component := merge (dict
+      "SERVICE_TYPE" "bootstrap"
+      "STARTUP_DB_MUTATION_MODE" "operator"
+      "NO_STARTUP_DB_MUTATIONS" "false") (include "futureagi.omega.envFromPins" . | fromYaml) -}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "futureagi.component" $ctx }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "futureagi.componentLabels" $ctx | nindent 4 }}
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "10"
+    helm.sh/hook-delete-policy: before-hook-creation
+    argocd.argoproj.io/hook: PostSync
+spec:
+  backoffLimit: {{ $bs.backoffLimit }}
+  activeDeadlineSeconds: {{ $bs.activeDeadlineSeconds }}
+  {{- /* As the bootstrap job: 0 deletes the job as soon as it finishes; empty (or null) never. */}}
+  {{- $ttl := $bs.ttlSecondsAfterFinished }}
+  {{- if not (or (kindIs "invalid" $ttl) (eq (toString $ttl) "")) }}
+  ttlSecondsAfterFinished: {{ $ttl }}
+  {{- end }}
+  template:
+    metadata:
+      labels:
+        {{- include "futureagi.componentLabels" $ctx | nindent 8 }}
+      {{- with $bs.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      restartPolicy: Never
+      serviceAccountName: {{ include "futureagi.bootstrapServiceAccountName" . }}
+      automountServiceAccountToken: false
+      {{- include "futureagi.block" (dict "text" (include "futureagi.imagePullSecrets" .) "indent" 6) }}
+      securityContext:
+        {{- include "futureagi.podSecurityContext" (dict "root" $ "uid" 1000 "overrides" $b.podSecurityContext) | nindent 8 }}
+      {{- include "futureagi.block" (dict "text" (include "futureagi.scheduling" (dict "root" . "values" $b)) "indent" 6) }}
+      containers:
+        - name: harness-backfill
+          image: {{ include "futureagi.image" (dict "root" . "image" $b.image "digestKey" "backend") }}
+          imagePullPolicy: {{ include "futureagi.imagePullPolicy" (dict "root" . "image" $b.image) }}
+          command:
+            - sh
+            - -c
+            - |
+              python manage.py harness_versions_backfill --auto
+              rc=$?
+              if [ "$rc" -ne 0 ]; then
+                echo "WARNING: the harness versions backfill exited $rc; the release goes on. Its output is above; the next upgrade runs it again."
+              fi
+              exit 0
+          env:
+            {{- include "futureagi.env.python" (dict "root" . "component" $component "direct" true) | trim | nindent 12 }}
+          {{- with .Values.config.extraEnvFrom }}
+          envFrom:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml $bs.resources | nindent 12 }}
+          securityContext:
+            {{- include "futureagi.containerSecurityContext" (dict "root" $ "overrides" $b.containerSecurityContext) | nindent 12 }}
+          volumeMounts:
+            {{- include "futureagi.python.volumeMounts" . | trim | nindent 12 }}
+            {{- with $extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+      volumes:
+        {{- include "futureagi.python.volumes" . | trim | nindent 8 }}
+        {{- with $extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+
+{{- end -}}

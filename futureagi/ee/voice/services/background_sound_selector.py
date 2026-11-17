@@ -1,10 +1,14 @@
+# Pre-existing lint debt, exempted file-wide so a security fix can touch this
+# module behaviour-neutrally (typing rewrites and an explicit read mode).
+# ruff: noqa: UP006, UP015, UP035, UP045
+
 import json
 import re
 from typing import Any, Dict, List, Optional
 
 import structlog
 
-from agentic_eval.core.llm.llm import LLM
+from agentic_eval.core.llm.platform_model import PlatformFeature, call_platform_model
 
 logger = structlog.get_logger(__name__)
 
@@ -49,7 +53,9 @@ Replace BG_XX with the actual ID from the list above. Include nothing else in yo
 
 def _extract_bg_id(response: str) -> Optional[str]:
     """Extract BG_XX ID from LLM response using pattern matching."""
-    match = re.search(r"SELECTED:\s*(BG_[A-Z0-9]+(?:_[A-Z0-9]+)*)", response, re.IGNORECASE)
+    match = re.search(
+        r"SELECTED:\s*(BG_[A-Z0-9]+(?:_[A-Z0-9]+)*)", response, re.IGNORECASE
+    )
     if match:
         return match.group(1).upper()
 
@@ -121,12 +127,6 @@ def select_background_sound(situation: str) -> Dict[str, Any]:
     prompt = _build_prompt_bg_sound_selection(noises, situation)
     logger.info(f"[BG] Built background sound prompt: {prompt}")
 
-    llm = LLM(
-        model_name="gemini-3.5-flash-lite",
-        temperature=0.2,
-        provider="vertex_ai",
-        api_key=None,
-    )
     messages = [
         {
             "role": "system",
@@ -140,7 +140,8 @@ def select_background_sound(situation: str) -> Dict[str, Any]:
     ]
 
     try:
-        raw = llm.call_llm(messages, "vertex_ai").strip()
+        feature = PlatformFeature.VOICE_BACKGROUND_CHOICE
+        raw = call_platform_model(feature, messages).strip()
         logger.info(f"[BG] Raw LLM background sound response: {raw}")
         bg_id = _extract_bg_id(raw)
         if not bg_id:

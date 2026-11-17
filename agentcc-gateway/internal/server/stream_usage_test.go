@@ -17,7 +17,7 @@ func TestTeeStreamUsage_ConsumerAbandonsStream(t *testing.T) {
 	defer cancel()
 
 	in := make(chan models.StreamChunk)
-	out, usageCh := teeStreamUsage(ctx, in)
+	out, usageCh := teeStreamUsage(ctx, in, nil)
 
 	go func() {
 		defer close(in)
@@ -61,7 +61,7 @@ func TestTeeStreamUsage_ConsumerAbandonsStream(t *testing.T) {
 
 func TestTeeStreamUsage_ForwardsEveryChunk(t *testing.T) {
 	in := make(chan models.StreamChunk)
-	out, usageCh := teeStreamUsage(context.Background(), in)
+	out, usageCh := teeStreamUsage(context.Background(), in, nil)
 
 	go func() {
 		defer close(in)
@@ -94,7 +94,7 @@ func TestTeeStreamUsage_ForwardsEveryChunk(t *testing.T) {
 // skips the request rather than pricing it at zero.
 func TestTeeStreamUsage_NoUsageLeavesResponseNil(t *testing.T) {
 	in := make(chan models.StreamChunk)
-	out, usageCh := teeStreamUsage(context.Background(), in)
+	out, usageCh := teeStreamUsage(context.Background(), in, nil)
 
 	go func() {
 		defer close(in)
@@ -111,5 +111,39 @@ func TestTeeStreamUsage_NoUsageLeavesResponseNil(t *testing.T) {
 	}
 	if _, ok := rc.Metadata["input_tokens"]; ok {
 		t.Error("input_tokens recorded for a stream that reported none")
+	}
+}
+
+// A Future AGI (managed) stream that ends before its upstream reports usage
+// is billed on an estimate, as chat's is (estimatedManagedStreamUsage): the
+// prompt's tokens from the request's messages, and the output the stream
+// carried at about four characters a token.
+func TestTeeStreamUsage_ManagedStreamWithoutUsageIsEstimated(t *testing.T) {
+	in := make(chan models.StreamChunk)
+	out, usageCh := teeStreamUsage(context.Background(), in, nil)
+
+	text := "hello there"
+	go func() {
+		defer close(in)
+		in <- models.StreamChunk{Model: "m", Choices: []models.StreamChoice{{Delta: models.Delta{Content: &text}}}}
+	}()
+	for range out {
+	}
+
+	rc := &models.RequestContext{Metadata: map[string]string{"billing_mode": billingManaged}, Model: "m",
+		Request: &models.ChatCompletionRequest{Messages: []models.Message{{Role: "user", Content: []byte(`"hi"`)}}}}
+	applyCanonicalStreamUsage(rc, usageCh)
+
+	if rc.Response == nil || rc.Response.Usage == nil {
+		t.Fatal("a managed stream with no usage left rc.Response nil: it would be billed nothing")
+	}
+	if got := rc.Response.Usage.CompletionTokens; got != (len(text)+3)/4 {
+		t.Errorf("CompletionTokens = %d, want %d from the %d characters streamed", got, (len(text)+3)/4, len(text))
+	}
+	if rc.Response.Usage.PromptTokens <= 0 {
+		t.Errorf("PromptTokens = %d, want the prompt's estimate", rc.Response.Usage.PromptTokens)
+	}
+	if rc.Metadata["usage_estimated"] != "true" {
+		t.Errorf("usage_estimated = %q, want true", rc.Metadata["usage_estimated"])
 	}
 }

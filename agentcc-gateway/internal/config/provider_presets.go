@@ -68,3 +68,15 @@ func logPresetDefaults(name string, before, after ProviderConfig) {
 	slog.Info("config: provider preset filled defaults",
 		"provider", name, "preset", after.Type, "fields", filled)
 }
+
+// applyProviderPresets resolves every provider's preset defaults in place, the
+// first step of Validate, so a config built without Load (a test, or a
+// programmatically constructed config) is validated against the endpoint the
+// gateway will dial too. Load has already applied them (and logged what they
+// filled); reapplying is idempotent. Explicit fields always win.
+func (c *Config) applyProviderPresets() {
+	for name, p := range c.Providers {
+		ApplyProviderPreset(&p)
+		c.Providers[name] = p
+	}
+}

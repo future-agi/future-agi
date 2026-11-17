@@ -1,0 +1,32 @@
+{
+  "vendor": "google_maps",
+  "capability": "data",
+  "skus": [
+    {
+      "sku": "google_maps.text_search_pro",
+      "unit": "request",
+      "usd_per_unit": 0.032,
+      "free_on_failure": false
+    },
+    {
+      "sku": "google_maps.grounding_lite",
+      "unit": "request",
+      "usd_per_unit": 0.007,
+      "free_on_failure": false
+    }
+  ],
+  "resale_status": "unconfirmed",
+  "resale_terms_ref": "",
+  "terms_url": "https://cloud.google.com/maps-platform/terms",
+  "terms_checked_at": "2026-10-15",
+  "zdr_capable": false,
+  "trains_on_input": "no",
+  "improvement_license": false,
+  "regions": [],
+  "results_retention": "metadata",
+  "cacheable": "none",
+  "eval_export": "forbidden",
+  "no_divert": false,
+  "no_perf_disclosure": false,
+  "no_benchmark": false
+}

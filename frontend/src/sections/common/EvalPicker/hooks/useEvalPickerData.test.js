@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { normalizeOldEndpointEval } from "./useEvalPickerData";
+import { normalizeOldEndpointEval, sortPickerItems } from "./useEvalPickerData";
 
 describe("normalizeOldEndpointEval", () => {
   // The bug TH-6125 closed: the mapper used to rename `created_by_name` to
@@ -75,9 +75,9 @@ describe("normalizeOldEndpointEval", () => {
         eval_template_tags: ["AGENT_EVAL"],
       }).eval_type,
     ).toBe("agent");
-    expect(
-      normalizeOldEndpointEval({ id: "e", name: "n" }).eval_type,
-    ).toBe("llm");
+    expect(normalizeOldEndpointEval({ id: "e", name: "n" }).eval_type).toBe(
+      "llm",
+    );
   });
 
   it("emits snake_case keys for template_type / output_type / last_updated / current_version", () => {
@@ -156,5 +156,62 @@ describe("normalizeOldEndpointEval", () => {
     ]) {
       expect(out).not.toHaveProperty(camel);
     }
+  });
+});
+
+// L7b G6 evalpicker:find / evalpicker:rows: the old endpoint's rows sort by
+// the picked column, and a row that carries its metadata keeps it.
+
+describe("L7b G6 · sortPickerItems", () => {
+  const rows = [
+    {
+      name: "tone_on_brand",
+      last_updated: "2026-10-20",
+      created_by_name: "System",
+    },
+    {
+      name: "Citation_accuracy",
+      last_updated: "2026-10-22",
+      created_by_name: "Maya Chen",
+    },
+    {
+      name: "bleu_score",
+      last_updated: "2026-10-21",
+      created_by_name: "System",
+    },
+  ];
+  it("name asc / desc changes the order", () => {
+    expect(
+      sortPickerItems(rows, [{ id: "name", desc: false }]).map((r) => r.name),
+    ).toEqual(["bleu_score", "Citation_accuracy", "tone_on_brand"]);
+    expect(
+      sortPickerItems(rows, [{ id: "name", desc: true }]).map((r) => r.name),
+    ).toEqual(["tone_on_brand", "Citation_accuracy", "bleu_score"]);
+  });
+  it("last_updated desc puts the newest first; an unknown id keeps the order", () => {
+    expect(
+      sortPickerItems(rows, [{ id: "last_updated", desc: true }]).map(
+        (r) => r.name,
+      )[0],
+    ).toBe("Citation_accuracy");
+    expect(sortPickerItems(rows, [{ id: "nope" }])).toBe(rows);
+  });
+  it("normalize keeps the row's own eval_type, owner, output_type and tags", () => {
+    const out = normalizeOldEndpointEval({
+      id: "t1",
+      name: "check_refund_amount",
+      eval_type: "code",
+      owner: "system",
+      output_type: "percentage",
+      template_type: "single",
+      created_by_name: "System",
+      eval_template_tags: ["refunds", "deterministic"],
+    });
+    expect(out).toMatchObject({
+      eval_type: "code",
+      owner: "system",
+      output_type: "percentage",
+      eval_template_tags: ["refunds", "deterministic"],
+    });
   });
 });

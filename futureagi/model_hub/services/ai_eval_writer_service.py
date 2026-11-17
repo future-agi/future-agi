@@ -23,6 +23,7 @@ class MalformedModelOutput(RuntimeError):
     A model failure (not the caller's fault), so the view maps it to a 5xx.
     """
 
+
 SYSTEM_PROMPT = """You are an expert AI evaluation engineer. Given a user's brief description of what they want to evaluate, generate a comprehensive evaluation instruction prompt.
 
 Rules:
@@ -116,7 +117,13 @@ def _parse_array(text: str) -> list:
     return data
 
 
-def generate_eval_prompt(*, description: str, output_format: str = "prompt") -> dict:
+def generate_eval_prompt(
+    *,
+    description: str,
+    output_format: str = "prompt",
+    organization=None,
+    workspace=None,
+) -> dict:
     """Generate an eval artifact from a description via the LLM.
 
     Args:
@@ -150,14 +157,15 @@ def generate_eval_prompt(*, description: str, output_format: str = "prompt") -> 
     # Route through the in-house LLM wrapper (Agentcc usage gateway with
     # litellm fallback) so the call is metered + org-attributed and retries
     # are handled for us — same pattern as ai_filter.py, not a raw Bedrock call.
-    from agentic_eval.core.llm.llm import LLM
-    from agentic_eval.core.utils.model_config import ModelConfigs
+    from agentic_eval.core.llm.platform_model import PlatformFeature
+    from model_hub.services.model_route import platform_llm
 
-    haiku_cfg = ModelConfigs.HAIKU_4_5_BEDROCK_ARN
-    llm = LLM(
-        provider=haiku_cfg.provider,
-        model_name=haiku_cfg.model_name,
-        temperature=0.3,
+    # One key: bound to the caller's organization/workspace; a managed-
+    # eligible model runs gateway-only on Future AGI credits, no fallback.
+    llm = platform_llm(
+        PlatformFeature.AI_EVAL_WRITER,
+        organization=organization,
+        workspace=workspace,
         max_tokens=1500 if output_format == "messages" else 1000,
     )
     content = llm._get_completion_content(

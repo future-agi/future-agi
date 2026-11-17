@@ -41,6 +41,20 @@ export function resolveResponseFormatForApi(modelConfig) {
 }
 
 /**
+ * Resolve the response output port's data_schema from the response format,
+ * matching the backend's get_output_schema_for_response_format: the selected
+ * schema for a custom response schema, an object for JSON, otherwise a string.
+ * @param {Object} modelConfig - { responseFormat: string, responseSchema: Object|null }
+ * @returns {Object} JSON schema for the response port
+ */
+export function resolveResponsePortSchema(modelConfig) {
+  const rf = resolveResponseFormatForApi(modelConfig);
+  if (rf && typeof rf === "object" && rf.schema) return rf.schema;
+  if (rf === "json") return { type: "object" };
+  return { type: "string" };
+}
+
+/**
  * Build base form values from node metadata (not from node.data internals).
  */
 function getBaseValues(nodeData) {

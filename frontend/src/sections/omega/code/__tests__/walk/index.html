@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Code panels walk</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <!-- Future AGI's API on this same origin, so the walk answers it (walk.mjs). -->
+    <script>
+      window.__FUTURE_AGI_CONFIG__ = { VITE_HOST_API: window.location.origin };
+    </script>
+    <script type="module" src="./main.jsx"></script>
+  </body>
+</html>

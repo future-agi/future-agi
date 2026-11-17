@@ -14,13 +14,11 @@ import json
 import socket
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pandas as pd
 import pytest
 import requests
-import yaml
 from structlog.testing import capture_logs
 
 from agentic_eval.core.embeddings import serving_client
@@ -36,8 +34,6 @@ from agentic_eval.core.embeddings.serving_client import (
 
 # Bound at import, before the conftest fixture swaps in its stand-in.
 REAL_SERVING_PROBE = serving_client._probe
-
-SYSTEM_EVALS = Path(__file__).resolve().parents[1] / "system_evals" / "function"
 
 
 def _counting_probe(monkeypatch, verdict):
@@ -590,13 +586,15 @@ class TestEmbeddingEvalPreprocessing:
     @pytest.mark.parametrize(
         "eval_name", ["embedding_similarity", "semantic_list_contains"]
     )
-    def test_passes_the_configured_url_to_the_sandbox(self, eval_name, monkeypatch):
+    def test_hands_the_eval_no_serving_url(self, eval_name, monkeypatch):
+        """Both evals run in the backend, which has the URL; the inputs (which
+        the result echoes) never carry serving's internal address."""
         from evaluations.engine.preprocessing import preprocess_inputs
 
         monkeypatch.setenv("MODEL_SERVING_URL", "http://ml-host:9000/")
         inputs = preprocess_inputs(eval_name, {"output": "a", "expected": "b"})
 
-        assert inputs["_model_serving_url"] == "http://ml-host:9000"
+        assert inputs == {"output": "a", "expected": "b"}
 
     def test_clip_score_fails_fast_without_model_serving(self, model_serving_down):
         from evaluations.engine.preprocessing import preprocess_inputs
@@ -630,38 +628,42 @@ class TestEmbeddingEvalPreprocessing:
             assert preprocessing.preprocess_inputs("broken", {"x": 1}) == {"x": 1}
 
 
-def _system_eval(name):
-    code = yaml.safe_load((SYSTEM_EVALS / f"{name}.yaml").read_text())["config"]["code"]
-    namespace = {}
-    exec(code, namespace)  # noqa: S102 - trusted repo fixture
-    return namespace["evaluate"]
+class TestEmbeddingEvalsCallTheConfiguredServing:
+    """Both evals call ``MODEL_SERVING_URL`` from the backend, with the one
+    batched ``/model/v1/embed`` request their sandboxed code used to send."""
 
-
-class TestEmbeddingEvalCodeUsesTheConfiguredUrl:
-    """The seeded code used to hardcode ``http://serving:8080``."""
-
-    def test_embedding_similarity(self, embed_server):
+    @pytest.fixture
+    def serving_at(self, embed_server, monkeypatch):
         base_url, paths = embed_server
-        evaluate = _system_eval("embedding_similarity")
+        monkeypatch.setenv("MODEL_SERVING_URL", base_url)
+        # The process-wide client reads the URL once, when first built.
+        monkeypatch.setattr(serving_client, "_serving_client", None)
+        return paths
 
-        result = evaluate(
-            None, "the cat sat", "a cat was sitting", None, _model_serving_url=base_url
+    def test_embedding_similarity(self, serving_at):
+        from agentic_eval.core_evals.fi_evals.function.functions import (
+            calculate_embedding_similarity,
         )
 
-        assert result["score"] == 1.0
-        assert paths == ["/model/v1/embed"]
-
-    def test_semantic_list_contains(self, embed_server):
-        base_url, paths = embed_server
-        evaluate = _system_eval("semantic_list_contains")
-
-        result = evaluate(
-            None,
-            "Refunds take five days.",
-            '["money back"]',
-            None,
-            _model_serving_url=base_url,
+        result = calculate_embedding_similarity(
+            output="the cat sat", expected="a cat was sitting"
         )
 
-        assert result["score"] == 1.0
-        assert paths == ["/model/v1/embed"]
+        assert result == {"result": 1.0, "reason": "Cosine similarity (text): 1.0000"}
+        assert serving_at == ["/model/v1/embed"]
+
+    def test_semantic_list_contains(self, serving_at):
+        from agentic_eval.core_evals.fi_evals.function.functions import (
+            calculate_semantic_list_contains,
+        )
+
+        result = calculate_semantic_list_contains(
+            output="Refunds take five days.", expected='["money back"]'
+        )
+
+        assert result == {
+            "result": 1.0,
+            "reason": "Matched 1/1 phrases (threshold=0.5; partial matches "
+            "allowed). 'money back': 1.0.",
+        }
+        assert serving_at == ["/model/v1/embed"]

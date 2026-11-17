@@ -3,6 +3,7 @@ from pydantic import Field
 
 from ai_tools.base import BaseTool, ToolContext, ToolResult
 from ai_tools.registry import register_tool
+from ee.falcon_ai.tools.context.memory_access import memory_write_denial
 
 
 class SaveMemoryInput(PydanticBaseModel):
@@ -25,6 +26,10 @@ class SaveMemoryTool(BaseTool):
     input_model = SaveMemoryInput
 
     def execute(self, params: SaveMemoryInput, context: ToolContext) -> ToolResult:
+        denied = memory_write_denial(context)
+        if denied is not None:
+            return denied
+
         from ee.falcon_ai.models import FalconMemory
 
         memory, created = FalconMemory.objects.update_or_create(

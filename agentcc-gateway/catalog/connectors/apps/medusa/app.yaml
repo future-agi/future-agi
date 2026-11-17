@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: medusa
+version: 1.0.0
+name: Medusa
+description: "Search Medusa documentation and retrieve implementation guides for commerce development."
+vendor:
+  name: Medusa
+  domains: [medusajs.com]
+eeCategory: developer
+group: other
+categories: [developer, knowledge-base]
+tags: [docs, search]
+docsUrl: https://docs.medusajs.com/learn/introduction/build-with-llms-ai/docs-mcp-server
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://docs.medusajs.com/learn/introduction/build-with-llms-ai/docs-mcp-server
+    fetchedAt: 2026-11-09

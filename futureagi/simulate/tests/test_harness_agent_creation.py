@@ -23,6 +23,7 @@ from simulate.models import (
     HostedHarnessConversation,
     HostedHarnessJob,
     HostedHarnessSecret,
+    SandboxHarnessJob,
 )
 from simulate.models.agent_definition import ProviderCredentials
 from simulate.serializers.harness_job import (
@@ -50,6 +51,7 @@ pytestmark = pytest.mark.django_db
 
 URL = "/simulate/api/harness-jobs/"
 PREFLIGHT_URL = "/simulate/api/harness-jobs/preflight/"
+# All val-* fixtures below are synthetic test value.
 VALUES = {"OPENAI_API_KEY": "val-openai-1", "DB_URL": "val-db-1"}
 SECRETS = (
     "val-openai-1",
@@ -881,7 +883,7 @@ class TestSandboxProvider:
         with (
             patch(
                 "simulate.services.harness_sandbox.HarnessSandboxClient.submit",
-                return_value={"job_id": "x"},
+                return_value={"job": {"job_id": "x"}},
             ) as submit,
             patch(
                 "simulate.services.harness_sandbox.HarnessSandboxClient.preflight",
@@ -902,6 +904,9 @@ class TestSandboxProvider:
 
         assert created.status_code == 202
         assert checked.status_code == 200
+        binding = SandboxHarnessJob.objects.get(job_id="x")
+        assert binding.organization_id == user.organization_id
+        assert binding.workspace_id == workspace.id
         for sent in (submit.call_args.args[0], preflight.call_args.args[0]):
             refs = sent["secret_refs"]
             assert set(refs) == set(VALUES)

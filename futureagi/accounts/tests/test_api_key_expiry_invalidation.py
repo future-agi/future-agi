@@ -48,7 +48,7 @@ def test_saved_expiry_invalidates_committed_credentials(
         "near": now + timedelta(seconds=10),
         None: None,
     }[new_expiry]
-    digest = hashlib.sha256(f"{key.api_key}:{key.secret_key}".encode()).hexdigest()
+    digest = "apikey:" + hashlib.sha256(key.api_key.encode()).hexdigest()
     with patch("redis.Redis.from_url") as factory:
         publisher = factory.return_value.__enter__.return_value.publish
         with django_capture_on_commit_callbacks(execute=True):
@@ -128,7 +128,7 @@ def test_detached_force_update_invalidates(key, django_capture_on_commit_callbac
         expires_at=expiry,
     )
     assert detached._state.adding is True
-    digest = hashlib.sha256(f"{key.api_key}:{key.secret_key}".encode()).hexdigest()
+    digest = "apikey:" + hashlib.sha256(key.api_key.encode()).hexdigest()
     with patch("redis.Redis.from_url") as factory:
         with django_capture_on_commit_callbacks(execute=True):
             detached.save(force_update=True, update_fields=["expires_at"])
@@ -162,7 +162,7 @@ def test_partial_expiry_invalidates_persisted_credentials(
         persisted_pair[0 if credential_field == "api_key" else 1] = (
             "persisted-credential-edit"
         )
-    digest = hashlib.sha256(":".join(persisted_pair).encode()).hexdigest()
+    digest = "apikey:" + hashlib.sha256(persisted_pair[0].encode()).hexdigest()
     with patch("redis.Redis.from_url") as factory:
         with django_capture_on_commit_callbacks(execute=True):
             instance.save(force_update=True, update_fields=iter(fields))
@@ -175,7 +175,7 @@ def test_partial_expiry_invalidates_persisted_credentials(
         )
     key.refresh_from_db()
     assert key.expires_at == expiry
-    assert [key.api_key, key.secret_key] == persisted_pair
+    assert [key.api_key, key.secret_key] == [persisted_pair[0], ""]
 
 
 def test_create_invalidates_a_preexisting_negative_cache(
@@ -223,7 +223,7 @@ def test_iterable_update_fields_preserves_the_expiry_write(
 
 
 def test_callback_captures_credentials_at_save(key, django_capture_on_commit_callbacks):
-    digest = hashlib.sha256(f"{key.api_key}:{key.secret_key}".encode()).hexdigest()
+    digest = "apikey:" + hashlib.sha256(key.api_key.encode()).hexdigest()
     with patch("redis.Redis.from_url") as factory:
         with django_capture_on_commit_callbacks(execute=True):
             key.expires_at = timezone.now() - timedelta(seconds=1)

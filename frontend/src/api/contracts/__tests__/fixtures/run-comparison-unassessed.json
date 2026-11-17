@@ -1,0 +1,126 @@
+{
+  "status": true,
+  "result": {
+    "baseline_run_id": "fa633b7e-dec8-43ee-8615-77f337cea062",
+    "candidate_run_id": "edda88f0-733c-4cb3-a04c-042249805896",
+    "dataset_version_id": "e33bdc4d-62e8-43cd-a9a1-ac5d5ddcbf6d",
+    "metric_id": "3a7c464a-1b7b-4442-a446-08da6615c2f4",
+    "evaluator_version_id": "dee09301-fd74-4ef1-bb15-dc10e1350f6c",
+    "comparison": {
+      "baseline": {
+        "item_count": 2,
+        "completed_count": 2,
+        "failed_count": 0,
+        "score_count": 0,
+        "score_average": null,
+        "score_min": null,
+        "score_max": null,
+        "pass_count": null,
+        "pass_rate": null,
+        "status_counts": {
+          "completed": 2
+        },
+        "score_status_counts": {
+          "not_assessed": 2
+        }
+      },
+      "candidate": {
+        "item_count": 1,
+        "completed_count": 1,
+        "failed_count": 0,
+        "score_count": 0,
+        "score_average": null,
+        "score_min": null,
+        "score_max": null,
+        "pass_count": null,
+        "pass_rate": null,
+        "status_counts": {
+          "completed": 1
+        },
+        "score_status_counts": {
+          "not_assessed": 1
+        }
+      },
+      "cases": [
+        {
+          "example_id": "08e832b8-13d4-446b-92d4-4ce8c1d98e21",
+          "trial_number": 1,
+          "status": "missing",
+          "baseline_status": "completed",
+          "candidate_status": null,
+          "baseline_score": null,
+          "candidate_score": null,
+          "score_delta": null,
+          "missing_side": "candidate"
+        },
+        {
+          "example_id": "e3cb8bb8-8151-49a3-86cb-d231a70b5071",
+          "trial_number": 1,
+          "status": "not_assessed",
+          "baseline_status": "not_assessed",
+          "candidate_status": "not_assessed",
+          "baseline_score": null,
+          "candidate_score": null,
+          "score_delta": null,
+          "missing_side": null
+        }
+      ],
+      "status_counts": {
+        "missing": 1,
+        "not_assessed": 1
+      },
+      "comparable_count": 0
+    },
+    "baseline_counts": {
+      "expected": 2,
+      "recorded": 2,
+      "missing": 0,
+      "completed": 2,
+      "failed": 0,
+      "assessed": 0
+    },
+    "candidate_counts": {
+      "expected": 2,
+      "recorded": 1,
+      "missing": 1,
+      "completed": 1,
+      "failed": 0,
+      "assessed": 0
+    },
+    "missing_by_side": {
+      "baseline": [],
+      "candidate": [
+        {
+          "example_id": "08e832b8-13d4-446b-92d4-4ce8c1d98e21",
+          "trial_number": 1
+        }
+      ]
+    },
+    "trace_refs": [
+      {
+        "example_id": "08e832b8-13d4-446b-92d4-4ce8c1d98e21",
+        "trial_number": 1,
+        "baseline": {
+          "run_item_id": "55def503-b42e-4d9c-bb51-1c31d845ac72",
+          "trace_id": null,
+          "root_span_id": ""
+        },
+        "candidate": null
+      },
+      {
+        "example_id": "e3cb8bb8-8151-49a3-86cb-d231a70b5071",
+        "trial_number": 1,
+        "baseline": {
+          "run_item_id": "aabf3aac-14dd-43d0-baea-523ec9bd51ea",
+          "trace_id": null,
+          "root_span_id": ""
+        },
+        "candidate": {
+          "run_item_id": "a652fa02-ed74-469a-92e1-6afd23847808",
+          "trace_id": null,
+          "root_span_id": ""
+        }
+      }
+    ]
+  }
+}

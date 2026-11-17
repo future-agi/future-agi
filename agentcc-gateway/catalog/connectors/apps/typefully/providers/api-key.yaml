@@ -1,0 +1,45 @@
+# Typefully documents bearer API keys for headless or scripted MCP clients.
+schema: "connector-manifest/v1#provider"
+app: typefully
+id: api-key
+version: 1.1.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.typefully.com/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: Typefully API key
+      help: "Create a current Typefully API key in Settings > API. Supply the key without the Bearer prefix. This static-key route supports headless or scripted MCP clients and can manage and schedule your social posts."
+      helpUrl: https://support.typefully.com/en/articles/8718287-typefully-api
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_plan
+  source: https://typefully.com/pricing
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://support.typefully.com/en/articles/13128440-typefully-mcp-server
+    fetchedAt: 2026-11-09
+  - fact: transport.variant
+    url: https://support.typefully.com/en/articles/13128440-typefully-mcp-server
+    fetchedAt: 2026-11-09
+  - fact: auth.kind
+    url: https://typefully.com/ai-agents.md
+    fetchedAt: 2026-11-09
+  - fact: auth.credentialParts
+    url: https://typefully.com/ai-agents.md
+    fetchedAt: 2026-11-09

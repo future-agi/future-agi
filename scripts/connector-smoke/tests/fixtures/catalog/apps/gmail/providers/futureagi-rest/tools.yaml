@@ -1,0 +1,5 @@
+# Fixture for the live-smoke runner's tests (scripts/connector-smoke), not
+# catalog data. Facts are illustrative.
+# The REST generator's curated overlay (CN4's input format). The manifest
+# loader does not parse it; it scans it for secret-shaped values.
+operations: [gmail.users.threads.list, gmail.users.messages.send]

@@ -1,5 +1,32 @@
 from django.db import migrations
 
+UPDATE_SAFETY = {
+    "schema_version": 1,
+    "risk_classes": ["data_migration"],
+    "tables": ["postgres:simulate_eval_config"],
+    "mitigation": (
+        "forward rewrites the filters JSON of every simulate_eval_config row to "
+        "snake_case keys and canonical operator names (for example is to equals). A "
+        "system column id becomes snake_case (for example traceId to trace_id) when "
+        "the filter's column type is empty, SYSTEM_METRIC or NORMAL. It removes the "
+        "top-level colType, and the top-level col_type unless colType holds a "
+        "non-empty value, and copies that non-empty colType value, or else col_type's, "
+        "into filter_config when that is a dict whose col_type is missing or empty. It "
+        "drops the id and _meta keys of each filter item. It reads only id and filters "
+        "with iterator() and saves only rows that changed (update_fields=['filters']) "
+        "on the migration's own connection. A database that applied 1.58.0 already has "
+        "this migration recorded and does not run it again. On a fresh install "
+        "simulate_eval_config has no rows when it runs, so nothing is written. Safe to "
+        "run again: it rewrites only to canonical forms and saves only rows that "
+        "changed, and the migration is atomic, so a failed run rolls back whole. The "
+        "reverse is a no-op. Row scale: one row per simulate eval config; not a "
+        "registered high-volume table."
+    ),
+    "reviewer": "<actual-github-login>",
+    "review": "<actual-PR-review-discussion-permalink>",
+    "large_volume_rehearsal": True,
+}
+
 
 FILTER_ITEM_KEY_ALIASES = {
     "columnId": "column_id",
@@ -127,11 +154,11 @@ def _canonicalize_filter_list(filters):
 
 def canonicalize_simulate_eval_config_filters(apps, schema_editor):
     SimulateEvalConfig = apps.get_model("simulate", "SimulateEvalConfig")
-    for config in SimulateEvalConfig.objects.all().only("id", "filters").iterator():
+    for config in SimulateEvalConfig.objects.using(schema_editor.connection.alias).all().only("id", "filters").iterator():
         next_filters, changed = _canonicalize_filter_list(config.filters or [])
         if changed:
             config.filters = next_filters
-            config.save(update_fields=["filters"])
+            config.save(using=schema_editor.connection.alias, update_fields=["filters"])
 
 
 class Migration(migrations.Migration):

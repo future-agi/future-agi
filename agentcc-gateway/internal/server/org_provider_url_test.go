@@ -50,6 +50,7 @@ func newOrgProviderURLTestServer(t *testing.T, operatorURL string, orgProviders 
 	tenantStore.Set("org-urls", &tenant.OrgConfig{Providers: orgProviders})
 
 	srv := New(cfg, "", registry, pipeline.NewEngine(), nil, nil, nil, nil, testModelDBPtr(), tenantStore, nil)
+	releaseTestServer(t, srv)
 	srv.ready.Store(true)
 	return srv
 }
@@ -151,6 +152,9 @@ func TestOrgProviderPrivateBaseURLRefusalExplainsOptIn(t *testing.T) {
 // refusal: a base_url that is not usable says why, and any other build
 // failure keeps its cause to the gateway log.
 func TestOrgProviderBuildFailureIsA502ServerError(t *testing.T) {
+	// .invalid is not guaranteed to fail in every runner's ambient DNS.
+	// Use the standard resolver seam and never send a real DNS query.
+	stubProviderDNS(t, nil)
 	operator := startMockOpenAI(t)
 	defer operator.Close()
 

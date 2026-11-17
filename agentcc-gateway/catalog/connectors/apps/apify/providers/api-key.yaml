@@ -1,0 +1,44 @@
+schema: "connector-manifest/v1#provider"
+app: apify
+id: api-key
+version: 1.1.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.apify.com
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: API token
+      help: "Get an Apify API token from API & Integrations in Apify Console. It permits Actor runs and access to storage and results within its permissions; runs consume your account's usage allowance."
+      helpUrl: https://docs.apify.com/mcp
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_metered
+  source: https://docs.apify.com/mcp
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://docs.apify.com/mcp
+    fetchedAt: 2026-11-09
+  - fact: transport.variant
+    url: https://docs.apify.com/mcp
+    fetchedAt: 2026-11-09
+  - fact: auth.kind
+    url: https://docs.apify.com/mcp
+    fetchedAt: 2026-11-09
+  - fact: auth.credentialParts
+    url: https://docs.apify.com/mcp
+    fetchedAt: 2026-11-09

@@ -10,12 +10,13 @@ from datetime import datetime, timezone
 from unittest.mock import patch
 
 import pytest
-from django.conf import settings
 from rest_framework import status
 from rest_framework.test import APIClient
 
 from accounts.models import Organization, User
+from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.workspace import Workspace
+from conftest import WorkspaceAwareAPIClient
 from model_hub.models.choices import (
     CellStatus,
     DatasetSourceChoices,
@@ -26,6 +27,8 @@ from model_hub.models.choices import (
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from model_hub.models.evals_metric import EvalTemplate, UserEvalMetric
 from model_hub.models.experiments import ExperimentDatasetTable, ExperimentsTable
+from tfc.constants.levels import Level
+from tfc.constants.roles import OrganizationRoles
 
 # ==================== Fixtures ====================
 
@@ -37,12 +40,22 @@ def organization(db):
 
 @pytest.fixture
 def user(db, organization):
-    return User.objects.create_user(
+    user = User.objects.create_user(
         email="test@example.com",
         password="testpassword123",
         name="Test User",
         organization=organization,
     )
+    OrganizationMembership.no_workspace_objects.get_or_create(
+        user=user,
+        organization=organization,
+        defaults={
+            "role": OrganizationRoles.OWNER,
+            "level": Level.OWNER,
+            "is_active": True,
+        },
+    )
+    return user
 
 
 @pytest.fixture
@@ -57,11 +70,11 @@ def workspace(db, organization, user):
 
 @pytest.fixture
 def auth_client(user, workspace):
-    client = APIClient()
+    client = WorkspaceAwareAPIClient()
     client.force_authenticate(user=user)
-    settings.CURRENT_WORKSPACE = workspace
-    settings.ORGANIZATION = user.organization
-    return client
+    client.set_workspace(workspace)
+    yield client
+    client.stop_workspace_injection()
 
 
 @pytest.fixture

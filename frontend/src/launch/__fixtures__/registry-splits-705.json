@@ -1,0 +1,44 @@
+{
+  "dataset.collab": [
+    "dataset.collab.comments",
+    "dataset.collab.assignments",
+    "dataset.collab.tags",
+    "dataset.collab.corrections",
+    "dataset.collab.translate",
+    "dataset.collab.reviews",
+    "dataset.collab.sendToQa"
+  ],
+  "dataset.filtersSystem": [
+    "dataset.filtersSystem.pills",
+    "dataset.filtersSystem.expressions"
+  ],
+  "dataset.imports": [
+    "dataset.imports.generateRowsTile",
+    "dataset.imports.sources",
+    "dataset.imports.blankGrid"
+  ],
+  "list.organize": [
+    "list.organize.folders",
+    "list.organize.star",
+    "list.organize.query"
+  ],
+  "dataset.rowExtras": [
+    "dataset.rowExtras.runs",
+    "dataset.rowExtras.activity",
+    "dataset.rowExtras.conversation"
+  ],
+  "dataset.versions": ["dataset.versions", "dataset.schema"],
+  "exp.new.unhonoured": [
+    "exp.new.scope",
+    "exp.new.runSettings",
+    "exp.new.record"
+  ],
+  "exp.results": [
+    "exp.results.matrix",
+    "exp.results.paths",
+    "exp.results.summary",
+    "exp.results.traces",
+    "exp.results.iterateDock"
+  ],
+  "exp.iterate": ["exp.results.iterateDock"]
+}

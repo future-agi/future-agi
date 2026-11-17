@@ -31,6 +31,12 @@ from django.db import close_old_connections, transaction
 from django.utils import timezone
 from temporalio import activity
 
+from evaluations.usage_step import (
+    UsageStep,
+    error_localizer_step,
+    log_unreadable_step,
+    step_event_id,
+)
 from simulate.models.test_execution import CallExecution
 from simulate.services.agent_definition import resolve_api_key_for_version
 from simulate.services.harness_evals import effective_simulation_mapping
@@ -44,10 +50,47 @@ from simulate.utils.eval_summary import derive_kpi_output_type
 from simulate.utils.processing_outcomes import build_skipped_eval_output_payload
 from simulate.utils.test_execution_utils import eval_source
 from simulate.utils.verdicts import has_stored_verdict
+from tfc.logging.temporal import try_activity_info
 from tfc.utils.case import to_camel_case, to_snake_case
 from tfc.utils.storage_client import server_reachable_url
 
 logger = structlog.get_logger(__name__)
+
+
+def _usage_run() -> tuple[str, str] | None:
+    """The call workflow run this activity is part of, or None when it cannot
+    be read.
+
+    A retry of the activity is in the run of its first attempt. A rerun a
+    person starts is a new run, also when it reuses the call's row and the
+    workflow's id. With no run to key them to, the usage events of this
+    attempt get fresh event ids and are billed.
+    """
+    try:
+        info = try_activity_info()
+        if info is None or not (info.workflow_id and info.workflow_run_id):
+            return None
+        return info.workflow_id, info.workflow_run_id
+    except Exception:
+        log_unreadable_step()
+        return None
+
+
+def _usage_step(
+    call_execution, usage_run: tuple[str, str] | None, evaluator: tuple[str, str]
+) -> UsageStep | None:
+    """One evaluation step of a call, as its usage events are keyed: the call,
+    the call workflow run that evaluates it and what evaluates it (an
+    evaluation config, or a tool call by its place in the call). None when the
+    run is unknown; the step's events then get fresh event ids."""
+    if usage_run is None:
+        return None
+    return {
+        "evaluated": ("simulate_call", str(call_execution.id)),
+        "run": usage_run,
+        "evaluator": evaluator,
+    }
+
 
 # ============================================================================
 # EVALUATION ACTIVITIES
@@ -141,12 +184,14 @@ async def run_simulate_evaluations(
 
             # Run evaluations standalone (no TestExecutor)
             heartbeater.details = ("running_evaluations", input.call_execution_id)
+            usage_run = _usage_run()
 
             def run_evaluations_sync():
                 _run_evaluations_standalone(
                     call_execution,
                     eval_config_ids=input.eval_config_ids,
                     skip_existing=input.skip_existing,
+                    usage_run=usage_run,
                 )
 
             await sync_to_async(run_evaluations_sync, thread_sensitive=False)()
@@ -770,11 +815,19 @@ def build_simulation_context_map(call_execution, agent_version):
     return ctx, subjects
 
 
-def _run_single_evaluation(eval_config, call_execution, transcript_data):
+def _run_single_evaluation(
+    eval_config, call_execution, transcript_data, usage_run=None
+):
     """
     Run a single SimulateEvalConfig evaluation.
 
     Replicates TestExecutor._run_single_simulate_evaluation() logic.
+    ``usage_run`` is the call workflow run the evaluation is part of. Its
+    usage event is keyed to the call, that run and the config, so an
+    evaluation the activity runs again after a retry is billed once. So is
+    the localization of each error localization task it makes (the playground
+    task run_eval_func makes and the call's own task), each keyed to that
+    step and its task source.
     """
     from model_hub.models.choices import StatusType
     from model_hub.models.develop_dataset import Cell, Column
@@ -793,8 +846,17 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
 
         # Get scenario column order
         scenario_ids = call_execution.test_execution.scenario_ids
+        # This activity runs with no workspace bound, so the manager adds no
+        # tenant filter. Every scenario, column and dataset read here is limited
+        # to the execution's own organization. An id of another organization's
+        # scenario, stored before execute checked scenario_ids (T6 #7e), then
+        # adds none of its columns to the cell-read gate below and no name to
+        # the mismatch message.
+        organization_id = call_execution.test_execution.run_test.organization_id
         scenario_column_order_qs = (
-            Scenarios.objects.filter(id__in=scenario_ids, deleted=False)
+            Scenarios.objects.filter(
+                id__in=scenario_ids, organization_id=organization_id, deleted=False
+            )
             .select_related("dataset")
             .values_list("dataset__column_order", flat=True)
         )
@@ -864,7 +926,9 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
         columns_by_id = {}
         if mismatch_column_ids:
             for col in Column.objects.select_related("dataset").filter(
-                id__in=mismatch_column_ids, deleted=False
+                id__in=mismatch_column_ids,
+                dataset__organization_id=organization_id,
+                deleted=False,
             ):
                 columns_by_id[str(col.id)] = col
 
@@ -874,14 +938,16 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
         ]
         scenario_by_dataset = {}
         if dataset_ids:
-            for scn in Scenarios.objects.filter(dataset_id__in=dataset_ids):
+            for scn in Scenarios.objects.filter(
+                dataset_id__in=dataset_ids, organization_id=organization_id
+            ):
                 scenario_by_dataset[scn.dataset_id] = scn
 
         # Pre-fetch test scenario names (used in mismatch error messages)
         test_scenarios = list(
-            Scenarios.objects.filter(id__in=scenario_ids, deleted=False).values_list(
-                "name", flat=True
-            )
+            Scenarios.objects.filter(
+                id__in=scenario_ids, organization_id=organization_id, deleted=False
+            ).values_list("name", flat=True)
         )
         test_scenarios_str = (
             ", ".join(test_scenarios) if test_scenarios else "unknown scenarios"
@@ -1029,17 +1095,23 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
                 else None,
             }
 
+        usage_step = _usage_step(
+            call_execution,
+            usage_run,
+            ("simulate_eval_config", str(eval_config.id)),
+        )
         eval_result = run_eval_func(
             config=config,
             mappings=updated_mapping,
             template=eval_template,
             org=organization,
             model=eval_config.model,
-            kb_id=eval_config.kb_id,
+            kb_id=eval_config.kb_id_id,
             error_localizer=eval_config.error_localizer,
             workspace=call_execution.test_execution.run_test.workspace,
             source=eval_source(call_execution.test_execution_id),
             call_context=_call_context,
+            usage_step=usage_step,
         )
 
         if isinstance(eval_result, str):
@@ -1081,6 +1153,9 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
                         mapping=updated_mapping,
                         eval_explanation=eval_reason,
                         log_id=None,
+                        usage_event_id=step_event_id(
+                            error_localizer_step(usage_step, "simulate")
+                        ),
                     )
                 except Exception as e:
                     logger.error(
@@ -1215,7 +1290,7 @@ def _check_eval_completion(call_execution, eval_config_ids=None, run_test=None):
 
 
 def _run_evaluations_standalone(
-    call_execution, eval_config_ids=None, skip_existing=False
+    call_execution, eval_config_ids=None, skip_existing=False, usage_run=None
 ):
     """
     Standalone evaluation orchestrator — replaces TestExecutor._run_simulate_evaluations().
@@ -1226,6 +1301,8 @@ def _run_evaluations_standalone(
     With ``skip_existing`` on, a config that already holds a sealed verdict
     is neither re-graded nor rewritten, mirroring
     ``TestExecutor._run_simulate_evaluations``'s guard.
+    ``usage_run`` is the call workflow run the evaluations are part of; each
+    evaluation's usage event is keyed to it.
     """
     from simulate.models import SimulateEvalConfig, TestExecution
 
@@ -1326,7 +1403,12 @@ def _run_evaluations_standalone(
                     TestExecution.ExecutionStatus.CANCELLED,
                     TestExecution.ExecutionStatus.CANCELLING,
                 ]:
-                    _run_single_evaluation(eval_config, call_execution, transcript_data)
+                    _run_single_evaluation(
+                        eval_config,
+                        call_execution,
+                        transcript_data,
+                        usage_run=usage_run,
+                    )
                     logger.info(
                         f"Successfully ran evaluation {eval_config.name} ({eval_config.id}) "
                         f"on call execution {call_execution.id}"
@@ -1420,9 +1502,12 @@ async def run_tool_call_evaluation(
                 "running_tool_evaluation",
                 input.call_execution_id,
             )
+            usage_run = _usage_run()
 
             def run_tool_eval_sync():
-                _run_tool_evaluation_standalone(call_execution, test_execution)
+                _run_tool_evaluation_standalone(
+                    call_execution, test_execution, usage_run=usage_run
+                )
 
             await sync_to_async(run_tool_eval_sync, thread_sensitive=False)()
 
@@ -1527,12 +1612,14 @@ async def _inject_client_tool_calls(call: CallExecution, client_raw_data: dict) 
         )
 
 
-def _run_tool_evaluation_standalone(call_execution, test_execution):
+def _run_tool_evaluation_standalone(call_execution, test_execution, usage_run=None):
     """
     Standalone tool evaluation — replaces TestExecutor._run_tool_evaluation().
 
     Uses customer_call_id already set on CallExecution by fetch_client_call_data (Phase 5).
     Does NOT call find_client_call_id again.
+    ``usage_run`` is the call workflow run the evaluation is part of; each
+    tool call's usage event is keyed to the call, that run and the tool call.
     """
     try:
         from ee.agenthub.tool_eval_agent.tool_eval_agent import ToolEvalAgent
@@ -1889,9 +1976,17 @@ def _run_tool_evaluation_standalone(call_execution, test_execution):
                             "total_cost", 0
                         )
                     credits = BillingConfig.get().calculate_ai_credits(actual_cost)
+                    step_id = step_event_id(
+                        _usage_step(
+                            call_execution,
+                            usage_run,
+                            ("simulate_tool_evaluation", str(idx)),
+                        )
+                    )
 
                     emit(
                         UsageEvent(
+                            **({"event_id": step_id} if step_id else {}),
                             org_id=str(organization.id),
                             event_type=api_call_type,
                             amount=credits,

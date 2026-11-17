@@ -1,0 +1,44 @@
+schema: "connector-manifest/v1#provider"
+app: you-com
+id: api-key
+version: 1.1.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://api.you.com/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: API key
+      help: "Create an API key at you.com/platform. Supply the key without the Bearer prefix. Requests use your You.com account balance; research and finance tools require explicit opt-in."
+      helpUrl: https://you.com/docs/agents/mcp-server
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_metered
+  source: https://you.com/docs/agents/mcp-server
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://you.com/docs/agents/mcp-server
+    fetchedAt: 2026-11-09
+  - fact: transport.variant
+    url: https://you.com/docs/agents/mcp-server
+    fetchedAt: 2026-11-09
+  - fact: auth.kind
+    url: https://you.com/docs/agents/mcp-server
+    fetchedAt: 2026-11-09
+  - fact: auth.credentialParts
+    url: https://you.com/docs/agents/mcp-server
+    fetchedAt: 2026-11-09

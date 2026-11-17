@@ -38,6 +38,13 @@ const DATE_OP_LABELS = {
   less_than_or_equal: "on or before",
 };
 
+// The panel says "is null" / "is not null" for most types; only its array
+// and map operators read "is empty" / "is not empty". Dates keep the empty
+// words too: the datasets null-predicate test (b1f7de3d65) pins them on the
+// chip, though TraceFilterPanel's DATE_OPS still say "is null".
+const EMPTY_OP_LABELS = { is_null: "is empty", is_not_null: "is not empty" };
+const EMPTY_WORD_TYPES = new Set(["array", "map", "date", "datetime"]);
+
 /**
  * Build a human-readable label from an extraFilter (snake_case API format).
  * { column_id, filter_config: { filter_type, filter_op, filter_value } }
@@ -54,6 +61,7 @@ function buildChipParts(filter, fieldLabelMap) {
     ? val.length === 1
     : !(typeof val === "string" && val.includes(","));
   const opLabel =
+    (EMPTY_WORD_TYPES.has(type) && EMPTY_OP_LABELS[op]) ||
     ((type === "datetime" || type === "date") && DATE_OP_LABELS[op]) ||
     (op === "in" && single
       ? "="

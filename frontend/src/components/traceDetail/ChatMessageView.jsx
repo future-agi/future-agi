@@ -51,20 +51,40 @@ export function isOpenAIMessages(input) {
     "role" in data[0]
   )
     return true;
-  // Gemini/Vertex format: {contents: [{role, parts}], model: "..."}
+  // Complete OpenAI requests or Gemini/Vertex contents.
   if (
-    data != null &&
+    data &&
     typeof data === "object" &&
     !Array.isArray(data) &&
-    data.contents &&
-    Array.isArray(data.contents)
+    (Array.isArray(data.messages) || Array.isArray(data.contents))
   )
     return true;
   return false;
 }
 
+/** System turns among the attribute-extracted input messages. */
+function attributeSystemTurns(attrInputMessages) {
+  return (attrInputMessages || [])
+    .filter((msg) => msg?.role === "system")
+    .map(normalizeMessage);
+}
+
+// A system prompt recorded outside the captured turns goes first, without
+// replacing captured turns and their tool metadata. Nothing is added when the
+// turns have their own system turn, or when no turn is readable (those are
+// left for the attribute fallback).
+function withSystemTurns(captured, systemMessages) {
+  if (
+    !captured.some((msg) => msg.role !== "unknown") ||
+    captured.some((msg) => msg.role === "system")
+  ) {
+    return captured;
+  }
+  return [...systemMessages, ...captured];
+}
+
 /** Parse messages from input — handles OpenAI, Gemini/Vertex, and plain formats */
-function parseMessages(input) {
+function parseMessages(input, attrInputMessages = []) {
   if (!input) return [];
   let data = input;
   if (typeof data === "string") {
@@ -78,48 +98,311 @@ function parseMessages(input) {
   if (Array.isArray(data)) {
     return data.map(normalizeMessage);
   }
+  // Complete request: {messages: [{role, content, tool_calls, ...}]}.
+  // LangChain records a batch of message lists: {messages: [[...]]}.
+  if (Array.isArray(data?.messages)) {
+    const captured = data.messages.flat().map(normalizeMessage);
+    // Anthropic keeps the system prompt beside the messages.
+    const hasRequestSystem = Array.isArray(data.system)
+      ? data.system.length > 0
+      : Boolean(data.system);
+    return withSystemTurns(
+      captured,
+      hasRequestSystem
+        ? [normalizeMessage({ role: "system", content: data.system })]
+        : attributeSystemTurns(attrInputMessages),
+    );
+  }
   // Gemini format: {contents: [{role, parts}], model: "..."}
-  if (
-    data != null &&
-    typeof data === "object" &&
-    data.contents &&
-    Array.isArray(data.contents)
-  ) {
-    return data.contents.map(normalizeMessage);
+  // Gemini system instructions live outside contents.
+  if (Array.isArray(data?.contents)) {
+    return withSystemTurns(
+      data.contents.map(normalizeMessage),
+      attributeSystemTurns(attrInputMessages),
+    );
   }
   return [];
 }
 
-/** Normalize a message to {role, content} format (handles Gemini parts) */
-function normalizeMessage(msg) {
-  if (!msg || typeof msg !== "object")
-    return { role: "unknown", content: [messageBlockText(msg)] };
-  const role = normalizeMessageRole(msg.role);
+/** OTel GenAI gen_ai.system_instructions (text parts) as a system turn. */
+function systemInstructionTurns(instructions) {
+  let value = instructions;
+  if (typeof value === "string") {
+    try {
+      value = JSON.parse(value);
+    } catch {
+      // Plain-text instructions are shown as they are.
+    }
+  }
+  if (value == null) return [];
+  const text = (Array.isArray(value) ? value : [value])
+    .map((part) => {
+      if (typeof part === "string") return part;
+      if (typeof part?.content === "string") return part.content;
+      if (typeof part?.text === "string") return part.text;
+      return JSON.stringify(part);
+    })
+    .filter((part) => part && part.trim())
+    .join("\n\n");
+  return text ? [{ role: "system", content: [text] }] : [];
+}
+
+// A prompt recorded as plain text or as a non-message object, rather than as
+// a message list, is still the turn's input: show it as one user message.
+function promptMessages(input) {
+  if (isOpenAIMessages(input)) return [];
+  if (typeof input === "string") {
+    return input.trim() ? [{ role: "user", content: [input] }] : [];
+  }
+  if (
+    input &&
+    typeof input === "object" &&
+    !Array.isArray(input) &&
+    Object.keys(input).length > 0
+  ) {
+    const json = JSON.stringify(input, null, 2);
+    return [{ role: "user", content: [`\`\`\`json\n${json}\n\`\`\``] }];
+  }
+  return [];
+}
+
+// Image addresses the card may load; any other address stays as text.
+const IMAGE_SRC_PATTERN = /^(?:https?:\/\/|data:image\/|blob:)/i;
+
+/** The address of an image content part, or null for any other part. */
+function imagePartUrl(part) {
+  if (!part || typeof part !== "object") return null;
+  const url = [
+    part.image_url?.url, // OpenAI chat: {type: "image_url", image_url: {url}}
+    part.image_url, // OpenAI responses: {type: "input_image", image_url}
+    part.image?.url,
+    part.image, // flattened message_content.image
+    part["image.url"], // flattened message_content.image.url
+    part["image.image.url"], // flattened OpenInference image
+    part["image_url.url"],
+  ].find((value) => typeof value === "string" && value.trim());
+  return url && IMAGE_SRC_PATTERN.test(url.trim()) ? url.trim() : null;
+}
+
+const LANGCHAIN_ROLES = new Map([
+  ["human", "user"],
+  ["ai", "assistant"],
+  ["system", "system"],
+  ["tool", "tool"],
+  ["function", "function"],
+]);
+
+/** LangChain serializes a message as {lc, type, id: [..., class], kwargs}. */
+const isLangChainMessage = (msg) =>
+  msg.lc != null &&
+  Array.isArray(msg.id) &&
+  msg.kwargs != null &&
+  typeof msg.kwargs === "object";
+
+/** A LangChain-serialized message as a {role, content, tool_calls} message. */
+function fromLangChainMessage(msg) {
+  const { kwargs } = msg;
+  const className = String(msg.id[msg.id.length - 1] || "");
+  const kind = String(
+    kwargs.type || className.replace(/Message(?:Chunk)?$/, ""),
+  ).toLowerCase();
+  const role =
+    (kind === "chat" && kwargs.role) || LANGCHAIN_ROLES.get(kind) || kind;
+  const toolCalls = kwargs.tool_calls?.length
+    ? kwargs.tool_calls
+    : kwargs.additional_kwargs?.tool_calls;
+  return {
+    role: role || "unknown",
+    content: kwargs.content,
+    ...(toolCalls?.length > 0
+      ? {
+          // LangChain tool calls carry their arguments as `args`.
+          tool_calls: toolCalls.map((call) =>
+            call?.args !== undefined ? { ...call, arguments: call.args } : call,
+          ),
+        }
+      : {}),
+    ...(kwargs.tool_call_id != null
+      ? { tool_call_id: kwargs.tool_call_id }
+      : {}),
+    ...(kwargs.name != null ? { name: kwargs.name } : {}),
+  };
+}
+
+// OpenLLMetry records tool calls as flat `tool_calls.N.<field>` message keys.
+const DOTTED_TOOL_CALL = /^tool_calls\.(\d+)\.(.+)$/;
+
+/** Fold flat `tool_calls.N.*` keys into a tool_calls list. */
+function foldDottedToolCalls(msg) {
+  if (Array.isArray(msg.tool_calls) || Array.isArray(msg.toolCalls)) return msg;
+  const calls = {};
+  const rest = {};
+  Object.entries(msg).forEach(([key, value]) => {
+    const match = DOTTED_TOOL_CALL.exec(key);
+    if (!match) {
+      rest[key] = value;
+      return;
+    }
+    const call = calls[match[1]] || (calls[match[1]] = {});
+    // `function.name` / `function.arguments` nest like the OpenAI shape.
+    const [field, ...nested] = match[2].split(".");
+    if (nested.length) {
+      const parent = typeof call[field] === "object" ? call[field] : {};
+      call[field] = { ...parent, [nested.join(".")]: value };
+    } else {
+      call[field] = value;
+    }
+  });
+  const indices = Object.keys(calls).sort((a, b) => a - b);
+  if (!indices.length) return msg;
+  return { ...rest, tool_calls: indices.map((index) => calls[index]) };
+}
+
+/** A tool result as text: strings as is, text blocks joined, else JSON. */
+function resultText(value) {
+  if (value == null) return "";
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) {
+    return value
+      .map((block) => {
+        if (typeof block === "string") return block;
+        if (typeof block?.text === "string") return block.text;
+        return JSON.stringify(block);
+      })
+      .join("\n\n");
+  }
+  return `\`\`\`json\n${JSON.stringify(value, null, 2)}\n\`\`\``;
+}
+
+/**
+ * A tool call, tool result or reasoning block, from Anthropic content blocks
+ * or OTel GenAI parts; null for any other block.
+ */
+function toolOrReasoningBlock(block) {
+  switch (block?.type) {
+    case "tool_use": // Anthropic
+      return {
+        toolCall: { id: block.id, name: block.name, arguments: block.input },
+      };
+    case "tool_call": // OTel GenAI (LangChain content blocks use args)
+      return {
+        toolCall: {
+          id: block.id,
+          name: block.name,
+          arguments: block.arguments ?? block.args,
+        },
+      };
+    case "tool_result": // Anthropic
+      return {
+        toolCallId: block.tool_use_id,
+        text: [block.is_error ? "**Error:**" : "", resultText(block.content)]
+          .filter(Boolean)
+          .join("\n\n"),
+      };
+    case "tool_call_response": // OTel GenAI
+      return { toolCallId: block.id, text: resultText(block.response) };
+    case "thinking": // Anthropic
+      return { text: `**Thinking:** ${block.thinking ?? ""}` };
+    case "reasoning": // OTel GenAI
+      return { text: `**Reasoning:** ${resultText(block.content)}` };
+    default:
+      return null;
+  }
+}
+
+/**
+ * Content blocks or parts as display entries. Tool calls become tool_calls
+ * (unless the message lists its own) and a tool result's ID its
+ * tool_call_id, so tool cards and the header show them instead of JSON.
+ */
+function withBlocks(message, blocks, displayBlock) {
+  const content = [];
+  const toolCalls = [];
+  let toolCallId = null;
+  blocks.forEach((block) => {
+    const entry = toolOrReasoningBlock(block);
+    if (!entry) {
+      content.push(displayBlock(block));
+      return;
+    }
+    if (entry.toolCall) toolCalls.push(entry.toolCall);
+    if (entry.text != null) content.push(entry.text);
+    if (toolCallId == null && entry.toolCallId != null) {
+      toolCallId = entry.toolCallId;
+    }
+  });
+  const hasToolCalls = (message.tool_calls || message.toolCalls)?.length > 0;
+  const hasToolCallId = (message.tool_call_id ?? message.toolCallId) != null;
+  return {
+    ...message,
+    content,
+    ...(toolCalls.length > 0 && !hasToolCalls ? { tool_calls: toolCalls } : {}),
+    ...(toolCallId != null && !hasToolCallId
+      ? { tool_call_id: toolCallId }
+      : {}),
+  };
+}
+
+// Image parts stay whole so the card shows the picture, not its JSON. A part
+// with its own text field reads as text.
+const isImagePart = (part) =>
+  part != null &&
+  typeof part === "object" &&
+  !Object.hasOwn(part, "text") &&
+  imagePartUrl(part) != null;
+
+/** A recorded message (a role string, or LangChain-serialized), not a content block. */
+const isRecordedMessage = (item) =>
+  item != null &&
+  typeof item === "object" &&
+  ((typeof item.role === "string" && item.role !== "") ||
+    isLangChainMessage(item));
+
+/** Normalize content while retaining tool calls, result IDs and message names. */
+function normalizeMessage(raw) {
+  if (!raw || typeof raw !== "object")
+    return { role: "unknown", content: [messageBlockText(raw)] };
+  const msg = isLangChainMessage(raw)
+    ? fromLangChainMessage(raw)
+    : foldDottedToolCalls(raw);
+  const message = { ...msg, role: normalizeMessageRole(msg.role) };
   // OpenAI format: {role, content: "text" or [{type, text}]}
   if (msg.content != null) {
     if (typeof msg.content === "string")
-      return { role, content: [msg.content] };
+      return { ...message, content: [msg.content] };
     if (Array.isArray(msg.content)) {
-      return {
-        role,
-        content: msg.content.map(messageBlockText),
-      };
+      return withBlocks(message, msg.content, (c) =>
+        isImagePart(c) ? c : messageBlockText(c),
+      );
     }
-    return { role, content: [serializeMessageValue(msg.content)] };
+    return { ...message, content: [serializeMessageValue(msg.content)] };
   }
-  // Gemini format: {role, parts: [{text: "..."}]}
+  // Gemini parts use text; OTel GenAI text parts use content.
   if (msg.parts && Array.isArray(msg.parts)) {
-    const texts = msg.parts.map((p) => {
+    return withBlocks(message, msg.parts, (p) => {
       if (typeof p === "string") return p;
       if (p && Object.hasOwn(p, "text")) return messageBlockText(p);
+      if (p?.type === "text" && typeof p.content === "string") return p.content;
       const call = p?.functionCall || p?.function_call;
       if (call)
         return `**Tool call:** \`${messageBlockText(call.name)}\`\n\`\`\`json\n${serializeMessageValue(call.args, 2)}\n\`\`\``;
       return messageBlockText(p);
     });
-    return { role, content: texts };
   }
-  return { role, content: [serializeMessageValue(msg)] };
+  // Tool-only assistant messages have no text; the tool cards carry their body.
+  if ((msg.tool_calls || msg.toolCalls)?.length > 0) {
+    return { ...message, content: [] };
+  }
+  return { ...message, content: [serializeMessageValue(msg)] };
+}
+
+/** A tool call as Markdown, in the shape a Gemini function call part takes. */
+function toolCallText(tc) {
+  const name = messageBlockText(tc?.function?.name || tc?.name || "tool");
+  const args = tc?.function?.arguments || tc?.arguments || "";
+  const body = typeof args === "string" ? args : serializeMessageValue(args, 2);
+  const call = `**Tool call:** \`${name}\``;
+  return body ? `${call}\n\`\`\`json\n${body}\n\`\`\`` : call;
 }
 
 // ── Single Message Card ──
@@ -132,14 +415,32 @@ const MessageCard = ({ message }) => {
   const name = message.name;
 
   // Content can be string, array of strings, array of content parts, or null
-  const textContent = useMemo(() => {
-    if (content == null) return "";
-    if (typeof content === "string") return content;
+  const { textContent, imageUrls } = useMemo(() => {
+    if (content == null) return { textContent: "", imageUrls: [] };
+    if (typeof content === "string")
+      return { textContent: content, imageUrls: [] };
     if (Array.isArray(content)) {
-      return content.map(messageBlockText).join("\n\n");
+      const texts = [];
+      const urls = [];
+      content.forEach((p) => {
+        if (isImagePart(p)) urls.push(imagePartUrl(p));
+        else texts.push(messageBlockText(p));
+      });
+      return { textContent: texts.join("\n\n"), imageUrls: urls };
     }
-    return serializeMessageValue(content, 2);
+    return {
+      textContent: serializeMessageValue(content, 2),
+      imageUrls: [],
+    };
   }, [content]);
+  // A turn that is only tool calls has no other body, so its calls show open
+  // in the body instead of as collapsed cards under an empty one.
+  const callsInBody =
+    !textContent && imageUrls.length === 0 && toolCalls?.length > 0;
+  const bodyText = callsInBody
+    ? toolCalls.map(toolCallText).join("\n\n")
+    : textContent;
+  const isEmpty = !bodyText && imageUrls.length === 0;
 
   return (
     <Box
@@ -210,9 +511,37 @@ const MessageCard = ({ message }) => {
           "& pre": { whiteSpace: "pre-wrap", fontSize: 12 },
         }}
       >
-        {textContent ? (
-          <Markdown>{textContent}</Markdown>
-        ) : (
+        {bodyText && <Markdown>{bodyText}</Markdown>}
+        {imageUrls.length > 0 && (
+          <Box
+            sx={{
+              display: "flex",
+              flexWrap: "wrap",
+              gap: 1,
+              mt: textContent ? 1 : 0,
+            }}
+          >
+            {imageUrls.map((url, i) => (
+              <Box
+                key={i}
+                component="img"
+                src={url}
+                alt="Image in this message"
+                loading="lazy"
+                sx={{
+                  display: "block",
+                  maxWidth: "100%",
+                  maxHeight: 240,
+                  objectFit: "contain",
+                  border: "1px solid",
+                  borderColor: "divider",
+                  borderRadius: "4px",
+                }}
+              />
+            ))}
+          </Box>
+        )}
+        {isEmpty && (
           <Typography
             sx={{ fontSize: 12, color: "text.disabled", fontStyle: "italic" }}
           >
@@ -222,7 +551,7 @@ const MessageCard = ({ message }) => {
       </Box>
 
       {/* Tool calls within this message */}
-      {toolCalls?.length > 0 && (
+      {toolCalls?.length > 0 && !callsInBody && (
         <Box sx={{ px: 1.5, pb: 1 }}>
           {toolCalls.map((tc, i) => (
             <ToolCallCard
@@ -252,16 +581,30 @@ const ChatMessageView = ({
   totalTokens,
   attrInputMessages,
   attrOutputMessages,
+  systemInstructions,
 }) => {
   const [showAll, setShowAll] = useState(false);
-  // Prefer attribute-extracted messages (from span_attributes like llm.inputMessages)
-  // Fall back to parsing raw input as OpenAI messages format
+  // Captured histories retain tool metadata that flattened attributes can lose,
+  // so they win unless no captured turn is readable. With neither, a plain
+  // prompt stays visible (e.g. output-only attributes). System instructions
+  // recorded beside the turns go first when no system turn is present.
   const messages = useMemo(() => {
-    if (attrInputMessages?.length > 0) return attrInputMessages;
-    return parseMessages(input);
-  }, [input, attrInputMessages]);
+    const captured = parseMessages(input, attrInputMessages);
+    let turns = captured;
+    if (
+      attrInputMessages?.length > 0 &&
+      !captured.some((msg) => msg.role !== "unknown")
+    ) {
+      turns = attrInputMessages.map(normalizeMessage);
+    } else if (!captured.length) {
+      turns = promptMessages(input);
+    }
+    if (turns.some((msg) => msg.role === "system")) return turns;
+    return [...systemInstructionTurns(systemInstructions), ...turns];
+  }, [input, attrInputMessages, systemInstructions]);
 
-  // Parse output — prefer attribute-extracted, fall back to raw output
+  // Parse output — prefer attribute-extracted, fall back to raw output.
+  // Always keep a list: a span may record multiple reply messages.
   const outputMessages = useMemo(() => {
     if (attrOutputMessages?.length > 0) {
       return attrOutputMessages.map(normalizeMessage);
@@ -276,35 +619,32 @@ const ChatMessageView = ({
       }
     }
     if (data == null || (Array.isArray(data) && data.length === 0)) return [];
-    // Role-bearing arrays are separate messages; other arrays are reply blocks.
-    if (
-      Array.isArray(data) &&
-      data.every((message) => typeof message?.role === "string" && message.role)
-    ) {
+    // Message arrays are separate messages; other arrays are reply blocks.
+    if (Array.isArray(data) && data.every(isRecordedMessage)) {
       return data.map(normalizeMessage);
     }
-    // Raw OpenAI completion: {choices: [{message: {role, content}}]}.
-    if (typeof data.choices?.[0]?.message?.role === "string") {
-      return [normalizeMessage(data.choices[0].message)];
+    // Complete OpenAI response: retain every recorded choice message.
+    if (Array.isArray(data?.choices)) {
+      const choiceMessages = data.choices
+        .filter((choice) => choice?.message)
+        .map((choice) => normalizeMessage(choice.message));
+      if (choiceMessages.length > 0) return choiceMessages;
     }
     // Gemini output: {content: {role: "model", parts: [{text: "..."}]}}
-    if (typeof data === "object" && data.content && data.content.role) {
+    if (data?.content?.role) {
       return [normalizeMessage(data.content)];
     }
     // OpenAI: {role, content}
-    if (typeof data === "object" && data.role) return [normalizeMessage(data)];
-    if (
-      typeof data === "object" &&
-      data.content &&
-      typeof data.content === "string"
-    ) {
-      return [{ role: "assistant", content: [data.content] }];
+    if (data?.role) return [normalizeMessage(data)];
+    if (typeof data?.content === "string") {
+      return [normalizeMessage({ ...data, role: "assistant" })];
     }
     // Raw output may be content blocks or a JSON scalar, not a message envelope.
     // Keep unknown blocks as JSON rather than silently hiding the model's reply.
     return [normalizeMessage({ role: "assistant", content: data })];
   }, [output, attrOutputMessages]);
 
+  // Repeated text can be a distinct recorded turn; retain each output entry.
   const allMessages = useMemo(
     () => [...messages, ...outputMessages],
     [messages, outputMessages],
@@ -449,6 +789,7 @@ ChatMessageView.propTypes = {
   totalTokens: PropTypes.number,
   attrInputMessages: PropTypes.array,
   attrOutputMessages: PropTypes.array,
+  systemInstructions: PropTypes.any,
 };
 
 export default React.memo(ChatMessageView);

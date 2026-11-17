@@ -45,7 +45,7 @@ test('OBS-E2E-060: Error Feed stays error-free without projects and Retry restor
   tag: ['@flow'],
   annotation: flowAnnotation({
     id: 'OBS-E2E-060', area: 'observe',
-    userGoal: 'A developer opens Error Feed in an empty workspace without a spurious error, reads existing issues in a populated workspace, and recovers from a failed read using Retry.',
+    userGoal: 'A developer opens Error Feed in an empty workspace without a spurious error, reads existing issues in a populated workspace, and recovers from a failed read using Retry; runs on the e2e test image, which opens Error Feed without a licence; a real build without a licence shows the Error Feed upgrade wall.',
     steps: [
       'open Observe in a test-owned empty workspace and click Error Feed',
       'read the no-projects status without an error notification on first visit, reload and revisit',

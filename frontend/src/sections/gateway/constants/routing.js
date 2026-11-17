@@ -9,3 +9,8 @@ export const ROUTING_STRATEGY_OPTIONS = [
 ];
 
 export const DEFAULT_ROUTING_STRATEGY = "round_robin";
+
+// Said under every failover and circuit breaker control: a request that
+// sets a provider lock is sent to that provider alone.
+export const PROVIDER_LOCK_FAILOVER_NOTE =
+  "For your organization's keys, failover and circuit breakers don't apply to a request that sets a provider lock.";

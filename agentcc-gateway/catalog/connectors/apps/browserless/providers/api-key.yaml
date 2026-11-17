@@ -1,0 +1,44 @@
+schema: "connector-manifest/v1#provider"
+app: browserless
+id: api-key
+version: 1.1.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.browserless.io/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: API token
+      help: "Copy an API token from your Browserless dashboard. Supply the token without the Bearer prefix. Browser sessions consume account units; proxy traffic and CAPTCHA solving can add usage. The default region is US West."
+      helpUrl: https://docs.browserless.io/mcp/browserless-mcp-server/setup
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_metered
+  source: https://docs.browserless.io/mcp/browserless-mcp-server/setup
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://docs.browserless.io/mcp/browserless-mcp-server/setup
+    fetchedAt: 2026-11-09
+  - fact: transport.variant
+    url: https://docs.browserless.io/mcp/browserless-mcp-server/setup
+    fetchedAt: 2026-11-09
+  - fact: auth.kind
+    url: https://docs.browserless.io/mcp/browserless-mcp-server/setup
+    fetchedAt: 2026-11-09
+  - fact: auth.credentialParts
+    url: https://docs.browserless.io/mcp/browserless-mcp-server/setup
+    fetchedAt: 2026-11-09

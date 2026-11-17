@@ -33,6 +33,8 @@ type ErrorDetail struct {
 	Type    string  `json:"type"`
 	Param   *string `json:"param"`
 	Code    string  `json:"code"`
+	// Metadata is the error's machine-readable detail, omitted when nil.
+	Metadata any `json:"metadata,omitempty"`
 }
 
 // APIError is an error that carries HTTP status and OpenAI error details.
@@ -42,15 +44,61 @@ type APIError struct {
 	Code    string
 	Message string
 	Param   *string
+	// Metadata is written as error.metadata: the PaymentMeta of a payment
+	// or limit refusal (error-402-v1).
+	Metadata any
+	// RetryAfterSec, when positive, is sent as the Retry-After header.
+	RetryAfterSec int
+	// UpstreamStatus is the HTTP status the error was made with, when that
+	// is set: the openai and azure adapters put the provider's own status
+	// here when they parse its JSON error (parseProviderError), and
+	// ErrUpstreamProvider puts here the status it is given. That is the
+	// provider's status on an adapter's raw-body and unreadable-response
+	// paths and on the capability core's vendor 4xx, but a fixed 502 on
+	// some of the gateway's own failures (the provider returned no stream
+	// or closed it before any chunk, a provider or failover target is not
+	// found, a speech dial got no answer, a gemini speech answer has no
+	// audio the gateway can decode). It is 0 when the provider
+	// never answered (ErrUpstreamProvider(0, ...)), on the gateway's other
+	// errors, and also on the errors the anthropic, gemini, bedrock and
+	// cohere adapters parse from a provider's JSON body and on the speech
+	// relay's handshake refusals: those carry the provider's answer only in
+	// Code (provider_<status>, or the provider's error type or RPC status),
+	// from which routing's upstreamStatusOf reads a status when this is 0.
+	// Status is what the client gets (an upstream 5xx is a 502); retry,
+	// failover and circuit breaker status lists match either one. Never
+	// written to the client, except as x-agentcc-upstream-status when
+	// UpstreamStatusVisible is set.
+	UpstreamStatus int
+	// ProviderStatus is the HTTP status of the provider's own error answer
+	// that an adapter parsed into this error (the adapters' parse*Error);
+	// 0 on every other error. It marks the error as the provider's, so the
+	// answer the client gets can say which provider failed (the server's
+	// providerFailure); retry, failover and classification never read it.
+	// Never written to the client.
+	ProviderStatus int
+	// Provider is the ID of the provider whose answer this error is, set
+	// where the gateway called that provider; "" when unknown. Never written
+	// to the client.
+	Provider string
+	// ProviderRejected is set only by an adapter reading a real provider error
+	// response/envelope. UpstreamStatus alone also includes synthesized errors.
+	ProviderRejected bool `json:"-"`
+	// BillingEvidence is internal upstream evidence, not client error metadata.
+	BillingEvidence *ProviderBillingEvidence `json:"-"`
 
 	// RetryAfter, when set, is sent as the Retry-After header: an upstream's
 	// own value, passed on so the caller waits as long as the vendor asked.
+	// RetryAfterSec, the gateway's own value, wins when both are set.
 	RetryAfter string
 
-	// UpstreamStatus, when set, is the status the upstream answered with,
-	// sent as x-agentcc-upstream-status so a caller can tell the gateway's
-	// refusal from the vendor's.
-	UpstreamStatus int
+	// UpstreamStatusVisible sends UpstreamStatus to the client as
+	// x-agentcc-upstream-status, so a caller can tell the gateway's refusal
+	// from the vendor's. Only a decision vendor's answer sets it
+	// (DecisionUpstreamError, DecisionInvalidResponse): every other
+	// UpstreamStatus, which can be the gateway's own synthetic 502, stays
+	// internal.
+	UpstreamStatusVisible bool `json:"-"`
 }
 
 func (e *APIError) Error() string {
@@ -115,8 +163,14 @@ func ErrInternal(message string) *APIError {
 	return newAPIError(http.StatusInternalServerError, ErrTypeServer, "internal_error", message)
 }
 
+// ErrUpstreamProvider is a provider's failure the gateway answers as a 502:
+// status is the provider's own HTTP status (0 when it never answered), kept
+// in the code ("provider_<status>") and as UpstreamStatus. Some of the
+// gateway's own failures pass a fixed 502 instead (see UpstreamStatus).
 func ErrUpstreamProvider(status int, message string) *APIError {
-	return newAPIError(http.StatusBadGateway, ErrTypeUpstream, fmt.Sprintf("provider_%d", status), message)
+	e := newAPIError(http.StatusBadGateway, ErrTypeUpstream, fmt.Sprintf("provider_%d", status), message)
+	e.UpstreamStatus = status
+	return e
 }
 
 func ErrGatewayTimeout(message string) *APIError {
@@ -127,17 +181,52 @@ func ErrGuardrailBlocked(code, message string) *APIError {
 	return newAPIError(http.StatusForbidden, ErrTypeGuardrail, code, message)
 }
 
+// CodeProviderBusy is the code of the 503 the gateway answers when every
+// upstream slot of a provider entry (its max_concurrent) stayed in use for the
+// entry's queue wait (queue_timeout). Nothing was sent upstream.
+const CodeProviderBusy = "provider_busy"
+
+// ProviderBusyRetryAfterSec is the Retry-After of a provider_busy refusal: a
+// slot frees as soon as any call on the entry ends, so the wait is short.
+const ProviderBusyRetryAfterSec = 1
+
+// ErrProviderBusy is the refusal of a call that found no free upstream slot on
+// provider entry within its queue wait. The message names the entry and
+// carries no request or configuration value; the code is repeated in it so
+// the Anthropic and Google dialects, whose bodies have no code field, still
+// show it.
+func ErrProviderBusy(entry string) *APIError {
+	e := newAPIError(http.StatusServiceUnavailable, ErrTypeServer, CodeProviderBusy,
+		fmt.Sprintf("%s: provider entry %q has no free upstream slot; the request was not sent upstream, retry after the Retry-After interval", CodeProviderBusy, entry))
+	e.RetryAfterSec = ProviderBusyRetryAfterSec
+	return e
+}
+
+// IsProviderBusy reports whether err is a provider_busy refusal the gateway
+// made (ErrProviderBusy): a call that was never dispatched.
+func IsProviderBusy(err error) bool {
+	var apiErr *APIError
+	return errors.As(err, &apiErr) && apiErr.Code == CodeProviderBusy &&
+		apiErr.Status == http.StatusServiceUnavailable && apiErr.UpstreamStatus == 0
+}
+
+// BearerChallenge is the WWW-Authenticate challenge on every 401 the gateway
+// writes. RFC 7235 requires a challenge on a 401, and MCP clients read it to
+// learn that the endpoint wants a bearer token.
+const BearerChallenge = `Bearer realm="agentcc-gateway"`
+
 // ErrGuardrailUnavailable distinguishes execution failures from content decisions.
 func ErrGuardrailUnavailable(message string) *APIError {
 	return newAPIError(http.StatusServiceUnavailable, "guardrail", "guardrail_unavailable", message)
 }
 
-// WriteError writes an OpenAI-compatible error JSON response.
+// WriteError writes an OpenAI-compatible error JSON response. A 401 carries
+// BearerChallenge unless the caller set a challenge of its own.
 //
 // The message is redacted here as well as at construction. Most of this
-// package's errors are built by the constructors above, but 78 sites build an
-// APIError directly — a provider parsing an upstream error body, for one — and
-// those never pass through newAPIError. Redacting at the boundary every
+// package's errors are built by the constructors above, but many sites build
+// an APIError directly — a provider parsing an upstream error body, for one —
+// and those never pass through newAPIError. Redacting at the boundary every
 // response leaves through needs no site to remember.
 func WriteError(w http.ResponseWriter, err *APIError) {
 	// A post-stage refusal must not replay the already completed provider call.
@@ -146,21 +235,36 @@ func WriteError(w http.ResponseWriter, err *APIError) {
 	}
 	resp := ErrorResponse{
 		Error: ErrorDetail{
-			Message: RedactCredentials(err.Message),
-			Type:    err.Type,
-			Code:    err.Code,
-			Param:   err.Param,
+			Message:  RedactCredentials(err.Message),
+			Type:     err.Type,
+			Code:     err.Code,
+			Param:    err.Param,
+			Metadata: err.Metadata,
 		},
 	}
+	SetRetryAfter(w, err)
 	w.Header().Set("Content-Type", "application/json")
-	if err.RetryAfter != "" {
-		w.Header().Set("Retry-After", err.RetryAfter)
+	if err.Status == http.StatusUnauthorized && w.Header().Get("WWW-Authenticate") == "" {
+		w.Header().Set("WWW-Authenticate", BearerChallenge)
 	}
-	if err.UpstreamStatus > 0 {
+	if err.UpstreamStatusVisible && err.UpstreamStatus > 0 {
 		w.Header().Set("x-agentcc-upstream-status", strconv.Itoa(err.UpstreamStatus))
 	}
 	w.WriteHeader(err.Status)
 	json.NewEncoder(w).Encode(resp)
+}
+
+// SetRetryAfter sets err's Retry-After header when it has one. Every writer
+// of an APIError calls it before writing the status, whatever the dialect of
+// the body.
+func SetRetryAfter(w http.ResponseWriter, err *APIError) {
+	switch {
+	case err == nil:
+	case err.RetryAfterSec > 0:
+		w.Header().Set("Retry-After", strconv.Itoa(err.RetryAfterSec))
+	case err.RetryAfter != "":
+		w.Header().Set("Retry-After", err.RetryAfter)
+	}
 }
 
 // WriteErrorFromError writes an error response from a generic error.

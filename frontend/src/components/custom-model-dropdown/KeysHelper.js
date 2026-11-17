@@ -1,3 +1,5 @@
+import { localProviderLogo } from "src/utils/localProviderLogo";
+import { providerDisplayName } from "src/utils/providerDisplayName";
 export const editorOptions = {
   selectOnLineNumbers: true,
   roundedSelection: false,
@@ -83,16 +85,34 @@ export const createSortBySelectedProvider = (prioritizedProvider) => {
   };
 };
 
+// Text as a provider search compares it: lower case, without spaces, "_" or
+// "-", so "Hugging Face", "hugging-face" and "huggingface" read the same.
+const providerSearchKey = (text) => {
+  const lower = String(text ?? "").toLowerCase();
+  return lower.replace(/[\s_-]+/g, "");
+};
+
+// Whether a provider card matches a search, by the name the card shows or by
+// its provider id. Every provider card search uses it.
+export const providerMatchesSearch = (provider, search = "") => {
+  const term = providerSearchKey(search);
+  if (!term) return true;
+  const texts = [
+    provider?.display_name,
+    provider?.displayName,
+    provider?.provider,
+  ];
+  return texts.some((text) => providerSearchKey(text).includes(term));
+};
+
 export const filterAndSortProviders = (
   providers = [],
   type,
   search = "",
   sortFn,
 ) => {
-  const searchTerm = search.toLowerCase();
-
   const filtered = providers.filter((p) => {
-    const matchesSearch = p.display_name?.toLowerCase().includes(searchTerm);
+    const matchesSearch = providerMatchesSearch(p, search);
 
     if (type === "json") {
       // Include json-type or cloud-only providers regardless of type
@@ -117,16 +137,37 @@ export const filterAndSortProviders = (
   return typeof sortFn === "function" ? sortFn(filtered) : filtered;
 };
 
-export const normalizeProviderStatus = (provider = {}) => ({
-  ...provider,
-  display_name:
-    provider.display_name || provider.displayName || provider.provider || "",
-  displayName:
-    provider.displayName || provider.display_name || provider.provider || "",
-  hasKey: provider.hasKey ?? provider.has_key ?? false,
-  maskedKey: provider.maskedKey ?? provider.masked_key ?? null,
-  logoUrl: provider.logoUrl ?? provider.logo_url ?? "",
-});
+// A card names its provider with providerDisplayName
+// (src/utils/providerDisplayName.js), as a model's missing-key hint does, so
+// the card and the hint always read the same: "OpenAI" and "PaLM" where the
+// server's list reads "Openai" and "Palm", and the server's own name for a
+// provider without a brand entry ("Cohere Chat").
+export const normalizeProviderStatus = (provider = {}) => {
+  const name = provider.provider ? providerDisplayName(provider.provider) : "";
+  return {
+    ...provider,
+    display_name:
+      name ||
+      provider.display_name ||
+      provider.displayName ||
+      provider.provider ||
+      "",
+    displayName:
+      name ||
+      provider.displayName ||
+      provider.display_name ||
+      provider.provider ||
+      "",
+    hasKey: provider.hasKey ?? provider.has_key ?? false,
+    maskedKey: provider.maskedKey ?? provider.masked_key ?? null,
+    // The server's sentence when it marks the stored key or settings as not
+    // valid; null otherwise. Cards show it as the server words it.
+    configurationError:
+      provider.configurationError ?? provider.configuration_error ?? null,
+    logoUrl: localProviderLogo(provider),
+    logo_url: localProviderLogo(provider),
+  };
+};
 
 export const getFilterOptions = ({
   defaultModelProviders = [],

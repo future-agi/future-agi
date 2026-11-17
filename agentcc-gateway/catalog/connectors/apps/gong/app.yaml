@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: gong
+version: 1.0.0
+name: Gong
+description: "Answers and briefs on accounts, deals and contacts from Gong's calls and emails."
+vendor:
+  name: Gong
+  domains: [gong.io]
+eeCategory: data
+group: other
+categories: [data, sales]
+tags: [sales, calls, deals]
+docsUrl: https://help.gong.io/docs/about-gong-mcp-server
+defaultProvider: mcp
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://help.gong.io/docs/about-gong-mcp-server
+    fetchedAt: 2026-11-12

@@ -82,13 +82,15 @@ type cohereUsage struct {
 }
 
 type cohereBilledUnits struct {
-	InputTokens  int `json:"input_tokens"`
-	OutputTokens int `json:"output_tokens"`
+	InputTokens  *int `json:"input_tokens"`
+	OutputTokens *int `json:"output_tokens"`
+	// SearchUnits is what Cohere bills a rerank call by.
+	SearchUnits int `json:"search_units,omitempty"`
 }
 
 type cohereTokens struct {
-	InputTokens  int `json:"input_tokens"`
-	OutputTokens int `json:"output_tokens"`
+	InputTokens  *int `json:"input_tokens"`
+	OutputTokens *int `json:"output_tokens"`
 }
 
 // --- Translation functions ---
@@ -217,17 +219,7 @@ func translateResponse(resp *cohereResponse, model string) *models.ChatCompletio
 	}
 
 	if resp.Usage != nil {
-		usage := &models.Usage{}
-		if resp.Usage.Tokens != nil {
-			usage.PromptTokens = resp.Usage.Tokens.InputTokens
-			usage.CompletionTokens = resp.Usage.Tokens.OutputTokens
-			usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
-		} else if resp.Usage.BilledUnits != nil {
-			usage.PromptTokens = resp.Usage.BilledUnits.InputTokens
-			usage.CompletionTokens = resp.Usage.BilledUnits.OutputTokens
-			usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
-		}
-		result.Usage = usage
+		result.Usage = resp.Usage.toUsage()
 	}
 
 	return result
@@ -289,10 +281,11 @@ func parseCohereError(status int, body []byte) *models.APIError {
 	}
 	if err := json.Unmarshal(body, &errResp); err == nil && errResp.Message != "" {
 		return &models.APIError{
-			Status:  mapCohereStatus(status),
-			Type:    mapCohereErrorType(status),
-			Code:    fmt.Sprintf("provider_%d", status),
-			Message: errResp.Message,
+			Status:         mapCohereStatus(status),
+			Type:           mapCohereErrorType(status),
+			Code:           fmt.Sprintf("provider_%d", status),
+			Message:        errResp.Message,
+			ProviderStatus: status,
 		}
 	}
 
@@ -300,7 +293,9 @@ func parseCohereError(status int, body []byte) *models.APIError {
 	if len(msg) > 500 {
 		msg = msg[:500] + "..."
 	}
-	return models.ErrUpstreamProvider(status, fmt.Sprintf("cohere error (HTTP %d): %s", status, msg))
+	e := models.ErrUpstreamProvider(status, fmt.Sprintf("cohere error (HTTP %d): %s", status, msg))
+	e.ProviderStatus = status // A real HTTP refusal, not a synthetic gateway failure.
+	return e
 }
 
 func mapCohereStatus(status int) int {
@@ -371,13 +366,7 @@ func translateEmbeddingRequest(req *models.EmbeddingRequest, headers map[string]
 		}
 	}
 
-	// Determine input_type from provider headers, or default to "search_document".
-	// Cohere supports: "search_document", "search_query", "classification", "clustering".
-	// Callers should set the "x-cohere-input-type" header to control this.
-	inputType := "search_document"
-	if v, ok := headers["x-cohere-input-type"]; ok && v != "" {
-		inputType = v
-	}
+	inputType := cohereInputType(req.InputType, headers)
 
 	return &cohereEmbedRequest{
 		Model:          model,
@@ -385,6 +374,28 @@ func translateEmbeddingRequest(req *models.EmbeddingRequest, headers map[string]
 		InputType:      inputType,
 		EmbeddingTypes: []string{"float"},
 	}
+}
+
+// cohereInputTypes maps a request's input_type to Cohere's.
+var cohereInputTypes = map[string]string{
+	models.EmbeddingInputTypeQuery:          "search_query",
+	models.EmbeddingInputTypeDocument:       "search_document",
+	models.EmbeddingInputTypeClassification: "classification",
+	models.EmbeddingInputTypeClustering:     "clustering",
+}
+
+// cohereInputType is the input_type an embed request goes out with: the
+// request's own, mapped to Cohere's names; else the provider's static
+// x-cohere-input-type header, which is only the default; else
+// search_document.
+func cohereInputType(requested string, headers map[string]string) string {
+	if v, ok := cohereInputTypes[requested]; ok {
+		return v
+	}
+	if v := headers["x-cohere-input-type"]; v != "" {
+		return v
+	}
+	return "search_document"
 }
 
 func translateEmbeddingResponse(resp *cohereEmbedResponse, model string) *models.EmbeddingResponse {
@@ -402,10 +413,10 @@ func translateEmbeddingResponse(resp *cohereEmbedResponse, model string) *models
 		})
 	}
 
-	if resp.Meta != nil && resp.Meta.BilledUnits != nil {
+	if resp.Meta != nil && resp.Meta.BilledUnits != nil && resp.Meta.BilledUnits.InputTokens != nil {
 		result.Usage = &models.EmbeddingUsage{
-			PromptTokens: resp.Meta.BilledUnits.InputTokens,
-			TotalTokens:  resp.Meta.BilledUnits.InputTokens,
+			PromptTokens: *resp.Meta.BilledUnits.InputTokens,
+			TotalTokens:  *resp.Meta.BilledUnits.InputTokens,
 		}
 	}
 
@@ -467,7 +478,7 @@ func translateRerankResponse(resp *cohereRerankResponse) *models.RerankResponse 
 	if resp.Meta != nil && resp.Meta.BilledUnits != nil {
 		result.Meta = &models.RerankMeta{
 			BilledUnits: map[string]int{
-				"search_units": resp.Meta.BilledUnits.InputTokens,
+				"search_units": resp.Meta.BilledUnits.SearchUnits,
 			},
 		}
 	}

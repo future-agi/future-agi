@@ -1,0 +1,25 @@
+.custom-header {
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.child-column-header.ag-header-cell.ag-header-cell-sortable {
+  background-color: var(--bg-paper) !important;
+}
+
+.experiment-view-grid .ag-floating-bottom {
+  min-height: 40px !important;
+  height: 40px !important;
+}
+.experiment-view-grid .ag-floating-bottom-viewport {
+  max-height: 40px !important;
+}
+.experiment-view-grid .ag-floating-bottom-container {
+  max-height: 40px;
+}
+.experiment-view-grid .ag-row-pinned {
+  max-height: 40px;
+}
+.ag-header-cell-resize {
+  z-index: 0 !important;
+}

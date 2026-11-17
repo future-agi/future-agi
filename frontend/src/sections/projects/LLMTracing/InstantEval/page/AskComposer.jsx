@@ -22,6 +22,7 @@ import {
   MAX_QUESTIONS,
   readOption,
   readsFor,
+  uniqueQuestionDrafts,
   validateInstantEval,
 } from "../instantEvalPayloads";
 import ScopeFilterBar from "src/sections/projects/ScopeFilterBar";
@@ -54,8 +55,21 @@ import {
 import { creditAmount, creditWords, durationWords } from "./askFilter";
 import { sourceViewTitle } from "./askLinks";
 import { scopeWords } from "./askFormat";
+import { DOC_LINKS } from "src/sections/projects/LLMTracing/common";
+import { isWindowItem } from "src/sections/projects/observeScope";
 
 const asDraft = (entry) => draftsFromQuestions([entry])[0];
+
+// Sessions and users are read off the ids a project's spans carry, and the
+// docs for sending them (the pages the Sessions and Users tabs link).
+const ID_SETUP = {
+  sessions: {
+    name: "Sessions",
+    attribute: "session.id",
+    docs: DOC_LINKS.sessions,
+  },
+  users: { name: "Users", attribute: "user.id", docs: DOC_LINKS.users },
+};
 
 const ALL = "all";
 // A sample size typed in rather than picked from the menu.
@@ -735,7 +749,11 @@ export default function AskComposer({
   // Whether answers cost credits here; where they don't, no credit figure
   // or billing line is shown.
   const billed = creditsPerAnswer(estimate) != null;
-  const filled = Math.max(1, questions.filter((q) => q.question.trim()).length);
+  const uniqueQuestions = uniqueQuestionDrafts(questions);
+  const filled = Math.max(
+    1,
+    uniqueQuestions.filter((q) => q.question.trim()).length,
+  );
   const sizes = offeredSizes(estimate, filled);
   const sampling = sizes.length > 0;
   const count = estimate?.population ?? 0;
@@ -908,7 +926,7 @@ export default function AskComposer({
     setConfirming(false);
     const handedOver = population.handedOver;
     onAsk({
-      questions,
+      questions: uniqueQuestions,
       reads,
       // What the shown count is for: the scope, once settled.
       filters: population.filters,
@@ -938,6 +956,14 @@ export default function AskComposer({
     !population.isUpdating &&
     Boolean(estimate) &&
     !count;
+  // Whether a filter (or the Users search) narrowed that count, beyond its
+  // date: the settled scope, which is what the count was for.
+  const narrowed =
+    (population.filters || []).some((item) => item && !isWindowItem(item)) ||
+    Boolean(population.search);
+  // With nothing narrowing it, no sessions or users most likely means the
+  // spans don't carry their ids (or not in this date range): say both.
+  const idSetup = ID_SETUP[unit];
 
   return (
     <Stack spacing={3} sx={{ maxWidth: 880 }}>
@@ -1019,6 +1045,11 @@ export default function AskComposer({
             }
           />
         ))}
+        {uniqueQuestions.length < questions.length && (
+          <Typography variant="caption" color="text.secondary" role="status">
+            Matching questions are asked once.
+          </Typography>
+        )}
         <Stack direction="row" alignItems="center" spacing={1}>
           <Button
             size="small"
@@ -1094,9 +1125,24 @@ export default function AskComposer({
       {error && <Alert severity="error">{error}</Alert>}
       {nothingInView && (
         <Alert severity="info">
-          {population.handedOver
-            ? `None of the ${meta.plural} handed over can be read.`
-            : `No ${meta.plural} match this date range and these filters. Widen the date range or remove a filter.`}
+          {population.handedOver ? (
+            `None of the ${meta.plural} handed over can be read.`
+          ) : narrowed ? (
+            `No ${meta.plural} match this date range and these filters. Widen the date range or remove a filter.`
+          ) : idSetup ? (
+            <>
+              {`No ${meta.plural} found in this date range. ${idSetup.name} need ${idSetup.attribute} on your spans; if yours set it, widen the date range.`}{" "}
+              <Link
+                href={idSetup.docs}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                How to set {idSetup.attribute}
+              </Link>
+            </>
+          ) : (
+            `No ${meta.plural} found in this date range. Widen the date range.`
+          )}
         </Alert>
       )}
 

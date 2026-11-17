@@ -1,6 +1,7 @@
 from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
+from integrations.views.destinations import DestinationsView
 from integrations.views.integration_connection import IntegrationConnectionViewSet
 from integrations.views.slack import (
     SlackChannelsView,
@@ -16,6 +17,7 @@ router.register(
 router.register(r"sync-logs", SyncLogViewSet, basename="sync-logs")
 
 urlpatterns = [
+    path("destinations/", DestinationsView.as_view(), name="integration-destinations"),
     path("slack/install/", SlackInstallView.as_view(), name="slack-install"),
     path("slack/callback/", slack_oauth_callback, name="slack-callback"),
     path(

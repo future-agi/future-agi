@@ -679,6 +679,39 @@ class RuntimeBindingTests(unittest.TestCase):
         self.inst.model["volumes"]["extra"] = {}
         with self.assertRaises(GuardRefused): self.runtime()
 
+    def test_a_service_the_layout_names_as_not_covered_refuses_the_install(self):
+        named = host.load_fixed_data("automatic-layout.json")["automatic_unsupported"]["services"]
+        self.assertTrue({"hub-checker", "hub-runner"} <= set(named))
+        self.assertTrue(self.runtime())
+        for service in sorted(named):
+            with self.subTest(service=service):
+                model = copy.deepcopy(self.inst.model)
+                self.inst.model["services"][service] = {"image": "fixture/" + service + ":1", "restart": "unless-stopped",
+                                                        "volumes": []}
+                with self.assertRaises(GuardRefused) as caught:
+                    self.runtime()
+                # The public reason stays the same; the names let setup say why and which manual updates work.
+                self.assertEqual(caught.exception.reason_code, ReasonCode.UNSUPPORTED_INSTALLATION)
+                self.assertEqual(caught.exception.not_covered, (service,))
+                self.inst.model = model
+
+    def test_tmpfs_on_a_covered_service_refuses_unless_the_layout_names_it(self):
+        self.assertTrue(self.runtime())
+        self.inst.model["services"]["app"]["tmpfs"] = ["/scratch:rw,nosuid"]
+        with self.assertRaises(GuardRefused) as caught:
+            self.runtime()
+        self.assertEqual(caught.exception.reason_code, ReasonCode.UNSUPPORTED_INSTALLATION)
+
+    def test_a_layout_without_the_not_covered_list_refuses(self):
+        contract = host.load_fixed_data("automatic-layout.json")
+        del contract["automatic_unsupported"]
+        original = state.load_fixed_data
+        with patch.object(state, "load_fixed_data",
+                          side_effect=lambda name: copy.deepcopy(contract) if name == "automatic-layout.json" else original(name)):
+            with self.assertRaises(GuardRefused) as caught:
+                self.runtime()
+        self.assertEqual(caught.exception.reason_code, ReasonCode.UNSUPPORTED_INSTALLATION)
+
     def make_observation(self, *, probe_effect=None, storage=None):
         verified = VerificationSnapshot(True, "synthetic", "fixture", "fixture", "unit-test-only", NOW)
         release = DiscoveredRelease(canonical_json(self.inst.manifest), b"fixture", manifest_hash(self.inst.manifest), "d" * 64, verified)

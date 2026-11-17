@@ -1,0 +1,122 @@
+{
+  "cards": [
+    {
+      "vendor": "exa",
+      "capability": "search",
+      "skus": [
+        {
+          "sku": "exa.search.standard",
+          "unit": "request",
+          "usd_per_unit": 0.005,
+          "free_on_failure": true,
+          "max_usd_per_call": 0.025
+        },
+        {
+          "sku": "exa.search.deep",
+          "unit": "request",
+          "usd_per_unit": 0.015,
+          "tier": "deep",
+          "free_on_failure": true
+        }
+      ],
+      "resale_status": "managed_partner",
+      "resale_terms_ref": "legal/resale/exa-2026-10.pdf",
+      "terms_url": "https://exa.example.com/terms",
+      "terms_checked_at": "2026-10-15",
+      "zdr_capable": true,
+      "trains_on_input": "no",
+      "improvement_license": false,
+      "regions": ["us", "eu"],
+      "results_retention": "metadata",
+      "cacheable": "org",
+      "eval_export": "allowed",
+      "no_divert": false,
+      "no_perf_disclosure": false,
+      "no_benchmark": false,
+      "attribution": "Results by Exa",
+      "price_effective_until": "2027-01-01"
+    },
+    {
+      "vendor": "parallel",
+      "capability": "search",
+      "skus": [
+        {
+          "sku": "parallel.search.base",
+          "unit": "request",
+          "usd_per_unit": 0.004,
+          "free_on_failure": false,
+          "min_units": 1
+        }
+      ],
+      "resale_status": "unconfirmed",
+      "resale_terms_ref": "",
+      "terms_url": "https://parallel.example.com/terms",
+      "terms_checked_at": "2026-10-15",
+      "zdr_capable": false,
+      "trains_on_input": "no",
+      "improvement_license": false,
+      "regions": ["us"],
+      "results_retention": "none",
+      "cacheable": "none",
+      "eval_export": "allowed",
+      "no_divert": true,
+      "no_perf_disclosure": false,
+      "no_benchmark": true
+    },
+    {
+      "vendor": "tavily",
+      "capability": "search",
+      "skus": [
+        {
+          "sku": "tavily.search.basic",
+          "unit": "request",
+          "usd_per_unit": 0.008,
+          "free_on_failure": true
+        }
+      ],
+      "resale_status": "byok_only",
+      "resale_terms_ref": "",
+      "terms_url": "https://tavily.example.com/terms",
+      "terms_checked_at": "2026-10-15",
+      "zdr_capable": false,
+      "trains_on_input": "ai_features_only",
+      "improvement_license": true,
+      "regions": ["us"],
+      "results_retention": "metadata",
+      "cacheable": "org",
+      "eval_export": "forbidden",
+      "no_divert": false,
+      "no_perf_disclosure": true,
+      "no_benchmark": false,
+      "improvement_opt_out_ref": "https://tavily.example.com/opt-out"
+    },
+    {
+      "vendor": "futureagi",
+      "capability": "guardrails",
+      "skus": [
+        {
+          "sku": "fagi.protect.check",
+          "unit": "request",
+          "usd_per_unit": 0.0,
+          "free_on_failure": true,
+          "cost_from_result_meta": false
+        }
+      ],
+      "resale_status": "native",
+      "resale_terms_ref": "",
+      "terms_url": "https://futureagi.com/terms",
+      "terms_checked_at": "2026-10-15",
+      "zdr_capable": false,
+      "trains_on_input": "no",
+      "improvement_license": false,
+      "regions": ["us", "eu"],
+      "results_retention": "full",
+      "cacheable": "none",
+      "eval_export": "allowed",
+      "no_divert": false,
+      "no_perf_disclosure": false,
+      "no_benchmark": false,
+      "owner_price_pending": true
+    }
+  ]
+}

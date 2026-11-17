@@ -6,9 +6,11 @@ Compose runs exactly the way the rest of the repository runs it:
   COMPOSE_PROFILES and docker-compose.override.yml.
 - Production: `docker compose --env-file deploy/.env.production
   -f docker-compose.distributed.yml -f deploy/docker-compose.production.yml`,
-  like deploy/setup.sh. bin/update's own commands take every key from the env
-  file (subprocess_env drops the shell's exports); a Compose command it
-  prints for the operator to run is followed by shell_rule().
+  like deploy/setup.sh, then `-f deploy/docker-compose.production.hub.yml`
+  when COMPOSE_PROFILES enables the hub profile (production_compose_files).
+  bin/update's own commands take every key from the env file (subprocess_env
+  drops the shell's exports); a Compose command it prints for the operator to
+  run is followed by shell_rule().
 """
 
 from __future__ import annotations
@@ -23,18 +25,24 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Collection, Dict, List, Mapping, Optional, Sequence, Tuple
 
-from .envfile import read_env
+from .envfile import EnvFileError, read_env
 from .manifest import ImageRef, ManifestError, parse_image_ref
 
 STANDALONE_FILE = "docker-compose.yml"
 DISTRIBUTED_FILE = "docker-compose.distributed.yml"
 PRODUCTION_OVERLAY = "deploy/docker-compose.production.yml"
+# The Omega Hub's production settings and services. A production install uses it right after
+# PRODUCTION_OVERLAY, and only when COMPOSE_PROFILES lists one of HUB_PROFILES (`*` enables
+# every profile, as in Compose and the backend's own check).
+PRODUCTION_HUB_OVERLAY = "deploy/docker-compose.production.hub.yml"
+HUB_PROFILES = ("hub", "*")
 PRODUCTION_ENV = "deploy/.env.production"
 
 # deploy/setup.sh's SECRET_NAMES: never let a shell export shadow them in
 # production (tests keep this list equal to setup.sh's).
 SETUP_SECRET_NAMES = (
-    "SECRET_KEY", "AGENTCC_INTERNAL_API_KEY", "AGENTCC_ADMIN_TOKEN", "PG_PASSWORD",
+    "SECRET_KEY", "FI_API_SECRET_PEPPER", "AGENTCC_INTERNAL_API_KEY", "AGENTCC_ADMIN_TOKEN",
+    "AGENTCC_WEBHOOK_SECRET", "OMEGA_HUB_CHECKER_TOKEN", "PG_PASSWORD",
     "MINIO_ROOT_PASSWORD", "PROPERTY_CATALOG_API_PASSWORD",
     "PROPERTY_CATALOG_CONSUMER_PASSWORD", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GOOGLE_API_KEY",
     "INTEGRATION_ENCRYPTION_KEY", "EE_LICENSE_KEY", "RECAPTCHA_SECRET_KEY", "MAILGUN_API_KEY",
@@ -263,6 +271,10 @@ class Installation:
             for name in (DISTRIBUTED_FILE, PRODUCTION_OVERLAY):
                 if not (self.root / name).exists():
                     raise InstallError(f"{name} is missing from {self.root}: is this a complete checkout?")
+            if self.hub_enabled() and not (self.root / PRODUCTION_HUB_OVERLAY).exists():
+                raise InstallError(
+                    f"{PRODUCTION_HUB_OVERLAY} is missing from {self.root}, and COMPOSE_PROFILES "
+                    "enables the Omega Hub, which needs it: is this a complete checkout?")
         else:
             if env_file is not None and env_file.resolve() != (self.root / ".env").resolve():
                 raise InstallError(
@@ -436,10 +448,14 @@ class Installation:
 
         `docker compose`, or the standalone binary this run uses: by name when
         the PATH finds that same binary, else by its path. Production adds the
-        env file and both Compose files the way deploy/setup.sh and
-        deploy/README.md's $COMPOSE do. Every word is shell-quoted, and it
-        starts with `cd <checkout> && ` when bin/update was run from another
-        directory (cd_prefix).
+        env file and its Compose files (production_compose_files) the way
+        deploy/setup.sh and deploy/README.md's $COMPOSE do. Every word is
+        shell-quoted, and it starts with `cd <checkout> && ` when bin/update
+        was run from another directory (cd_prefix).
+
+        It is text for messages, refusals included: when the env file cannot
+        be read it leaves the hub file out instead of failing. compose_args
+        and _ownership_files fail instead.
         """
 
         words = list(self.compose) or ["docker", "compose"]
@@ -447,7 +463,13 @@ class Installation:
         if name != words[0] and self._on_path(name, words[0]):
             words[0] = name
         if self.production:
-            words += ["--env-file", self.relative(self.env_file), "-f", DISTRIBUTED_FILE, "-f", PRODUCTION_OVERLAY]
+            words += ["--env-file", self.relative(self.env_file)]
+            try:
+                files = self.production_compose_files()
+            except EnvFileError:
+                files = [DISTRIBUTED_FILE, PRODUCTION_OVERLAY]
+            for file in files:
+                words += ["-f", file]
             if getattr(self, 'status_overlay', None) is not None:
                 words += ['-f', self.relative(self.status_overlay)]
         return self.cd_prefix() + " ".join(shlex.quote(word) for word in words)
@@ -512,11 +534,39 @@ class Installation:
             env[key] = "" if value is None else value
         return env
 
+    def hub_enabled(self) -> bool:
+        """Whether COMPOSE_PROFILES lists `hub` or `*`, as this install's Compose commands see it.
+
+        The env file's value wins: subprocess_env drops an export of a key the
+        env file sets. A key it does not set comes from the environment, and a
+        value `check` plans with (overlay_env) wins over both. Each
+        comma-separated entry is stripped and compared whole, so `hubx` is not
+        `hub`. EnvFileError when the env file cannot be read.
+        """
+
+        env = dict(read_env(self.env_file), **self.subprocess_env())
+        entries = (env.get("COMPOSE_PROFILES") or "").split(",")
+        return bool(set(HUB_PROFILES) & {entry.strip() for entry in entries})
+
+    def production_compose_files(self) -> List[str]:
+        """A production install's Compose files, relative to the checkout, in Compose's order.
+
+        docker-compose.distributed.yml and deploy/docker-compose.production.yml,
+        then deploy/docker-compose.production.hub.yml when the Omega Hub is
+        enabled (hub_enabled). A registered status overlay comes after them.
+        """
+
+        files = [DISTRIBUTED_FILE, PRODUCTION_OVERLAY]
+        if self.hub_enabled():
+            files.append(PRODUCTION_HUB_OVERLAY)
+        return files
+
     def compose_args(self, *args: str) -> List[str]:
         if self.production:
             overlay = getattr(self, 'status_overlay', None)
-            return [*self.compose, "--env-file", str(self.env_file),
-                    "-f", str(self.root / DISTRIBUTED_FILE), "-f", str(self.root / PRODUCTION_OVERLAY),
+            files = [word for file in self.production_compose_files()
+                     for word in ("-f", str(self.root / file))]
+            return [*self.compose, "--env-file", str(self.env_file), *files,
                     *(['-f', str(overlay)] if overlay is not None else []), *args]
         return [*self.compose, *args]
 
@@ -839,7 +889,8 @@ class Installation:
         """
 
         if self.production:
-            paths = [self.root / DISTRIBUTED_FILE, self.root / PRODUCTION_OVERLAY]
+            # The files compose_args passes, in its order (the Hub's after the production overlay).
+            paths = [self.root / file for file in self.production_compose_files()]
             if getattr(self, 'status_overlay', None) is not None:
                 paths.append(self.status_overlay)
         else:
@@ -884,9 +935,11 @@ class Installation:
                 recorded = labels.get("com.docker.compose.project.config_files")
                 if not isinstance(recorded, str) or not recorded:
                     raise ValueError("missing or malformed config_files label")
-                if [self._owner_path(path) for path in recorded.split(",")] != files:
+                recorded_files = [self._owner_path(path) for path in recorded.split(",")]
+                if recorded_files != files:
+                    remedy = self._started_without_hub_file(recorded_files, files)
                     raise ValueError(f"container {str(record.get('Id', '?'))[:12]} records different config_files "
-                                     f"{recorded!r}")
+                                     f"{recorded!r}{remedy}")
                 field = "environment_file"
                 recorded_env = labels.get("com.docker.compose.project.environment_file")
                 # With no --env-file, supported Compose releases omit this label: their implicit .env is
@@ -900,6 +953,24 @@ class Installation:
                                      f"environment_file {recorded_env!r}")
         except (OSError, RuntimeError, ValueError) as exc:
             raise self._ownership_error(f"{field}: {exc}") from exc
+
+    def _started_without_hub_file(self, recorded: List[Path], files: List[Path]) -> str:
+        """The fix for labels naming every selected file but the Hub's production file, else "".
+
+        Containers started before the Hub moved to its own file carry the
+        older file list. The refusal stands; this only names the fix.
+        """
+
+        hub = (self.root / PRODUCTION_HUB_OVERLAY).resolve()
+        if not self.production or hub not in files:
+            return ""
+        if recorded != [path for path in files if path != hub]:
+            return ""
+        start = f"{self.compose_hint()} up -d --no-build --wait"
+        return (f": it was started without {PRODUCTION_HUB_OVERLAY}, which COMPOSE_PROFILES "
+                f"now enables. Start the stack once with that file (`{start}`, from a shell that "
+                f"does not export any key of {self.relative(self.env_file)}) or re-run "
+                "deploy/setup.sh, then run bin/update again")
 
     def check_ownership(self) -> None:
         """Fresh, fail-closed mutation preflight. Call under the update lock before backup/env/recovery writes.

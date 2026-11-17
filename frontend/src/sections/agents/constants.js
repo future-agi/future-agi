@@ -1,3 +1,6 @@
+import { importWithRecovery } from "src/utils/chunkRecovery";
+import { NOT_IN_RELEASE } from "src/components/NotInRelease/notInRelease";
+
 export const AGENT_TAB_IDS = {
   AGENT_CONFIGURATION: "AgentConfiguration",
   PERFORMANCE_ANALYTICS: "PerformanceAnalytics",
@@ -164,13 +167,15 @@ export const OTHER_AUTH_METHODS = [
     label: "NO AUTH",
     value: "noAuth",
   },
+  // Not built in this release: listed, disabled, with the shared line in the
+  // label because the menu renders only an option's label.
   {
-    label: "OAUTH 2.0 (coming soon)",
+    label: `OAUTH 2.0 · ${NOT_IN_RELEASE}`,
     value: "oauth2_0",
     disabled: true,
   },
   {
-    label: "DIGEST AUTH (coming soon)",
+    label: `DIGEST AUTH · ${NOT_IN_RELEASE}`,
     value: "bigestAuth",
     disabled: true,
   },
@@ -369,9 +374,22 @@ export const PROVIDER_STEPS_MAPPER = {
 };
 
 /**
+ * The form status a LiveKit "Test Connection" result maps to. On Future AGI
+ * Cloud the backend never contacts a customer's LiveKit URL, so it answers
+ * `skipped`: the credentials were not verified. That is never shown as a
+ * success and never blocks saving them.
+ * @param {{ valid?: boolean, skipped?: boolean }} result
+ * @returns {"valid" | "skipped" | "invalid"}
+ */
+export const livekitValidationStatus = (result) => {
+  if (result?.skipped) return "skipped";
+  return result?.valid ? "valid" : "invalid";
+};
+
+/**
  * Validate LiveKit credentials by calling the backend endpoint.
  * @param {{ livekitUrl: string, livekitApiKey: string, livekitApiSecret: string, livekitAgentName: string }} params
- * @returns {Promise<{ valid: boolean, error?: string }>}
+ * @returns {Promise<{ valid: boolean, skipped?: boolean, message?: string, error?: string }>}
  */
 export const validateLiveKitCredentials = async ({
   livekitUrl,
@@ -381,7 +399,9 @@ export const validateLiveKitCredentials = async ({
   agentDefinitionId,
 }) => {
   // Importing here to avoid circular dependency issues at module level
-  const { default: axios, endpoints } = await import("src/utils/axios");
+  const { default: axios, endpoints } = await importWithRecovery(
+    () => import("src/utils/axios"),
+  );
   try {
     const response = await axios.post(
       endpoints.runTests.validateLiveKitCredentials,
@@ -396,6 +416,13 @@ export const validateLiveKitCredentials = async ({
       },
     );
     const result = response.data?.result || response.data;
+    if (result?.skipped) {
+      return {
+        valid: false,
+        skipped: true,
+        message: result?.message || "LiveKit credentials were not verified.",
+      };
+    }
     if (result?.valid) {
       return { valid: true };
     }

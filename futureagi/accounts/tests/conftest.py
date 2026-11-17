@@ -20,6 +20,11 @@ checkout:
 Non-custom-role product behavior is covered in ``ee/usage`` tests, not here.
 Live outbound calls (HubSpot / SMTP / Slack) must be mocked in the test module
 that exercises them (see ``test_post_registration.py``).
+
+3. ``_console_delegation_off_for_retirement`` — the console's delegated-call
+   switches are on when unset, and the 733 retirement refuses unless both are
+   off, so every accounts test starts with both explicitly false. A test that
+   needs one on sets it itself.
 """
 
 from __future__ import annotations
@@ -42,6 +47,19 @@ def _allow_custom_role_gate_for_accounts_tests(monkeypatch):
         return original_check(feature, *args, **kwargs)
 
     monkeypatch.setattr(ee_gating, "check_ee_feature", check_ee_feature)
+
+
+@pytest.fixture(autouse=True)
+def _console_delegation_off_for_retirement(settings, monkeypatch):
+    """Retirement runs with console delegation off, as its runbook requires."""
+    for name in (
+        "AGENTCC_DELEGATED_BATCH_ENABLED",
+        "AGENTCC_DELEGATED_PLAYGROUND_ENABLED",
+    ):
+        monkeypatch.setenv(name, "false")
+        # A settings value would take precedence over the environment.
+        if hasattr(settings, name):
+            delattr(settings, name)
 
 
 @pytest.fixture(autouse=True)

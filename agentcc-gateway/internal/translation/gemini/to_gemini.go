@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/futureagi/agentcc-gateway/internal/genaifmt"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 )
 
@@ -112,9 +113,17 @@ func (t *Translator) ErrorFromCanonical(err *models.APIError) (statusCode int, b
 	resp := geminiErrorResponse{
 		Error: geminiErrorDetail{
 			Code:    statusCode,
-			Message: err.Message,
+			Message: models.RedactCredentials(err.Message),
 			Status:  mapErrorTypeToGeminiStatus(err.Type),
 		},
+	}
+	if err.Code != "" {
+		resp.Error.Details = []map[string]any{genaifmt.ErrorInfo(err.Code)}
+	}
+	// A gateway admission refusal is a retryable 503, not an INTERNAL
+	// server error. Match the native GenAI error writer's status dialect.
+	if statusCode == http.StatusServiceUnavailable {
+		resp.Error.Status = "UNAVAILABLE"
 	}
 	body, _ = json.Marshal(resp)
 	contentType = "application/json"
@@ -130,7 +139,7 @@ func mapErrorTypeToGeminiStatus(errType string) string {
 		return "INVALID_ARGUMENT"
 	case models.ErrTypeAuthentication:
 		return "UNAUTHENTICATED"
-	case models.ErrTypePermission:
+	case models.ErrTypePermission, models.ErrTypeGuardrail: // a guardrail's refusal is a 403
 		return "PERMISSION_DENIED"
 	case models.ErrTypeNotFound:
 		return "NOT_FOUND"

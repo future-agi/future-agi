@@ -51,6 +51,7 @@ export default function AccountGeneral() {
     isPublic: Yup.boolean(),
   });
 
+  /** @type {Yup.InferType<typeof UpdateUserSchema>} */
   const defaultValues = {
     displayName: user?.displayName || "",
     email: user?.email || "",

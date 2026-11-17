@@ -52,7 +52,9 @@ import {
   insightsKeys,
   patchConfig,
   projectMissing,
+  resultsRemovedError,
   runFailureReason,
+  runResultsRemoved,
   useInsightsConfig,
   useInsightsRun,
 } from "./insightsApi";
@@ -616,6 +618,8 @@ export default function ReportPage({
   const newerRunning = latest && latest.id !== effectiveRunId && latestActive;
   const completed = run?.status === "completed";
   const runs = config.runs || (latest ? [latest] : []);
+  // `runs` lists the newest runs only; every run counts.
+  const runCount = Math.max(config.run_count || 0, runs.length);
   const sharedTaxonomy = runs
     .filter((r) => r.status === "completed")
     .sort((a, b) => new Date(a.created_at) - new Date(b.created_at))
@@ -648,6 +652,13 @@ export default function ReportPage({
     );
   };
 
+  // The latest run, or the run a link opens, was retired with the data it
+  // read: its results are gone, and running again reads current data.
+  const latestRemoved =
+    effectiveRunId === latest?.id && runResultsRemoved(latest);
+  const removed =
+    latestRemoved || (runQuery.isError && resultsRemovedError(runQuery.error));
+
   let body;
   if (!effectiveRunId)
     body = (
@@ -665,6 +676,26 @@ export default function ReportPage({
         }
       >
         This report has not run yet.
+      </Alert>
+    );
+  else if (removed)
+    body = (
+      <Alert
+        severity="info"
+        action={
+          <Button
+            color="inherit"
+            size="small"
+            disabled={!canRun}
+            onClick={() => setRerun({ rediscover: false })}
+          >
+            Run again
+          </Button>
+        }
+      >
+        {latestRemoved
+          ? "This report's results were removed because data it read was deleted or has expired. Run it again over current data."
+          : "This run's results were removed because data it read was deleted or has expired. Run the report again over current data."}
       </Alert>
     );
   else if (runQuery.isLoading)
@@ -766,7 +797,9 @@ export default function ReportPage({
               <Box sx={{ mt: 2 }}>
                 <TrendCard
                   runs={runs}
+                  runCount={runCount}
                   runId={effectiveRunId}
+                  run={run}
                   order={model.order}
                   currentSegments={currentSegments}
                   sharedTaxonomy={sharedTaxonomy}
@@ -826,8 +859,8 @@ export default function ReportPage({
         content={
           <Stack spacing={1}>
             <Typography variant="body2">
-              “{config.name}” and all {formatCount(runs.length)} of its runs
-              will be deleted. This can&apos;t be undone.
+              “{config.name}” and all {formatCount(runCount)} of its runs will
+              be deleted. This can&apos;t be undone.
             </Typography>
             {deleting.state.status === "error" && (
               <Alert severity="error">{deleting.state.error}</Alert>

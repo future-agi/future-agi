@@ -12,11 +12,17 @@ from ee.usage.schemas.event_types import BillingEventType
 from ee.usage.schemas.events import UsageEvent
 
 # The billing consumer stores event_id as a UUID; uuid5 keeps the id stable
-# across redelivery of the same attempt.
+# across redelivery of the same run.
 _EVENT_ID_NAMESPACE = uuid.UUID("5d7c6a3e-2f4b-4a1e-9c8d-6b0e1f2a3c4d")
 
 
-def usage_event_id(cell_or_run_id, attempt):
+def usage_event_id(cell_or_run_id, attempt=None):
+    """The id of a Jev run's usage event. The answer, which carries the
+    charge, is keyed to the run alone (``attempt`` None), so a retry of the
+    run that answers on another HTTP attempt keeps the id and is charged once.
+    Each other attempt is keyed to the run and its attempt."""
+    if attempt is None:
+        return str(uuid.uuid5(_EVENT_ID_NAMESPACE, f"jev:{cell_or_run_id}:charge"))
     return str(uuid.uuid5(_EVENT_ID_NAMESPACE, f"jev:{cell_or_run_id}:{attempt}"))
 
 
@@ -25,7 +31,8 @@ def build_usage_events(evaluator, *, org_id, cell_or_run_id, amount):
     events. Only the successful attempt carries ``amount`` and token units (the
     client keeps none for a failed one), so the others are zero-amount records
     of the attempt and its outcome. Count runs by the ``outcome == "success"``
-    events, not by events."""
+    events, not by events. The successful attempt's event is keyed to the run
+    alone (usage_event_id)."""
     actual = evaluator.last_jev or {}
     events = []
     for record in evaluator.client.attempts:
@@ -34,7 +41,7 @@ def build_usage_events(evaluator, *, org_id, cell_or_run_id, amount):
         usage = record.get("usage") or {}
         events.append(
             UsageEvent(
-                event_id=usage_event_id(cell_or_run_id, attempt),
+                event_id=usage_event_id(cell_or_run_id, None if success else attempt),
                 org_id=str(org_id),
                 event_type=BillingEventType.JEV_EVALUATOR.value,
                 amount=amount if success else 0,

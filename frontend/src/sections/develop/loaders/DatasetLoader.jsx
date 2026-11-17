@@ -130,6 +130,8 @@ export default function DatasetLoader({
           <LinearProgress
             variant="determinate"
             value={progress}
+            aria-label="Dataset progress"
+            aria-valuetext={`${progress}% completed`}
             sx={{
               height: theme.spacing(0.5),
               borderRadius: theme.spacing(2),

@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://futureagi.com/schemas/connector-catalog-bundle/v1.json",
+  "title": "connector-catalog-bundle/v1",
+  "description": "dist/catalog.json: every app, provider and platform record compiled into one file by agentcc-catalog build. Consumers (the gateway, Django, Omega EE and OSS) pin it by version and sha256. A bundle never carries price-overlay data, a client id, a secret or a community package.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "version",
+    "sha256",
+    "sourceCommit",
+    "apps",
+    "providers",
+    "platforms"
+  ],
+  "properties": {
+    "schema": { "const": "connector-catalog-bundle/v1" },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]{4}[.](0[1-9]|1[0-2])[.](0[1-9]|[12][0-9]|3[01])[.](0|[1-9][0-9]{0,3})$",
+      "description": "YYYY.MM.DD.N"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "SHA-256 of the apps, providers and platforms members as agentcc-catalog build serializes them."
+    },
+    "sourceCommit": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$",
+      "description": "The git commit the records were built from."
+    },
+    "apps": {
+      "type": "array",
+      "items": {
+        "$ref": "https://futureagi.com/schemas/connector-manifest/v1.json#/$defs/app"
+      }
+    },
+    "providers": {
+      "type": "array",
+      "items": {
+        "$ref": "https://futureagi.com/schemas/connector-manifest/v1.json#/$defs/provider"
+      }
+    },
+    "platforms": {
+      "type": "array",
+      "items": {
+        "$ref": "https://futureagi.com/schemas/connector-manifest/v1.json#/$defs/platform"
+      }
+    }
+  }
+}

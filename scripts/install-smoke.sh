@@ -26,10 +26,13 @@ smoke_sign_in() {
     | jq -er '.access'
 }
 
-# token: prints the account's API key, then its secret key (GET /accounts/keys/).
+# token: explicitly creates this signed-in person's key, then returns its pair.
+# Callers capture stdout; never print it into CI logs.
 smoke_keys() {
-  curl -fsS --max-time 30 "$SMOKE_API/accounts/keys/" -H "Authorization: Bearer $1" \
-    | jq -er '.data | select(.api_key and .secret_key) | .api_key, .secret_key'
+  curl -fsS --max-time 30 -X POST "$SMOKE_API/accounts/key/generate_secret_key/" \
+      -H "Authorization: Bearer $1" -H 'Content-Type: application/json' \
+      -d "$(jq -n --arg key_name "install-smoke-$(openssl rand -hex 8)" '{$key_name}')" \
+    | jq -er '.result | select(.api_key and .secret_key) | .api_key, .secret_key'
 }
 
 # project, API key, secret key: sends a two-span OTLP/HTTP trace (an agent run

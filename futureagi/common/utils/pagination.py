@@ -1,33 +1,39 @@
-from django.core.paginator import Paginator
+from django.core.paginator import InvalidPage, Paginator
 from django.db.models import QuerySet
+from rest_framework.exceptions import NotFound
 from rest_framework.request import Request
+
+from common.utils.page_limits import enforce_page_size
 
 DEFAULT_PAGE_SIZE = 10
 MAX_PAGE_SIZE = 100
 
 
 def paginate_queryset(queryset: QuerySet, request: Request) -> tuple[list, dict]:
-    """
-    Paginate a queryset using ``page_number`` and ``page_size`` query params.
+    """Paginate with one-based ``page_number`` and capped ``page_size``.
 
-    Uses Django's ``Paginator.get_page()`` which clamps out-of-range page
-    numbers: values above ``total_pages`` return the last page, values
-    below 1 (or non-numeric) return the first page.
-
-    ``page_size`` is silently clamped to ``MAX_PAGE_SIZE`` so a client cannot
-    force an unbounded response.
+    Oversized requests are refused before counting or materializing rows.
+    Invalid page numbers are 404s rather than silently serving another page.
+    A ``page_size`` within the shared cap but above ``MAX_PAGE_SIZE`` is
+    clamped to ``MAX_PAGE_SIZE``, so a list never returns more than 100 rows.
 
     Args:
         queryset: The Django QuerySet to paginate.
         request: DRF request whose ``query_params`` supply ``page_number``
             (default 1) and ``page_size`` (default 10, max 100).
     """
-    page_number = int(request.query_params.get("page_number", 1))
+    enforce_page_size(request.query_params.get("page_size", DEFAULT_PAGE_SIZE))
+    page_number = request.query_params.get("page_number", 1)
     page_size = int(request.query_params.get("page_size", DEFAULT_PAGE_SIZE))
+    if page_size <= 0:
+        raise NotFound("Invalid page.")
     page_size = min(page_size, MAX_PAGE_SIZE)
 
     paginator = Paginator(queryset, page_size)
-    page = paginator.get_page(page_number)
+    try:
+        page = paginator.page(page_number)
+    except InvalidPage:
+        raise NotFound("Invalid page.") from None
 
     total_pages = paginator.num_pages
 

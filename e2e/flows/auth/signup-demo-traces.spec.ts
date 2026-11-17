@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../../lib/trace-hygiene/fixture';
 import { ApiClient } from '../../lib/api-client';
 import { E2E } from '../../lib/env';
 import { flowAnnotation } from '../../lib/flow-meta';

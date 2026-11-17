@@ -4,6 +4,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
 
 from agentcc.models.custom_property import AgentccCustomPropertySchema
+from agentcc.permissions import GatewayAdminActionsMixin
 from agentcc.serializers.custom_property import AgentccCustomPropertySchemaSerializer
 from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
 from tfc.utils.general_methods import GeneralMethods
@@ -11,10 +12,14 @@ from tfc.utils.general_methods import GeneralMethods
 logger = structlog.get_logger(__name__)
 
 
-class AgentccCustomPropertySchemaViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
+class AgentccCustomPropertySchemaViewSet(
+    GatewayAdminActionsMixin, BaseModelViewSetMixinWithUserOrg, ModelViewSet
+):
     """CRUD for custom property schemas. Org-scoped."""
 
     permission_classes = [IsAuthenticated]
+    # Match the console's Owner/Admin write gate; reads and validation stay open.
+    gateway_admin_actions = frozenset({"create", "update", "partial_update", "destroy"})
     serializer_class = AgentccCustomPropertySchemaSerializer
     queryset = AgentccCustomPropertySchema.no_workspace_objects.all()
     _gm = GeneralMethods()
@@ -47,10 +52,12 @@ class AgentccCustomPropertySchemaViewSet(BaseModelViewSetMixinWithUserOrg, Model
 
     def create(self, request, *args, **kwargs):
         try:
-            serializer = AgentccCustomPropertySchemaSerializer(data=request.data)
+            org = getattr(request, "organization", None)
+            serializer = AgentccCustomPropertySchemaSerializer(
+                data=request.data, context={"organization": org}
+            )
             if not serializer.is_valid():
                 return self._gm.bad_request(serializer.errors)
-            org = getattr(request, "organization", None)
             if org is None:
                 return self._gm.bad_request("Organization context is required")
             schema = serializer.save(organization=org)
@@ -65,7 +72,10 @@ class AgentccCustomPropertySchemaViewSet(BaseModelViewSetMixinWithUserOrg, Model
         try:
             instance = self.get_object()
             serializer = AgentccCustomPropertySchemaSerializer(
-                instance, data=request.data, partial=kwargs.get("partial", False)
+                instance,
+                data=request.data,
+                partial=kwargs.get("partial", False),
+                context={"organization": instance.organization},
             )
             if not serializer.is_valid():
                 return self._gm.bad_request(serializer.errors)

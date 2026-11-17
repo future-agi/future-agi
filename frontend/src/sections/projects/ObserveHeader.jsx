@@ -28,6 +28,7 @@ import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import { useDebounce } from "src/hooks/use-debounce";
 
 import { useProjectList, DOC_LINKS } from "./LLMTracing/common";
+import BulkExportButton from "./LLMTracing/BulkExportButton";
 import { resetTraceGridStore, resetSpanGridStore } from "./LLMTracing/states";
 import TagEditor from "src/sections/project/TagEditor";
 import ConfigureProject from "../project-detail/ConfigureProject";
@@ -39,7 +40,28 @@ import {
   OBSERVE_PAGE_CHANGED_EVENT,
 } from "./observeEvents";
 
-const ObserveHeader = ({ text, refreshData, resetFilters }) => {
+const ObserveHeader = ({
+  text,
+  refreshData,
+  resetFilters,
+  filterTrace,
+  traceAttributeKeys,
+  filterSpan,
+  filterSession,
+  selectedTab,
+}) => {
+  const exportRowType =
+    text === "Sessions"
+      ? "sessions"
+      : selectedTab === "spans"
+        ? "spans"
+        : "traces";
+  const exportFilters =
+    text === "Sessions"
+      ? filterSession
+      : selectedTab === "spans"
+        ? filterSpan
+        : filterTrace;
   const [openConfigDialog, setOpenConfigDialog] = useState(false);
   const queryClient = useQueryClient();
   const [openShareUrl, setOpenShareUrl] = useState(false);
@@ -274,14 +296,32 @@ const ObserveHeader = ({ text, refreshData, resetFilters }) => {
 
   return (
     <Box display="flex" flexDirection="column" width="100%">
+      {/* At 1024 the page leaves this row 792 px. Back (73), the project
+          picker (at most 240) and the tag icon (28) take about 365 and the
+          right-hand controls 348, so they share one line. When more is on
+          the row (a "Last updated" stamp, tags, a narrower window) the
+          controls move to a second line, right-aligned, instead of running past the
+          window edge and pushing the page sideways. */}
       <Box
         display="flex"
         alignItems="center"
         justifyContent="space-between"
-        sx={{ minHeight: 38 }}
+        sx={{
+          minHeight: 38,
+          flexWrap: "wrap",
+          columnGap: 1.5,
+          rowGap: 1,
+          minWidth: 0,
+        }}
       >
         {/* ── Left: Back + Project dropdown + Tag icon ── */}
-        <Box display="flex" alignItems="center" gap={1.5}>
+        <Box
+          display="flex"
+          alignItems="center"
+          gap={1.5}
+          /* May shrink below its content: the project name gives way first. */
+          sx={{ minWidth: 0 }}
+        >
           {/* Back button */}
           <Button
             variant="outlined"
@@ -301,7 +341,14 @@ const ObserveHeader = ({ text, refreshData, resetFilters }) => {
             ref={projectDropdownRef}
             variant="outlined"
             size="small"
-            sx={{ minWidth: 200, justifyContent: "space-between" }}
+            /* A long project name ends in "…" inside the cap; without one the
+               button asked the row for the whole name's width. */
+            sx={{
+              minWidth: 200,
+              maxWidth: 240,
+              flexShrink: 1,
+              justifyContent: "space-between",
+            }}
             onClick={() => setProjectDropdownOpen(true)}
             endIcon={
               isLoadingProjects ? (
@@ -411,14 +458,40 @@ const ObserveHeader = ({ text, refreshData, resetFilters }) => {
               </Box>
             </Box>
           </Popover>
-          {/* Tag editor */}
-          {observeId && <TagEditor projectId={observeId} variant="header" />}
+          {/* Tag editor. Its own box is width 100%, so on its own it took the
+              rest of this group as an empty band. Held to its content here,
+              it shows every tag when the row has room and shrinks with the
+              row (its own overflow is hidden) when it does not. */}
+          {observeId && (
+            <Box
+              sx={{
+                display: "flex",
+                alignItems: "center",
+                minWidth: 0,
+                flexShrink: 1,
+              }}
+            >
+              <TagEditor projectId={observeId} variant="header" />
+            </Box>
+          )}
 
           {/* Show simulation calls toggle — moved to Display panel */}
         </Box>
 
         {/* ── Right: Last updated + Auto refresh + Action buttons ── */}
-        <Box display="flex" alignItems="center" gap={1}>
+        <Box
+          display="flex"
+          alignItems="center"
+          gap={1}
+          /* Stays at the right edge, also when it wraps to a line of its
+             own; its pieces wrap rather than leave the window. */
+          sx={{
+            flexWrap: "wrap",
+            justifyContent: "flex-end",
+            ml: "auto",
+            minWidth: 0,
+          }}
+        >
           {/* Last updated timestamp */}
           {lastUpdated && (
             <Box
@@ -427,6 +500,7 @@ const ObserveHeader = ({ text, refreshData, resetFilters }) => {
                 alignItems: "center",
                 gap: 0.5,
                 opacity: 0.8,
+                flexShrink: 0,
               }}
             >
               <Iconify
@@ -479,6 +553,7 @@ const ObserveHeader = ({ text, refreshData, resetFilters }) => {
               sx={{
                 display: "flex",
                 alignItems: "center",
+                flexShrink: 0,
                 gap: 1,
                 height: 28,
                 px: 1.5,
@@ -528,8 +603,13 @@ const ObserveHeader = ({ text, refreshData, resetFilters }) => {
             </ButtonBase>
           </CustomTooltip>
 
-          {/* Action buttons — bordered icon squares */}
-          <Box display="flex" alignItems="center" gap={1}>
+          {/* Action buttons — bordered icon squares, never squeezed */}
+          <Box
+            display="flex"
+            alignItems="center"
+            gap={1}
+            sx={{ flexShrink: 0 }}
+          >
             {/* Reload */}
             <CustomTooltip
               show
@@ -571,29 +651,14 @@ const ObserveHeader = ({ text, refreshData, resetFilters }) => {
               </ObserveIconButton>
             </CustomTooltip>
 
-            {/* Exact Observe exports remain fail-closed until a bounded,
-                resumable export contract is available. */}
             {(text === "LLM Tracing" || text === "Sessions") && (
-              <CustomTooltip
-                show
-                title="Exact CSV export is temporarily unavailable"
-                arrow
-                size="small"
-                type="black"
-              >
-                <span>
-                  <ObserveIconButton
-                    size="small"
-                    aria-label="Exact CSV export is temporarily unavailable"
-                    disabled
-                  >
-                    <Iconify
-                      icon="solar:download-minimalistic-linear"
-                      width={16}
-                    />
-                  </ObserveIconButton>
-                </span>
-              </CustomTooltip>
+              <BulkExportButton
+                key={`${observeId}:${exportRowType}:${JSON.stringify(exportFilters || [])}`}
+                projectId={observeId}
+                rowType={exportRowType}
+                filters={exportFilters}
+                attributeKeys={traceAttributeKeys}
+              />
             )}
 
             {/* View Docs */}
@@ -667,6 +732,11 @@ ObserveHeader.propTypes = {
   text: PropTypes.string,
   refreshData: PropTypes.func,
   resetFilters: PropTypes.func,
+  filterTrace: PropTypes.array,
+  traceAttributeKeys: PropTypes.arrayOf(PropTypes.string),
+  filterSpan: PropTypes.array,
+  filterSession: PropTypes.array,
+  selectedTab: PropTypes.string,
 };
 
 export default ObserveHeader;

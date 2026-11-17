@@ -1,4 +1,5 @@
-import { Box, Popper, Typography } from "@mui/material";
+import { Box, ButtonBase, Typography } from "@mui/material";
+import SwitcherSubmenu from "./SwitcherSubmenu";
 import React from "react";
 import PropTypes from "prop-types";
 import Iconify from "src/components/iconify";
@@ -34,7 +35,8 @@ const ThemeSelectorChild = React.forwardRef(({ setOpen }, popperTimeoutRef) => {
         }
         setOpen(true);
       }}
-      onMouseLeave={() => {
+      onMouseLeave={(event) => {
+        if (event.currentTarget.contains(document.activeElement)) return;
         popperTimeoutRef.current = setTimeout(() => {
           setOpen(false);
         }, 100);
@@ -57,6 +59,8 @@ const ThemeSelectorChild = React.forwardRef(({ setOpen }, popperTimeoutRef) => {
 
         return (
           <Box
+            component={ButtonBase}
+            aria-pressed={isActive}
             key={option.value}
             onClick={() => {
               settings.onUpdate("themeMode", option.value);
@@ -68,9 +72,10 @@ const ThemeSelectorChild = React.forwardRef(({ setOpen }, popperTimeoutRef) => {
               cursor: "pointer",
               borderRadius: "4px",
               backgroundColor: isActive ? "background.neutral" : "transparent",
-              "&:hover": {
+              "&:hover, &:focus-visible": {
                 backgroundColor: "background.neutral",
               },
+              "&:focus-visible": { outline: "2px solid", outlineColor: "primary.main" },
               display: "flex",
               alignItems: "center",
               gap: "8px",
@@ -110,31 +115,17 @@ ThemeSelectorChild.propTypes = {
 };
 
 const ThemeSelector = React.forwardRef(
-  ({ open, anchorEl, setOpen }, popperTimeoutRef) => {
-    return (
-      <Popper
-        open={open}
-        anchorEl={anchorEl}
-        placement="right-start"
-        modifiers={[
-          {
-            name: "offset",
-            options: {
-              offset: [0, 8],
-            },
-          },
-        ]}
-        style={{ zIndex: 1300 }}
-      >
-        <ThemeSelectorChild setOpen={setOpen} ref={popperTimeoutRef} />
-      </Popper>
-    );
-  },
+  ({ open, anchorEl, setOpen, autoFocus }, popperTimeoutRef) => (
+    <SwitcherSubmenu open={open} anchorEl={anchorEl} setOpen={setOpen} autoFocus={autoFocus} label="Appearance">
+      {(changeOpen) => <ThemeSelectorChild setOpen={changeOpen} ref={popperTimeoutRef} />}
+    </SwitcherSubmenu>
+  ),
 );
 
 ThemeSelector.displayName = "ThemeSelector";
 
 ThemeSelector.propTypes = {
+  autoFocus: PropTypes.bool,
   open: PropTypes.bool,
   anchorEl: PropTypes.object,
   setOpen: PropTypes.func,

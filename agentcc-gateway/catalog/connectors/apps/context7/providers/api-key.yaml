@@ -1,0 +1,47 @@
+# Current Context7 docs recommend Authorization: Bearer for remote API-key clients.
+# Paid plans meter calls beyond the included allowance; Free has a hard call cap.
+schema: "connector-manifest/v1#provider"
+app: context7
+id: api-key
+version: 1.1.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.context7.com/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: Context7 API key
+      help: "Create an API key in Context7 Dashboard > Settings > API Keys. Keys belong to one teamspace; read-only keys can retrieve documentation. Calls use the team's allowance and paid overage rules. Supply the key without the Bearer prefix."
+      helpUrl: https://context7.com/docs/howto/api-keys
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_metered
+  source: https://context7.com/docs/plans-pricing
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://context7.com/docs/resources/all-clients
+    fetchedAt: 2026-11-09
+  - fact: transport.variant
+    url: https://context7.com/docs/resources/all-clients
+    fetchedAt: 2026-11-09
+  - fact: auth.kind
+    url: https://context7.com/docs/resources/all-clients
+    fetchedAt: 2026-11-09
+  - fact: auth.credentialParts
+    url: https://context7.com/docs/resources/all-clients
+    fetchedAt: 2026-11-09
+x-omega: { ossId: context7-remote }

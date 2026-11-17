@@ -780,8 +780,8 @@ def _note_unverified(version: Any, revision: str, key: str) -> None:
 
 
 def _unchanged(models: Models, job: Any, revision: str) -> bool:
-    """An already versioned environment whose archive is still its default's."""
-    if job.environment_version_id is None:
+    """An environment with both pins whose archive is still its default's."""
+    if job.environment_version_id is None or job.suite_version_id is None:
         return False
     default = (
         _live(models.HarnessEnvironmentVersion)

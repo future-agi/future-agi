@@ -14,7 +14,7 @@ Usage:
 """
 
 import re
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from django.http import HttpRequest, HttpResponse
@@ -24,6 +24,14 @@ if TYPE_CHECKING:
 # =============================================================================
 # Django HTTP Span Naming
 # =============================================================================
+
+
+def _exported_path(request: "HttpRequest") -> str:
+    """The request path with a checkout session redacted (others unchanged)."""
+    # Imported on use: this module loads before Django is set up.
+    from tfc.logging.checkout import scrub_checkout_payload
+
+    return scrub_checkout_payload(request.path)
 
 
 def django_request_hook(span: "Span", request: "HttpRequest") -> None:
@@ -37,8 +45,13 @@ def django_request_hook(span: "Span", request: "HttpRequest") -> None:
         return
 
     try:
+        from .redaction import capture_span_values
+
+        # Keep values until the outer instrumentor ends this span, even after
+        # the logging middleware resets its scope and these URLs are scrubbed.
+        capture_span_values(span, request)
         # Add request path as attribute (useful for filtering)
-        span.set_attribute("http.target", request.path)
+        span.set_attribute("http.target", _exported_path(request))
 
         # Add query string if present (masked)
         if request.GET:
@@ -73,7 +86,8 @@ def django_response_hook(
         if view_name:
             # Update span name to be more descriptive
             method = request.method or "HTTP"
-            path = request.path
+            # Redact before truncation so no partial session value remains.
+            path = _exported_path(request)
 
             # Truncate long paths
             if len(path) > 50:
@@ -98,7 +112,7 @@ def django_response_hook(
         pass  # Don't fail the request if hook fails
 
 
-def _get_view_name(request: "HttpRequest") -> Optional[str]:
+def _get_view_name(request: "HttpRequest") -> str | None:
     """
     Extract a human-readable view name from the request.
 
@@ -157,7 +171,7 @@ def _get_view_name(request: "HttpRequest") -> Optional[str]:
 # =============================================================================
 
 
-def get_db_span_name(query: str, operation: Optional[str] = None) -> str:
+def get_db_span_name(query: str, operation: str | None = None) -> str:
     """
     Create a descriptive span name for database queries.
 
@@ -188,7 +202,7 @@ def get_db_span_name(query: str, operation: Optional[str] = None) -> str:
     return operation
 
 
-def _extract_table_name(query: str) -> Optional[str]:
+def _extract_table_name(query: str) -> str | None:
     """Extract the main table name from a SQL query."""
     query = query.strip()
 

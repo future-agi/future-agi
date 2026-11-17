@@ -3,25 +3,18 @@ import re
 import uuid
 from datetime import datetime
 from enum import Enum
-from typing import Any, Optional
+from typing import Any
 
 import structlog
 from django.core.cache import cache
-from django.db import IntegrityError, transaction
+from django.core.exceptions import ValidationError
+from django.db import DatabaseError, IntegrityError, InterfaceError, transaction
 from django.db.models import Q
 from django.utils import timezone
 from litellm import cost_per_token, model_cost
 
 from accounts.models import Organization
 from accounts.models.workspace import Workspace
-from tracer.utils.normalization import (
-    CONTRACT,
-    normalize_span,
-    requires_immutable_admission,
-)
-from tracer.utils.normalization.details import store_details
-
-logger = structlog.get_logger(__name__)
 from agentic_eval.core_evals.fi_evals import *  # noqa: F403
 from model_hub.models.ai_model import AIModel
 from model_hub.models.choices import StatusType
@@ -43,6 +36,12 @@ from tracer.utils.helper import (
     get_default_project_version_config,
     get_default_trace_config,
 )
+from tracer.utils.normalization import (
+    CONTRACT,
+    normalize_span,
+    requires_immutable_admission,
+)
+from tracer.utils.normalization.details import store_details
 from tracer.utils.semantic_conventions import (
     AttributeRegistry,
     detect_semconv,
@@ -53,6 +52,8 @@ try:
     from ee.usage.utils.usage_entries import log_and_deduct_cost_for_resource_request
 except ImportError:
     log_and_deduct_cost_for_resource_request = None
+
+logger = structlog.get_logger(__name__)
 
 
 class OtelSpan:
@@ -793,6 +794,9 @@ def convert_otel_span_to_observation_span(
     """
     try:
         normalize_span(otel_span)
+        # A span that names no trace is unreadable; no trace is made up for it.
+        if not otel_span.get("trace_id"):
+            raise ValueError("A span needs a trace_id.")
         if requires_immutable_admission(otel_span["attributes"]):
             raise ValueError(CONTRACT["admission_error"])
         store_details(otel_span)
@@ -959,7 +963,10 @@ def convert_otel_span_to_observation_span(
             "output": output_val,
             "model": model,
             "model_parameters": decoder.parse_json_string(
-                attributes.get(SpanAttributes.REQUEST_PARAMETERS)
+                attributes.get(
+                    SpanAttributes.REQUEST_PARAMETERS,
+                    attributes.get(SpanAttributes.LLM_INVOCATION_PARAMETERS),
+                )
             ),
             "latency_ms": latency,
             "org_id": organization_id,
@@ -984,6 +991,7 @@ def convert_otel_span_to_observation_span(
             "span_attributes": parsed_attributes,
             "eval_attributes": parsed_attributes,  # Deprecated: same as span_attributes
             "eval_status": StatusType.NOT_STARTED.value,
+            "cost": cost,
             "resource_attributes": resource_attributes,
             "semconv_source": semconv_source,
         }
@@ -1004,7 +1012,9 @@ def convert_otel_span_to_observation_span(
             ),
         }
 
-    except ResourceLimitError:
+    except (ResourceLimitError, DatabaseError, InterfaceError):
+        # A limit, or a database that cannot answer, is not a bad span: each
+        # keeps its own type so the caller can answer it by kind.
         raise
     except Exception as e:
         raise ValueError(
@@ -1109,7 +1119,9 @@ def _deduct_project_creation_cost(
         or call_log_row.status == APICallStatusChoices.RESOURCE_LIMIT.value
     ):
         raise ResourceLimitError(
-            "Trace creation not allowed due to plan limits or insufficient credits."
+            # PROPOSED copy; keep in sync with INSUFFICIENT_CREDITS.
+            "This request could not be completed. Try again later; "
+            "if it keeps happening, contact your administrator."
         )
 
     return call_log_row
@@ -1182,17 +1194,28 @@ def get_or_create_project(
                     source=source,
                 )
                 return project
-        except IntegrityError:
-            # Another worker created it first — just fetch it
-            return Project.no_workspace_objects.get(
-                name=project_name,
-                trace_type=project_type,
-                organization=organization,
-                workspace=workspace,
-            )
+        except (IntegrityError, ValidationError) as refused:
+            # Another worker created it first, so read it again. Project.save
+            # runs full_clean: a rival committed before this create meets the
+            # unique constraint there, as a ValidationError, and one that
+            # commits during the INSERT meets it as an IntegrityError. If no
+            # such project exists, the create failed for its own reason.
+            try:
+                return Project.no_workspace_objects.get(
+                    name=project_name,
+                    trace_type=project_type,
+                    organization=organization,
+                    workspace=workspace,
+                )
+            except Project.DoesNotExist:
+                raise refused from None
 
+    except (DatabaseError, InterfaceError):
+        # A database that cannot answer is not a bad project name: callers
+        # answer it by kind, and its text stays out of their responses.
+        raise
     except Exception as e:
-        raise Exception(f"Failed to create or get project: {str(e)}")
+        raise Exception(f"Failed to create or get project: {str(e)}") from e
 
 
 def _get_eval_template(eval_template_name, project):
@@ -1395,7 +1418,7 @@ def get_or_create_project_version(
             )
             return project_version
 
-    except Project.DoesNotExist:
+    except (Project.DoesNotExist, DatabaseError, InterfaceError):
         raise
     except Exception as e:
         raise Exception(f"Failed to create project version: {str(e)}")  # noqa: B904
@@ -1642,7 +1665,10 @@ def _convert_single_span(otel_span, projects, project_versions, organization_id)
         "output": output_val,
         "model": model,
         "model_parameters": DECODER.parse_json_string(
-            attributes.get(SpanAttributes.REQUEST_PARAMETERS)
+            attributes.get(
+                SpanAttributes.REQUEST_PARAMETERS,
+                attributes.get(SpanAttributes.LLM_INVOCATION_PARAMETERS),
+            )
         ),
         "latency_ms": latency,
         "org_id": organization_id,
@@ -1688,7 +1714,7 @@ def _convert_single_span(otel_span, projects, project_versions, organization_id)
 
 
 def bulk_convert_otel_spans_to_observation_spans(
-    otel_spans, organization_id=None, user_id=None, workspace_id=None
+    otel_spans, organization_id=None, user_id=None, workspace_id=None, *, projects=None
 ):
     """
     Converts a list of OTel span dictionaries to ObservationSpan objects with mapped fields in bulk.
@@ -1700,8 +1726,10 @@ def bulk_convert_otel_spans_to_observation_spans(
             otel_spans, organization_id, user_id, workspace_id
         )
 
-        # 2. Bulk fetch or create all necessary related objects
-        projects = _bulk_get_or_create_projects(project_keys)
+        # Reuse the exact project objects whose privacy policies were applied.
+        # Other callers retain the existing resolution path.
+        if projects is None:
+            projects = _bulk_get_or_create_projects(project_keys)
         project_versions = _bulk_get_or_create_project_versions(
             version_keys, projects, organization_id
         )
@@ -1724,15 +1752,15 @@ def bulk_convert_otel_spans_to_observation_spans(
         )
         raise ValueError(
             f"Error converting OTel spans to Observation spans in bulk: {str(e)}"
-        )
+        ) from e
 
 
 def calculate_cost(
     attributes: dict,
-    prompt_tokens: Optional[int],
-    completion_tokens: Optional[int],
-    model: Optional[str],
-    organization_id: Optional[str] = None,
+    prompt_tokens: int | None,
+    completion_tokens: int | None,
+    model: str | None,
+    organization_id: str | None = None,
 ):
     """
     Calculates cost for a span. Checks user-provided cost attributes first
@@ -1800,10 +1828,10 @@ def calculate_cost(
 
 
 def calculate_cost_from_tokens(
-    prompt_tokens: Optional[int],
-    completion_tokens: Optional[int],
-    model: Optional[str],
-    organization_id: Optional[str] = None,
+    prompt_tokens: int | None,
+    completion_tokens: int | None,
+    model: str | None,
+    organization_id: str | None = None,
 ):
     """
     Calculates the cost of a model call based on the number of prompt and completion tokens.
@@ -1865,11 +1893,12 @@ def calculate_cost_from_tokens(
                 if custom_pricing.get("not_found"):
                     cost = 0
                 else:
+                    # Stored custom prices are per million tokens, as entered.
                     prompt_tokens_cost_usd_dollar = prompt_tokens * (
-                        custom_pricing["input_cost"] / 1000
+                        custom_pricing["input_cost"] / 1_000_000
                     )
                     completion_tokens_cost_usd_dollar = completion_tokens * (
-                        custom_pricing["output_cost"] / 1000
+                        custom_pricing["output_cost"] / 1_000_000
                     )
                     cost = (
                         prompt_tokens_cost_usd_dollar

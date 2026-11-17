@@ -1,0 +1,87 @@
+# Airtable's MCP server with OAuth from Airtable's authorization server: an
+# OAuth app an admin creates and approves, or dynamic registration, or a
+# client ID metadata document. The scopes are the ones Airtable's MCP guide
+# lists.
+schema: "connector-manifest/v1#provider"
+app: airtable
+id: mcp
+version: 1.1.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.airtable.com/mcp
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent, user]
+auth:
+  kind: oauth2
+  oauth2:
+    authorizeUrl: https://airtable.com/oauth2/v1/authorize
+    tokenUrl: https://airtable.com/oauth2/v1/token
+    scopes:
+      - "data.records:read"
+      - "data.records:write"
+      - "schema.bases:read"
+      - "schema.bases:write"
+      - "data.recordComments:read"
+      - "data.recordComments:write"
+      - "workspacesAndBases:read"
+    pkce: true
+    tokenBody: form
+    clientAuth: basic
+    registration: [preregistered, cimd, dcr]
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://airtable.com/developers/agents/mcp/getting-started
+    fetchedAt: 2026-10-20
+  - fact: auth.kind
+    url: https://airtable.com/developers/agents/mcp/getting-started
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.authorizeUrl
+    url: https://mcp.airtable.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.tokenUrl
+    url: https://mcp.airtable.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.scopes
+    url: https://airtable.com/developers/agents/mcp/getting-started
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.scopes
+    url: https://mcp.airtable.com/.well-known/oauth-protected-resource/mcp
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.pkce
+    url: https://mcp.airtable.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.clientAuth
+    url: https://mcp.airtable.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.registration
+    url: https://mcp.airtable.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.registration
+    url: https://airtable.com/developers/agents/mcp/getting-started
+    fetchedAt: 2026-10-20
+x-omega:
+  publicClient:
+    supported: true
+    evidence:
+      - url: https://airtable.com/developers/agents/mcp/getting-started
+        fetchedAt: 2026-10-20
+        sha256: 739f1a433fb5e1fb4cc1cc39a8bee31ba9035645300fceb94db0a98d434e31a4
+        quote: "Copy your client ID (and, optionally, client secret)."
+      - url: https://airtable.com/developers/web/api/oauth-reference
+        fetchedAt: 2026-10-22
+        sha256: 53a9e4544d8e82c120ff0b0d7bae3efb91fb64f5b21e51be22e1a9ac7792fac6
+        quote: "Authorization (optional) Required if your integration has a client_secret. forbidden if it does not."
+      - url: https://mcp.airtable.com/.well-known/oauth-authorization-server
+        fetchedAt: 2026-10-20
+        sha256: 0c808d1579dad2962d269f33df3be7ad8d3864ba3f0ddd26862a4d7450430e31
+        quote: '"token_endpoint_auth_methods_supported":["client_secret_basic","none"]'
+    notes: "An OAuth integration made at airtable.com/create/oauth without a client secret is a public client; the token request then carries client_id and code_verifier. The redirect URI must match exactly and may be http only on localhost (127.0.0.1 is allowed), so OSS pins its loopback redirect in omega mcp add (oauth-reference, Redirect URI)."

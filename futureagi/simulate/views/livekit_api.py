@@ -32,6 +32,8 @@ from simulate.repositories import (
     PhoneNumberRepository,
 )
 from simulate.services.agent_definition import is_masked
+from simulate.utils.ended_reason import EndedReasonSource, stored_ended_reason_source
+from tfc.ee_loader import is_cloud_env
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_serializers import ApiTextErrorResponseSerializer
 from tfc.utils.general_methods import GeneralMethods
@@ -50,6 +52,14 @@ class LiveKitErrorResponseSerializer(ApiTextErrorResponseSerializer):
 
 
 _gm = GeneralMethods()
+
+# What ValidateLiveKitCredentialsView answers on Future AGI Cloud instead of
+# probing the customer's LiveKit URL from the backend (T6 #7b).
+LIVEKIT_NOT_VERIFIED_ON_CLOUD = (
+    "LiveKit credentials not verified on Future AGI Cloud: Future AGI does not "
+    "contact customer LiveKit URLs from its servers; connection problems will "
+    "show when a run connects."
+)
 
 
 class LiveKitOkResponseSerializer(serializers.Serializer):
@@ -134,6 +144,11 @@ class ValidateLiveKitCredentialsRequestSerializer(serializers.Serializer):
 class ValidateLiveKitCredentialsResultSerializer(serializers.Serializer):
     valid = serializers.BooleanField()
     error = serializers.CharField(required=False, allow_blank=True)
+    # Future AGI Cloud only: the check was not run (skipped), so nothing was
+    # verified, and ``message`` says why.
+    verified = serializers.BooleanField(required=False)
+    skipped = serializers.BooleanField(required=False)
+    message = serializers.CharField(required=False, allow_blank=True)
 
 
 class ValidateLiveKitCredentialsResponseSerializer(serializers.Serializer):
@@ -345,7 +360,15 @@ class CallExecutionUpdateView(InternalAPIView):
         if not kwargs:
             return _gm.bad_request("No valid fields provided")
 
-        updated = await CallExecutionRepository.update_lifecycle(call_id, **kwargs)
+        # Only our agent worker holds the internal secret; the reason it sends
+        # is the LiveKit session's own end reason.
+        updated = await CallExecutionRepository.update_lifecycle(
+            call_id,
+            **kwargs,
+            ended_reason_source=(
+                EndedReasonSource.PROVIDER if "ended_reason" in kwargs else None
+            ),
+        )
         if not updated:
             return _gm.not_found("CallExecution not found")
         return Response({"ok": True})
@@ -450,7 +473,9 @@ class LiveCallListenerTokenView(APIView):
     def get(self, request: Request, call_id: str) -> Response:
         from tfc.ee_gates import voice_sim_gate_response
 
-        denial = voice_sim_gate_response(request.user.organization)
+        denial = voice_sim_gate_response(
+            getattr(request, "organization", None) or request.user.organization
+        )
         if denial is not None:
             return denial
 
@@ -538,15 +563,33 @@ class ValidateLiveKitCredentialsView(APIView):
         responses={
             200: ValidateLiveKitCredentialsResponseSerializer,
             400: ApiTextErrorResponseSerializer,
+            404: ApiTextErrorResponseSerializer,
         },
         reject_unknown_fields=True,
     )
     def post(self, request: Request) -> Response:
         from tfc.ee_gates import voice_sim_gate_response
 
-        denial = voice_sim_gate_response(request.user.organization)
+        denial = voice_sim_gate_response(
+            getattr(request, "organization", None) or request.user.organization
+        )
         if denial is not None:
             return denial
+
+        # On Future AGI Cloud the URL is the customer's, so a probe from this
+        # backend would go wherever it points: private ranges, loopback, cloud
+        # metadata, redirect targets. Nothing is built, read or sent; the answer
+        # says the credentials were not verified, and saving them never depends
+        # on it. A self-hosted install still probes its own LiveKit server.
+        if is_cloud_env(getattr(settings, "CLOUD_DEPLOYMENT", "") or ""):
+            return self.gm.success_response(
+                {
+                    "valid": False,
+                    "verified": False,
+                    "skipped": True,
+                    "message": LIVEKIT_NOT_VERIFIED_ON_CLOUD,
+                }
+            )
 
         from tfc.utils.lazy_extras import load_extra
 
@@ -573,21 +616,33 @@ class ValidateLiveKitCredentialsView(APIView):
         # 401 because they aren't real credentials. Rehydrate any masked
         # field from the stored ProviderCredentials before validating. The
         # url is plaintext on read so it doesn't need this branch.
+        #
+        # Only the caller's own agent: the organization and soft-delete filter
+        # of every other AgentDefinition lookup in simulate (AgentRunsView,
+        # StoredAgentView, the agent version views), and the objects manager
+        # adds the workspace the request was authenticated into. Another
+        # org's agent, one in a workspace the caller is not in, a deleted one
+        # and an id that names nothing get the same 404, before any stored
+        # credential is read or any request is sent.
         if agent_definition_id and (is_masked(api_key) or is_masked(api_secret)):
-            try:
-                agent = AgentDefinition.objects.get(id=agent_definition_id)
-                version = agent.active_version or agent.latest_version
-                if version:
-                    try:
-                        creds = version.credentials
-                        if is_masked(api_key):
-                            api_key = creds.get_api_key()
-                        if is_masked(api_secret):
-                            api_secret = creds.get_api_secret()
-                    except AgentVersion.credentials.RelatedObjectDoesNotExist:
-                        pass
-            except AgentDefinition.DoesNotExist:
-                pass
+            agent = AgentDefinition.objects.filter(
+                id=agent_definition_id,
+                organization=getattr(request, "organization", None)
+                or request.user.organization,
+                deleted=False,
+            ).first()
+            if agent is None:
+                return self.gm.not_found("Agent definition not found")
+            version = agent.active_version or agent.latest_version
+            if version:
+                try:
+                    creds = version.credentials
+                    if is_masked(api_key):
+                        api_key = creds.get_api_key()
+                    if is_masked(api_secret):
+                        api_secret = creds.get_api_secret()
+                except AgentVersion.credentials.RelatedObjectDoesNotExist:
+                    pass
 
         if not all([livekit_url, api_key, api_secret]):
             return self.gm.bad_request("All credential fields are required.")
@@ -811,7 +866,8 @@ async def _handle_room_finished(event) -> None:
     workflow_id = lk_data.get("workflow_id", "")
 
     # Use agent worker's ended_reason if already written, otherwise default
-    ended_reason = config.get("ended_reason", "") or "call_completed"
+    stored_reason = config.get("ended_reason", "")
+    ended_reason = stored_reason or "call_completed"
 
     # Compute timestamps and duration
     now = datetime.now(tz=UTC)
@@ -839,7 +895,18 @@ async def _handle_room_finished(event) -> None:
     if started_at:
         update_kwargs["started_at"] = started_at
 
-    await CallExecutionRepository.update_lifecycle(call_id, **update_kwargs)
+    # A stored reason is written again with the source its writer recorded for
+    # it; a stored reason with none stays hidden on a shared link. The default
+    # is our fixed one.
+    await CallExecutionRepository.update_lifecycle(
+        call_id,
+        **update_kwargs,
+        ended_reason_source=(
+            stored_ended_reason_source(config.get("call_metadata"), stored_reason)
+            if stored_reason
+            else EndedReasonSource.FIXED
+        ),
+    )
 
     logger.info(
         "livekit_webhook_room_finished_ok",

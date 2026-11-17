@@ -1,4 +1,8 @@
-from django.core.exceptions import FieldDoesNotExist
+from django.core.exceptions import (
+    FieldDoesNotExist,
+    ObjectDoesNotExist,
+    ValidationError,
+)
 from django.db import models
 from django.utils import timezone
 
@@ -6,7 +10,9 @@ from tfc.middleware.workspace_context import (
     get_current_organization,
     get_current_user,
     get_current_workspace,
+    workspace_scope_is_empty,
 )
+from tfc.utils.workspace_scope import model_has_workspace_data
 
 
 def _has_db_field(model, field_name):
@@ -16,6 +22,67 @@ def _has_db_field(model, field_name):
         return True
     except FieldDoesNotExist:
         return False
+
+
+def _is_insert_save(instance, *, force_update=False, update_fields=None):
+    """Share INSERT eligibility without treating reconstructed UPDATEs as new."""
+    return (
+        instance._state.adding
+        and not force_update
+        and update_fields is None
+        and not getattr(instance, "_workspace_autoassign_force_update", False)
+    )
+
+
+def _same_organization(workspace, instance):
+    """Compare the two related organizations in one key namespace.
+
+    A fresh row may carry organization_id as a string while the loaded
+    workspace carries the typed pk (42 vs "42", UUID vs its string); both name
+    the same organization. Values are compared in the instance relation's own
+    target-field namespace: when either relation targets a non-pk field, the
+    workspace organization's value for that field is read instead of its pk.
+    Relations to a different model and unresolvable values never match.
+    """
+    try:
+        right = instance.organization_id
+        try:
+            field = instance._meta.get_field("organization")
+        except FieldDoesNotExist:
+            return str(workspace.organization_id) == str(right)
+        target = field.target_field
+        workspace_field = workspace._meta.get_field("organization")
+        if field.related_model is not workspace_field.related_model:
+            return False
+        if target.primary_key and workspace_field.target_field.primary_key:
+            left = workspace.organization_id
+        else:
+            left = getattr(workspace.organization, target.attname)
+        return target.to_python(left) == target.to_python(right)
+    except (
+        AttributeError,
+        FieldDoesNotExist,
+        ObjectDoesNotExist,
+        TypeError,
+        ValueError,
+        ValidationError,
+    ):
+        return False
+
+
+def _can_assign_workspace(instance, workspace):
+    """Shared workspace policy for BaseModel.save and the save signals."""
+    if getattr(instance, "disable_auto_workspace_assignment", False):
+        return False
+    if getattr(instance._meta, "label_lower", "") == "usage.usageeventlog":
+        return False
+    if not workspace:
+        return False
+    if not hasattr(instance, "organization_id"):
+        return True
+    if not instance.organization_id:
+        return True
+    return _same_organization(workspace, instance)
 
 
 class WorkspaceAutoAssignMixin:
@@ -44,6 +111,11 @@ class BaseModelManager(models.Manager):
 
         # Get the model class for field checking
         model = self.model
+
+        # A denied landing is not a background query. Include child tables
+        # whose workspace ownership is through a Dataset, Project or other FK.
+        if workspace_scope_is_empty() and model_has_workspace_data(model):
+            return queryset.none()
 
         # Apply workspace filtering if workspace context is set
         current_workspace = get_current_workspace()
@@ -81,6 +153,11 @@ class AllObjectsManager(models.Manager):
         # Get the model class for field checking
         model = self.model
 
+        # A denied landing is not a background query. Include child tables
+        # whose workspace ownership is through a Dataset, Project or other FK.
+        if workspace_scope_is_empty() and model_has_workspace_data(model):
+            return queryset.none()
+
         # Apply workspace filtering if workspace context is set
         current_workspace = get_current_workspace()
         if current_workspace:
@@ -109,6 +186,10 @@ class AllObjectsManager(models.Manager):
 class NoWorkspaceFilterManager(models.Manager):
     def get_queryset(self):
         queryset = super().get_queryset()
+        # Bypassing one selected workspace is not permission to bypass a denied
+        # authenticated scope. Background jobs retain their unscoped semantics.
+        if workspace_scope_is_empty() and model_has_workspace_data(self.model):
+            return queryset.none()
         return queryset.filter(deleted=False)
 
 
@@ -140,42 +221,79 @@ class BaseModel(models.Model):
         ordering = ("-created_at",)
 
     def save(self, *args, **kwargs):
+        # Django's positional save arguments are force_insert, force_update,
+        # using, update_fields. Preserve update-only intent in either spelling.
+        insert_save = _is_insert_save(
+            self,
+            force_update=kwargs.get(
+                "force_update", args[1] if len(args) > 1 else False
+            ),
+            update_fields=kwargs.get(
+                "update_fields", args[3] if len(args) > 3 else None
+            ),
+        )
         # Auto-assign workspace if workspace context is set and model has workspace field
         current_workspace = get_current_workspace()
         if (
             current_workspace
             and hasattr(self, "workspace")
-            and not self.pk  # Only for new instances
+            and insert_save
             and (not hasattr(self, "workspace_id") or not self.workspace_id)
         ):  # Only if workspace is not already set
-            # Additional safety check - ensure the workspace belongs to the same organization
-            if hasattr(self, "organization") and self.organization:
-                if current_workspace.organization != self.organization:
-                    # Log warning but don't fail
-                    import logging
-
-                    logger = logging.getLogger(__name__)
-                    logger.warning(
-                        f"Workspace {current_workspace.id} does not belong to "
-                        f"organization {self.organization.id}. Skipping auto-assignment."
-                    )
-                else:
-                    self.workspace = current_workspace
-            else:
-                # No organization set yet, assign workspace
+            if _can_assign_workspace(self, current_workspace):
                 self.workspace = current_workspace
+            elif getattr(self, "organization_id", None) and not _same_organization(
+                current_workspace, self
+            ):
+                # Log warning but don't fail on an organization mismatch.
+                import logging
+
+                logger = logging.getLogger(__name__)
+                logger.warning(
+                    f"Workspace {current_workspace.id} does not belong to "
+                    f"organization {self.organization_id}. Skipping auto-assignment."
+                )
 
         # Auto-assign organization if organization context is set and model has organization field
         current_organization = get_current_organization()
         if (
             current_organization
             and hasattr(self, "organization")
-            and not self.pk  # Only for new instances
+            and insert_save
             and (not hasattr(self, "organization_id") or not self.organization_id)
         ):  # Only if organization is not already set
             self.organization = current_organization
 
         super().save(*args, **kwargs)
+
+    def save_base(
+        self,
+        raw=False,
+        force_insert=False,
+        force_update=False,
+        using=None,
+        update_fields=None,
+    ):
+        # Django pre_save includes update_fields but not force_update. Carry
+        # that intent through the real signal dispatch, including callers
+        # that bypass BaseModel.save and call Model.save/save_base directly.
+        attr = "_workspace_autoassign_force_update"
+        missing = object()
+        previous = self.__dict__.get(attr, missing)
+        self.__dict__[attr] = force_update or (previous is not missing and previous)
+        try:
+            return super().save_base(
+                raw=raw,
+                force_insert=force_insert,
+                force_update=force_update,
+                using=using,
+                update_fields=update_fields,
+            )
+        finally:
+            if previous is missing:
+                self.__dict__.pop(attr, None)
+            else:
+                self.__dict__[attr] = previous
 
     def delete(self, using=None, keep_parents=False):
         self.deleted = True

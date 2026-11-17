@@ -1925,6 +1925,9 @@ def deduct_cost_for_request(
         # Free tier limits are enforced by check_usage() in metering.py.
         # Always allow the action; usage tracking handles billing.
         status = APICallStatusChoices.PROCESSING.value
+        # A model endpoint's own token count (input_tokens on a prompt run) is
+        # shown only; it never feeds a charge. If this recorded cost is ever
+        # billed, it is priced on the platform's own count, decided then.
         deducted_cost = 0
 
         # --- Legacy wallet check (deprecated) ---

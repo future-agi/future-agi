@@ -1,0 +1,162 @@
+{
+  "schema": "omega-hub-rules/v1",
+  "version": 1,
+  "effectiveAt": "2026-10-14",
+  "admission": [
+    {
+      "step": "unpack",
+      "title": "Unpack",
+      "text": "A .tar.gz or .zip of at most 2 MiB, with at most 60 files and 512 KiB unpacked. No absolute paths, no '..', no links or devices. Every file is UTF-8 text or a PNG, JPEG, GIF or WebP image; archives, binaries and compiled modules are refused."
+    },
+    {
+      "step": "manifest",
+      "title": "Manifest and format",
+      "text": "omega.hub.json passes the entry rules R1-R13, has a plain semver version not already published for this entry, a disclosure with a 20-200 character summary, 4-1200 character network/files/credentials and 4-300 character shell/background parts, no reserved trust word as a tag, and a remix_of that names an approved, unblocked version."
+    },
+    {
+      "step": "licence",
+      "title": "Licence",
+      "text": "The licence is one of the eight allowed SPDX ids, and a LICENSE file, if present, matches it."
+    },
+    {
+      "step": "secrets",
+      "title": "Secrets",
+      "text": "No file holds a key, token, private key, password in a connection string or other credential value. Matches are redacted in every report."
+    },
+    {
+      "step": "dependencies",
+      "title": "Dependencies",
+      "text": "package.json depends only on @omega/* packages, runs no install scripts, and there is no .npmrc or lockfile naming another registry."
+    },
+    {
+      "step": "static-scan",
+      "title": "Static scan",
+      "text": "Code that evaluates strings, loads code dynamically, loads native modules, hides large encoded blobs, ships minified lines or reads credential folders is refused. Shell, worker, raw network, environment enumeration, writing code files and background work are flagged for the reviewer."
+    },
+    {
+      "step": "sandbox-run",
+      "title": "Sandbox run",
+      "text": "The entry's own test runs with no key in an isolated container with the network off, and its demo recording matches a fresh run."
+    },
+    {
+      "step": "capabilities",
+      "title": "Capabilities and disclosure facts",
+      "text": "The checker records what the code contacts, reads, runs and keeps running, so the reviewer can check the disclosure against it."
+    },
+    {
+      "step": "diff",
+      "title": "Changes since the last version",
+      "text": "For an update, every changed file and manifest field is listed for the reviewer, new keys and disclosure changes first."
+    },
+    {
+      "step": "similarity",
+      "title": "Similarity",
+      "text": "A new entry whose code files are mostly identical to another listed entry, without naming it in remix_of, is flagged."
+    }
+  ],
+  "content": [
+    {
+      "key": "C1",
+      "text": "It does what its title, tagline and README say, and the confirmed disclosure says everything it contacts, reads, runs, keeps running and stores."
+    },
+    {
+      "key": "C2",
+      "text": "You publish your own work, or work you have the right to publish under its licence. Publishing another person's project without them is declined."
+    },
+    {
+      "key": "C3",
+      "text": "No code that downloads and runs other code, and no code that changes its own files."
+    },
+    {
+      "key": "C4",
+      "text": "No opaque files: no binaries, archives, compiled modules or minified bundles."
+    },
+    {
+      "key": "C5",
+      "text": "Keys are asked for only through keys and models.live keys, never read from files, and never sent anywhere except the service they belong to."
+    },
+    {
+      "key": "C6",
+      "text": "One listing per lineage: a derivative names its origin in remix_of and is materially different from it."
+    },
+    {
+      "key": "C7",
+      "text": "No trust words in tags, handles or display names, and no impersonation."
+    },
+    {
+      "key": "C8",
+      "text": "No banned claims, tracking images or misleading links."
+    }
+  ],
+  "checklist": [
+    {
+      "key": "describes-code",
+      "text": "The README, tagline and title describe what the code does; nothing is hidden."
+    },
+    {
+      "key": "flags-needed",
+      "text": "Each flagged call is needed, and the confirmed disclosure covers it."
+    },
+    {
+      "key": "live-hosts",
+      "text": "In live mode the entry contacts only its model vendors and the hosts named in the disclosure."
+    },
+    {
+      "key": "licence-own-work",
+      "text": "The code is the publisher's to licence, and the licence file and the manifest agree. It is not someone else's project submitted without them."
+    },
+    {
+      "key": "links-honest",
+      "text": "Links in the README go where they say. There are no tracking images, and no banned claims slipped past the prose rules."
+    },
+    {
+      "key": "keys-minimal",
+      "text": "The keys asked for are the minimum, and each why is accurate."
+    },
+    {
+      "key": "no-impersonation",
+      "text": "The entry does not impersonate another publisher, product or person."
+    },
+    {
+      "key": "diff-explained",
+      "text": "For an update: every change in the diff is explained by the version notes or is harmless."
+    },
+    {
+      "key": "not-a-copy",
+      "text": "It is not a renamed copy. If it derives from a listed entry, remix_of names it and the difference is material; an undeclared-copy flag is resolved one way or the other."
+    },
+    {
+      "key": "no-self-update",
+      "text": "It does not download and run code, and does not change its own files."
+    }
+  ],
+  "counts": {
+    "installs": "Installs: downloads of this entry's bundle by the Omega CLI in the last 30 days, counted once per network address per version per day. Never decremented; uninstalling is not seen.",
+    "opens": "Opened in Future AGI: times a signed-in Future AGI user opened it in Studio, Deploy or the Omega Console in the last 30 days.",
+    "likes": "Likes: signed-in Future AGI users who liked it."
+  },
+  "trending": {
+    "text": "Trending ranks entries by installs in the last 7 days plus three times the likes in the last 7 days. Ties go to the newest approval.",
+    "weights": {
+      "installs7d": 1,
+      "likes7d": 3
+    }
+  },
+  "reviewMeans": [
+    "Every version on the Omega Hub passed automated checks and was approved by a Future AGI maintainer before it was listed. The checks validate the manifest, the licence and the dependencies, scan for secrets and risky calls, and run the entry with no key and no network in an isolated container. A maintainer then reads the README, the flagged code and the changes since the last version, and confirms the disclosure you see on the page.",
+    "Review is not a code audit and not a guarantee. An entry runs with your permissions when you run it. `omega hub run` runs with no key by default, behind a network guard that stops accidents but is not a sandbox. Read the disclosure, keep live runs to the keys an entry asks for, and report anything that looks wrong: we act on security reports within one business day."
+  ],
+  "targets": {
+    "review": "A first review decision usually within 2 business days.",
+    "securityReport": "A first action on a security report usually within 1 business day.",
+    "otherReport": "A first action on other reports usually within 5 business days.",
+    "reviewBusinessDays": 2,
+    "securityReportBusinessDays": 1,
+    "otherReportBusinessDays": 5
+  },
+  "contacts": {
+    "discord": "https://discord.com/invite/n2tCUKBkAw",
+    "security": "security@futureagi.com",
+    "securityNote": "Until security@futureagi.com exists, use the private report form; appeals go to a reply to the moderation email."
+  }
+}

@@ -1,0 +1,30 @@
+# The Omega Hub (README.md, "Omega Hub"), layered on your values:
+#
+#   helm upgrade --install futureagi deploy/helm/futureagi \
+#     -f my-values.yaml -f deploy/helm/futureagi/examples/hub.yaml --timeout 20m
+#
+# First set up the runner host (deploy/hub-runner/README.md): a VM of its own
+# whose Docker runs containers on gVisor, reachable only on TCP 2376 with
+# mutual TLS, behind an egress firewall. Then create the Secret with its client
+# certificate (the files that host's setup printed):
+#
+#   kubectl create secret generic futureagi-hub-runner-client \
+#     --from-file=ca.pem --from-file=cert.pem --from-file=key.pem
+hub:
+  enabled: true
+  # The ingress controller in front of the backend.
+  trustedProxyDepth: 1
+  checker:
+    image:
+      # The checker image you built and pushed (services/omega-hub-checker).
+      registry: registry.example.com
+      repository: futureagi/omega-hub-checker
+      tag: "1.0.0"
+    runner:
+      # The release manifest's runtimes.hubRunner, built and pushed, by digest.
+      image: registry.example.com/futureagi/omega-hub-runner@sha256:3774a1b8f10b8d522e441a723fdf21cf43e5c18b58bd4272fc3b14e71467d750
+      dockerHost: tcp://hub-runner.example.internal:2376
+      tlsSecret: futureagi-hub-runner-client
+      networkPolicyTo:
+        - ipBlock:
+            cidr: 10.20.0.7/32

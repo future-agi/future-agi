@@ -27,3 +27,16 @@ CUSTOM_PROMPT_EVALUATOR_TYPE_ID = "CustomPromptEvaluator"
 GROUND_TRUTH_AWARE_EVAL_TYPES = frozenset(
     {CUSTOM_PROMPT_EVALUATOR_TYPE_ID, AGENT_EVALUATOR_TYPE_ID}
 )
+
+# The built-in embedding evals, scored in the backend through model serving.
+# Until SYSTEM_EVALS_VERSION 29 they were code evals, and they still take a
+# binding's params (similarity_threshold, match_all) the way code evals do: as
+# run kwargs, never as constructor config.
+SERVING_EMBEDDING_EVAL_TYPES = frozenset(
+    {"EmbeddingSimilarity", "SemanticListContains"}
+)
+
+# Evaluators that receive a binding's runtime ``params`` as run kwargs.
+PARAMS_AS_RUN_KWARGS_EVAL_TYPES = (
+    frozenset({"CustomCodeEval"}) | SERVING_EMBEDDING_EVAL_TYPES
+)

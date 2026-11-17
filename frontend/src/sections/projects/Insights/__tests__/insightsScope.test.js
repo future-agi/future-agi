@@ -145,6 +145,31 @@ describe("scopes", () => {
     );
   });
 
+  // Rows from a report's category keep the window it read them
+  // in, so the new report reads each user's activity there only.
+  it("keeps the source report's window with rows handed over from it", () => {
+    expect(
+      fixedScope("Churned · Weekly", [
+        "2026-10-01T00:00:00+00:00",
+        "2026-10-08T00:00:00+00:00",
+      ]),
+    ).toEqual({
+      label: "Churned · Weekly",
+      preset: FIXED_PRESET,
+      window: ["2026-10-01T00:00:00.000Z", "2026-10-08T00:00:00.000Z"],
+    });
+    expect(fixedScope("12 sessions")).toEqual({
+      label: "12 sessions",
+      preset: FIXED_PRESET,
+    });
+    expect(
+      fixedScope("12 sessions", ["not a date", "2026-10-08T00:00:00Z"]),
+    ).not.toHaveProperty("window");
+    expect(
+      fixedScope("12 sessions", ["2026-10-01T00:00:00Z"]),
+    ).not.toHaveProperty("window");
+  });
+
   it("describes filters in words", () => {
     expect(describeFilter(STATUS)).toBe("Status is ERROR");
     expect(

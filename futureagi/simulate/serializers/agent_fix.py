@@ -274,7 +274,12 @@ class AgentFixRunSerializer(serializers.ModelSerializer):
     @swagger_serializer_method(serializer_or_field=AgentFixEnvironmentSerializer)
     def get_environment(self, fix_run: AgentFixRun) -> dict:
         environment = fix_run.environment
-        version = environment.environment_version
+        version = (
+            fix_run.source_run.environment_version if fix_run.source_run else None
+        )
+        # Legacy fixes may have no source run or pinned environment version.
+        if version is None:
+            version = environment.environment_version
         return {
             "name": environment_name(environment),
             "version": version.version_number if version else None,

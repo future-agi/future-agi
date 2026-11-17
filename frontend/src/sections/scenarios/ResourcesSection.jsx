@@ -32,8 +32,10 @@ const ResourcesSection = () => {
           onClick={() => setOpenLoomDialog(true)}
         >
           <img
-            alt="loom video"
-            src="https://cdn.loom.com/sessions/thumbnails/f13e7911fb5c4ec583c72dc20acbc83a-d4d2e941d783a924-full-play.gif"
+            alt="Play external tutorial"
+            width={96}
+            height={64}
+            src="/assets/icons/action_buttons/ic_filled_play_button.svg"
           />
         </Box>
         <Box

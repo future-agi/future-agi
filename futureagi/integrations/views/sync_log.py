@@ -15,9 +15,14 @@ from integrations.serializers.contracts import (
     SyncLogListResponseSerializer,
 )
 from integrations.serializers.sync_log import SyncLogSerializer
+from integrations.services.export_failures import exception_fields
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_errors import build_error_envelope
-from tfc.utils.base_viewset import BaseModelViewSetMixin
+from tfc.utils.base_viewset import (
+    BaseModelViewSetMixin,
+    active_request_organization,
+    request_workspace_q,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -39,15 +44,19 @@ class SyncLogViewSet(BaseModelViewSetMixin, ReadOnlyModelViewSet):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        # Filter to only show sync logs for connections belonging to the user's org
-        queryset = SyncLog.objects.filter(
-            connection__organization=getattr(self.request, "organization", None)
-            or self.request.user.organization,
-            connection__deleted=False,
-        ).order_by("-started_at")
-        workspace = getattr(self.request, "workspace", None)
-        if workspace:
-            queryset = queryset.filter(connection__workspace=workspace)
+        organization = active_request_organization(self.request)
+        if organization is None:
+            return SyncLog.objects.none()
+        queryset = (
+            SyncLog.objects.filter(
+                request_workspace_q(self.request, "connection__workspace"),
+                connection__organization=organization,
+                connection__deleted=False,
+                deleted=False,
+            )
+            .select_related("connection")
+            .order_by("-started_at")
+        )
 
         query_data = getattr(self.request, "validated_query_data", {})
         connection_id = query_data.get(
@@ -101,7 +110,7 @@ class SyncLogViewSet(BaseModelViewSetMixin, ReadOnlyModelViewSet):
                 }
             )
         except Exception as e:
-            logger.exception("Error listing sync logs", error=str(e))
+            logger.warning("Error listing sync logs", **exception_fields(e))
             return Response(
                 build_error_envelope(
                     "Failed to list sync logs.",

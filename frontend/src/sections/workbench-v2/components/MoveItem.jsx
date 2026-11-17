@@ -85,7 +85,7 @@ const MoveItem = ({ id, open, onClose, name, folderId }) => {
       >
         <Typography
           typography={"s2"}
-          color={"text.disabled"}
+          color={"text.tertiary"}
           fontWeight={"fontWeightRegular"}
         >
           Current location

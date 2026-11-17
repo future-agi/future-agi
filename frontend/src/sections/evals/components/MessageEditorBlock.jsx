@@ -1,7 +1,11 @@
 import { Box } from "@mui/material";
 import PropTypes from "prop-types";
-import { useCallback, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import PromptEditor from "src/components/PromptCards/PromptEditor";
+
+// PromptEditor applies an outside change only when it differs from the text
+// beyond trailing line breaks, so only such a change comes back as an echo.
+const trimBreaks = (text) => (text || "").replace(/\n+$/, "");
 
 /**
  * Single message block using PromptEditor (same Quill editor as agent InstructionEditor).
@@ -27,13 +31,22 @@ const MessageEditorBlock = ({
   const isInternalChange = useRef(false);
   // Store the last known content to avoid re-init loops
   const lastContent = useRef(content);
+  // Content set from outside (not text this block sent), while the render
+  // that brought it commits: PromptEditor applies it in its own effect,
+  // which runs before this block's, so Quill's echo arrives in that window.
+  const syncedContent = useRef(null);
 
   // Only re-create prompt blocks when content changes externally
   // (not from our own onPromptChange callback)
   const prompt = useMemo(() => {
+    if (trimBreaks(content) !== trimBreaks(lastContent.current))
+      syncedContent.current = content;
     lastContent.current = content;
     return content ? [{ type: "text", text: content }] : [];
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [content]);
+  useEffect(() => {
+    syncedContent.current = null;
   }, [content]);
 
   const handlePromptChange = useCallback(
@@ -42,8 +55,16 @@ const MessageEditorBlock = ({
         .filter((b) => b.type === "text")
         .map((b) => b.text)
         .join("");
-      // Only fire onChange if text actually changed
-      if (text !== lastContent.current) {
+      // Only fire onChange if text actually changed. Quill keeps a terminal
+      // "\n" in its document, so content set from outside (a version
+      // picked) comes back once with that "\n" added; that echo is not a
+      // change. Typed text, a line break at the end included, reports.
+      const synced = syncedContent.current;
+      syncedContent.current = null;
+      const echoed =
+        text === lastContent.current ||
+        (synced !== null && text === `${synced}\n`);
+      if (!echoed) {
         lastContent.current = text;
         isInternalChange.current = true;
         onContentChange(text);

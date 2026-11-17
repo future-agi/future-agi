@@ -1,0 +1,17 @@
+{
+  "http": {
+    "status": 409,
+    "headers": {
+      "content-type": "application/json"
+    }
+  },
+  "body": {
+    "status": false,
+    "type": "conflict",
+    "code": "agent_key_cap_reached",
+    "detail": "This organization holds as many live EE agent keys as it may. Revoke a key it no longer uses (an old key after a rotation), then mint again.",
+    "message": "This organization holds as many live EE agent keys as it may. Revoke a key it no longer uses (an old key after a rotation), then mint again.",
+    "error": "This organization holds as many live EE agent keys as it may. Revoke a key it no longer uses (an old key after a rotation), then mint again.",
+    "result": "This organization holds as many live EE agent keys as it may. Revoke a key it no longer uses (an old key after a rotation), then mint again."
+  }
+}

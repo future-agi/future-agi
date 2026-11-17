@@ -3,6 +3,7 @@ import PropTypes from "prop-types";
 import React from "react";
 import { ShowComponent } from "src/components/show";
 import SvgColor from "src/components/svg-color";
+import { formatExactMoney } from "src/sections/common/format/money";
 
 const CostCard = ({
   icon,
@@ -45,7 +46,7 @@ const CostCard = ({
       </Box>
       <Typography typography="s1">{title}</Typography>
       <Typography typography="m1" fontWeight="fontWeightSemiBold">
-        ${value}
+        {formatExactMoney(value, { minimumFractionDigits: 0 })}
       </Typography>
       <ShowComponent condition={additionalInfo?.length === 0}>
         <Typography typography="s2">No additional details available</Typography>
@@ -64,7 +65,7 @@ const CostCard = ({
 CostCard.propTypes = {
   title: PropTypes.string,
   icon: PropTypes.string,
-  value: PropTypes.number,
+  value: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
   additionalInfo: PropTypes.arrayOf(
     PropTypes.shape({
       label: PropTypes.string,

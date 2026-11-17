@@ -65,11 +65,62 @@
       ]
     },
     "code-executor": {
+      "profiles": [],
+      "restart": "unless-stopped",
+      "mounts": [],
+      "tmpfs": [
+        "/sandbox/scripts",
+        "/tmp"
+      ]
+    },
+    "hub-checker": {
       "profiles": [
-        "sandbox"
+        "hub"
       ],
       "restart": "unless-stopped",
-      "mounts": []
+      "mounts": [
+        {
+          "type": "volume",
+          "source": "hub-runner-client",
+          "target": "/certs/client",
+          "read_only": true
+        }
+      ],
+      "tmpfs": [
+        "/tmp"
+      ]
+    },
+    "hub-runner": {
+      "profiles": [
+        "hub"
+      ],
+      "restart": "unless-stopped",
+      "mounts": [
+        {
+          "type": "volume",
+          "source": "hub-runner-ca",
+          "target": "/certs/ca",
+          "read_only": false
+        },
+        {
+          "type": "volume",
+          "source": "hub-runner-client",
+          "target": "/certs/client",
+          "read_only": false
+        },
+        {
+          "type": "volume",
+          "source": "hub-runner-server",
+          "target": "/certs/server",
+          "read_only": false
+        },
+        {
+          "type": "volume",
+          "source": "hub-runner-data",
+          "target": "/var/lib/docker",
+          "read_only": false
+        }
+      ]
     },
     "postgres": {
       "profiles": [],
@@ -94,7 +145,24 @@
   "volumes": {
     "app-data": {},
     "clickhouse-data": {},
+    "hub-runner-ca": {},
+    "hub-runner-client": {},
+    "hub-runner-data": {},
+    "hub-runner-server": {},
     "postgres-data": {}
+  },
+  "automatic_unsupported": {
+    "services": {
+      "code-executor": "Runs by default and holds only tmpfs scratch, but the automatic updater's runtime, backup and restore still observe exactly app, postgres and clickhouse, each with one named volume; until they cover a service without a named volume, an install that runs it is refused instead of updated without it.",
+      "hub-checker": "The Omega Hub checker (profile hub) is not covered by automatic updates yet; an install that runs it is refused.",
+      "hub-runner": "The Omega Hub runner daemon (profile hub) is privileged and keeps its own Docker state and certificates; automatic updates do not back it up or restore it, so an install that runs it is refused."
+    },
+    "volumes": {
+      "hub-runner-ca": "Hub runner certificate authority (profile hub); not backed up by automatic updates.",
+      "hub-runner-client": "Hub runner client certificate (profile hub); not backed up by automatic updates.",
+      "hub-runner-data": "Hub runner Docker data (profile hub); not backed up by automatic updates.",
+      "hub-runner-server": "Hub runner server certificate (profile hub); not backed up by automatic updates."
+    }
   },
   "backup_coverage": {
     "app-data": {
@@ -126,17 +194,23 @@
   },
   "service_storage": {
     "app": {
-      "volumes": ["app-data"],
+      "volumes": [
+        "app-data"
+      ],
       "ephemeral": false,
       "reason": "All durable embedded service state is under /data; Redis and container scratch are ephemeral"
     },
     "postgres": {
-      "volumes": ["postgres-data"],
+      "volumes": [
+        "postgres-data"
+      ],
       "ephemeral": false,
       "reason": "The PostgreSQL data directory is cold-archived before target startup"
     },
     "clickhouse": {
-      "volumes": ["clickhouse-data"],
+      "volumes": [
+        "clickhouse-data"
+      ],
       "ephemeral": false,
       "reason": "The ClickHouse data directory is cold-archived before target startup"
     },
@@ -148,7 +222,24 @@
     "code-executor": {
       "volumes": [],
       "ephemeral": true,
-      "reason": "Optional sandbox profile is unqualified for automatic updates; execution scratch is disposable"
+      "reason": "Runs by default; /tmp and /sandbox/scripts are tmpfs execution scratch, disposable and never backed up"
+    },
+    "hub-checker": {
+      "volumes": [
+        "hub-runner-client"
+      ],
+      "ephemeral": false,
+      "reason": "Reads the hub runner client certificate; /tmp is tmpfs; not covered by automatic updates (automatic_unsupported)"
+    },
+    "hub-runner": {
+      "volumes": [
+        "hub-runner-ca",
+        "hub-runner-client",
+        "hub-runner-data",
+        "hub-runner-server"
+      ],
+      "ephemeral": false,
+      "reason": "Hub runner certificates and Docker state; not covered by automatic updates (automatic_unsupported)"
     }
   },
   "bind_coverage": {

@@ -1,0 +1,61 @@
+{
+  "sourcePackage": {
+    "name": "@fontsource-variable/inter",
+    "version": "5.3.0",
+    "published": "2026-07-19T03:50:25.793Z",
+    "integrity": "sha512-OupL48va4JNofb97w6NYeF9S7W/kHNKM0Er8Dem5nqi4jeOLrVJDoE8tZEpnMJmtkvNbB1EIPPwHcdkF6b1oUA==",
+    "license": "OFL-1.1"
+  },
+  "provenance": "Official Inter font data vendored from the integrity-checked pinned npm release. Package metadata and per-file digests are recorded below.",
+  "files": [
+    {
+      "file": "inter-cyrillic-ext-wght-normal.woff2",
+      "bytes": 25960,
+      "package": "@fontsource-variable/inter",
+      "packagePath": "files/inter-cyrillic-ext-wght-normal.woff2",
+      "digest": "sha256:ca157063339ac4ad418f214f3abfed119b0798ab4d377386ce5c9e5a7a435ebd"
+    },
+    {
+      "file": "inter-cyrillic-wght-normal.woff2",
+      "bytes": 18748,
+      "package": "@fontsource-variable/inter",
+      "packagePath": "files/inter-cyrillic-wght-normal.woff2",
+      "digest": "sha256:71d5ee93cc1e9f1d520a3a8b66456de18c7879d8df09d57fcd2eaff75fef0075"
+    },
+    {
+      "file": "inter-greek-ext-wght-normal.woff2",
+      "bytes": 11232,
+      "package": "@fontsource-variable/inter",
+      "packagePath": "files/inter-greek-ext-wght-normal.woff2",
+      "digest": "sha256:6e9e020a25f9b56d418f2c085b1d3c09725a4da23fe693a5b463064606732190"
+    },
+    {
+      "file": "inter-greek-wght-normal.woff2",
+      "bytes": 18996,
+      "package": "@fontsource-variable/inter",
+      "packagePath": "files/inter-greek-wght-normal.woff2",
+      "digest": "sha256:1be3448e292fbf05ffe176fe1e43f135013d50b1e7d324ad1a558f623d3bb6f6"
+    },
+    {
+      "file": "inter-latin-ext-wght-normal.woff2",
+      "bytes": 85068,
+      "package": "@fontsource-variable/inter",
+      "packagePath": "files/inter-latin-ext-wght-normal.woff2",
+      "digest": "sha256:34b9c504cab7a73e37b746343a449132e56cf7b5481af2cb81dc74dcff25c956"
+    },
+    {
+      "file": "inter-latin-wght-normal.woff2",
+      "bytes": 48256,
+      "package": "@fontsource-variable/inter",
+      "packagePath": "files/inter-latin-wght-normal.woff2",
+      "digest": "sha256:3100e775e8616cd2611beecfa23a4263d7037586789b43f035236a2e6fbd4c62"
+    },
+    {
+      "file": "inter-vietnamese-wght-normal.woff2",
+      "bytes": 10252,
+      "package": "@fontsource-variable/inter",
+      "packagePath": "files/inter-vietnamese-wght-normal.woff2",
+      "digest": "sha256:5c66f9e07e90c6d4ac4922cc68d60de26c17b1858e677fb5e603fce3952b3ff2"
+    }
+  ]
+}

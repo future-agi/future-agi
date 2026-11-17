@@ -3,6 +3,7 @@ import { Box, Button, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { RouterLink } from "src/routes/components";
 import StatusBadge from "src/components/status-badge/StatusBadge";
+import NotInReleaseButton from "src/components/NotInRelease/NotInReleaseButton";
 import { VOICE_CHAT_PROVIDERS } from "src/sections/agents/constants";
 import { AGENT_SUMMARY_COPY, CONNECTOR_LABEL } from "./overview.constants";
 import { CONNECTED_AGENTS_PATH } from "src/sections/agent-playground/agentsTabs";
@@ -14,8 +15,13 @@ const providerLabel = (provider) =>
   CONNECTOR_LABEL[provider] ||
   provider;
 
-// With `onManageVersions`, a "Manage versions" action opens the agent versions.
-export default function AgentSummarySection({ subject, onManageVersions }) {
+// With `onManageVersions`, a "Manage versions" action opens the agent versions;
+// with `manageBlockedReason` instead, it is shown disabled with that reason.
+export default function AgentSummarySection({
+  subject,
+  onManageVersions,
+  manageBlockedReason,
+}) {
   const title = subject
     ? AGENT_SUMMARY_COPY.agentTitle(subject.name, subject.active_version)
     : AGENT_SUMMARY_COPY.noAgentTitle;
@@ -120,6 +126,16 @@ export default function AgentSummarySection({ subject, onManageVersions }) {
             {AGENT_SUMMARY_COPY.manage}
           </Button>
         )}
+        {!onManageVersions && manageBlockedReason && (
+          <NotInReleaseButton
+            reason={manageBlockedReason}
+            variant="outlined"
+            size="small"
+            color="inherit"
+          >
+            {AGENT_SUMMARY_COPY.manage}
+          </NotInReleaseButton>
+        )}
       </Stack>
     </Box>
   );
@@ -133,4 +149,6 @@ AgentSummarySection.propTypes = {
     active_version: PropTypes.string,
   }),
   onManageVersions: PropTypes.func,
+  // Without `onManageVersions`: why Manage versions is shown disabled.
+  manageBlockedReason: PropTypes.string,
 };

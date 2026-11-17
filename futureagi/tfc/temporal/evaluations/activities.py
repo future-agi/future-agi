@@ -5,6 +5,7 @@ These activities process individual Evaluation objects immediately when
 triggered, rather than being polled by a scheduled job.
 """
 
+from django.db import Error as DatabaseError
 from django.db import close_old_connections
 from temporalio import activity
 
@@ -13,6 +14,12 @@ from tfc.temporal.evaluations.types import (
     RunSingleEvaluationInput,
     RunSingleEvaluationOutput,
 )
+
+
+class EvaluationReadError(Exception):
+    """The worker could not read the evaluation for a reason other than its
+    absence; the activity raises it so the workflow retries."""
+
 
 # =============================================================================
 # Synchronous Helper Functions
@@ -28,6 +35,8 @@ def _run_single_evaluation_sync(evaluation_id: str) -> dict:
     """
     close_old_connections()
 
+    evaluation = None
+    eval_result = None
     try:
         from model_hub.models.evaluation import Evaluation, StatusChoices
         from model_hub.tasks.user_evaluation import (
@@ -40,11 +49,26 @@ def _run_single_evaluation_sync(evaluation_id: str) -> dict:
             "user", "eval_template", "workspace", "organization"
         ).get(id=evaluation_id)
 
+        # The persisted evaluation is the tenant authority after dispatch. Key
+        # authentication only binds user.organization in memory; the worker's
+        # reloaded user may still have a different legacy organization.
+        if (
+            evaluation.workspace is not None
+            and evaluation.workspace.organization_id != evaluation.organization_id
+        ):
+            raise ValueError("Evaluation workspace does not belong to its organization")
+        # _run_eval uses this binding for quota, ground truth, provider context
+        # and metering. Do not save the user: their legacy organization is unchanged.
+        evaluation.user.organization = evaluation.organization
+
         # Mark as processing
         evaluation.status = StatusChoices.PROCESSING
         evaluation.save(update_fields=["status"])
 
-        # Run the actual evaluation
+        # Run the actual evaluation. Billed under the evaluation, so a retry
+        # of this activity emits the usage event the first attempt emitted.
+        # The id goes as it is: an evaluation without one is billed under a
+        # fresh id, never under another evaluation's.
         eval_result = _run_eval(
             eval_template=evaluation.eval_template,
             inputs=evaluation.input_data,
@@ -52,6 +76,7 @@ def _run_single_evaluation_sync(evaluation_id: str) -> dict:
             user=evaluation.user,
             workspace=evaluation.workspace,
             eval_config=evaluation.eval_config,
+            evaluation_id=evaluation.id,
         )
 
         # Update evaluation with results
@@ -88,11 +113,29 @@ def _run_single_evaluation_sync(evaluation_id: str) -> dict:
         }
 
     except Exception as e:
+        if evaluation is None:
+            if isinstance(e, DatabaseError):
+                # The database could not answer (for example, it was unreachable).
+                # Nothing has run or been charged yet, so the workflow retries.
+                raise EvaluationReadError(type(e).__name__) from e
+            # The evaluation does not exist (for example, it was deleted after
+            # its workflow was started), or its id cannot name one: there is no
+            # row to mark, and reading it again cannot succeed.
+            return {
+                "evaluation_id": evaluation_id,
+                "status": "MISSING",
+                "error": str(e),
+            }
+
+        from sdk.utils.api_errors import evaluation_failure_reason
         from tfc.ee_gates import jev_error_message
 
         # Mark as failed on any error (matches original behavior)
         evaluation.status = StatusChoices.FAILED
         evaluation.error_message = jev_error_message(e) or str(e)
+        # A run that returned keeps the evaluator's own reason.
+        if eval_result is None:
+            evaluation.reason = evaluation_failure_reason(e)
         # Don't return here - let finally block save and return
 
         return {
@@ -147,6 +190,10 @@ async def run_single_evaluation_activity(
             status=result["status"],
             error=result.get("error"),
         )
+
+    except EvaluationReadError:
+        # Raised so the workflow's retry policy runs the activity again.
+        raise
 
     except Exception as e:
         activity.logger.exception(

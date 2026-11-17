@@ -1424,6 +1424,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                 "input": trace_row.get("input"),
                 "output": trace_row.get("output"),
                 "system_metrics": {
+                    "project_id": str(project_id),
                     "total_latency_ms": trace_row.get("root_latency_ms", 0),
                     "user_id": user_id_label,
                     "total_cost": trace_row.get("total_cost", 0),

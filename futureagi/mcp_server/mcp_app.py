@@ -7,7 +7,6 @@ no session affinity, survives server restarts, horizontally scalable.
 """
 
 import json
-import os
 import time
 from contextvars import ContextVar
 
@@ -28,6 +27,7 @@ from mcp_server.api_executor import (
     executor,
 )
 from mcp_server.generated_registry import registry
+from mcp_server.public_url import mcp_public_base_url
 from mcp_server.response_limits import ResponseTooLargeError, bounded_response
 from tfc.middleware.workspace_context import (
     clear_workspace_context,
@@ -36,8 +36,6 @@ from tfc.middleware.workspace_context import (
     get_current_workspace,
     set_workspace_context,
 )
-from tfc.utils.api_errors import ApiErrorCode
-from tfc.utils.error_codes import get_error_message
 
 logger = structlog.get_logger(__name__)
 
@@ -47,8 +45,9 @@ _request_context: ContextVar[MCPRequestContext | None] = ContextVar(
     "mcp_request_context", default=None
 )
 
-# Build allowed hosts from MCP_SERVER_BASE_URL for DNS rebinding protection.
-_mcp_base_url = os.environ.get("MCP_SERVER_BASE_URL", "")
+# Build allowed hosts from the public MCP base URL (the one Settings > MCP
+# Server shows) for DNS rebinding protection.
+_mcp_base_url = mcp_public_base_url() or ""
 _allowed_hosts = ["localhost", "localhost:*", "127.0.0.1", "127.0.0.1:*"]
 if _mcp_base_url:
     from urllib.parse import urlparse
@@ -75,8 +74,18 @@ _transport_security = TransportSecuritySettings(
 )
 
 
+# The refusal code the REST API gives an expired key (ApiErrorCode.API_KEY_EXPIRED).
+_API_KEY_EXPIRED_CODE = "api_key_expired"
+
+
 class APIKeyExpired(Exception):
     """The key pair matched a key whose ``expires_at`` has passed."""
+
+
+def _is_expired_key_refusal(exc) -> bool:
+    """Whether the shared key policy refused a proven key because it expired."""
+    code = exc.get_codes() if hasattr(exc, "get_codes") else None
+    return getattr(code, "value", code) == _API_KEY_EXPIRED_CODE
 
 
 def _authenticate_and_set_context(
@@ -87,68 +96,51 @@ def _authenticate_and_set_context(
     Raises ``APIKeyExpired`` for an expired key so the caller can answer with
     the same distinct error the REST API gives instead of "Invalid credentials".
     """
-    from accounts.models.user import OrgApiKey, User
+    from rest_framework.exceptions import AuthenticationFailed
+
+    from accounts.api_key_policy import (
+        APIKeyRetired,
+        authenticate_api_key,
+        live_membership,
+    )
     from accounts.models.workspace import Workspace
+    from accounts.services.workspace_landing import resolve_user_workspace
 
+    # The shared personal-key policy also refuses coding_agent keys: their
+    # restricted simulate routes never include MCP tools.
     try:
-        # Use .all() to skip BaseModelManager workspace filtering. Not
-        # filtered on enabled: REST auth disables a key once it expires, and
-        # that key must still read as expired here, not as a wrong key.
-        org_api_key = (
-            OrgApiKey.objects.all()
-            .select_related("organization", "workspace")
-            .get(api_key=api_key, secret_key=secret_key)
-        )
-    except OrgApiKey.DoesNotExist:
-        logger.warning("mcp_auth_failed", api_key_prefix=api_key[:8] if api_key else "")
+        org_api_key = authenticate_api_key(api_key, secret_key)
+    except APIKeyRetired:
+        raise
+    except AuthenticationFailed as exc:
+        if _is_expired_key_refusal(exc):
+            logger.warning("mcp_auth_key_expired")
+            raise APIKeyExpired from exc
+        logger.warning("mcp_auth_failed")
         return None
-
-    if org_api_key.is_expired:
-        logger.warning("mcp_auth_key_expired", api_key_prefix=api_key[:8])
-        raise APIKeyExpired
-    if not org_api_key.enabled:
-        logger.warning("mcp_auth_failed", api_key_prefix=api_key[:8])
-        return None
-
-    # An ingest key may only write spans to the collector, even if a user was
-    # attached to it.
-    if org_api_key.type == "ingest":
-        logger.warning("mcp_auth_ingest_key_refused", org=str(org_api_key.organization))
-        return None
-    # A coding agent's key may make only the simulate calls its loop needs, and no
-    # MCP tool is one of them.
-    if org_api_key.type == "coding_agent":
-        logger.warning(
-            "mcp_auth_coding_agent_key_refused", org=str(org_api_key.organization)
-        )
-        return None
-
-    if org_api_key.type == "system":
-        user = (
-            User.objects.all()
-            .select_related("organization")
-            .filter(organization=org_api_key.organization)
-            .order_by("created_at")
-            .first()
-        )
-    else:
-        user = org_api_key.user
-
-    if not user:
-        logger.warning(
-            "mcp_auth_no_user",
-            key_type=org_api_key.type,
-            org=str(org_api_key.organization),
-        )
-        return None
+    user = org_api_key.user
 
     organization = org_api_key.organization
-    workspace = (
-        org_api_key.workspace
-        or Workspace.objects.all()
-        .filter(organization=organization, is_default=True, is_active=True)
-        .first()
-    )
+    workspace = org_api_key.workspace
+    if (
+        workspace is None
+        and org_api_key.type == "user"
+        and user is not None
+        and live_membership(user.pk, organization.pk) is not None
+    ):
+        # A personal key with no workspace stays in the key's own organization and,
+        # on every call, uses a workspace its own active person can open now: the
+        # organization's default workspace, otherwise that person's own landing.
+        default = Workspace.no_workspace_objects.filter(
+            organization=organization, is_default=True, is_active=True
+        ).first()
+        if default is not None and user.can_access_workspace(default):
+            workspace = default
+        else:
+            workspace = resolve_user_workspace(user, organization)
+    if workspace is None:
+        logger.warning("mcp_auth_failed")
+        return None
 
     return _bind_context(
         MCPRequestContext(
@@ -161,69 +153,73 @@ def _authenticate_and_set_context(
 
 
 def _authenticate_via_oauth(token: str) -> MCPRequestContext | None:
-    """Authenticate via OAuth Bearer token and set per-request context."""
+    """Bind the bearer's exact owner, tenant and immutable tool-group grant."""
+    from uuid import UUID
+
+    from accounts.models.organization import Organization
+    from accounts.models.organization_membership import OrganizationMembership
     from accounts.models.user import User
     from accounts.models.workspace import Workspace
+    from mcp_server.models.oauth_revocation import MCPOAuthAccessRevocation
     from mcp_server.oauth_utils import decrypt_oauth_token
 
     payload = decrypt_oauth_token(token)
-    if not payload or payload.get("type") != "mcp_oauth":
+    if not isinstance(payload, dict) or payload.get("type") != "mcp_oauth":
         return None
-
+    if MCPOAuthAccessRevocation.is_revoked(token):
+        return None
+    # SDK grants use a list; older tokens can carry space- or comma-delimited
+    # scopes. Missing or malformed scopes must never become an unrestricted grant.
+    scopes = payload.get("scope")
+    if isinstance(scopes, str):
+        scopes = scopes.replace(",", " ").split()
+    if not isinstance(scopes, list) or any(
+        not isinstance(group, str) for group in scopes
+    ):
+        return None
+    granted_tool_groups = frozenset(scopes)
     try:
-        user = (
-            User.objects.all().select_related("organization").get(id=payload["user_id"])
-        )
-    except User.DoesNotExist:
+        user_id = UUID(str(payload.get("user_id")))
+        organization_id = UUID(str(payload.get("org_id")))
+        workspace_id = UUID(str(payload.get("workspace_id")))
+    except (ValueError, TypeError, AttributeError):
+        return None
+    user = (
+        User.objects.all()
+        .select_related("organization")
+        .filter(pk=user_id, is_active=True)
+        .first()
+    )
+    if user is None:
         return None
 
-    organization = user.organization
+    # A live membership in the grant's organization is authoritative, not the
+    # user's home organization or another membership selected by preference.
+    organization = Organization.objects.filter(pk=organization_id).first()
+    if (
+        organization is None
+        or not OrganizationMembership.no_workspace_objects.filter(
+            user=user, organization=organization, is_active=True, deleted=False
+        ).exists()
+    ):
+        return None
 
-    workspace = None
-    if payload.get("workspace_id"):
-        workspace = (
-            Workspace.objects.all()
-            .filter(
-                id=payload["workspace_id"], organization=organization, is_active=True
-            )
-            .first()
-        )
-    if not workspace:
-        workspace = (
-            Workspace.objects.all()
-            .filter(organization=organization, is_default=True, is_active=True)
-            .first()
-        )
+    # Missing, inactive and foreign workspaces never fall back to a default.
+    # Keep IR's live workspace-access check in addition to exact grant binding.
+    workspace = Workspace.no_workspace_objects.filter(
+        pk=workspace_id, organization=organization, is_active=True
+    ).first()
+    if workspace is None or not user.can_access_workspace(workspace):
+        return None
 
     return _bind_context(
         MCPRequestContext(
             user=user,
             organization=organization,
             workspace=workspace,
-            oauth_scopes=_parse_oauth_scopes(payload.get("scope")),
+            granted_tool_groups=granted_tool_groups,
         )
     )
-
-
-def _parse_oauth_scopes(raw) -> frozenset[str]:
-    """The tool groups an access token's ``scope`` claim grants.
-
-    Tokens carry a list of group slugs; a space- or comma-separated string is
-    accepted too. Anything else grants nothing, so a malformed claim fails
-    closed rather than falling back to every group.
-    """
-    if isinstance(raw, str):
-        items = raw.replace(",", " ").split()
-    elif isinstance(raw, (list, tuple, set, frozenset)):
-        items = [item.strip() for item in raw if isinstance(item, str)]
-    else:
-        items = []
-    return frozenset(item for item in items if item)
-
-
-def _tool_in_token_scope(context: MCPRequestContext, tool) -> bool:
-    """Whether the caller's OAuth token, if any, was granted the tool's group."""
-    return context.oauth_scopes is None or tool.group in context.oauth_scopes
 
 
 def _bind_context(context: MCPRequestContext) -> MCPRequestContext:
@@ -231,6 +227,7 @@ def _bind_context(context: MCPRequestContext) -> MCPRequestContext:
         workspace=context.workspace,
         organization=context.organization,
         user=context.user,
+        require_workspace=True,
     )
     _request_context.set(context)
     return context
@@ -253,21 +250,44 @@ def _current_context() -> MCPRequestContext | None:
     return MCPRequestContext(user=user, organization=organization, workspace=workspace)
 
 
-def _enabled_tools_for_context(context: MCPRequestContext):
-    from mcp_server.usage_helpers import get_enabled_tools, get_or_create_connection
-
-    connection = get_or_create_connection(
-        context.user, context.organization, context.workspace
+def _tool_in_token_scope(context: MCPRequestContext, tool) -> bool:
+    """Whether the caller's OAuth grant, if any, covers the tool's group."""
+    return (
+        context.granted_tool_groups is None or tool.group in context.granted_tool_groups
     )
-    enabled = get_enabled_tools(connection)
-    if context.oauth_scopes is not None:
-        enabled = {
-            name
-            for name in enabled
-            if (tool := registry.get(name)) is not None
-            and _tool_in_token_scope(context, tool)
+
+
+def _enabled_tools_for_context(context: MCPRequestContext, *, create=False):
+    from mcp_server.usage_helpers import (
+        get_connection,
+        get_enabled_tools,
+        get_or_create_connection,
+    )
+    from tfc.utils.tenant_scope import acts_in_organization
+
+    # Discovery is read-only; only tool calls may initialize a scoped connection.
+    if (
+        context.user is None
+        or not context.user.is_authenticated
+        or not context.user.is_active
+        or context.organization is None
+        or context.workspace is None
+        or context.workspace.organization_id != context.organization.pk
+    ):
+        return None, set()
+    # Preserve IR's live tenant recheck, including revocation after binding.
+    if not acts_in_organization(context.user, context.organization):
+        return None, set()
+    lookup = get_or_create_connection if create else get_connection
+    connection = lookup(context.user, context.organization, context.workspace)
+    enabled_names = get_enabled_tools(connection)
+    if context.granted_tool_groups is not None:
+        # Shared connection policy may narrow a bearer grant, never expand it.
+        # Both discovery and execution use this same intersection.
+        enabled_names &= {
+            tool.name for tool in registry.list_by_groups(context.granted_tool_groups)
         }
-    return connection, enabled
+    return connection, enabled_names
 
 
 def _json_safe(value):
@@ -319,6 +339,8 @@ async def call_generated_tool(name: str, arguments: dict):
             data={"required_scope": tool.group},
         )
 
+    from rest_framework.exceptions import PermissionDenied
+
     from mcp_server.exceptions import RateLimitExceededError
     from mcp_server.rate_limiter import check_rate_limit, get_rate_limit_tier
     from mcp_server.usage_helpers import (
@@ -327,7 +349,15 @@ async def call_generated_tool(name: str, arguments: dict):
         update_session_counters,
     )
 
-    connection, enabled_names = await sync_to_async(_enabled_tools_for_context)(context)
+    try:
+        connection, enabled_names = await sync_to_async(_enabled_tools_for_context)(
+            context, create=True
+        )
+    except PermissionDenied:
+        return _error_result("Invalid MCP connection scope", code="HTTP_403")
+    if connection is None:
+        # The same refusal the executor gives a caller outside the tenant.
+        return _error_result("Access denied to this organization", code="HTTP_403")
     if name not in enabled_names:
         return _error_result(f"Tool is disabled: {name}", code="FORBIDDEN")
 
@@ -394,8 +424,6 @@ def get_mcp_oauth_app():
     """
     global _oauth_app
     if _oauth_app is None:
-        import os
-
         from mcp.server.auth.routes import (
             create_auth_routes,
             create_protected_resource_routes,
@@ -409,8 +437,11 @@ def get_mcp_oauth_app():
 
         from mcp_server.constants import TOOL_GROUPS
         from mcp_server.oauth_provider import FutureAGIOAuthProvider
+        from mcp_server.oauth_routes import revocation_route
 
-        base_url = os.environ.get("MCP_SERVER_BASE_URL", "http://localhost:8000")
+        # The same base the dashboard shows as "<base>/mcp", so the issuer and
+        # the protected resource match the URL an IDE was given.
+        base_url = mcp_public_base_url() or "http://localhost:8000"
 
         provider = FutureAGIOAuthProvider()
 
@@ -424,6 +455,11 @@ def get_mcp_oauth_app():
             ),
             revocation_options=RevocationOptions(enabled=True),
         )
+
+        auth_routes = [
+            revocation_route(provider) if route.path == "/revoke" else route
+            for route in auth_routes
+        ]
 
         resource_routes = create_protected_resource_routes(
             resource_url=AnyHttpUrl(f"{base_url}/mcp"),
@@ -492,8 +528,6 @@ async def _mcp_streamable_with_auth(scope, receive, send):
 
     Supports: Bearer token (OAuth) or X-Api-Key + X-Secret-Key headers.
     """
-    import os
-
     from asgiref.sync import sync_to_async
     from starlette.responses import Response as StarletteResponse
 
@@ -502,8 +536,9 @@ async def _mcp_streamable_with_auth(scope, receive, send):
 
     method = scope.get("method", "GET")
 
-    # Build WWW-Authenticate header for 401 responses (RFC 9728)
-    base_url = os.environ.get("MCP_SERVER_BASE_URL", "http://localhost:8000")
+    # Build WWW-Authenticate header for 401 responses (RFC 9728), from the
+    # same public base the dashboard shows.
+    base_url = mcp_public_base_url() or "http://localhost:8000"
     www_auth = f'Bearer resource_metadata="{base_url}/.well-known/oauth-protected-resource/mcp"'
 
     # Authenticate every request (GET for session init, POST for tool calls, DELETE for cleanup)
@@ -543,17 +578,41 @@ async def _mcp_streamable_with_auth(scope, receive, send):
             await response(scope, receive, send)
             return
 
+        from accounts.api_key_policy import APIKeyRetired
+
         try:
             context = await sync_to_async(_authenticate_and_set_context)(
                 api_key, secret_key
             )
+        except APIKeyRetired as exc:
+            # Name the same error as every other refusal here, with the retired
+            # key's own sentence, code and link to create a personal key.
+            response = StarletteResponse(
+                content=json.dumps(
+                    {
+                        "error": "invalid_token",
+                        "error_description": exc.default_detail,
+                        "code": exc.default_code,
+                        "create_url": exc.create_url,
+                    }
+                ),
+                status_code=401,
+                headers={
+                    "Content-Type": "application/json",
+                    "WWW-Authenticate": www_auth,
+                },
+            )
+            await response(scope, receive, send)
+            return
         except APIKeyExpired:
+            from tfc.utils.error_codes import get_error_message
+
             response = StarletteResponse(
                 content=json.dumps(
                     {
                         "error": "invalid_token",
                         "error_description": get_error_message("API_KEY_EXPIRED"),
-                        "code": ApiErrorCode.API_KEY_EXPIRED.value,
+                        "code": _API_KEY_EXPIRED_CODE,
                     }
                 ),
                 status_code=401,
@@ -579,7 +638,7 @@ async def _mcp_streamable_with_auth(scope, receive, send):
     logger.debug(
         "mcp_request_authenticated",
         method=method,
-        org_id=str(context.organization.id),
+        org_id=str(context.organization.id) if context.organization else None,
         user=str(context.user.id),
     )
 

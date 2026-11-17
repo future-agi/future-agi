@@ -392,6 +392,9 @@ def test_linear_link_protects_f6_before_mocked_external_call(
             {"team_id": "team-local-test"},
             format="json",
         )
+        # Sign-in puts the selected organization on the request; this request
+        # skips sign-in, so it is set here.
+        request.organization = cluster.project.organization
         force_authenticate(request, user=user)
         response = CreateLinearIssueView.as_view()(
             request, cluster_id=cluster.cluster_id

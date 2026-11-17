@@ -1,0 +1,23 @@
+{
+  "http": {
+    "status": 400,
+    "headers": {
+      "content-type": "application/json"
+    }
+  },
+  "body": {
+    "status": false,
+    "type": "validation_error",
+    "code": "agent_key_invalid",
+    "detail": "This agent key was minted for another workspace. Use this workspace's agent key.",
+    "message": "This agent key was minted for another workspace. Use this workspace's agent key.",
+    "error": "This agent key was minted for another workspace. Use this workspace's agent key.",
+    "result": "This agent key was minted for another workspace. Use this workspace's agent key.",
+    "attr": "agent_key_id",
+    "details": {
+      "agent_key_id": [
+        "This agent key was minted for another workspace. Use this workspace's agent key."
+      ]
+    }
+  }
+}

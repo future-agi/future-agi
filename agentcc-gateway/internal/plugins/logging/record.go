@@ -1,17 +1,53 @@
 package logging
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/futureagi/agentcc-gateway/internal/capability"
 	"github.com/futureagi/agentcc-gateway/internal/config"
+	"github.com/futureagi/agentcc-gateway/internal/credentials"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/payloads"
 	"github.com/futureagi/agentcc-gateway/internal/privacy"
 )
+
+// Whose words a request log's error message is (the log entry's
+// error_source).
+const (
+	// errorSourceProvider: a provider's own error answer, which an adapter
+	// parsed from the provider's response. Its message can be the provider's
+	// text.
+	errorSourceProvider = "provider"
+	// errorSourceClient: the caller ended the request.
+	errorSourceClient = "client"
+	// errorSourceGateway: every other error, in the gateway's own words: its
+	// refusals, timeouts and checks, and its account of a provider that
+	// answered badly or not at all.
+	errorSourceGateway = "gateway"
+)
+
+// errorSource is whose words the request's last error is. A provider's own
+// answer is marked where an adapter parsed it (APIError.ProviderStatus, or
+// ProviderRejected for an error envelope); UpstreamStatus is not that mark,
+// since the gateway also sets it on failures it words itself. The caller ended
+// the request when call_end says so (a call that was sent) or the last error
+// is a cancelled context.
+func errorSource(rc *models.RequestContext, lastErr error) string {
+	if rc.Metadata["call_end"] == "client_cancelled" || errors.Is(lastErr, context.Canceled) {
+		return errorSourceClient
+	}
+	var apiErr *models.APIError
+	if errors.As(lastErr, &apiErr) && (apiErr.ProviderStatus > 0 || apiErr.ProviderRejected) {
+		return errorSourceProvider
+	}
+	return errorSourceGateway
+}
 
 // TraceRecord captures a snapshot of a request's lifecycle for logging.
 type TraceRecord struct {
@@ -53,6 +89,17 @@ type TraceRecord struct {
 	// Error context.
 	ErrorMessage string `json:"error_message,omitempty"`
 	ErrorCode    string `json:"error_code,omitempty"`
+	// ErrorFromUpstream is APIError.UpstreamStatus > 0. The openai and azure
+	// adapters set it when they pass a provider's own error.code through, and
+	// models.ErrUpstreamProvider sets it on every error it makes with a
+	// nonzero status; the request log leaves ErrorCode out for these
+	// (flusher.go). It does not mark every provider error: on this release
+	// the anthropic, gemini, bedrock and cohere adapters' parsed errors and
+	// the speech relay's refusals leave it false, with their provider_ codes.
+	ErrorFromUpstream bool `json:"-"`
+	// ErrorSource says whose words ErrorMessage is (errorSource): "provider",
+	// "client" or "gateway"; "" when the request has no error.
+	ErrorSource string `json:"error_source,omitempty"`
 
 	// Optional bodies.
 	RequestBody      *models.ChatCompletionRequest  `json:"request_body,omitempty"`
@@ -67,6 +114,16 @@ type TraceRecord struct {
 
 	// Custom metadata.
 	Metadata map[string]string `json:"metadata,omitempty"`
+}
+
+// answerUsage is the usage of the request's answer: the served answer's, or
+// that of an answer a post-stage check withheld, which the provider still
+// gave and counted (models.RequestContext.WithheldUsage). Nil when neither.
+func answerUsage(rc *models.RequestContext) *models.Usage {
+	if rc.Response != nil {
+		return rc.Response.Usage
+	}
+	return rc.WithheldUsage
 }
 
 // buildRecord constructs a TraceRecord from a RequestContext.
@@ -100,14 +157,14 @@ func buildRecord(rc *models.RequestContext, cfg config.RequestLoggingConfig) Tra
 	// Response metrics.
 	if rc.Response != nil {
 		rec.StatusCode = 200
-		if rc.Response.Usage != nil {
-			rec.PromptTokens = rc.Response.Usage.PromptTokens
-			rec.CompletionTokens = rc.Response.Usage.CompletionTokens
-			rec.TotalTokens = rc.Response.Usage.TotalTokens
-		}
 		if len(rc.Response.Choices) > 0 {
 			rec.FinishReason = rc.Response.Choices[0].FinishReason
 		}
+	}
+	if u := answerUsage(rc); u != nil {
+		rec.PromptTokens = u.PromptTokens
+		rec.CompletionTokens = u.CompletionTokens
+		rec.TotalTokens = u.TotalTokens
 	}
 	if rec.StatusCode == 0 {
 		switch rc.EndpointType {
@@ -150,6 +207,23 @@ func buildRecord(rc *models.RequestContext, cfg config.RequestLoggingConfig) Tra
 			if rc.DecisionResponse != nil {
 				rec.StatusCode = 200
 			}
+		case "anthropic_count_tokens", "genai_count_tokens", "genai_embed", "assistants", "vector_stores", "files":
+			// The handler passes the provider's answer through as it is (or,
+			// for the Files API, serves it from the gateway's file store), so
+			// rc holds no answer: it records the status it answered with,
+			// the provider's own when the provider refused the call. A
+			// count's tokens stay 0 here (it consumes none); the count is in
+			// the metadata (models.CountedTokensMetadataKey).
+			if status, err := strconv.Atoi(rc.Metadata[models.ResponseStatusMetadataKey]); err == nil && status > 0 {
+				rec.StatusCode = status
+			}
+		}
+	}
+	// A capability call keeps its response on the core's call record, not on
+	// rc.
+	if rec.StatusCode == 0 {
+		if call, ok := capability.CallOf(rc); ok && call.Response() != nil {
+			rec.StatusCode = 200
 		}
 	}
 	if rec.ResolvedModel == "" && rec.StatusCode > 0 {
@@ -159,11 +233,13 @@ func buildRecord(rc *models.RequestContext, cfg config.RequestLoggingConfig) Tra
 	// Determine status code from errors.
 	if len(rc.Errors) > 0 {
 		lastErr := rc.Errors[len(rc.Errors)-1]
+		rec.ErrorSource = errorSource(rc, lastErr)
 		var apiErr *models.APIError
 		if errors.As(lastErr, &apiErr) {
 			rec.StatusCode = apiErr.Status
 			rec.ErrorMessage = apiErr.Message
 			rec.ErrorCode = apiErr.Code
+			rec.ErrorFromUpstream = apiErr.UpstreamStatus > 0
 			if rc.EndpointType == "decision" {
 				// A vendor's error text can quote the decision's content back;
 				// the code and status say what happened.
@@ -201,6 +277,20 @@ func buildRecord(rc *models.RequestContext, cfg config.RequestLoggingConfig) Tra
 		if len(rec.Metadata) == 0 {
 			rec.Metadata = nil
 		}
+	}
+	// An answer an output check withheld: the provider answered and the
+	// request was priced, but the client got the check's refusal. The mark
+	// is set on the record's own copy (rc is read-only here) and tells it
+	// from a request refused before the provider was called. A caller cannot
+	// set the name: request metadata drops it (caller_metadata.go). Only a
+	// provider's answer is marked: an answer the gateway gave itself before
+	// any provider call (a cache hit, or another pre-plugin's answer) that
+	// the check refused is a plain guardrail block.
+	if rc.Flags.AnswerRefused && !rc.Flags.CacheHit && !rc.Flags.ShortCircuited {
+		if rec.Metadata == nil {
+			rec.Metadata = make(map[string]string, 1)
+		}
+		rec.Metadata["answer_withheld"] = "true"
 	}
 
 	// Guardrail results.
@@ -264,12 +354,7 @@ func redactMessages(msgs []models.Message, r *privacy.Redactor, mode string) []m
 
 	out := make([]models.Message, len(msgs))
 	for i, m := range msgs {
-		out[i] = m
-
-		// Redact content (json.RawMessage — could be string or structured).
-		if len(m.Content) > 0 {
-			out[i].Content = redactContent(m.Content, r, mode)
-		}
+		out[i] = redactMessage(m, r, mode)
 	}
 	return out
 }
@@ -282,36 +367,56 @@ func redactChoices(choices []models.Choice, r *privacy.Redactor, mode string) []
 	out := make([]models.Choice, len(choices))
 	for i, c := range choices {
 		out[i] = c
-		if len(c.Message.Content) > 0 {
-			out[i].Message.Content = redactContent(c.Message.Content, r, mode)
-		}
+		out[i].Message = redactMessage(c.Message, r, mode)
 	}
 	return out
 }
 
-// sensitiveHeaderKeys never reach a request log. The gateway accepts a
-// credential in each of these, so a missing entry publishes it to everyone
-// with access to the logs — x-goog-api-key was missing, and the GenAI route
-// reads a caller's Google key from it (handlers_genai.go).
-var sensitiveHeaderKeys = map[string]bool{
-	"authorization":                  true,
-	"proxy-authorization":            true,
-	"x-agentcc-provider-key":         true,
-	"x-api-key":                      true,
-	"api-key":                        true,
-	"x-goog-api-key":                 true,
-	"x-goog-iam-authorization-token": true,
-	"x-amz-security-token":           true,
-	"x-auth-token":                   true,
-	"cookie":                         true,
-	"set-cookie":                     true,
-	"x-webhook-secret":               true,
+func redactMessage(m models.Message, r *privacy.Redactor, mode string) models.Message {
+	if len(m.Content) > 0 {
+		m.Content = redactContent(m.Content, r, mode)
+	}
+	if m.Refusal != nil {
+		refusal := r.RedactForMode(*m.Refusal, mode)
+		m.Refusal = &refusal
+	}
+	if m.Audio != nil {
+		audio := *m.Audio
+		audio.Transcript = r.RedactForMode(audio.Transcript, mode)
+		// A pattern cannot inspect encoded audio, and its reusable ID can
+		// retrieve it. Never keep either in a privacy-redacted body.
+		if r.ShouldRedact() || mode == privacy.ModeFull || mode == privacy.ModePatterns {
+			if audio.Data != "" {
+				audio.Data = "[REDACTED]"
+			}
+			if audio.ID != "" {
+				audio.ID = "[REDACTED]"
+			}
+		}
+		m.Audio = &audio
+	}
+	if len(m.ToolCalls) > 0 {
+		m.ToolCalls = append([]models.ToolCall(nil), m.ToolCalls...)
+		for i := range m.ToolCalls {
+			tc := &m.ToolCalls[i]
+			tc.ID = r.RedactForMode(tc.ID, mode)
+			tc.Function.Name = r.RedactForMode(tc.Function.Name, mode)
+			tc.Function.Arguments = redactToolArguments(tc.Function.Arguments, r, mode)
+		}
+	}
+	return m
 }
 
+// sanitizeHeaders is h as the request log keeps it: the value of every
+// credential header (credentials.IsHeader, the list the trace export never
+// exports) is "***", so the log shows that the header was sent and never
+// what it held. x-agentcc-provider-key, an internal caller's own provider key
+// for one decision call (models.ProviderKeyHeader), is named here as well, so
+// no change to the credential word rules can ever log it.
 func sanitizeHeaders(h map[string][]string) map[string][]string {
 	out := make(map[string][]string, len(h))
 	for k, v := range h {
-		if sensitiveHeaderKeys[strings.ToLower(k)] {
+		if credentials.IsHeader(k) || strings.EqualFold(k, models.ProviderKeyHeader) {
 			out[k] = []string{"***"}
 		} else {
 			out[k] = v

@@ -45,7 +45,7 @@ const AreaChartWrapper = ({ data, graphLabels, headerData, datasetIndex }) => {
               : "N/A"}
           </Typography>
           {data?.length === 1 && (
-            <TotalRowCount value={data?.[0]?.totalCells || 0} />
+            <TotalRowCount value={data?.[0]?.total_cells || 0} />
           )}
         </Box>
         <Box>

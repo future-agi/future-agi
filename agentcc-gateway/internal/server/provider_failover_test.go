@@ -33,11 +33,12 @@ func TestAdaptiveOperatorBreakerWithTenantProviders(t *testing.T) {
 					cfg.Routing.ProviderLock = config.ProviderLockConfig{Enabled: true}
 					cfg.Routing.Failover = config.FailoverConfig{Enabled: true, MaxAttempts: 2}
 					cfg.Routing.CircuitBreaker = config.CircuitBreakerConfig{Enabled: true, FailureThreshold: 1, Cooldown: time.Hour}
-					keyType := "byok"
-					if entry == "internal-ignores-override" {
-						keyType = "internal"
-					}
-					cfg.Auth.Keys = []config.AuthKeyConfig{{Name: "synthetic-breaker", Key: "synthetic-breaker-probe", KeyType: keyType, Metadata: map[string]string{"org_id": "synthetic-org"}}}
+					// An internal key with the org: on the line a customer
+					// (byok) key stays on its org's own providers and never
+					// fails over to the operator's, so the operator breaker is
+					// driven by a key that may reach the operator's providers,
+					// with the org's provider entries still in place.
+					cfg.Auth.Keys = []config.AuthKeyConfig{{Name: "synthetic-breaker", Key: "synthetic-breaker-probe", KeyType: "internal", Metadata: map[string]string{"org_id": "synthetic-org"}}}
 					srv, gateway := adaptiveServer(t, cfg)
 					id := "unrelated"
 					pcfg := &tenant.ProviderConfig{Enabled: false, APIKey: "synthetic-provider-key", Models: []string{"different-model"}}
@@ -98,36 +99,42 @@ func TestAdaptiveMixedOperatorOrgBreakers(t *testing.T) {
 				cfg.Routing.CircuitBreaker = config.CircuitBreakerConfig{Enabled: true, FailureThreshold: 1, Cooldown: time.Hour}
 				srv, gateway := adaptiveServer(t, cfg)
 				store := tenant.NewStore()
+				// A customer key stays on its org's own providers: the org has
+				// its own key for fast and for slow, and the operator's
+				// providers get no call.
 				store.Set("synthetic-org", &tenant.OrgConfig{Providers: map[string]*tenant.ProviderConfig{
 					"fast": {Enabled: true, APIKey: "synthetic-provider-key", Models: []string{"different-model"}},
+					"slow": {Enabled: true, APIKey: "synthetic-provider-key", Models: []string{"different-model"}},
 				}})
 				orgCache := providers.NewOrgProviderCache(map[string]config.ProviderConfig{
 					"fast": {BaseURL: org.URL, APIFormat: "openai", Models: []string{"different-model"}},
+					"slow": {BaseURL: org.URL, APIFormat: "openai", Models: []string{"different-model"}},
 				}, false)
 				t.Cleanup(orgCache.EvictAll)
 				srv.handlers.tenantStore, srv.handlers.orgProviderCache = store, orgCache
 				srv.handlers.keyStore = auth.NewKeyStore(cfg.Auth)
+				// Under the lock each request makes one attempt on the org's own
+				// fast key and answers that provider's error (502). The org's
+				// breaker does not open, so every request reaches the key.
 				for i := 0; i < 3; i++ {
 					status, body := adaptiveHTTP(t, gateway, "adaptive-sample", "synthetic-mixed-probe", stream, http.Header{"X-Agentcc-Provider-Lock": {"fast"}})
-					if i == 0 && (status != http.StatusBadGateway || !strings.Contains(body, "synthetic upstream unavailable")) {
-						t.Fatalf("mixed failover response: status=%d missing_error=%t", status, !strings.Contains(body, "synthetic upstream unavailable"))
-					}
-					// Both breakers are open now: the org's for its own fast key
-					// and the operator's for slow. Nothing is called.
-					if i > 0 && status != http.StatusServiceUnavailable {
-						t.Fatalf("request %d with every breaker open: status=%d", i, status)
+					if status != http.StatusBadGateway || !strings.Contains(body, "synthetic upstream unavailable") {
+						t.Fatalf("request %d: status=%d missing_error=%t; want 502 with the org provider's error", i, status, !strings.Contains(body, "synthetic upstream unavailable"))
 					}
 				}
-				globalHealth := srv.handlers.healthMonitor.GetHealth("slow")
-				if globalSlowCalls.Load() != 1 || globalHealth.ErrorCount != 1 || globalHealth.CircuitState != "open" {
-					t.Fatalf("mixed attempt lost operator breaker: calls=%d errors=%d circuit=%s", globalSlowCalls.Load(), globalHealth.ErrorCount, globalHealth.CircuitState)
+				// The operator's providers got no call (who pays stays the org).
+				if globalSlowCalls.Load() != 0 || globalFastCalls.Load() != 0 {
+					t.Fatalf("a customer key reached the operator: fast_calls=%d slow_calls=%d", globalFastCalls.Load(), globalSlowCalls.Load())
 				}
-				// The org's own key failed once, which opens its own breaker
-				// (threshold 1), so later requests skip it instead of burning
-				// an attempt. The operator's fast stays untouched.
-				orgHealth := srv.handlers.healthMonitor.GetHealth("fast")
-				if orgCalls.Load() != 1 || globalFastCalls.Load() != 0 || orgHealth.RequestCount != 0 || orgHealth.CircuitState != "closed" {
-					t.Fatalf("org attempt contaminated operator state: org_calls=%d global_calls=%d samples=%d circuit=%s", orgCalls.Load(), globalFastCalls.Load(), orgHealth.RequestCount, orgHealth.CircuitState)
+				// The operator's health holds no sample from the org's attempts.
+				for _, id := range []string{"fast", "slow"} {
+					operator := srv.handlers.healthMonitor.GetHealth(id)
+					if operator.RequestCount != 0 || operator.CircuitState == "open" {
+						t.Fatalf("org attempt contaminated operator %s: samples=%d circuit=%s", id, operator.RequestCount, operator.CircuitState)
+					}
+				}
+				if orgCalls.Load() != 3 {
+					t.Fatalf("org's own keys called %d times, want 3 (one attempt per request on fast)", orgCalls.Load())
 				}
 			})
 		}

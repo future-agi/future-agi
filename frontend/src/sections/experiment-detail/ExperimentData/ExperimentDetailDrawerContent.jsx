@@ -180,9 +180,11 @@ export default function ExperimentDetailDrawerContent({
   const [activeTab, setActiveTab] = useState("");
   const [isDragging, setIsDragging] = useState(false);
   const [openDetailRow, setOpenDetailRow] = useState(null);
+  // Grid rows carry row_id (the rows API); rowId is the older client key.
+  const rowIdValue = row?.row_id ?? row?.rowId;
   const handleCopyRowId = () => {
-    if (!row?.rowId) return;
-    copyToClipboard(row.rowId);
+    if (!rowIdValue) return;
+    copyToClipboard(rowIdValue);
     enqueueSnackbar("Copied to clipboard", { variant: "success" });
   };
   const [showDescription, setShowDescription] = useState(false);
@@ -496,6 +498,11 @@ export default function ExperimentDetailDrawerContent({
           const cellData = row?.[agentCol?.id] || {};
           return {
             ...cellData,
+            // The row-diff API returns the diff as cell_diff_value;
+            // DatapointCard reads it as cellDiffValue.
+            ...(Array.isArray(cellData?.cell_diff_value)
+              ? { cellDiffValue: cellData.cell_diff_value }
+              : {}),
             columnName: agentCol?.name,
             isFinal: agentCol?.is_final,
           };
@@ -527,11 +534,15 @@ export default function ExperimentDetailDrawerContent({
 
     // Reads come off the BE row shape (cell_value / cell_diff_value, snake_case);
     // writes use the DatapointCard prop names (cellValue / cellDiffValue, camelCase).
+    // Grid diff mode carries the diff in cell_value; the row-diff API returns
+    // it in cell_diff_value.
+    const diffWords = Array.isArray(row?.[col.id]?.cell_value)
+      ? row?.[col.id]?.cell_value
+      : row?.[col.id]?.cell_diff_value;
     const value = {
       ...(row?.[col.id] || {}),
-      ...(indColsDifTracker?.[col?.id] &&
-      Array.isArray(row?.[col.id]?.cell_value)
-        ? { cellDiffValue: row?.[col.id]?.cell_value }
+      ...(indColsDifTracker?.[col?.id] && Array.isArray(diffWords)
+        ? { cellDiffValue: diffWords }
         : {
             cellValue: Array.isArray(row?.[col.id]?.cell_value)
               ? row?.[col.id]?.cell_value
@@ -594,7 +605,7 @@ export default function ExperimentDetailDrawerContent({
             <Typography variant="m3" fontWeight={600} color="text.primary">
               Experiments
             </Typography>
-            <ShowComponent condition={!!row?.rowId}>
+            <ShowComponent condition={!!rowIdValue}>
               <Box
                 sx={{
                   border: "1px solid",
@@ -613,7 +624,7 @@ export default function ExperimentDetailDrawerContent({
                   color="text.primary"
                   noWrap
                 >
-                  Row ID: {row?.rowId}
+                  Row ID: {rowIdValue}
                 </Typography>
                 <SvgColor
                   src="/assets/icons/ic_copy.svg"

@@ -156,7 +156,7 @@ const jevRows = (picker: Locator) => picker.getByRole('menuitem').filter({ hasTe
 async function authorJevEvaluator(page: Page, name: string,
   configure: () => Promise<void>): Promise<{ id: string; sent: Published }> {
   const id = await openJudgeEditor(page);
-  await page.getByPlaceholder('Eg: Hallucination detector').fill(name);
+  await page.getByPlaceholder('e.g. hallucination_detector').fill(name);
   // MessageEditorBlock's PromptEditor uses a Quill contenteditable, not textarea.
   await page.locator('.ql-editor[contenteditable="true"]').first().fill(PROMPT);
   const picker = await openModelPicker(page);

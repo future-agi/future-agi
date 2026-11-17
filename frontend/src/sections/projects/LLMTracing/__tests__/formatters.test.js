@@ -56,21 +56,23 @@ describe("formatCost", () => {
 
   it("formats small values with 4 decimals", () => {
     expect(formatCost(0.0015)).toBe("$0.0015");
+    // Four decimals below one cent; seven for smaller nonzero costs.
     expect(formatCost(0.0001)).toBe("$0.0001");
+    expect(formatCost(0.0000211)).toBe("$0.0000211");
   });
 
   it("keeps costs below $0.0001 visible instead of rounding to $0.0000", () => {
     // Real OpenRouter generation costs from the R2 run.
-    expect(formatCost(0.00003054)).toBe("$0.0000305");
+    expect(formatCost(0.00003054)).toBe("$0.00003054");
     expect(formatCost(0.0000237)).toBe("$0.0000237");
     expect(formatCost(0.000009)).toBe("$0.000009");
-    expect(formatCost(0.00009999)).toBe("$0.0001");
+    expect(formatCost(0.00009999)).toBe("$0.00009999");
     expect(formatCost(0.0000001)).toBe("$0.0000001");
   });
 
   it("reads costs that would round to zero as below the smallest shown", () => {
-    expect(formatCost(0.00000004)).toBe("< $0.0000001");
-    expect(formatCost(1e-12)).toBe("< $0.0000001");
+    expect(formatCost(0.00000004)).toBe("$0.00000004");
+    expect(formatCost(1e-12)).toBe("$0.000000000001");
   });
 
   it("formats larger values with 2 decimals", () => {

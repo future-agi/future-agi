@@ -53,5 +53,9 @@ export function addResultToast({
       variant: "info",
     };
   }
-  return { message: "No items were added", variant: "warning" };
+  return {
+    message:
+      "No items were added because nothing in the selection matched. Change the selection and try again.",
+    variant: "warning",
+  };
 }

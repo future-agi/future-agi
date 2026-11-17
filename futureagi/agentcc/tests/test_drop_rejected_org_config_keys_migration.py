@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 import pytest
 from django.apps import apps as django_apps
+from django.db import connection
 
 from agentcc.models.org_config import AgentccOrgConfig
 from agentcc.services.config_push import validate_org_config
@@ -205,7 +206,7 @@ class TestDropRejectedKeys:
         )
         clean_updated_at = clean.updated_at
 
-        migration.drop_rejected_keys(django_apps, None)
+        migration.drop_rejected_keys(django_apps, connection.schema_editor())
 
         rows = {
             row.version: row
@@ -242,7 +243,7 @@ class TestDropRejectedKeys:
             organization=organization, version=1, is_active=True, **REJECTED_EVERYWHERE
         )
 
-        migration.drop_rejected_keys(django_apps, None)
+        migration.drop_rejected_keys(django_apps, connection.schema_editor())
 
         config.refresh_from_db()
         validate_org_config(config)
@@ -252,11 +253,11 @@ class TestDropRejectedKeys:
             organization=organization, version=1, is_active=True, **REJECTED_EVERYWHERE
         )
 
-        migration.drop_rejected_keys(django_apps, None)
+        migration.drop_rejected_keys(django_apps, connection.schema_editor())
         first = AgentccOrgConfig._base_manager.filter(organization=organization).values(
             "routing", "budgets", "mcp", "alerting"
         )[0]
-        migration.drop_rejected_keys(django_apps, None)
+        migration.drop_rejected_keys(django_apps, connection.schema_editor())
         second = AgentccOrgConfig._base_manager.filter(
             organization=organization
         ).values("routing", "budgets", "mcp", "alerting")[0]

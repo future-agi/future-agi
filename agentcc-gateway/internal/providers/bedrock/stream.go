@@ -24,10 +24,14 @@ type eventStreamMessage struct {
 type bedrockStreamState struct {
 	messageID                 string
 	model                     string
-	inputTokens               int
+	inputTokens               *int
 	created                   int64
 	toolCallIndex             int
 	blockIndexToToolCallIndex map[int]int
+	// cacheReadTokens and cacheWriteTokens are message_start's cache reads
+	// and writes, which inputTokens does not count.
+	cacheReadTokens  int
+	cacheWriteTokens int
 }
 
 func newBedrockStreamState(model string) *bedrockStreamState {
@@ -203,9 +207,9 @@ func (s *bedrockStreamState) parseStreamPayload(msg *eventStreamMessage) (*model
 	switch event.Type {
 	case "message_start":
 		var msgStart struct {
-			ID    string       `json:"id"`
-			Model string       `json:"model"`
-			Usage bedrockUsage `json:"usage"`
+			ID    string        `json:"id"`
+			Model string        `json:"model"`
+			Usage *bedrockUsage `json:"usage"`
 		}
 		if event.Message != nil {
 			json.Unmarshal(event.Message, &msgStart)
@@ -214,11 +218,20 @@ func (s *bedrockStreamState) parseStreamPayload(msg *eventStreamMessage) (*model
 		if msgStart.Model != "" {
 			s.model = msgStart.Model
 		}
-		s.inputTokens = msgStart.Usage.InputTokens
+		var startUsage *models.Usage
+		if msgStart.Usage != nil {
+			s.inputTokens = msgStart.Usage.InputTokens
+			s.cacheReadTokens = msgStart.Usage.CacheReadInputTokens
+			s.cacheWriteTokens = msgStart.Usage.CacheCreationInputTokens
+			inputOnly := *msgStart.Usage
+			inputOnly.OutputTokens = nil // message_start is not the final output count.
+			startUsage = inputOnly.toUsage()
+		}
 
 		role := "assistant"
 		return &models.StreamChunk{
 			ID:      s.messageID,
+			Usage:   startUsage,
 			Object:  "chat.completion.chunk",
 			Model:   s.model,
 			Created: s.created,
@@ -332,12 +345,16 @@ func (s *bedrockStreamState) parseStreamPayload(msg *eventStreamMessage) (*model
 				{Index: 0, FinishReason: &finishReason},
 			},
 		}
+		// message_delta carries the output count, and may repeat the input
+		// counts. Every count is cumulative, so the larger one wins.
 		if event.Usage != nil {
-			chunk.Usage = &models.Usage{
-				PromptTokens:     s.inputTokens,
-				CompletionTokens: event.Usage.OutputTokens,
-				TotalTokens:      s.inputTokens + event.Usage.OutputTokens,
+			u := bedrockUsage{
+				InputTokens:              models.MaxTokenCount(s.inputTokens, event.Usage.InputTokens),
+				CacheReadInputTokens:     max(s.cacheReadTokens, event.Usage.CacheReadInputTokens),
+				CacheCreationInputTokens: max(s.cacheWriteTokens, event.Usage.CacheCreationInputTokens),
+				OutputTokens:             event.Usage.OutputTokens,
 			}
+			chunk.Usage = u.toUsage()
 		}
 		return chunk, false, nil
 

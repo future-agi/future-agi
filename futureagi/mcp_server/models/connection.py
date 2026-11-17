@@ -33,6 +33,9 @@ class MCPConnection(BaseModel):
         default="remote",
     )
     is_active = models.BooleanField(default=True)
+    # The database default keeps inserts that do not name the column (a pod of
+    # the previous release, while a deploy rolls) working.
+    reconnect_required = models.BooleanField(default=False, db_default=False)
     oauth_token_encrypted = models.TextField(null=True, blank=True)
     oauth_refresh_token_encrypted = models.TextField(null=True, blank=True)
     oauth_token_expires_at = models.DateTimeField(null=True, blank=True)

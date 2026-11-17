@@ -5,11 +5,14 @@ ENV NLTK_DATA=/usr/local/share/nltk_data
 # The application source can advance independently of the shared base image.
 # Keep small import-critical additions explicit here so every service built
 # from this Dockerfile (backend and queue workers alike) has the same runtime.
+# Includes T6 #4 trust-store and async-runtime upgrades.
 # Installed before the source copy, so a source change reuses this layer.
 RUN pip install --no-cache-dir \
+    "certifi==2026.10.19" \
+    "anyio==4.15.1" \
+    "urllib3==2.8.0" \
     "daytona==0.207.0" \
     "httpx-ws==0.7.2" \
-    "urllib3>=2.1" \
     "e2b==2.37.1" \
     "claude-agent-sdk==0.2.139" \
     "aiohttp>=3.13.3" \
@@ -21,7 +24,7 @@ RUN pip install --no-cache-dir \
     "pyjwt==2.15.1" \
     "openai==2.54.0" \
     "mcp==1.30.0" \
-    "nltk==3.10.3" \
+    "nltk==3.10.4" \
     "pillow==12.3.0" \
     "pypdf==6.19.0" \
     "pdfplumber==0.11.10" \
@@ -51,6 +54,9 @@ RUN pip install --no-cache-dir \
 # granian>=2.7.1 fixes granian#798. channels-redis (CHANNEL_LAYER_BACKEND=redis)
 # needs asgiref>=3.9.1; pinning it stops pip from replacing the base's 3.8.1
 # with whatever is latest.
+# urllib3 2.8.0 bounds a chunked response's size line (GHSA-vxq7-64xx-v4gw),
+# which safe_fetch's body limit relies on; it also meets the urllib3>=2.1 the
+# sandbox extra's Daytona SDK needs.
 
 COPY futureagi/ .
 

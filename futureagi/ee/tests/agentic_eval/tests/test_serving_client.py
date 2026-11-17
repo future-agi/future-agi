@@ -479,17 +479,31 @@ class TestPerformance:
         """Test batch processing performance"""
         mock_response = Mock()
         mock_response.status_code = 200
-        # Create 100 individual embeddings, each as a list of 3 values
-        # Wrap in extra array layer to work with the response processing logic
-        embeddings = [[0.1, 0.2, 0.3] for _ in range(100)]
-        mock_response.json.return_value = {"embeddings": [embeddings]}
+        # /embed answers one vector per input text, in order; embed_text
+        # returns the first one for a list.
+        embeddings = [[float(i), 0.5] for i in range(100)]
+        mock_response.json.return_value = {"embeddings": embeddings}
         mock_post.return_value = mock_response
 
         # Test large batch
         large_batch = [f"Text {i}" for i in range(100)]
         result = self.client.embed_text(large_batch)
 
-        assert len(result) == 100
+        assert result == [0.0, 0.5]
+        mock_post.assert_called_once()
+
+    @patch('requests.Session.post')
+    def test_batch_embedding_returns_one_vector_per_text(self, mock_post):
+        """A batch of 100 texts is one request and gets 100 vectors back."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        embeddings = [[float(i), 0.5] for i in range(100)]
+        mock_response.json.return_value = {"embeddings": embeddings}
+        mock_post.return_value = mock_response
+
+        result = self.client.embed_text_batch([f"Text {i}" for i in range(100)])
+
+        assert result == embeddings
         mock_post.assert_called_once()
 
 
@@ -516,9 +530,14 @@ def sample_audio_bytes():
 
 
 @pytest.mark.integration
-def test_usage_example(mock_serving_response):
+def test_usage_example():
     """Test typical usage patterns"""
-    with patch('requests.Session.post', return_value=mock_serving_response):
+    # /embed answers one vector per input text; embed_text returns the first.
+    one_text = Mock(status_code=200)
+    one_text.json.return_value = {"embeddings": [[0.1, 0.2, 0.3]]}
+    two_texts = Mock(status_code=200)
+    two_texts.json.return_value = {"embeddings": [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]}
+    with patch('requests.Session.post', side_effect=[one_text, two_texts]):
         client = ModelServingClient()
 
         # Test typical usage

@@ -1,0 +1,143 @@
+schema: connector-gen/rest-overlay/v1
+spec: fixtures/spec/slides-v1.discovery.json.gz
+tools:
+  - name: get_presentation
+    title: Read presentation
+    description: Read the complete app-authorized presentation, including slide text and structure, for example presentationId=deck-fixture.
+    operation:
+      id: slides.presentations.get
+    scopes:
+      - https://www.googleapis.com/auth/drive.file
+    annotations:
+      openWorldHint: false
+    posture: auto
+    response:
+      fields: [presentationId, title, slides]
+      maxBytes: 100000
+  - name: get_page
+    title: Get page
+    description: Read a slide page by presentationId and pageObjectId, for example deck-fixture and slide-fixture.
+    operation:
+      id: slides.presentations.pages.get
+    scopes:
+      - https://www.googleapis.com/auth/drive.file
+    annotations:
+      openWorldHint: false
+    posture: auto
+  - name: get_thumbnail
+    title: Get thumbnail
+    description: Get the temporary thumbnail URL for a slide. The URL is returned, not downloaded.
+    operation:
+      id: slides.presentations.pages.getThumbnail
+    scopes:
+      - https://www.googleapis.com/auth/drive.file
+    annotations:
+      openWorldHint: false
+    posture: auto
+  - name: create_presentation
+    title: Create presentation
+    description: Create a blank presentation with title="Quarterly review".
+    operation:
+      id: slides.presentations.create
+    scopes:
+      - https://www.googleapis.com/auth/drive.file
+    annotations:
+      openWorldHint: false
+      destructiveHint: false
+    posture: ask
+    body:
+      fields:
+        - title
+      required:
+        - title
+      description: Create a blank presentation with title="Quarterly review".
+  - name: create_slide
+    title: Create slide
+    description: Create a slide with a caller-selected objectId, for example new_slide, and predefinedLayout="BLANK".
+    operation:
+      id: slides.presentations.batchUpdate
+    scopes:
+      - https://www.googleapis.com/auth/drive.file
+    annotations:
+      openWorldHint: false
+      destructiveHint: false
+    posture: ask
+    body:
+      fields:
+        - requests.createSlide
+      required:
+        - requests
+        - requests.createSlide
+      description: Create a slide with a caller-selected objectId, for example new_slide, and predefinedLayout="BLANK".
+  - name: insert_text
+    title: Insert text
+    description: Insert text into an existing shape objectId at insertionIndex=0, for example text="Quarterly review".
+    operation:
+      id: slides.presentations.batchUpdate
+    scopes:
+      - https://www.googleapis.com/auth/drive.file
+    annotations:
+      openWorldHint: false
+      destructiveHint: false
+    posture: ask
+    body:
+      fields:
+        - requests.insertText
+      required:
+        - requests
+        - requests.insertText
+      description: Insert text into an existing shape objectId at insertionIndex=0, for example text="Quarterly review".
+  - name: replace_text
+    title: Replace text
+    description: Replace matching text across slides, for example containsText.text="PLACEHOLDER".
+    operation:
+      id: slides.presentations.batchUpdate
+    scopes:
+      - https://www.googleapis.com/auth/drive.file
+    annotations:
+      openWorldHint: false
+      destructiveHint: true
+    posture: deny
+    body:
+      fields:
+        - requests.replaceAllText
+      required:
+        - requests
+        - requests.replaceAllText
+      description: Replace matching text across slides, for example containsText.text="PLACEHOLDER".
+  - name: delete_object
+    title: Delete object
+    description: Delete a slide or page element by objectId, for example slide-fixture. This is destructive.
+    operation:
+      id: slides.presentations.batchUpdate
+    scopes:
+      - https://www.googleapis.com/auth/drive.file
+    annotations:
+      openWorldHint: false
+      destructiveHint: true
+    posture: deny
+    body:
+      fields:
+        - requests.deleteObject
+      required:
+        - requests
+        - requests.deleteObject
+      description: Delete a slide or page element by objectId, for example slide-fixture. This is destructive.
+  - name: duplicate_object
+    title: Duplicate object
+    description: Duplicate a slide or shape by objectId, for example slide-fixture.
+    operation:
+      id: slides.presentations.batchUpdate
+    scopes:
+      - https://www.googleapis.com/auth/drive.file
+    annotations:
+      openWorldHint: false
+      destructiveHint: false
+    posture: ask
+    body:
+      fields:
+        - requests.duplicateObject
+      required:
+        - requests
+        - requests.duplicateObject
+      description: Duplicate a slide or shape by objectId, for example slide-fixture.

@@ -6,6 +6,21 @@
 # from ee.usage.models.usage import SubscriptionResourceLimit
 # from ee.usage.models.usage import UsageLog
 
+from ee.usage.models.managed_credits import (
+    ImmutableLedgerEntryError,
+    ManagedCreditAccount,
+    ManagedCreditEntry,
+)
+from ee.usage.models.billing_ledger import (  # noqa: E402  (after managed_credits)
+    BillingInvoiceMirror,
+    LedgerCredentialBinding,
+    LedgerServiceCredential,
+    ReconciliationRun,
+    StripeEventLog,
+    UsageEventRecord,
+    UsageEventRefusal,
+)
+
 # Deployment telemetry receiver models moved to ee.cloud.telemetry.models.
 # Import conditionally for backward compat on cloud deployments.
 try:

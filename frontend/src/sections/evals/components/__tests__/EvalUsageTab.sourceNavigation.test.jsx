@@ -541,16 +541,19 @@ describe("Usage tab: View trace / View call on an opened eval log", () => {
     await openLog("root");
     await user.click(await screen.findByRole("button", { name: "View trace" }));
     await screen.findByTestId("trace-body");
-    // A refresh puts another log at the opened position: the host remounts
-    // for that log and the root's trace closes without a Close click.
-    const [root, child, ...rest] = table();
-    h.logs = logsState([child, root, ...rest]);
+    // The open log is followed by its id: a refresh that drops it from the
+    // list closes its panel and its trace without a Close click.
+    const [, ...rest] = table();
+    h.logs = logsState(rest);
     await act(async () => view.rerender());
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(screen.getByText("judged the child span", { selector: "p" }));
-    // The next refresh brings the root log back to that position.
+    expect(
+      screen.queryByText("judged the root span", { selector: "p" }),
+    ).toBeNull();
+    // The next refresh brings the root log back; opened again, it shows.
     h.logs = logsState();
     await act(async () => view.rerender());
+    await openLog("root");
     expect(screen.getByText("judged the root span", { selector: "p" }));
     await screen.findByRole("button", { name: "View trace" });
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();

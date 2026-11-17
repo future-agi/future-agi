@@ -1,0 +1,28 @@
+{
+  "enabled": true,
+  "org_enabled": true,
+  "servers": [
+    {
+      "server_id": "github",
+      "era": "2025-11-25",
+      "transport": "http",
+      "healthy": true,
+      "tool_count": 27,
+      "last_error": null,
+      "last_refreshed_at": "2026-10-16T09:00:00Z"
+    },
+    {
+      "server_id": "issues",
+      "era": "2026-07-28",
+      "transport": "http",
+      "healthy": false,
+      "tool_count": 0,
+      "last_error": "upstream_error: connection refused",
+      "last_refreshed_at": "2026-10-16T08:59:30Z"
+    }
+  ],
+  "sessions": 3,
+  "tools": 27,
+  "resources": 4,
+  "prompts": 2
+}

@@ -8,6 +8,10 @@ from accounts.models.workspace import Workspace
 from model_hub.models.kb import KnowledgeBase
 from tfc.utils.base_model import BaseModel
 
+# The model Optimize drawer sends an environment as its number, which a run
+# stores as the text "1" to "4".
+ENVIRONMENT_NUMBER_TEXT = ("1", "2", "3", "4")
+
 
 class OptimizeDataset(BaseModel):
     class OptimizeType(models.TextChoices):
@@ -60,6 +64,24 @@ class OptimizeDataset(BaseModel):
                 return 3
             if typ == cls.CORPUS:
                 return 4
+
+        @classmethod
+        def events_number(cls, value):
+            """The events Environment number a stored run environment reads.
+
+            A stored name maps to its number. A run saved from the model
+            Optimize drawer stores the number itself, as the text "1" to "4";
+            that text, or the int 1 to 4, maps to the same number. Anything
+            else is None, which ClickHouse receives as NULL and which matches
+            no row.
+            """
+            if isinstance(value, bool):
+                return None
+            if isinstance(value, int):
+                return int(value) if 1 <= value <= 4 else None
+            if value in ENVIRONMENT_NUMBER_TEXT:
+                return int(value)
+            return cls.get_env_num_types(value)
 
     class StatusType(models.TextChoices):
         NOT_STARTED = "not_started", "Not Started"

@@ -18,11 +18,27 @@ _call = _env_evals._call
 _graded = _env_evals._graded
 _template = _env_evals._template
 dispatch = _env_evals.dispatch
-env_client = _env_evals.env_client
 environment = _env_evals.environment
 finished_run = _env_evals.finished_run
 
 UNOFFERED = "legacy_person_only_check"
+
+
+@pytest.fixture
+def env_client(auth_client):
+    # The simulation page's add endpoint reads the request's workspace, which
+    # sign-in sets; a plain client sets none, so this file uses the client that
+    # sends the workspace the way the app does.
+    return auth_client
+
+
+@pytest.fixture(autouse=True)
+def signed_in_user_bound(monkeypatch, user):
+    # Sign-in binds the person to the request before the view runs
+    # (APIKeyAuthentication); the test client clears that binding, so the
+    # tenant scope that decides which evaluation templates are visible is
+    # told who is asking, as it is for a signed-in person.
+    monkeypatch.setattr("tfc.utils.tenant_scope.get_current_user", lambda: user)
 
 
 def _unoffered(name=UNOFFERED, required_keys=("input", "output")):

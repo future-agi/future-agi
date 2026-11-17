@@ -15,9 +15,10 @@ function StatusCellRenderer({ value }) {
   return <StatusBadge status={value} label={value ? undefined : "unknown"} />;
 }
 
-export default function IntegrationSyncHistory({ connectionId }) {
+export default function IntegrationSyncHistory({ connectionId, isExport }) {
   const agTheme = useAgTheme();
-  const { data, isLoading, isError } = useSyncLogs(connectionId);
+  const { data, isLoading, isError, isRefetching, refetch } =
+    useSyncLogs(connectionId);
 
   const columnDefs = useMemo(
     () => [
@@ -27,26 +28,39 @@ export default function IntegrationSyncHistory({ connectionId }) {
         flex: 1,
         valueFormatter: ({ value }) => (value ? fDateTime(value) : "—"),
       },
-      {
-        field: "traces_fetched",
-        headerName: "Traces",
-        width: 100,
-        valueFormatter: ({ value }) => value?.toLocaleString() || "0",
-      },
-      {
-        field: "spans_synced",
-        cellStyle: { fontVariantNumeric: "tabular-nums" },
-        headerName: "Spans",
-        width: 100,
-        valueFormatter: ({ value }) => value?.toLocaleString() || "0",
-      },
-      {
-        field: "scores_synced",
-        cellStyle: { fontVariantNumeric: "tabular-nums" },
-        headerName: "Scores",
-        width: 100,
-        valueFormatter: ({ value }) => value?.toLocaleString() || "0",
-      },
+      // An export's sync counts the request logs it sent
+      // (activities.py _sync_export_integration stores them as traces_fetched).
+      ...(isExport
+        ? [
+            {
+              field: "traces_fetched",
+              headerName: "Request logs",
+              minWidth: 150,
+              valueFormatter: ({ value }) => value?.toLocaleString() || "0",
+            },
+          ]
+        : [
+            {
+              field: "traces_fetched",
+              headerName: "Traces",
+              width: 100,
+              valueFormatter: ({ value }) => value?.toLocaleString() || "0",
+            },
+            {
+              field: "spans_synced",
+              cellStyle: { fontVariantNumeric: "tabular-nums" },
+              headerName: "Spans",
+              width: 100,
+              valueFormatter: ({ value }) => value?.toLocaleString() || "0",
+            },
+            {
+              field: "scores_synced",
+              cellStyle: { fontVariantNumeric: "tabular-nums" },
+              headerName: "Scores",
+              width: 100,
+              valueFormatter: ({ value }) => value?.toLocaleString() || "0",
+            },
+          ]),
       {
         field: "status",
         headerName: "Status",
@@ -60,7 +74,7 @@ export default function IntegrationSyncHistory({ connectionId }) {
         tooltipField: "error_message",
       },
     ],
-    [],
+    [isExport],
   );
 
   if (isLoading) {
@@ -68,7 +82,15 @@ export default function IntegrationSyncHistory({ connectionId }) {
   }
 
   if (isError) {
-    return <ErrorState title="Failed to load sync history" />;
+    return (
+      <ErrorState
+        role="alert"
+        title="Failed to load sync history"
+        detail="Check your connection and retry."
+        onRetry={() => refetch()}
+        retrying={isRefetching}
+      />
+    );
   }
 
   const rowData = Array.isArray(data) ? data : [];
@@ -76,7 +98,7 @@ export default function IntegrationSyncHistory({ connectionId }) {
   if (rowData.length === 0) {
     return (
       <Box py={4} textAlign="center">
-        <Typography sx={{ typography: "s1", color: "text.disabled" }}>
+        <Typography sx={{ typography: "s1", color: "text.secondary" }}>
           No sync history yet.
         </Typography>
       </Box>
@@ -102,4 +124,5 @@ export default function IntegrationSyncHistory({ connectionId }) {
 
 IntegrationSyncHistory.propTypes = {
   connectionId: PropTypes.string.isRequired,
+  isExport: PropTypes.bool,
 };

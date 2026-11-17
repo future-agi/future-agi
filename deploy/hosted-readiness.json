@@ -1,0 +1,362 @@
+{
+  "schema": "futureagi.hosted-readiness/v1",
+  "productAccepted": false,
+  "profile": "hosted-preparation",
+  "candidateBinding": "Every receipt must bind git rev-parse HEAD of the reviewed candidate, built image digests and effective config checksum. Null is OWED, never accepted.",
+  "historicalReferences": [
+    "<HOME>/.futureagi-local/gateway-program/launch/ORCHESTRATOR-NOTES.md",
+    "<HOME>/.futureagi-local/gateway-program/launch/DEPLOY-CHECKLIST.md",
+    "<HOME>/.futureagi-local/gateway-program/launch/MCP-APPS-PLAN.md"
+  ],
+  "sources": {
+    "baseSha": "a29196a47dd5489ffeeab33720eecd34c1ec60cd",
+    "oldHead": "1a6f976af389c97f42d39df288426173fb77f689",
+    "acceptedInternalReleaseConsole": "6d41910eff9a89bd5ab4544da59747d005f3f68f",
+    "acceptedInputMerge": "69312783c583248a2cbd849ad0f99bc369e95e58",
+    "newerIntCandidateOnly": "8df8fa93c2a61030df3b3103b0de82b1e4b0221e",
+    "plat2CandidateOnly": "dad3ad744614e3ae82dfcd759cdf4f73ecd62537",
+    "newerInputAcceptance": "OWED exact independent receipt; short-head clean-code notes are not C5 composition acceptance"
+  },
+  "statusVocabulary": ["OWED", "VERIFIED_LOCAL_CLOUD", "HUMAN_ATTESTED"],
+  "gates": [
+    {
+      "id": "SOURCE-C5",
+      "component": "composition",
+      "identity": {
+        "sourceSha": null,
+        "imageDigests": [],
+        "effectiveConfigSha256": null
+      },
+      "status": "OWED",
+      "owner": "gateway integrator",
+      "prerequisiteIds": [],
+      "evidencePaths": [
+        "<WORKSPACE>/futureagi/tmp/gw-g18-hosted-prep-1027/source-manifest.json"
+      ],
+      "nextGoStep": "Independent exact-SHA acceptance for newer INT and PLAT2; compose accepted inputs with no-ff merges and regenerate/check outputs. Accepted historical INT input is not final C5 proof."
+    },
+    {
+      "id": "STRICT-BOUNDARY",
+      "component": "proof boundary",
+      "identity": {
+        "sourceSha": null,
+        "imageDigests": [],
+        "effectiveConfigSha256": null
+      },
+      "status": "OWED",
+      "owner": "main",
+      "prerequisiteIds": [],
+      "evidencePaths": [
+        "<WORKSPACE>/futureagi/tmp/gw-g18-hosted-prep-1027/strict-boundary.json"
+      ],
+      "nextGoStep": "Adopt independently verified exact r574 successor, archive/file hashes, lifecycle scope, attributable audit, negative controls and zero unexplained rejects. Old kit555 or exit81 is insufficient."
+    },
+    {
+      "id": "OFFLINE-ASSETS",
+      "component": "frontend",
+      "identity": {
+        "sourceSha": null,
+        "imageDigests": [],
+        "effectiveConfigSha256": null
+      },
+      "status": "OWED",
+      "owner": "main and gateway",
+      "prerequisiteIds": ["STRICT-BOUNDARY"],
+      "evidencePaths": [
+        "<WORKSPACE>/futureagi/tmp/gw-g18-hosted-prep-1027/offline-assets.json"
+      ],
+      "nextGoStep": "Accepted wrapper/assets revision, nine-import adoption where applicable, local fonts/icons and normal-flow inventory. No new CDN allowance or writer-only acceptance."
+    },
+    {
+      "id": "HOSTED-CONFIG",
+      "component": "gateway/backend/deploy",
+      "identity": {
+        "sourceSha": null,
+        "imageDigests": [],
+        "effectiveConfigSha256": null
+      },
+      "status": "OWED",
+      "owner": "gateway",
+      "prerequisiteIds": ["SOURCE-C5"],
+      "evidencePaths": [
+        "<WORKSPACE>/futureagi/tmp/gw-g18-hosted-prep-1027/hosted-config-render.json",
+        "<WORKSPACE>/futureagi/tmp/gw-g18-hosted-prep-1027/startup-refusals.json"
+      ],
+      "nextGoStep": "Positive/negative Helm and Compose renders, effective post-env refusal, existing ConfigMap, auth/guardrails, proxy and Redis settings, no insecure/test overrides or unapproved capabilities."
+    },
+    {
+      "id": "READINESS",
+      "component": "gateway/backend",
+      "identity": {
+        "sourceSha": null,
+        "imageDigests": [],
+        "effectiveConfigSha256": null
+      },
+      "status": "OWED",
+      "owner": "gateway",
+      "prerequisiteIds": ["HOSTED-CONFIG"],
+      "evidencePaths": [
+        "<WORKSPACE>/futureagi/tmp/gw-g18-hosted-prep-1027/readiness-lifecycle.json"
+      ],
+      "nextGoStep": "Bounded schema/Redis readiness, initial keys AND complete org configuration, failed starts, auth failure/recovery, drain/shutdown. Self-hosted bundled fresh-install exception stays functional."
+    },
+    {
+      "id": "C5-GUARDRAILS",
+      "component": "console/gateway",
+      "identity": {
+        "sourceSha": null,
+        "imageDigests": [],
+        "effectiveConfigSha256": null
+      },
+      "status": "OWED",
+      "owner": "gateway",
+      "prerequisiteIds": ["SOURCE-C5", "STRICT-BOUNDARY", "OFFLINE-ASSETS"],
+      "evidencePaths": [
+        "<WORKSPACE>/futureagi/tmp/gw-g18-hosted-prep-1027/c5-guardrails.json"
+      ],
+      "nextGoStep": "Save and Activate a real console blocklist on shipped config: blocked403, clean200, pipeline-off banner/Not enforced. Bind config hash, candidate/image, backend state and permitted mock-upstream observations."
+    },
+    {
+      "id": "C5-ROLES-EXPORTS",
+      "component": "integrations",
+      "identity": {
+        "sourceSha": null,
+        "imageDigests": [],
+        "effectiveConfigSha256": null
+      },
+      "status": "OWED",
+      "owner": "gateway",
+      "prerequisiteIds": ["SOURCE-C5", "STRICT-BOUNDARY", "OFFLINE-ASSETS"],
+      "evidencePaths": [
+        "<WORKSPACE>/futureagi/tmp/gw-g18-hosted-prep-1027/c5-integrations.json"
+      ],
+      "nextGoStep": "Member refusal/Admin success for Slack install and integration CRUD; each export delivery, refused/replaced/revoked credential, recovery/deletion and destructive confirmations. Preserve stored policy. Label stand-in delivery, not vendor certification."
+    },
+    {
+      "id": "C5-PERFORMANCE",
+      "component": "gateway",
+      "identity": {
+        "sourceSha": null,
+        "imageDigests": [],
+        "effectiveConfigSha256": null
+      },
+      "status": "OWED",
+      "owner": "gateway",
+      "prerequisiteIds": ["SOURCE-C5"],
+      "evidencePaths": [
+        "<WORKSPACE>/futureagi/tmp/gw-g18-hosted-prep-1027/c5-performance.json"
+      ],
+      "nextGoStep": "At least five enabled/no-rules versus disabled repeats with p50/p99, throughput, allocations and spread; explicit within-noise decision or repair."
+    },
+    {
+      "id": "REGRESSIONS-CONTRACTS",
+      "component": "all components",
+      "identity": {
+        "sourceSha": null,
+        "imageDigests": [],
+        "effectiveConfigSha256": null
+      },
+      "status": "OWED",
+      "owner": "independent verifier",
+      "prerequisiteIds": ["HOSTED-CONFIG", "READINESS"],
+      "evidencePaths": [
+        "<WORKSPACE>/futureagi/tmp/gw-g18-hosted-prep-1027/release-regressions.json",
+        "<WORKSPACE>/futureagi/tmp/gw-g18-hosted-prep-1027/contracts-generated.json"
+      ],
+      "nextGoStep": "Exact committed-head Go/race/scenarios/W2c; Django relevant/full release suites; frontend tests/lint/build; coverage/inventory; OpenAPI/frontend/MCP/catalog/FLOWS generators; conflict markers. Nonzero baseline vet is not clean vet."
+    },
+    {
+      "id": "IMAGE-PROVENANCE",
+      "component": "images",
+      "identity": {
+        "sourceSha": null,
+        "imageDigests": [],
+        "effectiveConfigSha256": null
+      },
+      "status": "OWED",
+      "owner": "gateway and ops",
+      "prerequisiteIds": ["REGRESSIONS-CONTRACTS"],
+      "evidencePaths": [
+        "<WORKSPACE>/futureagi/tmp/gw-g18-hosted-prep-1027/image-provenance.json"
+      ],
+      "nextGoStep": "Bind built revisions/digests, Go toolchain parity, vulnerability/secret/size/image-standard and normal pre-ship admission; check C4 10.0MB carry and stream-refusal wording."
+    },
+    {
+      "id": "MIGRATIONS",
+      "component": "database/operator",
+      "identity": {
+        "sourceSha": null,
+        "imageDigests": [],
+        "effectiveConfigSha256": null
+      },
+      "status": "OWED",
+      "owner": "gateway and ops",
+      "prerequisiteIds": ["HOSTED-CONFIG"],
+      "evidencePaths": [
+        "<WORKSPACE>/futureagi/tmp/gw-g18-hosted-prep-1027/migration-rehearsal.json"
+      ],
+      "nextGoStep": "Rehearse empty install and representative synthetic upgrade through prism0051, one leaf,0030 lock timing,0046 defaults,0047 encryption,two0048 branches,0049 merge,0050 aliases,0051 URLs; restart/idempotence and bounded locks/jobs. Later MCP requires actual0052-0057 and agentcc_mcp_migrate_secrets --check. Never rename/fake/reverse applied encrypted data."
+    },
+    {
+      "id": "ENCRYPTION",
+      "component": "backend/workers/operator",
+      "identity": {
+        "sourceSha": null,
+        "imageDigests": [],
+        "effectiveConfigSha256": null
+      },
+      "status": "OWED",
+      "owner": "gateway and ops",
+      "prerequisiteIds": ["MIGRATIONS"],
+      "evidencePaths": [
+        "<WORKSPACE>/futureagi/tmp/gw-g18-hosted-prep-1027/encryption-rehearsal.json"
+      ],
+      "nextGoStep": "Synthetic stable-key/restart, old/new transition, existing decryptability, model_hub_keys_at_rest --check/--encrypt where supported plus separate ops rotation receipt. CredentialManager is single Fernet; qualified transition tooling is still a technical gate, not an assumed MultiFernet path."
+    },
+    {
+      "id": "OPTIONS-DS",
+      "component": "console",
+      "identity": {
+        "sourceSha": null,
+        "imageDigests": [],
+        "effectiveConfigSha256": null
+      },
+      "status": "OWED",
+      "owner": "gateway",
+      "prerequisiteIds": ["SOURCE-C5", "OFFLINE-ASSETS", "STRICT-BOUNDARY"],
+      "evidencePaths": [
+        "<WORKSPACE>/futureagi/tmp/gw-g18-hosted-prep-1027/options-truth.json",
+        "<WORKSPACE>/futureagi/tmp/gw-g18-hosted-prep-1027/ds-report.json"
+      ],
+      "nextGoStep": "Exact-head release/MCP option matrix through save/confirm/backend effects; no visible unproven entry options; preserve enforcement. DS-v0.2 report for carried/changed UI, without re-theming."
+    },
+    {
+      "id": "MCP-SOURCE-PAIR",
+      "component": "MCP/EE",
+      "identity": {
+        "sourceSha": null,
+        "imageDigests": [],
+        "effectiveConfigSha256": null
+      },
+      "status": "OWED",
+      "owner": "main and gateway",
+      "prerequisiteIds": ["SOURCE-C5", "IMAGE-PROVENANCE"],
+      "evidencePaths": [
+        "<WORKSPACE>/futureagi/tmp/gw-g18-hosted-prep-1027/ee-pair-attestation.json"
+      ],
+      "nextGoStep": "Gateway release first; accepted public stage2 candidate and actual EE pair with/before it; attach-contract digest and middleware/scope compatibility; local/cloud CW2/CW2c. Historical internal f0826b8154ed82050d12ab2d8803629a76db0bac is not hosted acceptance."
+    },
+    {
+      "id": "MCP-CN30A",
+      "component": "MCP",
+      "identity": {
+        "sourceSha": null,
+        "imageDigests": [],
+        "effectiveConfigSha256": null
+      },
+      "status": "OWED",
+      "owner": "gateway",
+      "prerequisiteIds": ["MCP-SOURCE-PAIR", "STRICT-BOUNDARY"],
+      "evidencePaths": [
+        "<WORKSPACE>/futureagi/tmp/gw-g18-hosted-prep-1027/cn30a.json"
+      ],
+      "nextGoStep": "Actual shipped static-credential scenario: two orgs/two users each, isolation/egress, exactly one tool-call log, default write denial, kill switch, nondisclosure and applicable W3b."
+    },
+    {
+      "id": "MCP-CATALOGUE",
+      "component": "MCP catalogue",
+      "identity": {
+        "sourceSha": null,
+        "imageDigests": [],
+        "effectiveConfigSha256": null
+      },
+      "status": "OWED",
+      "owner": "gateway",
+      "prerequisiteIds": [
+        "MCP-SOURCE-PAIR",
+        "OFFLINE-ASSETS",
+        "STRICT-BOUNDARY"
+      ],
+      "evidencePaths": [
+        "<WORKSPACE>/futureagi/tmp/gw-g18-hosted-prep-1027/catalog-browser.json"
+      ],
+      "nextGoStep": "Strict real bundled catalogue and addable-app browser proof; echo fixtures/historical CN30a are insufficient. Unqualified new-entry options unavailable; do not erase saved policy or waive future delivery."
+    },
+    {
+      "id": "LATER-CAPABILITIES",
+      "component": "OAuth/K2/credits",
+      "identity": {
+        "sourceSha": null,
+        "imageDigests": [],
+        "effectiveConfigSha256": null
+      },
+      "status": "OWED",
+      "owner": "existing capability owners",
+      "prerequisiteIds": ["MCP-CN30A"],
+      "evidencePaths": [
+        "<WORKSPACE>/futureagi/tmp/gw-g18-hosted-prep-1027/capability-gates.json"
+      ],
+      "nextGoStep": "Disabled and conditional: OAuth/W4/CN30b,K2/Arcade/W4b,approvals/limits/W5,one-key money. K2 runtime/8090/network policy/private-egress exception all-three-or-none, off here. Keep settled 5% fee and BYOK-free terms."
+    },
+    {
+      "id": "OWNER-OPS",
+      "component": "release",
+      "identity": {
+        "sourceSha": null,
+        "imageDigests": [],
+        "effectiveConfigSha256": null
+      },
+      "status": "OWED",
+      "owner": "owner and ops",
+      "prerequisiteIds": [
+        "SOURCE-C5",
+        "HOSTED-CONFIG",
+        "READINESS",
+        "C5-GUARDRAILS",
+        "C5-ROLES-EXPORTS",
+        "C5-PERFORMANCE",
+        "REGRESSIONS-CONTRACTS",
+        "IMAGE-PROVENANCE",
+        "MIGRATIONS",
+        "ENCRYPTION",
+        "OPTIONS-DS"
+      ],
+      "evidencePaths": [
+        "<WORKSPACE>/futureagi/tmp/gw-g18-hosted-prep-1027/owner-ops-go.json"
+      ],
+      "nextGoStep": "Current admission/CI, public export approval, exact regional deployment-shape attestation, backups/applied-state/quiet-window approval, credential-remediation receipt, release go and rollback operator. No public action by G18."
+    },
+    {
+      "id": "RUNNING-SERVICE",
+      "component": "actual service",
+      "identity": {
+        "sourceSha": null,
+        "imageDigests": [],
+        "effectiveConfigSha256": null
+      },
+      "status": "OWED",
+      "owner": "ops",
+      "prerequisiteIds": ["OWNER-OPS"],
+      "evidencePaths": [
+        "<WORKSPACE>/futureagi/tmp/gw-g18-hosted-prep-1027/postdeploy-attestation.json"
+      ],
+      "nextGoStep": "Ops-only postdeploy checks: actual effective config/probes,403/200 guardrail,tenant/roles,initial sync and applicable MCP. No hosted contact in preparation."
+    },
+    {
+      "id": "DOCS",
+      "component": "public availability",
+      "identity": {
+        "sourceSha": null,
+        "imageDigests": [],
+        "effectiveConfigSha256": null
+      },
+      "status": "OWED",
+      "owner": "owner/docs",
+      "prerequisiteIds": ["RUNNING-SERVICE"],
+      "evidencePaths": [
+        "<WORKSPACE>/futureagi/tmp/gw-g18-hosted-prep-1027/docs-parity.json"
+      ],
+      "nextGoStep": "Only after running-service acceptance may owner authorize docs#1032 and availability claims matching the actual service."
+    }
+  ]
+}

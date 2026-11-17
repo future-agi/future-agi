@@ -1,4 +1,4 @@
-import { test, expect, request as pwRequest } from '@playwright/test';
+import { test, expect, request as pwRequest } from '../../lib/trace-hygiene/fixture';
 import type { Page, Request, Route } from '@playwright/test';
 import { E2E } from '../../lib/env';
 import { provisionActor, TestActor } from '../../lib/provisioning';

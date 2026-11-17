@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://futureagi.com/contracts/gateway/examples/mcp-managed-tool-settlement-v1.schema.json",
+  "title": "mcp-managed-tool-settlement-v1",
+  "description": "A managed tool call's settlement record. It is an ordinary managed-settlement-v1 outbox entry, so it must validate against managed-settlement-v1.schema.json as well; this schema adds only the MCP mapping: request_id = generation_id = tool_call_id, provider mcp, model <server_id>/<tool>, endpoint_id mcp:<server_id>:<tool>, cost_source price_card or provider_reported, upstream_fee_bps 0, and one attempt <tool_call_id>.1 of kind primary on provider mcp:<server_id> with credential_type managed. Uses only the keywords internal/contracts/schematest supports.",
+  "type": "object",
+  "required": [
+    "v",
+    "kind",
+    "request_id",
+    "generation_id",
+    "provider",
+    "model",
+    "endpoint_id",
+    "cost_source",
+    "upstream_fee_bps",
+    "processing_fee_bps",
+    "markup_bps",
+    "attempts"
+  ],
+  "properties": {
+    "v": {
+      "const": "1"
+    },
+    "kind": {
+      "type": "string",
+      "enum": ["spend", "void"]
+    },
+    "request_id": {
+      "type": "string",
+      "pattern": "^tc_.+$",
+      "description": "The tool_call_id."
+    },
+    "generation_id": {
+      "type": "string",
+      "pattern": "^tc_.+$",
+      "description": "The tool_call_id, equal to request_id."
+    },
+    "provider": {
+      "const": "mcp"
+    },
+    "model": {
+      "type": "string",
+      "pattern": "^[^/]+/.+$",
+      "description": "<server_id>/<tool>"
+    },
+    "endpoint_id": {
+      "type": "string",
+      "pattern": "^mcp:[^:]+:.+$",
+      "description": "mcp:<server_id>:<tool>"
+    },
+    "cost_source": {
+      "type": "string",
+      "enum": ["price_card", "provider_reported"]
+    },
+    "upstream_fee_bps": {
+      "const": "0"
+    },
+    "processing_fee_bps": {
+      "type": "string",
+      "pattern": "^[0-9]+$"
+    },
+    "markup_bps": {
+      "type": "string",
+      "pattern": "^[0-9]+$"
+    },
+    "attempts": {
+      "type": "string",
+      "pattern": "^\\[\\{\"attempt_id\":\"tc_[^\"]+\\.1\",\"kind\":\"primary\",\"provider\":\"mcp:[^\"]+\",\"model\":\"[^\"]+\",\"credential_type\":\"managed\",.*\\}\\]$",
+      "description": "Exactly one attempt, <tool_call_id>.1, primary, on mcp:<server_id>, credential_type managed."
+    }
+  }
+}

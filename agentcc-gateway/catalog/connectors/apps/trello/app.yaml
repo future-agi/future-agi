@@ -1,0 +1,27 @@
+schema: "connector-manifest/v1#app"
+id: trello
+version: 1.0.0
+name: Trello
+description: "Boards, lists, cards and checklists in one Trello workspace."
+vendor:
+  name: Atlassian
+  domains: [trello.com, atlassian.com]
+  githubOrgs: [atlassian]
+eeCategory: productivity
+group: other
+categories: [productivity, project-management]
+tags: [boards, cards, tasks]
+docsUrl: https://github.com/atlassian/trello-mcp-server
+archetype: issue-tracker
+defaultProvider: mcp
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://github.com/atlassian/trello-mcp-server
+    fetchedAt: 2026-10-21
+  - fact: vendor.domains
+    url: https://mcp.trello.com/.well-known/oauth-protected-resource/v1
+    fetchedAt: 2026-10-21
+  - fact: vendor.githubOrgs
+    url: https://github.com/atlassian/trello-mcp-server
+    fetchedAt: 2026-10-21

@@ -1,6 +1,7 @@
 import json
 import uuid
-from unittest.mock import MagicMock
+from dataclasses import replace
+from unittest.mock import MagicMock, Mock
 
 import pytest
 from rest_framework import status
@@ -11,6 +12,7 @@ from accounts.models.workspace import Workspace
 from model_hub.models.ai_model import AIModel
 from model_hub.models.choices import StatusType
 from model_hub.models.evals_metric import EvalTemplate
+from model_hub.services import bulk_selection
 from simulate.models import AgentDefinition
 from simulate.models.agent_version import AgentVersion
 from simulate.models.scenarios import Scenarios
@@ -19,11 +21,11 @@ from tfc.constants.roles import OrganizationRoles
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.project import Project
 from tracer.models.replay_session import ReplaySession, ReplaySessionStep
+from tracer.tests._ch_seed import seed_ch_trace_sessions
 from tracer.tests.test_replay_session_utils import (
     _VAPI_RAW_LOG,
     _ch_conversation_span,
 )
-
 
 REPLAY_SESSION_PATH = "/tracer/replay-session/"
 
@@ -61,6 +63,9 @@ def test_replay_session_create_list_retrieve_and_eval_configs(
         error_localizer=True,
     )
 
+    # Direct ORM fixtures bypass ingestion's CH dual-write. Source membership
+    # must be present in the authoritative store before replay creation.
+    seed_ch_trace_sessions([trace_session])
     create_response = auth_client.post(
         REPLAY_SESSION_PATH,
         data={
@@ -112,6 +117,95 @@ def test_replay_session_create_list_retrieve_and_eval_configs(
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize("select_all", [False, True])
+def test_replay_session_create_ch_only_sources_stay_in_project(
+    auth_client, observe_project, select_all, monkeypatch
+):
+    from types import SimpleNamespace
+
+    from tracer.models.trace_session import TraceSession
+
+    local = SimpleNamespace(
+        id=uuid.uuid4(), project_id=observe_project.id, name="Synthetic CH-only local"
+    )
+    foreign = SimpleNamespace(
+        id=uuid.uuid4(), project_id=uuid.uuid4(), name="Synthetic CH-only foreign"
+    )
+    retained = SimpleNamespace(
+        id=uuid.uuid4(),
+        project_id=observe_project.id,
+        name="Synthetic CH-only retained",
+    )
+    seed_ch_trace_sessions([local, foreign, retained])
+    assert not TraceSession.no_workspace_objects.filter(
+        id__in=[local.id, foreign.id, retained.id]
+    ).exists()
+    filters = [
+        {
+            "column_id": "created_at",
+            "filter_config": {
+                "filter_type": "datetime",
+                "filter_op": "between",
+                "filter_value": ["2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"],
+            },
+        }
+    ]
+    # Preserve real CH ownership validation; replace only the population read.
+    # In select-all mode local is an exclusion, not the retained conversation.
+    resolver = Mock(
+        return_value=bulk_selection.ResolveResult(
+            ids=[str(retained.id)], total_matching=1, truncated=False
+        )
+    )
+    monkeypatch.setattr(bulk_selection, "resolve_filtered_session_ids", resolver)
+
+    def create(ids):
+        return auth_client.post(
+            REPLAY_SESSION_PATH,
+            {
+                "project_id": str(observe_project.id),
+                "replay_type": "session",
+                "ids": [str(value) for value in ids],
+                "select_all": select_all,
+                **({"filters": filters} if select_all else {}),
+            },
+            format="json",
+        )
+
+    accepted = create([local.id])
+    assert accepted.status_code == status.HTTP_201_CREATED, accepted.content
+    expected_ids = [str(retained.id if select_all else local.id)]
+    assert result(accepted)["ids"] == expected_ids
+    assert result(accepted)["select_all"] is False
+    assert result(accepted)["project"] == str(observe_project.id)
+    saved = ReplaySession.no_workspace_objects.get(id=result(accepted)["id"])
+    assert saved.ids == expected_ids
+    assert saved.select_all is False
+    before = ReplaySession.no_workspace_objects.filter(project=observe_project).count()
+    # Even select_all must validate every explicit ID, including a mixed batch.
+    for prefix in ([], [local.id]):
+        refused = create([*prefix, foreign.id])
+        missing = create([*prefix, uuid.uuid4()])
+        assert refused.status_code == missing.status_code == status.HTTP_400_BAD_REQUEST
+        assert refused.json() == missing.json()
+    assert (
+        ReplaySession.no_workspace_objects.filter(project=observe_project).count()
+        == before
+    )
+    if select_all:
+        resolver.assert_called_once()
+        args = resolver.call_args.kwargs
+        assert args["project_id"] == observe_project.id
+        assert args["organization"] == observe_project.organization
+        assert args["workspace"] == observe_project.workspace
+        assert args["user"] == accepted.wsgi_request.user
+        assert args["filters"] == filters
+        assert args["exclude_ids"] == {str(local.id)}
+    else:
+        resolver.assert_not_called()
+
+
+@pytest.mark.django_db
 @pytest.mark.parametrize("customer", ["+15550100001", ["+15550100001"], 7])
 def test_replay_session_create_reads_a_voice_customer_that_is_not_an_object(
     auth_client, observe_project, session_trace, monkeypatch, customer
@@ -119,9 +213,20 @@ def test_replay_session_create_reads_a_voice_customer_that_is_not_an_object(
     # With no phoneNumber on the call, the contact number comes from customer,
     # which has none when it is not an object.
     raw_log = {**_VAPI_RAW_LOG, "phoneNumber": None, "customer": customer}
-    span = _ch_conversation_span(json.dumps(raw_log))
+    span = replace(
+        _ch_conversation_span(json.dumps(raw_log)),
+        project_id=str(observe_project.id),
+        trace_id=str(session_trace.id),
+        trace_session_id=str(session_trace.session_id),
+    )
     reader = MagicMock()
     reader.__enter__ = lambda s: s
+    reader.newest_trace_projects.return_value = {
+        str(session_trace.id): str(observe_project.id)
+    }
+    reader.roots_by_trace_ids.return_value = [span]
+    # Root I/O is empty for this voice call; the conversation is in raw_log.
+    reader.get_trace_row.return_value = None
     reader.list_by_trace_ids.return_value = [span]
     reader.list_by_trace.return_value = [span]
     monkeypatch.setattr("tracer.services.clickhouse.v2.get_reader", lambda: reader)
@@ -140,6 +245,9 @@ def test_replay_session_create_reads_a_voice_customer_that_is_not_an_object(
     assert response.status_code == status.HTTP_201_CREATED, response.content
     suggestions = result(response)["suggestions"]
     assert suggestions["original_voice_config"]["contact_number"] == ""
+    reader.newest_trace_projects.assert_called_once_with(
+        {str(session_trace.id)}, [str(observe_project.id)]
+    )
 
 
 @pytest.mark.django_db
@@ -218,10 +326,12 @@ def test_replay_session_generate_scenario_links_agent_and_scenario(
     )
     monkeypatch.setattr(
         "tracer.views.replay_session.start_create_graph_scenario_workflow_sync",
-        lambda validated_data, scenario_id: workflow_calls.append(
-            {"validated_data": validated_data, "scenario_id": scenario_id}
-        )
-        or "workflow-test",
+        lambda validated_data, scenario_id: (
+            workflow_calls.append(
+                {"validated_data": validated_data, "scenario_id": scenario_id}
+            )
+            or "workflow-test"
+        ),
     )
 
     response = auth_client.post(
@@ -301,7 +411,8 @@ def test_replay_session_routes_hide_out_of_scope_projects_and_sessions(
     other_organization = Organization.objects.create(name="Replay Other Org")
     other_user = User.objects.create_user(
         email="replay-other@example.com",
-        password="testpassword123",
+        # synthetic test value
+        password="FAKE_REPLAY_TEST_PASSWORD",
         name="Replay Other User",
         organization=other_organization,
         organization_role=OrganizationRoles.OWNER,

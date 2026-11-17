@@ -5,7 +5,7 @@ Tests for Phase 10: Usage & Feedback APIs.
 import pytest
 
 from model_hub.models.choices import OwnerChoices
-from model_hub.models.evals_metric import EvalTemplate
+from model_hub.models.evals_metric import EvalTemplate, Feedback
 
 
 @pytest.fixture
@@ -62,3 +62,37 @@ class TestEvalFeedbackListAPI:
             "/model-hub/eval-templates/00000000-0000-0000-0000-000000000000/feedback-list/"
         )
         assert response.status_code == 404
+
+
+# Not e2e-marked: pytest.ini deselects e2e by default, and this regression
+# must run with the default suite.
+@pytest.mark.integration
+@pytest.mark.django_db
+class TestEvalFeedbackListAuthor:
+    def test_feedback_items_carry_author_id(
+        self, auth_client, eval_template, user, organization, workspace
+    ):
+        """W10-EVALS-U01: trace feedback can only be edited by its author.
+
+        The Feedback tab compares each row's author with the viewer before it
+        offers Edit Feedback, so every item must carry the author's id.
+        """
+        feedback = Feedback.objects.create(
+            source="observe",
+            source_id="span-w10-evals-u01",
+            value="passed",
+            explanation="Original note",
+            user=user,
+            eval_template=eval_template,
+            organization=organization,
+            workspace=workspace,
+        )
+
+        response = auth_client.get(
+            f"/model-hub/eval-templates/{eval_template.id}/feedback-list/"
+        )
+
+        assert response.status_code == 200
+        items = response.data["result"]["items"]
+        assert [item["id"] for item in items] == [str(feedback.id)]
+        assert items[0]["user_id"] == str(user.id)

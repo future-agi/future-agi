@@ -1,5 +1,6 @@
 """Capture the real playground dispatch without running a model or database."""
 
+import json
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import Mock, create_autospec
@@ -88,6 +89,66 @@ class _TraceQuery:
         return 1
 
 
+def test_session_drawer_paths_deliver_complete_ordered_ch_conversation(
+    preview, monkeypatch
+):
+    from tracer.services.clickhouse.v2 import eval_loader
+    from tracer.utils import eval as eval_utils
+
+    traces = [
+        SimpleNamespace(
+            id=str(uuid4()),
+            created_at=START + timedelta(seconds=index),
+            input={
+                "messages": [{"role": "user", "content": f"turn-{index}" + "x" * 5000}]
+            },
+            output={"content": f"answer-{index}"},
+        )
+        for index in range(20)
+    ]
+    by_id = {trace.id: trace for trace in traces}
+    preview.reader.session_trace_ids.return_value = list(reversed(by_id))
+    preview.reader.per_trace_root_span_start_times.return_value = {
+        trace.id: trace.created_at for trace in traces
+    }
+
+    def read_trace_row(trace_id, *, project_id):
+        assert str(project_id) == PROJECT_ID
+        trace = by_id[str(trace_id)]
+        return {
+            "id": trace.id,
+            "project_id": PROJECT_ID,
+            "created_at": trace.created_at,
+            "input": json.dumps(trace.input),
+            "output": json.dumps(trace.output),
+        }
+
+    preview.reader.get_trace_row.side_effect = read_trace_row
+    monkeypatch.setattr(
+        eval_utils.EvalTemplate.no_workspace_objects,
+        "get",
+        lambda **_: preview.template,
+    )
+    # No complete-conversation value is supplied by the browser. Its session
+    # preview is partial; resolution must use the same CH path as online tasks,
+    # even when the process default (or an enclosing request) selects postgres.
+    with eval_loader.eval_read_source("postgres"):
+        response = preview.post(
+            config={},
+            mapping_paths={"input": "conversation_complete"},
+        )
+        assert eval_loader._read_source() == "postgres"
+    assert response.status_code == 200, response.data
+    assert preview.reader.get_trace_row.call_count == len(traces)
+    preview.run_eval.assert_called_once()
+    payload = preview.run_eval.call_args.args[1]["input"]
+    assert len(payload) > 60000
+    assert json.loads(payload) == [
+        {"trace_id": trace.id, "input": trace.input, "output": trace.output}
+        for trace in traces
+    ]
+
+
 @pytest.fixture
 def preview(monkeypatch):
     org = SimpleNamespace(id=uuid4())
@@ -115,11 +176,18 @@ def preview(monkeypatch):
     reader.list_by_session.return_value = []
     get_reader = Mock(return_value=reader)
     monkeypatch.setattr("tracer.services.clickhouse.v2.get_reader", get_reader)
-    monkeypatch.setattr("tfc.ee_gates.turing_oss_gate_for_template", lambda *_: None)
+    monkeypatch.setattr(
+        "tfc.ee_gates.turing_oss_gate_for_template",
+        lambda *_, **_kwargs: None,
+    )
     # Binding validation also reads the persisted template-model fallback.
-    template = SimpleNamespace(config={}, model=None)
-    get_template = Mock(return_value=template)
-    monkeypatch.setattr(playground, "_get_accessible_eval_template", get_template)
+    template = SimpleNamespace(config={}, model=None, eval_type=None)
+    get_template = create_autospec(
+        playground._get_accessible_eval_template_for_request, return_value=template
+    )
+    monkeypatch.setattr(
+        playground, "_get_accessible_eval_template_for_request", get_template
+    )
     run_eval = Mock(
         return_value={
             "output": "Passed",

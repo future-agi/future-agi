@@ -13,6 +13,7 @@ vi.mock("src/components/iconify", () => {
 });
 
 import OSSUpgradeGate from "../oss-upgrade-gate";
+import { FEATURES } from "../constants";
 
 function renderGate(feature, reasonCode) {
   return render(
@@ -146,5 +147,128 @@ describe("the primary button's arrow", () => {
     );
     fireEvent.click(button);
     expect(screen.getByText("The License page")).toBeInTheDocument();
+  });
+});
+
+// The declarations emotion wrote for an element's own classes.
+function declarationsOf(element) {
+  const classes = Array.from(element.classList, (name) => `.${name}`);
+  return Array.from(document.styleSheets)
+    .flatMap((sheet) => Array.from(sheet.cssRules))
+    .filter((rule) =>
+      classes.some((name) => rule.selectorText?.split(/[\s:,]/)[0] === name),
+    )
+    .map((rule) => rule.style.cssText)
+    .join(" ");
+}
+
+// The five features with a preview, and how the team's wall blurs each: the
+// two Observe tabs blur the whole image as one element; the other three blur
+// below a sharp top with a backdrop layer.
+const PREVIEW_FORM = {
+  errorFeed: "below-top",
+  optimization: "below-top",
+  falconAI: "below-top",
+  instantEval: "whole",
+  insights: "whole",
+};
+
+function expectPreviewInItsForm(container, feature) {
+  const previews = container.querySelectorAll("img");
+  expect(previews).toHaveLength(1);
+  const [preview] = previews;
+  const wholeBlur = [];
+  for (let el = preview; el && el !== container; el = el.parentElement) {
+    if (/(^|[\s;])filter:\s*blur\(/.test(declarationsOf(el))) {
+      wholeBlur.push(el);
+    }
+  }
+  // The layer that blurs what is behind it starts below the sharp top.
+  const belowTop = Array.from(container.querySelectorAll("*")).filter((el) =>
+    /(^|[\s;])top:\s*38%/.test(declarationsOf(el)),
+  );
+  if (PREVIEW_FORM[feature] === "whole") {
+    expect(wholeBlur).toHaveLength(1);
+    expect(declarationsOf(wholeBlur[0])).toMatch(/filter:\s*blur\(16px\)/);
+    expect(belowTop).toHaveLength(0);
+  } else {
+    expect(wholeBlur).toHaveLength(0);
+    expect(belowTop).toHaveLength(1);
+    // That layer blurs what is behind it: below the top, never sharp.
+    expect(declarationsOf(belowTop[0])).toMatch(
+      /(^|[\s;])backdrop-filter:\s*blur\(9px\)/,
+    );
+  }
+}
+
+describe("facts-only gates over the team's previews", () => {
+  it.each(Object.keys(PREVIEW_FORM))(
+    "%s states facts over its preview, in the team's form, when the EE image is unavailable",
+    (feature) => {
+      const { container } = renderGate(feature, "EE_CODE_UNAVAILABLE");
+      expectPreviewInItsForm(container, feature);
+      expect(container.textContent).not.toMatch(
+        /Build a dataset|jinja template|June 2026|April 2026|coming soon|roadmap|star the repo|Connect your tools|What to do next/i,
+      );
+      expect(
+        screen.getByRole("heading", {
+          name: `${FEATURES[feature].name} is not available on this deployment`,
+        }),
+      ).toBeInTheDocument();
+      expect(screen.getByTestId("oss-gate-needs")).toHaveTextContent(
+        /Enterprise Edition image and a license key/,
+      );
+      expect(screen.getByRole("link", { name: "Talk to us" })).toHaveAttribute(
+        "href",
+        "https://futureagi.com/talk-to-human",
+      );
+    },
+  );
+  it("sends a generic expired license to license management with factual needs", () => {
+    renderGate("errorFeed", "LICENSE_EXPIRED");
+    expect(screen.getByTestId("oss-gate-needs")).toHaveTextContent(
+      /has expired/,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Manage license" }));
+    expect(screen.getByText("The License page")).toBeInTheDocument();
+  });
+  it("names the missing plan on a cloud plan denial", () => {
+    renderGate("errorFeed", "PLAN_FEATURE_MISSING");
+    expect(screen.getByTestId("oss-gate-needs")).toHaveTextContent(
+      /plan that includes this feature/,
+    );
+  });
+  it("keeps a plain license need when no reason is given", () => {
+    renderGate("optimization");
+    expect(screen.getByTestId("oss-gate-needs")).toHaveTextContent(
+      "Needs an Enterprise license.",
+    );
+  });
+  it("renders nothing for an unknown feature", () => {
+    const { container } = renderGate("nope");
+    expect(container.textContent).toBe("");
+  });
+  it.each(["instantEval", "insights"])(
+    "%s keeps its unlock steps over its wholly blurred preview",
+    (feature) => {
+      const { container } = renderGate(feature, "LICENSE_FEATURE_MISSING");
+      expectPreviewInItsForm(container, feature);
+      expect(screen.getByText("What to do next")).toBeInTheDocument();
+    },
+  );
+  it.each(["knowledgeBase", "usageSummary", "pricing", "billing"])(
+    "%s, which has no preview, shows its card alone",
+    (feature) => {
+      const { container } = renderGate(feature, "LICENSE_MISSING");
+      expect(container.querySelector("img")).toBeNull();
+      expect(screen.getByTestId("oss-gate-needs")).toBeInTheDocument();
+    },
+  );
+  it("does not suggest a license key can resolve an unavailable capability check", () => {
+    renderGate("insights", "RESOLVER_UNAVAILABLE");
+    expect(screen.getByTestId("oss-gate-needs")).toHaveTextContent(
+      /could not be checked/,
+    );
+    expect(screen.queryByText("What to do next")).toBeNull();
   });
 });

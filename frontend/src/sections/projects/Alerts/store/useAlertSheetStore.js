@@ -26,7 +26,13 @@ export const useAlertSheetStore = create((set) => ({
 
   setSelectedAll: (selectedAll) => set({ selectedAll }),
 
-  setExcludingIds: (ids) => set({ excludingIds: ids }),
+  // The Issues grid passes a function updater when rows are unticked during
+  // select-all, so apply it to the current set rather than storing it.
+  setExcludingIds: (updater) =>
+    set((state) => ({
+      excludingIds:
+        typeof updater === "function" ? updater(state.excludingIds) : updater,
+    })),
 
   setTotalRows: (totalRows) => set({ totalRows }),
 

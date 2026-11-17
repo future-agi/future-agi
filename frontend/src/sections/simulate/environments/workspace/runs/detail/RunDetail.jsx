@@ -20,6 +20,10 @@ import { paths } from "src/routes/paths";
 import { fToNow } from "src/utils/format-time";
 import { CAPABILITY, useFeatureAllowed } from "src/hooks/useCapabilities";
 import {
+  isHiddenFromRestrictedOrgs,
+  useRestrictSimulateToEnvironments,
+} from "src/hooks/useRestrictSimulateToEnvironments";
+import {
   useRunDetail,
   useOptimizationRuns,
 } from "src/api/simulate-environments/runDetail";
@@ -35,6 +39,7 @@ import {
 } from "src/api/simulate-environments/rerunScenarios";
 
 import SectionCard from "../../../components/SectionCard";
+import { RUN_FAILURE_REASONS } from "../../workspace.constants";
 import StatusChip from "../StatusChip";
 import StopRunControl from "../StopRunControl";
 import AgentDiffersTag from "../../run/AgentDiffersTag";
@@ -56,6 +61,11 @@ import ReliabilityHeadline from "./ReliabilityHeadline";
 import useCallListNavigation from "./useCallListNavigation";
 import useOpenCallParam from "./useOpenCallParam";
 
+// Shown over the optimization runs for an organization that sees only
+// Environments, where their rows do not open.
+const OPTIMIZATION_DETAILS_UNAVAILABLE =
+  "Optimization details open in Run Simulation, which your organization doesn't have.";
+
 /**
  * The designer-style run/execution detail page.
  *
@@ -76,6 +86,7 @@ export default function RunDetail({
 }) {
   const navigate = useNavigate();
   const location = useLocation();
+  const restrictSimulateToEnvironments = useRestrictSimulateToEnvironments();
   const [tab, setTab] = useState("tasks");
   // Filters handed to the calls table from elsewhere on the page (an analytics
   // tile, a diagnosis issue). `seq` remounts the table so a repeat hand-off
@@ -152,12 +163,26 @@ export default function RunDetail({
     }
   }, [executionStatus, executionId, queryClient]);
 
-  const openOptimization = (row) =>
+  // An optimization's page sits under Run Simulation, which is not registered
+  // for an organization that sees only Environments: there its row stays put
+  // and the line above the list says why.
+  const optimizationsHidden =
+    restrictSimulateToEnvironments &&
+    isHiddenFromRestrictedOrgs(paths.dashboard.simulate.test);
+  const openOptimization = (row) => {
+    if (optimizationsHidden) return;
     navigate(
       `${paths.dashboard.simulate.test}/${testId}/${executionId}/${row.id}`,
     );
+  };
 
   const status = identity?.runState;
+  // A failed run whose failure has words of its own says why, under the header.
+  // Only the map's own codes match, never a name every object inherits.
+  const failureCode = identity?.failure?.code;
+  const failureReason = Object.hasOwn(RUN_FAILURE_REASONS, failureCode)
+    ? RUN_FAILURE_REASONS[failureCode]
+    : null;
   // A fix's check run is not one of the user's runs: it has no run number, and
   // only the fix acts on it, so it offers no Stop, Re-run or Debug failures.
   const fixRun = identity?.fixRun ?? null;
@@ -267,7 +292,10 @@ export default function RunDetail({
             <Typography noWrap sx={{ typography: "s1_2", fontWeight: 600 }}>
               {fixRun ? (
                 <>
-                  {`Check run ${fixRun.label} for `}
+                  {/* fixRun.label is the engine's internal name for the run
+                      ("baseline", "c2-target"), so the title leaves it out;
+                      the agent version after it says which version it checked. */}
+                  {"Check run for "}
                   <Link
                     component={RouterLink}
                     href={paths.dashboard.simulate.environments.improvement(
@@ -277,7 +305,7 @@ export default function RunDetail({
                     color="inherit"
                     underline="always"
                   >
-                    this fix
+                    this improvement
                   </Link>
                   {` · agent ${agentLabel}${pinnedLabels}`}
                 </>
@@ -311,6 +339,14 @@ export default function RunDetail({
             {startedLabel ? ` · started ${startedLabel}` : ""}
             {lastResume ? ` · resumed ${fToNow(lastResume.at)}` : ""}
           </Typography>
+          {failureReason && (
+            <Typography
+              data-testid="run-failure-reason"
+              sx={{ typography: "s2", color: "text.secondary", mt: 0.25 }}
+            >
+              {failureReason}
+            </Typography>
+          )}
         </Box>
 
         <ReliabilityHeadline
@@ -488,6 +524,13 @@ export default function RunDetail({
               }
               sx={{ border: "none" }}
             >
+              {optimizationsHidden && (
+                <Typography
+                  sx={{ typography: "s2", color: "text.subtitle", mb: 1.5 }}
+                >
+                  {OPTIMIZATION_DETAILS_UNAVAILABLE}
+                </Typography>
+              )}
               <OptimizationRunsList
                 runs={optimizationRuns}
                 isLoading={optimizationsLoading}

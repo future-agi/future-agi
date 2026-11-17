@@ -30,27 +30,54 @@ const maxInlineImageBytes = 64 << 10
 // The redactor is threaded through because these attributes carry the same
 // user content input.value does. Emitting them unredacted would be a way
 // around the org's privacy config that the JSON body already respects.
-func (p *Plugin) attachMessages(span *otelpkg.Span, rc *models.RequestContext, r *privacy.Redactor, mode string) {
+func (p *Plugin) attachMessages(span *otelpkg.Span, rc *models.RequestContext, r *privacy.Redactor, mode string, contentMode models.ContentMode) {
+	masking := r != nil && r.ShouldRedact()
 	scrub := func(s string) string { return redact(payloads.ElideInlineData(s), r, mode) }
+	scrubJSON := func(s string) string {
+		// Unknown schemas may carry opaque media in fields a text redactor
+		// cannot interpret. Suppress this fallback, not just literal matches.
+		if masking {
+			return "[REDACTED]"
+		}
+		return payloads.ElideInlineData(s)
+	}
 
 	if rc.Request != nil {
 		for i, msg := range rc.Request.Messages {
-			p.attachMessage(span, "llm.input_messages."+strconv.Itoa(i), msg, scrub)
+			if masking {
+				msg = suppressMessageMedia(msg)
+			}
+			p.attachMessage(span, "llm.input_messages."+strconv.Itoa(i), msg, scrub, scrubJSON, contentMode)
 		}
 	}
 	if rc.Response != nil {
 		for i, choice := range rc.Response.Choices {
-			p.attachMessage(span, "llm.output_messages."+strconv.Itoa(i), choice.Message, scrub)
+			msg := choice.Message
+			if masking {
+				msg = suppressMessageMedia(msg)
+			}
+			p.attachMessage(span, "llm.output_messages."+strconv.Itoa(i), msg, scrub, scrubJSON, contentMode)
 		}
 	}
 }
 
-func (p *Plugin) attachMessage(span *otelpkg.Span, prefix string, msg models.Message, scrub func(string) string) {
+func (p *Plugin) attachMessage(span *otelpkg.Span, prefix string, msg models.Message, scrub, scrubJSON func(string) string, contentMode models.ContentMode) {
 	if msg.Role != "" {
 		span.SetAttribute(prefix+".message.role", msg.Role)
 	}
 	if len(msg.Content) == 0 {
 		return
+	}
+
+	// Filter before flattening: image URLs bypass text redaction and native
+	// or nested parts can also reach the fallback JSON attribute. msg is a
+	// value copy; never change the provider request or a parallel observer.
+	if contentMode != models.ContentModeFull {
+		context := imageContent
+		if msg.Role == "tool" || msg.Role == "function" {
+			context = imageToolEnvelope
+		}
+		msg.Content = json.RawMessage(maskImageJSONInContext(string(msg.Content), contentMode, context))
 	}
 
 	// Plain string content: the common case, emitted flat.
@@ -62,8 +89,9 @@ func (p *Plugin) attachMessage(span *otelpkg.Span, prefix string, msg models.Mes
 
 	var parts []messagePart
 	if err := json.Unmarshal(msg.Content, &parts); err != nil {
-		// Some other shape — hand it over as-is rather than dropping it.
-		span.SetAttribute(prefix+".message.content", scrub(string(msg.Content)))
+		// The fallback is suppressed under masking, including unknown or
+		// malformed structures that cannot be classified as text or images.
+		span.SetAttribute(prefix+".message.content", scrubJSON(string(msg.Content)))
 		return
 	}
 
@@ -83,8 +111,8 @@ func (p *Plugin) attachMessage(span *otelpkg.Span, prefix string, msg models.Mes
 		if part.Text != "" {
 			span.SetAttribute(base+".text", scrub(part.Text))
 		}
-		// The URL is left intact: under the size bound it is either a link or
-		// a small data URI the viewer renders, and scrubbing would break both.
+		// Only full-content image parts remain here. Under the size bound
+		// the viewer still gets the original link or data URI unchanged.
 		if part.ImageURL != nil && part.ImageURL.URL != "" {
 			span.SetAttribute(base+".image.url", part.ImageURL.URL)
 		}

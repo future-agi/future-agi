@@ -60,7 +60,7 @@ import {
   shareInFlightListPage,
 } from "./listCursorPagination";
 import ListCursorContinuationNotice from "./ListCursorContinuationNotice";
-import { getListTotalState } from "./listTotalMetadata";
+import { getEmptyListOverlay, getListTotalState } from "./listTotalMetadata";
 import { getSpanPhysicalRowId } from "./spanPhysicalIdentity";
 import {
   parseAxiosResult,
@@ -244,6 +244,12 @@ const SpanGrid = React.forwardRef(
       compareType,
       // Only the visible grid of a primary/compare pair renders the drawer.
       hideDetailDrawer = false,
+      // Empty-page context (primary grids): the date pill text and the next
+      // steps the empty overlay can offer.
+      rangeLabel,
+      onClearFilters,
+      onWidenRange,
+      listWindow,
     },
     gridRef,
   ) => {
@@ -291,6 +297,7 @@ const SpanGrid = React.forwardRef(
     const {
       beginPageLoad,
       endUnknown,
+      exactTotal,
       frontierPage,
       hasMore,
       page,
@@ -302,6 +309,7 @@ const SpanGrid = React.forwardRef(
       isPageLoading,
       publishPage,
       resetPagination,
+      visibleRowCount,
     } = useCursorGridPagination(gridRef, gridElementRef);
 
     // Use ref to track latest columns for comparison without triggering dataSource recreation
@@ -448,6 +456,9 @@ const SpanGrid = React.forwardRef(
             setOpenQuickFilter,
             setFilterOpen,
           ),
+          // This grid sits on the page, under the trace drawer: a hovered
+          // name cell's funnel stacks beneath side drawers, not over them.
+          quickFilterBelowDrawers: true,
         },
       }),
       [setFilterOpen, setExtraFilters],
@@ -491,9 +502,12 @@ const SpanGrid = React.forwardRef(
           grouping[getRandomId()] = [eachCol];
         }
       }
+      // A span row holds one value per label (no per-annotator breakdown),
+      // so each label is one column that reads it.
       const annotationColumns = generateAnnotationColumnsForTracing(
         grouping["Annotation Metrics"] || [],
         showMetricsIds,
+        { perAnnotator: false },
       );
       delete grouping["Annotation Metrics"];
       const columnDefsResult = Object.entries(grouping).flatMap(
@@ -1016,13 +1030,22 @@ const SpanGrid = React.forwardRef(
           // free to paint the target rows before that transition can settle.
           loading={gridLoading || transitionLoading}
           suppressServerSideFullWidthLoadingRow={true}
-          noRowsOverlayComponent={() =>
-            continuationNotice
-              ? null
-              : NoRowsOverlay(
-                  getQueryReadMessage(readStateRef.current) || "No spans found",
-                )
-          }
+          noRowsOverlayComponent={() => {
+            if (continuationNotice) return null;
+            const readStateMessage = getQueryReadMessage(readStateRef.current);
+            if (readStateMessage) return NoRowsOverlay(readStateMessage);
+            return NoRowsOverlay(
+              "No spans found",
+              getEmptyListOverlay({
+                noun: "spans",
+                rangeLabel,
+                hasFilters: extraFilters?.length > 0,
+                onClearFilters,
+                onWidenRange,
+                listWindow,
+              }),
+            );
+          }}
           onCellClicked={handleCellClick}
           onSelectionChanged={onSelectionChanged}
           // onGridReady={(params) => {
@@ -1067,6 +1090,8 @@ const SpanGrid = React.forwardRef(
           furthestPage={furthestPage}
           hasMore={hasMore}
           provenNext={provenNext}
+          rowCount={visibleRowCount}
+          totalCount={exactTotal}
           onPageChange={goToPage}
           onPageSizeChange={changePageSize}
         />
@@ -1101,6 +1126,10 @@ SpanGrid.propTypes = {
   cellHeight: PropTypes.string,
   metricFilters: PropTypes.array,
   enabled: PropTypes.bool,
+  rangeLabel: PropTypes.string,
+  onClearFilters: PropTypes.func,
+  onWidenRange: PropTypes.func,
+  listWindow: PropTypes.object,
 };
 
 export default SpanGrid;

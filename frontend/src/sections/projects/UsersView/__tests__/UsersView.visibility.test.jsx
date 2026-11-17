@@ -86,6 +86,7 @@ vi.mock("src/routes/hooks/use-url-state", async () => {
 vi.mock("src/api/project/saved-views", () => ({
   useUpdateSavedView: () => ({ mutate: vi.fn() }),
   useUpdateWorkspaceSavedView: () => ({ mutate: vi.fn() }),
+  useSetProjectDefaultView: () => vi.fn(),
 }));
 vi.mock("../../LLMTracing/useLLMTracingFilters", async () => {
   const filters = [];

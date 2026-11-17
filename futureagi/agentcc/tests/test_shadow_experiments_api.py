@@ -1,5 +1,6 @@
 """Coverage for the /agentcc/shadow-experiments/ and /agentcc/shadow-results/ endpoints."""
 
+import json
 from unittest.mock import patch
 
 import pytest
@@ -46,9 +47,7 @@ class TestShadowExperimentCRUD:
             user, name="paused-one", status=AgentccShadowExperiment.STATUS_PAUSED
         )
 
-        response = auth_client.get(
-            "/agentcc/shadow-experiments/?status=paused"
-        )
+        response = auth_client.get("/agentcc/shadow-experiments/?status=paused")
         assert response.status_code == 200
         names = {row["name"] for row in response.json()["result"]}
         assert names == {"paused-one"}
@@ -57,24 +56,27 @@ class TestShadowExperimentCRUD:
         response = api_client.get("/agentcc/shadow-experiments/")
         assert response.status_code in (401, 403)
 
-    @pytest.mark.requires_ee
-    def test_create_writes_and_scopes_to_active_org(self, auth_client, user):
-        response = auth_client.post(
-            "/agentcc/shadow-experiments/",
-            {
-                "name": "brand-new-exp",
-                "source_model": "gpt-4o",
-                "shadow_model": "claude-3-5-sonnet",
-                "shadow_provider": "anthropic",
-                "sample_rate": 0.25,
-            },
-            format="json",
-        )
-        assert response.status_code == 200, response.json()
-        row = AgentccShadowExperiment.no_workspace_objects.get(name="brand-new-exp")
-        assert row.organization == user.organization
-        assert row.created_by == user
-        assert row.sample_rate == 0.25
+    def test_create_answers_501_and_stores_nothing(self, auth_client, user):
+        # docs-agentcc-711, item 3: no experiment mirrors traffic, so none is
+        # created (the plan-limit check is never reached either).
+        with patch("tfc.ee_gating.check_ee_can_create") as limit:
+            response = auth_client.post(
+                "/agentcc/shadow-experiments/",
+                {
+                    "name": "brand-new-exp",
+                    "source_model": "gpt-4o",
+                    "shadow_model": "claude-3-5-sonnet",
+                    "shadow_provider": "anthropic",
+                    "sample_rate": 0.25,
+                },
+                format="json",
+            )
+        assert response.status_code == 501, response.json()
+        assert response.json()["code"] == "shadow_experiments_not_active"
+        assert not AgentccShadowExperiment.no_workspace_objects.filter(
+            name="brand-new-exp"
+        ).exists()
+        limit.assert_not_called()
 
     def test_retrieve_returns_experiment(self, auth_client, user):
         exp = _make_experiment(user, name="retrieve-me")
@@ -92,6 +94,65 @@ class TestShadowExperimentCRUD:
         assert response.status_code == 200
         exp.refresh_from_db()
         assert exp.description == "now with a description"
+
+    @pytest.mark.parametrize("method", ["put", "patch"])
+    @pytest.mark.parametrize(
+        "before, after",
+        [
+            (before, after)
+            for before in ("active", "paused", "completed")
+            for after in ("active", "paused", "completed")
+            if before != after
+        ],
+    )
+    def test_ordinary_update_refuses_lifecycle_changes(
+        self, auth_client, user, method, before, after
+    ):
+        exp = _make_experiment(user, status=before, description="original")
+        payload = {
+            "name": exp.name,
+            "source_model": exp.source_model,
+            "shadow_model": exp.shadow_model,
+            "shadow_provider": exp.shadow_provider,
+            "description": "must not save either",
+            "status": after,
+        }
+        with patch("agentcc.services.config_push.push_org_config") as push:
+            response = getattr(auth_client, method)(
+                f"/agentcc/shadow-experiments/{exp.id}/", payload, format="json"
+            )
+
+        assert response.status_code == 501, response.json()
+        assert response.json()["code"] == "shadow_experiments_not_active"
+        exp.refresh_from_db()
+        assert exp.status == before
+        assert exp.description == "original"
+        push.assert_not_called()
+
+    @pytest.mark.parametrize("method", ["put", "patch"])
+    @pytest.mark.parametrize("stored_status", ["active", "paused", "completed"])
+    @pytest.mark.parametrize("include_status", [False, True])
+    def test_metadata_update_can_omit_or_preserve_status(
+        self, auth_client, user, method, stored_status, include_status
+    ):
+        exp = _make_experiment(user, status=stored_status)
+        payload = {
+            "name": exp.name,
+            "source_model": exp.source_model,
+            "shadow_model": exp.shadow_model,
+            "shadow_provider": exp.shadow_provider,
+            "description": "metadata edit",
+        }
+        if include_status:
+            payload["status"] = stored_status
+        response = getattr(auth_client, method)(
+            f"/agentcc/shadow-experiments/{exp.id}/", payload, format="json"
+        )
+
+        assert response.status_code == 200, response.json()
+        exp.refresh_from_db()
+        assert exp.description == "metadata edit"
+        assert exp.status == stored_status
 
     def test_destroy_soft_deletes_experiment_and_results(self, auth_client, user):
         exp = _make_experiment(user, name="to-delete")
@@ -127,59 +188,32 @@ class TestShadowExperimentCRUD:
 @pytest.mark.integration
 @pytest.mark.api
 class TestShadowExperimentLifecycle:
-    @patch(
-        "agentcc.views.shadow_experiments.AgentccShadowExperimentViewSet._push_org_config",
-        return_value=True,
+    """docs-agentcc-711, item 3: pause, resume and complete answer 501, leave
+    the stored experiment as it was and push nothing (they used to answer
+    gateway_synced for a push that carried nothing about the experiment)."""
+
+    @pytest.mark.parametrize(
+        "action, status",
+        [
+            ("pause", AgentccShadowExperiment.STATUS_ACTIVE),
+            ("resume", AgentccShadowExperiment.STATUS_PAUSED),
+            ("complete", AgentccShadowExperiment.STATUS_ACTIVE),
+        ],
     )
-    def test_pause_transitions_active_to_paused(self, mock_push, auth_client, user):
-        exp = _make_experiment(user, status=AgentccShadowExperiment.STATUS_ACTIVE)
-        response = auth_client.patch(f"/agentcc/shadow-experiments/{exp.id}/pause/")
-        assert response.status_code == 200, response.json()
+    @patch("agentcc.services.config_push.push_org_config", return_value=True)
+    def test_lifecycle_action_answers_501_and_changes_nothing(
+        self, mock_push, auth_client, user, action, status
+    ):
+        exp = _make_experiment(user, status=status)
+        response = auth_client.patch(f"/agentcc/shadow-experiments/{exp.id}/{action}/")
+        assert response.status_code == 501, response.json()
+        body = response.json()
+        assert body["code"] == "shadow_experiments_not_active"
+        assert "gateway_synced" not in json.dumps(body)
+        assert "restart" not in json.dumps(body)
         exp.refresh_from_db()
-        assert exp.status == AgentccShadowExperiment.STATUS_PAUSED
-        mock_push.assert_called_once()
-
-    def test_pause_rejects_non_active(self, auth_client, user):
-        exp = _make_experiment(user, status=AgentccShadowExperiment.STATUS_PAUSED)
-        response = auth_client.patch(f"/agentcc/shadow-experiments/{exp.id}/pause/")
-        assert response.status_code == 400
-        assert "active" in response.json()["message"].lower()
-
-    @patch(
-        "agentcc.views.shadow_experiments.AgentccShadowExperimentViewSet._push_org_config",
-        return_value=True,
-    )
-    def test_resume_transitions_paused_to_active(self, mock_push, auth_client, user):
-        exp = _make_experiment(user, status=AgentccShadowExperiment.STATUS_PAUSED)
-        response = auth_client.patch(f"/agentcc/shadow-experiments/{exp.id}/resume/")
-        assert response.status_code == 200, response.json()
-        exp.refresh_from_db()
-        assert exp.status == AgentccShadowExperiment.STATUS_ACTIVE
-
-    def test_resume_rejects_non_paused(self, auth_client, user):
-        exp = _make_experiment(user, status=AgentccShadowExperiment.STATUS_ACTIVE)
-        response = auth_client.patch(f"/agentcc/shadow-experiments/{exp.id}/resume/")
-        assert response.status_code == 400
-
-    @patch(
-        "agentcc.views.shadow_experiments.AgentccShadowExperimentViewSet._push_org_config",
-        return_value=True,
-    )
-    def test_complete_terminates_experiment(self, mock_push, auth_client, user):
-        exp = _make_experiment(user, status=AgentccShadowExperiment.STATUS_ACTIVE)
-        response = auth_client.patch(
-            f"/agentcc/shadow-experiments/{exp.id}/complete/"
-        )
-        assert response.status_code == 200, response.json()
-        exp.refresh_from_db()
-        assert exp.status == AgentccShadowExperiment.STATUS_COMPLETED
-
-    def test_complete_rejects_already_completed(self, auth_client, user):
-        exp = _make_experiment(user, status=AgentccShadowExperiment.STATUS_COMPLETED)
-        response = auth_client.patch(
-            f"/agentcc/shadow-experiments/{exp.id}/complete/"
-        )
-        assert response.status_code == 400
+        assert exp.status == status
+        mock_push.assert_not_called()
 
 
 @pytest.mark.integration
@@ -235,11 +269,7 @@ class TestShadowResultReadOnly:
         # DRF pagination wraps results under "results"; the unpaginated
         # branch wraps under _gm.success_response's "result" key. Accept
         # both shapes.
-        rows = (
-            body.get("result")
-            if "result" in body
-            else body.get("results", [])
-        )
+        rows = body.get("result") if "result" in body else body.get("results", [])
         assert isinstance(rows, list)
         assert len(rows) >= 1
 

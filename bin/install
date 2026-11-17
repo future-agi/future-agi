@@ -38,7 +38,9 @@
 #                                      # https://docs.futureagi.com/docs/self-hosting/configuration/telemetry)
 #
 # Idempotent: a fresh install gets generated secrets in .env; re-running
-# never changes an existing value and merges any new vars from .env.example.
+# preserves operator-set API peppers and merges new vars from .env.example.
+# On upgrades, an empty or published-default API pepper is rotated with the
+# default retired so existing API keys still verify (bin/lib/secrets.sh).
 # --distributed is recorded in .env (COMPOSE_FILE), so later runs and a plain
 # `docker compose` stay on the distributed stack. An existing install keeps its
 # stack: moving one between standalone and distributed is refused, because its data
@@ -227,6 +229,10 @@ ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$ROOT/bin/lib/summary.sh"
 # shellcheck source=lib/build-local.sh
 . "$ROOT/bin/lib/build-local.sh"
+# shellcheck source=lib/sandbox-host.sh
+. "$ROOT/bin/lib/sandbox-host.sh"
+# shellcheck source=lib/startup.sh
+. "$ROOT/bin/lib/startup.sh"
 LOG_FILE="$ROOT/install-$(date +%Y%m%d-%H%M%S).log"
 exec 3>>"$LOG_FILE"
 printf "# Future AGI install log — %s\n# host: %s, uname: %s\n\n" \
@@ -357,8 +363,8 @@ else
 fi
 
 # ---------------- telemetry and unsafe settings ----------------
-# Written before anything starts, so the first account's registration is
-# already the minimal opt-out one.
+# Written before anything starts, so deployment telemetry sends nothing,
+# including when the first account is created.
 if (( NO_TELEMETRY == 1 )); then
   set_env_var FUTURE_AGI_TELEMETRY_DISABLED true
   ok "FUTURE_AGI_TELEMETRY_DISABLED=true written to .env: telemetry is off"
@@ -374,6 +380,16 @@ telemetry_is_off() {
   [[ "$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]')" =~ ^(1|true|yes|on)$ ]]
 }
 
+# Admin emails join the registration only on this opt-in (off by default).
+# Trimmed first, as the app reads it (config.telemetry_shares_admin_emails).
+telemetry_shares_admin_emails() {
+  local value
+  value=$(compose_env_value FUTURE_AGI_TELEMETRY_SHARE_ADMIN_EMAILS)
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  [[ "$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]')" =~ ^(1|true|yes|on)$ ]]
+}
+
 # What deployment telemetry sends, before any account (and so any admin
 # email) exists. Worded as the telemetry page,
 # https://docs.futureagi.com/docs/self-hosting/configuration/telemetry.
@@ -385,14 +401,25 @@ telemetry_notice() {
   hours=$(env_value FUTURE_AGI_TELEMETRY_INTERVAL_HOURS 6)
   step "Telemetry"
   if telemetry_is_off; then
-    ok "Off (FUTURE_AGI_TELEMETRY_DISABLED=true). One minimal registration still goes to ${host}: instance id, version, deployment type, timestamp."
+    ok "Off (FUTURE_AGI_TELEMETRY_DISABLED=true). Deployment telemetry sends nothing to Future AGI."
   else
-    say "  When the first account is created, this install registers with ${host}:"
-    say "  instance id, version, deployment type, and the emails and domains of owners,"
-    say "  admins and staff/superuser accounts. Then it"
-    say "  sends usage counts every ${hours} h; never traces, prompts or other content."
-    say "  Opt out: --no-telemetry, or FUTURE_AGI_TELEMETRY_DISABLED=true in .env. One minimal"
-    say "  registration remains: instance id, version, deployment type, timestamp."
+    say "  Deployment telemetry is on so Future AGI can count installs and plan release testing."
+    say "  When the first owner/admin account exists, this install registers with ${host}:"
+    if telemetry_shares_admin_emails; then
+      say "  instance id, version and deployment type, plus the emails and domains of owners,"
+      say "  admins and staff/superuser accounts (FUTURE_AGI_TELEMETRY_SHARE_ADMIN_EMAILS=true)."
+      say "  Fields: schema_version, instance_id, version, deployment_type, timestamp,"
+      say "  telemetry_disabled=false, users[] (email, domain)."
+    else
+      say "  instance id, version and deployment type. It sends no email addresses unless"
+      say "  FUTURE_AGI_TELEMETRY_SHARE_ADMIN_EMAILS=true is set in .env."
+      say "  Fields: schema_version, instance_id, version, deployment_type, timestamp,"
+      say "  telemetry_disabled=false."
+    fi
+    say "  Then it sends usage counts every ${hours} h and content-free journey events;"
+    say "  never traces, prompts or other content."
+    say "  Opt out: --no-telemetry, or FUTURE_AGI_TELEMETRY_DISABLED=true in .env."
+    say "  Opting out sends no deployment telemetry to Future AGI, including registration."
   fi
   say "  ${DIM}Details: https://docs.futureagi.com/docs/self-hosting/configuration/telemetry${RESET}"
 }
@@ -715,18 +742,6 @@ FRESH_INSTALL=1
 if (( ${#STALE_VOLS[@]} > 0 && WIPE_VOLS == 0 )); then FRESH_INSTALL=0; fi
 write_secrets "$FRESH_INSTALL" "$DISTRIBUTED" "$project_name"
 
-# ---------------- sandbox profile ----------------
-# With COMPOSE_PROFILES=sandbox the app sends code evals to the nsjail
-# executor. It reads the setting from .env inside the container, so a value
-# given only in the shell starts the executor but leaves evals in the app.
-if (( DISTRIBUTED == 0 )); then
-  shell_profiles=",${COMPOSE_PROFILES:-},"
-  env_profiles=",$(env_value COMPOSE_PROFILES ""),"
-  if [[ "${shell_profiles// /}" == *,sandbox,* && "${env_profiles// /}" != *,sandbox,* ]]; then
-    warn "COMPOSE_PROFILES=sandbox is set in your shell but not in .env. Add it to .env: the app reads it there to send code evals to the nsjail executor."
-  fi
-fi
-
 # ---------------- port preflight ----------------
 # Runs before the --no-up exit so port overrides land in .env even when
 # you're only bootstrapping.
@@ -828,6 +843,24 @@ if (( vm_probe_ran == 1 )); then
   fi
 fi
 
+# A profile CODE_EXECUTOR_APPARMOR_PROFILE names that this host has not loaded
+# stops Docker from starting the code executor, and the install with it.
+sandbox_unloaded="$(sandbox_unloaded_profile)"
+if [[ -n "$sandbox_unloaded" ]]; then
+  preflight_fail "CODE_EXECUTOR_APPARMOR_PROFILE names the AppArmor profile ${sandbox_unloaded}, which this host has not loaded, so Docker cannot start the code executor. Load the profile on the Docker host first, or remove the setting; see INSTALLATION.md › Code evals and the sandbox"
+fi
+
+# The code-evaluation sandbox needs Linux user namespaces inside its container.
+# Say so before installing on a host that blocks them; everything else works.
+sandbox_conditions="$(sandbox_host_conditions)"
+if [[ -n "$sandbox_conditions" ]]; then
+  warn "Code evaluations will not run on this host as configured: the code-evaluation sandbox cannot isolate a run here, so each code evaluation will fail with \"The code sandbox could not start a run on this host\"."
+  while IFS= read -r sandbox_condition; do
+    if [[ -n "$sandbox_condition" ]]; then warn "  - ${sandbox_condition}"; fi
+  done <<<"$sandbox_conditions"
+  warn "  The install continues and everything else works. See INSTALLATION.md › Code evals and the sandbox."
+fi
+
 # Every preflight check passed, so --distributed can be recorded now.
 record_mode
 
@@ -835,8 +868,8 @@ record_mode
 # Done up-front so the rest of the install can run unattended. Captured
 # values are used after the backend reports healthy. Press Enter on the
 # email prompt to skip; --skip-user-creation / CI=1 skip without asking.
-# The telemetry notice comes first: the first account's email is part of
-# the registration.
+# The telemetry notice runs before the first owner/admin account is created.
+# Admin email/domain sharing is off unless FUTURE_AGI_TELEMETRY_SHARE_ADMIN_EMAILS opts in.
 telemetry_notice
 
 readonly ACCOUNT_SKIPPED="skipped"
@@ -927,6 +960,11 @@ if (( FROM_SOURCE == 1 )); then
   else
     build_local_images standalone
   fi
+  # Code evaluations run in this sandbox; Compose would otherwise pull the
+  # published code-executor:latest, which may not start under this checkout's
+  # non-root, read-only settings.
+  build_local_code_executor
+  set_env_var CODE_EXECUTOR_VERSION local
   set_env_var FUTURE_AGI_VERSION local
   if (( DISTRIBUTED == 1 )); then
     # The distributed stack tags these images separately.
@@ -934,7 +972,7 @@ if (( FROM_SOURCE == 1 )); then
     set_env_var AGENTCC_GATEWAY_VERSION local
     set_env_var FI_COLLECTOR_VERSION local
   fi
-  ok "FUTURE_AGI_VERSION=local written to .env"
+  ok "FUTURE_AGI_VERSION=local and CODE_EXECUTOR_VERSION=local written to .env"
 fi
 
 # ---------------- pull images ----------------
@@ -1005,10 +1043,12 @@ while IFS=$'\t' read -r service image; do
   fi
   if [[ "$image" != *:local ]]; then
     pull_services+=("$service")
-  elif [[ "$image" != futureagi/fi-collector:local ]] && ! docker image inspect "$image" >/dev/null 2>&1; then
-    # fi-collector:local has a build: section in the distributed stack; anything
-    # else tagged `local` exists only after --from-source.
-    preflight_fail "$image is not built yet. Re-run with --from-source to build it from this checkout, or set its tag in .env (FUTURE_AGI_VERSION) back to a published release"
+  elif [[ "$image" != futureagi/fi-collector:local && "$image" != futureagi/omega-hub-checker:local && \
+          "$image" != futureagi/omega-hub-runner-host:local ]] && ! docker image inspect "$image" >/dev/null 2>&1; then
+    # fi-collector:local (distributed) and the Omega Hub checker and its runner
+    # daemon (both stacks) have a build: section; compose builds them from this
+    # checkout. Anything else tagged `local` exists only after --from-source.
+    preflight_fail "$image is not built yet. Re-run with --from-source to build it from this checkout, or set its tag in .env (FUTURE_AGI_VERSION, or CODE_EXECUTOR_VERSION for the code executor) back to a published release"
   fi
 done <<<"$SERVICE_IMAGES"
 
@@ -1047,10 +1087,25 @@ if [[ -n "$app_image" && -n "$VM_ARCH" ]]; then
   fi
 fi
 
+# An integer setting from .env (DEFAULT when unset) within [MIN,MAX]; anything
+# else stops the install, naming the setting. The result is in BOUNDED_ENV_INT.
+bounded_env_int() {
+  local var="$1" default="$2" min="$3" max="$4" value
+  value=$(env_value "$var" "$default")
+  if [[ ! "$value" =~ ^[0-9]+$ ]] || (( value < min || value > max )); then
+    die "$var must be an integer in [$min,$max] (got '$value')"
+  fi
+  BOUNDED_ENV_INT="$value"
+}
+
 # ---------------- bring up ----------------
 step "Starting the stack"
 
 if (( DISTRIBUTED == 1 )); then
+  # How long the schema migrations (postgres-schema-bootstrap) may run: an
+  # upgrade of a large database applies them for longer than any fixed wait.
+  bounded_env_int INSTALL_MIGRATION_TIMEOUT_SECONDS 14400 600 86400
+  migration_timeout="$BOUNDED_ENV_INT"
   # --build forces a rebuild of any service with `build:` set, so a stale
   # image tag from a previous worktree (or an outdated layer) doesn't carry
   # old source into a new install. Docker's layer cache makes this fast
@@ -1070,7 +1125,10 @@ if (( DISTRIBUTED == 1 )); then
   # One attempt, as in bin/e2e: replaying compose up can rerun an exited schema
   # or mirror job after an uncertain write. Inspect retained state before resuming.
   # Preserve services omitted by an upgrade; legacy retirement is an explicit step.
-  if ! $DC up -d "$build_flag" --wait --wait-timeout 1200; then
+  # That one `up` runs in the background while bin/lib/startup.sh reports the
+  # schema migrations' progress: they may run INSTALL_MIGRATION_TIMEOUT_SECONDS,
+  # and the rest of the stack then has 1200 s to report running/healthy.
+  if ! start_distributed_stack "$build_flag" "$migration_timeout" 1200; then
     die "docker compose startup failed or timed out; partial state retained, no automatic retry. Inspect 'docker compose ps -a' and 'docker compose logs' before explicitly resuming."
   fi
 else
@@ -1091,21 +1149,37 @@ if (( DISTRIBUTED == 1 )) && project_has_service rabbitmq; then
   warn "  Its data volume stays until you delete it: docker volume rm ${project_name}_rabbitmq-data"
 fi
 
+# Profile removal does not retire containers from a previous default-on install.
+# Report only: never remove an operator's checker or privileged runner silently.
+warn_disabled_hub_containers() {
+  (( DISTRIBUTED == 1 )) || return 0
+  local profiles profile
+  # An explicitly empty shell variable overrides .env in Compose too.
+  if [[ ${COMPOSE_PROFILES+x} ]]; then
+    profiles="$COMPOSE_PROFILES"
+  else
+    profiles=$(compose_env_value COMPOSE_PROFILES "")
+  fi
+  # No word splitting/globbing, and no empty arrays under Bash 3 nounset.
+  while IFS= read -r profile; do
+    profile="${profile#"${profile%%[![:space:]]*}"}"
+    profile="${profile%"${profile##*[![:space:]]}"}"
+    if [[ "$profile" == hub || "$profile" == '*' ]]; then return 0; fi
+  done <<< "${profiles//,/$'\n'}"
+  if project_has_service hub-runner || project_has_service hub-checker; then
+    warn "The hub profile is off, but this project's Hub containers still exist. Turning the profile off does not stop them."
+    warn "  Production intentionally keeps its external-runner checker; leave that checker running."
+    warn "  If you intended to disable Hub, stop and remove its containers explicitly: $DC -f docker-compose.distributed.yml -p $(printf '%q' "$project_name") --profile hub rm -sf hub-runner hub-checker"
+  fi
+}
+warn_disabled_hub_containers
+
 # ---------------- readiness wait ----------------
 if (( DISTRIBUTED == 1 )); then
   step "Waiting for the application and property catalog to become ready"
 else
   step "Waiting for the application to become ready"
 fi
-
-bounded_env_int() {
-  local var="$1" default="$2" min="$3" max="$4" value
-  value=$(env_value "$var" "$default")
-  if [[ ! "$value" =~ ^[0-9]+$ ]] || (( value < min || value > max )); then
-    die "$var must be an integer in [$min,$max] (got '$value')"
-  fi
-  BOUNDED_ENV_INT="$value"
-}
 
 compose_service_snapshot() {
   local service="$1" container_id snapshot
@@ -1294,6 +1368,56 @@ while true; do
   fi
   sleep 5
 done
+
+# ---------------- harness versions backfill ----------------
+# Once, now that the stack is up: give existing environments their harness
+# versions. It runs as the one-shot operator command, like the bootstrap
+# (SERVICE_TYPE=bootstrap, STARTUP_DB_MUTATION_MODE=operator). Only the state
+# and counts of its last result line are printed. A failure warns and the
+# install goes on: the stack stays up, and the command can be run again.
+step "Backfilling harness versions"
+backfill_rerun="$DC exec -T -e SERVICE_TYPE=bootstrap -e STARTUP_DB_MUTATION_MODE=operator $APP_SVC python manage.py harness_versions_backfill --auto"
+backfill_out=""
+backfill_line=""
+backfill_state=""
+backfill_counts=""
+backfill_processed=""
+# As for create_user below: no errexit or ERR trap while it runs. Its stdin
+# is /dev/null, so it never reads input meant for the installer.
+set +eE
+trap - ERR
+if backfill_out=$($DC exec -T -e SERVICE_TYPE=bootstrap -e STARTUP_DB_MUTATION_MODE=operator \
+                    "$APP_SVC" python manage.py harness_versions_backfill --auto </dev/null 2>/dev/null); then
+  backfill_rc=0
+else
+  backfill_rc=$?
+fi
+backfill_line=$(printf '%s\n' "$backfill_out" | grep -a '^Harness versions backfill: state=' | tail -1)
+trap 'on_err $LINENO' ERR
+set -eE
+backfill_re='state=([a-z_]+)'
+if [[ "$backfill_line" =~ $backfill_re ]]; then
+  backfill_state="${BASH_REMATCH[1]}"
+fi
+for backfill_key in total processed succeeded failed skipped busy_organizations; do
+  backfill_re="[[:space:]]${backfill_key}=([0-9]+)[[:space:]]"
+  if [[ " $backfill_line " =~ $backfill_re ]]; then
+    backfill_counts+=" ${backfill_key}=${BASH_REMATCH[1]}"
+    if [[ "$backfill_key" == processed ]]; then backfill_processed="${BASH_REMATCH[1]}"; fi
+  fi
+done
+case "${backfill_rc}:${backfill_state}" in
+  0:complete) ok "Harness versions backfilled (${backfill_processed:-0} environments)" ;;
+  0:off) say "  Harness versioning is off (HARNESS_VERSIONING_ENABLED=false); no backfill" ;;
+  0:already_running) say "  A backfill is already running; check versioning status for progress." ;;
+  0:) warn "The harness versions backfill printed no result. Run it again with: $backfill_rerun" ;;
+  0:*) warn "The harness versions backfill ended with state=${backfill_state}${backfill_counts}. Run it again with: $backfill_rerun" ;;
+  *)
+    warn "Harness versions backfill failed (exit ${backfill_rc}${backfill_state:+, state=${backfill_state}${backfill_counts}}). The stack is up; the install goes on."
+    warn "  It is a one-shot command in the $APP_SVC service, run once after startup. Service log: $DC logs $APP_SVC"
+    warn "  Run it again with: $backfill_rerun"
+    ;;
+esac
 
 # ---------------- create captured user ----------------
 if [[ -n "$USER_EMAIL" ]]; then

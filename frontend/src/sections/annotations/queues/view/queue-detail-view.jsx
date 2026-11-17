@@ -11,6 +11,7 @@ import {
   Dialog,
   DialogActions,
   DialogContent,
+  DialogContentText,
   DialogTitle,
   FormControlLabel,
   IconButton,
@@ -41,9 +42,13 @@ import {
 import StatusBadge from "../components/status-badge";
 import QueueItemsTable from "../items/queue-items-table";
 import QueueItemsEmpty from "../items/queue-items-empty";
+import QueueItemsDenied from "../items/queue-items-denied";
+import { viewDenialOf } from "src/sections/common/Access/accessModel";
 import AddItemsDialog from "../items/add-items-dialog";
+import AddPairDialog from "../items/add-pair-dialog";
 import QueueSettingsTab from "./queue-settings-tab";
 import QueueAnalyticsTab from "./queue-analytics-tab";
+import PairwiseResultsSummary from "./pairwise-results-summary";
 import QueueAgreementTab from "./queue-agreement-tab";
 import ExportToDatasetDialog from "./export-to-dataset-dialog";
 import AutomationRulesTab from "./automation-rules-tab";
@@ -70,6 +75,19 @@ const REVIEW_STATUS_OPTIONS = [
   { value: "rejected", label: "Rejected" },
 ];
 
+// Opening an item in a draft or paused queue: say what state the queue is in
+// and point at the control this viewer actually has.
+function inactiveQueueMessage(status, canActivate) {
+  const state =
+    {
+      draft: "This queue is a draft.",
+      paused: "This queue is paused.",
+    }[status] || "This queue isn't active.";
+  return canActivate
+    ? `${state} Select Activate at the top of the page to start annotating.`
+    : `${state} Ask a queue manager to activate it.`;
+}
+
 export default function QueueDetailView() {
   const { queueId } = useParams();
   const navigate = useNavigate();
@@ -87,6 +105,8 @@ export default function QueueDetailView() {
   const [exportMenuAnchor, setExportMenuAnchor] = useState(null);
   const [bulkAssignOpen, setBulkAssignOpen] = useState(false);
   const [bulkAssignUserIds, setBulkAssignUserIds] = useState(new Set());
+  const [bulkRemoveOpen, setBulkRemoveOpen] = useState(false);
+  const [bulkRemoveIds, setBulkRemoveIds] = useState([]);
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [itemOrdering, setItemOrdering] = useState("-created_at");
   const gridRef = useRef(null);
@@ -98,6 +118,7 @@ export default function QueueDetailView() {
   );
   const {
     data: itemsData,
+    error: itemsError,
     isLoading,
     fetchNextPage,
     hasNextPage,
@@ -140,8 +161,13 @@ export default function QueueDetailView() {
   }, [queue, user, currentUserId]);
 
   const isManager = hasQueueRole(myQueueMembership, QUEUE_ROLES.MANAGER);
+  const canActivateQueue =
+    isManager && Boolean(queue?.status) && queue.status !== "active";
   const canAnnotateQueue =
-    hasQueueRole(myQueueMembership, QUEUE_ROLES.ANNOTATOR) || isManager;
+    hasQueueRole(myQueueMembership, QUEUE_ROLES.ANNOTATOR) ||
+    isManager ||
+    (queue?.mode === "pairwise" &&
+      hasQueueRole(myQueueMembership, QUEUE_ROLES.REVIEWER));
   const canViewSubmissions =
     hasQueueRole(myQueueMembership, QUEUE_ROLES.REVIEWER) || isManager;
 
@@ -236,13 +262,31 @@ export default function QueueDetailView() {
     setSelectedIds(new Set());
   }, []);
 
-  const handleBulkRemove = useCallback(() => {
+  const handleOpenBulkRemove = useCallback(() => {
     if (selectedIds.size === 0 || isBulkRemoving) return;
+    setBulkRemoveIds(Array.from(selectedIds));
+    setBulkRemoveOpen(true);
+  }, [selectedIds, isBulkRemoving]);
+
+  const handleBulkRemove = useCallback(() => {
+    if (bulkRemoveIds.length === 0 || isBulkRemoving) return;
     bulkRemove(
-      { queueId, itemIds: Array.from(selectedIds) },
-      { onSuccess: clearSelectedItems },
+      { queueId, itemIds: bulkRemoveIds },
+      {
+        onSuccess: () => {
+          setBulkRemoveOpen(false);
+          clearSelectedItems();
+        },
+      },
     );
-  }, [queueId, selectedIds, bulkRemove, clearSelectedItems, isBulkRemoving]);
+  }, [queueId, bulkRemoveIds, bulkRemove, clearSelectedItems, isBulkRemoving]);
+
+  const bulkRemoveLabel = `${bulkRemoveIds.length} item${
+    bulkRemoveIds.length === 1 ? "" : "s"
+  }`;
+  const bulkRemoveCost = `${
+    bulkRemoveIds.length === 1 ? "Its" : "Their"
+  } annotations, notes and review comments are deleted too. This can't be undone.`;
 
   const handleBulkApprove = useCallback(() => {
     if (selectedReviewableItems.length === 0 || isBulkReviewing) return;
@@ -388,7 +432,7 @@ export default function QueueDetailView() {
         </Typography>
         {queue?.status && <StatusBadge status={queue.status} />}
         <Box sx={{ flex: "1 1 auto", minWidth: 0 }} />
-        {isManager && queue?.status && queue.status !== "active" && (
+        {canActivateQueue && (
           <Button
             variant="outlined"
             disabled={isUpdatingStatus}
@@ -502,6 +546,12 @@ export default function QueueDetailView() {
               },
             }}
           />
+        </Box>
+      )}
+
+      {queue?.mode === "pairwise" && (
+        <Box sx={{ px: 3, pb: 2 }}>
+          <PairwiseResultsSummary queueId={queueId} />
         </Box>
       )}
 
@@ -678,7 +728,7 @@ export default function QueueDetailView() {
                       color="error"
                       variant="outlined"
                       size="medium"
-                      onClick={handleBulkRemove}
+                      onClick={handleOpenBulkRemove}
                       loading={isBulkRemoving}
                       disabled={isAssigningItems}
                     >
@@ -705,7 +755,7 @@ export default function QueueDetailView() {
                     startIcon={<Iconify icon="solar:add-linear" />}
                     onClick={() => setAddDialogOpen(true)}
                   >
-                    Add Items
+                    {queue?.mode === "pairwise" ? "Add pair" : "Add Items"}
                   </Button>
                 )}
               </Stack>
@@ -713,7 +763,10 @@ export default function QueueDetailView() {
           )}
 
           {/* Content */}
-          {isEmpty ? (
+          {/* W4 §9 (M6): a refused read says so instead of "No items". */}
+          {viewDenialOf(itemsError) ? (
+            <QueueItemsDenied error={itemsError} />
+          ) : isEmpty ? (
             <Box
               sx={{
                 display: "flex",
@@ -723,6 +776,7 @@ export default function QueueDetailView() {
               }}
             >
               <QueueItemsEmpty
+                isPairwise={queue?.mode === "pairwise"}
                 onAddClick={
                   isManager ? () => setAddDialogOpen(true) : undefined
                 }
@@ -767,7 +821,7 @@ export default function QueueDetailView() {
                   );
                 } else {
                   enqueueSnackbar(
-                    "You can only annotate when the queue is in active state. Manage status in settings tab",
+                    inactiveQueueMessage(queue?.status, canActivateQueue),
                     { variant: "info" },
                   );
                 }
@@ -786,12 +840,22 @@ export default function QueueDetailView() {
         </Box>
       )}
 
-      <AddItemsDialog
-        open={addDialogOpen}
-        onClose={() => setAddDialogOpen(false)}
-        queueId={queueId}
-        queue={queue}
-      />
+      {queue?.mode === "pairwise" ? (
+        addDialogOpen && (
+          <AddPairDialog
+            onClose={() => setAddDialogOpen(false)}
+            queueId={queueId}
+            queue={queue}
+          />
+        )
+      ) : (
+        <AddItemsDialog
+          open={addDialogOpen}
+          onClose={() => setAddDialogOpen(false)}
+          queueId={queueId}
+          queue={queue}
+        />
+      )}
 
       <ExportToDatasetDialog
         open={exportDialogOpen}
@@ -855,6 +919,37 @@ export default function QueueDetailView() {
             disabled={queueAnnotators.length === 0 || selectedIds.size === 0}
           >
             Assign
+          </LoadingButton>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog
+        open={bulkRemoveOpen}
+        onClose={() => {
+          if (!isBulkRemoving) setBulkRemoveOpen(false);
+        }}
+        maxWidth={false}
+        PaperProps={{ sx: { maxWidth: 560 } }}
+        fullWidth
+      >
+        <DialogTitle>Remove {bulkRemoveLabel} from this queue?</DialogTitle>
+        <DialogContent>
+          <DialogContentText>{bulkRemoveCost}</DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button
+            onClick={() => setBulkRemoveOpen(false)}
+            disabled={isBulkRemoving}
+          >
+            Cancel
+          </Button>
+          <LoadingButton
+            color="error"
+            variant="contained"
+            onClick={handleBulkRemove}
+            loading={isBulkRemoving}
+          >
+            Remove {bulkRemoveLabel}
           </LoadingButton>
         </DialogActions>
       </Dialog>

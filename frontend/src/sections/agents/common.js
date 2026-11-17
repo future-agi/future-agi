@@ -34,6 +34,11 @@ export const getAgentFormValues = (agentDetails) => {
     // apiEndpoint: snapshot.api_endpoint || "",
     authenticationMethod: snapshot.authentication_method || "",
     apiKey: agentDetails?.api_key ?? "",
+    // The Vapi public key is write-only: the form never holds the saved key,
+    // only whether one is saved.
+    vapiPublicKey: "",
+    removeVapiPublicKey: false,
+    hasVapiPublicKey: snapshot.has_vapi_public_key === true,
     observabilityEnabled: snapshot.observability_enabled ?? false,
     token: snapshot?.token || "",
     username: snapshot?.username || "",

@@ -187,16 +187,16 @@ const readRows = async (
   if (colId === 'user_id' && witness) {
     const apiIds = (await witness.latest).slice().sort();
     if (apiIds.length === 0) {
-      // UsersView hides the grid after a confirmed empty first page; the
-      // UsersEmptyScreen is the UI witness, not a viewport we can wheel-scroll.
-      await expect(page.getByText('Setup Telemetry', { exact: true }))
-        .toBeVisible({ timeout: UI_READY });
-      await expect(page.getByText("Configure your application to send user ID's to Future AGI", { exact: true }))
-        .toBeVisible({ timeout: UI_READY });
+      // An empty page only says the date range was quiet: the grid stays,
+      // with no rows to wheel-scroll, and its overlay names that range.
       await expect(page.locator('.clean-data-table:visible'))
-        .toHaveCount(0, { timeout: UI_READY });
+        .toHaveCount(1, { timeout: UI_READY });
+      await expect(page.getByRole('heading', { name: /^No users for / }))
+        .toBeVisible({ timeout: UI_READY });
+      await expect(page.getByText('Set up telemetry', { exact: true }))
+        .toHaveCount(0);
       const rendered = await gridRows(page, colId);
-      expect(rendered, 'confirmed empty Users UI must equal actual API page').toEqual(apiIds);
+      expect(rendered, 'range-empty Users grid must equal actual API page').toEqual(apiIds);
       witness.walks.push({
         dateOption: urlDateFilter(page, 'userDateFilter')?.dateOption,
         apiIds, renderedIds: rendered, frames: [],
@@ -855,12 +855,12 @@ scopeTest('OBS-E2E-048: the workspace Users list opens a preset date fresh from 
             'for each preset and Custom, open a /dashboard/users link carrying that option with a range from ~400 days ago',
             'save one workspace Users view per preset and Custom, all storing that range',
             'open /dashboard/users and click each saved view tab in turn',
-            'wheel-scroll each nonempty complete Users API page, including a target beyond the first virtualized viewport; verify the confirmed empty Users screen for Custom'],
+            'wheel-scroll each nonempty complete Users API page, including a target beyond the first virtualized viewport; for Custom, verify the grid stays and names the empty range instead of the setup screen'],
     backendChecks: ['both traces have all their spans in ClickHouse spans (FINAL)',
                     'each preset link and view sends every user-list request with the preset window as of now, never the stored one, and the URL date param is rewritten to it',
                     'Today lists only the today user, Yesterday only the yesterday user, and 7D–12M exactly both, among this flow\'s users',
                     'Custom links and views send and keep their stored range verbatim and list neither user',
-                    'the complete wheel-scrolled rendered user-ID set equals the actual API page; a rolling view reveals the initially offscreen target; an empty API page shows the confirmed empty Users screen with no visible grid or user rows',
+                    'the complete wheel-scrolled rendered user-ID set equals the actual API page; a rolling view reveals the initially offscreen target; an empty API page keeps the grid visible with no user rows and a no-users message naming the date range, never the setup screen',
                     'opening the views writes nothing back: every tracer_saved_view row in PG still holds its stored range'],
   }),
 }, async ({ browser, scopeActors, scopeProbe: probe }, testInfo) => {

@@ -1,0 +1,41 @@
+Flat Color Icons
+Author: Icons8 (flat-color-icons@1.1.0 package.json)
+Source: @iconify/json@2.2.548/json/flat-color-icons.json
+Licence: MIT (MIT option of upstream MIT OR Good-Boy)
+Text source: https://raw.githubusercontent.com/icons8/flat-Color-icons/8eccbbbd8b2af1d2c9593e7cfba5ecb0d68ee378/LICENSE.md
+The upstream licence supplies no dated copyright line. No year or copyright notice has been invented. The complete upstream dual-licence notice is preserved below; this distribution selects MIT, not Good-Boy.
+
+#Good Boy License
+We’ve released the icon pack under either MIT or the [Good Boy License](https://icons8.com/good-boy-license/). We invented it. Please do _whatever your mom would approve of:_
+
+##Permitted Use
+
+* Download in any format
+* Change
+* Fork
+
+##Prohibited Use
+
+* No tattoos
+* No touching with unwashed hands
+* No exchanging for drugs.
+
+MIT License (selected option; standard permission terms)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.

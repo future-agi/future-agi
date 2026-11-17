@@ -1,0 +1,51 @@
+# Fixture for the L3 conformance harness tests, not catalog data. A K4
+# provider: a local stdio package that takes its token from the environment.
+schema: "connector-manifest/v1#provider"
+app: acme
+id: local
+version: 1.0.0
+kind: vendor_local
+publisher: vendor
+vendorStatus: { label: ga, source: https://acme.example/docs/mcp }
+transport:
+  kind: stdio
+  command: acme-mcp
+  args: ["--stdio"]
+  env:
+    ACME_TOKEN: An Acme API token for the account the server acts as.
+hosted: false
+trusted: false
+accountModes: [agent]
+auth: { kind: local_setup }
+tools:
+  source: upstream_mcp
+  defaultPosture: auto
+  items:
+    - name: list_notes
+      title: List notes
+      description: "List the notes in the workspace, newest first."
+      annotations:
+        readOnlyHint: true
+        destructiveHint: false
+        idempotentHint: true
+        openWorldHint: false
+      inputSchema: { type: object, properties: {} }
+    - name: delete_note
+      title: Delete a note
+      description: "Delete one note by its id, such as n-42."
+      annotations:
+        readOnlyHint: false
+        destructiveHint: true
+        idempotentHint: true
+        openWorldHint: false
+      posture: deny
+      inputSchema:
+        type: object
+        properties:
+          note_id: { type: string }
+        required: [note_id]
+pricing: { model: free }
+quality: { tier: listed }
+lifecycle: { status: active }
+sources: []
+x-omega: { ee: exclude, ossId: acme-local }

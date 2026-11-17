@@ -47,10 +47,32 @@ class ExploreTraceTool(BaseTool):
     category = "tracing"
     input_model = ExploreTraceInput
 
+    def run(self, raw_params, context):
+        if getattr(context, "background_analysis", None) is not None:
+            from ee.agenthub.traceerroragent.background_payload_tools import (
+                run_background_tool,
+            )
+
+            return run_background_tool(self, raw_params, context)
+        return super().run(raw_params, context)
+
     def execute(self, params: ExploreTraceInput, context: ToolContext) -> ToolResult:
         from tracer.models.trace import Trace
         from tracer.services.clickhouse.v2 import get_reader
 
+        guard = getattr(context, "background_analysis", None)
+        if guard is not None:
+            from ee.agenthub.traceerroragent.background_payload_tools import (
+                require_tool_parameters,
+            )
+
+            require_tool_parameters(params, guard, "explore_trace_legacy")
+
+        def checkpoint():
+            if guard is not None:
+                guard.check()
+
+        checkpoint()
         # Verify trace access (Trace stays in PG; project__organization is the
         # tenant scope check)
         try:
@@ -59,12 +81,31 @@ class ExploreTraceTool(BaseTool):
                 project__organization=context.organization,
             )
         except Trace.DoesNotExist:
+            if guard is not None:
+                from ee.agenthub.traceerroragent.background_tools import (
+                    reject_chauffeur,
+                )
+
+                reject_chauffeur(guard)
             return ToolResult.not_found("Trace", str(params.trace_id))
 
         # Load all spans from CH 25.3 — was ObservationSpan.objects.filter(
         # trace=, deleted=False).order_by("start_time", "created_at").
+        checkpoint()
         with get_reader() as reader:
-            spans = reader.list_by_trace(str(trace.id))
+            checkpoint()
+            spans = reader.list_by_trace(
+                str(trace.id), project_id=str(trace.project_id)
+            )
+        checkpoint()
+
+        if guard is not None:
+            from ee.agenthub.traceerroragent.background_tool_validation import (
+                validate_chauffeur_report,
+                validate_trace_spans,
+            )
+
+            validate_trace_spans(spans, guard)
 
         if not spans:
             return ToolResult(
@@ -102,7 +143,13 @@ class ExploreTraceTool(BaseTool):
                 if parent_node:
                     parent_node["children"].append({"span": s, "children": []})
                 elif pid_str not in tree:
-                    # Orphan — add as root
+                    if guard is not None:
+                        from ee.agenthub.traceerroragent.background_tools import (
+                            reject_chauffeur,
+                        )
+
+                        reject_chauffeur(guard)
+                    # Orphan — add as root (foreground recovery only)
                     tree[str(s.id)] = {"span": s, "children": []}
 
         # Sort children by time
@@ -118,7 +165,13 @@ class ExploreTraceTool(BaseTool):
         )
 
         # Run Chauffeur (Haiku) for sub-flow identification
-        chauffeur_report = self._run_chauffeur(execution_summary)
+        checkpoint()
+        chauffeur_report = self._run_chauffeur(execution_summary, guard=guard)
+        checkpoint()
+        if guard is not None:
+            chauffeur_report = validate_chauffeur_report(
+                chauffeur_report, guard, span_ids=span_map
+            )
 
         # Build the output
         content = section("Trace Exploration", outline)
@@ -182,8 +235,10 @@ class ExploreTraceTool(BaseTool):
 
     def _sort_children(self, node):
         node["children"].sort(
-            key=lambda n: getattr(n["span"], "start_time", None)
-            or getattr(n["span"], "created_at", None)
+            key=lambda n: (
+                getattr(n["span"], "start_time", None)
+                or getattr(n["span"], "created_at", None)
+            )
         )
         for child in node["children"]:
             self._sort_children(child)
@@ -213,8 +268,10 @@ class ExploreTraceTool(BaseTool):
 
         roots = sorted(
             tree.values(),
-            key=lambda n: getattr(n["span"], "start_time", None)
-            or getattr(n["span"], "created_at", None),
+            key=lambda n: (
+                getattr(n["span"], "start_time", None)
+                or getattr(n["span"], "created_at", None)
+            ),
         )
         for i, root in enumerate(roots, start=1):
             walk(root, [i])
@@ -302,8 +359,10 @@ class ExploreTraceTool(BaseTool):
 
         roots = sorted(
             tree.values(),
-            key=lambda n: getattr(n["span"], "start_time", None)
-            or getattr(n["span"], "created_at", None),
+            key=lambda n: (
+                getattr(n["span"], "start_time", None)
+                or getattr(n["span"], "created_at", None)
+            ),
         )
         for i, root in enumerate(roots, start=1):
             walk(root, [i])
@@ -316,7 +375,7 @@ class ExploreTraceTool(BaseTool):
 
         return "\n".join(lines)
 
-    def _run_chauffeur(self, trace_execution_summary):
+    def _run_chauffeur(self, trace_execution_summary, *, guard=None):
         """Identify sub-flows in the trace using an LLM call.
 
         Uses litellm directly with the model configured.
@@ -364,17 +423,39 @@ class ExploreTraceTool(BaseTool):
 
         HAIKU_MODEL = os.environ.get("BEDROCK_HAIKU_ARN", "")
 
-        try:
-            response = litellm.completion(
-                model=HAIKU_MODEL,
-                messages=[
-                    {"role": "system", "content": CHAUFFEUR_PROMPT},
-                    {"role": "user", "content": trace_execution_summary},
-                ],
-                max_tokens=16000,
-                temperature=0.2,
+        from tracer.services.background_transport import (
+            analysis_transport_scope,
+            current_guard,
+        )
+
+        guard = guard or current_guard()
+        if guard is not None:
+            from ee.agenthub.traceerroragent.background_tools import (
+                chauffeur_content,
+                reject_chauffeur,
             )
-            raw = response.choices[0].message.content
+
+        try:
+            messages = [
+                {"role": "system", "content": CHAUFFEUR_PROMPT},
+                {"role": "user", "content": trace_execution_summary},
+            ]
+            if guard is not None:
+                from ee.agenthub.traceerroragent.background_tool_validation import (
+                    parse_chauffeur_report,
+                )
+
+                with analysis_transport_scope(guard):
+                    raw = chauffeur_content(messages, guard)
+                    return parse_chauffeur_report(raw, guard)
+            else:
+                response = litellm.completion(
+                    model=HAIKU_MODEL,
+                    messages=messages,
+                    max_tokens=16000,
+                    temperature=0.2,
+                )
+                raw = response.choices[0].message.content
 
             # Parse JSON from response — unwrap any ``` fence, else fall back
             # to grabbing the first {...} object.
@@ -395,6 +476,8 @@ class ExploreTraceTool(BaseTool):
                         pass
 
             if not parsed:
+                if guard is not None:
+                    reject_chauffeur(guard)
                 return {"sub_flows": [], "trace_overview": ""}
 
             # Normalize format
@@ -416,8 +499,12 @@ class ExploreTraceTool(BaseTool):
                     )
                 return {"sub_flows": sub_flows, "trace_overview": ""}
 
+            if guard is not None:
+                reject_chauffeur(guard)
             return {"sub_flows": [], "trace_overview": ""}
 
         except Exception as e:
+            if guard is not None:
+                reject_chauffeur(guard)
             logger.warning(f"Chauffeur analysis failed: {e}")
             return {"sub_flows": [], "trace_overview": ""}

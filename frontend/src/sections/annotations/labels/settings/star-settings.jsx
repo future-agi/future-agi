@@ -19,6 +19,9 @@ export default function StarSettings({ control }) {
           required: "Required",
           min: { value: 1, message: "Minimum 1 star" },
           max: { value: MAX_STARS, message: `Maximum ${MAX_STARS} stars` },
+          // Checked after min and max, so 0.5 still asks for at least 1 star.
+          validate: (value) =>
+            Number.isInteger(Number(value)) || "Enter a whole number of stars.",
         }}
         render={({ field, fieldState }) => (
           <TextField

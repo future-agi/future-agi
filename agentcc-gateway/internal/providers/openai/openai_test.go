@@ -377,15 +377,15 @@ func TestCreateSpeech_SemaphoreReleasedOnClose(t *testing.T) {
 
 	// Semaphore slot is held (not released via defer since speech streams).
 	// Verify by checking semaphore length.
-	if len(p.semaphore) != 1 {
-		t.Errorf("semaphore occupied = %d, want 1", len(p.semaphore))
+	if p.slots.InFlight() != 1 {
+		t.Errorf("semaphore occupied = %d, want 1", p.slots.InFlight())
 	}
 
 	body.Close()
 
 	// After close, semaphore should be released.
-	if len(p.semaphore) != 0 {
-		t.Errorf("semaphore after close = %d, want 0", len(p.semaphore))
+	if p.slots.InFlight() != 0 {
+		t.Errorf("semaphore after close = %d, want 0", p.slots.InFlight())
 	}
 }
 
@@ -407,8 +407,8 @@ func TestCreateSpeech_SemaphoreReleasedOnError(t *testing.T) {
 	}
 
 	// Semaphore should be released on error path.
-	if len(p.semaphore) != 0 {
-		t.Errorf("semaphore after error = %d, want 0", len(p.semaphore))
+	if p.slots.InFlight() != 0 {
+		t.Errorf("semaphore after error = %d, want 0", p.slots.InFlight())
 	}
 }
 
@@ -812,8 +812,8 @@ func TestNewProvider_Defaults(t *testing.T) {
 	if p.baseURL != "https://api.openai.com" {
 		t.Errorf("baseURL = %q, want https://api.openai.com", p.baseURL)
 	}
-	if cap(p.semaphore) != 100 {
-		t.Errorf("semaphore cap = %d, want 100", cap(p.semaphore))
+	if p.slots.Cap() != 1024 {
+		t.Errorf("semaphore cap = %d, want 1024", p.slots.Cap())
 	}
 }
 

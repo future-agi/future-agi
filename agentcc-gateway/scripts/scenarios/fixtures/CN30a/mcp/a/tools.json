@@ -1,0 +1,16 @@
+[
+  {
+    "name": "lookup",
+    "description": "Org A's notes lookup (97a_cn_release_proof_static.sh).",
+    "inputSchema": { "type": "object", "properties": { "q": { "type": "string" } } },
+    "annotations": { "readOnlyHint": true },
+    "result": { "content": [{ "type": "text", "text": "org-a notes" }] }
+  },
+  {
+    "name": "purge",
+    "description": "Org A's notes purge: destructive, and org A's only.",
+    "inputSchema": { "type": "object" },
+    "annotations": { "readOnlyHint": false, "destructiveHint": true },
+    "result": { "content": [{ "type": "text", "text": "org-a purged" }] }
+  }
+]

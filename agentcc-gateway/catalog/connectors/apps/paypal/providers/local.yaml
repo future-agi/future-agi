@@ -1,0 +1,53 @@
+schema: "connector-manifest/v1#provider"
+# PayPal's local stdio MCP server acts with the token identity's full permissions
+# on the account. Use a least-privilege token for the agent and start in SANDBOX.
+# All tools are enabled, including payment and refund operations.
+app: paypal
+id: local
+version: 1.0.0
+kind: vendor_local
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: stdio
+  command: npx
+  args: ["-y", "@paypal/mcp", "--tools=all"]
+  env:
+    PAYPAL_ACCESS_TOKEN: "Required PayPal API access token. The server acts with that identity's full permissions on the account; use a least-privilege token for the agent and supply it at runtime."
+    PAYPAL_ENVIRONMENT: "Optional environment selector: SANDBOX for testing or PRODUCTION for live transactions; defaults to SANDBOX. Start with SANDBOX."
+hosted: false
+trusted: false
+accountModes: [agent]
+auth: { kind: local_setup }
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: kind
+    url: https://developer.paypal.com/ai-tools/mcp-server
+    fetchedAt: 2026-11-16
+  - fact: publisher
+    url: https://developer.paypal.com/ai-tools/mcp-server
+    fetchedAt: 2026-11-16
+  - fact: transport.kind
+    url: https://raw.githubusercontent.com/paypal/paypal-mcp-server/main/server.json
+    fetchedAt: 2026-11-16
+  - fact: transport.command
+    url: https://developer.paypal.com/ai-tools/mcp-server
+    fetchedAt: 2026-11-16
+  - fact: transport.args
+    url: https://developer.paypal.com/ai-tools/mcp-server
+    fetchedAt: 2026-11-16
+  - fact: transport.env
+    url: https://developer.paypal.com/ai-tools/mcp-server
+    fetchedAt: 2026-11-16
+  - fact: transport.env
+    url: https://github.com/paypal/paypal-mcp-server
+    fetchedAt: 2026-11-16
+  - fact: auth.kind
+    url: https://developer.paypal.com/ai-tools/mcp-server
+    fetchedAt: 2026-11-16
+  - fact: tools.source
+    url: https://github.com/paypal/paypal-mcp-server
+    fetchedAt: 2026-11-16

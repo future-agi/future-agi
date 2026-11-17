@@ -218,6 +218,8 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def tls_context(directory):
+    import tempfile
+
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
     private = rsa.generate_private_key(public_exponent=65537, key_size=2048)
@@ -242,19 +244,23 @@ def tls_context(directory):
         .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
         .sign(private, hashes.SHA256())
     )
-    cert, key = directory / "ca.pem", directory / "key.pem"
+    cert = directory / "ca.pem"
     cert.write_bytes(certificate.public_bytes(serialization.Encoding.PEM))
-    key.write_bytes(
-        private.private_bytes(
-            serialization.Encoding.PEM,
-            serialization.PrivateFormat.PKCS8,
-            serialization.NoEncryption(),
-        )
-    )
-    key.chmod(0o600)
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-    context.load_cert_chain(cert, key)
-    key.unlink()  # Only the public trust certificate remains shared with Django.
+    # /tmp is private to the mock container; the shared volume gets only ca.pem.
+    with tempfile.TemporaryDirectory(
+        prefix="mock-google-tls-", dir="/tmp"
+    ) as private_dir:
+        key = Path(private_dir) / "key.pem"
+        key.write_bytes(
+            private.private_bytes(
+                serialization.Encoding.PEM,
+                serialization.PrivateFormat.PKCS8,
+                serialization.NoEncryption(),
+            )
+        )
+        key.chmod(0o600)
+        context.load_cert_chain(cert, key)
     return context
 
 

@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: splunk
+version: 1.0.0
+name: Splunk
+description: "Query Splunk Observability Cloud metrics, traces and alerts for the US1 realm."
+vendor:
+  name: Splunk
+  domains: [splunk.com]
+eeCategory: developer
+group: other
+categories: [developer, observability]
+tags: [apm, metrics, alerts]
+docsUrl: https://help.splunk.com/en/splunk-enterprise/mcp-server-for-splunk-platform/2.1/connect-splunk-mcp-server-to-other-products-and-clients/configure-splunk-observability-tools-with-splunk-mcp-server
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://help.splunk.com/en/splunk-enterprise/mcp-server-for-splunk-platform/2.1/connect-splunk-mcp-server-to-other-products-and-clients/configure-splunk-observability-tools-with-splunk-mcp-server
+    fetchedAt: 2026-11-09

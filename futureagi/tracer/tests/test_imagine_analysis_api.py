@@ -11,7 +11,7 @@ from tfc.constants.roles import OrganizationRoles
 from tracer.models.imagine_analysis import ImagineAnalysis
 from tracer.models.project import Project
 from tracer.models.saved_view import SavedView
-
+from tracer.models.trace import Trace
 
 IMAGINE_ANALYSIS_PATH = "/tracer/imagine-analysis/"
 
@@ -44,12 +44,15 @@ def test_imagine_analysis_trigger_poll_and_cached_result(
     monkeypatch,
 ):
     saved_view = create_imagine_saved_view(observe_project, workspace, user)
-    trace_id = str(uuid.uuid4())
+    trace = Trace.no_workspace_objects.create(
+        project=observe_project, name="Imagine API trace"
+    )
+    trace_id = str(trace.id)
     workflow_calls = []
 
     def fake_start_imagine_analysis(**kwargs):
         workflow_calls.append(kwargs)
-        return "workflow-imagine-test"
+        return f"imagine-pb1-{kwargs['analysis_id']}"
 
     monkeypatch.setattr(
         "tfc.temporal.imagine.client.start_imagine_analysis",
@@ -62,9 +65,7 @@ def test_imagine_analysis_trigger_poll_and_cached_result(
             "saved_view_id": str(saved_view.id),
             "trace_id": trace_id,
             "project_id": str(observe_project.id),
-            "widgets": [
-                {"widget_id": "summary", "prompt": "Summarize this trace."}
-            ],
+            "widgets": [{"widget_id": "summary", "prompt": "Summarize this trace."}],
         },
         format="json",
     )
@@ -83,12 +84,13 @@ def test_imagine_analysis_trigger_poll_and_cached_result(
     assert analysis.project_id == observe_project.id
     assert analysis.organization_id == organization.id
     assert analysis.status == "running"
-    assert analysis.workflow_id == "workflow-imagine-test"
+    assert analysis.workflow_id == f"imagine-pb1-{analysis.id}"
     assert workflow_calls == [
         {
             "analysis_id": str(analysis.id),
             "trace_id": trace_id,
             "org_id": str(organization.id),
+            "project_id": str(observe_project.id),
             "prompt": "Summarize this trace.",
         }
     ]
@@ -135,7 +137,10 @@ def test_imagine_analysis_trigger_failure_persists_failed_status(
     monkeypatch,
 ):
     saved_view = create_imagine_saved_view(observe_project, workspace, user)
-    trace_id = str(uuid.uuid4())
+    trace = Trace.no_workspace_objects.create(
+        project=observe_project, name="Imagine API trace"
+    )
+    trace_id = str(trace.id)
 
     def fail_start_imagine_analysis(**_kwargs):
         raise RuntimeError("temporal unavailable in test")

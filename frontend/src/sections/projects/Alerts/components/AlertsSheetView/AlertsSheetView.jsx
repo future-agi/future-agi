@@ -22,11 +22,13 @@ import BackButton from "src/sections/develop-detail/Common/BackButton";
 import SvgColor from "src/components/svg-color";
 import TracingControls from "src/sections/projects/LLMTracing/TracingControls";
 import {
-  alertThresholdBand,
+  alertChartSeriesName,
+  getAlertChartXAxisRange,
   getCompareChartConfig,
   getDefaultDateRange,
   getSimpleLineChartConfig,
 } from "../../common";
+import { staticThresholdBands } from "../../alertThresholdBands";
 import AlertsChart from "../AlertsChart";
 import DuplicateAlert from "../DuplicateALert";
 import { useQuery } from "@tanstack/react-query";
@@ -36,7 +38,6 @@ import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import { useAlertStore } from "../../store/useAlertStore";
 import { useAlertSheetView } from "../../store/useAlertSheetView";
 import { AlertTableSkeleton } from "../AlertSkeletons";
-import _ from "lodash";
 import { isAlertMuted } from "../../common";
 import {
   keepPreviousMonitorGraphData,
@@ -56,6 +57,7 @@ export default function AlertsSheetView() {
     handleCloseSheetView,
     handleProjectChange,
     handleStartCreatingAlerts,
+    handleChangeAlertType,
     setCurrentTab,
     setOpenCreateAlerts,
     mainPage,
@@ -84,13 +86,23 @@ export default function AlertsSheetView() {
   const canViewTrace =
     hasLoadedAlertDetails && Boolean(alertRuleDetails?.project);
 
+  // The edit/duplicate drawer names its preview chart (legend and y-axis unit)
+  // from the store's alertType, so start it on this alert's own metric.
+  const syncAlertTypeWithRule = () => {
+    if (alertRuleDetails?.metricType) {
+      handleChangeAlertType(alertRuleDetails.metricType);
+    }
+  };
+
   const handleDuplicateAlert = () => {
     setDuplicateModal(false);
+    syncAlertTypeWithRule();
     handleStartCreatingAlerts();
   };
 
   const {
     data: latestGraphData,
+    dataUpdatedAt: graphReadAt,
     isError: isGraphError,
     isFetching: isGraphFetching,
     refetch: refetchGraph,
@@ -122,6 +134,20 @@ export default function AlertsSheetView() {
   });
   const data = graphState.data;
 
+  // The time axis runs to the last graph read (within the selected range) and
+  // the last firing, not only to the newest bucket with data. The read time
+  // is rounded up to the whole minute, so a poll that brings the same buckets
+  // within that minute leaves the axis end, and the chart, unchanged.
+  const xAxisRange = useMemo(
+    () =>
+      getAlertChartXAxisRange(data, {
+        dateRange: dateFilter?.dateFilter,
+        lastTriggered: alertRuleDetails?.lastTriggered,
+        readAt: graphReadAt || Date.now(),
+      }),
+    [data, dateFilter, alertRuleDetails?.lastTriggered, graphReadAt],
+  );
+
   const [chartKey] = useState(0);
 
   const selectedThresHoldType = useMemo(() => {
@@ -140,6 +166,10 @@ export default function AlertsSheetView() {
 
     try {
       let chartConfig;
+      const seriesName = alertChartSeriesName({
+        metricType: alertRuleDetails.metricType,
+        earlier: alertRuleDetails.thresholdRule === "earlier",
+      });
 
       if (selectedThresHoldType === "static") {
         const values = data?.result?.map((res) => res?.value) || [];
@@ -149,48 +179,28 @@ export default function AlertsSheetView() {
         min = Math.max(0, Math.floor(min * 0.9));
         max = Math.ceil(max * 1.1);
 
-        const isLessThan = alertRuleDetails?.thresholdOperator === "less_than";
-
-        const thresholds = isLessThan
-          ? [
-              {
-                value: max,
-                y2: alertRuleDetails?.warningThresholdValue,
-                ...alertThresholdBand(theme, "success", 0.03),
-              },
-              {
-                value: alertRuleDetails?.warningThresholdValue,
-                y2: alertRuleDetails?.criticalThresholdValue,
-                ...alertThresholdBand(theme, "warning", 0.03),
-              },
-              {
-                value: alertRuleDetails?.criticalThresholdValue,
-                y2: min,
-                ...alertThresholdBand(theme, "danger", 0.05),
-              },
-            ]
-          : [
-              {
-                value: max,
-                y2: alertRuleDetails?.criticalThresholdValue,
-                ...alertThresholdBand(theme, "danger", 0.05),
-              },
-              {
-                value: alertRuleDetails?.criticalThresholdValue,
-                y2: alertRuleDetails?.warningThresholdValue,
-                ...alertThresholdBand(theme, "warning", 0.03),
-              },
-              {
-                value: alertRuleDetails?.warningThresholdValue,
-                y2: min,
-                ...alertThresholdBand(theme, "success", 0.03),
-              },
-            ];
+        // A level saved as infinity or not-a-number comes with its words and
+        // no number, and draws no line.
+        const thresholds = staticThresholdBands(theme, {
+          thresholdOperator: alertRuleDetails?.thresholdOperator,
+          critical: {
+            value: alertRuleDetails?.criticalThresholdValue,
+            words: alertRuleDetails?.criticalThresholdLabel,
+          },
+          warning: {
+            value: alertRuleDetails?.warningThresholdValue,
+            words: alertRuleDetails?.warningThresholdLabel,
+          },
+          max,
+          min,
+          dangerAlpha: 0.05,
+        });
 
         chartConfig = getSimpleLineChartConfig(
           data,
           {
-            seriesName: _.startCase(_.toLower(alertRuleDetails.metricType)),
+            seriesName,
+            unitKey: alertRuleDetails.metricType,
             thresholds,
           },
           { isDark, theme },
@@ -198,7 +208,7 @@ export default function AlertsSheetView() {
       } else if (selectedThresHoldType === "percentage_change") {
         chartConfig = getCompareChartConfig(
           data,
-          { seriesName: _.startCase(_.toLower(alertRuleDetails.metricType)) },
+          { seriesName, unitKey: alertRuleDetails.metricType },
           { isDark, theme },
         );
       }
@@ -223,7 +233,9 @@ export default function AlertsSheetView() {
     }
   }, [selectedThresHoldType, data, alertRuleDetails, isDark]);
 
-  // Render chart with proper loading states
+  // Render chart with proper loading states. The points sit at their true
+  // instants; the axis labels and the tooltip's time print the browser's
+  // local time, where ApexCharts would print UTC.
   const renderChart = () => {
     return (
       <AlertsChart
@@ -234,10 +246,13 @@ export default function AlertsSheetView() {
           xaxis: {
             type: "datetime",
             convertedCatToNumeric: false, // include this explicitly
+            ...xAxisRange,
             labels: {
+              datetimeUTC: false,
               style: { fontSize: "12px", colors: theme.palette.text.tertiary },
             },
           },
+          tooltip: { ...options.tooltip, x: { format: "dd MMM HH:mm" } },
         }}
       />
     );
@@ -260,6 +275,7 @@ export default function AlertsSheetView() {
     trackEvent(Events.alertEditClicked, {
       [PropertyName.id]: alertRuleDetails.id,
     });
+    syncAlertTypeWithRule();
     setCurrentTab(1);
     setOpenCreateAlerts(true);
   };

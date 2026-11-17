@@ -234,6 +234,8 @@ export default function GeneratePromptDrawer({
           sx: {
             height: "100vh",
             width: "640px",
+            // Never wider than the screen.
+            maxWidth: "100vw",
             position: "fixed",
             zIndex: 2,
             backgroundColor: "background.paper",
@@ -282,6 +284,7 @@ export default function GeneratePromptDrawer({
             </Stack>
             <IconButton
               onClick={handleClose}
+              aria-label="Close"
               sx={{
                 margin: 0,
               }}
@@ -349,7 +352,9 @@ export default function GeneratePromptDrawer({
                     sx={{
                       height: theme.spacing(20 / 8),
                       width: theme.spacing(20 / 8),
-                      color: "text.disabled",
+                      // An enabled button's icon, not a
+                      // disabled one.
+                      color: "text.secondary",
                     }}
                     src={src}
                   />
@@ -385,7 +390,7 @@ export default function GeneratePromptDrawer({
           >
             <Typography
               variant="s1"
-              color={"text.disabled"}
+              color={"text.secondary"}
               fontWeight={"fontWeightMedium"}
             >
               Cancel

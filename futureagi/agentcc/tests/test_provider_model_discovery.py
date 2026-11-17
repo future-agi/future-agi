@@ -8,6 +8,9 @@ from agentcc.views.provider_credential import AgentccProviderCredentialViewSet
 
 def _mock_response(payload=None):
     response = Mock()
+    # Discovery reads the status first (it refuses a 3xx and follows no
+    # redirect), so the answer has one.
+    response.status_code = 200
     response.json.return_value = payload or {"models": []}
     return response
 
@@ -38,7 +41,9 @@ class TestAgentccProviderCredentialModelDiscovery:
                 "google",
             )
 
-        assert models == ["gemini-custom"]
+        # The helper keeps Google's raw resource names; the credential-aware
+        # projection in fetch_models strips the "models/" prefix.
+        assert models == ["models/gemini-custom"]
         mock_validate_url.assert_called_once_with(
             "https://models.example.com",
             PROVIDER_URL_ERROR,
@@ -52,6 +57,7 @@ class TestAgentccProviderCredentialModelDiscovery:
             "https://models.example.com/v1beta/models",
             params={"key": "custom-api-key"},
             timeout=15,
+            allow_redirects=False,
         )
 
     @pytest.mark.parametrize(
@@ -91,6 +97,7 @@ class TestAgentccProviderCredentialModelDiscovery:
             expected,
             params={"key": "custom-api-key"},
             timeout=15,
+            allow_redirects=False,
         )
 
     def test_google_preset_without_base_url_uses_official_endpoint(self):
@@ -111,6 +118,7 @@ class TestAgentccProviderCredentialModelDiscovery:
             "https://generativelanguage.googleapis.com/v1beta/models",
             params={"key": "google-api-key"},
             timeout=15,
+            allow_redirects=False,
         )
 
     def test_google_preset_with_official_base_url_uses_official_endpoint(self):
@@ -135,6 +143,7 @@ class TestAgentccProviderCredentialModelDiscovery:
             "https://generativelanguage.googleapis.com/v1beta/models",
             params={"key": "google-api-key"},
             timeout=15,
+            allow_redirects=False,
         )
 
     def test_google_preset_on_openai_format_lists_models_at_google(self):
@@ -160,9 +169,10 @@ class TestAgentccProviderCredentialModelDiscovery:
                 "openai",
             )
 
-        assert models == ["gemini-2.5-flash"]
+        assert models == ["models/gemini-2.5-flash"]
         safe_session.get.assert_called_once_with(
             "https://generativelanguage.googleapis.com/v1beta/models",
             params={"key": "google-api-key"},
             timeout=15,
+            allow_redirects=False,
         )

@@ -1,0 +1,38 @@
+{{- if and (include "futureagi.hub.enabled" .) .Values.networkPolicy.enabled }}
+{{- $c := .Values.hub.checker -}}
+# The Hub checker takes no connections. It reaches DNS, this release's
+# backend (the registry) and the runner host's Docker port, nothing else.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "futureagi.component" (dict "root" . "component" "hub-checker") }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "futureagi.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "futureagi.selectorLabels" (dict "root" . "component" "hub-checker") | nindent 6 }}
+  policyTypes: ["Ingress", "Egress"]
+  ingress: []
+  egress:
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "futureagi.selectorLabels" (dict "root" . "component" "backend") | nindent 14 }}
+      ports:
+        - port: 8000
+          protocol: TCP
+    - ports:
+        - port: {{ include "futureagi.hub.runnerPort" . | int }}
+          protocol: TCP
+      {{- with $c.runner.networkPolicyTo }}
+      to:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

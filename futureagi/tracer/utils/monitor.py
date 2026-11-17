@@ -1,3 +1,4 @@
+import math
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Optional
 
@@ -6,25 +7,28 @@ if TYPE_CHECKING:
         MonitorMetricsQueryBuilder,
     )
 
+import requests
 import structlog
 from django.conf import settings
 from django.core.exceptions import ValidationError as DjangoValidationError
+from django.db import transaction
 from django.db.models import DurationField, ExpressionWrapper, F, Q
 from django.db.models.functions import Now
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from slack_sdk.webhook import WebhookClient
-
 from tfc.temporal import temporal_activity
 from tfc.utils.email import email_helper
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.webhook_delivery import post_webhook
+
 from tracer.models.custom_eval_config import CustomEvalConfig, EvalOutputType
 from tracer.models.monitor import (
     AlertTypeChoices,
     ComparisonOperatorChoices,
     MonitorMetricTypeChoices,
     ThresholdCalculationMethodChoices,
+    ThresholdRuleChoices,
     UserAlertMonitor,
     UserAlertMonitorLog,
 )
@@ -63,6 +67,28 @@ def uses_choice_threshold(eval_template) -> bool:
 
 class MonitorConfigError(Exception):
     """Monitor misconfiguration (e.g. deleted eval config); not retryable."""
+
+
+def uses_earlier_rule(monitor: UserAlertMonitor) -> bool:
+    """True for a percentage-change monitor saved before the threshold update
+    and not edited since: it is still judged against a band around the
+    history's mean (tracer.utils.monitor_earlier_rule)."""
+    return (
+        monitor.threshold_type == ThresholdCalculationMethodChoices.PERCENTAGE_CHANGE
+        and monitor.threshold_rule == ThresholdRuleChoices.EARLIER
+    )
+
+
+def counts_error_free_providers(monitor: UserAlertMonitor) -> bool:
+    """True for a service-provider error-rate monitor whose numbers are about
+    the share of providers with no errors: saved before the threshold update
+    and neither converted nor edited since (a percentage-change monitor, a
+    static one the conversion could not convert exactly, or one an older
+    server saved while the update rolled out)."""
+    return (
+        monitor.metric_type == MonitorMetricTypeChoices.SERVICE_PROVIDER_ERROR_RATES
+        and monitor.threshold_rule == ThresholdRuleChoices.EARLIER
+    )
 
 
 def build_monitor_ch_builder(monitor: UserAlertMonitor) -> "MonitorMetricsQueryBuilder":
@@ -104,28 +130,45 @@ def build_monitor_ch_builder(monitor: UserAlertMonitor) -> "MonitorMetricsQueryB
             eval_config_id=eval_config_id,
             eval_output_type=eval_output_type,
             threshold_metric_value=monitor.threshold_metric_value,
+            provider_error_free=counts_error_free_providers(monitor),
         )
     except ValueError as e:
         # Filter translation rejects the stored filters — permanent misconfig.
         raise MonitorConfigError(f"Invalid monitor filters: {e}") from e
 
 
-def get_interval_kind(monitor: UserAlertMonitor) -> str:
-    """Calendar bucket kind for the monitor's frequency (Trunc parity)."""
-    interval = timedelta(minutes=monitor.alert_frequency)
+# Metrics whose value is a total over the period: their previous-period
+# baseline is the history window's total divided by the periods in it.
+TOKEN_METRICS = (
+    MonitorMetricTypeChoices.TOKEN_USAGE,
+    MonitorMetricTypeChoices.DAILY_TOKENS_SPENT,
+    MonitorMetricTypeChoices.MONTHLY_TOKENS_SPENT,
+)
+PER_PERIOD_TOTAL_METRICS = (MonitorMetricTypeChoices.COUNT_OF_ERRORS, *TOKEN_METRICS)
 
+
+def get_period_seconds(monitor: UserAlertMonitor) -> int:
+    """Length of one evaluation period: the window one metric value covers."""
     if monitor.metric_type == MonitorMetricTypeChoices.DAILY_TOKENS_SPENT:
-        interval = timedelta(days=1)
-    elif monitor.metric_type == MonitorMetricTypeChoices.MONTHLY_TOKENS_SPENT:
-        interval = timedelta(days=30)
+        return 24 * 60 * 60
+    if monitor.metric_type == MonitorMetricTypeChoices.MONTHLY_TOKENS_SPENT:
+        return 30 * 24 * 60 * 60
+    return monitor.alert_frequency * 60
 
-    if interval.days >= 30:
-        return "month"
-    if interval.days >= 1:
-        return "day"
-    if interval.total_seconds() >= 3600:
-        return "hour"
-    return "minute"
+
+def baseline_periods(monitor: UserAlertMonitor, history: timedelta) -> float | None:
+    """Evaluation periods in a history window: window / period, with no floor.
+
+    A history shorter than one period is a fraction of it (15 minutes of a
+    1-hour period is 0.25), so a total over it is scaled up to one period, a
+    rate comparison. None when the period or the window is not positive (a bad
+    row): there is nothing to scale by, so no baseline.
+    """
+    period_seconds = get_period_seconds(monitor)
+    history_seconds = history.total_seconds()
+    if period_seconds <= 0 or history_seconds <= 0:
+        return None
+    return history_seconds / period_seconds
 
 
 def _send_alert_email(monitor: UserAlertMonitor, message: str, alert_type: str) -> None:
@@ -239,6 +282,49 @@ def _send_webhook_notification(
         logger.error("monitor_webhook_failed", monitor_id=str(monitor.id))
 
 
+def _send_pagerduty_notification(
+    monitor: UserAlertMonitor, message: str, alert_type: str
+) -> None:
+    """Sends a best-effort PagerDuty Events API v2 trigger event."""
+    if not monitor.pagerduty_routing_key:
+        return
+
+    try:
+        payload = {
+            "routing_key": monitor.pagerduty_routing_key,
+            "event_action": "trigger",
+            "dedup_key": f"futureagi-observe:{monitor.id}:{alert_type}",
+            "payload": {
+                "summary": message[:1024],
+                "severity": {
+                    "critical": "critical",
+                    "warning": "warning",
+                }.get(alert_type, "info"),
+                "source": "futureagi-observe",
+                "custom_details": {
+                    "monitor_id": str(monitor.id),
+                    "monitor_name": monitor.name,
+                    "metric": monitor.metric or monitor.metric_type,
+                },
+            },
+        }
+        response = requests.post(
+            "https://events.pagerduty.com/v2/enqueue",
+            json=payload,
+            timeout=10,
+            # Never forward the routing key to a redirected destination.
+            allow_redirects=False,
+        )
+        response.raise_for_status()
+        if 300 <= response.status_code < 400:
+            raise ValueError("Unexpected PagerDuty redirect")
+        logger.info("monitor_pagerduty_sent", monitor_id=str(monitor.id))
+    except Exception:  # noqa: BLE001 - delivery must not retry the other channels
+        # Neither exception text nor payload belongs in logs: either may contain
+        # the routing key or the alert's private message.
+        logger.error("monitor_pagerduty_failed", monitor_id=str(monitor.id))
+
+
 def _handle_alert_trigger(
     monitor: UserAlertMonitor,
     message: str,
@@ -249,13 +335,38 @@ def _handle_alert_trigger(
     threshold_value: float | None = None,
 ) -> None:
     """Handles the actions when an alert is triggered."""
-    UserAlertMonitorLog.objects.create(
-        alert=monitor,
-        type=alert_type,
-        message=message,
-        time_window_start=time_window_start,
-        time_window_end=now,
-    )
+    with transaction.atomic():
+        # Metric and historical queries can outlive a mute; recheck before
+        # firing. The row lock makes a duplicate check of this window wait here.
+        live = UserAlertMonitor.objects.select_for_update(of=("self",)).filter(
+            pk=monitor.pk, is_mute=False
+        )
+        # Select a column: exists() selects none, which drops the OF clause.
+        if live.values_list("pk", flat=True).first() is None:
+            return
+        # One alert per window: a retried or duplicated check of the same
+        # window neither writes nor sends it again. A deleted row was still
+        # delivered, so it counts too.
+        if (
+            now is not None
+            and UserAlertMonitorLog.all_objects.filter(
+                alert=monitor,
+                time_window_start=time_window_start,
+                time_window_end=now,
+            ).exists()
+        ):
+            logger.info(
+                "monitor_alert_window_already_fired", monitor_id=str(monitor.id)
+            )
+            return
+
+        UserAlertMonitorLog.objects.create(
+            alert=monitor,
+            type=alert_type,
+            message=message,
+            time_window_start=time_window_start,
+            time_window_end=now,
+        )
     logger.info(
         "monitor_alert_fired",
         monitor_id=str(monitor.id),
@@ -267,6 +378,7 @@ def _handle_alert_trigger(
     _send_webhook_notification(
         monitor, message, alert_type, current_value, threshold_value
     )
+    _send_pagerduty_notification(monitor, message, alert_type)
 
 
 @temporal_activity(
@@ -324,6 +436,9 @@ def process_monitor_task(monitor_id: str, now_iso: str) -> None:
         logger.info("monitor_gone_before_check", monitor_id=str(monitor_id))
         return
 
+    if monitor.is_mute:
+        return
+
     logger.info(f"Checking monitor: {monitor.name} ({monitor.id}) at {now}")
     try:
         _process_monitor(monitor, now)
@@ -343,9 +458,22 @@ def process_monitor_task(monitor_id: str, now_iso: str) -> None:
         raise
 
 
+def _get_metric_window_start(
+    monitor: UserAlertMonitor, start_time: datetime, end_time: datetime
+) -> datetime:
+    """Use the same trailing window for metric queries and alert evidence."""
+    if monitor.metric_type == MonitorMetricTypeChoices.DAILY_TOKENS_SPENT:
+        return end_time - timedelta(days=1)
+    if monitor.metric_type == MonitorMetricTypeChoices.MONTHLY_TOKENS_SPENT:
+        return end_time - timedelta(days=30)
+    return start_time
+
+
 def _process_monitor(monitor: UserAlertMonitor, now: datetime) -> None:
     """Processes a single monitor."""
-    time_window_start = now - timedelta(minutes=monitor.alert_frequency)
+    time_window_start = _get_metric_window_start(
+        monitor, now - timedelta(minutes=monitor.alert_frequency), now
+    )
 
     # Build once: value + historical share the builder (avoids a second eval
     # config read and filter translation per percentage-change cycle).
@@ -374,12 +502,8 @@ def _get_metric_value(
     builder = builder or build_monitor_ch_builder(monitor)
     metric_type = monitor.metric_type
 
-    # DAILY/MONTHLY are trailing windows regardless of alert_frequency.
-    ch_start = start_time
-    if metric_type == MonitorMetricTypeChoices.DAILY_TOKENS_SPENT:
-        ch_start = end_time - timedelta(days=1)
-    elif metric_type == MonitorMetricTypeChoices.MONTHLY_TOKENS_SPENT:
-        ch_start = end_time - timedelta(days=30)
+    # Preserve trailing-window semantics for direct metric-query callers too.
+    ch_start = _get_metric_window_start(monitor, start_time, end_time)
 
     query, params = builder.build_metric_value_query(metric_type, ch_start, end_time)
     result = analytics.execute_ch_query(
@@ -393,32 +517,50 @@ def _get_metric_value(
     return None
 
 
-def _get_historical_stats(
+def get_previous_period_baseline(
     monitor: UserAlertMonitor,
     start_time: datetime,
     end_time: datetime,
     builder: Optional["MonitorMetricsQueryBuilder"] = None,
-) -> tuple[float | None, float | None]:
-    """Historical (mean, stddev) for the window, from ClickHouse. Raises on CH errors."""
-    analytics = AnalyticsQueryService()
+    *,
+    analytics: AnalyticsQueryService | None = None,
+    timeout_ms: int = MONITOR_QUERY_TIMEOUT_MS,
+) -> float | None:
+    """What a percentage-change monitor compares with: the metric's value for
+    one evaluation period, from the history window ``[start_time, end_time)``.
+
+    The alert worker and the monitor graph both call this, so the graph's
+    current bucket is judged exactly as the worker fires. Count and token
+    metrics: the window's total over the periods in it (empty periods count as
+    0; a window shorter than one period is scaled up to one, so 15 minutes of
+    a 1-hour period is its total times 4). Rate, latency and eval metrics: the
+    metric pooled over the window, as the value query computes it. None when
+    the window has no data: not enough history, so there is no percentage
+    alert. A real zero (data, no errors) is 0.0. None also for a period or
+    window that is not positive. Raises on CH errors.
+    """
+    analytics = analytics or AnalyticsQueryService()
     builder = builder or build_monitor_ch_builder(monitor)
 
+    periods = baseline_periods(monitor, end_time - start_time)
+    if periods is None:
+        return None
     query, params = builder.build_historical_stats_query(
         monitor.metric_type,
         start_time,
         end_time,
-        interval_kind=get_interval_kind(monitor),
+        periods=periods,
     )
     result = analytics.execute_ch_query(
         query,
         params,
-        timeout_ms=MONITOR_QUERY_TIMEOUT_MS,
+        timeout_ms=timeout_ms,
         settings=MONITOR_CH_SETTINGS,
     )
-    if result.data:
-        row = result.data[0]
-        return row.get("mean"), row.get("stddev")
-    return None, None
+    baseline = result.data[0].get("mean") if result.data else None
+    if baseline is None or not math.isfinite(baseline):
+        return None
+    return float(baseline)
 
 
 def _check_thresholds_and_alert(
@@ -432,6 +574,12 @@ def _check_thresholds_and_alert(
 
     if monitor.threshold_type == ThresholdCalculationMethodChoices.STATIC:
         _check_static_threshold(monitor, current_value, time_window_start, now)
+
+    elif uses_earlier_rule(monitor):
+        # Imported here: the earlier rule builds on this module.
+        from tracer.utils.monitor_earlier_rule import check_percentage_band
+
+        check_percentage_band(monitor, current_value, time_window_start, now, builder)
 
     elif monitor.threshold_type == ThresholdCalculationMethodChoices.PERCENTAGE_CHANGE:
         _check_percentage_change_threshold(
@@ -484,61 +632,31 @@ def _check_percentage_change_threshold(
     now: datetime,
     builder: Optional["MonitorMetricsQueryBuilder"] = None,
 ) -> None:
-    """Checks for alerts based on percentage change from historical mean."""
+    """Checks for alerts based on percentage change from the previous period."""
     historical_start = time_window_start - timedelta(
         minutes=monitor.auto_threshold_time_window
     )
 
-    historical_mean, historical_stddev = _get_historical_stats(
+    baseline = get_previous_period_baseline(
         monitor, historical_start, time_window_start, builder
     )
 
-    if historical_mean is None or historical_stddev is None:
+    if baseline is None:
         logger.warning(
-            f"Could not calculate historical mean/stddev for monitor {monitor.id} "
-            f"({monitor.metric_type}). Skipping percentage change check."
+            "monitor_percentage_change_no_history",
+            monitor_id=str(monitor.id),
+            metric_type=monitor.metric_type,
         )
         return
 
-    op = monitor.threshold_operator
-    sign = 1 if op == ComparisonOperatorChoices.GREATER_THAN else -1
-
-    critical_dev = historical_stddev * (
-        1 + (monitor.critical_threshold_value or 0) / 100
-    )
-    warning_dev = historical_stddev * (1 + (monitor.warning_threshold_value or 0) / 100)
-
-    critical_threshold = (
-        (historical_mean + sign * critical_dev)
-        if monitor.critical_threshold_value is not None
-        else None
-    )
-    warning_threshold = (
-        (historical_mean + sign * warning_dev)
-        if monitor.warning_threshold_value is not None
-        else None
-    )
-
-    alert_type = None
-    threshold_val = None
-
-    if critical_threshold is not None and _compare(
-        current_value, op, critical_threshold
-    ):
-        alert_type = AlertTypeChoices.CRITICAL
-        threshold_val = critical_threshold
-    elif warning_threshold is not None and _compare(
-        current_value, op, warning_threshold
-    ):
-        alert_type = AlertTypeChoices.WARNING
-        threshold_val = warning_threshold
-
-    if alert_type:
+    breach = percentage_change_breach(monitor, current_value, baseline)
+    if breach:
+        alert_type, threshold_val = breach
         message = (
             f"Metric '{monitor.name}' for project '{monitor.project.name}' "
             f"({current_value:.2f}) breached the {alert_type} threshold "
-            f"({monitor.threshold_operator} {threshold_val:.2f}) based on historical data "
-            f"(mean: {historical_mean:.2f}, stddev: {historical_stddev:.2f})."
+            f"({monitor.threshold_operator} {threshold_val:.2f}): "
+            f"{_previous_period_phrase(monitor, baseline)}."
         )
         _handle_alert_trigger(
             monitor,
@@ -549,6 +667,73 @@ def _check_percentage_change_threshold(
             current_value=current_value,
             threshold_value=threshold_val,
         )
+
+
+def percentage_change_breach(
+    monitor: UserAlertMonitor, current_value: float, baseline: float
+) -> tuple[str, float] | None:
+    """(alert type, threshold) when ``current_value`` breaches the monitor's
+    percentage of ``baseline``; None when it does not.
+
+    The comparison is ``current > baseline * (1 + p)`` (``<`` and ``1 - p`` for
+    less-than), so nothing divides: against a zero baseline any increase fires
+    a greater-than monitor, and an unchanged zero never alerts.
+    """
+    op = monitor.threshold_operator
+    sign = 1 if op == ComparisonOperatorChoices.GREATER_THAN else -1
+    for alert_type, percent in (
+        (AlertTypeChoices.CRITICAL, monitor.critical_threshold_value),
+        (AlertTypeChoices.WARNING, monitor.warning_threshold_value),
+    ):
+        if percent is None:
+            continue
+        threshold = baseline * (1 + sign * percent / 100)
+        if _compare(current_value, op, threshold):
+            return alert_type, threshold
+    return None
+
+
+def _plain_number(value: float) -> str:
+    """4.0 -> "4", 2.5 -> "2.5", 0.004 -> "0.004" (a small rate never reads 0)."""
+    if value != 0 and abs(value) < 0.01:
+        return f"{value:.2g}"
+    return f"{value:.2f}".rstrip("0").rstrip(".")
+
+
+def _plain_duration(minutes: int) -> str:
+    """60 -> "hour", 180 -> "3 hours", 10080 -> "7 days", 90 -> "90 minutes"."""
+    if minutes % (24 * 60) == 0:
+        count, unit = minutes // (24 * 60), "day"
+    elif minutes % 60 == 0:
+        count, unit = minutes // 60, "hour"
+    else:
+        count, unit = minutes, "minute"
+    return unit if count == 1 else f"{count} {unit}s"
+
+
+def _previous_period_phrase(monitor: UserAlertMonitor, baseline: float) -> str:
+    """The baseline in words: "up from 4 in the previous period"; for a longer
+    history "up from an average of 4 per period over the previous 7 days"; for
+    a shorter one "up from a rate of 4 per period over the previous 15 minutes".
+    """
+    direction = (
+        "up"
+        if monitor.threshold_operator == ComparisonOperatorChoices.GREATER_THAN
+        else "down"
+    )
+    value = _plain_number(baseline)
+    history_minutes = monitor.auto_threshold_time_window
+    # Exactly one period: the baseline is that period's value.
+    periods = baseline_periods(monitor, timedelta(minutes=history_minutes))
+    if periods is None or periods == 1:
+        return f"{direction} from {value} in the previous period"
+    if monitor.metric_type in PER_PERIOD_TOTAL_METRICS:
+        # A longer history's total is averaged per period; a shorter one's is
+        # scaled up to one period, a rate. Neither is one period's count.
+        kind = "an average" if periods > 1 else "a rate"
+        value = f"{kind} of {value} per period"
+    history = _plain_duration(history_minutes)
+    return f"{direction} from {value} over the previous {history}"
 
 
 def _compare(value1: float, operator: str, value2: float) -> bool:

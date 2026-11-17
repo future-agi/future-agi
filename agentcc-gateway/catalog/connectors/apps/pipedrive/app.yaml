@@ -1,0 +1,23 @@
+schema: "connector-manifest/v1#app"
+id: pipedrive
+version: 1.0.0
+name: Pipedrive
+description: "Deals, contacts, organizations, leads and activities in Pipedrive."
+vendor:
+  name: Pipedrive
+  domains: [pipedrive.com, pipedrive.ai]
+eeCategory: data
+group: other
+categories: [data, crm]
+tags: [sales, crm]
+docsUrl: https://support.pipedrive.com/en/article/mcp
+archetype: crm
+defaultProvider: mcp
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://support.pipedrive.com/en/article/mcp
+    fetchedAt: 2026-11-12
+  - fact: vendor.domains
+    url: https://support.pipedrive.com/en/article/mcp-chatgpt
+    fetchedAt: 2026-11-12

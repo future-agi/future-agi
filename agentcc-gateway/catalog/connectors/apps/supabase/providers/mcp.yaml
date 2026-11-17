@@ -1,0 +1,88 @@
+# Supabase's hosted MCP server with OAuth from Supabase's platform
+# authorization server, which registers clients dynamically by default and
+# also takes an OAuth app an organization creates by hand (a client id and
+# secret). The scopes are those the server's protected-resource metadata
+# lists, which an MCP client requests when the server names none.
+schema: "connector-manifest/v1#provider"
+app: supabase
+id: mcp
+version: 1.0.1
+kind: vendor_mcp
+publisher: vendor
+vendorStatus:
+  label: beta
+  source: https://mcp.supabase.com/.well-known/oauth-protected-resource/mcp
+transport:
+  kind: http
+  url: https://mcp.supabase.com/mcp
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent, user]
+auth:
+  kind: oauth2
+  oauth2:
+    authorizeUrl: https://api.supabase.com/v1/oauth/authorize
+    tokenUrl: https://api.supabase.com/v1/oauth/token
+    scopes:
+      - "organizations:read"
+      - "projects:read"
+      - "projects:write"
+      - "database:write"
+      - "database:read"
+      - "analytics:read"
+      - "secrets:read"
+      - "edge_functions:read"
+      - "edge_functions:write"
+      - "environment:read"
+      - "environment:write"
+      - "storage:read"
+      - "storage:write"
+    pkce: true
+    tokenBody: form
+    clientAuth: body
+    registration: [preregistered, dcr]
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://supabase.com/docs/guides/ai-tools/mcp
+    fetchedAt: 2026-10-21
+  - fact: transport.url
+    url: https://mcp.supabase.com/.well-known/oauth-protected-resource/mcp
+    fetchedAt: 2026-10-21
+  - fact: auth.kind
+    url: https://supabase.com/docs/guides/ai-tools/mcp
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.authorizeUrl
+    url: https://api.supabase.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.tokenUrl
+    url: https://api.supabase.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.scopes
+    url: https://mcp.supabase.com/.well-known/oauth-protected-resource/mcp
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.pkce
+    url: https://api.supabase.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.clientAuth
+    url: https://api.supabase.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.registration
+    url: https://api.supabase.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.registration
+    url: https://supabase.com/docs/guides/ai-tools/mcp
+    fetchedAt: 2026-10-21
+x-omega:
+  publicClient:
+    supported: false
+    evidence:
+      - url: https://api.supabase.com/.well-known/oauth-authorization-server
+        fetchedAt: 2026-10-21
+        sha256: 6a3ab5a76fc1a05afc53a2a7f09654c2fcac845d5ba24964eff451e82f9f2fce
+        quote: '"token_endpoint_auth_methods_supported":["client_secret_basic","client_secret_post"]'
+    notes: "A hand-made Supabase OAuth app is a confidential client; only dynamic registration, which omega mcp login does not do, gets another."

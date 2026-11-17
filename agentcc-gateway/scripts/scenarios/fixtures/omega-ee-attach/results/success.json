@@ -1,0 +1,30 @@
+{
+  "http": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    }
+  },
+  "body": {
+    "jsonrpc": "2.0",
+    "id": 3,
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "Created issue acme/web#418."
+        }
+      ],
+      "isError": false,
+      "_meta": {
+        "io.futureagi/tool_call": {
+          "tool_call_id": "tc_01K7CN5TC00000000000000001",
+          "executed": true,
+          "billing_mode": "byok",
+          "billed_usd": 0,
+          "latency_ms": 812
+        }
+      }
+    }
+  }
+}

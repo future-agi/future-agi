@@ -25,7 +25,11 @@ from simulate.serializers.chat_simulation import (
     SendChatRequestSerializer,
     TestExecutionChatBatchResponseSerializer,
 )
-from simulate.services.chat_sim import initiate_chat, send_message_to_chat
+from simulate.services.chat_sim import (
+    ChatUsageRefused,
+    initiate_chat,
+    send_message_to_chat,
+)
 from simulate.services.test_executor import TestExecutor
 from simulate.utils.scenario_completeness import check_scenarios_incomplete
 from simulate.utils.test_execution_utils import generate_simulator_agent_prompt
@@ -38,6 +42,22 @@ from tfc.utils.api_serializers import (
 from tfc.utils.general_methods import GeneralMethods
 
 logger = structlog.get_logger(__name__)
+
+# True of every refusal: a limit or unpaid invoice, and a check that failed closed.
+USAGE_REFUSED = (
+    "The chat could not start because this organization's usage check did not allow it."
+)
+
+
+def _caused_by(error, kind):
+    """Whether `error` or an exception it was raised from is a `kind`."""
+    seen = set()
+    while error is not None and id(error) not in seen:
+        if isinstance(error, kind):
+            return True
+        seen.add(id(error))
+        error = error.__cause__ or error.__context__
+    return False
 
 
 class RunTestNameView(APIView):
@@ -217,7 +237,12 @@ class TestExecutionChatBatchView(APIView):
             try:
                 test_execution = TestExecution.objects.select_related(
                     "run_test", "run_test__agent_definition", "agent_version"
-                ).get(id=test_execution_id, deleted=False)
+                ).get(
+                    run_test_workspace_filter(request, "run_test"),
+                    id=test_execution_id,
+                    deleted=False,
+                    run_test__organization=get_request_organization(request),
+                )
             except TestExecution.DoesNotExist:
                 return self.gm.bad_request("Test execution not found")
 
@@ -303,7 +328,7 @@ class TestExecutionChatBatchView(APIView):
                                 prompt=fallback_prompt,
                                 voice_provider="vapi",
                                 voice_name="marissa",
-                                model="gpt-4",
+                                model="gpt-4o",
                                 llm_temperature=0.7,
                                 initial_message="Hi!",
                                 max_call_duration_in_minutes=30,
@@ -607,14 +632,15 @@ class ChatSendMessageView(APIView):
         except (CallExecution.DoesNotExist, Http404):
             return self.gm.not_found("Call execution not found")
         except ValidationError as e:
+            logger.exception(f"Validation error sending chat message: {str(e)}")
             return self.gm.bad_request(
-                f"Invalid request data format. Expected SendChatRequest schema. Errors: {str(e)}"
+                "Invalid request data format. Expected SendChatRequest schema."
             )
         except Exception as e:
             logger.exception(f"Error sending message to chat execution: {str(e)}")
-            return self.gm.internal_server_error_response(
-                f"Failed to send message: {str(e)}"
-            )
+            if _caused_by(e, ChatUsageRefused):
+                return self.gm.internal_server_error_response(USAGE_REFUSED)
+            return self.gm.internal_server_error_response("Failed to send message.")
 
 
 class ChatSDKCodeView(APIView):
@@ -669,4 +695,4 @@ class ChatSDKCodeView(APIView):
 
         except Exception as e:
             logger.exception(f"Error generating SDK code: {str(e)}")
-            return self.gm.bad_request(f"Failed to generate SDK code: {str(e)}")
+            return self.gm.bad_request("Failed to generate SDK code.")

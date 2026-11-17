@@ -85,15 +85,16 @@ describe("history recovery", () => {
     ];
     const onOpen = renderRail();
     const card = screen.getByRole("link", { name: "Open the run: Resolved?" });
+    // The status and its fixes sit beside the open-run link, not inside it;
+    // the link carries the status as its description.
+    expect(screen.getByText("Failed before answering")).toBeInTheDocument();
     expect(
-      within(card).getByText("Failed before answering"),
-    ).toBeInTheDocument();
-    expect(
-      within(card).getByText(
+      screen.getByText(
         "No answers were saved. Check the evaluator or recreate the question.",
       ),
     ).toBeInTheDocument();
-    const fix = within(card).getByRole("link", { name: "Fix evaluator" });
+    expect(card).toHaveAccessibleDescription(/Failed before answering/);
+    const fix = screen.getByRole("link", { name: "Fix evaluator" });
     expect(fix).toHaveAttribute("href", "/dashboard/evaluations/evaluator-1");
     fireEvent.keyDown(fix, { key: "Enter" });
     fireEvent.click(fix);

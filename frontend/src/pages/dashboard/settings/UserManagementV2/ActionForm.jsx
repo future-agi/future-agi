@@ -82,8 +82,7 @@ const ActionForm = ({
             }}
           >
             <Typography variant="body2" sx={{ fontWeight: 600, mb: 0.5 }}>
-              Owner: Full control. Can manage billing, members, and transfer
-              ownership.
+              Owner: Full control. Can manage billing and members.
             </Typography>
             <Typography variant="body2" sx={{ mb: 0.5 }}>
               Admin: Full control on manage settings, members, and permissions.
@@ -113,7 +112,7 @@ const ActionForm = ({
             <Box sx={{ display: "flex" }}>
               <Typography
                 variant="body1"
-                sx={{ minWidth: 120, fontWeight: 500, color: "text.secondary" }}
+                sx={{ minWidth: 140, fontWeight: 500, color: "text.secondary" }}
               >
                 User name:
               </Typography>
@@ -127,12 +126,12 @@ const ActionForm = ({
                   <Typography
                     variant="body1"
                     sx={{
-                      minWidth: 120,
+                      minWidth: 140,
                       fontWeight: 500,
                       color: "text.secondary",
                     }}
                   >
-                    Org Role:
+                    Organization role:
                   </Typography>
                   <Typography variant="body1" sx={{ color: "text.primary" }}>
                     {userData?.org_role ||
@@ -146,12 +145,12 @@ const ActionForm = ({
                     <Typography
                       variant="body1"
                       sx={{
-                        minWidth: 120,
+                        minWidth: 140,
                         fontWeight: 500,
                         color: "text.secondary",
                       }}
                     >
-                      WS Role:
+                      Workspace role:
                     </Typography>
                     <Typography variant="body1" sx={{ color: "text.primary" }}>
                       {userData?.ws_role ||
@@ -166,7 +165,7 @@ const ActionForm = ({
             <Box sx={{ display: "flex" }}>
               <Typography
                 variant="body1"
-                sx={{ minWidth: 120, fontWeight: 500, color: "text.secondary" }}
+                sx={{ minWidth: 140, fontWeight: 500, color: "text.secondary" }}
               >
                 Email:
               </Typography>
@@ -178,7 +177,7 @@ const ActionForm = ({
             <Box sx={{ display: "flex" }}>
               <Typography
                 variant="body1"
-                sx={{ minWidth: 120, fontWeight: 500, color: "text.secondary" }}
+                sx={{ minWidth: 140, fontWeight: 500, color: "text.secondary" }}
               >
                 Status:
               </Typography>

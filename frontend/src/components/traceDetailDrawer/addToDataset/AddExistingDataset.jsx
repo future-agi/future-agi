@@ -20,8 +20,132 @@ import axios, { endpoints } from "src/utils/axios";
 import { LoadingButton } from "@mui/lab";
 import { useNavigate, useParams } from "react-router";
 import FormSearchSelectFieldState from "src/components/FromSearchSelectField/FormSearchSelectFieldState";
-import { LLM_TABS } from "../../../sections/projects/LLMTracing/common";
 import { coreSpanFields } from "../common";
+import { importSelection } from "./importSelection";
+
+/**
+ * The span field → column picker of Add to dataset, reusable (R2-SPEC
+ * §7.2: one mapper, not two): a searchable select whose options may carry
+ * an edit pencil (`editable`) and an always-visible add entry. The Add-data
+ * sheet's `Field ▾` uses it too.
+ *
+ * @param {*} props.value  the selected option's value (or its label)
+ * @param {{label: string, value: *, editable?: boolean, disabled?: boolean}[]} props.options
+ * @param {(event) => void} props.onChange  `event.target.value` = option value
+ * @param {(option) => boolean} [props.isOptionDisabled]
+ * @param {(option, index) => void} [props.onEditOption]  pencil on editable options
+ * @param {string} [props.addLabel]  e.g. `+ Add Column` (value `add_column`)
+ */
+export const FieldToColumnPicker = ({
+  value,
+  options,
+  onChange,
+  label = "Column",
+  placeholder = "Select column",
+  size = "small",
+  isOptionDisabled,
+  onEditOption,
+  addLabel,
+  addValue = "add_column",
+  sx,
+}) => {
+  const theme = useTheme();
+  return (
+    <FormSearchSelectFieldState
+      size={size}
+      label={label}
+      value={value ?? ""}
+      sx={{ width: "100%", ...sx }}
+      placeholder={placeholder}
+      onChange={onChange}
+      options={[
+        ...(Array.isArray(options) ? options : []).map((opt, i) => {
+          const disabled = Boolean(opt.disabled || isOptionDisabled?.(opt));
+          return {
+            label: opt.label,
+            value: opt.value,
+            disabled,
+            component: (
+              <MenuItem
+                key={i}
+                disabled={disabled}
+                sx={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  color: theme.palette.text.primary,
+                  "&.Mui-disabled": {
+                    color: theme.palette.text.disabled,
+                  },
+                }}
+              >
+                {opt.label}
+                {opt.editable && onEditOption && (
+                  <IconButton
+                    size="small"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onEditOption(opt, i);
+                    }}
+                  >
+                    <Iconify
+                      icon="fluent:edit-16-regular"
+                      width={14}
+                      height={14}
+                    />
+                  </IconButton>
+                )}
+              </MenuItem>
+            ),
+          };
+        }),
+        ...(addLabel
+          ? [
+              {
+                label: addLabel,
+                value: addValue,
+                alwaysVisible: true,
+                component: (
+                  <Box
+                    key={addValue}
+                    sx={{
+                      color: "primary.main",
+                      width: "100%",
+                      px: 2,
+                      py: 0.75,
+                    }}
+                  >
+                    {addLabel}
+                  </Box>
+                ),
+              },
+            ]
+          : []),
+      ]}
+    />
+  );
+};
+
+FieldToColumnPicker.propTypes = {
+  value: PropTypes.any,
+  options: PropTypes.arrayOf(
+    PropTypes.shape({
+      label: PropTypes.string,
+      value: PropTypes.any,
+      editable: PropTypes.bool,
+      disabled: PropTypes.bool,
+    }),
+  ),
+  onChange: PropTypes.func,
+  label: PropTypes.string,
+  placeholder: PropTypes.string,
+  size: PropTypes.oneOf(["small", "medium"]),
+  isOptionDisabled: PropTypes.func,
+  onEditOption: PropTypes.func,
+  addLabel: PropTypes.string,
+  addValue: PropTypes.string,
+  sx: PropTypes.object,
+};
 
 const AddExistingDataset = ({
   handleclose,
@@ -30,6 +154,8 @@ const AddExistingDataset = ({
   observationFields,
   selectedTraces,
   selectedSpans,
+  selectedSessions,
+  sessionFilters,
   selectAll,
   currentTab,
   onSuccess,
@@ -245,13 +371,17 @@ const AddExistingDataset = ({
       new_mapping_config,
       select_all: Boolean(selectAll),
       project: observeId,
-      ...(currentTab === LLM_TABS.TRACE
+      ...(currentTab === "sessions"
         ? {
-            trace_ids: selectedTraces,
+            session_ids: selectedSessions,
+            session_filters: sessionFilters || [],
           }
-        : {
-            span_ids: selectedNode ? [selectedNode] : selectedSpans,
-          }),
+        : importSelection({
+            currentTab,
+            selectedTraces,
+            selectedSpans,
+            selectedNode,
+          })),
     });
   };
 
@@ -260,10 +390,16 @@ const AddExistingDataset = ({
       axios.post(endpoints.project.addExistingDataset, payload),
     onSuccess: (res) => {
       if (res.data?.status) {
+        // `res.data.status` is the envelope flag; the job state is in result.
+        const isProcessing = res.data?.result?.status !== "completed";
+
         enqueueSnackbar(
           <>
-            <span>Data added successfully</span>
-            {/* {res.data.result.message} */}
+            <span>
+              {isProcessing
+                ? "Rows are being added to the dataset in the background, this can take a while for large selections."
+                : "Data added successfully"}
+            </span>
             <span
               onClick={() =>
                 navigate(`/dashboard/develop/${selectedDataset}?tab=data`, {
@@ -281,7 +417,7 @@ const AddExistingDataset = ({
               View Dataset
             </span>
           </>,
-          { variant: "success" },
+          { variant: isProcessing ? "info" : "success" },
         );
         handleclose();
         if (onSuccess) {
@@ -398,12 +534,25 @@ const AddExistingDataset = ({
                 <Grid item xs={12} sm={5}>
                   <Box>
                     <FormControl size="small" fullWidth>
-                      <FormSearchSelectFieldState
-                        size="small"
-                        label="Column"
+                      <FieldToColumnPicker
                         value={item?.column ?? ""}
-                        sx={{ width: "100%" }}
-                        placeholder="Select column"
+                        options={(Array.isArray(allColumnOption)
+                          ? allColumnOption
+                          : []
+                        ).map((col) => ({
+                          label: col?.name,
+                          value: col,
+                          editable: col?.editable,
+                        }))}
+                        isOptionDisabled={(opt) =>
+                          isMenuItemDisabled(opt.value, item)
+                        }
+                        onEditOption={(opt, i) => {
+                          setShowInputIndex(index);
+                          setNewColumnName(opt.value.name);
+                          setEditingColumnId(i);
+                        }}
+                        addLabel="+ Add Column"
                         onChange={(e) => {
                           const value = e.target.value;
                           if (value === "add_column") {
@@ -413,64 +562,6 @@ const AddExistingDataset = ({
                             handleColumnChange(index, value);
                           }
                         }}
-                        options={[
-                          ...(Array.isArray(allColumnOption)
-                            ? allColumnOption
-                            : []
-                          ).map((col, i) => ({
-                            label: col?.name,
-                            value: col,
-                            disabled: isMenuItemDisabled(col, item),
-                            component: (
-                              <MenuItem
-                                key={i}
-                                disabled={isMenuItemDisabled(col, item)}
-                                sx={{
-                                  display: "flex",
-                                  justifyContent: "space-between",
-                                  alignItems: "center",
-                                }}
-                              >
-                                {col.name}
-                                {col.editable && (
-                                  <IconButton
-                                    size="small"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      setShowInputIndex(index);
-                                      setNewColumnName(col.name);
-                                      setEditingColumnId(i);
-                                    }}
-                                  >
-                                    <Iconify
-                                      icon="solar:pen-linear"
-                                      width={14}
-                                      height={14}
-                                    />
-                                  </IconButton>
-                                )}
-                              </MenuItem>
-                            ),
-                          })),
-                          {
-                            label: "+ Add Column",
-                            value: "add_column",
-                            alwaysVisible: true,
-                            component: (
-                              <Box
-                                key="add_column"
-                                sx={{
-                                  color: "primary.main",
-                                  width: "100%",
-                                  px: 2,
-                                  py: 0.75,
-                                }}
-                              >
-                                + Add Column
-                              </Box>
-                            ),
-                          },
-                        ]}
                       />
                       {showInputIndex === index && (
                         <Box mt={1}>
@@ -651,6 +742,8 @@ AddExistingDataset.propTypes = {
   observationFields: PropTypes.array,
   selectedTraces: PropTypes.array,
   selectedSpans: PropTypes.array,
+  selectedSessions: PropTypes.array,
+  sessionFilters: PropTypes.array,
   selectAll: PropTypes.bool,
   currentTab: PropTypes.string,
   onSuccess: PropTypes.func,

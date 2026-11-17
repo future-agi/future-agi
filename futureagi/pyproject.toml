@@ -44,12 +44,10 @@ dependencies = [
     "humanize",
     "pydantic>=2.11.10",  # Use latest with thread-safety fixes
     "jsonpath-ng",
-    # >=3.10.3 clears the high-severity findings of TH-8370: remote code
-    # execution and unsafe pickle loading from a downloaded corpus, plus the
-    # path traversal and SSRF in nltk.download. The corpora the backend loads
-    # (stopwords, punkt_tab, averaged_perceptron_tagger_eng, wordnet) are
-    # unchanged, so bin/install_nltk_data.py keeps its revision and checksums.
-    "nltk>=3.10.3",
+    # T6 reviewed candidate: keep the backend, serving and executor aligned.
+    # Corpus formats remain compatible with bin/install_nltk_data.py's pinned
+    # archives. RestrictedPython containment remains a separate requirement.
+    "nltk==3.10.4",
     "retrying",
     # 1.84.0 is the first release to close CVE-2026-35030 and CVE-2026-49468
     # (auth bypass / privilege escalation / RCE); the 1.83.x fixes leave the
@@ -198,6 +196,9 @@ dependencies = [
     # pairs with the ffmpeg binary kept in the runtime image stage.
     "pydub",
     "audioop-lts>=0.2.2; python_version >= '3.13'",  # pydub on newer Python
+    # The Public Suffix List for webhook URL checks (webhooks/config.py); it came
+    # only through presidio-analyzer in the pii extra, so a base image had none.
+    "tldextract>=5.1",
     "livekit-api>=1.0.0",
     "livekit>=1.0.0",
     "retell-sdk",
@@ -205,8 +206,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Image-size split (futureagi/Dockerfile.oss installs only the base
-# dependencies unless --build-arg EXTRAS=... names these). Every first-party
+# Image-size split: Dockerfile.oss installs the base plus variant-default
+# extras (overridable with --build-arg EXTRAS=...). Every first-party
 # import of them is lazy and fails with a clear error when the extra is absent:
 #   sandbox:   simulate/services/hosted_sandbox/{daytona,e2b}.py. Hosted harness
 #              jobs on managed sandboxes; without it the gateway answers 501
@@ -261,6 +262,9 @@ audio = [
     # pydub logically belongs here but lives in base deps (Deepgram STT is a
     # base feature), so listing it in this extra would be unreachable.
     "elevenlabs",
+]
+datasets = [
+    "datasets==4.5.0",
 ]
 ml = [
     "torch",

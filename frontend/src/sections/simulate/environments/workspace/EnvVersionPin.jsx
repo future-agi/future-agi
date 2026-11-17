@@ -4,36 +4,67 @@ import { Box, Button, Stack, Typography, Popover } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { fDateTime } from "src/utils/format-time";
 import { STATUS_ROLES } from "src/utils/runStatus";
+import NotInReleaseButton from "src/components/NotInRelease/NotInReleaseButton";
 import {
+  VERSIONING_STATE,
   canMakeDefault,
-  isVersioningDisabled,
   useEnvironmentVersions,
   useMoveDefault,
+  versioningBackfillFailed,
+  versioningReadable,
+  versioningState,
 } from "src/api/simulate-environments/versions";
-import { VERSIONS_COPY, WORKSPACE_COPY } from "./workspace.constants";
+import {
+  VERSIONING_STATE_COPY,
+  VERSIONS_COPY,
+  WORKSPACE_COPY,
+} from "./workspace.constants";
 import { refusalText } from "./evals/refusalText";
 import MakeDefaultConfirm from "./versions/MakeDefaultConfirm";
 
 // The environment-version pin: the header names the default environment version,
 // and clicking it lists every version of the world, where an earlier active one
 // can be made the default. Shown once the server has answered (a failed refresh
-// keeps the last answer); hidden when versioning is off, has just been switched
-// off, or the environment has no versions.
+// keeps the last answer). While versioning is off, or is being enabled and no
+// environment version is recorded yet, the pin stays, disabled, with the reason.
+// An environment with versioning on and no versions shows none.
 export default function EnvVersionPin({ env }) {
   const [anchor, setAnchor] = useState(null);
   // The version waiting on the user's confirmation.
   const [confirming, setConfirming] = useState(null);
   const move = useMoveDefault(env?.id);
-  const enabled = Boolean(env?.versioning?.enabled);
+  // No versioning read while versioning is off.
   const { data, error } = useEnvironmentVersions(env?.id, {
-    enabled,
+    enabled: versioningReadable(env),
   });
+  const state = versioningState(env, error);
   const versions = data?.environment || [];
   const current = data?.defaults?.environment;
+  const { pin, versionBar } = WORKSPACE_COPY;
 
-  if (!enabled || !data || isVersioningDisabled(error) || !current) {
-    return null;
+  const blocked =
+    state === VERSIONING_STATE.OFF
+      ? VERSIONING_STATE_COPY.offAction
+      : state === VERSIONING_STATE.ENABLING && data && !current
+        ? versioningBackfillFailed(env)
+          ? VERSIONING_STATE_COPY.enablingFailedAction
+          : VERSIONING_STATE_COPY.enablingAction
+        : null;
+  if (blocked) {
+    return (
+      <NotInReleaseButton
+        reason={blocked}
+        size="small"
+        variant="outlined"
+        color="inherit"
+        startIcon={<Iconify icon="solar:code-linear" width={11} />}
+        sx={{ typography: "s3", height: 22, px: 0.875 }}
+      >
+        {versionBar.envPrefix} {VERSIONING_STATE_COPY.noVersions}
+      </NotInReleaseButton>
+    );
   }
+  if (!data || !current) return null;
   const currentLabel = current.label || VERSIONS_COPY.unlabelled;
 
   const open = (e) => setAnchor(e.currentTarget);
@@ -41,7 +72,6 @@ export default function EnvVersionPin({ env }) {
     setAnchor(null);
     move.reset();
   };
-  const { pin, versionBar } = WORKSPACE_COPY;
   const { makeDefault } = VERSIONS_COPY;
   const defaultIndex = versions.findIndex((v) => v.id === current.id);
   // Versions are newest first, so one listed after the default is older.
@@ -242,7 +272,10 @@ export default function EnvVersionPin({ env }) {
 EnvVersionPin.propTypes = {
   env: PropTypes.shape({
     id: PropTypes.string,
-    versioning: PropTypes.shape({ enabled: PropTypes.bool }),
+    versioning: PropTypes.shape({
+      enabled: PropTypes.bool,
+      state: PropTypes.oneOf(["off", "enabling", "ready"]),
+    }),
   }).isRequired,
 };
 

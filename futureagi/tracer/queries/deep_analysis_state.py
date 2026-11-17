@@ -1,25 +1,13 @@
-"""Transient per-trace deep-analysis job state.
+"""Feed state: durable background receipts first, legacy cache/rows otherwise.
 
-The Error Feed's on-demand "Run Deep Analysis" used to track its per-trace job
-state in ``Trace.error_analysis_status`` (a PG column on ``tracer_trace``).
-Post CH-cutover that table is gone, so the column can't be read or written.
-
-The only genuinely *transient* state is "running" / "failed": a finished run is
-recorded by a ``TraceErrorAnalysis`` row (feed-owned PG, survives the drop) which
-is the source of truth for "done". So the marker lives in the cache, not a table.
-
-Two distinct keys back it so the failed state can never block a retry:
-
-- ``set_running`` is an atomic ``cache.add`` on the RUNNING key — two rapid
-  dispatches collapse to one (double-click guard), and a crashed worker
-  self-heals when the marker TTLs out (the old column left such traces stuck in
-  PROCESSING forever). It first clears any FAILED marker so a retry claims cleanly.
-- ``set_failed`` clears the RUNNING key and sets the FAILED key, so the next
-  ``set_running`` claim isn't blocked by a stale running marker.
-- "done" is never stored here — it derives from ``TraceErrorAnalysis`` existence.
+The legacy Judge pipeline keeps its cache contract. Background attempts have a
+separate PG lifecycle row: neither a partial finding nor cache eviction can
+establish completion. Cache mutations never change that durable row.
 """
 
 from django.core.cache import cache
+
+from tracer.queries import background_analysis_state
 
 # Ceiling matches the analysis activity's ``time_limit``; a marker that outlives
 # a crashed run TTLs back to "idle" so the "Run Deep Analysis" button re-enables.
@@ -46,11 +34,11 @@ def is_running(trace_id: str) -> bool:
     return cache.get(_running_key(trace_id)) is not None
 
 
-def set_failed(trace_id: str) -> None:
+def set_failed(trace_id: str, *, code: str | None = None) -> None:
     """Record a failed run (until it TTLs out) and release the running claim so a
     retry can re-dispatch."""
     cache.delete(_running_key(trace_id))
-    cache.set(_failed_key(trace_id), "1", _TTL_SECONDS)
+    cache.set(_failed_key(trace_id), code or "1", _TTL_SECONDS)
 
 
 def clear(trace_id: str) -> None:
@@ -58,13 +46,34 @@ def clear(trace_id: str) -> None:
     cache.delete(_failed_key(trace_id))
 
 
-def status(trace_id: str, *, has_analysis: bool) -> str:
-    """Frontend job state: ``done`` | ``running`` | ``failed`` | ``idle``.
+def clear_background_running(trace_id: str) -> None:
+    """Compare before releasing the existing running marker, never a failure.
 
-    A completed ``TraceErrorAnalysis`` row wins ("done"). Otherwise the transient
-    running/failed marker, else "idle" — mirroring the old status→feed-state map
-    without touching the dropped column.
+    A watchdog can publish an abort while cache.delete is blocked. Success must
+    therefore NEVER delete the failed key, even if it was absent at this check.
+    This compatibility helper only touches the legacy cache. Background workers
+    no longer call it: their generation-fenced receipt is the sole authority.
     """
+    if cache.get(_failed_key(trace_id)) is not None:
+        return
+    if cache.get(_running_key(trace_id)) == "1":
+        cache.delete(_running_key(trace_id))
+
+
+def background_status(row) -> str:
+    if row.status == "completed":
+        return "done"
+    if row.status == "aborted":
+        return "failed"
+    return "running"
+
+
+def status(trace_id: str, *, has_analysis: bool, project_ids=None) -> str:
+    row = background_analysis_state.get_state(trace_id, project_ids=project_ids)
+    if row is not None:
+        return background_status(row)
+    if _cached_failure_code(trace_id) is not None:
+        return "failed"
     if has_analysis:
         return "done"
     if cache.get(_running_key(trace_id)) is not None:
@@ -72,3 +81,18 @@ def status(trace_id: str, *, has_analysis: bool) -> str:
     if cache.get(_failed_key(trace_id)) is not None:
         return "failed"
     return "idle"
+
+
+def failure_code(trace_id: str, *, project_ids=None) -> str | None:
+    """Public typed outcome; do not expose arbitrary exception text."""
+    row = background_analysis_state.get_state(trace_id, project_ids=project_ids)
+    if row is not None:
+        return row.reason_code or None if row.status == "aborted" else None
+    return _cached_failure_code(trace_id)
+
+
+def _cached_failure_code(trace_id):
+    code = cache.get(_failed_key(trace_id))
+    if code in ("analysis_access_revoked", "analysis_deadline_exceeded"):
+        return code
+    return None

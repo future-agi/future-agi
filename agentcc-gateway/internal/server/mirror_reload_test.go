@@ -63,10 +63,12 @@ func TestMirrorLimitHoldsAcrossConfigReload(t *testing.T) {
 	t.Cleanup(releaseAll)
 
 	path := filepath.Join(t.TempDir(), "gateway.yaml")
+	// The admin token is one config.Load accepts (reloadAdminToken): this
+	// gateway refuses to load a config whose admin token is short.
 	writeConfig := func(enabled bool, maxConcurrent int) {
 		t.Helper()
 		yaml := fmt.Sprintf(`admin:
-  token: reload-test-token
+  token: %s
 providers:
   openai:
     base_url: %q
@@ -85,7 +87,7 @@ routing:
         target_provider: shadow
         target_model: shadow-model
         sample_rate: 1
-`, prod.URL, shadow.URL, enabled, maxConcurrent)
+`, reloadAdminToken, prod.URL, shadow.URL, enabled, maxConcurrent)
 		if err := os.WriteFile(path, []byte(yaml), 0o600); err != nil {
 			t.Fatal(err)
 		}

@@ -1,5 +1,7 @@
+import PersonalKeySnippet, {
+  PersonalKeyControl,
+} from "src/sections/keys/view/PersonalKeySnippet";
 import { Box, LinearProgress, Tab } from "@mui/material";
-import { SegmentedTabs } from "src/components/tabs/tabs";
 import React, { useState } from "react";
 import { Events, handleOnDocsClicked, trackEvent } from "src/utils/Mixpanel";
 import { useQuery } from "@tanstack/react-query";
@@ -8,6 +10,8 @@ import axios, { endpoints } from "src/utils/axios";
 import InstructionTitle from "./InstructionTitle";
 import InstructionCodeCopy from "./InstructionCodeCopy";
 import ObserveInstruments from "./ObserveInstuments";
+import CollectorUrlNote from "./CollectorUrlNote";
+import { SegmentedTabs } from "src/components/tabs/tabs";
 
 const NewExperiment = () => {
   const [languageTab, setLanguageTab] = useState("python");
@@ -17,7 +21,7 @@ const NewExperiment = () => {
     isLoading,
     error,
   } = useQuery({
-    queryKey: ["keys"],
+    queryKey: ["project-sdk-code", "experiment"],
     queryFn: () =>
       axios.get(endpoints.project.getCodeBlockTracer, {
         params: {
@@ -55,8 +59,8 @@ const NewExperiment = () => {
       {/* Installation & Keys Section */}
       <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
         <InstructionTitle
-          title="Install Dependencies"
-          description="For more instructions, checkout our "
+          title="Install dependencies"
+          description="For more instructions, check out our "
           url="https://docs.futureagi.com/docs/dataset/features/experiments"
           urltext="Docs"
           onUrlClick={() => handleOnDocsClicked("prototype_page")}
@@ -90,22 +94,24 @@ const NewExperiment = () => {
         {/* API Keys */}
         <Box sx={{ mt: 1.5 }}>
           <InstructionTitle
-            title="Load API keys"
-            description="load your API keys"
+            title="Use a personal API key"
+            description="Create a key or replace the placeholders with your saved values."
           />
         </Box>
 
+        <PersonalKeyControl />
         <InstructionCodeCopy
           text={getCodeBySection("keys")}
           language={languageTab}
           onCopy={() => trackEvent(Events.apikeys)}
         />
+        <CollectorUrlNote missing={Boolean(keysData?.collector_url_missing)} />
       </Box>
 
       {/* Telemetry Section with its own tab control */}
       <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
         <InstructionTitle
-          title="Setup Telemetry"
+          title="Set up telemetry"
           description="Register your application to send traces to this project. The code should be added BEFORE any code execution."
         />
 
@@ -136,7 +142,7 @@ const NewExperiment = () => {
       {/* Instruments Section */}
       <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
         <InstructionTitle
-          title="Setup Instrumentation"
+          title="Set up instrumentation"
           description="Add tracing instrumentation to give you observability into your application."
         />
 
@@ -153,4 +159,10 @@ const NewExperiment = () => {
   );
 };
 
-export default NewExperiment;
+export default function NewExperimentWithKey() {
+  return (
+    <PersonalKeySnippet>
+      <NewExperiment />
+    </PersonalKeySnippet>
+  );
+}

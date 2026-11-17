@@ -18,8 +18,9 @@ import json
 import re
 import threading
 import uuid as _uuid
+from collections.abc import Callable
 from dataclasses import asdict
-from typing import Any, Callable
+from typing import Any
 
 import structlog
 from django.db.models import Q
@@ -56,6 +57,7 @@ from ee.agenthub.cluster_rca.types import (
 )
 from ee.agenthub.untrusted_content import json_data_block
 from ee.usage.services.gateway_llm_client import call_llm_raw, get_gateway_client
+from evaluations.run_settings import run_settings
 from tracer.models.trace_error_analysis import ErrorClusterTraces
 from tracer.services.clickhouse.cluster_rca_spans import (
     aggregate_span_field,
@@ -66,12 +68,12 @@ from tracer.services.clickhouse.cluster_rca_spans import (
     read_span,
     search_spans_in_traces,
     search_trace_ids,
+    span_ids_in_traces,
     spans_for_trace,
     timeline_trace_counts,
     trace_roots,
     traces_in_session,
 )
-from tracer.services.clickhouse.v2 import get_reader
 from tracer.services.clickhouse.span_attribute_lookups import (
     aggregate_attribute_over_traces,
     list_attribute_keys_for_project,
@@ -79,7 +81,7 @@ from tracer.services.clickhouse.span_attribute_lookups import (
     list_attributes_for_trace,
     scoped_trace_ids,
 )
-
+from tracer.services.clickhouse.v2 import get_reader
 
 # Type alias for the streaming-events callback the caller can pass in.
 # Callable[(event_type: str, payload: dict)] → None
@@ -116,8 +118,8 @@ _DEFAULT_VERBATIM_CAP = 2048  # 2KB default cap for root I/O / span I/O
 # expand can exceed this. Past the ceiling the field is compressed via the lite
 # summarizer before it enters the main model's context, so one deep read can't
 # blow the ~1M-token window. Tunable.
-_READ_COMPRESS_CHARS = 120_000          # ~30k tokens — compress trigger
-_READ_COMPRESS_INPUT_CAP = 2_000_000    # never feed the compressor more than this
+_READ_COMPRESS_CHARS = 120_000  # ~30k tokens — compress trigger
+_READ_COMPRESS_INPUT_CAP = 2_000_000  # never feed the compressor more than this
 # Deterministic safety net for compression: verbatim windows around any failure
 # marker are extracted BEFORE the lossy LLM summary, so an error can never be
 # silently dropped (an LLM can miss a needle buried in filler — for an RCA tool
@@ -127,7 +129,7 @@ _ERROR_MARKER_RE = re.compile(
     r"timed out|refused|denied|unauthorized|forbidden|fatal|panic|crash|"
     r"\b[45]\d{2}\b)"
 )
-_ERROR_WINDOW_CHARS = 240   # verbatim context kept around each marker
+_ERROR_WINDOW_CHARS = 240  # verbatim context kept around each marker
 _ERROR_BLOCK_BUDGET = 24_000  # cap on the total verbatim-error block
 
 # Inline span I/O budgets for read(trace).
@@ -137,10 +139,10 @@ _ERROR_BLOCK_BUDGET = 24_000  # cap on the total verbatim-error block
 # context is bounded independently by _compact_old_tool_results, which keeps
 # only the most recent CLUSTER_RCA_COMPACT_KEEP_RECENT tool results — so the
 # worst case the main model ever holds is that many trace payloads.
-_SPAN_IO_FIELD_CAP = 1024       # per span, per field, on a default read
-_TRACE_IO_BUDGET = 48_000       # total inline span I/O for one trace
+_SPAN_IO_FIELD_CAP = 1024  # per span, per field, on a default read
+_TRACE_IO_BUDGET = 48_000  # total inline span I/O for one trace
 _TRACE_IO_BUDGET_FULL = 160_000  # same, for the opted-in forensic depth
-_MAX_SPANS_RENDERED = 400       # span-count ceiling; the tail is elided and counted
+_MAX_SPANS_RENDERED = 400  # span-count ceiling; the tail is elided and counted
 
 
 def _clamp(value: Any, lo: int, hi: int) -> int:
@@ -171,7 +173,9 @@ def _snippet(value: Any, limit: int = _SNIPPET_LEN) -> str:
     return s[:limit] + ("…" if len(s) > limit else "")
 
 
-def _verbatim(value: Any, cap: int = _DEFAULT_VERBATIM_CAP, expand: bool = False) -> dict:
+def _verbatim(
+    value: Any, cap: int = _DEFAULT_VERBATIM_CAP, expand: bool = False
+) -> dict:
     """Default-light verbatim field with truncation markers.
 
     Returns {value, truncated, full_chars}. When `expand=True`, returns the
@@ -279,7 +283,7 @@ def _rollup_to_list(agg_result: dict, offset: int, limit: int) -> dict:
         return agg_result
     buckets = agg_result.get("buckets", [])
     total = len(buckets)
-    page = buckets[offset:offset + limit]
+    page = buckets[offset : offset + limit]
     return {
         "items": [
             {"key": b["key"], "count": b["count"], "pct": b.get("pct", 0.0)}
@@ -368,6 +372,7 @@ def _expand_set(expand: Any) -> set[str]:
     if isinstance(expand, (list, tuple, set)):
         return {str(p) for p in expand if p}
     return set()
+
 
 logger = structlog.get_logger(__name__)
 
@@ -473,6 +478,9 @@ class ClusterAnalysisAgent:
         # call wants this; one DB round-trip per cluster is enough).
         self._cluster_trace_uuids_cache: dict[str, list[str]] = {}
         self._cluster_session_uuids_cache: dict[str, list[str]] = {}
+        # Per-run cluster→ids of this project's spans on its traces: one CH read,
+        # which keeps the evaluation tools' trace-level rows to this project.
+        self._cluster_span_ids_cache: dict[str, list[str]] = {}
         # Per-run span caches — a trace's spans are read at most once from CH;
         # _span_index flattens them by span_id for read(span) hits.
         self._trace_spans_cache: dict[str, list[dict]] = {}
@@ -490,9 +498,7 @@ class ClusterAnalysisAgent:
         # --- Cluster context (uuid + label + project) ----------------------
         cluster_ctx = self._init_cluster_context(cluster_id, project_id)
         if cluster_ctx is None:
-            raise ValueError(
-                f"cluster '{cluster_id}' not found or has been deleted"
-            )
+            raise ValueError(f"cluster '{cluster_id}' not found or has been deleted")
         self.cluster_uuid: str = cluster_ctx["uuid"]
         self.cluster_label: str = cluster_ctx["label"]
         # Public attribute — the LLM-facing identifier. UI / logs see this.
@@ -506,9 +512,7 @@ class ClusterAnalysisAgent:
 
         # Preload the project's schema (custom span attribute keys) into the
         # system prompt so the agent doesn't burn turns enumerating.
-        self.project_schema_context: str = build_project_schema_context(
-            self.project_id
-        )
+        self.project_schema_context: str = build_project_schema_context(self.project_id)
 
         self.model = model
         self.temperature = temperature
@@ -623,8 +627,9 @@ class ClusterAnalysisAgent:
             if isinstance(v, str):
                 return self._resolve_alias(v) or v
             if isinstance(v, list):
-                return [self._resolve_alias(x) or x if isinstance(x, str) else x
-                        for x in v]
+                return [
+                    self._resolve_alias(x) or x if isinstance(x, str) else x for x in v
+                ]
             return v
 
         out: dict = {}
@@ -633,7 +638,7 @@ class ClusterAnalysisAgent:
                 out[key] = value
                 continue
             if isinstance(value, dict) and len(value) == 1:
-                (op_key, op_val), = value.items()
+                ((op_key, op_val),) = value.items()
                 out[key] = {op_key: _resolve_one(op_val)}
             else:
                 out[key] = _resolve_one(value)
@@ -710,6 +715,37 @@ class ClusterAnalysisAgent:
         self._cluster_session_uuids_cache[cluster_uuid] = result
         return result
 
+    def _cluster_span_ids(self, cluster_uuid: str) -> list[str]:
+        """Ids of this project's spans on the cluster's traces. Cached per run.
+
+        One batched, project-scoped ClickHouse read for every trace in the
+        cluster scope, the first time an evaluation tool needs it. When the
+        project holds no span of those traces, or the read fails, the list
+        stays empty for the run and one warning is logged: the evaluation
+        tools then read no trace-level row.
+        """
+        cached = self._cluster_span_ids_cache.get(cluster_uuid)
+        if cached is not None:
+            return cached
+
+        trace_uuids = self._cluster_trace_uuids(cluster_uuid)
+        result: list[str] = []
+        if trace_uuids:
+            error: str | None = None
+            try:
+                result = span_ids_in_traces(self.project_id, trace_uuids)
+            except Exception as exc:
+                error = str(exc)
+            if not result:
+                logger.warning(
+                    "cluster_rca_eval_scope_has_no_project_spans",
+                    cluster_id=self.cluster_id,
+                    traces=len(trace_uuids),
+                    error=error,
+                )
+        self._cluster_span_ids_cache[cluster_uuid] = result
+        return result
+
     def _eval_scope_q(self, cluster_uuid: str, trace_uuids: list[str]) -> Q:
         """EvalLogger filter for a cluster's eval evidence.
 
@@ -718,8 +754,31 @@ class ClusterAnalysisAgent:
         formed the cluster. Scoping by trace alone would silently drop the
         single most important signal for a session cluster, so OR in the
         cluster's sessions when there are any.
+
+        Its trace arm names no project, and two projects can hold one trace
+        id. The evaluation tools read through ``_project_eval_scope_q``.
         """
         q = Q(trace_id__in=trace_uuids)
+        session_uuids = self._cluster_session_uuids(cluster_uuid)
+        if session_uuids:
+            q |= Q(trace_session_id__in=session_uuids)
+        return q
+
+    def _project_eval_scope_q(self, cluster_uuid: str, trace_uuids: list[str]) -> Q:
+        """EvalLogger filter for list(eval_results), read(eval_result) and
+        aggregate(eval_metric): the cluster's eval evidence in this project.
+
+        An eval row names no project, and two projects can hold one trace id.
+        So a row on ``trace_uuids`` is kept only when its span is one of this
+        project's spans on the cluster's traces (``_cluster_span_ids``). Span
+        and trace rows both name a span, a trace row its root span, so both
+        are kept. No span ids, no trace-level rows. Session rows are matched
+        by session as in ``_eval_scope_q``: session ids are per project.
+        """
+        q = Q(
+            trace_id__in=trace_uuids,
+            observation_span_id__in=self._cluster_span_ids(cluster_uuid),
+        )
         session_uuids = self._cluster_session_uuids(cluster_uuid)
         if session_uuids:
             q |= Q(trace_session_id__in=session_uuids)
@@ -860,13 +919,13 @@ class ClusterAnalysisAgent:
                 # non-streaming on purpose: Vertex omits thought summaries from
                 # streamGenerateContent on tool-calling turns, so streaming
                 # would gut the per-turn reasoning this agent is built to surface.
-                create_kwargs = dict(
-                    model=self.model,
-                    messages=messages,
-                    temperature=self.temperature,
-                    max_tokens=self.max_tokens,
-                    tools=CLUSTER_RCA_TOOLS,
-                )
+                create_kwargs = {
+                    "model": self.model,
+                    "messages": messages,
+                    "temperature": self.temperature,
+                    "max_tokens": self.max_tokens,
+                    "tools": CLUSTER_RCA_TOOLS,
+                }
                 if self.thinking_budget:
                     # OpenAI-compat client rejects unknown top-level kwargs;
                     # provider-specific thinking config rides in extra_body.
@@ -1058,22 +1117,18 @@ class ClusterAnalysisAgent:
             }
         ]
         submit_only = [
-            t
-            for t in CLUSTER_RCA_TOOLS
-            if t["function"]["name"] == TERMINAL_TOOL_NAME
+            t for t in CLUSTER_RCA_TOOLS if t["function"]["name"] == TERMINAL_TOOL_NAME
         ]
         try:
-            create_kwargs = dict(
-                model=self.model,
-                messages=forced_messages,
-                temperature=self.temperature,
-                max_tokens=self.max_tokens,
-                tools=submit_only,
-            )
+            create_kwargs = {
+                "model": self.model,
+                "messages": forced_messages,
+                "temperature": self.temperature,
+                "max_tokens": self.max_tokens,
+                "tools": submit_only,
+            }
             if self.thinking_budget:
-                create_kwargs["extra_body"] = {
-                    "thinking_budget": self.thinking_budget
-                }
+                create_kwargs["extra_body"] = {"thinking_budget": self.thinking_budget}
             _result = call_llm_raw(self._gateway_client, **create_kwargs)
             self.total_cost_usd += _result.cost_usd
             response = _result.response
@@ -1181,6 +1236,14 @@ class ClusterAnalysisAgent:
 
     def _execute_tool(self, tool_name: str, args: dict) -> dict:
         """Dispatch a tool call to its handler. Returns a plain dict."""
+        context = getattr(self, "_falcon_tool_context", None)
+        if context is not None:
+            from ee.falcon_ai.tool_scope import workspace_access_allowed
+
+            if not workspace_access_allowed(context, context.workspace):
+                return tool_error(
+                    ERROR_CODE_UNAVAILABLE, "Workspace is no longer available."
+                )
         handlers = {
             "list": self._tool_list,
             "search": self._tool_search,
@@ -1193,9 +1256,7 @@ class ClusterAnalysisAgent:
         }
         handler = handlers.get(tool_name)
         if handler is None:
-            return tool_error(
-                ERROR_CODE_INVALID_ARGS, f"Unknown tool: {tool_name}"
-            )
+            return tool_error(ERROR_CODE_INVALID_ARGS, f"Unknown tool: {tool_name}")
 
         # Auto-scope: the agent works within ONE cluster, so default the run's
         # cluster_id into the filter. The LLM never has to repeat it and never
@@ -1243,9 +1304,7 @@ class ClusterAnalysisAgent:
                 cluster_id=self.cluster_id,
                 tool_name=tool_name,
             )
-            return tool_error(
-                ERROR_CODE_UNAVAILABLE, f"{tool_name}: {exc}"
-            )
+            return tool_error(ERROR_CODE_UNAVAILABLE, f"{tool_name}: {exc}")
 
         if debounced and not (isinstance(result, dict) and result.get("is_error")):
             self._call_history[call_key] = 1
@@ -1349,9 +1408,7 @@ class ClusterAnalysisAgent:
         }
         handler = handlers.get(entity)
         if handler is None:
-            return tool_error(
-                ERROR_CODE_INVALID_ARGS, f"Unknown entity: {entity}"
-            )
+            return tool_error(ERROR_CODE_INVALID_ARGS, f"Unknown entity: {entity}")
         return handler(query, filter or {}, _clamp(limit, 1, 100))
 
     def _tool_read(
@@ -1382,14 +1439,10 @@ class ClusterAnalysisAgent:
         }
         handler = handlers.get(entity)
         if handler is None:
-            return tool_error(
-                ERROR_CODE_INVALID_ARGS, f"Unknown entity: {entity}"
-            )
+            return tool_error(ERROR_CODE_INVALID_ARGS, f"Unknown entity: {entity}")
         return handler(id)
 
-    def _tool_aggregate(
-        self, metric: str, filter: dict, group_by: str
-    ) -> dict:
+    def _tool_aggregate(self, metric: str, filter: dict, group_by: str) -> dict:
         """Count-by-group across the cluster's (optionally filtered) traces.
 
         filter:   cluster_id (required, the blast radius) + optional
@@ -1418,8 +1471,10 @@ class ClusterAnalysisAgent:
 
         if not trace_uuids:
             return {
-                "buckets": [], "total": 0,
-                "group_by": group_by, "metric": metric,
+                "buckets": [],
+                "total": 0,
+                "group_by": group_by,
+                "metric": metric,
             }
 
         # attr.<key> group_by → ClickHouse value distribution.
@@ -1455,14 +1510,23 @@ class ClusterAnalysisAgent:
         except _AggUnknownGroupBy as exc:
             valid = {
                 "trace_count": [
-                    "version", "session_id", "scan_issue_category",
-                    "scan_issue_group", "scan_issue_fix_layer", "attr.<key>",
+                    "version",
+                    "session_id",
+                    "scan_issue_category",
+                    "scan_issue_group",
+                    "scan_issue_fix_layer",
+                    "attr.<key>",
                 ],
                 "span_count": [
-                    "span_tool_name", "span_status", "span_type", "attr.<key>",
+                    "span_tool_name",
+                    "span_status",
+                    "span_type",
+                    "attr.<key>",
                 ],
                 "scan_issue_count": [
-                    "scan_issue_category", "scan_issue_group", "scan_issue_fix_layer",
+                    "scan_issue_category",
+                    "scan_issue_group",
+                    "scan_issue_fix_layer",
                 ],
             }.get(metric, [])
             return tool_error(
@@ -1497,10 +1561,7 @@ class ClusterAnalysisAgent:
 
         # version / session_id → CH (denormalized trace columns on spans).
         if group_by in ("version", "session_id"):
-
-            result = aggregate_trace_field(
-                self.project_id, trace_uuids, group_by
-            )
+            result = aggregate_trace_field(self.project_id, trace_uuids, group_by)
             if result is None:
                 raise _AggUnknownGroupBy(group_by)
             buckets, tot = result
@@ -1508,17 +1569,23 @@ class ClusterAnalysisAgent:
                 for b in buckets:
                     b["key"] = (
                         self._mint_alias("session", b["key"])
-                        if b["key"] not in (None, "(none)") else "(no session)"
+                        if b["key"] not in (None, "(none)")
+                        else "(no session)"
                     )
             elif group_by == "version":
                 for b in buckets:
                     b["key"] = (
                         self._mint_alias("version", b["key"])
-                        if b["key"] not in (None, "(none)") else "(no version)"
+                        if b["key"] not in (None, "(none)")
+                        else "(no version)"
                     )
             return buckets, tot
 
-        if group_by in ("scan_issue_category", "scan_issue_group", "scan_issue_fix_layer"):
+        if group_by in (
+            "scan_issue_category",
+            "scan_issue_group",
+            "scan_issue_fix_layer",
+        ):
             field_map = {
                 "scan_issue_category": "category",
                 "scan_issue_group": "group",
@@ -1537,7 +1604,7 @@ class ClusterAnalysisAgent:
             # Count distinct eval rows (not trace_id) so session-level results,
             # which carry no trace, still register against their metric.
             rows = selectors.count_cluster_eval_metrics(
-                self._eval_scope_q(cluster_uuid, trace_uuids)
+                self._project_eval_scope_q(cluster_uuid, trace_uuids)
             )
             buckets = [
                 {
@@ -1556,7 +1623,9 @@ class ClusterAnalysisAgent:
         raise _AggUnknownGroupBy(group_by)
 
     def _agg_span_count(
-        self, trace_uuids: list[str], group_by: str,
+        self,
+        trace_uuids: list[str],
+        group_by: str,
     ) -> tuple[list[dict[str, Any]], int]:
         """span_count rollups across the cluster's spans (ClickHouse)."""
 
@@ -1660,9 +1729,7 @@ class ClusterAnalysisAgent:
             "features": [],
         }
 
-    def _tool_timeline(
-        self, filter: dict, bucket: str = "hour"
-    ) -> dict:
+    def _tool_timeline(self, filter: dict, bucket: str = "hour") -> dict:
         """Failure count over time. bucket ∈ {minute, hour, day}.
 
         v1: per-bucket distinct-trace count for the cluster (ClickHouse, by
@@ -1679,7 +1746,10 @@ class ClusterAnalysisAgent:
             return err
         if not trace_uuids:
             return {
-                "buckets": [], "total": 0, "bucket_size": bucket, "deploys": [],
+                "buckets": [],
+                "total": 0,
+                "bucket_size": bucket,
+                "deploys": [],
             }
         rows = timeline_trace_counts(self.project_id, trace_uuids, bucket)
         buckets = [
@@ -1710,7 +1780,13 @@ class ClusterAnalysisAgent:
             return err
         cluster_uuid = self.cluster_uuid
         if not trace_uuids:
-            return {"items": [], "total_count": 0, "offset": offset, "limit": limit, "has_more": False}
+            return {
+                "items": [],
+                "total_count": 0,
+                "offset": offset,
+                "limit": limit,
+                "has_more": False,
+            }
 
         # Page from the scoped trace_uuids, NOT junction rows: a session cluster's
         # junction rows have trace_id NULL, so trace_id__in there returns nothing.
@@ -1734,12 +1810,10 @@ class ClusterAnalysisAgent:
         # dedups defensively.
         ordered_uuids = list(provenance)
         seen = set(ordered_uuids)
-        ordered_uuids.extend(
-            sorted(tid for tid in trace_uuids if tid not in seen)
-        )
+        ordered_uuids.extend(sorted(tid for tid in trace_uuids if tid not in seen))
 
         total_count = len(ordered_uuids)
-        page_trace_ids = ordered_uuids[offset:offset + limit]
+        page_trace_ids = ordered_uuids[offset : offset + limit]
         roots = trace_roots(self.project_id, page_trace_ids)
 
         items: list[dict[str, Any]] = []
@@ -1758,12 +1832,13 @@ class ClusterAnalysisAgent:
                         "session", root.get("trace_session_id")
                     ),
                     "created_at": (
-                        m.created_at.isoformat()
-                        if m and m.created_at else None
+                        m.created_at.isoformat() if m and m.created_at else None
                     ),
                     "provenance": (
-                        "scanner" if tid in finding_ids
-                        else "eval" if m and m.eval_logger_id
+                        "scanner"
+                        if tid in finding_ids
+                        else "eval"
+                        if m and m.eval_logger_id
                         else "unknown"
                     ),
                     "scan_issue_id": self._mint_alias(
@@ -1790,7 +1865,13 @@ class ClusterAnalysisAgent:
         if err:
             return err
         if not trace_uuids:
-            return {"items": [], "total_count": 0, "offset": offset, "limit": limit, "has_more": False}
+            return {
+                "items": [],
+                "total_count": 0,
+                "offset": offset,
+                "limit": limit,
+                "has_more": False,
+            }
         rows, total = list_spans_in_traces(
             self.project_id, trace_uuids, limit=limit, offset=offset
         )
@@ -1800,7 +1881,8 @@ class ClusterAnalysisAgent:
                 "trace_id": self._mint_alias("trace", s.get("trace_id")),
                 "parent": (
                     self._mint_alias("span", s["parent_span_id"])
-                    if s.get("parent_span_id") else None
+                    if s.get("parent_span_id")
+                    else None
                 ),
                 "type": s.get("observation_type"),
                 "name": s.get("name"),
@@ -1823,10 +1905,16 @@ class ClusterAnalysisAgent:
         if err:
             return err
         if not trace_uuids:
-            return {"items": [], "total_count": 0, "offset": offset, "limit": limit, "has_more": False}
+            return {
+                "items": [],
+                "total_count": 0,
+                "offset": offset,
+                "limit": limit,
+                "has_more": False,
+            }
         session_ids = distinct_sessions(self.project_id, trace_uuids)
         total = len(session_ids)
-        page = session_ids[offset:offset + limit]
+        page = session_ids[offset : offset + limit]
         items = [
             {"session_id": self._mint_alias("session", sid), "_uuid": sid}
             for sid in page
@@ -1842,7 +1930,9 @@ class ClusterAnalysisAgent:
     def _list_tool_names(self, filter: dict, limit: int, offset: int = 0) -> dict:
         """Distinct tool span names in cluster scope. Wraps aggregate."""
         agg = self._tool_aggregate(
-            metric="span_count", filter=filter, group_by="span_tool_name",
+            metric="span_count",
+            filter=filter,
+            group_by="span_tool_name",
         )
         return _rollup_to_list(agg, offset, limit)
 
@@ -1852,40 +1942,49 @@ class ClusterAnalysisAgent:
         if err:
             return err
         if not trace_uuids:
-            return {"items": [], "total_count": 0, "offset": offset, "limit": limit, "has_more": False}
+            return {
+                "items": [],
+                "total_count": 0,
+                "offset": offset,
+                "limit": limit,
+                "has_more": False,
+            }
         items, total = error_messages_in_traces(
             self.project_id, trace_uuids, limit=limit, offset=offset
         )
         return {
-            "items": items, "total_count": total,
-            "offset": offset, "limit": limit,
+            "items": items,
+            "total_count": total,
+            "offset": offset,
+            "limit": limit,
             "has_more": total > offset + len(items),
         }
 
     def _list_versions(self, filter: dict, limit: int, offset: int = 0) -> dict:
         """Distinct project versions in cluster scope. Wraps aggregate."""
         agg = self._tool_aggregate(
-            metric="trace_count", filter=filter, group_by="version",
+            metric="trace_count",
+            filter=filter,
+            group_by="version",
         )
         return _rollup_to_list(agg, offset, limit)
 
     def _list_eval_results(self, filter: dict, limit: int, offset: int = 0) -> dict:
-        """EvalLogger rows attached to the cluster's traces (and, for a
-        session cluster, the session-level rows on its sessions)."""
+        """EvalLogger rows on this project's spans of the cluster's traces (and,
+        for a session cluster, the session-level rows on its sessions)."""
         trace_uuids, err = self._resolve_scoped_trace_uuids(filter)
         if err:
             return err
         cluster_uuid = self.cluster_uuid
         rows, total = selectors.list_cluster_eval_results(
-            self._eval_scope_q(cluster_uuid, trace_uuids or []), offset, limit
+            self._project_eval_scope_q(cluster_uuid, trace_uuids or []), offset, limit
         )
         items = [
             {
                 "id": self._mint_alias("eval_result", er.id),
                 "trace_id": self._mint_alias("trace", er.trace_id),
                 "metric": (
-                    er.custom_eval_config.name
-                    if er.custom_eval_config_id else None
+                    er.custom_eval_config.name if er.custom_eval_config_id else None
                 ),
                 "score": (
                     er.output_float
@@ -1916,7 +2015,13 @@ class ClusterAnalysisAgent:
             return err
         cluster_uuid = self.cluster_uuid
         if not trace_uuids:
-            return {"items": [], "total_count": 0, "offset": offset, "limit": limit, "has_more": False}
+            return {
+                "items": [],
+                "total_count": 0,
+                "offset": offset,
+                "limit": limit,
+                "has_more": False,
+            }
         rows, total = selectors.list_cluster_scan_issues(
             cluster_uuid, trace_uuids, offset, limit
         )
@@ -1925,7 +2030,8 @@ class ClusterAnalysisAgent:
                 "id": self._mint_alias("scan_issue", i.id),
                 "trace_id": (
                     self._mint_alias("trace", i.scan_result.trace_id)
-                    if i.scan_result else None
+                    if i.scan_result
+                    else None
                 ),
                 "category": i.category,
                 "group": i.group,
@@ -1948,7 +2054,8 @@ class ClusterAnalysisAgent:
     ) -> dict:
         """Distinct scan_issue categories in cluster. Wraps aggregate."""
         agg = self._tool_aggregate(
-            metric="scan_issue_count", filter=filter,
+            metric="scan_issue_count",
+            filter=filter,
             group_by="scan_issue_category",
         )
         return _rollup_to_list(agg, offset, limit)
@@ -1956,7 +2063,8 @@ class ClusterAnalysisAgent:
     def _list_fix_layers(self, filter: dict, limit: int, offset: int = 0) -> dict:
         """Distinct fix_layer values across the cluster's scan issues."""
         agg = self._tool_aggregate(
-            metric="scan_issue_count", filter=filter,
+            metric="scan_issue_count",
+            filter=filter,
             group_by="scan_issue_fix_layer",
         )
         return _rollup_to_list(agg, offset, limit)
@@ -1976,8 +2084,7 @@ class ClusterAnalysisAgent:
                 self.project_id, trace_uuids or []
             )
             rows = [
-                {"key": k.key, "type": k.type, "count": k.count}
-                for k in batch_keys
+                {"key": k.key, "type": k.type, "count": k.count} for k in batch_keys
             ]
         else:
             # Project-scope fallback (uses the existing helper).
@@ -1989,11 +2096,10 @@ class ClusterAnalysisAgent:
                 )
             project_keys = list_attribute_keys_for_project(self.project_id)
             rows = [
-                {"key": k.key, "type": k.type, "count": k.count}
-                for k in project_keys
+                {"key": k.key, "type": k.type, "count": k.count} for k in project_keys
             ]
         total = len(rows)
-        page = rows[offset:offset + limit]
+        page = rows[offset : offset + limit]
         return {
             "items": page,
             "total_count": total,
@@ -2013,23 +2119,20 @@ class ClusterAnalysisAgent:
     # PER-ENTITY SEARCH HANDLERS — all stubs
     # ------------------------------------------------------------------------
 
-    def _search_traces(
-        self, query: str, filter: dict, limit: int
-    ) -> dict:
+    def _search_traces(self, query: str, filter: dict, limit: int) -> dict:
         """Substring search across the cluster's traces' span I/O (ClickHouse).
         Returns distinct matching traces with a representative snippet."""
         if not query:
             return tool_error(
-                ERROR_CODE_INVALID_ARGS, "search(traces) needs a non-empty query",
+                ERROR_CODE_INVALID_ARGS,
+                "search(traces) needs a non-empty query",
             )
         trace_uuids, err = self._resolve_scoped_trace_uuids(filter)
         if err:
             return err
         if not trace_uuids:
             return {"items": [], "total_count": 0, "has_more": False}
-        matched = search_trace_ids(
-            self.project_id, trace_uuids, query, limit=limit + 1
-        )
+        matched = search_trace_ids(self.project_id, trace_uuids, query, limit=limit + 1)
         has_more = len(matched) > limit
         matched = matched[:limit]
         roots = trace_roots(self.project_id, matched) if matched else {}
@@ -2050,13 +2153,12 @@ class ClusterAnalysisAgent:
             "has_more": has_more,
         }
 
-    def _search_spans(
-        self, query: str, filter: dict, limit: int
-    ) -> dict:
+    def _search_spans(self, query: str, filter: dict, limit: int) -> dict:
         """Substring search across span input/output/name/status_message (CH)."""
         if not query:
             return tool_error(
-                ERROR_CODE_INVALID_ARGS, "search(spans) needs a non-empty query",
+                ERROR_CODE_INVALID_ARGS,
+                "search(spans) needs a non-empty query",
             )
         trace_uuids, err = self._resolve_scoped_trace_uuids(filter)
         if err:
@@ -2075,7 +2177,9 @@ class ClusterAnalysisAgent:
                 "name": s.get("name"),
                 "type": s.get("observation_type"),
                 "snippet": _match_snippet(
-                    query, s.get("input"), s.get("output"),
+                    query,
+                    s.get("input"),
+                    s.get("output"),
                     s.get("status_message"),
                 ),
             }
@@ -2087,14 +2191,13 @@ class ClusterAnalysisAgent:
             "has_more": has_more,
         }
 
-    def _search_sessions(
-        self, query: str, filter: dict, limit: int
-    ) -> dict:
+    def _search_sessions(self, query: str, filter: dict, limit: int) -> dict:
         """Search session-member traces for substring; returns sessions whose
         any member trace matches (CH). 'find the session where X happened'."""
         if not query:
             return tool_error(
-                ERROR_CODE_INVALID_ARGS, "search(sessions) needs a non-empty query",
+                ERROR_CODE_INVALID_ARGS,
+                "search(sessions) needs a non-empty query",
             )
         trace_uuids, err = self._resolve_scoped_trace_uuids(filter)
         if err:
@@ -2112,20 +2215,17 @@ class ClusterAnalysisAgent:
         has_more = len(seen) > limit
         seen = seen[:limit]
         return {
-            "items": [
-                {"session_id": self._mint_alias("session", sid)} for sid in seen
-            ],
+            "items": [{"session_id": self._mint_alias("session", sid)} for sid in seen],
             "total_count": len(seen),
             "has_more": has_more,
         }
 
-    def _search_scan_issues(
-        self, query: str, filter: dict, limit: int
-    ) -> dict:
+    def _search_scan_issues(self, query: str, filter: dict, limit: int) -> dict:
         """Substring search across finding statement and category."""
         if not query:
             return tool_error(
-                ERROR_CODE_INVALID_ARGS, "search(scan_issues) needs a non-empty query",
+                ERROR_CODE_INVALID_ARGS,
+                "search(scan_issues) needs a non-empty query",
             )
         trace_uuids, err = self._resolve_scoped_trace_uuids(filter)
         if err:
@@ -2143,7 +2243,8 @@ class ClusterAnalysisAgent:
                 "id": self._mint_alias("scan_issue", i.id),
                 "trace_id": (
                     self._mint_alias("trace", i.scan_result.trace_id)
-                    if i.scan_result else None
+                    if i.scan_result
+                    else None
                 ),
                 "category": i.category,
                 "group": i.group,
@@ -2173,15 +2274,11 @@ class ClusterAnalysisAgent:
 
         uuid = self._resolve_alias(id)
         if uuid is None:
-            return tool_error(
-                ERROR_CODE_NOT_FOUND, f"cluster '{id}' not found"
-            )
+            return tool_error(ERROR_CODE_NOT_FOUND, f"cluster '{id}' not found")
 
         group = selectors.get_cluster_for_read(uuid, self.project_id)
         if group is None:
-            return tool_error(
-                ERROR_CODE_NOT_FOUND, f"cluster '{id}' not found"
-            )
+            return tool_error(ERROR_CODE_NOT_FOUND, f"cluster '{id}' not found")
 
         payload: dict[str, Any] = {
             # `id` is the LLM-facing label. _uuid is kept for client deep-links.
@@ -2257,14 +2354,12 @@ class ClusterAnalysisAgent:
                     # via the junction — exact and target-agnostic (session
                     # eval rows have no trace, so a trace-scoped count misses
                     # them entirely).
-                    telemetry["eval_results"] = (
-                        selectors.count_cluster_eval_members(uuid)
+                    telemetry["eval_results"] = selectors.count_cluster_eval_members(
+                        uuid
                     )
                     target = group.eval_target_type or "span"
                     if target == "session":
-                        telemetry["sessions"] = len(
-                            self._cluster_session_uuids(uuid)
-                        )
+                        telemetry["sessions"] = len(self._cluster_session_uuids(uuid))
                         unit_note = (
                             "This is a SESSION-level eval cluster — the unit of "
                             "failure is the whole session (multi-trace), not a "
@@ -2304,8 +2399,8 @@ class ClusterAnalysisAgent:
                     payload["telemetry"] = telemetry
                     payload["telemetry_note"] = unit_note
                 else:
-                    telemetry["scan_issues"] = (
-                        selectors.count_cluster_scan_issues(uuid, trace_uuids)
+                    telemetry["scan_issues"] = selectors.count_cluster_scan_issues(
+                        uuid, trace_uuids
                     )
                     payload["telemetry"] = telemetry
                     if span_total == 0:
@@ -2316,15 +2411,11 @@ class ClusterAnalysisAgent:
                             "spans; reason from the scan issues and conclude."
                         )
         except Exception:
-            logger.exception(
-                "cluster_manifest_failed", cluster_id=group.cluster_id
-            )
+            logger.exception("cluster_manifest_failed", cluster_id=group.cluster_id)
 
         return payload
 
-    def _read_trace(
-        self, id: str, depth: str, expand: set[str] | None = None
-    ) -> dict:
+    def _read_trace(self, id: str, depth: str, expand: set[str] | None = None) -> dict:
         """Read one trace at the chosen depth.
 
         depth='summary' (default):
@@ -2351,16 +2442,13 @@ class ClusterAnalysisAgent:
 
         trace_uuid = self._resolve_alias(id)
         if trace_uuid is None:
-            return tool_error(
-                ERROR_CODE_NOT_FOUND, f"trace '{id}' not found"
-            )
+            return tool_error(ERROR_CODE_NOT_FOUND, f"trace '{id}' not found")
 
         # Cache by (uuid, depth, frozenset(expand)) — different expands ARE
         # different payloads, so don't conflate.
         cache_key = (trace_uuid, depth, frozenset(expand))
         if cache_key in self._trace_summary_cache:
             return self._trace_summary_cache[cache_key]
-
 
         # ---- Trace telemetry from ClickHouse spans (cached for the run).
         spans_list = self._spans_for_trace(trace_uuid)
@@ -2374,9 +2462,9 @@ class ClusterAnalysisAgent:
         # is the root span's I/O; trace context is denormalized onto spans.
         span_ids = {s["span_id"] for s in spans_list}
         roots = [
-            s for s in spans_list
-            if not s.get("parent_span_id")
-            or s["parent_span_id"] not in span_ids
+            s
+            for s in spans_list
+            if not s.get("parent_span_id") or s["parent_span_id"] not in span_ids
         ]
         roots.sort(key=lambda s: s.get("start_time") or "")
         root = roots[0] if roots else spans_list[0]
@@ -2389,14 +2477,16 @@ class ClusterAnalysisAgent:
         expand_error = full_default_expand or "root.error" in expand
 
         root_error = (
-            root.get("status_message")
-            if root.get("status") == "ERROR"
-            else None
+            root.get("status_message") if root.get("status") == "ERROR" else None
         )
 
         root_block = _build_root_block(
-            root.get("input"), root.get("output"), root_error,
-            expand_input, expand_output, expand_error,
+            root.get("input"),
+            root.get("output"),
+            root_error,
+            expand_input,
+            expand_output,
+            expand_error,
         )
         # Compress any expanded field that would blow the context window.
         self._cap_oversized_fields(root_block, ["input", "output", "error"], "root")
@@ -2416,9 +2506,7 @@ class ClusterAnalysisAgent:
         # on execution order alone drops the span the read exists to find when
         # the failure happens late, which is where failures usually happen.
         if len(spans_list) > _MAX_SPANS_RENDERED:
-            keep = {
-                i for i, s in enumerate(spans_list) if s.get("status") == "ERROR"
-            }
+            keep = {i for i, s in enumerate(spans_list) if s.get("status") == "ERROR"}
             keep = set(sorted(keep)[:_MAX_SPANS_RENDERED])
             for i in range(len(spans_list)):
                 if len(keep) >= _MAX_SPANS_RENDERED:
@@ -2431,12 +2519,8 @@ class ClusterAnalysisAgent:
         io_by_index: dict[int, dict] = {}
         budget_spent = 0
         if depth in ("summary", "full"):
-            field_cap = (
-                _DEFAULT_VERBATIM_CAP if depth == "full" else _SPAN_IO_FIELD_CAP
-            )
-            budget = (
-                _TRACE_IO_BUDGET_FULL if depth == "full" else _TRACE_IO_BUDGET
-            )
+            field_cap = _DEFAULT_VERBATIM_CAP if depth == "full" else _SPAN_IO_FIELD_CAP
+            budget = _TRACE_IO_BUDGET_FULL if depth == "full" else _TRACE_IO_BUDGET
             for i in sorted(
                 range(len(rendered)),
                 key=lambda n: rendered[n].get("status") != "ERROR",
@@ -2477,10 +2561,11 @@ class ClusterAnalysisAgent:
             entry.update(io_by_index.get(i, {}))
             spans_skeleton.append(entry)
 
-        # ---- Notable attributes (ClickHouse per-trace lookup). Graceful no-op.
+        # ---- Notable attributes (ClickHouse per-trace lookup, this project's
+        # spans only, like the span read above). Graceful no-op.
         notable_attributes: dict[str, Any] = {}
         try:
-            for attr in list_attributes_for_trace(trace_uuid):
+            for attr in list_attributes_for_trace(trace_uuid, self.project_id):
                 if len(attr.values) == 1:
                     notable_attributes[attr.key] = attr.values[0]
                 else:
@@ -2496,9 +2581,9 @@ class ClusterAnalysisAgent:
                 error=str(exc),
             )
 
-        # ---- Deterministic eval_scores join.
+        # ---- Deterministic eval_scores join, over the spans read above only.
         eval_scores: list[dict[str, Any]] = []
-        eval_rows = selectors.trace_eval_results(trace_uuid)
+        eval_rows = selectors.trace_eval_results(trace_uuid, span_ids)
         for er in eval_rows:
             score: Any = (
                 er.output_float
@@ -2513,9 +2598,7 @@ class ClusterAnalysisAgent:
                 {
                     "id": self._mint_alias("eval_result", er.id),
                     "metric": (
-                        er.custom_eval_config.name
-                        if er.custom_eval_config_id
-                        else None
+                        er.custom_eval_config.name if er.custom_eval_config_id else None
                     ),
                     "score": score,
                     "errored": bool(er.error),
@@ -2527,9 +2610,7 @@ class ClusterAnalysisAgent:
             "trace_id": self._mint_alias("trace", trace_uuid),
             "_uuid": str(trace_uuid),
             "name": ctx.get("trace_name"),
-            "session_id": self._mint_alias(
-                "session", ctx.get("trace_session_id")
-            ),
+            "session_id": self._mint_alias("session", ctx.get("trace_session_id")),
             "tags": _parse_json_list(ctx.get("tags")),
             "root": root_block,
             "spans": spans_skeleton,
@@ -2576,8 +2657,7 @@ class ClusterAnalysisAgent:
         head_budget = max(0, _READ_COMPRESS_CHARS - len(error_block))
         parts.append(
             f"FIELD HEAD ({label}, {len(text)} chars total, "
-            f"{max(0, len(text) - head_budget)} elided):\n"
-            + src[:head_budget]
+            f"{max(0, len(text) - head_budget)} elided):\n" + src[:head_budget]
         )
         return "\n\n".join(parts)
 
@@ -2645,9 +2725,7 @@ class ClusterAnalysisAgent:
 
         span = self._lookup_span(span_id)
         if span is None:
-            return tool_error(
-                ERROR_CODE_NOT_FOUND, f"span '{id}' not found"
-            )
+            return tool_error(ERROR_CODE_NOT_FOUND, f"span '{id}' not found")
 
         inp = _verbatim(span.get("input"), expand="input" in expand)
         out = _verbatim(span.get("output"), expand="output" in expand)
@@ -2720,9 +2798,7 @@ class ClusterAnalysisAgent:
 
         session_uuid = self._resolve_alias(id)
         if session_uuid is None:
-            return tool_error(
-                ERROR_CODE_NOT_FOUND, f"session '{id}' not found"
-            )
+            return tool_error(ERROR_CODE_NOT_FOUND, f"session '{id}' not found")
 
         # Member traces (chronological) from CH — sessions are typically
         # <50 turns; the LLM sees snippets only.
@@ -2732,9 +2808,7 @@ class ClusterAnalysisAgent:
                 ERROR_CODE_NOT_FOUND,
                 f"session '{id}' has no traces in ClickHouse",
             )
-        ordered = sorted(
-            members.items(), key=lambda kv: kv[1].get("first_start") or ""
-        )
+        ordered = sorted(members.items(), key=lambda kv: kv[1].get("first_start") or "")
         return {
             "session_id": self._mint_alias("session", session_uuid),
             "_uuid": str(session_uuid),
@@ -2752,30 +2826,25 @@ class ClusterAnalysisAgent:
             ],
         }
 
-    def _read_eval_result(
-        self, id: str, expand: set[str] | None = None
-    ) -> dict:
+    def _read_eval_result(self, id: str, expand: set[str] | None = None) -> dict:
         """Read one EvalLogger row. eval_explanation default-truncated 2KB."""
 
         expand = expand or set()
         eval_uuid = self._resolve_alias(id)
         if eval_uuid is None:
-            return tool_error(
-                ERROR_CODE_NOT_FOUND, f"eval_result '{id}' not found"
-            )
+            return tool_error(ERROR_CODE_NOT_FOUND, f"eval_result '{id}' not found")
 
-        # EvalLogger has no direct project FK; scope by membership in THIS
-        # cluster's eval evidence (its project-scoped traces + sessions). A
-        # foreign-project eval row is not in that set and so cannot resolve —
-        # same transitive-scope guarantee the list/agg eval handlers rely on.
+        # EvalLogger has no direct project FK, and two projects can hold one
+        # trace id; scope by membership in THIS cluster's eval evidence on this
+        # project's spans (plus its sessions). Another project's row on a shared
+        # trace id is not in that set and so cannot resolve, by alias or by raw
+        # UUID — the same scope the list/agg eval handlers use.
         trace_uuids = self._cluster_trace_uuids(self.cluster_uuid)
         er = selectors.get_eval_result_for_read(
-            self._eval_scope_q(self.cluster_uuid, trace_uuids), eval_uuid
+            self._project_eval_scope_q(self.cluster_uuid, trace_uuids), eval_uuid
         )
         if er is None:
-            return tool_error(
-                ERROR_CODE_NOT_FOUND, f"eval_result '{id}' not found"
-            )
+            return tool_error(ERROR_CODE_NOT_FOUND, f"eval_result '{id}' not found")
 
         score: Any = (
             er.output_float
@@ -2796,13 +2865,9 @@ class ClusterAnalysisAgent:
             "trace_id": self._mint_alias("trace", er.trace_id),
             "span_id": self._mint_alias("span", er.observation_span_id),
             "metric": (
-                er.custom_eval_config.name
-                if er.custom_eval_config_id
-                else None
+                er.custom_eval_config.name if er.custom_eval_config_id else None
             ),
-            "eval_config_id": self._mint_alias(
-                "eval_config", er.custom_eval_config_id
-            ),
+            "eval_config_id": self._mint_alias("eval_config", er.custom_eval_config_id),
             "score": score,
             "errored": bool(er.error),
             "error_message": er.error_message,
@@ -2818,20 +2883,16 @@ class ClusterAnalysisAgent:
 
         cfg_uuid = self._resolve_alias(id)
         if cfg_uuid is None:
-            return tool_error(
-                ERROR_CODE_NOT_FOUND, f"eval_config '{id}' not found"
-            )
+            return tool_error(ERROR_CODE_NOT_FOUND, f"eval_config '{id}' not found")
         cfg = selectors.get_eval_config_for_read(cfg_uuid, self.project_id)
         if cfg is None:
-            return tool_error(
-                ERROR_CODE_NOT_FOUND, f"eval_config '{id}' not found"
-            )
+            return tool_error(ERROR_CODE_NOT_FOUND, f"eval_config '{id}' not found")
         return {
             "id": self._mint_alias("eval_config", cfg.id),
             "_uuid": str(cfg.id),
             "name": cfg.name,
             "model": cfg.model,
-            "config": cfg.config,
+            "config": run_settings(cfg.config),
             "mapping": cfg.mapping,
             "filters": cfg.filters,
             "error_localizer": cfg.error_localizer,
@@ -2847,14 +2908,10 @@ class ClusterAnalysisAgent:
 
         ver_uuid = self._resolve_alias(id)
         if ver_uuid is None:
-            return tool_error(
-                ERROR_CODE_NOT_FOUND, f"version '{id}' not found"
-            )
+            return tool_error(ERROR_CODE_NOT_FOUND, f"version '{id}' not found")
         v = selectors.get_version_for_read(ver_uuid, self.project_id)
         if v is None:
-            return tool_error(
-                ERROR_CODE_NOT_FOUND, f"version '{id}' not found"
-            )
+            return tool_error(ERROR_CODE_NOT_FOUND, f"version '{id}' not found")
         return {
             "id": self._mint_alias("version", v.id),
             "_uuid": str(v.id),
@@ -2867,15 +2924,11 @@ class ClusterAnalysisAgent:
 
         issue_uuid = self._resolve_alias(id)
         if issue_uuid is None:
-            return tool_error(
-                ERROR_CODE_NOT_FOUND, f"scan_issue '{id}' not found"
-            )
+            return tool_error(ERROR_CODE_NOT_FOUND, f"scan_issue '{id}' not found")
 
         issue = selectors.get_scan_issue_for_read(issue_uuid, self.project_id)
         if issue is None:
-            return tool_error(
-                ERROR_CODE_NOT_FOUND, f"scan_issue '{id}' not found"
-            )
+            return tool_error(ERROR_CODE_NOT_FOUND, f"scan_issue '{id}' not found")
 
         return {
             "id": self._mint_alias("scan_issue", issue.id),
@@ -2890,9 +2943,7 @@ class ClusterAnalysisAgent:
                 if issue.scan_result
                 else None
             ),
-            "cluster_id": (
-                issue.cluster.cluster_id if issue.cluster_id else None
-            ),
+            "cluster_id": (issue.cluster.cluster_id if issue.cluster_id else None),
         }
 
     def _read_prior_analysis(self, id: str) -> dict:
@@ -2914,9 +2965,7 @@ class ClusterAnalysisAgent:
             finding_type = FindingType(finding["finding_type"])
             confidence = Confidence(finding["confidence"])
         except (KeyError, ValueError) as exc:
-            return tool_error(
-                ERROR_CODE_INVALID_ARGS, f"Invalid enum: {exc}"
-            )
+            return tool_error(ERROR_CODE_INVALID_ARGS, f"Invalid enum: {exc}")
 
         with self._counter_lock:
             self._finding_counter += 1
@@ -2927,12 +2976,8 @@ class ClusterAnalysisAgent:
             title=finding.get("title", ""),
             description=finding.get("description", ""),
             confidence=confidence,
-            evidence_trace_ids=self._evidence_uuids(
-                finding.get("evidence_trace_ids")
-            ),
-            evidence_span_ids=self._evidence_uuids(
-                finding.get("evidence_span_ids")
-            ),
+            evidence_trace_ids=self._evidence_uuids(finding.get("evidence_trace_ids")),
+            evidence_span_ids=self._evidence_uuids(finding.get("evidence_span_ids")),
         )
         self.findings.append(new_finding)
         self.on_event(
@@ -2945,9 +2990,7 @@ class ClusterAnalysisAgent:
         try:
             confidence = Confidence(payload["confidence"])
         except (KeyError, ValueError) as exc:
-            return tool_error(
-                ERROR_CODE_INVALID_ARGS, f"Invalid confidence: {exc}"
-            )
+            return tool_error(ERROR_CODE_INVALID_ARGS, f"Invalid confidence: {exc}")
 
         # Reject an empty synthesis before marking complete: a truncated/lazy
         # call can set confidence with blank root-cause text, which would end the
@@ -2964,11 +3007,10 @@ class ClusterAnalysisAgent:
             synthesis=synthesis_text,
             fix=payload.get("fix", ""),
             confidence=confidence,
-            evidence_trace_ids=self._evidence_uuids(
-                payload.get("evidence_trace_ids")
-            ),
+            evidence_trace_ids=self._evidence_uuids(payload.get("evidence_trace_ids")),
             suggested_questions=[
-                q for q in (payload.get("suggested_questions") or [])
+                q
+                for q in (payload.get("suggested_questions") or [])
                 if isinstance(q, str) and q.strip()
             ][:3],
         )
@@ -3010,9 +3052,7 @@ class ClusterAnalysisAgent:
                 name = tool_call_id_to_name.get(tc_id, "")
                 tool_msg_indices.append((i, name))
 
-        non_submit = [
-            (i, n) for i, n in tool_msg_indices if n not in SUBMIT_TOOLS
-        ]
+        non_submit = [(i, n) for i, n in tool_msg_indices if n not in SUBMIT_TOOLS]
         if len(non_submit) <= CLUSTER_RCA_COMPACT_KEEP_RECENT:
             return
 

@@ -334,6 +334,12 @@ class ExactGraphReadError(RuntimeError):
     """A complete exact graph refresh could not be produced."""
 
 
+class EvalLifecycleUnavailable(ExactGraphReadError):
+    """The selected eval logger cannot establish a valid scored population."""
+
+    error_code = "eval_lifecycle_unavailable"
+
+
 def output_bucket_partitions(
     start_date: datetime,
     end_date: datetime,
@@ -2351,7 +2357,12 @@ def read_exact_eval_graph(
     )
     if not output_type:
         output_type = config.eval_template.config.get("output", "SCORE")
-    choices = list(req_data_config.get("choices") or config.eval_template.choices or [])
+    # Request/display choices must never narrow scalar-result validity. Prefer
+    # the configured vocabulary even when the request supplies only one series.
+    valid_choices = list(
+        config.eval_template.choices or req_data_config.get("choices") or []
+    )
+    choices = list(req_data_config.get("choices") or valid_choices)
     if not all_series and str(output_type).upper() in {"CHOICE", "CHOICES"}:
         selected = req_data_config.get("value")
         choices = [str(selected)] if selected not in (None, "") else choices[:1]
@@ -2393,6 +2404,7 @@ def read_exact_eval_graph(
         eval_output_type=output_type,
         eval_name=config.name,
         choices=choices,
+        valid_choices=valid_choices,
         # Session filters are compiled exactly once by the shared per-session
         # selector. Passing them to the generic trace builder as well would
         # reinterpret aggregate/message fields as raw span attributes.
@@ -2408,6 +2420,10 @@ def read_exact_eval_graph(
             else ()
         ),
     )
+    # Validate source capability even for an empty window: unsupported lifecycle
+    # must be unavailable, not a successful empty quality series. Building the
+    # statement does not execute a ClickHouse read.
+    query, params = builder.build()
     if empty:
         formatted = builder.format_result([], [])
         series = formatted if isinstance(formatted, list) else [formatted]
@@ -2417,7 +2433,6 @@ def read_exact_eval_graph(
             rows_returned=0,
         )
     else:
-        query, params = builder.build()
         result = _execute_direct_exact_graph_query(
             analytics=analytics,
             query=query,
@@ -3884,6 +3899,22 @@ def _is_user_date_filter(item: dict[str, Any]) -> bool:
     )
 
 
+def _user_filters_need_trace_latency(filters: list[dict[str, Any]]) -> bool:
+    """Whether a post-aggregate filter reads the user's average trace latency.
+
+    Mirrors the output-filter routing of ``_user_filter_clauses``, including
+    every list alias of ``avg_trace_latency``.
+    """
+
+    for item in filters:
+        if _is_user_date_filter(item) or _is_raw_attribute_filter(item):
+            continue
+        column_id = item.get("column_id") or item.get("columnId")
+        if _USER_OUTPUT_FILTER_MAP.get(column_id) == "avg_trace_latency":
+            return True
+    return False
+
+
 def _user_filter_clauses(
     filters: list[dict[str, Any]],
     *,
@@ -4312,6 +4343,45 @@ def _user_aggregate_source_sql(
             "            toFloat64(0) AS avg_output_float"
         )
 
+    # Users list parity (user_list._user_trace_latency_ctes): reduce each
+    # canonical user/trace to one measured time envelope before averaging, so
+    # contained child spans never dilute a trace's latency. Like the eval
+    # columns, only a latency filter pays for the extra reduction.
+    latency_cte = ""
+    latency_join = ""
+    latency_column = "toFloat64(0) AS avg_trace_latency"
+    if _user_filters_need_trace_latency(filters):
+        latency_cte = """,
+        user_trace_durations AS (
+            SELECT
+                end_user_id,
+                trace_id,
+                if(
+                    countIf(isNotNull(latency_ms)) = 0,
+                    NULL,
+                    (
+                        max(toUnixTimestamp64Micro(start_time) + latency_ms * 1000)
+                        - minIf(
+                            toUnixTimestamp64Micro(start_time),
+                            isNotNull(latency_ms)
+                        )
+                    ) / 1000.0
+                ) AS duration_ms
+            FROM resolved_spans
+            GROUP BY end_user_id, trace_id
+        ),
+        user_trace_latency AS (
+            SELECT end_user_id, avg(duration_ms) AS avg_trace_latency
+            FROM user_trace_durations
+            GROUP BY end_user_id
+        )"""
+        latency_join = (
+            "LEFT JOIN user_trace_latency AS utl ON utl.end_user_id = usm.end_user_id"
+        )
+        latency_column = (
+            "coalesce(round(utl.avg_trace_latency, 2), 0) AS avg_trace_latency"
+        )
+
     # user_trace_ids is required internally when an eval field determines
     # membership, even if the caller itself only needs canonical user IDs.
     internal_trace_ids_select = (
@@ -4531,8 +4601,6 @@ def _user_aggregate_source_sql(
                 AND trace_session_id !=
                     toUUID('00000000-0000-0000-0000-000000000000')
             ) AS num_sessions,
-            coalesce(round(avgIf(latency_ms, isNotNull(latency_ms)), 2), 0)
-                AS avg_trace_latency,
             countIf(observation_type = 'llm') AS num_llm_calls,
             uniqExactIf(trace_id, observation_type = 'guardrail')
                 AS num_guardrails_triggered,
@@ -4547,7 +4615,7 @@ def _user_aggregate_source_sql(
         GROUP BY end_user_id
         HAVING {user_membership}
     )
-    {eval_cte},
+    {eval_cte}{latency_cte},
     user_rows AS (
         SELECT
             ud.user_id AS user_id,
@@ -4557,7 +4625,7 @@ def _user_aggregate_source_sql(
             usm.output_tokens AS output_tokens,
             usm.num_traces AS num_traces,
             usm.num_sessions AS num_sessions,
-            usm.avg_trace_latency AS avg_trace_latency,
+            {latency_column},
             usm.num_llm_calls AS num_llm_calls,
             usm.num_guardrails_triggered AS num_guardrails_triggered,
             usm.num_active_days AS num_active_days,
@@ -4574,6 +4642,7 @@ def _user_aggregate_source_sql(
         INNER JOIN user_dimensions AS ud
           ON ud.end_user_id = usm.end_user_id
         {eval_join}
+        {latency_join}
         {valid_user_predicate}
     )
     SELECT *

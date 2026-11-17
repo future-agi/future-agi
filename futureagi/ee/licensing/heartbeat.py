@@ -92,12 +92,25 @@ def collect_heartbeat_usage() -> dict:
         return {}
 
 
+def _configured_license_key() -> str | None:
+    from ee.licensing.activation_client import _get_configured_license_key
+
+    license_key = _get_configured_license_key()
+    if not license_key or not license_key.strip():
+        logger.debug("enterprise_heartbeat_skipped_no_license_key")
+        return None
+    return license_key
+
+
 def send_heartbeat() -> bool:
     if not is_heartbeat_enabled():
         return False
 
     try:
-        from ee.licensing.activation_client import _get_configured_license_key
+        # Checked before any DB work, and again right before the POST.
+        if not _configured_license_key():
+            return False
+
         from ee.licensing.state import get_snapshot
         from ee.licensing.validator import hash_key
         from tfc.deployment_telemetry.config import detect_deployment_type, get_version
@@ -112,12 +125,6 @@ def send_heartbeat() -> bool:
         if not snapshot.license_id:
             return False
 
-        license_key = _get_configured_license_key()
-        if not license_key:
-            logger.debug("enterprise_heartbeat_skipped_no_license_key")
-            return False
-        heartbeat_secret = hash_key(license_key).encode()
-
         payload = build_heartbeat_payload(
             instance_id=str(state.instance_id),
             license_id=snapshot.license_id,
@@ -125,6 +132,13 @@ def send_heartbeat() -> bool:
             deployment_type=detect_deployment_type(),
             usage_data=collect_heartbeat_usage(),
         )
+
+        # The lookups and usage collection above can block; a key removed
+        # meanwhile must stop the check-in.
+        license_key = _configured_license_key()
+        if not license_key:
+            return False
+        heartbeat_secret = hash_key(license_key).encode()
 
         import httpx
 

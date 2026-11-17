@@ -37,7 +37,13 @@ export function buildSummaryRow(run, scores) {
     scenarioCount: run?.scenarioCount ?? null,
     scenarioIds: run?.scenarioIds ?? [],
     trials: run?.trials ?? 1,
-    passRate: total ? Math.round((passed / total) * 100) : 0,
+    // v3 judges only measured calls, not errors/queued/inconclusive calls.
+    // Preserve its null rate too: no measured calls is not a zero-percent run.
+    passRate: run?.passRate !== undefined
+      ? run.passRate
+      : total
+        ? Math.round((passed / total) * 100)
+        : 0,
     durationS: run?.durationS ?? null,
     scores: scores || {},
     tokens: null,

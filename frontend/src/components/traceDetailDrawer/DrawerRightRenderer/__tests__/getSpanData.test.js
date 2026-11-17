@@ -131,16 +131,24 @@ describe("getLlmData / extractMessages (characterization)", () => {
       input({
         "llm.input_messages.0.message.role": "user",
         "llm.input_messages.0.message.contents.0.message_content.type": "text",
-        "llm.input_messages.0.message.contents.0.message_content.text": "part one",
+        "llm.input_messages.0.message.contents.0.message_content.text":
+          "part one",
         "llm.input_messages.0.message.contents.1.message_content.type": "text",
-        "llm.input_messages.0.message.contents.1.message_content.text": "part two",
+        "llm.input_messages.0.message.contents.1.message_content.text":
+          "part two",
       }).inputMessage,
     ).toMatchInlineSnapshot(`
       [
         {
           "content": [
-            {},
-            {},
+            {
+              "text": "part one",
+              "type": "text",
+            },
+            {
+              "text": "part two",
+              "type": "text",
+            },
           ],
           "role": "user",
         },
@@ -193,7 +201,9 @@ describe("getLlmData / extractMessages (characterization)", () => {
   });
 
   it("returns an empty list when no message attributes are present", () => {
-    expect(input({ "some.other.attr": "x" }).inputMessage).toMatchInlineSnapshot(`[]`);
+    expect(
+      input({ "some.other.attr": "x" }).inputMessage,
+    ).toMatchInlineSnapshot(`[]`);
   });
 
   it("keeps a flat content string when a message also has structured parts (no crash)", () => {

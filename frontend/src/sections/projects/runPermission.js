@@ -6,6 +6,11 @@ import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 // preview, question and edit, and lets them read every result.
 export const VIEWER_CANT_RUN = "Viewers can read results but can't start runs.";
 
+// Said on the disabled Create alert / New Alert actions: alerts are created
+// only by roles holding OBSERVABILITY.ADD_TASKS_ALERTS, which a Viewer lacks.
+export const VIEWER_CANT_CREATE_ALERTS =
+  "Viewers can't create alerts. Ask a workspace admin for Member access.";
+
 /**
  * Whether this person's workspace role lets them start Instant eval runs and
  * Insights reports, decided as Tasks decides who may add an eval task. A

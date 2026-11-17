@@ -1,3 +1,4 @@
+import { formatExactMoney } from "src/sections/common/format/money";
 import numeral from "numeral";
 
 // ----------------------------------------------------------------------
@@ -5,41 +6,14 @@ import numeral from "numeral";
 export function fNumber(number) {
   return numeral(number).format();
 }
-export function fCurrency(number, showThreeDecimals = false) {
-  if (number == null) return "";
-  if (typeof number === "string") number = parseFloat(number);
-  if (!Number.isFinite(number) || number === 0) return "$0";
-
-  const absNumber = Math.abs(number);
-  if (absNumber < (showThreeDecimals ? 0.0000001 : 0.000001)) return "$0";
-
-  let decimals;
-  if (Number.isInteger(number)) {
-    decimals = 0;
-  } else if (!showThreeDecimals) {
-    decimals = 2;
-  } else if (absNumber >= 1) {
-    decimals = 3;
-  } else {
-    // Capture first 3 significant digits for sub-1 values, capped at 7
-    // to support micro-pricing like $0.000002/token.
-    decimals = Math.min(7, -Math.floor(Math.log10(absNumber)) + 2);
-  }
-
-  let formatted = new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: decimals,
-    maximumFractionDigits: decimals,
-  }).format(number);
-
-  if (decimals > 0) {
-    formatted = formatted.replace(/(\.\d*?[1-9])0+$/g, "$1");
-    formatted = formatted.replace(/\.0+$/g, "");
-  }
-  return formatted;
+export function fCurrency(number) {
+  // Retain the legacy optional argument; it no longer caps monetary precision.
+  return formatExactMoney(number, {
+    grouping: true,
+    minimumFractionDigits: 0,
+    missing: number == null ? "" : "—",
+  });
 }
-
 
 export function fUsage(value, unit) {
   const suffix = unit ? ` ${unit}` : "";
@@ -49,7 +23,6 @@ export function fUsage(value, unit) {
   if (value >= 1e3) return `${(value / 1e3).toFixed(1)}K${suffix}`;
   if (Number.isInteger(value)) return `${value.toLocaleString()}${suffix}`;
   if (value < 1) {
-
     const order = Math.floor(Math.log10(Math.abs(value)));
     const decimals = Math.min(6, Math.max(2, -order + 1));
     return `${Number(value.toFixed(decimals))}${suffix}`;

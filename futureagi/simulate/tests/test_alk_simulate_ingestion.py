@@ -5526,13 +5526,14 @@ class TestRunHostedSdkJob:
         assert exec_calls == []
 
     def test_env_passthrough_customer_key_blocks_child_even_when_worker_has_value(
-        self, monkeypatch
+        self, monkeypatch, settings
     ):
-        # A manager:"env" ref for a CUSTOMER provider key must never
+        # On Cloud, a manager:"env" ref for a CUSTOMER provider key must never
         # let the child dial on the worker's own key — even when the worker
         # process happens to have that exact env var set (e.g. for the
         # platform's own, unrelated use). The ref itself is the bug signal,
-        # not just an unresolved lookup.
+        # not just an unresolved lookup. A self-hosted install is the other
+        # side: its operator is the customer (the case below).
         import asyncio
 
         from temporalio.exceptions import ApplicationError
@@ -5540,6 +5541,7 @@ class TestRunHostedSdkJob:
         from simulate.temporal.activities import hosted_runner as hr
         from simulate.temporal.types.hosted_runner import RunHostedJobInput
 
+        settings.CLOUD_DEPLOYMENT = "US"
         monkeypatch.setenv("RETELL_API_KEY", "platform-key")
 
         exec_calls = []
@@ -5582,6 +5584,63 @@ class TestRunHostedSdkJob:
         assert excinfo.value.type == "provider_credentials_missing"
         assert excinfo.value.non_retryable
         assert exec_calls == []
+
+    def test_env_passthrough_customer_key_reaches_child_on_self_host(
+        self, monkeypatch, settings
+    ):
+        # Self-hosted twin of the Cloud refusal above: the operator is the
+        # customer, so a manager:"env" ref whose source is the exact reviewed
+        # operator name hands the worker's own value to the child.
+        import asyncio
+
+        from simulate.temporal.activities import hosted_runner as hr
+        from simulate.temporal.types.hosted_runner import RunHostedJobInput
+
+        settings.CLOUD_DEPLOYMENT = ""
+        monkeypatch.setenv("RETELL_API_KEY", "operator-key")
+
+        seen_env = {}
+
+        async def _fake_exec(*args, **kwargs):
+            seen_env.update(kwargs.get("env") or {})
+            return _FakeProc(
+                [
+                    b'{"phase": "completed", "job_id": "job-x", '
+                    b'"submission_status": "submitted"}'
+                ]
+            )
+
+        async def _acquire(job_id, run_seconds):
+            return {
+                "did": "+15557654321",
+                "dispatch_rule_name": "r1",
+                "room_name": "sim-slot-01",
+                "slot_id": "s1",
+            }
+
+        async def _release(slot):
+            pass
+
+        monkeypatch.setattr(hr.asyncio, "create_subprocess_exec", _fake_exec)
+        monkeypatch.setattr(hr.activity, "heartbeat", lambda *a, **k: None)
+        monkeypatch.setattr(hr, "_acquire_did_slot", _acquire)
+        monkeypatch.setattr(hr, "_release_did_slot", _release)
+
+        job = self._originator_sip_job("retell")
+        job["metadata"]["secret_env"] = [
+            {"key": "RETELL_API_KEY", "manager": "env", "source": "RETELL_API_KEY"},
+        ]
+
+        inp = RunHostedJobInput(
+            job_id="job-x",
+            run_id="run-x",
+            mode="voice_sip",
+            job_json=json.dumps(job),
+            run_seconds=900,
+        )
+        out = asyncio.run(hr.run_hosted_sdk_job(inp))
+        assert out.phase == "completed"
+        assert seen_env["RETELL_API_KEY"] == "operator-key"
 
     def test_env_passthrough_system_livekit_key_still_reaches_child(self, monkeypatch):
         # Positive case: a system LiveKit runtime var
@@ -5699,8 +5758,8 @@ class TestRunHostedSdkJob:
         assert out.phase == "completed"
         assert "LIVEKIT_API_KEY" not in seen_env
 
-    def test_setting_manager_ref_for_customer_key_is_blocked(self):
-        # A manager:"setting" ref for a customer
+    def test_setting_manager_ref_for_customer_key_is_blocked(self, settings):
+        # On Cloud, a manager:"setting" ref for a customer
         # provider key must be blocked exactly like a manager:"env" ref —
         # the customer-key rule must not live only inside the env-passthrough
         # branch, where a "setting" ref (or any future manager) would
@@ -5713,6 +5772,7 @@ class TestRunHostedSdkJob:
             _resolve_voice_secret_env,
         )
 
+        settings.CLOUD_DEPLOYMENT = "US"
         job = {
             "metadata": {
                 "secret_env": [
@@ -6059,9 +6119,13 @@ class TestHostedRunnerProviderSupport:
             _customer_provider_env_keys,
         )
 
-        assert _customer_provider_env_keys() == {
+        table_keys = {
             p["api_key_env"] for p in _PROVIDER_PROFILES.values() if p["api_key_env"]
         }
+        # The Vapi public control key is a customer credential too (saved on the
+        # customer's Vapi record, refused from worker sources on Cloud), but no
+        # profile names it as its api_key_env, so it joins the set by name.
+        assert _customer_provider_env_keys() == table_keys | {"VAPI_PUBLIC_API_KEY"}
 
 
 @pytest.mark.integration
@@ -6072,6 +6136,7 @@ class TestHostedRerunDispatch:
     CallExecutionWorkflow that fails with an empty provider phone number."""
 
     def test_dispatch_hosted_rerun_reuses_execution(self, run_test):
+        import simulate.views.run_test as run_test_module
         from simulate.views.run_test import _dispatch_hosted_rerun
 
         scenario_ids = [
@@ -6085,10 +6150,18 @@ class TestHostedRerunDispatch:
             simulator_agent=run_test.simulator_agent,
         )
 
-        with patch(
-            "simulate.temporal.client.start_simulation_runner_workflow",
-            return_value="wf-hosted-1",
-        ) as dispatch:
+        # Hosted reruns fail closed while the hosted runner is off, and this
+        # run's agent is a voice agent, so both switches are on here.
+        with (
+            patch.object(run_test_module.app_settings, "HOSTED_RUNNER_ENABLED", True),
+            patch.object(
+                run_test_module.app_settings, "HOSTED_RUNNER_VOICE_ENABLED", True
+            ),
+            patch(
+                "simulate.temporal.client.start_simulation_runner_workflow",
+                return_value="wf-hosted-1",
+            ) as dispatch,
+        ):
             workflow_id = _dispatch_hosted_rerun(te)
 
         assert workflow_id == "wf-hosted-1"
@@ -6899,7 +6972,10 @@ class TestViewGatesReadVersionSnapshot:
             },
         )
 
+        # The batch is refused before any change while the hosted runner is
+        # off, so it is on here; the voice switch makes the voice agent eligible.
         with (
+            patch.object(run_test_module.app_settings, "HOSTED_RUNNER_ENABLED", True),
             patch.object(
                 run_test_module.app_settings, "HOSTED_RUNNER_VOICE_ENABLED", True
             ),

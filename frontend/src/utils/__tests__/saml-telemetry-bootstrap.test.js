@@ -2,6 +2,10 @@ import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import { describe, expect, it } from "vitest";
 import * as projection from "../saml-telemetry-urls";
+// The hooks also run the embed scrubber after the projection, so the executed
+// initialization needs those functions too.
+import * as embedGuard from "src/sections/omega/embed/telemetry/guard";
+import * as embedSdkGuards from "src/sections/omega/embed/telemetry/sdk-guards";
 
 const main = readFileSync("src/main.jsx", "utf8");
 const start = main.indexOf("Sentry.init({");
@@ -18,6 +22,8 @@ function sentryOptions() {
     .slice(start, end)
     .replace("import.meta.env.VITE_APP_VERSION", "undefined");
   runInNewContext(source, {
+    ...embedGuard,
+    ...embedSdkGuards,
     ...projection,
     Sentry: {
       init(value) {

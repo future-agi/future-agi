@@ -124,8 +124,11 @@ const CompareDatasetDrawer = ({
       open={compareDatasetDrawerVisible}
       sx={coveredDrawerSx(covered)}
       onClose={onCompareDatasetDrawerClose}
-      variant="persistent"
+      variant="temporary"
       PaperProps={{
+        role: "dialog",
+        "aria-modal": true,
+        "aria-label": "Compare datasets",
         sx: {
           width: "35%",
           height: "100vh",
@@ -222,6 +225,7 @@ const CompareDatasetDrawer = ({
                   onClick={() => handleCheckboxChange(val?.value, val?.label)}
                 >
                   <Checkbox
+                    inputProps={{ "aria-label": val.label }}
                     sx={{
                       paddingX: 1.5,
                       "&:hover": { backgroundColor: "transparent" },

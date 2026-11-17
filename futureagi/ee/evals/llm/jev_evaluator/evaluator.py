@@ -5,10 +5,12 @@ import re
 import time
 
 from jinja2 import StrictUndefined, TemplateError, UndefinedError
-from jinja2.sandbox import SandboxedEnvironment
 
 from agentic_eval.core.llm.llm import LLM
 from agentic_eval.core.utils.llm_payloads import compute_choices_failure
+from agentic_eval.core_evals.fi_evals.llm.custom_prompt_evaluator.template_sandbox import (
+    build_prompt_environment,
+)
 from ee.evals.llm.custom_prompt_evaluator.rendering import render_prompt
 from ee.jev.client import JevSystemOneClient
 from ee.jev.mapping import (
@@ -107,9 +109,9 @@ class TypedDecisionEvaluator(LLM):
             multi_choice=config.get("multi_choice", False),
             config=config,
         )
-        # Same template environment as the custom prompt evaluator: plain
-        # variables, filters and loops; underscore attributes are not resolved.
-        self.env = SandboxedEnvironment(undefined=StrictUndefined)
+        # Tenant-written instructions: render in the immutable, fail-closed
+        # sandbox the custom prompt evaluator uses, never in plain Jinja.
+        self.env = build_prompt_environment(StrictUndefined)
         self.last_jev = None
         super().__init__(model_name=model, provider=self.connection, api_key=None)
 
@@ -164,7 +166,7 @@ class TypedDecisionEvaluator(LLM):
     def _evaluate(self, **kwargs):
         started = time.monotonic()
         config = {**self._jev_config}
-        for key in ("input_data_types", "ground_truth_few_shot"):
+        for key in ("input_data_types", "ground_truth_few_shot", "ground_truth_blocks"):
             if key in kwargs:
                 config[key] = kwargs[key]
         validate_jev_mapping(
@@ -200,10 +202,17 @@ class TypedDecisionEvaluator(LLM):
             parts.append(config["system_prompt"])
         parts.append(self.rule_prompt)
         if self.mapping.include_messages:
+            # Skip mirrored primary prompts, not every System message:
+            # additional System messages carry scoring instructions too.
             parts.extend(
                 message.get("content", "")
                 for message in config.get("messages", [])
-                if message.get("role") != "system" and message.get("content")
+                if message.get("content")
+                and (
+                    message.get("role") != "system"
+                    or message["content"]
+                    not in (config.get("system_prompt"), self.rule_prompt)
+                )
             )
         try:
             rendered = [

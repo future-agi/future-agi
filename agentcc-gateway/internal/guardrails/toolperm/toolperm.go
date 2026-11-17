@@ -57,8 +57,14 @@ func New(name string, cfg map[string]interface{}) *ToolPermGuardrail {
 		applyTo: "both",
 	}
 
-	if v, ok := cfg["mode"].(string); ok && v != "" {
-		g.mode = v
+	if value, present := cfg["mode"]; present {
+		// A missing mode defaults to denylist. An explicit malformed policy
+		// must not silently become a different policy or permit all tools.
+		if mode, ok := value.(string); ok {
+			g.mode = mode
+		} else {
+			g.mode = ""
+		}
 	}
 	if v, ok := cfg["apply_to"].(string); ok && v != "" {
 		g.applyTo = v
@@ -96,6 +102,15 @@ func IsToolPermConfig(cfg map[string]interface{}) bool {
 
 // Check evaluates tool names against the permission policy.
 func (g *ToolPermGuardrail) Check(ctx context.Context, input *guardrails.CheckInput) *guardrails.CheckResult {
+	if g.mode != "allowlist" && g.mode != "denylist" && g.mode != "audit" {
+		// This is a failing policy result, not an execution error that a
+		// fail-open pipeline could ignore. Do not guess the original policy.
+		return &guardrails.CheckResult{
+			Pass:    false,
+			Score:   1.0,
+			Message: "invalid tool permission mode: restore allowlist, denylist or audit from the intended policy",
+		}
+	}
 	if input == nil {
 		return &guardrails.CheckResult{Pass: true}
 	}

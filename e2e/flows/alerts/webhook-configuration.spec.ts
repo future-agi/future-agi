@@ -97,7 +97,7 @@ test('ALERT-E2E-003: alert owners configure webhooks without private destination
     await page.getByRole('button', { name: /Update.*Alert/i }).click();
     const refusal = await refused;
     expect(refusal.status()).toBe(400);
-    expect(await refusal.text()).toContain('Webhook URL must resolve only to public HTTP(S) destinations.');
+    expect(await refusal.text()).toContain('Webhook URL must use an allowed scheme and a public destination without credentials.');
     const afterPrivate = await scopeProbe.pg<{ webhook_url: string }>('SELECT webhook_url FROM tracer_useralertmonitor WHERE id=$1', [id]);
     expect(afterPrivate).toEqual([{ webhook_url: destination }]);
 

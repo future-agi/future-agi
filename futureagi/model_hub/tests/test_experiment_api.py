@@ -43,6 +43,19 @@ from model_hub.models.experiments import (
 )
 from model_hub.models.run_prompt import RunPrompter
 from tfc.middleware.workspace_context import set_workspace_context
+from tfc.utils.general_methods import GeneralMethods
+
+# What the older create answers.
+RETIRED = (
+    "This route does not create experiments. "
+    "Create them with POST /model-hub/experiments/v2/."
+)
+
+# What a re-run of an experiment from before snapshots answers.
+PRESNAPSHOT = (
+    "This experiment was created before run snapshots and can't be re-run. "
+    "Duplicate it to run it again."
+)
 
 
 @pytest.fixture
@@ -233,7 +246,8 @@ class TestExperimentsTableView:
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
     def test_create_experiment_success(self, auth_client, dataset, output_column):
-        """Test successfully creating an experiment."""
+        """The older create made an experiment that never ran: a valid request
+        is now refused with the route to use, and nothing is created."""
         payload = {
             "name": "New Experiment",
             "dataset_id": str(dataset.id),
@@ -241,14 +255,17 @@ class TestExperimentsTableView:
             "prompt_config": {"model": "gpt-4", "temperature": 0.7},
         }
 
-        with patch("tfc.temporal.experiments.start_experiment_workflow"):
+        with patch("tfc.temporal.experiments.start_experiment_workflow") as start:
             response = auth_client.post(
                 "/model-hub/experiments/",
                 payload,
                 format="json",
             )
 
-        assert response.status_code == status.HTTP_200_OK, response.data
+        assert response.status_code == status.HTTP_400_BAD_REQUEST, response.data
+        assert response.json() == GeneralMethods().bad_request(RETIRED).data
+        start.assert_not_called()
+        assert not ExperimentsTable.objects.filter(name="New Experiment").exists()
 
     def test_update_experiment_success(
         self, auth_client, experiment, dataset, output_column
@@ -285,6 +302,13 @@ class TestExperimentsTableView:
         dataset,
         output_column,
     ):
+        experiment.snapshot_dataset = Dataset.objects.create(
+            name="Test Dataset snapshot",
+            organization=experiment.dataset.organization,
+            workspace=experiment.dataset.workspace,
+            source=DatasetSourceChoices.EXPERIMENT_SNAPSHOT.value,
+        )
+        experiment.save(update_fields=["snapshot_dataset"])
         experiment.experiments_datasets.add(experiment_dataset)
         previous_updated_at = experiment_dataset.updated_at
         payload = {
@@ -410,19 +434,22 @@ class TestExperimentRerunView:
     def test_rerun_experiment_success(
         self, auth_client, experiment, experiment_dataset
     ):
-        """Test successfully re-running an experiment."""
+        """The fixture experiment has no snapshot, so nothing would run: the
+        re-run is refused with one sentence and nothing is started."""
         payload = {
             "experiment_ids": [str(experiment.id)],
         }
 
-        with patch("tfc.temporal.experiments.start_experiment_workflow"):
+        with patch("tfc.temporal.experiments.start_experiment_workflow") as start:
             response = auth_client.post(
                 "/model-hub/experiments/re-run/",
                 payload,
                 format="json",
             )
 
-        assert response.status_code == status.HTTP_200_OK
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.json() == GeneralMethods().bad_request(PRESNAPSHOT).data
+        start.assert_not_called()
 
     def test_rerun_experiment_missing_id(self, auth_client):
         """Test that missing experiment_ids returns error."""
@@ -1221,6 +1248,65 @@ class TestDatasetExperimentsView:
         response = auth_client.get(f"/model-hub/experiments/{experiment.id}/")
 
         assert response.status_code == status.HTTP_200_OK
+
+    @pytest.mark.parametrize(
+        "eval_name",
+        ["accuracy", "no-reason-check", "gives-reason", "no-reason-check-reason"],
+    )
+    @pytest.mark.parametrize("column_config_only", ["true", "false"])
+    def test_reason_column_groups_preserve_eval_names(
+        self,
+        auth_client,
+        experiment,
+        dataset,
+        organization,
+        user,
+        workspace,
+        eval_template,
+        eval_name,
+        column_config_only,
+    ):
+        metric = UserEvalMetric.objects.create(
+            name=eval_name,
+            organization=organization,
+            workspace=workspace,
+            dataset=dataset,
+            template=eval_template,
+            config={},
+            status=StatusType.EXPERIMENT_EVALUATION.value,
+            source_id=str(experiment.id),
+            user=user,
+        )
+        experiment.user_eval_template_ids.add(metric)
+        value_column = Column.objects.create(
+            name=eval_name,
+            dataset=dataset,
+            data_type=DataTypeChoices.TEXT.value,
+            source=SourceChoices.EVALUATION.value,
+            source_id=str(metric.id),
+        )
+        reason_column = Column.objects.create(
+            name=f"{eval_name}-reason",
+            dataset=dataset,
+            data_type=DataTypeChoices.TEXT.value,
+            source=SourceChoices.EVALUATION_REASON.value,
+            source_id=f"{value_column.id}-sourceid-{metric.id}",
+        )
+
+        response = auth_client.get(
+            f"/model-hub/experiments/{experiment.id}/",
+            {"column_config_only": column_config_only},
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        configs = {
+            column["id"]: column
+            for column in response.json()["result"]["column_config"]
+        }
+        for column in (value_column, reason_column):
+            assert configs[str(column.id)]["name"] == column.name
+            assert configs[str(column.id)]["group"]["id"] == str(metric.id)
+            assert configs[str(column.id)]["group"]["name"] == eval_name
 
     def test_get_experiment_data_invalid_id(self, auth_client):
         """Test that invalid experiment_id returns error."""

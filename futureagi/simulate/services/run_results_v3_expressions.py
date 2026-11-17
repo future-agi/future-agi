@@ -21,6 +21,12 @@ from django.db.models.sql.datastructures import BaseTable
 NUMERIC_JSON_PATTERN = r"^-?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?$"
 # A score's text after ``lower(btrim(...))``, which may carry a plus sign.
 NUMERIC_TEXT_PATTERN = r"^[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?$"
+# The space a choice label may be padded with, as a regex bracket expression. It is
+# named because ``[[:space:]]`` follows the database locale: this is that class under
+# en_US.UTF8 (PG 16), where U+180E varies by glibc version.
+LABEL_SPACE_CLASS = (
+    "[ \t\n\r\f\v\u1680\u180e\u2000-\u2006\u2008-\u200a\u2028\u2029\u205f\u3000]"
+)
 
 
 class _LateralProjection(BaseTable):

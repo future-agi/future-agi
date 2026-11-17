@@ -25,16 +25,53 @@ export default function LoadingScreen({
 
   // Design system: a page or panel that is loading shows the simple loader.
   // A skeleton is only used where it copies the real layout, and that is
-  // written by the screen itself. `variant` is kept for callers; every
-  // variant renders the same loader.
+  // written by the screen itself. Under the spinner, one plain line says
+  // Loading (and the message, when one is given), and the whole status fades
+  // in after a moment as the loader does. `variant` is kept for callers;
+  // every variant renders the same loader.
   return (
-    <Loader
-      label={messageOverride || "Loading"}
-      minHeight={compact ? 120 : "60vh"}
+    <Box
+      role="status"
+      aria-live="polite"
+      aria-busy="true"
+      aria-label={messageOverride || "Loading"}
       data-variant={variant}
-      sx={sx}
+      sx={{
+        width: 1,
+        flexGrow: 1,
+        minHeight: compact ? 120 : "60vh",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        animation: "loading-screen-in 0.2s ease-out 0.3s backwards",
+        "@keyframes loading-screen-in": { from: { opacity: 0 } },
+        ...sx,
+      }}
       {...other}
-    />
+    >
+      <Loader
+        role="presentation"
+        aria-hidden="true"
+        minHeight={0}
+        sx={{ flexGrow: 0 }}
+      />
+      <Box
+        sx={{
+          textAlign: "center",
+          typography: "body_sm",
+          color: "text.secondary",
+          py: 1,
+        }}
+      >
+        Loading{"\u2026"}
+        {messageOverride && (
+          <Box component="span" sx={{ display: "block" }}>
+            {messageOverride}
+          </Box>
+        )}
+      </Box>
+    </Box>
   );
 }
 

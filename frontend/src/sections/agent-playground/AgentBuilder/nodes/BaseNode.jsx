@@ -2,6 +2,7 @@ import React, { memo } from "react";
 import { Handle, Position } from "@xyflow/react";
 import { Box, IconButton, Stack, Typography, ButtonBase } from "@mui/material";
 import SvgColor from "src/components/svg-color";
+import CustomTooltip from "src/components/tooltip";
 import PropTypes from "prop-types";
 import NodeSelectionPopper from "../../components/NodeSelectionPopper";
 import {
@@ -158,33 +159,45 @@ const BaseNode = ({
             {label}
           </Typography>
           {!preview && !isWorkflowRunning && !isReadOnly && (
-            <IconButton
-              className="node-delete-btn"
-              sx={{
-                color: "status.danger.fg",
-                bgcolor: "background.paper",
-                border: "1px solid",
-                borderColor: "status.danger.solid",
-                marginLeft: "auto",
-                p: 0.5,
-                position: "absolute",
-                right: 4,
-                top: "50%",
-                transform: "translateY(-50%)",
-                "&:hover": {
-                  bgcolor: "status.danger.bg",
-                },
-              }}
-              onClick={handleDeleteClick}
+            // Never disabled, so the tooltip wraps the button itself and
+            // anchors to it (a wrapping span would not follow its absolute
+            // position).
+            <CustomTooltip
+              show
+              title="Delete node"
+              size="small"
+              arrow
+              placement="bottom"
             >
-              <SvgColor
-                src="/assets/icons/ic_delete.svg"
+              <IconButton
+                className="node-delete-btn"
+                aria-label="Delete node"
                 sx={{
-                  width: 16,
-                  height: 16,
+                  color: "status.danger.fg",
+                  bgcolor: "background.paper",
+                  border: "1px solid",
+                  borderColor: "status.danger.solid",
+                  marginLeft: "auto",
+                  p: 0.5,
+                  position: "absolute",
+                  right: 4,
+                  top: "50%",
+                  transform: "translateY(-50%)",
+                  "&:hover": {
+                    bgcolor: "status.danger.bg",
+                  },
                 }}
-              />
-            </IconButton>
+                onClick={handleDeleteClick}
+              >
+                <SvgColor
+                  src="/assets/icons/ic_delete.svg"
+                  sx={{
+                    width: 16,
+                    height: 16,
+                  }}
+                />
+              </IconButton>
+            </CustomTooltip>
           )}
         </Stack>
 

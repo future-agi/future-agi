@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/privacy"
@@ -14,10 +15,16 @@ import (
 // It maps organization IDs to their merged OrgConfig. All methods are safe
 // for concurrent use.
 type Store struct {
-	mu         sync.RWMutex
-	configs    map[string]*OrgConfig
-	configHash map[string][32]byte // SHA-256 of serialized config per org
-	onChange   func(orgID string)  // optional callback fired when an org config changes
+	initialSyncComplete atomic.Bool
+	mu                  sync.RWMutex
+	configs             map[string]*storedConfig
+	self                *Store
+	native              atomic.Pointer[tenantLifecycle]
+	nativeReady         bool                         // guarded by Gate and mu when bound
+	touched             bool                         // any ordinary mutation precludes later binding
+	configHash          map[string][32]byte          // SHA-256 of serialized config per org
+	onChange            func(orgID string)           // optional callback fired when an org config changes
+	observers           map[*configObserver]struct{} // synchronous lifecycle invalidation; guarded by mu
 
 	// redactors caches the per-org privacy.Redactor built from configs.
 	// It lives here rather than in the plugins that use it so that every
@@ -29,20 +36,50 @@ type Store struct {
 	// enough: a build that reads a config, loses the CPU, and stores after an
 	// invalidation has already run caches a redactor older than the store.
 	redactors map[string]*privacy.Redactor
+
+	// Pushes (Set, Delete, LoadBulk) are numbered: gen is the last number
+	// given, pushedGen the number of the last push that set or deleted each
+	// org, loadedGen that of the last LoadBulk. A control-plane sync takes
+	// Generation before it reads the bulk endpoint and hands it to
+	// MergeFetched, which leaves alone what was pushed after it: the control
+	// plane pushes from inside the transaction that saves a config, so a bulk
+	// read that ran while the push arrived can answer with the org's previous
+	// config, or without the org. Guarded by mu.
+	gen       uint64
+	pushedGen map[string]uint64
+	loadedGen uint64
 }
 
 // NewStore creates a new empty tenant config store.
 func NewStore() *Store {
-	return &Store{
-		configs:    make(map[string]*OrgConfig),
+	s := &Store{
+		configs:    make(map[string]*storedConfig),
 		configHash: make(map[string][32]byte),
 		redactors:  make(map[string]*privacy.Redactor),
+		pushedGen:  make(map[string]uint64),
 	}
+	s.self = s
+	return s
 }
 
-// SetOnChange registers a callback that is invoked (outside the lock) for
-// each org whose config was added, updated, or removed by Set, MergeBulk,
-// or Delete. This is used to evict downstream caches (e.g., OrgProviderCache).
+// Generation is the number of the last push (Set, Delete or LoadBulk). A
+// control-plane sync reads it before it fetches the bulk configs and passes
+// it to MergeFetched.
+func (s *Store) Generation() uint64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.gen
+}
+
+// pushed numbers a push of orgID. Callers hold mu.
+func (s *Store) pushed(orgID string) {
+	s.gen++
+	s.pushedGen[orgID] = s.gen
+	s.notifyLocked(orgID)
+}
+
+// SetOnChange registers the unlocked, changed-MergeFetched-only callback.
+// Set/Delete/LoadBulk use synchronous observers, not this callback.
 func (s *Store) SetOnChange(fn func(orgID string)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -53,26 +90,36 @@ func (s *Store) SetOnChange(fn func(orgID string)) {
 func (s *Store) Get(orgID string) *OrgConfig {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.configs[orgID]
+	return s.configCopyLocked(orgID)
 }
 
 // Set upserts the org config for the given org ID.
 // Updates the config hash so MergeBulk detects no false change on next sync.
-func (s *Store) Set(orgID string, cfg *OrgConfig) {
+func (s *Store) Set(orgID string, cfg *OrgConfig) error {
+	if life := s.mutationLifecycle(); life != nil {
+		return s.setNative(life, orgID, cfg)
+	}
 	s.mu.Lock()
-	s.configs[orgID] = cfg
+	s.configs[orgID] = &storedConfig{present: true, ordinary: cfg}
 	s.configHash[orgID] = hashConfig(cfg)
 	delete(s.redactors, orgID)
+	s.pushed(orgID)
 	s.mu.Unlock()
+	return nil
 }
 
 // Delete removes the org config for the given org ID.
-func (s *Store) Delete(orgID string) {
+func (s *Store) Delete(orgID string) error {
+	if life := s.mutationLifecycle(); life != nil {
+		return s.deleteNative(life, orgID)
+	}
 	s.mu.Lock()
 	delete(s.configs, orgID)
 	delete(s.configHash, orgID)
 	delete(s.redactors, orgID)
+	s.pushed(orgID)
 	s.mu.Unlock()
+	return nil
 }
 
 // GetAll returns a copy of all org configs.
@@ -81,7 +128,9 @@ func (s *Store) GetAll() map[string]*OrgConfig {
 	defer s.mu.RUnlock()
 	result := make(map[string]*OrgConfig, len(s.configs))
 	for k, v := range s.configs {
-		result[k] = v
+		if v.present {
+			result[k] = s.configCopyLocked(k)
+		}
 	}
 	return result
 }
@@ -90,33 +139,71 @@ func (s *Store) GetAll() map[string]*OrgConfig {
 func (s *Store) Count() int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return len(s.configs)
+	if s.native.Load() == nil {
+		return len(s.configs)
+	}
+	n := 0
+	for _, entry := range s.configs {
+		if entry.present {
+			n++
+		}
+	}
+	return n
 }
 
 // LoadBulk replaces all configs in the store with the provided map.
 // Used for initial sync from the control plane on startup.
-func (s *Store) LoadBulk(configs map[string]*OrgConfig) {
+func (s *Store) LoadBulk(configs map[string]*OrgConfig) error {
+	if life := s.mutationLifecycle(); life != nil {
+		return s.loadNative(life, configs)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.configs = make(map[string]*OrgConfig, len(configs))
+	previous := s.configs
+	s.configs = make(map[string]*storedConfig, len(configs))
 	for k, v := range configs {
-		s.configs[k] = v
+		s.configs[k] = &storedConfig{present: true, ordinary: v}
 	}
 	// LoadBulk replaces every config and deliberately fires no onChange, so
 	// nothing downstream would otherwise learn these redactors are stale.
 	clear(s.redactors)
+	s.gen++
+	s.loadedGen = s.gen
+	for orgID := range previous {
+		s.notifyLocked(orgID)
+	}
+	for orgID := range configs {
+		if _, existed := previous[orgID]; !existed {
+			s.notifyLocked(orgID)
+		}
+	}
+	return nil
 }
 
-// MergeBulk merges successfully parsed org configs into the store.
+// MergeBulk merges successfully parsed org configs into the store, as
+// MergeFetched does for configs fetched now (it leaves no push alone).
+func (s *Store) MergeBulk(parsedConfigs map[string]*OrgConfig, allOrgIDs map[string]struct{}) error {
+	return s.MergeFetched(parsedConfigs, allOrgIDs, s.Generation())
+}
+
+// MergeFetched merges successfully parsed org configs, fetched from the control
+// plane after push number fetchedAt (Generation), into the store.
 //   - Orgs in parsedConfigs are added or updated.
 //   - Orgs present in the control plane response (allOrgIDs) but NOT in
 //     parsedConfigs failed to parse here or could not be built by the control
 //     plane — their existing store entries are preserved.
 //   - Orgs in the store that are NOT in allOrgIDs were removed from the control
 //     plane — they are deleted from the store.
+//   - An org pushed (Set or Delete) after fetchedAt keeps what the push left,
+//     and nothing changes when a LoadBulk ran after fetchedAt: the fetch may
+//     predate the push. The next sync, fetched after the push, applies the
+//     control plane's state to it again.
 //
 // Fires the onChange callback for each org that was added, updated, or removed.
-func (s *Store) MergeBulk(parsedConfigs map[string]*OrgConfig, allOrgIDs map[string]struct{}) {
+func (s *Store) MergeFetched(parsedConfigs map[string]*OrgConfig, allOrgIDs map[string]struct{}, fetchedAt uint64) error {
+	if life := s.mutationLifecycle(); life != nil {
+		return s.mergeNative(life, parsedConfigs, allOrgIDs, fetchedAt)
+	}
 	// Hashing serializes every config, so it runs before the write lock every request's Get waits on.
 	hashes := make(map[string][32]byte, len(parsedConfigs))
 	for orgID, cfg := range parsedConfigs {
@@ -125,12 +212,18 @@ func (s *Store) MergeBulk(parsedConfigs map[string]*OrgConfig, allOrgIDs map[str
 
 	s.mu.Lock()
 
+	if s.loadedGen > fetchedAt {
+		s.mu.Unlock()
+		return nil
+	}
+	pushedSince := func(orgID string) bool { return s.pushedGen[orgID] > fetchedAt }
+
 	// Track orgs that actually changed so we can fire onChange outside the lock.
 	var changed []string
 
 	// Remove orgs no longer present in the control plane response.
 	for orgID := range s.configs {
-		if _, inResponse := allOrgIDs[orgID]; !inResponse {
+		if _, inResponse := allOrgIDs[orgID]; !inResponse && !pushedSince(orgID) {
 			delete(s.configs, orgID)
 			delete(s.configHash, orgID)
 			changed = append(changed, orgID)
@@ -140,11 +233,14 @@ func (s *Store) MergeBulk(parsedConfigs map[string]*OrgConfig, allOrgIDs map[str
 	// Upsert configs. Only mark as changed if the config content differs
 	// (compared via SHA-256 of JSON serialization).
 	for orgID, cfg := range parsedConfigs {
+		if pushedSince(orgID) {
+			continue
+		}
 		newHash := hashes[orgID]
 		if oldHash, exists := s.configHash[orgID]; !exists || oldHash != newHash {
 			changed = append(changed, orgID)
 		}
-		s.configs[orgID] = cfg
+		s.configs[orgID] = &storedConfig{present: true, ordinary: cfg}
 		s.configHash[orgID] = newHash
 	}
 
@@ -152,7 +248,18 @@ func (s *Store) MergeBulk(parsedConfigs map[string]*OrgConfig, allOrgIDs map[str
 		delete(s.redactors, orgID)
 	}
 
+	// Pushes numbered at or before fetchedAt leave the guard: it holds a push only
+	// against a sync that began before it.
+	for orgID, g := range s.pushedGen {
+		if g <= fetchedAt {
+			delete(s.pushedGen, orgID)
+		}
+	}
+
 	cb := s.onChange
+	for _, orgID := range changed {
+		s.notifyLocked(orgID)
+	}
 	s.mu.Unlock()
 
 	// Fire onChange outside the lock to avoid deadlocks with downstream caches.
@@ -161,6 +268,7 @@ func (s *Store) MergeBulk(parsedConfigs map[string]*OrgConfig, allOrgIDs map[str
 			cb(orgID)
 		}
 	}
+	return nil
 }
 
 // Redactor returns the privacy redactor for an org, or nil when the org has no
@@ -176,7 +284,7 @@ func (s *Store) Redactor(orgID string) *privacy.Redactor {
 	}
 	s.mu.RLock()
 	cached, hit := s.redactors[orgID]
-	enabled := redactionEnabled(s.configs[orgID])
+	enabled := redactionEnabled(s.configDataLocked(orgID))
 	s.mu.RUnlock()
 	if hit {
 		return cached
@@ -194,7 +302,7 @@ func (s *Store) Redactor(orgID string) *privacy.Redactor {
 	if r, ok := s.redactors[orgID]; ok {
 		return r
 	}
-	cfg := s.configs[orgID]
+	cfg := s.configDataLocked(orgID)
 	if !redactionEnabled(cfg) {
 		return nil // disabled while this call was waiting for the lock
 	}
@@ -240,9 +348,13 @@ func hashConfig(cfg *OrgConfig) [32]byte {
 func (s *Store) GetProviderConfig(orgID, providerName string) *ProviderConfig {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	cfg := s.configs[orgID]
+	cfg := s.configCopyLocked(orgID)
 	if cfg == nil || cfg.Providers == nil {
 		return nil
 	}
 	return cfg.Providers[providerName]
 }
+
+// InitialSyncComplete is true only after a complete control-plane bulk read.
+// Pushes and partially parsed lists cannot establish hosted readiness.
+func (s *Store) InitialSyncComplete() bool { return s.initialSyncComplete.Load() }

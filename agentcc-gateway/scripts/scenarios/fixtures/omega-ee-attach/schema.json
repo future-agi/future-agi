@@ -1,0 +1,2217 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:futureagi:omega-ee-attach:v1",
+  "title": "omega-ee-attach/v1 golden fixtures",
+  "description": "The wire shapes of hosted Omega EE's broker = gateway mode: provisioning a virtual server (CN22), calling it over MCP, and the results EE reads. Spec: docs/gateway/connectors/omega-ee-attach.md. Each fixture names its $defs entry in fixtures.json. Credential values are always {{PLACEHOLDER}} tokens.",
+  "$defs": {
+    "provision_unavailable_response": {
+      "description": "All Enterprise provisioning routes are unavailable by default, before authentication or tenant lookup. The enabled compatibility shapes below do not authorize credential issuance.",
+      "type": "object",
+      "required": ["http", "body"],
+      "additionalProperties": false,
+      "properties": {
+        "http": {
+          "type": "object",
+          "required": ["status", "headers"],
+          "additionalProperties": false,
+          "properties": {
+            "status": {"const": 503},
+            "headers": {"const": {"content-type": "application/json"}}
+          }
+        },
+        "body": {
+          "const": {
+            "status": false,
+            "type": "service_unavailable",
+            "code": "feature_unavailable",
+            "detail": "Enterprise credential provisioning is unavailable.",
+            "message": "Enterprise credential provisioning is unavailable.",
+            "error": "Enterprise credential provisioning is unavailable.",
+            "result": "Enterprise credential provisioning is unavailable."
+          }
+        }
+      }
+    },
+    "placeholder": {
+      "type": "string",
+      "pattern": "^\\{\\{[A-Z][A-Z0-9_]*\\}\\}$"
+    },
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "uuid7": {
+      "description": "CN22d: a UUIDv7 (RFC 9562: version 7, the RFC variant), lower-case as EE writes it; Django compares it case-insensitively.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "vs_id": {
+      "description": "vs_<ULID>, assigned by the control plane (decision 32); EE stores it and never builds one.",
+      "type": "string",
+      "pattern": "^vs_[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "tool_call_id": {
+      "description": "tc_<ULID> (agentcc-gateway/internal/mcp/hook_meter.go).",
+      "type": "string",
+      "pattern": "^tc_[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "server_id": {
+      "description": "An org MCP server id (org config mcp.servers, MC.4).",
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_-]{0,47}$"
+    },
+    "key_id": {
+      "description": "A gateway virtual key's random id as the gateway knows it (AgentccAPIKey.gateway_key_id; keystore.go newKeyID: key_ + 24 hex). A legacy key_<n> id is refused: static config keys get one, and gateways before random ids reissued them after a restart (auth_bridge.py), so an access list could come to name another key. Mint a new key.",
+      "type": "string",
+      "pattern": "^key_[0-9a-f]{24}$"
+    },
+    "connection_id": {
+      "description": "EE's IntegrationConnection.id, opaque to the gateway.",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
+    },
+    "exposed_tool_name": {
+      "description": "A prefixed exposed name <server>__<tool>: at most 64 characters (vserver.MaxNameLen), characters [A-Za-z0-9_.-] (vserver.Normalize), first character a letter or digit, so it also passes EE's posture rule.",
+      "type": "string",
+      "maxLength": 64,
+      "pattern": "^[a-z0-9][A-Za-z0-9_.-]*__[A-Za-z0-9_.-]+$"
+    },
+    "non_public_url": {
+      "description": "Hosts EE never contacts: a host whose last label is a number, decimal or 0x hex, which the WHATWG URL parser EE uses reads as an IPv4 literal (10.0.0.1, 127.1, 0177.0.0.1, 0x7f.0.0.0x1, 127.0.0.0x1); a host with a dotted or dashed IPv4 address inside it (10.0.0.1.nip.io, 10-0-0-1.sslip.io); any name under nip.io or sslip.io, which encode an address in other forms too (7f000001.nip.io); *.local, *.localhost, *.localdomain, *.internal and *.home.arpa; and paths with dot segments or empty segments. EE's DNS pin refuses a private answer whatever the name; this is the schema's own guard.",
+      "type": "string",
+      "pattern": "^https?://([^/:]*\\.)?(0[xX][0-9a-fA-F]*|[0-9]+)([:/]|$)|^https?://([^/:]*\\.)?[0-9]{1,3}([.-][0-9]{1,3}){3}\\.|^https?://([^/:]*\\.)?(nip|sslip)\\.io([:/]|$)|^https?://[^/]*\\.(local|localhost|localdomain|internal|home\\.arpa)([:/]|$)|^https?://[^/]+/(.*/)?\\.\\.?(/|$)|^https?://[^/]+/.*//"
+    },
+    "public_https_url": {
+      "type": "string",
+      "maxLength": 2048,
+      "pattern": "^https://[a-z0-9-]+(\\.[a-z0-9-]+)+(:[0-9]{1,5})?/[^\\s#]*$",
+      "not": {
+        "$ref": "#/$defs/non_public_url"
+      }
+    },
+    "vs_url": {
+      "description": "The virtual server's MCP endpoint: the gateway's public origin, its MCP endpoint path, then /v/<vs_id>. No query, fragment, redirect or private host.",
+      "type": "string",
+      "maxLength": 200,
+      "pattern": "^https://[a-z0-9-]+(\\.[a-z0-9-]+)+(:[0-9]{1,5})?(/[A-Za-z0-9._~-]+)*/v/vs_[0-9A-HJKMNP-TV-Z]{26}$",
+      "not": {
+        "$ref": "#/$defs/non_public_url"
+      }
+    },
+    "rfc3339": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$"
+    },
+    "json_headers": {
+      "type": "object",
+      "required": ["content-type"],
+      "propertyNames": {
+        "enum": ["content-type", "cache-control"]
+      },
+      "properties": {
+        "content-type": {
+          "const": "application/json"
+        },
+        "cache-control": {
+          "const": "no-store"
+        }
+      }
+    },
+    "http_ok": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {
+        "status": {
+          "const": 200
+        },
+        "headers": {
+          "$ref": "#/$defs/json_headers"
+        }
+      }
+    },
+    "http_created": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {
+        "status": {
+          "const": 201
+        },
+        "headers": {
+          "$ref": "#/$defs/json_headers"
+        }
+      }
+    },
+    "provision_headers": {
+      "description": "EE's service credential (AM-C18 Q1; spec section 3.1): a credential per org made for EE alone, scoped to CN22 (ensure, detach and EE's agent keys) and nothing else, audited as EE, and sent as the X-Api-Key and X-Secret-Key pair of Django's API keys (accounts/authentication.py). Never the org's system OrgApiKey, which authenticates as the org's earliest-created user, and never the gateway admin token.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x-api-key", "x-secret-key"],
+      "properties": {
+        "content-type": {
+          "const": "application/json"
+        },
+        "x-api-key": {
+          "type": "string",
+          "pattern": "^\\{\\{EE_SERVICE_API_KEY\\}\\}$"
+        },
+        "x-secret-key": {
+          "type": "string",
+          "pattern": "^\\{\\{EE_SERVICE_SECRET_KEY\\}\\}$"
+        }
+      }
+    },
+    "provision_mint_headers": {
+      "description": "CN22d (AM-C27): the mint's headers are provision_headers plus a required Idempotency-Key, a UUIDv7 EE stores before the call and sends again when it retries the same mint (spec section 3.7). Missing or malformed: 400 idempotency_key_invalid.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x-api-key", "x-secret-key", "idempotency-key"],
+      "properties": {
+        "content-type": {
+          "const": "application/json"
+        },
+        "x-api-key": {
+          "type": "string",
+          "pattern": "^\\{\\{EE_SERVICE_API_KEY\\}\\}$"
+        },
+        "x-secret-key": {
+          "type": "string",
+          "pattern": "^\\{\\{EE_SERVICE_SECRET_KEY\\}\\}$"
+        },
+        "idempotency-key": {
+          "$ref": "#/$defs/uuid7"
+        }
+      }
+    },
+    "servers": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 8,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/server_id"
+      }
+    },
+    "ensure_body_agent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "workspace",
+        "connection_id",
+        "servers",
+        "mode",
+        "agent_key_id"
+      ],
+      "properties": {
+        "workspace": {
+          "$ref": "#/$defs/uuid"
+        },
+        "connection_id": {
+          "$ref": "#/$defs/connection_id"
+        },
+        "servers": {
+          "$ref": "#/$defs/servers"
+        },
+        "mode": {
+          "const": "agent"
+        },
+        "agent_key_id": {
+          "$ref": "#/$defs/key_id"
+        }
+      }
+    },
+    "ensure_body_user": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["workspace", "connection_id", "servers", "mode"],
+      "properties": {
+        "workspace": {
+          "$ref": "#/$defs/uuid"
+        },
+        "connection_id": {
+          "$ref": "#/$defs/connection_id"
+        },
+        "servers": {
+          "$ref": "#/$defs/servers"
+        },
+        "mode": {
+          "const": "user"
+        }
+      }
+    },
+    "provision_ensure_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["http", "body"],
+      "properties": {
+        "http": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["method", "url", "headers"],
+          "properties": {
+            "method": {
+              "const": "POST"
+            },
+            "url": {
+              "type": "string",
+              "pattern": "^https://[a-z0-9.-]+/agentcc/mcp/service/virtual-servers/ensure/$"
+            },
+            "headers": {
+              "$ref": "#/$defs/provision_headers"
+            }
+          }
+        },
+        "body": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/ensure_body_agent"
+            },
+            {
+              "$ref": "#/$defs/ensure_body_user"
+            }
+          ]
+        }
+      }
+    },
+    "provision_ensure_response": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["http", "body"],
+      "properties": {
+        "http": {
+          "$ref": "#/$defs/http_ok"
+        },
+        "body": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "result"],
+          "properties": {
+            "status": {
+              "const": true
+            },
+            "result": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "vs_id",
+                "url",
+                "mode",
+                "workspace",
+                "connection_id",
+                "created"
+              ],
+              "properties": {
+                "vs_id": {
+                  "$ref": "#/$defs/vs_id"
+                },
+                "url": {
+                  "$ref": "#/$defs/vs_url"
+                },
+                "mode": {
+                  "enum": ["agent", "user"]
+                },
+                "workspace": {
+                  "$ref": "#/$defs/uuid"
+                },
+                "connection_id": {
+                  "$ref": "#/$defs/connection_id"
+                },
+                "created": {
+                  "type": "boolean"
+                },
+                "agent_key_expires_at": {
+                  "description": "CN22c: when the agent key the virtual server is bound to expires. EE mints a new key and ensures with it before then (spec section 3.7). Null in user mode.",
+                  "oneOf": [
+                    {
+                      "$ref": "#/$defs/rfc3339"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "provision_detach_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["http", "body"],
+      "properties": {
+        "http": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["method", "url", "headers"],
+          "properties": {
+            "method": {
+              "const": "DELETE"
+            },
+            "url": {
+              "type": "string",
+              "pattern": "^https://[a-z0-9.-]+/agentcc/mcp/service/virtual-servers/vs_[0-9A-HJKMNP-TV-Z]{26}/$"
+            },
+            "headers": {
+              "$ref": "#/$defs/provision_headers"
+            }
+          }
+        },
+        "body": {
+          "type": "null"
+        }
+      }
+    },
+    "provision_detach_response": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["http", "body"],
+      "properties": {
+        "http": {
+          "$ref": "#/$defs/http_ok"
+        },
+        "body": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "result"],
+          "properties": {
+            "status": {
+              "const": true
+            },
+            "result": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["vs_id", "connection_id", "removed"],
+              "properties": {
+                "vs_id": {
+                  "$ref": "#/$defs/vs_id"
+                },
+                "connection_id": {
+                  "$ref": "#/$defs/connection_id"
+                },
+                "removed": {
+                  "const": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "provision_agent_key_mint_request": {
+      "description": "CN22's agent-key mint (spec section 3.7): one new gateway virtual key for a workspace of the caller's org, with EE's service credential and, since CN22d, an Idempotency-Key: a retry with the same one names the key the first mint made (409 agent_key_mint_replayed) instead of making another.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["http", "body"],
+      "properties": {
+        "http": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["method", "url", "headers"],
+          "properties": {
+            "method": {
+              "const": "POST"
+            },
+            "url": {
+              "type": "string",
+              "pattern": "^https://[a-z0-9.-]+/agentcc/mcp/service/agent-keys/$"
+            },
+            "headers": {
+              "$ref": "#/$defs/provision_mint_headers"
+            }
+          }
+        },
+        "body": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["workspace"],
+          "properties": {
+            "workspace": {
+              "$ref": "#/$defs/uuid"
+            }
+          }
+        }
+      }
+    },
+    "provision_agent_key_mint_response": {
+      "description": "201 with the new key's agent_key_id and its raw key, returned this once (the only CN22 answer that carries a credential), and since CN22c its expires_at. CN22 mints it not personal, with no allowed_ips, scoped to mcp and models with the workspace's spend budget (CN22c), expiring 90 days after the mint, bound to the workspace (rule 3).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["http", "body"],
+      "properties": {
+        "http": {
+          "$ref": "#/$defs/http_created"
+        },
+        "body": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "result"],
+          "properties": {
+            "status": {
+              "const": true
+            },
+            "result": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["agent_key_id", "key", "workspace"],
+              "properties": {
+                "agent_key_id": {
+                  "$ref": "#/$defs/key_id"
+                },
+                "key": {
+                  "type": "string",
+                  "pattern": "^\\{\\{ORG_VIRTUAL_KEY\\}\\}$"
+                },
+                "workspace": {
+                  "$ref": "#/$defs/uuid"
+                },
+                "expires_at": {
+                  "$ref": "#/$defs/rfc3339",
+                  "description": "CN22c: the key expires 90 days after it was minted; EE rotates it before then (spec section 3.7)."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "provision_agent_key_revoke_request": {
+      "description": "CN22's agent-key revoke (spec section 3.7): only a key the same credential minted; any other id is 404.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["http", "body"],
+      "properties": {
+        "http": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["method", "url", "headers"],
+          "properties": {
+            "method": {
+              "const": "POST"
+            },
+            "url": {
+              "type": "string",
+              "pattern": "^https://[a-z0-9.-]+/agentcc/mcp/service/agent-keys/key_[0-9a-f]{24}/revoke/$"
+            },
+            "headers": {
+              "$ref": "#/$defs/provision_headers"
+            }
+          }
+        },
+        "body": {
+          "type": "null"
+        }
+      }
+    },
+    "provision_agent_key_revoke_response": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["http", "body"],
+      "properties": {
+        "http": {
+          "$ref": "#/$defs/http_ok"
+        },
+        "body": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "result"],
+          "properties": {
+            "status": {
+              "const": true
+            },
+            "result": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["agent_key_id", "revoked"],
+              "properties": {
+                "agent_key_id": {
+                  "$ref": "#/$defs/key_id"
+                },
+                "revoked": {
+                  "const": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "provision_agent_key_mint_replayed_response": {
+      "description": "CN22d (AM-C27): the 409 for a mint whose Idempotency-Key already made a key under this service credential within 24 hours, with the same request. Django's envelope plus the key that mint made: agent_key_id, created_at, expires_at and revoked. Never the key: it was in the first mint's answer only. EE revokes that key, then mints with a new Idempotency-Key (spec section 3.7).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["http", "body"],
+      "properties": {
+        "http": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status"],
+          "properties": {
+            "status": {
+              "const": 409
+            },
+            "headers": {
+              "$ref": "#/$defs/json_headers"
+            }
+          }
+        },
+        "body": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "type",
+            "code",
+            "detail",
+            "message",
+            "error",
+            "result",
+            "agent_key_id",
+            "created_at",
+            "expires_at",
+            "revoked"
+          ],
+          "properties": {
+            "status": {
+              "const": false
+            },
+            "type": {
+              "const": "conflict"
+            },
+            "code": {
+              "const": "agent_key_mint_replayed"
+            },
+            "detail": {
+              "type": "string",
+              "minLength": 1
+            },
+            "message": {
+              "type": "string",
+              "minLength": 1
+            },
+            "error": {
+              "type": "string",
+              "minLength": 1
+            },
+            "result": {
+              "type": "string",
+              "minLength": 1
+            },
+            "agent_key_id": {
+              "$ref": "#/$defs/key_id"
+            },
+            "created_at": {
+              "$ref": "#/$defs/rfc3339"
+            },
+            "expires_at": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/rfc3339"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "revoked": {
+              "type": "boolean"
+            }
+          }
+        }
+      }
+    },
+    "provision_agent_keys_find_request": {
+      "description": "CN22d (AM-C27): EE finds the key a mint made by the Idempotency-Key it sent (after a lost answer), with its service credential. The same route without the query lists every agent key of the workspace; an Owner or Admin reads it too.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["http", "body"],
+      "properties": {
+        "http": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["method", "url", "headers"],
+          "properties": {
+            "method": {
+              "const": "GET"
+            },
+            "url": {
+              "type": "string",
+              "pattern": "^https://[a-z0-9.-]+/agentcc/mcp/service/workspaces/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/agent-keys/\\?mint_idempotency_key=[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            },
+            "headers": {
+              "$ref": "#/$defs/provision_headers"
+            }
+          }
+        },
+        "body": {
+          "type": "null"
+        }
+      }
+    },
+    "agent_key_listed": {
+      "description": "One agent key of the workspace (CN22c's list, CN22d's mint_idempotency_key): never the key itself. status is active, revoked or expired.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "agent_key_id",
+        "name",
+        "status",
+        "created_at",
+        "expires_at",
+        "last_used_at",
+        "budget_usd",
+        "budget_period",
+        "period_start",
+        "period_spend_usd",
+        "requests",
+        "mint_idempotency_key"
+      ],
+      "properties": {
+        "agent_key_id": {
+          "$ref": "#/$defs/key_id"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "enum": ["active", "revoked", "expired"]
+        },
+        "created_at": {
+          "$ref": "#/$defs/rfc3339"
+        },
+        "expires_at": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/rfc3339"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "last_used_at": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/rfc3339"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "budget_usd": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]{2}$"
+        },
+        "budget_period": {
+          "enum": ["daily", "weekly", "monthly"]
+        },
+        "period_start": {
+          "$ref": "#/$defs/rfc3339"
+        },
+        "period_spend_usd": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]{6}$"
+        },
+        "requests": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "mint_idempotency_key": {
+          "description": "The Idempotency-Key the key was minted with; null for a key minted before CN22d.",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/uuid7"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "provision_agent_keys_find_response": {
+      "description": "CN22d: 200 with the workspace's agent keys minted with that Idempotency-Key, newest first: none (that mint made nothing; mint again with the same key), one, or more (it was sent again after 24 hours or under a rotated credential). No key is ever in it.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["http", "body"],
+      "properties": {
+        "http": {
+          "$ref": "#/$defs/http_ok"
+        },
+        "body": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "result"],
+          "properties": {
+            "status": {
+              "const": true
+            },
+            "result": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["workspace", "keys"],
+              "properties": {
+                "workspace": {
+                  "$ref": "#/$defs/uuid"
+                },
+                "keys": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/agent_key_listed"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "django_error_response": {
+      "description": "Django's error envelope (tfc/utils/api_errors.py build_error_envelope).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["http", "body"],
+      "properties": {
+        "http": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status"],
+          "properties": {
+            "status": {
+              "enum": [400, 401, 403, 404, 409, 422, 503]
+            },
+            "headers": {
+              "$ref": "#/$defs/json_headers"
+            }
+          }
+        },
+        "body": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "type",
+            "code",
+            "detail",
+            "message",
+            "error",
+            "result"
+          ],
+          "properties": {
+            "status": {
+              "const": false
+            },
+            "type": {
+              "enum": [
+                "validation_error",
+                "authentication_error",
+                "permission_error",
+                "not_found",
+                "conflict",
+                "client_error",
+                "service_unavailable"
+              ]
+            },
+            "code": {
+              "enum": [
+                "invalid",
+                "not_authenticated",
+                "permission_denied",
+                "not_found",
+                "conflict",
+                "mode_mismatch",
+                "server_not_found",
+                "agent_key_invalid",
+                "connection_mode_conflict",
+                "gateway_sync_failed",
+                "gateway_url_not_public",
+                "agent_key_cap_reached",
+                "key_scope_denied",
+                "idempotency_key_invalid",
+                "idempotency_key_reused"
+              ]
+            },
+            "detail": {
+              "type": "string",
+              "minLength": 1
+            },
+            "message": {
+              "type": "string",
+              "minLength": 1
+            },
+            "error": {
+              "type": "string",
+              "minLength": 1
+            },
+            "result": {
+              "type": "string",
+              "minLength": 1
+            },
+            "attr": {
+              "type": "string",
+              "minLength": 1
+            },
+            "details": {
+              "description": "build_error_envelope's field errors: present whenever attr is, and attr is its first field name.",
+              "type": "object",
+              "additionalProperties": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "agent_context_header": {
+      "description": "Agent-context headers EE may send for attribution (plan section 6.2), canonical x-agentcc-* only. user-id and workspace-id are not here: in broker = gateway mode EE never asserts a user.",
+      "enum": [
+        "x-agentcc-agent-id",
+        "x-agentcc-agent-version",
+        "x-agentcc-run-id",
+        "x-agentcc-parent-run-id",
+        "x-agentcc-task-id",
+        "x-agentcc-trace-id",
+        "x-agentcc-workflow",
+        "x-agentcc-turn",
+        "x-agentcc-budget-scope",
+        "x-agentcc-budget-usd",
+        "x-agentcc-budget-remaining-usd",
+        "x-agentcc-max-cost-usd",
+        "x-agentcc-attempt-id",
+        "x-agentcc-deadline-ms",
+        "x-agentcc-env",
+        "x-agentcc-framework",
+        "x-agentcc-session-id",
+        "x-agentcc-generation-id",
+        "x-agentcc-mcp-allow-tools"
+      ]
+    },
+    "mcp_request_headers": {
+      "type": "object",
+      "required": ["content-type", "accept", "authorization"],
+      "propertyNames": {
+        "anyOf": [
+          {
+            "enum": [
+              "content-type",
+              "accept",
+              "authorization",
+              "mcp-session-id",
+              "mcp-protocol-version",
+              "last-event-id",
+              "traceparent",
+              "tracestate"
+            ]
+          },
+          {
+            "$ref": "#/$defs/agent_context_header"
+          }
+        ]
+      },
+      "properties": {
+        "content-type": {
+          "const": "application/json"
+        },
+        "accept": {
+          "const": "application/json, text/event-stream"
+        },
+        "authorization": {
+          "description": "The gateway credential only: an org virtual key (agent mode) or an M24 access token (user mode). Never a vendor token.",
+          "type": "string",
+          "pattern": "^Bearer \\{\\{(ORG_VIRTUAL_KEY|M24_ACCESS_TOKEN)\\}\\}$"
+        },
+        "mcp-session-id": {
+          "$ref": "#/$defs/placeholder"
+        },
+        "mcp-protocol-version": {
+          "enum": ["2025-03-26", "2025-06-18", "2025-11-25"]
+        },
+        "last-event-id": {
+          "type": "string"
+        },
+        "traceparent": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{2}-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$"
+        },
+        "tracestate": {
+          "type": "string"
+        }
+      }
+    },
+    "agent_meta": {
+      "description": "params._meta[\"io.futureagi/agent\"] (MC.10): the section 6.2 fields in snake_case, without user_id and workspace_id.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "agent_id": {
+          "type": "string"
+        },
+        "agent_version": {
+          "type": "string"
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "parent_run_id": {
+          "type": "string"
+        },
+        "task_id": {
+          "type": "string"
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "workflow": {
+          "type": "string"
+        },
+        "turn": {
+          "type": "integer"
+        },
+        "budget_scope": {
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        }
+      }
+    },
+    "request_meta": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "protocolVersion": {
+          "enum": ["2025-03-26", "2025-06-18", "2025-11-25"]
+        },
+        "io.futureagi/approval_id": {
+          "$ref": "#/$defs/placeholder"
+        },
+        "io.futureagi/agent": {
+          "$ref": "#/$defs/agent_meta"
+        },
+        "io.futureagi/generation_id": {
+          "type": "string"
+        },
+        "traceparent": {
+          "type": "string"
+        },
+        "progressToken": {
+          "type": ["string", "integer"]
+        }
+      }
+    },
+    "initialize_body": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["jsonrpc", "id", "method", "params"],
+      "properties": {
+        "jsonrpc": {
+          "const": "2.0"
+        },
+        "id": {
+          "type": ["integer", "string"]
+        },
+        "method": {
+          "const": "initialize"
+        },
+        "params": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["protocolVersion", "capabilities", "clientInfo"],
+          "properties": {
+            "protocolVersion": {
+              "enum": ["2025-03-26", "2025-06-18", "2025-11-25"]
+            },
+            "capabilities": {
+              "type": "object"
+            },
+            "clientInfo": {
+              "type": "object",
+              "required": ["name", "version"]
+            },
+            "_meta": {
+              "$ref": "#/$defs/request_meta"
+            }
+          }
+        }
+      }
+    },
+    "tools_list_body": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["jsonrpc", "id", "method"],
+      "properties": {
+        "jsonrpc": {
+          "const": "2.0"
+        },
+        "id": {
+          "type": ["integer", "string"]
+        },
+        "method": {
+          "const": "tools/list"
+        },
+        "params": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "cursor": {
+              "type": "string"
+            },
+            "_meta": {
+              "$ref": "#/$defs/request_meta"
+            }
+          }
+        }
+      }
+    },
+    "tools_call_body": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["jsonrpc", "id", "method", "params"],
+      "properties": {
+        "jsonrpc": {
+          "const": "2.0"
+        },
+        "id": {
+          "type": ["integer", "string"]
+        },
+        "method": {
+          "const": "tools/call"
+        },
+        "params": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "arguments"],
+          "properties": {
+            "name": {
+              "$ref": "#/$defs/exposed_tool_name"
+            },
+            "arguments": {
+              "type": "object"
+            },
+            "_meta": {
+              "$ref": "#/$defs/request_meta"
+            }
+          }
+        }
+      }
+    },
+    "mcp_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["http", "body"],
+      "properties": {
+        "http": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["method", "url", "headers"],
+          "properties": {
+            "method": {
+              "const": "POST"
+            },
+            "url": {
+              "$ref": "#/$defs/vs_url"
+            },
+            "headers": {
+              "$ref": "#/$defs/mcp_request_headers"
+            }
+          }
+        },
+        "body": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/initialize_body"
+            },
+            {
+              "$ref": "#/$defs/tools_list_body"
+            },
+            {
+              "$ref": "#/$defs/tools_call_body"
+            }
+          ]
+        }
+      }
+    },
+    "listed_tool": {
+      "type": "object",
+      "required": ["name", "inputSchema"],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/exposed_tool_name"
+        },
+        "title": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "inputSchema": {
+          "type": "object",
+          "required": ["type"],
+          "properties": {
+            "type": {
+              "const": "object"
+            }
+          }
+        },
+        "outputSchema": {
+          "type": "object"
+        },
+        "annotations": {
+          "type": "object"
+        },
+        "_meta": {
+          "type": "object"
+        }
+      }
+    },
+    "mcp_tools_list_response": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["http", "body"],
+      "properties": {
+        "http": {
+          "$ref": "#/$defs/http_ok"
+        },
+        "body": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["jsonrpc", "id", "result"],
+          "properties": {
+            "jsonrpc": {
+              "const": "2.0"
+            },
+            "id": {
+              "type": ["integer", "string"]
+            },
+            "result": {
+              "type": "object",
+              "required": ["tools"],
+              "properties": {
+                "tools": {
+                  "type": "array",
+                  "maxItems": 128,
+                  "items": {
+                    "$ref": "#/$defs/listed_tool"
+                  }
+                },
+                "nextCursor": {
+                  "type": "string"
+                },
+                "_meta": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "tool_call_meta": {
+      "description": "_meta[\"io.futureagi/tool_call\"] (MC.3; hook_evidence.go toolCallMeta). executed means may have executed.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "tool_call_id",
+        "executed",
+        "billing_mode",
+        "billed_usd",
+        "latency_ms"
+      ],
+      "properties": {
+        "tool_call_id": {
+          "$ref": "#/$defs/tool_call_id"
+        },
+        "executed": {
+          "type": "boolean"
+        },
+        "billing_mode": {
+          "enum": ["byok", "managed"]
+        },
+        "billed_usd": {
+          "type": "number",
+          "minimum": 0
+        },
+        "latency_ms": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "budget_meta": {
+      "description": "_meta[\"io.futureagi/budget\"] (M19).",
+      "type": "object",
+      "required": ["scope"],
+      "properties": {
+        "scope": {
+          "type": "string"
+        },
+        "calls_remaining": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "usd_remaining": {
+          "type": "number",
+          "minimum": 0
+        }
+      }
+    },
+    "error_type": {
+      "description": "The gateway's error types (internal/models/errors.go, errors_billing.go). Informational: EE keys on code.",
+      "enum": [
+        "invalid_request_error",
+        "authentication_error",
+        "permission_error",
+        "not_found",
+        "timeout_error",
+        "rate_limit_error",
+        "guardrail_error",
+        "server_error",
+        "upstream_error",
+        "gateway_timeout",
+        "payment_required"
+      ]
+    },
+    "err_auth_required": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "code", "message", "param", "metadata"],
+      "properties": {
+        "type": {
+          "$ref": "#/$defs/error_type"
+        },
+        "code": {
+          "const": "auth_required"
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        },
+        "param": {
+          "type": "null"
+        },
+        "metadata": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": ["server_id", "reason", "connect_url"],
+              "properties": {
+                "server_id": {
+                  "$ref": "#/$defs/server_id"
+                },
+                "reason": {
+                  "enum": [
+                    "no_token",
+                    "expired",
+                    "needs_reauth",
+                    "revoked",
+                    "account_ambiguous"
+                  ]
+                },
+                "connect_url": {
+                  "type": "string",
+                  "pattern": "^https://[a-z0-9.-]+/agentcc/mcp/connect/[a-z0-9][a-z0-9_-]{0,47}/start/\\?binding=[^\\s#&]+$"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "required": ["server_id", "reason"],
+              "properties": {
+                "server_id": {
+                  "$ref": "#/$defs/server_id"
+                },
+                "reason": {
+                  "const": "no_user_identity"
+                },
+                "connect_url": false
+              }
+            }
+          ]
+        }
+      }
+    },
+    "err_approval_required": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "code", "message", "param", "metadata"],
+      "properties": {
+        "type": {
+          "$ref": "#/$defs/error_type"
+        },
+        "code": {
+          "const": "approval_required"
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        },
+        "param": {
+          "type": "null"
+        },
+        "metadata": {
+          "type": "object",
+          "required": [
+            "approval_id",
+            "status",
+            "approve_url",
+            "poll_url",
+            "expires_at"
+          ],
+          "properties": {
+            "approval_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "status": {
+              "const": "pending"
+            },
+            "approve_url": {
+              "$ref": "#/$defs/public_https_url"
+            },
+            "poll_url": {
+              "$ref": "#/$defs/public_https_url"
+            },
+            "expires_at": {
+              "$ref": "#/$defs/rfc3339"
+            }
+          }
+        }
+      }
+    },
+    "err_tool_rate_limited": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "code", "message", "param", "metadata"],
+      "properties": {
+        "type": {
+          "$ref": "#/$defs/error_type"
+        },
+        "code": {
+          "const": "tool_rate_limited"
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        },
+        "param": {
+          "type": "null"
+        },
+        "metadata": {
+          "type": "object",
+          "required": ["scope", "limit", "window_s", "retry_after_s"],
+          "properties": {
+            "scope": {
+              "type": "string",
+              "minLength": 1
+            },
+            "limit": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "window_s": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "retry_after_s": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        }
+      }
+    },
+    "err_tool_budget_exhausted": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "code", "message", "param", "metadata"],
+      "properties": {
+        "type": {
+          "$ref": "#/$defs/error_type"
+        },
+        "code": {
+          "const": "tool_budget_exhausted"
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        },
+        "param": {
+          "type": "null"
+        },
+        "metadata": {
+          "type": "object",
+          "required": [
+            "limit_source",
+            "scope",
+            "resets_at",
+            "kind",
+            "remaining"
+          ],
+          "properties": {
+            "limit_source": {
+              "const": "agentcc_tool_budget"
+            },
+            "scope": {
+              "type": "string",
+              "pattern": "^run:.+$"
+            },
+            "resets_at": {
+              "type": "null"
+            },
+            "kind": {
+              "enum": ["calls", "usd"]
+            },
+            "remaining": {
+              "type": "number",
+              "minimum": 0
+            }
+          }
+        }
+      }
+    },
+    "err_tool_denied": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "code", "message", "param", "metadata"],
+      "properties": {
+        "type": {
+          "$ref": "#/$defs/error_type"
+        },
+        "code": {
+          "const": "tool_denied"
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        },
+        "param": {
+          "type": "null"
+        },
+        "metadata": {
+          "type": "object",
+          "required": ["rule"],
+          "properties": {
+            "rule": {
+              "type": "string",
+              "minLength": 1
+            },
+            "virtual_server": {
+              "$ref": "#/$defs/vs_id"
+            }
+          }
+        }
+      }
+    },
+    "error_object": {
+      "description": "_meta[\"io.futureagi/error\"] (MC.3, denial.go ErrorObject). Codes outside these five are listed in the spec; EE treats an unknown code as a failed tool call.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/err_auth_required"
+        },
+        {
+          "$ref": "#/$defs/err_approval_required"
+        },
+        {
+          "$ref": "#/$defs/err_tool_rate_limited"
+        },
+        {
+          "$ref": "#/$defs/err_tool_budget_exhausted"
+        },
+        {
+          "$ref": "#/$defs/err_tool_denied"
+        }
+      ]
+    },
+    "content_text": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "text"],
+      "properties": {
+        "type": {
+          "const": "text"
+        },
+        "text": {
+          "type": "string"
+        }
+      }
+    },
+    "mcp_tools_call_success": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["http", "body"],
+      "properties": {
+        "http": {
+          "$ref": "#/$defs/http_ok"
+        },
+        "body": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["jsonrpc", "id", "result"],
+          "properties": {
+            "jsonrpc": {
+              "const": "2.0"
+            },
+            "id": {
+              "type": ["integer", "string"]
+            },
+            "result": {
+              "type": "object",
+              "required": ["content", "_meta"],
+              "properties": {
+                "content": {
+                  "type": "array"
+                },
+                "isError": {
+                  "const": false
+                },
+                "structuredContent": {},
+                "resultType": {
+                  "const": "complete"
+                },
+                "_meta": {
+                  "type": "object",
+                  "required": ["io.futureagi/tool_call"],
+                  "properties": {
+                    "io.futureagi/tool_call": {
+                      "$ref": "#/$defs/tool_call_meta"
+                    },
+                    "io.futureagi/budget": {
+                      "$ref": "#/$defs/budget_meta"
+                    },
+                    "io.futureagi/error": false
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "mcp_tools_call_denial": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["http", "body"],
+      "properties": {
+        "http": {
+          "$ref": "#/$defs/http_ok"
+        },
+        "body": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["jsonrpc", "id", "result"],
+          "properties": {
+            "jsonrpc": {
+              "const": "2.0"
+            },
+            "id": {
+              "type": ["integer", "string"]
+            },
+            "result": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["content", "isError", "_meta"],
+              "properties": {
+                "content": {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 1,
+                  "items": {
+                    "$ref": "#/$defs/content_text"
+                  }
+                },
+                "isError": {
+                  "const": true
+                },
+                "resultType": {
+                  "const": "complete"
+                },
+                "_meta": {
+                  "type": "object",
+                  "required": ["io.futureagi/error", "io.futureagi/tool_call"],
+                  "properties": {
+                    "io.futureagi/error": {
+                      "$ref": "#/$defs/error_object"
+                    },
+                    "io.futureagi/tool_call": {
+                      "$ref": "#/$defs/tool_call_meta"
+                    },
+                    "io.futureagi/budget": {
+                      "$ref": "#/$defs/budget_meta"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "mcp_protocol_error": {
+      "description": "A protocol-level answer (not isError) in JSON-RPC: the MCP layer's own 401 (principal.go), for a credential the key gate let through, and the 404 for a virtual server the caller cannot address on the replica that answered, which always has this body. A replica that has not yet read a new or changed virtual server answers it too, until its next sync. A 404 with no body is the session's (mcp_session_not_found); a model-path JSON 404 is the router's (gateway_route_not_found).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["http", "body"],
+      "properties": {
+        "http": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "headers"],
+          "properties": {
+            "status": {
+              "enum": [401, 403, 404]
+            },
+            "headers": {
+              "type": "object",
+              "required": ["content-type"],
+              "propertyNames": {
+                "enum": ["content-type", "www-authenticate"]
+              },
+              "properties": {
+                "content-type": {
+                  "const": "application/json"
+                },
+                "www-authenticate": {
+                  "type": "string",
+                  "pattern": "^Bearer realm=\"agentcc-gateway\"(, (error=\"[a-z_]+\"|scope=\"[^\"]+\"|resource_metadata=\"https://[^\"]+\"))*$"
+                }
+              }
+            }
+          }
+        },
+        "body": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["jsonrpc", "id", "error"],
+          "properties": {
+            "jsonrpc": {
+              "const": "2.0"
+            },
+            "id": {
+              "type": ["integer", "string", "null"]
+            },
+            "error": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["code", "message"],
+              "properties": {
+                "code": {
+                  "enum": [-32001, -32600]
+                },
+                "message": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "data": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["code"],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "missing_credentials",
+                        "invalid_api_key",
+                        "key_expired",
+                        "ip_not_allowed",
+                        "invalid_token",
+                        "insufficient_scope"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "mcp_session_not_found": {
+      "description": "The answer to a request on a session the gateway does not hold for this caller: unknown, ended, expired (idle past mcp.session_ttl, 30 minutes by default, or 24 hours after initialize), or bound to another principal or virtual server (method_initialize.go validateSession). HTTP 404 with no body and no content type, unlike the virtual server's 404, which has a JSON-RPC body. EE initializes again on the same url and retries once; it never calls ensure or detach for it.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["http", "body"],
+      "properties": {
+        "http": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "headers"],
+          "properties": {
+            "status": {
+              "const": 404
+            },
+            "headers": {
+              "type": "object",
+              "propertyNames": {
+                "enum": ["content-length"]
+              },
+              "properties": {
+                "content-length": {
+                  "const": "0"
+                }
+              }
+            }
+          }
+        },
+        "body": {
+          "type": "null"
+        }
+      }
+    },
+    "gateway_key_gate_error": {
+      "description": "The gateway's key gate (middleware/auth.go KeyAuth) covers the MCP endpoint whenever request auth is on, and answers a missing, unknown, revoked or expired key with the model path's error object, not JSON-RPC. Unknown includes a key the answering replica has not loaded: one minted since its last key sync (creation reaches only the replica that made it, while a revocation reaches every replica at once), or any synced key on a replica that has just started and whose startup sync has not loaded keys yet (at the pin /readyz does not wait for that sync). EE's handling, in order (spec section 4.2): a key that is no longer the workspace's current key means rebuild the client from the current one and retry; while the key's minting window or its 401 window (one window from the first such 401) is open, back off and retry; after them, ensure with the current agent_key_id decides: 400 agent_key_invalid means Refused, and 200, no answer or a 5xx means the gateway is unavailable and EE keeps backing off. This 401 alone never makes a connection Refused.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["http", "body"],
+      "properties": {
+        "http": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "headers"],
+          "properties": {
+            "status": {
+              "const": 401
+            },
+            "headers": {
+              "type": "object",
+              "required": ["content-type", "www-authenticate"],
+              "propertyNames": {
+                "enum": ["content-type", "www-authenticate"]
+              },
+              "properties": {
+                "content-type": {
+                  "const": "application/json"
+                },
+                "www-authenticate": {
+                  "const": "Bearer realm=\"agentcc-gateway\""
+                }
+              }
+            }
+          }
+        },
+        "body": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["error"],
+          "properties": {
+            "error": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["message", "type", "param", "code"],
+              "properties": {
+                "message": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "type": {
+                  "const": "authentication_error"
+                },
+                "param": {
+                  "type": "null"
+                },
+                "code": {
+                  "const": "invalid_api_key"
+                },
+                "metadata": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "gateway_ip_rule_error": {
+      "description": "The key gate's 403 (middleware/auth.go KeyAuth, ipacl CheckClient): the gateway's ip_acl, the org's ip_acl (applied only while the gateway's is on) or the key's allowed_ips refuse the caller's address. The model path's error object, not JSON-RPC, and no WWW-Authenticate.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["http", "body"],
+      "properties": {
+        "http": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "headers"],
+          "properties": {
+            "status": {
+              "const": 403
+            },
+            "headers": {
+              "type": "object",
+              "required": ["content-type"],
+              "propertyNames": {
+                "enum": ["content-type"]
+              },
+              "properties": {
+                "content-type": {
+                  "const": "application/json"
+                }
+              }
+            }
+          }
+        },
+        "body": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["error"],
+          "properties": {
+            "error": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["message", "type", "param", "code"],
+              "properties": {
+                "message": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "type": {
+                  "const": "permission_error"
+                },
+                "param": {
+                  "type": "null"
+                },
+                "code": {
+                  "const": "permission_denied"
+                },
+                "metadata": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "gateway_route_not_found": {
+      "description": "The router's answer for a path the gateway does not serve (server/router.go): HTTP 404 with the model path's error object, type and code not_found, not JSON-RPC. On EE's provisioned url it means that gateway does not serve its MCP endpoint: with mcp.enabled off, no MCP route is registered and the key gate does not cover the path, so any key gets it. EE fails the call and says the gateway's MCP endpoint is not available; it never calls ensure or detach for it, and does not retry.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["http", "body"],
+      "properties": {
+        "http": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "headers"],
+          "properties": {
+            "status": {
+              "const": 404
+            },
+            "headers": {
+              "type": "object",
+              "required": ["content-type"],
+              "propertyNames": {
+                "enum": ["content-type"]
+              },
+              "properties": {
+                "content-type": {
+                  "const": "application/json"
+                }
+              }
+            }
+          }
+        },
+        "body": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["error"],
+          "properties": {
+            "error": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["message", "type", "param", "code"],
+              "properties": {
+                "message": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "type": {
+                  "const": "not_found"
+                },
+                "param": {
+                  "type": "null"
+                },
+                "code": {
+                  "const": "not_found"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "m24_access_token_claims": {
+      "description": "mcp-access-token-claims-v1 (MC.8) for the first-party EE client. The gateway validates it (M23). Before storing one, EE checks it against the run's bound host identity (ee_host_identity; AM-C18 Q4): sub is its subject, org_id its organizationId, and aud the url ensure returned for a connection in its workspaceId.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "typ",
+        "iss",
+        "aud",
+        "sub",
+        "org_id",
+        "client_id",
+        "scope",
+        "iat",
+        "nbf",
+        "exp",
+        "jti"
+      ],
+      "properties": {
+        "typ": {
+          "const": "futureagi-mcp-access"
+        },
+        "iss": {
+          "type": "string",
+          "pattern": "^https://[a-z0-9.-]+/agentcc/mcp-oauth$"
+        },
+        "aud": {
+          "$ref": "#/$defs/vs_url"
+        },
+        "sub": {
+          "$ref": "#/$defs/uuid"
+        },
+        "org_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "client_id": {
+          "$ref": "#/$defs/placeholder"
+        },
+        "scope": {
+          "type": "string",
+          "pattern": "^mcp:tools( mcp:resources)?( mcp:prompts)?$"
+        },
+        "iat": {
+          "type": "integer"
+        },
+        "nbf": {
+          "type": "integer"
+        },
+        "exp": {
+          "type": "integer"
+        },
+        "jti": {
+          "$ref": "#/$defs/placeholder"
+        }
+      }
+    },
+    "m24_token_response": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["http", "body"],
+      "properties": {
+        "http": {
+          "$ref": "#/$defs/http_ok"
+        },
+        "body": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "access_token",
+            "token_type",
+            "expires_in",
+            "refresh_token",
+            "scope"
+          ],
+          "properties": {
+            "access_token": {
+              "const": "{{M24_ACCESS_TOKEN}}"
+            },
+            "token_type": {
+              "const": "Bearer"
+            },
+            "expires_in": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 900
+            },
+            "refresh_token": {
+              "const": "{{M24_REFRESH_TOKEN}}"
+            },
+            "scope": {
+              "type": "string",
+              "pattern": "^mcp:tools( mcp:resources)?( mcp:prompts)?$"
+            }
+          }
+        }
+      }
+    },
+    "ee_host_identity": {
+      "description": "EE's HostIdentityKey (EE managed-auth/host-assertion-types.ts:14-20): the host side of the binding a run is bound to, (issuer, subject, org, workspace). The subject is the FutureAGI user id, the same value as M24's sub (AM-C18 Q4); the issuer is the host assertion's, not M24's.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["issuer", "subject", "organizationId", "workspaceId"],
+      "properties": {
+        "issuer": {
+          "type": "string",
+          "pattern": "^https://[a-z0-9.-]+(/[A-Za-z0-9._~-]+)*$"
+        },
+        "subject": {
+          "$ref": "#/$defs/uuid"
+        },
+        "organizationId": {
+          "$ref": "#/$defs/uuid"
+        },
+        "workspaceId": {
+          "$ref": "#/$defs/uuid"
+        }
+      }
+    },
+    "gateway_key_scope_error": {
+      "description": "CN22c: the key gate's 403 for an EE agent key outside its scope (scopes mcp and models: the MCP endpoint, POST /v1/chat/completions, /v1/embeddings and /v1/responses). Any other gateway route, key-gated or not, answers it before a handler runs; the pipeline answers the same for a route the gate does not cover. The model path's error object, not JSON-RPC, and no WWW-Authenticate. EE never sends the agent key anywhere else (section 8), so this is a defect in EE, not a state to retry.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["http", "body"],
+      "properties": {
+        "http": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "headers"],
+          "properties": {
+            "status": {
+              "const": 403
+            },
+            "headers": {
+              "type": "object",
+              "required": ["content-type"],
+              "propertyNames": {
+                "enum": ["content-type"]
+              },
+              "properties": {
+                "content-type": {
+                  "const": "application/json"
+                }
+              }
+            }
+          }
+        },
+        "body": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["error"],
+          "properties": {
+            "error": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["message", "type", "param", "code"],
+              "properties": {
+                "message": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "type": {
+                  "const": "permission_error"
+                },
+                "param": {
+                  "type": "null"
+                },
+                "code": {
+                  "const": "key_scope_denied"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "gateway_key_budget_error": {
+      "description": "CN22c: the 402 (error-402-v1) for a model call with an EE agent key whose budget for the period is spent. limit_source agentcc_key_limit, scope key:<agent_key_id>, resets_at the period's end (null when the gateway could not read the budget). An Owner or Admin sets the budget per workspace. EE fails the call and shows that the workspace's agent budget is spent until resets_at; it never mints a new key to get around it (section 8).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["http", "body"],
+      "properties": {
+        "http": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "headers"],
+          "properties": {
+            "status": {
+              "const": 402
+            },
+            "headers": {
+              "type": "object",
+              "required": ["content-type"],
+              "propertyNames": {
+                "enum": ["content-type"]
+              },
+              "properties": {
+                "content-type": {
+                  "const": "application/json"
+                }
+              }
+            }
+          }
+        },
+        "body": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["error"],
+          "properties": {
+            "error": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["message", "type", "param", "code", "metadata"],
+              "properties": {
+                "message": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "type": {
+                  "const": "payment_required"
+                },
+                "param": {
+                  "type": "null"
+                },
+                "code": {
+                  "const": "agent_key_budget_exhausted"
+                },
+                "metadata": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "limit_source",
+                    "remedy_hint",
+                    "available_usd",
+                    "scope",
+                    "resets_at"
+                  ],
+                  "properties": {
+                    "limit_source": {
+                      "const": "agentcc_key_limit"
+                    },
+                    "remedy_hint": {
+                      "const": "raise_key_budget"
+                    },
+                    "available_usd": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "scope": {
+                      "type": "string",
+                      "pattern": "^key:key_[0-9a-f]{24}$"
+                    },
+                    "resets_at": {
+                      "oneOf": [
+                        {
+                          "$ref": "#/$defs/rfc3339"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

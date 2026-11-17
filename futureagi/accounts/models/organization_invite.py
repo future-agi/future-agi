@@ -1,9 +1,10 @@
 import uuid
 from datetime import timedelta
 
-from django.db import models, transaction
+from django.db import models
 from django.utils import timezone
 
+from accounts.services.hard_erase_issuance_entry import issuance_entry
 from tfc.constants.levels import INVITE_VALIDITY_DAYS, Level
 from tfc.utils.base_model import BaseModel
 
@@ -108,25 +109,28 @@ class OrganizationInvite(BaseModel):
 
         from accounts.models.organization_membership import OrganizationMembership
         from accounts.models.workspace import Workspace, WorkspaceMembership
+        from accounts.services.identity_issuance import issue_membership
 
-        with transaction.atomic():
+        with issuance_entry(
+            organizations=[self.organization_id], people=[user.pk, self.invited_by_id]
+        ):
             # 1. Create or update org membership
             # Use all_objects to include soft-deleted rows — BaseModel.delete()
             # only sets deleted=True, leaving the DB row and unique constraint
             # intact, which would cause IntegrityError with objects manager.
-            org_membership, created = (
-                OrganizationMembership.all_objects.update_or_create(
-                    user=user,
-                    organization=self.organization,
-                    defaults={
-                        "level": self.level,
-                        "role": Level.to_org_string(self.level),
-                        "invited_by": self.invited_by,
-                        "is_active": True,
-                        "deleted": False,
-                        "deleted_at": None,
-                    },
-                )
+            org_membership, created = issue_membership(
+                OrganizationMembership.all_objects,
+                "update_or_create",
+                user=user,
+                organization=self.organization,
+                defaults={
+                    "level": self.level,
+                    "role": Level.to_org_string(self.level),
+                    "invited_by": self.invited_by,
+                    "is_active": True,
+                    "deleted": False,
+                    "deleted_at": None,
+                },
             )
 
             # 2. Create workspace memberships
@@ -140,7 +144,12 @@ class OrganizationInvite(BaseModel):
                 except Workspace.DoesNotExist:
                     continue  # workspace deleted between invite and accept
 
-                WorkspaceMembership.all_objects.update_or_create(
+                issue_membership(
+                    # The signed invitation supplies the authorized workspace.
+                    # An active recipient may currently be browsing another org;
+                    # its ambient workspace must not hide this existing row.
+                    WorkspaceMembership._base_manager,
+                    "update_or_create",
                     workspace=workspace,
                     user=user,
                     defaults={

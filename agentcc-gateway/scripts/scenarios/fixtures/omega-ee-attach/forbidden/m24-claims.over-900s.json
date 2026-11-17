@@ -1,0 +1,13 @@
+{
+  "typ": "futureagi-mcp-access",
+  "iss": "https://api.example.com/agentcc/mcp-oauth",
+  "aud": "https://gateway.example.com/mcp/v/vs_01K7CN5EEPERS0NM0DE0000002",
+  "sub": "7c9e2b1d-4a6f-4d8e-b0c1-3e5f7a9b1d2c",
+  "org_id": "5d1e7f3a-2c4b-4e6d-8f9a-1b2c3d4e5f60",
+  "client_id": "{{EE_FIRST_PARTY_CLIENT_ID}}",
+  "scope": "mcp:tools mcp:resources mcp:prompts",
+  "iat": 1792428000,
+  "nbf": 1792428000,
+  "exp": 1792431600,
+  "jti": "{{JTI}}"
+}

@@ -1,3 +1,6 @@
+// SELECTOR_RECHECK_AFTER_FE(FE-DSX-DATASETS-EVALS, FE-DSX-DEVELOP-DETAIL): WHOLE_FILE, not only conflict regions.
+// Recheck every selector, imported grid/picker helper, declaration and repeated use,
+// including all auto-merged hunks; change dependent references together after FE lands.
 import { test, expect } from '../../lib/fixtures';
 import { uploadFixture } from '../../lib/upload';
 import { POLL } from '../../lib/state-probe';
@@ -28,14 +31,17 @@ test('DATA-E2E-001: uploaded dataset values can be discovered and filtered', {
   page.setDefaultTimeout(UI_READY);
   const name = `e2e-data1-${testInfo.workerIndex}-${Date.now().toString(36)}`;
   await page.goto('/dashboard/develop', { waitUntil: 'domcontentloaded' });
-  await page.getByRole('button', { name: /^add dataset$/i }).first().click({ timeout: UI_READY });
-  await page.getByText('Upload a file (JSON, CSV)', { exact: true }).click({ timeout: UI_READY });
-  const dialog = page.getByRole('dialog').filter({ has: page.getByText('Upload a File', { exact: true }) });
+  // DevelopView.jsx and AddDatasetDrawer/UploadFileModal.jsx: New dataset, then
+  // Upload a file; the dialog previews the file and imports it on "Import 3 rows"
+  // (catalog-regions.csv holds three rows).
+  await page.getByRole('button', { name: 'New dataset', exact: true }).click({ timeout: UI_READY });
+  await page.getByText('Upload a file', { exact: true }).click({ timeout: UI_READY });
+  const dialog = page.getByRole('dialog', { name: 'Upload a file', exact: true });
   await uploadFixture(dialog.locator('input[type="file"]'), 'catalog-regions.csv');
-  await dialog.getByPlaceholder('Dataset Name').fill(name);
+  await dialog.getByPlaceholder('Dataset name', { exact: true }).fill(name);
   const uploaded = page.waitForResponse(r => r.url().endsWith(UPLOAD_PATH)
     && r.request().method() === 'POST', { timeout: UI_READY });
-  await dialog.getByRole('button', { name: 'Upload', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Import 3 rows', exact: true }).click();
   const response = await uploaded;
   expect(response.status()).toBe(200);
   const body = await response.json();

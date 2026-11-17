@@ -34,7 +34,21 @@ def create_application_read_http_client(**kwargs):
                 "ClickHouse initialization timeouts must be finite and positive"
             )
     kwargs["settings"] = application_read_settings(kwargs.get("settings"))
-    client = clickhouse_connect.get_client(**kwargs)
+    from tracer.services.background_transport import current_guard, guarded_http_pool
+
+    pool = None
+    if current_guard() is not None:
+        pool = guarded_http_pool()
+        kwargs["pool_mgr"] = pool
+        kwargs["query_retries"] = 0
+    try:
+        client = clickhouse_connect.get_client(**kwargs)
+    except BaseException:
+        if pool is not None:
+            pool.clear()
+        raise
+    if pool is not None:
+        client._owns_pool_manager = True
     client.timeout = Timeout(connect=int(connect), read=None)
     return instrument_clickhouse_client(client)
 

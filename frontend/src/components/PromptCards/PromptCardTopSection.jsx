@@ -172,6 +172,8 @@ function PromptMenu({
         ref={attachmentAnchorEl}
         disabled={disabled}
         size="small"
+        sx={{ p: 0 }}
+        aria-label="Message actions"
       >
         <SvgColor
           sx={{
@@ -286,6 +288,7 @@ const PromptTopSection = ({
             }}
             size="small"
             {...dragHandleProps}
+            aria-label="Drag to reorder"
           >
             <SvgColor
               sx={{
@@ -323,6 +326,7 @@ const PromptTopSection = ({
               size="small"
               onClick={onImprovePrompt}
               disabled={disabled}
+              aria-label="Improve prompt"
             >
               <SVGColor
                 src="/assets/icons/components/ic_improve_prompt.svg"
@@ -339,6 +343,7 @@ const PromptTopSection = ({
               ref={attachmentAnchorEl}
               disabled={disabled}
               color="text.primary"
+              aria-label="Attach files"
             >
               <SVGColor
                 src="/assets/icons/components/ic_attachment.svg"

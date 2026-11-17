@@ -1,0 +1,70 @@
+# Attio's hosted MCP server with OAuth from Attio's authorization server,
+# which registers clients dynamically. A connection acts as the Attio user
+# who signs in, within that user's workspace; Attio's page says no API key
+# is needed. Attio applies per-workspace rate limits by tool tier (read,
+# write, merge). The scopes are the ones the server advertises. EE reads a
+# pre-registered client from its environment and cannot register one, so it
+# gets none.
+schema: "connector-manifest/v1#provider"
+app: attio
+id: mcp
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.attio.com/mcp
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent, user]
+auth:
+  kind: oauth2
+  oauth2:
+    authorizeUrl: https://app.attio.com/oidc/authorize
+    tokenUrl: https://app.attio.com/oidc/token
+    scopes: [openid, offline_access, mcp]
+    pkce: true
+    tokenBody: form
+    clientAuth: body
+    revocation:
+      url: https://app.attio.com/oidc/revoke
+      method: POST
+      tokenBody: form
+      tokenField: token
+      clientAuth: body
+    registration: [dcr]
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://docs.attio.com/mcp/overview
+    fetchedAt: 2026-11-11
+  - fact: transport.url
+    url: https://mcp.attio.com/.well-known/oauth-protected-resource/mcp
+    fetchedAt: 2026-11-11
+  - fact: auth.kind
+    url: https://docs.attio.com/mcp/overview
+    fetchedAt: 2026-11-11
+  - fact: auth.oauth2.authorizeUrl
+    url: https://app.attio.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-11-11
+  - fact: auth.oauth2.tokenUrl
+    url: https://app.attio.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-11-11
+  - fact: auth.oauth2.scopes
+    url: https://mcp.attio.com/.well-known/oauth-protected-resource/mcp
+    fetchedAt: 2026-11-11
+  - fact: auth.oauth2.pkce
+    url: https://app.attio.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-11-11
+  - fact: auth.oauth2.revocation.url
+    url: https://app.attio.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-11-11
+  - fact: auth.oauth2.registration
+    url: https://app.attio.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-11-11
+x-omega: { ee: exclude }

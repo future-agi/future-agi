@@ -94,6 +94,8 @@ export default function NavSection() {
         </Button>
         <CustomTooltip show title="Add New Prompt" arrow size="small">
           <IconButton
+            type="button"
+            aria-label="Add New Prompt"
             size="small"
             sx={{
               border: "1px solid",

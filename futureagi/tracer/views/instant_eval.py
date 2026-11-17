@@ -11,6 +11,7 @@ The runs themselves (estimate, start, summary, rows, export, control) are in
 from datetime import UTC
 
 from django.core.cache import cache
+from django.db.models import Q
 from rest_framework import serializers
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
@@ -48,6 +49,7 @@ def _project(request, project_id):
 
 
 # ─── History ────────────────────────────────────────────────────────────────
+# Candidate batch size, not a limit on the history that can be browsed.
 HISTORY_SCAN = 500
 INSTANT_TASK_PREFIX = "Instant eval"
 # A finished run's history line is a few hundred bytes and its key moves with
@@ -294,42 +296,69 @@ class InstantEvalRunsView(InstantEvalLicenseRequired, APIView):
             return self._gm.not_found("Project not found")
         # A "Keep answering" task is continuous: it never finishes and isn't
         # a run, so History leaves it out (a page polls while a run is live).
+        # A run the Ask page started has a run record, so it stays in History
+        # after its task is renamed on the Tasks page; the name prefix only
+        # finds runs from before run records.
         tasks = EvalTask.objects.filter(
-            project=project, deleted=False, name__startswith=INSTANT_TASK_PREFIX
+            Q(name__startswith=INSTANT_TASK_PREFIX) | Q(instant_run__isnull=False),
+            project=project,
+            deleted=False,
         ).exclude(run_type=RunType.CONTINUOUS)
         if params.get("task_id"):
             tasks = tasks.filter(id=params["task_id"])
         if params.get("search"):
-            tasks = tasks.filter(name__icontains=params["search"])
-        tasks = list(
-            tasks.order_by("-created_at").prefetch_related("evals")[:HISTORY_SCAN]
-        )
-        # A run knows its own unit; a question may have been asked of another.
-        run_units = dict(
-            InstantEvalRun.objects.filter(
-                eval_task_id__in=[t.id for t in tasks]
-            ).values_list("eval_task_id", "unit")
-        )
-        runs = []
-        for task in tasks:
-            # In the order the run asked them (its page opens on the first).
-            metas = [
-                (str(c.id), (c.config or {}).get("instant_eval") or {})
-                for c in asked_order(task, list(task.evals.all()))
-            ]
-            metas = [(cid, m) for cid, m in metas if m.get("question")]
-            if not metas:
-                continue
-            unit = (
-                run_units.get(task.id)
-                or metas[0][1].get("unit")
-                or str(task.row_type or "traces")
+            search = params["search"]
+            # Any question a run asked finds it: its name carries only the
+            # first one, cut to 255 characters.
+            asked = EvalTask.evals.through.objects.filter(
+                evaltask__project=project,
+                customevalconfig__deleted=False,
+                customevalconfig__config__instant_eval__question__icontains=search,
+            ).values("evaltask_id")
+            tasks = tasks.filter(Q(name__icontains=search) | Q(id__in=asked))
+        tasks = tasks.order_by("-created_at", "-id").prefetch_related("evals")
+        skip = params["page_number"] * params["page_size"]
+        page = []
+        offset = 0
+        # Legacy question metadata decides eligibility and unit, so scan in
+        # batches until the page has one extra eligible run, not just task.
+        while len(page) <= params["page_size"]:
+            batch = list(tasks[offset : offset + HISTORY_SCAN])
+            if not batch:
+                break
+            # A run knows its unit; a question may have been asked of another.
+            run_units = dict(
+                InstantEvalRun.objects.filter(
+                    eval_task_id__in=[t.id for t in batch]
+                ).values_list("eval_task_id", "unit")
             )
-            if params.get("unit") and unit != params["unit"]:
-                continue
-            runs.append((task, unit, metas))
-        start = params["page_number"] * params["page_size"]
-        page = runs[start : start + params["page_size"]]
+            for task in batch:
+                # In the order the run asked them (its page opens on the first).
+                metas = [
+                    (str(c.id), (c.config or {}).get("instant_eval") or {})
+                    for c in asked_order(task, list(task.evals.all()))
+                ]
+                metas = [(cid, m) for cid, m in metas if m.get("question")]
+                if not metas:
+                    continue
+                unit = (
+                    run_units.get(task.id)
+                    or metas[0][1].get("unit")
+                    or str(task.row_type or "traces")
+                )
+                if params.get("unit") and unit != params["unit"]:
+                    continue
+                if skip:
+                    skip -= 1
+                    continue
+                page.append((task, unit, metas))
+                if len(page) > params["page_size"]:
+                    break
+            if len(batch) < HISTORY_SCAN:
+                break
+            offset += HISTORY_SCAN
+        has_more = len(page) > params["page_size"]
+        page = page[: params["page_size"]]
         tids = [str(t.id) for t, _, _ in page]
         instant_runs = {
             str(r.eval_task_id): r
@@ -401,6 +430,4 @@ class InstantEvalRunsView(InstantEvalLicenseRequired, APIView):
                     "sessions": sessions,
                 }
             )
-        return self._gm.success_response(
-            {"runs": out, "has_more": start + params["page_size"] < len(runs)}
-        )
+        return self._gm.success_response({"runs": out, "has_more": has_more})

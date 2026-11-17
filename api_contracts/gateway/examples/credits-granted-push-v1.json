@@ -1,0 +1,15 @@
+{
+  "request": {
+    "granted_total_micros": 100000000,
+    "version": 7,
+    "settled_spend_floor_micros": 41250000
+  },
+  "response": {
+    "applied": true,
+    "granted_total_micros": 100000000,
+    "granted_version": 7,
+    "spent_micros": 41262000,
+    "held_micros": 40000,
+    "available_micros": 58698000
+  }
+}

@@ -45,9 +45,12 @@ import { alpha } from "@mui/material/styles";
 import ReactApexChart from "react-apexcharts";
 import ChartLegend from "./ChartLegend";
 import WidgetPieCharts from "./WidgetPieCharts";
+import WidgetGroupByControl, { buildWidgetGroupBy } from "./WidgetGroupByControl";
 import {
   buildTimeRangePayload,
+  readCustomDateRange,
   resolveInitialTimeRange,
+  withDateFilterSearch,
 } from "./dashboardDateRange";
 import { paths } from "src/routes/paths";
 import {
@@ -56,11 +59,13 @@ import {
   useCreateWidget,
   useUpdateWidget,
   useDeleteWidget,
+  useReorderWidgets,
   isPropertyCatalogNotReadyError,
   useLegacyDashboardMetricsPaginated,
   usePropertyCatalog,
   useSimulationAgents,
 } from "src/hooks/useDashboards";
+import { useBeforeUnload } from "src/hooks/useBeforeUnload";
 import { useDebounce } from "src/hooks/use-debounce";
 import { useWorkspace } from "src/contexts/WorkspaceContext";
 import Iconify from "src/components/iconify";
@@ -117,8 +122,9 @@ import {
   getSeriesScalar,
   groupPieSeries,
   getSuggestedUnitConfig,
-  getUnitRendering,
+  getSeriesFormatConfig,
   getYAxisRangeWarning,
+  getTopSeriesIndices,
   getVisibleIndices,
   resolveWidgetAxisPlan,
   resolveSavedSelection,
@@ -148,6 +154,7 @@ import {
   shouldBlockWidgetPreviewForFailure,
   WIDGET_PREVIEW_MAX_WAIT_MS,
 } from "./widgetEditorState";
+import { getAddToRowPlacement } from "./dashboardRows";
 import { INTERACTIVE_REQUEST_TIMEOUT_MS } from "src/config/runtime_limits";
 
 const WIDGET_PREVIEW_REQUEST_TIMEOUT_MS = INTERACTIVE_REQUEST_TIMEOUT_MS;
@@ -159,6 +166,16 @@ const escapeCsvField = (field) => {
   }
   return str;
 };
+
+// Export column header for one bucket. Minute and hour buckets need the time
+// too, or every column of a sub-day export carries the same date.
+const formatExportBucket = (x, granularity) =>
+  format(
+    new Date(x),
+    granularity === "minute" || granularity === "hour"
+      ? "yyyy-MM-dd HH:mm"
+      : "yyyy-MM-dd",
+  );
 
 const SAVED_NAV_DELAY_MS = 400;
 const AXIS_LABEL_MAX_LENGTH = 50;
@@ -1416,6 +1433,24 @@ const getSeriesColor = (name, map, palette) =>
 
 const LETTER_LABELS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
+// Click targets that are not native buttons (role="button", tabIndex={0})
+// answer Enter and Space the way a button does. The handler runs during the
+// event, so `event.currentTarget` is still the element (pickers anchor to it).
+const onButtonKeyDown = (handler) => (event) => {
+  if (event.target !== event.currentTarget) return;
+  if (event.key !== "Enter" && event.key !== " ") return;
+  event.preventDefault();
+  handler(event);
+};
+
+const BUTTON_FOCUS_RING = {
+  "&:focus-visible": {
+    outline: "2px solid",
+    outlineColor: "primary.main",
+    outlineOffset: 2,
+  },
+};
+
 function ToggleButtons({ options, value, onChange, theme }) {
   return (
     <Box
@@ -2408,6 +2443,7 @@ export default function WidgetEditorView() {
   const createMutation = useCreateWidget();
   const updateMutation = useUpdateWidget();
   const deleteMutation = useDeleteWidget();
+  const reorderMutation = useReorderWidgets();
   const queryMutation = useDashboardQuery();
   const mutateDashboardQuery = queryMutation.mutate;
   const resetDashboardQuery = queryMutation.reset;
@@ -2447,7 +2483,15 @@ export default function WidgetEditorView() {
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
 
   const incomingTimePreset = searchParams.get("timePreset");
-  const dashboardDetailUrl = `${paths.dashboard.dashboards.detail(dashboardId)}${incomingTimePreset ? `?timePreset=${incomingTimePreset}` : ""}`;
+  // The dashboard's date filter, Custom dates included, as it was on entry.
+  const incomingCustomRange = readCustomDateRange(searchParams);
+  const dashboardDetailUrl = withDateFilterSearch(
+    paths.dashboard.dashboards.detail(dashboardId),
+    incomingTimePreset,
+    incomingCustomRange,
+  );
+  // Set by a dashboard row's "+": the new widget joins that widget's row.
+  const addAfterWidgetId = searchParams.get("addAfter");
 
   const confirmDeleteWidget = () => {
     if (!isEditing) {
@@ -2468,11 +2512,20 @@ export default function WidgetEditorView() {
   };
 
   const [timePreset, setTimePreset] = useState(incomingTimePreset || "30D");
-  const [granularity, setGranularity] = useState("day");
+  const [granularity, setGranularity] = useState(
+    PRESET_DEFAULT_GRANULARITY[incomingTimePreset || "30D"] || "day",
+  );
   const [chartType, setChartType] = useState("line");
   const [metrics, setMetrics] = useState([]);
   const [filters, setFilters] = useState([]);
   const [breakdowns, setBreakdowns] = useState([]);
+  const [groupByLimit, setGroupByLimit] = useState(null);
+  // A null limit can be an explicit opt-out, including after removing a breakdown.
+  const hasSelectedBreakdownRef = useRef(false);
+  const supportsTopValues = metrics.every((metric) =>
+    ["system", "system_metric", "custom_attribute"].includes(metric.type) &&
+    (!metric.source || metric.source === "traces"),
+  );
   const [rightTab, setRightTab] = useState(0);
   // Shared picker state: used for metric, filter, and breakdown pickers
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -2501,8 +2554,24 @@ export default function WidgetEditorView() {
   // Saved selection keys, applied once previewSeries loads.
   const pendingVisibleSeriesRef = useRef(undefined);
   const [isDatePickerOpen, setIsDatePickerOpen] = useState(false);
-  const [customDateRange, setCustomDateRange] = useState(null); // [startDate, endDate]
+  // [startDate, endDate]. A new widget starts on the dashboard's Custom dates;
+  // a saved one restores its own range when it loads.
+  const [customDateRange, setCustomDateRange] = useState(() =>
+    isRouteEditing ? null : incomingCustomRange,
+  );
   const customDateAnchorRef = useRef(null);
+  const selectTimePreset = (value) => {
+    if (value === "custom") {
+      setTimePreset("custom");
+      setIsDatePickerOpen(true);
+    } else {
+      // Only an explicit change of preset resets a valid resolution.
+      if (value !== timePreset) {
+        setGranularity(PRESET_DEFAULT_GRANULARITY[value] || "day");
+      }
+      setTimePreset(value);
+    }
+  };
   const lineChartRef = useRef(null);
   // Stable ancestor for the tooltip-clamp observer: lineChartRef only mounts
   // once the preview query resolves, but this container is present from the
@@ -2511,7 +2580,7 @@ export default function WidgetEditorView() {
   const saveNavTimerRef = useRef(null);
   useEffect(() => () => clearTimeout(saveNavTimerRef.current), []);
 
-  // Auto-set granularity when time preset changes
+  // Validate granularity without overwriting valid saved resolutions on hydration.
   const customDays =
     customDateRange && customDateRange[0] && customDateRange[1]
       ? Math.ceil(
@@ -2543,9 +2612,12 @@ export default function WidgetEditorView() {
       }
     } else {
       const def = PRESET_DEFAULT_GRANULARITY[timePreset] || "day";
-      setGranularity(def);
+      setGranularity((prev) => {
+        const allowed = getAllowedGranularities(timePreset, customDays);
+        return allowed.some((g) => g.value === prev) ? prev : def;
+      });
     }
-  }, [timePreset, customDays]);
+  }, [timePreset, customDays, granularity]);
 
   // Filter value picker state
   const [filterValueAnchor, setFilterValueAnchor] = useState(null);
@@ -2885,6 +2957,30 @@ export default function WidgetEditorView() {
 
   const isPickerInventoryLoading = isPaginatedLoading;
 
+  // The catalog read has no retry and no global toast, so a failed or
+  // stopped read must be said here rather than shown as an empty list.
+  // A failed next page keeps its own Retry in the pagination control.
+  const activeCatalogQuery = activeUsesLegacyCatalog
+    ? activeLegacyMetricCatalog
+    : activePropertyCatalog;
+  const isPickerInventoryLoadFailed = Boolean(
+    !isPickerInventoryLoading &&
+      !activeCatalogQuery.isFetchNextPageError &&
+      (activeCatalogQuery.isError ||
+        (!activeUsesLegacyCatalog && activePropertyCatalog.cursorChainStopped)),
+  );
+  const isPickerInventoryRetrying = Boolean(activeCatalogQuery.isFetching);
+  const retryPickerInventory = () =>
+    void Promise.resolve(activeCatalogQuery.refetch?.()).catch(() => {});
+  const pickerInventoryNoun =
+    pickerMode === "metric" ? "metrics" : "attributes";
+  const pickerEmptyMessage =
+    pickerMode !== "metric"
+      ? "No attributes found"
+      : trimmedDebouncedPickerSearch
+        ? `No metrics match "${trimmedDebouncedPickerSearch}"`
+        : "No metrics yet. Send traces or run an eval to populate this list.";
+
   // Chart tab — axis config
   const [axisConfig, setAxisConfig] = useState({
     leftY: {
@@ -2998,10 +3094,17 @@ export default function WidgetEditorView() {
         );
         // Restore breakdowns — saved format uses "name" as the key,
         // but the frontend picker/filter logic expects "id".
-        const savedBreakdowns = (qc.breakdowns || []).map((b) =>
+        const rawBreakdowns = qc.breakdowns?.length ? qc.breakdowns : qc.group_by ? [{
+          name: qc.group_by.key,
+          type: qc.group_by.type === "attribute" ? "custom_attribute" : "system_metric",
+          source: "traces",
+        }] : [];
+        const savedBreakdowns = rawBreakdowns.map((b) =>
           restoreWidgetQueryItem(b, fallbackSource, "string"),
         );
         setBreakdowns(savedBreakdowns);
+        hasSelectedBreakdownRef.current = savedBreakdowns.length > 0;
+        setGroupByLimit(qc.group_by ? (qc.group_by.limit ?? 5) : null);
         setInitialized(true);
       }
     }
@@ -3154,7 +3257,9 @@ export default function WidgetEditorView() {
 
   const buildQueryConfig = useCallback(() => {
     const timeRange = buildTimeRangePayload(timePreset, customDateRange);
+    const groupBy = supportsTopValues ? buildWidgetGroupBy(breakdowns, groupByLimit) : undefined;
     return {
+      ...(groupBy && { group_by: groupBy }),
       project_ids: [],
       time_range: timeRange,
       granularity,
@@ -3167,11 +3272,39 @@ export default function WidgetEditorView() {
         .filter((b) => b.id)
         .map((b) => buildBreakdownPayload(b)),
     };
-  }, [timePreset, customDateRange, granularity, metrics, filters, breakdowns]);
+  }, [timePreset, customDateRange, granularity, metrics, filters, breakdowns, groupByLimit, supportsTopValues]);
 
   const previewQueryConfig = buildQueryConfig();
   const previewQuerySignature = JSON.stringify(previewQueryConfig);
   currentPreviewSignatureRef.current = previewQuerySignature;
+
+  // Unsaved-changes guard. The baseline is the form as it stood just before
+  // the user's first input, not right after loading: loading a saved widget
+  // runs follow-up effects (preset granularity, axis unit) that are not edits.
+  // visible_series is left out because the preview rewrites it as it loads.
+  const formSignature = JSON.stringify({
+    name: chartName.trim(),
+    description: chartDescription.trim(),
+    chartType,
+    axis: toAxisConfigPayload(axisConfig),
+    query: previewQueryConfig,
+  });
+  const [formBaseline, setFormBaseline] = useState(null);
+  const formReady = !isRouteEditing || initialized;
+  const noteUserInput = () => {
+    if (formReady && formBaseline === null) setFormBaseline(formSignature);
+  };
+  const hasUnsavedChanges =
+    !isReadOnly && formBaseline !== null && formSignature !== formBaseline;
+  useBeforeUnload(hasUnsavedChanges);
+  const [leaveTarget, setLeaveTarget] = useState(null);
+  const leaveEditor = (url) => {
+    if (hasUnsavedChanges) {
+      setLeaveTarget(url);
+      return;
+    }
+    navigate(url);
+  };
 
   useEffect(() => {
     previewGenerationRef.current += 1;
@@ -3332,40 +3465,24 @@ export default function WidgetEditorView() {
     [mutateDashboardQuery],
   );
 
-  // Auto-preview when config changes (debounced)
+  // Debounce the same query identity used to invalidate the exact preview.
   const previewTimerRef = useRef(null);
   useEffect(() => {
+    const queryConfig = JSON.parse(previewQuerySignature);
     const customWithoutRange = timePreset === "custom" && !customDateRange;
-    if (metrics.length > 0 && !customWithoutRange) {
+    if (queryConfig.metrics.length > 0 && !customWithoutRange) {
       clearTimeout(previewTimerRef.current);
       previewTimerRef.current = setTimeout(() => {
-        runPreviewQuery(buildQueryConfig());
+        runPreviewQuery(queryConfig);
       }, 400);
     } else {
       resetDashboardQuery();
     }
     return () => clearTimeout(previewTimerRef.current);
   }, [
-    metrics.length,
+    previewQuerySignature,
     timePreset,
     customDateRange,
-    granularity,
-    metrics
-      .map(
-        (m) =>
-          `${m.id}:${m.aggregation}:${JSON.stringify(
-            (m.filters || [])
-              .filter((f) => f.id && hasWidgetFilterValue(f))
-              .map((f) => ({ id: f.id, op: f.operator, val: f.value })),
-          )}`,
-      )
-      .join(","),
-    JSON.stringify(
-      filters
-        .filter((f) => f.id && hasWidgetFilterValue(f))
-        .map((f) => ({ id: f.id, op: f.operator, val: f.value })),
-    ),
-    JSON.stringify(breakdowns.filter((b) => b.id).map((b) => b.id)),
     runPreviewQuery,
     resetDashboardQuery,
   ]);
@@ -3502,6 +3619,12 @@ export default function WidgetEditorView() {
       } else {
         setBreakdowns([...breakdowns, entry]);
       }
+      if (!hasSelectedBreakdownRef.current && pickerTargetIndex == null &&
+          breakdowns.length === 0 && groupByLimit === null &&
+          supportsTopValues && buildWidgetGroupBy([entry], 5)) {
+        setGroupByLimit(5);
+      }
+      hasSelectedBreakdownRef.current = true;
     } else if (pickerMode === "metric_filter" && pickerMetricIndex != null) {
       // Add or replace a per-metric filter
       const mfEvalOt = (option.outputType || "").toUpperCase();
@@ -3604,6 +3727,14 @@ export default function WidgetEditorView() {
       enqueueSnackbar("Add at least one metric", { variant: "warning" });
       return;
     }
+    // Without dates a Custom range would be saved as the 30D default.
+    if (timePreset === "custom" && !customDateRange) {
+      enqueueSnackbar("Choose the dates for the custom range", {
+        variant: "warning",
+      });
+      setIsDatePickerOpen(true);
+      return;
+    }
 
     // visible_series lives in chart_config since query_config's serializer
     // rejects unknown fields.
@@ -3618,6 +3749,7 @@ export default function WidgetEditorView() {
       },
     };
 
+    const savedSignature = formSignature;
     setSaveStatus("saving");
     try {
       if (isEditing) {
@@ -3628,16 +3760,42 @@ export default function WidgetEditorView() {
           data,
         });
       } else {
+        // From a row's "+": join that row and share its width evenly.
+        const rowPlacement = getAddToRowPlacement(
+          dashboard?.widgets,
+          addAfterWidgetId,
+        );
         const result = await createMutation.mutateAsync({
           dashboardId,
-          data: { ...data, width: 12, height: 320, position: 999 },
+          data: {
+            ...data,
+            ...(rowPlacement?.layout || {
+              width: 12,
+              height: 320,
+              position: 999,
+            }),
+          },
         });
         // Track created ID so subsequent saves update instead of creating again
         const newWidgetId = result?.data?.result?.id || result?.data?.id;
         if (newWidgetId) {
           setCreatedWidgetId(newWidgetId);
+          if (rowPlacement) {
+            try {
+              await reorderMutation.mutateAsync({
+                dashboardId,
+                order: rowPlacement.orderWith(newWidgetId),
+              });
+            } catch {
+              enqueueSnackbar(
+                "Widget created, but its row layout didn't update. Drag it into place on the dashboard.",
+                { variant: "warning" },
+              );
+            }
+          }
         }
       }
+      setFormBaseline(savedSignature);
       setSaveStatus("saved");
       clearTimeout(saveNavTimerRef.current);
       saveNavTimerRef.current = setTimeout(() => {
@@ -3692,22 +3850,13 @@ export default function WidgetEditorView() {
       }
     }
 
-    if (previewSeries.length <= MAX_CHART_SERIES) {
+    if (previewQueryConfig.group_by || previewSeries.length <= MAX_CHART_SERIES) {
       // Show all if within limit
       if (visibleSeries !== null) setVisibleSeries(null);
       return;
     }
-    // Rank series by total value, select top 10
-    const ranked = previewSeries
-      .map((s, i) => ({
-        i,
-        total: s.data.reduce((sum, pt) => sum + (pt.y || 0), 0),
-      }))
-      .sort((a, b) => b.total - a.total);
-    const topIndices = new Set(
-      ranked.slice(0, MAX_CHART_SERIES).map((r) => r.i),
-    );
-    setVisibleSeries(topIndices);
+    // Rank series by period value, select top 10 (the dashboard's default too)
+    setVisibleSeries(getTopSeriesIndices(previewSeries, MAX_CHART_SERIES));
   }, [previewSeries]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Derive ApexCharts type and stacking from our chartType
@@ -4309,7 +4458,7 @@ export default function WidgetEditorView() {
     const values = chartSeries.map((s) => {
       // Same aggregation-aware value the metric card, table and pie use, so
       // one widget cannot read differently per chart type.
-      const value = getSeriesScalar(s.data, s.aggregation);
+      const value = getSeriesScalar(s.data, s.aggregation, s.aggregateValue);
       return {
         value,
         numericValue: value == null ? 0 : value,
@@ -4450,6 +4599,11 @@ export default function WidgetEditorView() {
 
   return (
     <Box
+      // Capture phase, so the baseline is taken before the input's own change.
+      onPointerDownCapture={noteUserInput}
+      onKeyDownCapture={noteUserInput}
+      onClickCapture={noteUserInput}
+      onChangeCapture={noteUserInput}
       sx={{
         display: "flex",
         flexDirection: "column",
@@ -4478,7 +4632,7 @@ export default function WidgetEditorView() {
             underline="hover"
             color="text.secondary"
             sx={{ cursor: "pointer", fontSize: "12px" }}
-            onClick={() => navigate(paths.dashboard.dashboards.root)}
+            onClick={() => leaveEditor(paths.dashboard.dashboards.root)}
           >
             Dashboards
           </Link>
@@ -4494,7 +4648,7 @@ export default function WidgetEditorView() {
               whiteSpace: "nowrap",
               display: "block",
             }}
-            onClick={() => navigate(dashboardDetailUrl)}
+            onClick={() => leaveEditor(dashboardDetailUrl)}
           >
             {dashboard?.name || "Dashboard"}
           </Link>
@@ -4637,6 +4791,7 @@ export default function WidgetEditorView() {
         {/* Icon buttons */}
         <IconButton
           size="small"
+          aria-label="More widget actions"
           onClick={(e) => setMoreMenuAnchor(e.currentTarget)}
           sx={{ color: "text.secondary" }}
         >
@@ -4720,6 +4875,7 @@ export default function WidgetEditorView() {
           )}
           <Divider />
           <MenuItem
+            disabled={!previewSeries.length}
             onClick={() => {
               setMoreMenuAnchor(null);
               if (!previewSeries.length) return;
@@ -4727,13 +4883,17 @@ export default function WidgetEditorView() {
                 "Metric",
                 aggColumnLabel,
                 ...(previewSeries[0]?.data || []).map((pt) =>
-                  format(new Date(pt.x), "yyyy-MM-dd"),
+                  formatExportBucket(pt.x, granularity),
                 ),
               ];
               const rows = previewSeries.map((s) => {
                 // Agg column header is aggregation-derived, so the value must
                 // honour that aggregation too.
-                const avg = getSeriesScalar(s.data, s.aggregation);
+                const avg = getSeriesScalar(
+                  s.data,
+                  s.aggregation,
+                  s.aggregateValue,
+                );
                 return [
                   s.name,
                   avg == null ? "—" : avg.toFixed(2),
@@ -4758,35 +4918,48 @@ export default function WidgetEditorView() {
             <ListItemText>Export CSV</ListItemText>
           </MenuItem>
           <MenuItem
-            onClick={() => {
+            disabled={!previewSeries.length}
+            onClick={async () => {
               setMoreMenuAnchor(null);
               if (!previewSeries.length) return;
               const header = [
                 "Metric",
                 aggColumnLabel,
                 ...(previewSeries[0]?.data || []).map((pt) =>
-                  format(new Date(pt.x), "yyyy-MM-dd"),
+                  formatExportBucket(pt.x, granularity),
                 ),
               ];
               const rows = previewSeries.map((s) => {
                 // Agg column header is aggregation-derived, so the value must
                 // honour that aggregation too.
-                const avg = getSeriesScalar(s.data, s.aggregation);
+                const avg = getSeriesScalar(
+                  s.data,
+                  s.aggregation,
+                  s.aggregateValue,
+                );
                 return [
                   s.name,
                   avg == null ? "—" : avg.toFixed(2),
                   ...s.data.map((pt) => (pt.y != null ? pt.y : "")),
                 ];
               });
-              const csv = [header, ...rows].map((r) => r.join("\t")).join("\n");
-              navigator.clipboard.writeText(csv);
-              enqueueSnackbar("Copied to clipboard", { variant: "success" });
+              // Tab-separated, so a paste into a spreadsheet fills the cells.
+              const tsv = [header, ...rows].map((r) => r.join("\t")).join("\n");
+              try {
+                // Also throws when the page has no clipboard access at all.
+                await navigator.clipboard.writeText(tsv);
+                enqueueSnackbar("Copied to clipboard", { variant: "success" });
+              } catch {
+                enqueueSnackbar("Couldn't copy to clipboard", {
+                  variant: "error",
+                });
+              }
             }}
           >
             <ListItemIcon>
               <Iconify icon="solar:clipboard-linear" width={16} />
             </ListItemIcon>
-            <ListItemText>Copy CSV</ListItemText>
+            <ListItemText>Copy as table (TSV)</ListItemText>
           </MenuItem>
           <Divider />
           <MenuItem
@@ -4829,8 +5002,30 @@ export default function WidgetEditorView() {
           }
         />
 
+        <ConfirmDialog
+          open={Boolean(leaveTarget)}
+          onClose={() => setLeaveTarget(null)}
+          title="Discard unsaved changes?"
+          content="Changes to this widget aren't saved. Leaving now discards them."
+          cancelLabel="Keep editing"
+          action={
+            <Button
+              variant="contained"
+              color="error"
+              size="small"
+              onClick={() => {
+                const url = leaveTarget;
+                setLeaveTarget(null);
+                navigate(url);
+              }}
+            >
+              Discard
+            </Button>
+          }
+        />
+
         <Button
-          onClick={() => navigate(dashboardDetailUrl)}
+          onClick={() => leaveEditor(dashboardDetailUrl)}
           sx={{ color: "text.primary" }}
         >
           Close
@@ -4881,26 +5076,31 @@ export default function WidgetEditorView() {
           <Stack direction="row" alignItems="center" gap={1.5} flexWrap="wrap">
             {/* Time preset pill group */}
             <Box
+              role="group"
+              aria-label="Time range"
               sx={{
                 display: "inline-flex",
+                // A narrow preview column (1024 px) is narrower than the ten
+                // pills: wrap them onto a second line inside the group rather
+                // than letting the group run past the column and clip 3M-12M.
+                flexWrap: "wrap",
+                flexShrink: 1,
+                minWidth: 0,
+                maxWidth: "100%",
                 border: `1px solid ${theme.palette.divider}`,
                 borderRadius: 1,
                 overflow: "hidden",
-                flexShrink: 0,
               }}
             >
               {DATE_PRESETS.map((p, i) => (
                 <Box
                   key={p.value}
                   ref={p.value === "custom" ? customDateAnchorRef : undefined}
-                  onClick={() => {
-                    if (p.value === "custom") {
-                      setTimePreset("custom");
-                      setIsDatePickerOpen(true);
-                    } else {
-                      setTimePreset(p.value);
-                    }
-                  }}
+                  role="button"
+                  tabIndex={0}
+                  aria-pressed={timePreset === p.value}
+                  onClick={() => selectTimePreset(p.value)}
+                  onKeyDown={onButtonKeyDown(() => selectTimePreset(p.value))}
                   sx={{
                     px: 1.5,
                     py: 0.6,
@@ -4927,6 +5127,12 @@ export default function WidgetEditorView() {
                     gap: 0.5,
                     "&:hover": {
                       bgcolor: "action.hover",
+                    },
+                    // Inset: the group clips anything drawn outside a pill.
+                    "&:focus-visible": {
+                      outline: "2px solid",
+                      outlineColor: "primary.main",
+                      outlineOffset: -2,
                     },
                   }}
                 >
@@ -5498,13 +5704,15 @@ export default function WidgetEditorView() {
                         {chartSeries.map((s, i) => {
                           // Honour the metric's own aggregation and unit, so
                           // this matches the saved widget exactly.
-                          const value = getSeriesScalar(s.data, s.aggregation);
-                          const cellConfig = s.unit
-                            ? {
-                                ...leftAxisFormatConfig,
-                                ...getUnitRendering(s.unit),
-                              }
-                            : leftAxisFormatConfig;
+                          const value = getSeriesScalar(
+                            s.data,
+                            s.aggregation,
+                            s.aggregateValue,
+                          );
+                          const cellConfig = getSeriesFormatConfig(
+                            s,
+                            leftAxisFormatConfig,
+                          );
                           return (
                             <Box key={i} sx={{ textAlign: "center" }}>
                               <Typography
@@ -5998,10 +6206,12 @@ export default function WidgetEditorView() {
                     const avgA = getSeriesScalar(
                       previewSeries[a].data,
                       previewSeries[a].aggregation,
+                      previewSeries[a].aggregateValue,
                     );
                     const avgB = getSeriesScalar(
                       previewSeries[b].data,
                       previewSeries[b].aggregation,
+                      previewSeries[b].aggregateValue,
                     );
                     const scoreA =
                       avgA == null ? Number.NEGATIVE_INFINITY : avgA;
@@ -6180,7 +6390,11 @@ export default function WidgetEditorView() {
                             const s = previewSeries[si];
                             const checked =
                               visibleSeries === null || visibleSeries.has(si);
-                            const avg = getSeriesScalar(s.data, s.aggregation);
+                            const avg = getSeriesScalar(
+                              s.data,
+                              s.aggregation,
+                              s.aggregateValue,
+                            );
                             const color = getSeriesColor(
                               s.name,
                               seriesColorMap,
@@ -6246,12 +6460,10 @@ export default function WidgetEditorView() {
                                     ? "—"
                                     : formatValueWithConfig(
                                         avg,
-                                        s.unit
-                                          ? {
-                                              ...leftAxisFormatConfig,
-                                              ...getUnitRendering(s.unit),
-                                            }
-                                          : leftAxisFormatConfig,
+                                        getSeriesFormatConfig(
+                                          s,
+                                          leftAxisFormatConfig,
+                                        ),
                                         { fallbackDecimals: autoDecimals },
                                       )}
                                 </td>
@@ -6324,6 +6536,8 @@ export default function WidgetEditorView() {
                     // An illustration only: it opens over the property picker,
                     // so let clicks through and close as soon as you move on.
                     disableInteractive
+                    // Describe, not name: keep "Add metric" as the button name.
+                    describeChild
                     arrow
                     componentsProps={{
                       tooltip: {
@@ -6420,7 +6634,9 @@ export default function WidgetEditorView() {
                             lineHeight: 1.3,
                           }}
                         >
-                          Choose what to measure and track.
+                          {metrics.length >= 5
+                            ? "Up to 5 metrics per widget."
+                            : "Choose what to measure and track."}
                         </Typography>
                       </Box>
                     }
@@ -6429,9 +6645,16 @@ export default function WidgetEditorView() {
                       direction="row"
                       justifyContent="space-between"
                       alignItems="center"
+                      role="button"
+                      tabIndex={0}
+                      aria-label="Add metric"
+                      aria-disabled={metrics.length >= 5 ? true : undefined}
                       onClick={(e) => {
                         if (metrics.length < 5) openPicker(e, "metric");
                       }}
+                      onKeyDown={onButtonKeyDown((e) => {
+                        if (metrics.length < 5) openPicker(e, "metric");
+                      })}
                       sx={{
                         cursor: metrics.length >= 5 ? "default" : "pointer",
                         borderRadius: 1,
@@ -6448,6 +6671,7 @@ export default function WidgetEditorView() {
                                 },
                               }
                             : {},
+                        ...BUTTON_FOCUS_RING,
                       }}
                     >
                       <Typography
@@ -6483,9 +6707,10 @@ export default function WidgetEditorView() {
                         p: 1.5,
                         border: `1px solid ${theme.palette.divider}`,
                         borderRadius: 1,
-                        "&:hover .metric-hover-action": {
-                          opacity: 1,
-                        },
+                        "&:hover .metric-hover-action, &:focus-within .metric-hover-action":
+                          {
+                            opacity: 1,
+                          },
                       }}
                     >
                       <Stack direction="row" alignItems="center" gap={1}>
@@ -6514,6 +6739,9 @@ export default function WidgetEditorView() {
                           variant="body2"
                           noWrap
                           title={m.name}
+                          role="button"
+                          tabIndex={0}
+                          aria-label={`Change metric ${m.name}`}
                           sx={{
                             flex: 1,
                             cursor: "pointer",
@@ -6521,8 +6749,12 @@ export default function WidgetEditorView() {
                             textOverflow: "ellipsis",
                             maxWidth: 160,
                             "&:hover": { color: "primary.main" },
+                            ...BUTTON_FOCUS_RING,
                           }}
                           onClick={(e) => openPicker(e, "metric", i)}
+                          onKeyDown={onButtonKeyDown((e) =>
+                            openPicker(e, "metric", i),
+                          )}
                         >
                           {m.name}
                         </Typography>
@@ -6560,6 +6792,7 @@ export default function WidgetEditorView() {
                         <IconButton
                           className="metric-hover-action"
                           size="small"
+                          aria-label={`Remove metric ${m.name}`}
                           onClick={() => handleRemoveMetric(i)}
                           sx={{
                             opacity: 0,
@@ -6614,20 +6847,28 @@ export default function WidgetEditorView() {
                               />
                               <Typography
                                 variant="caption"
+                                role="button"
+                                tabIndex={0}
+                                aria-label={`Change metric filter ${mf.name}`}
                                 sx={{
                                   flex: 1,
                                   fontWeight: 500,
                                   cursor: "pointer",
                                   "&:hover": { color: "primary.main" },
+                                  ...BUTTON_FOCUS_RING,
                                 }}
                                 onClick={(e) =>
                                   openPicker(e, "metric_filter", fi, i)
                                 }
+                                onKeyDown={onButtonKeyDown((e) =>
+                                  openPicker(e, "metric_filter", fi, i),
+                                )}
                               >
                                 {mf.name}
                               </Typography>
                               <IconButton
                                 size="small"
+                                aria-label={`Remove filter ${mf.name}`}
                                 onClick={() => handleRemoveMetricFilter(i, fi)}
                               >
                                 <Iconify icon="solar:close-linear" width={12} />
@@ -6818,6 +7059,8 @@ export default function WidgetEditorView() {
                   {/* Empty metric slot */}
                   {metrics.length === 0 && (
                     <Box
+                      role="button"
+                      tabIndex={0}
                       sx={{
                         mt: 1,
                         p: 1.5,
@@ -6825,8 +7068,12 @@ export default function WidgetEditorView() {
                         borderRadius: 1,
                         cursor: "pointer",
                         "&:hover": { borderColor: "primary.main" },
+                        ...BUTTON_FOCUS_RING,
                       }}
                       onClick={(e) => openPicker(e, "metric")}
+                      onKeyDown={onButtonKeyDown((e) =>
+                        openPicker(e, "metric"),
+                      )}
                     >
                       <Stack direction="row" alignItems="center" gap={0.75}>
                         <Iconify
@@ -6852,6 +7099,8 @@ export default function WidgetEditorView() {
                     // An illustration only: it opens over the property picker,
                     // so let clicks through and close as soon as you move on.
                     disableInteractive
+                    // Describe, not name: keep "Add filter" as the button name.
+                    describeChild
                     arrow
                     componentsProps={{
                       tooltip: {
@@ -7028,7 +7277,13 @@ export default function WidgetEditorView() {
                       direction="row"
                       justifyContent="space-between"
                       alignItems="center"
+                      role="button"
+                      tabIndex={0}
+                      aria-label="Add filter"
                       onClick={(e) => openPicker(e, "filter")}
+                      onKeyDown={onButtonKeyDown((e) =>
+                        openPicker(e, "filter"),
+                      )}
                       sx={{
                         cursor: "pointer",
                         borderRadius: 1,
@@ -7042,6 +7297,7 @@ export default function WidgetEditorView() {
                             color: "primary.main",
                           },
                         },
+                        ...BUTTON_FOCUS_RING,
                       }}
                     >
                       <Typography
@@ -7067,9 +7323,10 @@ export default function WidgetEditorView() {
                         p: 1.5,
                         border: `1px solid ${theme.palette.divider}`,
                         borderRadius: 1,
-                        "&:hover .filter-hover-action": {
-                          opacity: 1,
-                        },
+                        "&:hover .filter-hover-action, &:focus-within .filter-hover-action":
+                          {
+                            opacity: 1,
+                          },
                       }}
                     >
                       <Stack direction="row" alignItems="center" gap={1}>
@@ -7082,18 +7339,30 @@ export default function WidgetEditorView() {
                         />
                         <Typography
                           variant="body2"
+                          role="button"
+                          tabIndex={0}
+                          aria-label={
+                            f.name ? `Change filter ${f.name}` : undefined
+                          }
                           sx={{
                             flex: 1,
                             cursor: "pointer",
                             "&:hover": { color: "primary.main" },
+                            ...BUTTON_FOCUS_RING,
                           }}
                           onClick={(e) => openPicker(e, "filter", i)}
+                          onKeyDown={onButtonKeyDown((e) =>
+                            openPicker(e, "filter", i),
+                          )}
                         >
                           {f.name || "Select attribute"}
                         </Typography>
                         <IconButton
                           className="filter-hover-action"
                           size="small"
+                          aria-label={
+                            f.name ? `Remove filter ${f.name}` : "Remove filter"
+                          }
                           onClick={() => handleRemoveFilter(i)}
                           sx={{
                             opacity: 0,
@@ -7298,6 +7567,8 @@ export default function WidgetEditorView() {
                     // An illustration only: it opens over the property picker,
                     // so let clicks through and close as soon as you move on.
                     disableInteractive
+                    // Describe, not name: keep "Add breakdown" as the button name.
+                    describeChild
                     arrow
                     componentsProps={{
                       tooltip: {
@@ -7498,40 +7769,16 @@ export default function WidgetEditorView() {
                       </Box>
                     }
                   >
-                    <Stack
-                      direction="row"
-                      justifyContent="space-between"
-                      alignItems="center"
-                      onClick={(e) => openPicker(e, "breakdown")}
-                      sx={{
-                        cursor: "pointer",
-                        borderRadius: 1,
-                        px: 1,
-                        py: 0.5,
-                        mx: -1,
-                        transition: "background-color 0.15s",
-                        "&:hover": {
-                          bgcolor: "action.hover",
-                          "& .breakdown-section-title": {
-                            color: "primary.main",
-                          },
-                        },
-                      }}
-                    >
-                      <Typography
-                        className="breakdown-section-title"
-                        variant="body2"
-                        fontWeight="fontWeightSemiBold"
-                        sx={{ transition: "color 0.15s" }}
-                      >
-                        Breakdown
-                      </Typography>
-                      <Iconify
-                        icon="solar:add-linear"
-                        width={20}
-                        sx={{ color: "text.secondary" }}
+                    <Box>
+                      <WidgetGroupByControl
+                        breakdowns={breakdowns}
+                        limit={groupByLimit}
+                        supported={supportsTopValues}
+                        selectAriaLabel="Add breakdown"
+                        onSelect={(event) => openPicker(event, "breakdown")}
+                        onChange={setGroupByLimit}
                       />
-                    </Stack>
+                    </Box>
                   </Tooltip>
                   {breakdowns.map((b, i) => (
                     <Box
@@ -7541,9 +7788,10 @@ export default function WidgetEditorView() {
                         p: 1.5,
                         border: `1px solid ${theme.palette.divider}`,
                         borderRadius: 1,
-                        "&:hover .breakdown-hover-action": {
-                          opacity: 1,
-                        },
+                        "&:hover .breakdown-hover-action, &:focus-within .breakdown-hover-action":
+                          {
+                            opacity: 1,
+                          },
                       }}
                     >
                       <Stack direction="row" alignItems="center" gap={1}>
@@ -7556,18 +7804,32 @@ export default function WidgetEditorView() {
                         />
                         <Typography
                           variant="body2"
+                          role="button"
+                          tabIndex={0}
+                          aria-label={
+                            b.name ? `Change breakdown ${b.name}` : undefined
+                          }
                           sx={{
                             flex: 1,
                             cursor: "pointer",
                             "&:hover": { color: "primary.main" },
+                            ...BUTTON_FOCUS_RING,
                           }}
                           onClick={(e) => openPicker(e, "breakdown", i)}
+                          onKeyDown={onButtonKeyDown((e) =>
+                            openPicker(e, "breakdown", i),
+                          )}
                         >
                           {b.name || "Select attribute"}
                         </Typography>
                         <IconButton
                           className="breakdown-hover-action"
                           size="small"
+                          aria-label={
+                            b.name
+                              ? `Remove breakdown ${b.name}`
+                              : "Remove breakdown"
+                          }
                           onClick={() => handleRemoveBreakdown(i)}
                           sx={{
                             opacity: 0,
@@ -8073,13 +8335,32 @@ export default function WidgetEditorView() {
                   </Box>
                 )}
                 {pickerMetricOptions.length === 0 &&
-                  !isPickerInventoryLoading && (
+                  !isPickerInventoryLoading &&
+                  (isPickerInventoryLoadFailed ? (
+                    <Stack
+                      role="alert"
+                      sx={{ p: 2 }}
+                      spacing={1}
+                      alignItems="center"
+                    >
+                      <Typography variant="body2" color="warning.main">
+                        {`Couldn't load ${pickerInventoryNoun}. Check your connection and try again.`}
+                      </Typography>
+                      <Button
+                        size="small"
+                        disabled={isPickerInventoryRetrying}
+                        onClick={retryPickerInventory}
+                      >
+                        {isPickerInventoryRetrying ? "Retrying…" : "Retry"}
+                      </Button>
+                    </Stack>
+                  ) : (
                     <Box sx={{ p: 3, textAlign: "center" }}>
                       <Typography variant="body2" color="text.disabled">
-                        No attributes found
+                        {pickerEmptyMessage}
                       </Typography>
                     </Box>
-                  )}
+                  ))}
               </Box>
             </Box>
           </Paper>

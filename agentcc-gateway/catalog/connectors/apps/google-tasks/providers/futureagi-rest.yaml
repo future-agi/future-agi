@@ -1,0 +1,162 @@
+# Native REST-to-MCP adapter, not an official Google-hosted MCP server.
+# The existing runtime forwards the supplied user's vendor bearer unchanged.
+# OAuth metadata describes Google; this adapter implements no consent or refresh.
+# Console connector_catalog._plan currently accepts vendor_mcp only, not rest.
+# Inline tools need no generated bundle. No authenticated smoke test was run.
+schema: "connector-manifest/v1#provider"
+app: google-tasks
+id: futureagi-rest
+version: 1.0.0
+kind: rest
+publisher: futureagi
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: "https://{connectorsHost}/google-tasks/mcp"
+  variant: streamable
+hosted: true
+trusted: false
+accountModes: [user]
+auth:
+  kind: oauth2
+  help: "Supply a Google access token granted tasks.readonly. This native adapter forwards it; it does not obtain or refresh tokens."
+  oauth2:
+    authorizeUrl: https://accounts.google.com/o/oauth2/v2/auth
+    tokenUrl: https://oauth2.googleapis.com/token
+    scopes: [https://www.googleapis.com/auth/tasks.readonly]
+    pkce: true
+    tokenBody: form
+    clientAuth: body
+  verify: { tool: list_tasklists }
+tools:
+  source: operations
+  defaultPosture: ask
+  items:
+    - name: list_tasklists
+      title: List task lists
+      description: >-
+        Read one page of the authenticated user's task lists. Returns the intact
+        page envelope, including nextPageToken when present. Pass that value as
+        pageToken to read the next page; absent items means an empty collection.
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true }
+      scopes: [https://www.googleapis.com/auth/tasks.readonly]
+      operation: { method: GET, path: "/tasks/v1/users/@me/lists" }
+      inputSchema:
+        type: object
+        x-origin: https://tasks.googleapis.com
+        additionalProperties: false
+        properties:
+          maxResults:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            description: "Page size; Google defaults to 1000 when omitted."
+          pageToken: { type: string, description: "Opaque nextPageToken from the previous page." }
+      outputSchema:
+        type: object
+        description: "Unmodified Google TaskLists page; items and nextPageToken may be absent."
+        properties:
+          kind: { type: string }
+          etag: { type: string }
+          nextPageToken: { type: string }
+          items:
+            type: array
+            items:
+              type: object
+              properties:
+                id: { type: string }
+                title: { type: string }
+                updated: { type: string }
+                etag: { type: string }
+                kind: { type: string }
+                selfLink: { type: string }
+      response: { maxBytes: 1048576 }
+    - name: list_tasks
+      title: List tasks
+      description: >-
+        Read one page of tasks from a task list. Keep filters unchanged when
+        passing nextPageToken as pageToken. Missing items means an empty page.
+        To include completed tasks from Google clients, set both showCompleted
+        and showHidden true. Assigned tasks require showAssigned true. A task's
+        due value contains date information only, not a precise deadline time.
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true }
+      scopes: [https://www.googleapis.com/auth/tasks.readonly]
+      operation: { method: GET, path: "/tasks/v1/lists/{tasklist}/tasks" }
+      inputSchema:
+        type: object
+        x-origin: https://tasks.googleapis.com
+        additionalProperties: false
+        required: [tasklist]
+        properties:
+          tasklist:
+            type: string
+            minLength: 1
+            description: "Task-list ID, or @default for the user's default list; encoded as one path segment."
+          maxResults:
+            type: integer
+            minimum: 1
+            maximum: 100
+            description: "Page size; Google defaults to 20 when omitted."
+          pageToken: { type: string, description: "Opaque nextPageToken from the previous page." }
+          showCompleted: { type: boolean, description: "Include completed tasks; Google defaults to true." }
+          showHidden: { type: boolean, description: "Include hidden tasks; Google defaults to false." }
+          showDeleted: { type: boolean, description: "Include deleted tasks; Google defaults to false." }
+          showAssigned: { type: boolean, description: "Include assigned tasks; Google defaults to false." }
+          completedMin: { type: string, format: date-time, description: "Lower completion-time bound, RFC3339." }
+          completedMax: { type: string, format: date-time, description: "Upper completion-time bound, RFC3339." }
+          dueMin: { type: string, format: date-time, description: "Lower due-date bound, RFC3339." }
+          dueMax: { type: string, format: date-time, description: "Upper due-date bound, RFC3339." }
+          updatedMin: { type: string, format: date-time, description: "Lower last-modified bound, RFC3339." }
+      outputSchema:
+        type: object
+        description: "Unmodified Google Tasks page; items and nextPageToken may be absent."
+        properties:
+          kind: { type: string }
+          etag: { type: string }
+          nextPageToken: { type: string }
+          items:
+            type: array
+            items:
+              type: object
+              properties:
+                id: { type: string }
+                title: { type: string }
+                status: { type: string }
+                updated: { type: string }
+                notes: { type: string }
+                due: { type: string, description: "Date information only; do not infer a scheduled time." }
+                completed: { type: string }
+                parent: { type: string }
+                deleted: { type: boolean }
+                hidden: { type: boolean }
+      response: { maxBytes: 1048576 }
+pricing: { model: free }
+upstream:
+  spec:
+    url: https://raw.githubusercontent.com/googleapis/google-api-go-client/b2487a489315d16e91d98a8d940dca2e59e0bd9d/tasks/v1/tasks-api.json
+    format: google-discovery
+    sha256: db90162f55c7e3612d426233a49d5022f142e5d65e7a1f0876ce48ca969e3b5f
+    licence: BSD-3-Clause (googleapis/google-api-go-client)
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: auth.oauth2.authorizeUrl
+    url: https://developers.google.com/identity/protocols/oauth2/web-server
+    fetchedAt: 2026-11-15
+  - fact: auth.oauth2.tokenUrl
+    url: https://developers.google.com/identity/protocols/oauth2/web-server
+    fetchedAt: 2026-11-15
+  - fact: auth.oauth2.scopes
+    url: https://developers.google.com/workspace/tasks/auth
+    fetchedAt: 2026-11-15
+  - fact: tools.items
+    url: https://developers.google.com/workspace/tasks/reference/rest/v1/tasklists/list
+    fetchedAt: 2026-11-15
+  - fact: tools.items
+    url: https://developers.google.com/workspace/tasks/reference/rest/v1/tasks/list
+    fetchedAt: 2026-11-15
+  - fact: upstream.spec
+    url: https://raw.githubusercontent.com/googleapis/google-api-go-client/b2487a489315d16e91d98a8d940dca2e59e0bd9d/tasks/v1/tasks-api.json
+    fetchedAt: 2026-11-15
+# Native runtime only; no generated EE/OSS bundles or Console workaround.
+x-omega: { ee: exclude, oss: exclude }

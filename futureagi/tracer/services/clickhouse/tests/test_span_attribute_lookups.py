@@ -7,6 +7,7 @@ import pytest
 from tracer.services.clickhouse.span_attribute_lookups import (
     aggregate_attribute_over_traces,
     list_attribute_keys_for_traces,
+    list_attributes_for_trace,
     span_id_by_provider_log_id,
     spans_by_eval_attribute_call_execution_ids,
     trace_ids_with_simulator_call_execution_id,
@@ -137,6 +138,21 @@ class TestListAttributeKeysForTraces:
         assert len(result) == 2
         assert result[0].key == "gen_ai.span.kind"
         assert result[0].count == 5
+
+
+class TestListAttributesForTrace:
+    def test_every_branch_reads_the_given_project(self, mock_ch):
+        mock_ch.execute_read.return_value = ([], [], 0)
+        list_attributes_for_trace("t1", "proj-1")
+        query, params = mock_ch.execute_read.call_args[0][:2]
+        assert query.count("UNION ALL") == 2
+        assert query.count("project_id = %(project_id)s") == 3
+        assert params == {"trace_id": "t1", "project_id": "proj-1"}
+
+    def test_reads_nothing_without_a_project(self, mock_ch):
+        for project_id in (None, ""):
+            assert list_attributes_for_trace("t1", project_id) == []
+        mock_ch.execute_read.assert_not_called()
 
 
 class TestFormerRawExecuteLookups:

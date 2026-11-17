@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: xero
+version: 1.0.0
+name: Xero
+description: "Invoices, contacts, payments, bank transactions, journals and reports in Xero."
+vendor:
+  name: Xero
+  domains: [xero.com]
+eeCategory: data
+group: other
+categories: [data, accounting]
+tags: [accounting, invoices]
+docsUrl: https://developer.xero.com/documentation/guides/remote-mcp/overview
+defaultProvider: mcp
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://developer.xero.com/documentation/guides/remote-mcp/overview
+    fetchedAt: 2026-11-12

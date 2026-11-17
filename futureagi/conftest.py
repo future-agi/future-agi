@@ -134,6 +134,11 @@ def _install_ee_usage_stubs_if_missing() -> None:
 
     events.UsageEvent = UsageEvent
 
+    def stable_evaluation_event_id(**_step):
+        return None
+
+    events.stable_evaluation_event_id = stable_evaluation_event_id
+
     event_properties = _make("ee.usage.utils.event_properties")
 
     def token_usage_properties(token_usage):
@@ -802,6 +807,36 @@ def _force_flush_cascade():
         _PgOps.sql_flush = _original
 
 
+@pytest.fixture(autouse=True, scope="session")
+def _authorize_test_flush(_force_flush_cascade):
+    """Give only Django's test flush a connection-bound erase authority.
+
+    Keep flush's own atomic execution and the existing CASCADE fixture. The
+    session patch grants nothing between calls; sql_authority resets its
+    ContextVar in finally, including when the original handle raises.
+    """
+    from functools import wraps
+
+    from django.core.management.commands.flush import Command
+    from django.db import DEFAULT_DB_ALIAS
+
+    from accounts.services.hard_erase_sql import sql_authority
+
+    original = Command.handle
+
+    @wraps(original)
+    def _flush_with_authority(self, *args, **options):
+        using = options.get("database", DEFAULT_DB_ALIAS)
+        with sql_authority(using, "erase"):
+            return original(self, *args, **options)
+
+    Command.handle = _flush_with_authority
+    try:
+        yield
+    finally:
+        Command.handle = original
+
+
 from accounts.models.organization import Organization
 from accounts.models.user import User
 from accounts.models.workspace import Workspace
@@ -975,6 +1010,24 @@ def clean_workspace_context():
     clear_workspace_context()
     yield
     clear_workspace_context()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def views_imported_without_workspace_context():
+    """Load the URLconf once, before any test sets a workspace context.
+
+    Loading it imports every view module, and a class-level queryset such as
+    `queryset = Model.objects.all()` is built at import through the
+    workspace-filtered manager. Imported while a test's workspace is set (a
+    plain APIClient fixture that sets the context before its first request),
+    it would keep that workspace for every later test in the session.
+    """
+    from tfc.asgi_startup import warm_http_urlconf
+
+    clear_workspace_context()
+    # The same walk the WSGI and ASGI entry points run before serving.
+    warm_http_urlconf()
+    yield
 
 
 @pytest.fixture(autouse=True)

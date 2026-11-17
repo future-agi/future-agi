@@ -1,0 +1,46 @@
+# Paddle's live hosted MCP server accepts a live API key as a bearer token.
+# Scope the key narrowly: the server does not gate destructive operations.
+schema: "connector-manifest/v1#provider"
+app: paddle
+id: api-key
+version: 1.1.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.paddle.com/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: Live API key
+      help: "Create a live API key in Paddle > My account > Settings > Authentication > API keys. Grant only the permissions the agent needs; permitted calls can modify live subscriptions and billing data. Sandbox keys do not work with this live endpoint."
+      helpUrl: https://developer.paddle.com/api-reference/about/api-keys
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_metered
+  source: https://www.paddle.com/pricing
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://developer.paddle.com/sdks/ai/paddle-mcp/
+    fetchedAt: 2026-11-09
+  - fact: transport.variant
+    url: https://developer.paddle.com/sdks/ai/paddle-mcp/
+    fetchedAt: 2026-11-09
+  - fact: auth.kind
+    url: https://developer.paddle.com/sdks/ai/paddle-mcp/
+    fetchedAt: 2026-11-09
+  - fact: auth.credentialParts
+    url: https://developer.paddle.com/sdks/ai/paddle-mcp/
+    fetchedAt: 2026-11-09

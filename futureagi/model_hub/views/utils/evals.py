@@ -10,6 +10,13 @@ from django.db import close_old_connections
 from accounts.models.organization import Organization
 from agentic_eval.core_evals.fi_evals import *  # noqa: F403
 from evaluations.constants import FUTUREAGI_EVAL_TYPES
+from evaluations.run_settings import run_settings, usage_record_settings
+from evaluations.usage_step import (
+    UsageStep,
+    activity_workflow_run,
+    error_localizer_step,
+    step_event_id,
+)
 from model_hub.models.choices import ModelChoices
 from model_hub.models.develop_dataset import Column
 from model_hub.models.evals_metric import EvalTemplate, EvalTemplateVersion
@@ -64,6 +71,10 @@ def run_eval_func(
     org,
     model=ModelChoices.TURING_LARGE.value,
     *args,
+    # The step this run evaluates, when the caller knows it (a composite's
+    # child on a cell or an Observe entry): its usage events are keyed to it,
+    # so a step a worker runs again is billed once.
+    usage_step: UsageStep | None = None,
     **kwargs,
 ):
     api_call_log_row = None
@@ -148,8 +159,16 @@ def run_eval_func(
                 pass
         futureagi_eval = True if eval_id in FUTUREAGI_EVAL_TYPES else False
         source = kwargs.get("source", "eval_playground")
+        # The New experiment wizard's card Test previews the run, so it scores
+        # and bills with the model the run uses, not as an editor pick.
+        wizard_test = (
+            isinstance(row_context, dict)
+            and row_context.get("source") == "experiment_create"
+        )
+        # The evaluator type is resolved above; there is no dataset metric binding.
         runner = EvaluationRunner(
-            eval_id,
+            user_eval_metric_id=None,
+            standalone_eval_type_id=eval_id,
             is_only_eval=is_only_eval,
             format_output=True,
             futureagi_eval=futureagi_eval,
@@ -158,13 +177,18 @@ def run_eval_func(
             protect=protect,
             organization_id=org.id,
             workspace_id=workspace.id if workspace else None,
+            # A pinned composite child or jury seat runs its version.
+            version_number=kwargs.get("version_number"),
         )
+        # A composite link or jury seat that names its own model keeps it;
+        # the pinned version's model does not replace it.
+        runner.keep_selected_model = bool(kwargs.get("keep_selected_model"))
 
         source_config = {
             "reference_id": str(template.id),
             "is_futureagi_eval": futureagi_eval,
         }
-        source_config.update(config)
+        source_config.update(usage_record_settings(config))
         if input_data_types:
             source_config.update({"input_data_types": input_data_types})
         source_config.update({"mappings": mappings, "source": "eval_playground"})
@@ -178,6 +202,11 @@ def run_eval_func(
 
         # runner.load_user_eval_metric()
         runner.eval_template = template
+        runner.honour_selected_model = not wizard_test
+        # Only the playground request refuses a saved summary template it
+        # cannot use. The wizard card Test previews the run, and runs fall
+        # back to the concise summary.
+        runner.strict_summary = bool(kwargs.get("strict_summary")) and not wizard_test
         if "mapping" in data_config:
             data_config.pop("mapping")
 
@@ -189,8 +218,21 @@ def run_eval_func(
             runtime_config=config,
         )
 
+        # Attribute playground usage to the evaluator we actually constructed,
+        # only when the request picked a model. With none picked, the check and
+        # the log go by the template and the run's config, as the engine runs it.
+        attribute_playground_model = (
+            source == "eval_playground"
+            and not wizard_test
+            and bool(model)
+            and eval_id in {"CustomPromptEvaluator", "AgentEvaluator"}
+        )
+        if attribute_playground_model:
+            model = getattr(eval_instance, "model", None) or model
+
         if not mappings:
-            for key, value in config.items():
+            # Inputs taken from the settings are run settings.
+            for key, value in run_settings(config).items():
                 # Exclude "mapping" to avoid a self-reference cycle: the view
                 # passes `mappings` as a reference to `config["mapping"]`
                 # when no top-level mapping is provided; copying that key
@@ -258,7 +300,11 @@ def run_eval_func(
         if model:
             source_config.update({"model": str(model)})
         if config is not None:
-            source_config.update(config)
+            # The usage record holds the run settings.
+            source_config.update(usage_record_settings(config))
+        # Keep caller config precedence outside the repaired playground path.
+        if attribute_playground_model and model:
+            source_config.update({"model": str(model)})
         if input_data_types:
             source_config.update({"input_data_types": input_data_types})
 
@@ -288,7 +334,11 @@ def run_eval_func(
         api_call_type = (
             BillingEventType.CODE_EVALUATOR.value
             if _is_code_eval and BillingEventType is not None
-            else _get_api_call_type(model, template=template, runtime_config=config)
+            else (
+                _get_api_call_type(model)
+                if attribute_playground_model
+                else _get_api_call_type(model, template=template, runtime_config=config)
+            )
         )
 
         # Pre-check: enforce free tier limits before running eval
@@ -526,6 +576,7 @@ def run_eval_func(
                 else 0
             )
 
+            step_id = step_event_id(usage_step)
             if (
                 emit is not None
                 and UsageEvent is not None
@@ -533,11 +584,12 @@ def run_eval_func(
                 and not _emit_jev_usage(
                     eval_instance,
                     org_id=str(org.id),
-                    run_id=str(api_call_log_row.log_id),
+                    run_id=step_id or str(api_call_log_row.log_id),
                 )
             ):
                 emit(
                     UsageEvent(
+                        **({"event_id": step_id} if step_id else {}),
                         org_id=str(org.id),
                         event_type=_get_billing_event_type(
                             api_call_type, model, evaluator=eval_instance
@@ -547,6 +599,7 @@ def run_eval_func(
                             "source": source,
                             "source_id": str(template.id),
                             "raw_cost_usd": str(actual_cost),
+                            **({"model": model} if attribute_playground_model else {}),
                             **cost_properties,
                             **token_usage_properties(_token_usage),
                         },
@@ -578,6 +631,11 @@ def run_eval_func(
                 mapping=mappings,
                 eval_explanation=response.get("reason"),
                 eval_config=config,
+                # Keyed to this run's step, so a retry that makes the task
+                # again is billed for its localization once.
+                usage_event_id=step_event_id(
+                    error_localizer_step(usage_step, "playground")
+                ),
             )
 
         return output
@@ -773,6 +831,23 @@ def process_eval_for_single_row(
         close_old_connections()
 
 
+def _eval_func_task_step(log_id, template_id, model) -> UsageStep | None:
+    """The step a run_eval_func_task runs, as its usage events are keyed: the
+    log it evaluates for, the task's workflow run, and the template with its
+    model. A retry of the task is billed once, a new task again. None without
+    a log id or outside an activity: the run then gets fresh event ids."""
+    if not log_id:
+        return None
+    run = activity_workflow_run()
+    if run is None:
+        return None
+    return {
+        "evaluated": ("eval_func_task", str(log_id)),
+        "run": run,
+        "evaluator": (str(template_id), model),
+    }
+
+
 @temporal_activity(time_limit=3600, queue="tasks_s")
 def run_eval_func_task(
     mappings,
@@ -813,6 +888,7 @@ def run_eval_func_task(
             kb_id=kb_id,
             workspace=workspace,
             input_data_types=input_data_types,
+            usage_step=_eval_func_task_step(log_id, template_id, model),
         )
 
         logger.info(f"Evaluation for feedback completed for {log_id}")

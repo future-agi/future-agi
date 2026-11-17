@@ -113,7 +113,10 @@ class TestToolRegistry:
         assert registry.get("search") is not None
         assert registry.get("read_schema") is not None
         assert registry.get("list_users") is not None
-        assert registry.get("create_api_key") is not None
+        # Credentials are issued only by the person's interactive session.
+        assert registry.get("create_api_key") is None
+        assert registry.get("list_api_keys") is not None
+        assert registry.get("revoke_api_key") is not None
         # Catalog tools shared with the MCP server
         for name in ("whoami", "list_workspaces", "list_datasets", "search_traces"):
             assert isinstance(registry.get(name), GeneratedAPITool), name

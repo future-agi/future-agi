@@ -27,6 +27,24 @@
       "entrypoint": "write_secrets",
       "availability": "every_install",
       "reason": "The installer fills absent webhook and Standalone Redis credentials; existing values are retained."
+    },
+    {
+      "variables": ["AGENTCC_MCP_STATE_KEYS"],
+      "path": "bin/lib/secrets.sh",
+      "language": "shell",
+      "symbol": "gen_secret",
+      "entrypoint": "write_secrets",
+      "availability": "every_install",
+      "reason": "The installer library and manual bin/update apply fill only an absent or empty state-key list with 32 random bytes as 64 hex characters; valid configured lists are preserved exactly. Automatic and dry-run paths neither generate a key nor add a missing-key refusal. Production setup and Helm are not covered."
+    },
+    {
+      "variables": ["FI_API_SECRET_PEPPER"],
+      "path": "bin/lib/secrets.sh",
+      "language": "shell",
+      "symbol": "rotate_published_api_secret_pepper",
+      "entrypoint": "write_secrets",
+      "availability": "every_install",
+      "reason": "The installer, and bin/update apply before an update (deploy/update/pepper.py, the same rule), replace an unset, empty, published or CHANGEME- pepper and keep the previous value in FI_API_SECRET_PEPPERS_RETIRED; an operator's pepper is kept."
     }
   ]
 }

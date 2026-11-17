@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: vanta
+version: 1.0.0
+name: Vanta
+description: "Compliance status, controls, tests, vendor risk and vulnerabilities."
+vendor:
+  name: Vanta
+  domains: [vanta.com]
+eeCategory: developer
+group: other
+categories: [developer, security-compliance]
+tags: [compliance, controls, vendor-risk, vulnerabilities]
+docsUrl: https://developer.vanta.com/docs/vanta-mcp
+defaultProvider: mcp
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://developer.vanta.com/docs/vanta-mcp
+    fetchedAt: 2026-11-11

@@ -7,7 +7,11 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
+  FormControlLabel,
   IconButton,
+  MenuItem,
+  Switch,
+  TextField,
   Typography,
   useTheme,
 } from "@mui/material";
@@ -15,7 +19,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { enqueueSnackbar } from "notistack";
 import PropTypes from "prop-types";
 import React, { useEffect, useState } from "react";
-import { useForm } from "react-hook-form";
+import { Controller, useForm } from "react-hook-form";
 import Iconify from "src/components/iconify";
 import axios, { endpoints } from "src/utils/axios";
 import { useGetProjectDetails } from "src/api/project/project-detail";
@@ -39,6 +43,16 @@ const samplingRateMarks = [
   },
 ];
 
+// Caches that list Observe projects by name: the Tracing list
+// (ObserveListView), the bulk-delete list (ProjectWrapperView) and the header
+// project switcher (useProjectList). Invalidating marks inactive entries
+// stale, so they refetch on their next mount whatever their staleTime.
+const OBSERVE_PROJECT_LIST_KEYS = [
+  ["observe-projects"],
+  ["project-observe-list"],
+  ["project-list"],
+];
+
 const ConfigureProject = ({ open, onClose, id, refreshGrid, module }) => {
   const theme = useTheme();
   const queryClient = useQueryClient();
@@ -59,15 +73,37 @@ const ConfigureProject = ({ open, onClose, id, refreshGrid, module }) => {
       projectName: projectDetail?.name || "",
       samplingRate: getSamplingRatePercent(projectDetail, module),
       samplingContactAttribute: projectDetail?.sampling_contact_attribute || "",
+      piiRedactionEnabled: projectDetail?.pii_redaction_enabled ?? false,
+      piiRedactionMode: projectDetail?.pii_redaction_mode ?? "mask_pii",
     },
     resolver: zodResolver(projectSchema),
     mode: "onChange",
   });
   const watchSamplingRate = watch("samplingRate");
+  const newProjectName = (watch("projectName") ?? "").trim();
+  // Ingestion finds a project by name and creates one when the name is
+  // missing, so a rename splits the traces unless the SDK name changes too.
+  const renameWarning =
+    module === "observe" &&
+    projectDetail?.name &&
+    newProjectName &&
+    newProjectName !== projectDetail.name
+      ? `Traces are matched by project name. Change the project name in your register() call to "${newProjectName}" too, or new traces will create a new project named "${projectDetail.name}".`
+      : undefined;
+  const watchPiiRedactionEnabled = watch("piiRedactionEnabled");
 
   const handleClose = () => {
     reset();
     onClose();
+  };
+
+  const invalidateProjectLists = () => {
+    if (module !== "observe") {
+      return;
+    }
+    OBSERVE_PROJECT_LIST_KEYS.forEach((queryKey) =>
+      queryClient.invalidateQueries({ queryKey }),
+    );
   };
 
   const { mutate: updateProject, isPending: isUpdating } = useMutation({
@@ -84,6 +120,7 @@ const ConfigureProject = ({ open, onClose, id, refreshGrid, module }) => {
       queryClient.invalidateQueries({
         queryKey: ["project-detail", id],
       });
+      invalidateProjectLists();
       handleClose();
       refreshGrid();
     },
@@ -100,6 +137,8 @@ const ConfigureProject = ({ open, onClose, id, refreshGrid, module }) => {
     if (module === "observe") {
       payload["sampling_rate"] = data.samplingRate / 100;
       payload.sampling_contact_attribute = data.samplingContactAttribute || "";
+      payload.pii_redaction_enabled = data.piiRedactionEnabled;
+      payload.pii_redaction_mode = data.piiRedactionMode;
     }
     updateProject(payload);
   };
@@ -109,7 +148,9 @@ const ConfigureProject = ({ open, onClose, id, refreshGrid, module }) => {
       reset({
         projectName: projectDetail.name || "",
         samplingRate: getSamplingRatePercent(projectDetail, module),
-      samplingContactAttribute: projectDetail?.sampling_contact_attribute || "",
+        samplingContactAttribute: projectDetail?.sampling_contact_attribute || "",
+        piiRedactionEnabled: projectDetail.pii_redaction_enabled ?? false,
+        piiRedactionMode: projectDetail.pii_redaction_mode ?? "mask_pii",
       });
     }
   }, [module, projectDetail, reset]);
@@ -120,6 +161,7 @@ const ConfigureProject = ({ open, onClose, id, refreshGrid, module }) => {
   };
 
   const handleDeleteSuccess = () => {
+    invalidateProjectLists();
     navigate(
       module === "observe" ? "/dashboard/observe" : "/dashboard/prototype",
     );
@@ -136,7 +178,7 @@ const ConfigureProject = ({ open, onClose, id, refreshGrid, module }) => {
           sx: {
             width: 560,
             maxWidth: 720,
-            maxHeight: 450,
+            maxHeight: "calc(100% - 32px)",
             display: "flex",
             flexDirection: "column",
           },
@@ -168,10 +210,13 @@ const ConfigureProject = ({ open, onClose, id, refreshGrid, module }) => {
           </Box>
         </DialogTitle>
 
-        <form onSubmit={handleSubmit(onSubmit)}>
+        <form
+          onSubmit={handleSubmit(onSubmit)}
+          style={{ display: "flex", flexDirection: "column", minHeight: 0 }}
+        >
           <DialogContent
             sx={{
-              overflow: "hidden",
+              overflowY: "auto",
               flexGrow: 1,
               paddingX: theme.spacing(1.5),
               mb: theme.spacing(1),
@@ -188,11 +233,73 @@ const ConfigureProject = ({ open, onClose, id, refreshGrid, module }) => {
               placeholder="Enter project name"
               margin="normal"
               fullWidth
-              helperText={errors.projectName?.message}
+              helperText={errors.projectName?.message || renameWarning}
               isSpinnerField={false}
               fieldType="text"
             />
             <ShowComponent condition={module === "observe"}>
+              <Box
+                component="section"
+                aria-labelledby="project-privacy-title"
+                sx={{
+                  width: "100%",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 1,
+                  mb: 2,
+                }}
+              >
+                <Typography
+                  id="project-privacy-title"
+                  typography="s1"
+                  fontWeight="fontWeightMedium"
+                >
+                  Privacy
+                </Typography>
+                <Controller
+                  name="piiRedactionEnabled"
+                  control={control}
+                  render={({ field: { value, onChange, ref, ...field } }) => (
+                    <FormControlLabel
+                      label="Redact PII in new traces"
+                      control={
+                        <Switch
+                          {...field}
+                          inputRef={ref}
+                          checked={value}
+                          onChange={(_, checked) => onChange(checked)}
+                          size="small"
+                        />
+                      }
+                    />
+                  )}
+                />
+                <Controller
+                  name="piiRedactionMode"
+                  control={control}
+                  render={({ field: { ref, ...field } }) => (
+                    <TextField
+                      {...field}
+                      inputRef={ref}
+                      select
+                      fullWidth
+                      size="small"
+                      label="Redaction mode"
+                      disabled={!watchPiiRedactionEnabled}
+                      error={!!errors.piiRedactionMode}
+                      helperText={errors.piiRedactionMode?.message}
+                    >
+                      <MenuItem value="mask_pii">Mask PII</MenuItem>
+                      <MenuItem value="hide_io">Hide inputs and outputs</MenuItem>
+                    </TextField>
+                  )}
+                />
+                <Typography typography="s2_1" color="text.secondary">
+                  Applies to newly ingested traces only. Existing traces are
+                  unchanged. Mask PII replaces detected personal information;
+                  hide inputs and outputs replaces their content with [hidden].
+                </Typography>
+              </Box>
               <FormTextFieldV2 control={control} fieldName="samplingContactAttribute" label="Contact attribute for eval sampling" size="small" fullWidth helperText="Optional span attribute, such as contact_id. New custom-contact policies use this mapping; saved policies keep their original mapping." />
               <Box
                 sx={{

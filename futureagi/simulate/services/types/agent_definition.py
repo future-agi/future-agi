@@ -34,4 +34,8 @@ class ProviderCredentialsInput(BaseModel):
     livekit_agent_name: str | None = None
     livekit_config_json: dict[str, Any] | None = None
     livekit_max_concurrency: int | None = None
+    # Vapi only: the assistant's public key. ``None`` or blank keeps the saved
+    # key; ``remove_vapi_public_key`` removes it.
+    vapi_public_key: str | None = Field(default=None, repr=False)
+    remove_vapi_public_key: bool = False
     provider_was_provided: bool = False

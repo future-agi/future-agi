@@ -1,0 +1,27 @@
+{
+  "vendor": "echo-a",
+  "capability": "echo",
+  "skus": [
+    {
+      "sku": "echo.call",
+      "unit": "request",
+      "usd_per_unit": 0.001,
+      "free_on_failure": true
+    }
+  ],
+  "resale_status": "managed_partner",
+  "owner_price_pending": false,
+  "resale_terms_ref": "test-fixture-echo-a",
+  "terms_url": "https://example.invalid/echo-a/terms",
+  "terms_checked_at": "2026-10-16",
+  "zdr_capable": true,
+  "trains_on_input": "no",
+  "improvement_license": false,
+  "regions": ["us", "eu"],
+  "results_retention": "full",
+  "cacheable": "none",
+  "eval_export": "allowed",
+  "no_divert": false,
+  "no_perf_disclosure": false,
+  "no_benchmark": false
+}

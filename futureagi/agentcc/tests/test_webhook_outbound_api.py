@@ -4,8 +4,14 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from agentcc.models.webhook import AgentccWebhook, AgentccWebhookEvent
+from agentcc.models.webhook import AgentccWebhookEvent
 from agentcc.services.url_safety import WEBHOOK_PRIVATE_URL_ERROR
+from agentcc.tests.test_webhook_encrypted_fixtures import (
+    make_webhook,
+)
+from agentcc.tests.test_webhook_encrypted_fixtures import (
+    webhook_encryption_key as webhook_encryption_key,
+)
 
 
 def _make_webhook(user, name="hook", **overrides):
@@ -16,7 +22,7 @@ def _make_webhook(user, name="hook", **overrides):
         "events": ["request.completed"],
     }
     kwargs.update(overrides)
-    return AgentccWebhook.objects.create(**kwargs)
+    return make_webhook(**kwargs)
 
 
 def _make_event(webhook, user, status=None, **overrides):
@@ -54,7 +60,8 @@ class TestAgentccWebhookCRUD:
         assert response.status_code == 200
         assert response.json()["result"]["id"] == str(webhook.id)
 
-    def test_update_writes_fields(self, auth_client, user):
+    def test_update_writes_fields(self, auth_client, user, provider_dns):
+        dns = provider_dns({"example.com": ["93.184.215.14"]})
         webhook = _make_webhook(user, name="mutate-me")
 
         response = auth_client.put(
@@ -71,6 +78,8 @@ class TestAgentccWebhookCRUD:
         assert webhook.name == "renamed"
         assert webhook.url == "https://example.com/renamed"
         assert webhook.events == ["error.occurred"]
+        # The URL check resolved it, answered by the stub.
+        assert "example.com" in [c.args[0] for c in dns.call_args_list]
 
     def test_partial_update_writes_single_field(self, auth_client, user):
         webhook = _make_webhook(user, name="partial")
@@ -97,8 +106,9 @@ class TestAgentccWebhookCRUD:
 class TestAgentccWebhookTest:
     @patch("agentcc.views.webhook_outbound.build_ssrf_safe_session")
     def test_test_send_rejects_private_url(
-        self, mock_session_builder, auth_client, user
+        self, mock_session_builder, auth_client, user, provider_dns
     ):
+        dns = provider_dns({})
         webhook = _make_webhook(user, url="http://169.254.169.254/")
 
         response = auth_client.post(f"/agentcc/webhooks/{webhook.id}/test/")
@@ -106,6 +116,8 @@ class TestAgentccWebhookTest:
         assert response.status_code == 400, response.json()
         assert response.json()["result"] == WEBHOOK_PRIVATE_URL_ERROR
         mock_session_builder.assert_not_called()
+        # The URL check resolved it, answered by the stub.
+        assert "169.254.169.254" in [c.args[0] for c in dns.call_args_list]
 
     @patch("agentcc.views.webhook_outbound.build_ssrf_safe_session")
     @patch("agentcc.views.webhook_outbound.ensure_public_http_url")
@@ -126,9 +138,7 @@ class TestAgentccWebhookTest:
         assert response.json()["result"]["success"] is True
 
         # An event row is written for the test delivery.
-        event = AgentccWebhookEvent.objects.get(
-            webhook=webhook, event_type="test"
-        )
+        event = AgentccWebhookEvent.objects.get(webhook=webhook, event_type="test")
         assert event.status == AgentccWebhookEvent.DELIVERED
         assert event.last_response_code == 200
 
@@ -148,11 +158,11 @@ class TestAgentccWebhookTest:
 
         assert response.status_code == 200, response.json()
         assert response.json()["result"]["success"] is False
-        assert "connection refused" in response.json()["result"]["error"]
+        # A fixed message, never the exception's text (ALERT-ACCESS-1 round 2).
+        error = response.json()["result"]["error"]
+        assert error and "connection refused" not in error
 
-        event = AgentccWebhookEvent.objects.get(
-            webhook=webhook, event_type="test"
-        )
+        event = AgentccWebhookEvent.objects.get(webhook=webhook, event_type="test")
         assert event.status == AgentccWebhookEvent.FAILED
 
 
@@ -173,9 +183,7 @@ class TestAgentccWebhookEvent:
         _make_event(webhook, user, status=AgentccWebhookEvent.DELIVERED)
         _make_event(webhook, user, status=AgentccWebhookEvent.FAILED)
 
-        response = auth_client.get(
-            "/agentcc/webhook-events/?status=failed"
-        )
+        response = auth_client.get("/agentcc/webhook-events/?status=failed")
         assert response.status_code == 200
         rows = response.json()["result"]
         assert len(rows) == 1
@@ -187,9 +195,7 @@ class TestAgentccWebhookEvent:
         _make_event(w1, user)
         _make_event(w2, user)
 
-        response = auth_client.get(
-            f"/agentcc/webhook-events/?webhook_id={w1.id}"
-        )
+        response = auth_client.get(f"/agentcc/webhook-events/?webhook_id={w1.id}")
         assert response.status_code == 200
         rows = response.json()["result"]
         assert len(rows) == 1
@@ -212,9 +218,7 @@ class TestAgentccWebhookEvent:
             last_error="boom",
         )
 
-        response = auth_client.post(
-            f"/agentcc/webhook-events/{event.id}/retry/"
-        )
+        response = auth_client.post(f"/agentcc/webhook-events/{event.id}/retry/")
         assert response.status_code == 200
         event.refresh_from_db()
         assert event.status == AgentccWebhookEvent.PENDING
@@ -223,11 +227,7 @@ class TestAgentccWebhookEvent:
 
     def test_retry_rejects_already_delivered(self, auth_client, user):
         webhook = _make_webhook(user)
-        event = _make_event(
-            webhook, user, status=AgentccWebhookEvent.DELIVERED
-        )
+        event = _make_event(webhook, user, status=AgentccWebhookEvent.DELIVERED)
 
-        response = auth_client.post(
-            f"/agentcc/webhook-events/{event.id}/retry/"
-        )
+        response = auth_client.post(f"/agentcc/webhook-events/{event.id}/retry/")
         assert response.status_code == 400

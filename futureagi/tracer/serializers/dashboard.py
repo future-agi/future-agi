@@ -1,4 +1,5 @@
 from django.conf import settings
+from drf_yasg.utils import swagger_serializer_method
 from rest_framework import serializers
 
 from accounts.serializers.user import UserSerializer
@@ -426,6 +427,7 @@ class DashboardSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
 
+    @swagger_serializer_method(serializer_or_field=serializers.IntegerField())
     def get_widget_count(self, obj):
         return obj.widgets.filter(deleted=False).count()
 
@@ -457,9 +459,83 @@ class DashboardDetailSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
 
+    @swagger_serializer_method(serializer_or_field=DashboardWidgetSerializer(many=True))
     def get_widgets(self, obj):
         widgets = obj.widgets.filter(deleted=False).order_by("position", "created_at")
         return DashboardWidgetSerializer(widgets, many=True).data
+
+
+# The shared dashboard page also reads the older camelCase spellings that
+# some saved widgets still hold, so a shared widget keeps them.
+_SHARED_TIME_RANGE_KEYS = ("time_range", "timeRange")
+_SHARED_METRIC_KEYS = ("id", "name", "display_name", "displayName", "aggregation")
+
+
+def _pick(value: object, keys: tuple[str, ...]) -> dict[str, object]:
+    """The entries of ``value`` named in ``keys``; ``{}`` when it is no dict."""
+    if not isinstance(value, dict):
+        return {}
+    return {key: value[key] for key in keys if key in value}
+
+
+class SharedDashboardWidgetSerializer(serializers.ModelSerializer):
+    """A widget as a dashboard share link answers it.
+
+    Its saved query keeps only the metric labels and the time range preset;
+    project ids, filters and breakdowns stay with the signed-in screens.
+    """
+
+    query_config = serializers.SerializerMethodField()
+    chart_config = serializers.SerializerMethodField()
+
+    class Meta:
+        model = DashboardWidget
+        fields = [
+            "id",
+            "name",
+            "description",
+            "width",
+            "height",
+            "query_config",
+            "chart_config",
+        ]
+        read_only_fields = fields
+
+    def get_query_config(self, obj):
+        config = obj.query_config if isinstance(obj.query_config, dict) else {}
+        shown = {}
+        metrics = config.get("metrics")
+        if isinstance(metrics, list):
+            shown["metrics"] = [
+                _pick(metric, _SHARED_METRIC_KEYS) for metric in metrics
+            ]
+        for key in _SHARED_TIME_RANGE_KEYS:
+            if key in config:
+                shown[key] = _pick(config[key], ("preset",))
+        return shown
+
+    def get_chart_config(self, obj):
+        return _pick(obj.chart_config, ("chart_type",))
+
+
+class SharedDashboardSerializer(serializers.ModelSerializer):
+    """A dashboard as its share link answers it: what the shared page shows,
+    with no user record, workspace or organization."""
+
+    widget_count = serializers.SerializerMethodField()
+    widgets = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Dashboard
+        fields = ["name", "description", "widget_count", "widgets"]
+        read_only_fields = fields
+
+    def get_widget_count(self, obj):
+        return obj.widgets.filter(deleted=False).count()
+
+    def get_widgets(self, obj):
+        widgets = obj.widgets.filter(deleted=False).order_by("position", "created_at")
+        return SharedDashboardWidgetSerializer(widgets, many=True).data
 
 
 class DashboardCreateUpdateSerializer(serializers.ModelSerializer):
@@ -471,6 +547,61 @@ class DashboardCreateUpdateSerializer(serializers.ModelSerializer):
         if not value or not value.strip():
             raise serializers.ValidationError("Dashboard name cannot be empty.")
         return value.strip()
+
+
+# Response contracts of the dashboard and widget CRUD actions, which answer
+# GeneralMethods.success_response() ({status, result}, HTTP 200). Only the
+# wrapper is inlined (ref_name = None): it renders exactly like the envelope
+# the generator infers for an un-annotated success_response() action.
+
+
+class DashboardListApiResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = DashboardSerializer(many=True)
+
+    class Meta:
+        ref_name = None
+
+
+class DashboardDetailApiResponseSerializer(serializers.Serializer):
+    """Retrieve, create and update all answer the dashboard detail."""
+
+    status = serializers.BooleanField(default=True)
+    result = DashboardDetailSerializer()
+
+    class Meta:
+        ref_name = None
+
+
+class DashboardWidgetApiResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = DashboardWidgetSerializer()
+
+    class Meta:
+        ref_name = None
+
+
+class DashboardGroupBySerializer(StrictInputSerializer):
+    type = serializers.ChoiceField(choices=("attribute", "tag"))
+    key = serializers.CharField(trim_whitespace=False, allow_blank=False)
+    limit = serializers.IntegerField(min_value=1, max_value=10, default=5)
+
+    def validate_key(self, value):
+        try:
+            return validate_text(
+                value, field="key", max_bytes=MAX_IDENTITY_COMPONENT_BYTES,
+                allow_controls=True,
+            )
+        except (TypeError, ValueError) as exc:
+            raise serializers.ValidationError(str(exc)) from exc
+
+    def validate(self, attrs):
+        if attrs["type"] == "tag" and attrs["key"] != "tag":
+            raise serializers.ValidationError({"key": "Use the catalog's tag dimension."})
+        return attrs
+
+    class Meta:
+        swagger_schema_fields = {"additionalProperties": False}
 
 
 class DashboardQuerySerializer(StrictInputSerializer):
@@ -489,6 +620,7 @@ class DashboardQuerySerializer(StrictInputSerializer):
     metrics = DashboardMetricSerializer(many=True)
     filters = filter_list_field(required=False, default=list)
     breakdowns = DashboardBreakdownSerializer(many=True, required=False, default=list)
+    group_by = DashboardGroupBySerializer(required=False)
     allow_sampled = serializers.BooleanField(
         required=False,
         default=False,
@@ -536,6 +668,40 @@ class DashboardQuerySerializer(StrictInputSerializer):
 
     def validate(self, attrs):
         metrics = attrs.get("metrics") or []
+        group = attrs.get("group_by")
+        if group:
+            from tracer.services.clickhouse.query_builders.dashboard import DashboardQueryBuilder
+
+            # Reject oversized windows before catalog/cache work or bucket
+            # materialization, including a saved widget replayed by a worker.
+            try:
+                DashboardQueryBuilder(attrs)._group_by_row_bound()
+            except ValueError as exc:
+                raise serializers.ValidationError({"group_by": str(exc)}) from exc
+            if attrs.get("workflow", "observability") != "observability" or any(
+                m.get("type") not in ("system_metric", "custom_attribute")
+                or m.get("source", "traces") != "traces"
+                for m in metrics
+            ):
+                raise serializers.ValidationError({
+                    "group_by": "Top values + other supports trace system and attribute metrics."
+                })
+            expected_type = "custom_attribute" if group["type"] == "attribute" else "system_metric"
+            dimensions = attrs.get("breakdowns") or []
+            if dimensions and (
+                len(dimensions) != 1
+                or dimensions[0].get("name") != group["key"]
+                or dimensions[0].get("type") != expected_type
+                or dimensions[0].get("source", "traces") != "traces"
+            ):
+                raise serializers.ValidationError({
+                    "group_by": "Group by must match the single selected breakdown."
+                })
+            if not dimensions:
+                attrs["breakdowns"] = [{
+                    "name": group["key"], "type": expected_type, "source": "traces",
+                    "attribute_type": "string",
+                }]
         annotation_error = annotation_breakdown_error(
             metrics, attrs.get("breakdowns") or []
         )
@@ -658,6 +824,9 @@ class DashboardQuerySeriesPointSerializer(serializers.Serializer):
 class DashboardQuerySeriesSerializer(serializers.Serializer):
     name = serializers.CharField(allow_blank=True)
     data = DashboardQuerySeriesPointSerializer(many=True)
+    # Optional for legacy/dataset/simulation snapshots; null means unavailable,
+    # not permission for a client to average already-aggregated buckets.
+    aggregate_value = serializers.FloatField(allow_null=True, required=False)
 
 
 class DashboardQueryMetricResultSerializer(serializers.Serializer):

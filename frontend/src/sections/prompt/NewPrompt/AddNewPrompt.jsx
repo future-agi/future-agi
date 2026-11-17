@@ -136,7 +136,7 @@ const AddNewPromptView = () => {
   const convertDefaultValues = () => {
     const latestVersionData = latestVersion?.data;
     const defaultValueMessages =
-      latestVersionData?.promptConfig?.[0].messages.map((item) => {
+      latestVersionData?.prompt_config?.[0]?.messages?.map((item) => {
         const content = item.content.map((temp) => ({
           ...temp,
           text: temp.text,
@@ -169,12 +169,12 @@ const AddNewPromptView = () => {
       variable_names: draftItem?.variable_names,
       templateVersion: draftItem?.version,
       promptConfigSnapshot: {
-        configuration: draftItem?.promptConfig[0].configuration,
-        messages: draftItem?.promptConfig[0].messages,
+        configuration: draftItem?.prompt_config?.[0]?.configuration,
+        messages: draftItem?.prompt_config?.[0]?.messages,
       },
       isDraft: true,
     };
-    if (draftItem.isDraft) {
+    if (draftItem.is_draft) {
       setVersionList([newItem, ...arrWithoutDraftInfo]);
     } else {
       setVersionList(arrWithoutDraftInfo);
@@ -316,7 +316,7 @@ const AddNewPromptView = () => {
         ...prev,
       ]);
       setCurrentTitle(titleName?.name);
-      navigate(`/dashboard/prompt/add/${data?.data?.result?.rootTemplate}`);
+      navigate(`/dashboard/prompt/add/${data?.data?.result?.root_template}`);
     },
   });
 
@@ -401,9 +401,9 @@ const AddNewPromptView = () => {
       setValue("config.messages", convertedDefaultValues.config.messages);
       setCurrentTitle(currentResult?.name);
       setEvalsConfigs(currentResult?.evaluationConfigs ?? []);
-      setModelData(currentResult?.promptConfig[0]?.configuration);
+      setModelData(currentResult?.prompt_config?.[0]?.configuration);
       const savedFormat =
-        currentResult?.promptConfig[0]?.configuration?.template_format;
+        currentResult?.prompt_config?.[0]?.configuration?.template_format;
       setTemplateFormat(savedFormat || "mustache");
       updateVersionList();
       if (
@@ -526,7 +526,7 @@ const AddNewPromptView = () => {
         setTitles={setTitles}
         titles={titles}
         total={
-          latestVersion?.data?.isDraft
+          latestVersion?.data?.is_draft
             ? versions?.data?.data?.count + 1
             : versions?.data?.data?.count
         }

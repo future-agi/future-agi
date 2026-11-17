@@ -1,0 +1,21 @@
+{
+  "name": "support-triage",
+  "entries": [
+    {
+      "id": "triage",
+      "kind": "workflow",
+      "module": "./entries/triage.ts",
+      "export": "workflow",
+      "label": "Triage a support message",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": ["message"]
+      }
+    }
+  ]
+}

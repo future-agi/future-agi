@@ -8,7 +8,6 @@ from datetime import datetime
 
 from django.db import connection, models
 
-from model_hub.models.develop_dataset import Column, Row
 from simulate.models.agent_definition import AgentDefinition
 from simulate.models.agent_version import AgentVersion
 from simulate.models.hosted_harness import HostedHarnessJob
@@ -17,6 +16,7 @@ from simulate.utils.persona_filtering import (
     apply_persona_filter,
     is_persona_filter_column,
 )
+from simulate.utils.scenario_rows import org_columns, org_rows
 from simulate.utils.sql_query import get_grouped_call_execution_metrics_query
 from tfc.constants.api_calls import FIX_CHECK_RUN_EVAL_SOURCE
 
@@ -88,6 +88,8 @@ class TestExecutionUtils:
             return queryset
 
         def apply_number_filter(queryset, field, op, value, transform=lambda v: v):
+            if op in ("is_null", "is_not_null"):
+                return queryset.filter(**{f"{field}__isnull": op == "is_null"})
             values = as_list(value)
             if op == "equals":
                 return queryset.filter(**{field: transform(values[0])})
@@ -119,8 +121,6 @@ class TestExecutionUtils:
         def apply_number_any_field_filter(
             queryset, fields, op, value, transform=lambda v: v
         ):
-            values = as_list(value)
-
             def q_for(field, lookup, val):
                 key = field if lookup is None else f"{field}__{lookup}"
                 return models.Q(**{key: val})
@@ -131,6 +131,13 @@ class TestExecutionUtils:
                     condition |= q_for(field, lookup, val)
                 return condition
 
+            if op == "is_null":
+                # A value in either cost field makes the column non-null.
+                return queryset.filter(**{f"{field}__isnull": True for field in fields})
+            if op == "is_not_null":
+                return queryset.filter(any_field_q("isnull", False))
+
+            values = as_list(value)
             if op == "equals":
                 return queryset.filter(any_field_q(None, transform(values[0])))
             if op == "not_equals":
@@ -421,6 +428,11 @@ class TestExecutionUtils:
                 elif column_id in ["responseTime", "response_time"]:
                     # Filter by response time (convert to milliseconds for database comparison)
                     if filter_type == "number":
+                        if filter_op in ("is_null", "is_not_null"):
+                            call_executions = call_executions.filter(
+                                response_time_ms__isnull=filter_op == "is_null"
+                            )
+                            continue
                         filter_value = float(filter_value)
                         # Convert seconds to milliseconds for database comparison
                         filter_value_ms = filter_value * 1000
@@ -1309,7 +1321,9 @@ def canonical_scenario_column_name(raw_name):
     return "Ideal Outcome" if raw_name == "outcome" else raw_name
 
 
-def reconcile_scenario_column_order(*, scenarios, call_executions, column_order):
+def reconcile_scenario_column_order(
+    *, scenarios, call_executions, column_order, organization_id
+):
     """Collapse per-dataset scenario columns into one entry per canonical name.
 
     Each scenario has its own dataset, and each dataset has its own ``Column``
@@ -1329,6 +1343,12 @@ def reconcile_scenario_column_order(*, scenarios, call_executions, column_order)
         call_executions: ``CallExecution`` queryset, used only for the fallback
             that recovers columns from the first call's dataset row.
         column_order: the current persisted column order (list of dicts).
+        organization_id: the execution's own organization. Columns and the
+            fallback row are read only from live data of its datasets: the
+            fallback row id comes from caller-written ``call_metadata``, so
+            another organization's row, or a soft-deleted one, reads exactly
+            like a row id that names nothing (T6 #7d). Required, so no caller
+            can skip the scope.
 
     Returns:
         ``(column_order, changed)`` - the reconciled order and whether it
@@ -1378,7 +1398,7 @@ def reconcile_scenario_column_order(*, scenarios, call_executions, column_order)
     if norm_all_col_ids:
         norm_columns_by_id = {
             str(col.id): col
-            for col in Column.objects.filter(id__in=norm_all_col_ids, deleted=False)
+            for col in org_columns(organization_id).filter(id__in=norm_all_col_ids)
         }
         for scenario in scenarios:
             if not (scenario.dataset and scenario.dataset.column_order):
@@ -1401,11 +1421,14 @@ def reconcile_scenario_column_order(*, scenarios, call_executions, column_order)
         )
         if fb_row_id:
             fb_row = (
-                Row.all_objects.filter(id=fb_row_id).select_related("dataset").first()
+                org_rows(organization_id)
+                .filter(id=fb_row_id)
+                .select_related("dataset")
+                .first()
             )
             if fb_row and fb_row.dataset and fb_row.dataset.column_order:
-                for col_obj in Column.all_objects.filter(
-                    id__in=fb_row.dataset.column_order, deleted=False
+                for col_obj in org_columns(organization_id).filter(
+                    id__in=fb_row.dataset.column_order
                 ):
                     _register_scenario_column(col_obj, None, str(fb_row.dataset.id))
 

@@ -108,7 +108,7 @@ func TestFailoverRefusalsDoNotSpendAttempts(t *testing.T) {
 					if err != nil || result == nil || result.ProviderID != tc.provider {
 						t.Fatalf("healthy target not returned: result=%+v err=%v", result, err)
 					}
-					if result.Attempts != len(tc.calls) || result.OriginalProvider != "a" || !result.FallbackUsed {
+					if result.AdmittedAttempts != len(tc.calls) || result.OriginalProvider != "a" || !result.FallbackUsed {
 						t.Fatalf("incorrect admitted-attempt metadata: %+v", result)
 					}
 				case tc.unavailable:

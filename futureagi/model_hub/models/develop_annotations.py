@@ -3,6 +3,7 @@ import uuid
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import Q
+from django.utils import timezone
 
 from accounts.models.organization import Organization
 from accounts.models.user import User
@@ -178,6 +179,10 @@ def validate_annotation_type_choice(value):
         )
 
 
+# Archive and restore write only these fields of a label.
+LABEL_ARCHIVE_FIELDS = frozenset({"deleted", "deleted_at", "updated_at"})
+
+
 class AnnotationsLabels(BaseModel):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=255)
@@ -346,8 +351,19 @@ class AnnotationsLabels(BaseModel):
         self.validate_settings()
 
     def save(self, *args, **kwargs):
-        self.full_clean()
+        update_fields = kwargs.get("update_fields")
+        if update_fields and LABEL_ARCHIVE_FIELDS.issuperset(update_fields):
+            # Archiving or restoring leaves the stored settings as they are, so
+            # settings that fail today's checks do not block it.
+            self.validate_constraints()
+        else:
+            self.full_clean()
         super().save(*args, **kwargs)
+
+    def delete(self, using=None, keep_parents=False):
+        self.deleted = True
+        self.deleted_at = timezone.now()
+        self.save(update_fields=sorted(LABEL_ARCHIVE_FIELDS))
 
     def __str__(self):
         return f"Annotation Label {self.id}"

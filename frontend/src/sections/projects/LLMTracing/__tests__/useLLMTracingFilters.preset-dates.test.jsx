@@ -68,6 +68,8 @@ describe("useLLMTracingFilters preset dates (TH-8634)", () => {
     "compareSpansDateFilter",
     "sessionDateFilter",
     "userDateFilter",
+    "sessionCompareDateFilter",
+    "userCompareDateFilter",
   ])(
     "a stale Today link in %s loads today's dates and the URL is rewritten",
     async (key) => {

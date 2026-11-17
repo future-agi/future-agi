@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: serpapi
+version: 1.0.0
+name: SerpApi
+description: "Search engine results through SerpApi."
+vendor:
+  name: SerpApi
+  domains: [serpapi.com]
+eeCategory: research
+group: other
+categories: [research, web-search]
+tags: [search]
+docsUrl: https://serpapi.com/integrations/mcp
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://serpapi.com/integrations/mcp
+    fetchedAt: 2026-11-12

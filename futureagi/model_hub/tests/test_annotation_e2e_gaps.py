@@ -974,6 +974,366 @@ class TestBulkCreatePartialFailure:
         assert score_count == 1
 
 
+TEXT_TOO_SHORT = "Text too short. Minimum length is 50 characters."
+
+
+@pytest.fixture
+def comment_label(db, organization, workspace, project):
+    return AnnotationsLabels.objects.create(
+        name="Comment E2E",
+        type=AnnotationTypeChoices.TEXT.value,
+        settings={"placeholder": "Enter text", "min_length": 50, "max_length": 500},
+        organization=organization,
+        workspace=workspace,
+        project=project,
+    )
+
+
+@pytest.fixture
+def buttons_label(db, organization, workspace, project):
+    """0 to 10 in steps of 3, shown as buttons: 0, 3, 6, 9 and the maximum 10."""
+    return AnnotationsLabels.objects.create(
+        name="Buttons E2E",
+        type=AnnotationTypeChoices.NUMERIC.value,
+        settings={"min": 0, "max": 10, "step_size": 3, "display_type": "button"},
+        organization=organization,
+        workspace=workspace,
+        project=project,
+    )
+
+
+def _choice_settings(options):
+    return {
+        "options": options,
+        "multi_choice": False,
+        "rule_prompt": "",
+        "auto_annotate": False,
+        "strategy": None,
+    }
+
+
+@pytest.fixture
+def valued_choice_label(db, organization, workspace, project):
+    """A choice label whose first option has a value apart from its label."""
+    return AnnotationsLabels.objects.create(
+        name="Valued Choice E2E",
+        type=AnnotationTypeChoices.CATEGORICAL.value,
+        settings=_choice_settings(
+            [{"label": "Good", "value": "good"}, {"label": "Bad"}]
+        ),
+        organization=organization,
+        workspace=workspace,
+        project=project,
+    )
+
+
+@pytest.fixture
+def legacy_choice_label(db, organization, workspace, project):
+    """A choice label stored with plain-string options and an option with no
+    label, which the label form refuses but an older label can hold."""
+    label = AnnotationsLabels.objects.create(
+        name="Legacy Choice E2E",
+        type=AnnotationTypeChoices.CATEGORICAL.value,
+        settings=_choice_settings([{"label": "Good"}, {"label": "Bad"}]),
+        organization=organization,
+        workspace=workspace,
+        project=project,
+    )
+    AnnotationsLabels.all_objects.filter(pk=label.pk).update(
+        settings=_choice_settings(["Good", "Bad", {"value": "odd"}])
+    )
+    label.refresh_from_db()
+    return label
+
+
+@pytest.mark.django_db
+@pytest.mark.integration
+class TestBulkCreateLabelLimits:
+    """``/scores/bulk/`` checks each new or changed answer against its label's
+    settings with the shared validator, as the trace's add_annotations does.
+    The answers that pass are saved; a refused label is listed in
+    ``failed_labels`` with the validator's reason under its id in
+    ``failed_reasons``, and nothing is stored for it. An answer left as it was
+    stored is not checked again, so a limit tightened since never blocks it.
+    A numeric label's maximum and a choice option's value are accepted, as the
+    queue accepts them, and only the labels that saved join a default queue."""
+
+    def _post(self, auth_client, span, scores, **fields):
+        from django.test import TestCase
+
+        with TestCase.captureOnCommitCallbacks(execute=True):
+            return auth_client.post(
+                f"{SCORE_URL}bulk/",
+                {
+                    "source_type": "observation_span",
+                    "source_id": span.id,
+                    "scores": scores,
+                    **fields,
+                },
+                format="json",
+            )
+
+    def test_a_too_short_answer_is_refused_and_the_valid_score_saves(
+        self, auth_client, observation_span_factory, numeric_label, comment_label
+    ):
+        span = observation_span_factory()
+
+        resp = self._post(
+            auth_client,
+            span,
+            [
+                {"label_id": str(comment_label.id), "value": {"text": "Too short."}},
+                {"label_id": str(numeric_label.id), "value": {"value": 7}},
+            ],
+        )
+
+        assert resp.status_code == status.HTTP_200_OK, resp.data
+        result = _result(resp)
+        assert result["success_labels"] == [str(numeric_label.id)]
+        assert result["failed_labels"] == [str(comment_label.id)]
+        assert result["failed_reasons"] == {str(comment_label.id): TEXT_TOO_SHORT}
+        assert not Score.objects.filter(
+            observation_span=span, label=comment_label, deleted=False
+        ).exists()
+        score = Score.objects.get(
+            observation_span=span, label=numeric_label, deleted=False
+        )
+        assert score.value == {"value": 7}
+
+    def test_an_unchanged_stored_answer_saves_again_after_its_limit_tightens(
+        self, auth_client, observation_span_factory, numeric_label, comment_label
+    ):
+        span = observation_span_factory()
+        comment_label.settings = {**comment_label.settings, "min_length": 1}
+        comment_label.save()
+        first = self._post(
+            auth_client,
+            span,
+            [
+                {"label_id": str(comment_label.id), "value": {"text": "Too short."}},
+                {"label_id": str(numeric_label.id), "value": {"value": 5}},
+            ],
+        )
+        assert first.status_code == status.HTTP_200_OK, first.data
+
+        comment_label.settings = {**comment_label.settings, "min_length": 50}
+        comment_label.save()
+        resp = self._post(
+            auth_client,
+            span,
+            [
+                {"label_id": str(comment_label.id), "value": {"text": "Too short."}},
+                {"label_id": str(numeric_label.id), "value": {"value": 7}},
+            ],
+        )
+
+        assert resp.status_code == status.HTTP_200_OK, resp.data
+        result = _result(resp)
+        assert result["failed_labels"] == []
+        assert result["failed_reasons"] == {}
+        assert sorted(result["success_labels"]) == sorted(
+            [str(comment_label.id), str(numeric_label.id)]
+        )
+        comment = Score.objects.get(
+            observation_span=span, label=comment_label, deleted=False
+        )
+        assert comment.value == {"text": "Too short."}
+        score = Score.objects.get(
+            observation_span=span, label=numeric_label, deleted=False
+        )
+        assert score.value == {"value": 7}
+
+    @pytest.mark.parametrize("answer", [10, 9], ids=["maximum", "on-a-step"])
+    def test_a_buttons_label_saves_its_maximum_and_an_answer_on_a_step(
+        self, auth_client, observation_span_factory, buttons_label, answer
+    ):
+        span = observation_span_factory()
+
+        resp = self._post(
+            auth_client,
+            span,
+            [{"label_id": str(buttons_label.id), "value": {"value": answer}}],
+        )
+
+        assert resp.status_code == status.HTTP_200_OK, resp.data
+        result = _result(resp)
+        assert result["success_labels"] == [str(buttons_label.id)]
+        assert result["failed_reasons"] == {}
+        score = Score.objects.get(
+            observation_span=span, label=buttons_label, deleted=False
+        )
+        assert score.value == {"value": answer}
+
+    def test_a_buttons_label_refuses_an_answer_between_its_steps(
+        self, auth_client, observation_span_factory, buttons_label
+    ):
+        span = observation_span_factory()
+
+        resp = self._post(
+            auth_client,
+            span,
+            [{"label_id": str(buttons_label.id), "value": {"value": 4}}],
+        )
+
+        assert resp.status_code == status.HTTP_200_OK, resp.data
+        result = _result(resp)
+        assert result["failed_labels"] == [str(buttons_label.id)]
+        assert result["failed_reasons"] == {
+            str(buttons_label.id): "Enter a multiple of 3."
+        }
+        assert not Score.objects.filter(
+            observation_span=span, label=buttons_label, deleted=False
+        ).exists()
+
+    def test_an_option_value_saves_as_sent(
+        self, auth_client, observation_span_factory, valued_choice_label
+    ):
+        span = observation_span_factory()
+
+        resp = self._post(
+            auth_client,
+            span,
+            [
+                {
+                    "label_id": str(valued_choice_label.id),
+                    "value": {"selected": ["good"]},
+                }
+            ],
+        )
+
+        assert resp.status_code == status.HTTP_200_OK, resp.data
+        result = _result(resp)
+        assert result["success_labels"] == [str(valued_choice_label.id)]
+        assert result["failed_reasons"] == {}
+        score = Score.objects.get(
+            observation_span=span, label=valued_choice_label, deleted=False
+        )
+        assert score.value == {"selected": ["good"]}
+
+    def test_a_legacy_choice_label_saves_a_valid_answer_with_the_others(
+        self,
+        auth_client,
+        observation_span_factory,
+        numeric_label,
+        legacy_choice_label,
+    ):
+        span = observation_span_factory()
+
+        resp = self._post(
+            auth_client,
+            span,
+            [
+                {
+                    "label_id": str(legacy_choice_label.id),
+                    "value": {"selected": ["Bad"]},
+                },
+                {"label_id": str(numeric_label.id), "value": {"value": 7}},
+            ],
+        )
+
+        assert resp.status_code == status.HTTP_200_OK, resp.data
+        result = _result(resp)
+        assert result["failed_reasons"] == {}
+        assert result["success_labels"] == [
+            str(legacy_choice_label.id),
+            str(numeric_label.id),
+        ]
+        choice = Score.objects.get(
+            observation_span=span, label=legacy_choice_label, deleted=False
+        )
+        assert choice.value == {"selected": ["Bad"]}
+        score = Score.objects.get(
+            observation_span=span, label=numeric_label, deleted=False
+        )
+        assert score.value == {"value": 7}
+
+    def test_a_legacy_choice_label_refuses_an_answer_it_does_not_offer(
+        self, auth_client, observation_span_factory, legacy_choice_label
+    ):
+        span = observation_span_factory()
+
+        resp = self._post(
+            auth_client,
+            span,
+            [
+                {
+                    "label_id": str(legacy_choice_label.id),
+                    "value": {"selected": ["Ugly"]},
+                }
+            ],
+        )
+
+        assert resp.status_code == status.HTTP_200_OK, resp.data
+        result = _result(resp)
+        reason = "Invalid categorical values: Ugly. Allowed options: Good, Bad"
+        assert result["failed_labels"] == [str(legacy_choice_label.id)]
+        assert result["failed_reasons"] == {str(legacy_choice_label.id): reason}
+        assert not Score.objects.filter(
+            observation_span=span, label=legacy_choice_label, deleted=False
+        ).exists()
+
+    def test_a_refused_label_adds_no_item_to_its_default_queue(
+        self,
+        auth_client,
+        observation_span_factory,
+        organization,
+        workspace,
+        project,
+        comment_label,
+    ):
+        span = observation_span_factory()
+        default_queue = AnnotationQueue.objects.create(
+            name="Default E2E",
+            organization=organization,
+            workspace=workspace,
+            project=project,
+            status=AnnotationQueueStatusChoices.ACTIVE.value,
+            is_default=True,
+        )
+        AnnotationQueueLabel.objects.create(
+            queue=default_queue, label=comment_label, required=False, order=0
+        )
+        review_queue = AnnotationQueue.objects.create(
+            name="Review E2E",
+            organization=organization,
+            workspace=workspace,
+            status=AnnotationQueueStatusChoices.ACTIVE.value,
+        )
+        item = QueueItem.objects.create(
+            queue=review_queue,
+            source_type=QueueItemSourceType.OBSERVATION_SPAN.value,
+            observation_span=span,
+            organization=organization,
+            workspace=workspace,
+            status=QueueItemStatus.PENDING.value,
+        )
+        default_items = QueueItem.objects.filter(
+            queue=default_queue, observation_span=span, deleted=False
+        )
+
+        refused = self._post(
+            auth_client,
+            span,
+            [{"label_id": str(comment_label.id), "value": {"text": "Too short."}}],
+            queue_item_id=str(item.id),
+        )
+
+        assert refused.status_code == status.HTTP_200_OK, refused.data
+        assert _result(refused)["failed_labels"] == [str(comment_label.id)]
+        assert not default_items.exists()
+
+        saved = self._post(
+            auth_client,
+            span,
+            [{"label_id": str(comment_label.id), "value": {"text": "x" * 50}}],
+            queue_item_id=str(item.id),
+        )
+
+        assert saved.status_code == status.HTTP_200_OK, saved.data
+        assert _result(saved)["success_labels"] == [str(comment_label.id)]
+        assert default_items.exists()
+
+
 @pytest.mark.django_db
 @pytest.mark.integration
 class TestScoreSideEffectIsolation:

@@ -30,6 +30,7 @@ import { useSelectedNode } from "./useSelectedNode";
 import { enqueueSnackbar } from "notistack";
 import AddDataset from "./addToDataset/add-dataset";
 import AnnotateDrawer from "./AnnotateDrawer";
+import { partialSaveMessage } from "./partialSaveMessage";
 import { TraceDetailContext } from "./TraceDetailContext";
 import AddAnnotationsDrawer from "./add-annotations-drawer";
 import AnnotationSidebarContent from "./AnnotationSidebarContent";
@@ -41,6 +42,7 @@ import { useTraceErrorAnalysis } from "./common";
 import ErrorAnalysis from "./ErrorAnalysis";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import { useUrlState } from "src/routes/hooks/use-url-state";
+import FindBar from "src/sections/common/Find/FindBar";
 
 const columnOptions = [
   { key: "latency", label: "Latency", visible: true },
@@ -92,14 +94,43 @@ const TraceDetailDrawerChild = ({
     staleTime: 1 * 60 * 1000,
   });
 
+  // The server's reason for each label it did not save, by label id; shown
+  // under that label's field in the annotate drawer.
+  const [failedReasons, setFailedReasons] = useState(null);
+
   const { mutate: addAnnotationValues } = useMutation({
     mutationFn: (data) =>
       axios.post(endpoints.project.addAnnotationValuesForSpan(), data),
-    onSuccess: () => {
-      enqueueSnackbar(`Annotations has been added.`, {
-        variant: "success",
-      });
-      setAnnotateRunDrawerOpen(false);
+    onSuccess: (response) => {
+      const result = response?.data?.result;
+      const failedLabels = result?.failed_labels ?? [];
+      if (failedLabels.length > 0) {
+        // Some labels did not save: the annotate drawer stays open with what
+        // was entered, so they can be fixed and sent again.
+        const drawerLabels =
+          queryClient
+            .getQueryData([
+              "project-annotations-labels-paginated",
+              projectIdToUse,
+            ])
+            ?.pages?.flatMap((page) => page?.data?.results ?? []) ?? [];
+        const savedLabels = result?.success_labels ?? [];
+        // None saved is an error; some saved is a warning.
+        enqueueSnackbar(
+          partialSaveMessage({
+            savedLabels,
+            failedLabels,
+            labels: [...drawerLabels, ...(projectLabels ?? [])],
+          }),
+          { variant: savedLabels.length === 0 ? "error" : "warning" },
+        );
+        setFailedReasons({ ...(result?.failed_reasons ?? {}) });
+      } else {
+        enqueueSnackbar(`Annotations has been added.`, {
+          variant: "success",
+        });
+        setAnnotateRunDrawerOpen(false);
+      }
       queryClient.invalidateQueries({
         queryKey: ["span-annotation", selectedNode?.id],
       });
@@ -151,6 +182,7 @@ const TraceDetailDrawerChild = ({
   const onAnnotateSubmit = (data) => {
     const { notes, ...rest } = data;
 
+    setFailedReasons(null);
     //@ts-ignore
     addAnnotationValues({
       observation_span_id: selectedNode?.id,
@@ -760,12 +792,16 @@ const TraceDetailDrawerChild = ({
         </Grid>
         <AnnotateDrawer
           open={Boolean(annotateRunDrawerOpen)}
-          onClose={() => setAnnotateRunDrawerOpen(null)}
+          onClose={() => {
+            setAnnotateRunDrawerOpen(null);
+            setFailedReasons(null);
+          }}
           observationName={annotateRunDrawerOpen?.spanName}
           observationType={annotateRunDrawerOpen?.observation_type}
           runName=""
           onSubmit={onAnnotateSubmit}
           projectId={projectId || observeId}
+          failedReasons={failedReasons}
         />
 
         {/* Annotation sidebar drawer */}
@@ -899,6 +935,7 @@ const TraceDetailDrawer = ({
           <Iconify icon="solar:close-linear" />
         </IconButton>
       </Box>
+      <FindBar scope=".MuiDrawer-paper" label="Find in this trace" />
       {traceData && (
         <TraceDetailDrawerChild
           traceData={traceData}

@@ -1,6 +1,10 @@
+import { useCallback, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { enqueueSnackbar } from "notistack";
 import axios, { endpoints } from "src/utils/axios";
 import { serializeFilterListForApi } from "src/api/contracts/filter-contract";
+import { useSafeAuthContext } from "src/auth/hooks/use-auth-context";
+import { getRequestErrorMessage } from "src/utils/errorUtils";
 
 export const SAVED_VIEWS_KEY = "saved-views";
 
@@ -93,25 +97,51 @@ export const buildUpdateSavedViewPayload = (data) => {
 export const getOwnViewNames = (views, currentUserId) =>
   (views ?? [])
     .filter(
-      (v) => currentUserId && String(v.created_by?.id) === String(currentUserId),
+      (v) =>
+        currentUserId && String(v.created_by?.id) === String(currentUserId),
     )
     .map((v) => v.name);
 
 export const DEFAULT_VIEW_NAME = "Default View";
+
+// Each tab type's shared default has its own name. A user's project view
+// names are unique across every tab type (the backend's
+// (project, created_by, name) rule), so one name for all of them made a
+// second tab type's default fail with "already exists", as spans did after
+// traces. Traces keeps the original name.
+const DEFAULT_VIEW_NAMES = {
+  traces: DEFAULT_VIEW_NAME,
+  spans: "Default spans view",
+  sessions: "Default sessions view",
+  users: "Default users view",
+};
+
+export const defaultViewNameFor = (tabType) =>
+  DEFAULT_VIEW_NAMES[tabType] ?? DEFAULT_VIEW_NAME;
+
+// "Share with project" toasts. The view becomes a project tab every member
+// can open; nothing loads it for them, so the words never say "default".
+export const sharedWithProjectMessage = (name) =>
+  name ? `Shared with the project as ${name}` : "Shared with the project";
+
+export const SHARE_WITH_PROJECT_FAILED =
+  "Failed to share the view with the project";
 
 // UI tab strings ("trace"/"spans") → backend tab_type ("traces"/"spans").
 export const tabTypeForSelectedTab = (selectedTab) =>
   selectedTab === "spans" ? "spans" : "traces";
 
 // The current user's own default view for a tab_type, or null. Scoped to
-// created_by so "Set default" never adopts (and overwrites) a teammate's shared
-// view, and to tab_type so a spans click can't PATCH the traces default with
-// spans-shaped config. The name stays "Default View" across tab_types (matching
-// existing data) — per-tab defaults would need an is_default flag + migration.
+// created_by so "Share with project" never adopts (and overwrites) a
+// teammate's shared view, and to tab_type so a spans click can't PATCH the
+// traces default with spans-shaped config. It matches the tab type's own name
+// (defaultViewNameFor); spans also adopts a legacy "Default View" row saved
+// before spans had a name of its own.
 export const findOwnDefaultView = (views, { tabType, userId }) =>
   (views ?? []).find(
     (v) =>
-      v?.name === DEFAULT_VIEW_NAME &&
+      (v?.name === defaultViewNameFor(tabType) ||
+        (tabType === "spans" && v?.name === DEFAULT_VIEW_NAME)) &&
       v?.tab_type === tabType &&
       userId != null &&
       String(v?.created_by?.id) === String(userId),
@@ -158,9 +188,32 @@ const reorderCustomViewsInCache = (currentResult, order) => {
 // Queries
 // ---------------------------------------------------------------------------
 
-export const useGetSavedViews = (projectId) => {
+// Several components watch one saved-views read (the tab bar, the view
+// dialog, the tracing view), and the app-wide toast (utils/queryErrorHandler)
+// reads meta.errorHandled from whichever of them rendered last. This getter
+// answers when the read fails, for all of them: true when a watcher's
+// `showsFailure` says that component shows the failure on screen.
+// project-detail.js keeps its own copy, because tests mock either file on
+// its own.
+const sharedReadMeta = (queryClient, queryKey, showsFailure) => ({
+  showsFailure,
+  get errorHandled() {
+    const query = queryClient.getQueryCache().find({ queryKey });
+    return Boolean(
+      query?.observers.some((observer) =>
+        observer.options.meta?.showsFailure?.(query.state.error, query),
+      ),
+    );
+  },
+});
+
+// `showsFailure(error, query)`: true when the caller shows this failed read
+// on screen itself, so it is not toasted as well.
+export const useGetSavedViews = (projectId, { showsFailure } = {}) => {
+  const queryClient = useQueryClient();
+  const queryKey = [SAVED_VIEWS_KEY, projectId];
   return useQuery({
-    queryKey: [SAVED_VIEWS_KEY, projectId],
+    queryKey,
     queryFn: async () => {
       const res = await axios.get(endpoints.savedViews.list, {
         params: { project_id: projectId },
@@ -169,6 +222,7 @@ export const useGetSavedViews = (projectId) => {
     },
     staleTime: 60_000,
     enabled: !!projectId,
+    meta: sharedReadMeta(queryClient, queryKey, showsFailure),
   });
 };
 
@@ -359,4 +413,84 @@ export const useReorderSavedViews = (projectId) => {
       });
     },
   });
+};
+
+// "Share with project": shares the view with the project as its tab type's
+// default view, a project-visible saved view every member sees as a tab.
+// On a saved-view tab that view becomes project-visible with the current
+// config; otherwise the user's own default for the tab type is updated, or a
+// new one is created. The returned function takes:
+//   tabType      backend tab_type: "traces", "spans", "sessions" or "users"
+//   config       the view's current saved-view config
+//   activeViewId the open saved view's id, or null on a fixed tab
+//   onSaved      optional (savedView, { created }) after a success
+// A click is ignored while a share is in flight (a second create would fail
+// with "already exists" after the first succeeds), and on a fixed tab until
+// the saved views and the user have loaded, since create vs update depends
+// on them.
+export const useSetProjectDefaultView = (projectId) => {
+  const { user } = useSafeAuthContext();
+  const { data: savedViewsData } = useGetSavedViews(projectId);
+  const { mutate: createSavedView } = useCreateSavedView(projectId);
+  const { mutate: updateSavedView } = useUpdateSavedView(projectId);
+  const pendingRef = useRef(false);
+  const userId = user?.id;
+
+  return useCallback(
+    ({ tabType, config, activeViewId, onSaved }) => {
+      if (pendingRef.current) return;
+      if (!activeViewId && (!savedViewsData || userId == null)) return;
+      pendingRef.current = true;
+
+      const onSettled = () => {
+        pendingRef.current = false;
+      };
+      const onError = (err) =>
+        enqueueSnackbar(
+          getRequestErrorMessage(err, SHARE_WITH_PROJECT_FAILED),
+          { variant: "error" },
+        );
+      const onSuccess = (created) => (response) => {
+        const view = response?.data?.result;
+        enqueueSnackbar(sharedWithProjectMessage(view?.name), {
+          variant: "success",
+        });
+        onSaved?.(view, { created });
+      };
+
+      const name = defaultViewNameFor(tabType);
+      const ownDefault = findOwnDefaultView(savedViewsData?.custom_views, {
+        tabType,
+        userId,
+      });
+      if (activeViewId || ownDefault) {
+        const update = {
+          id: activeViewId || ownDefault.id,
+          visibility: "project",
+          config,
+        };
+        // A legacy spans default still named "Default View" takes its own
+        // name, which frees "Default View" for the Traces default (a
+        // person's view names are unique across tab types).
+        if (!activeViewId && ownDefault.name !== name) update.name = name;
+        updateSavedView(update, {
+          onSuccess: onSuccess(false),
+          onError,
+          onSettled,
+        });
+        return;
+      }
+      createSavedView(
+        {
+          project_id: projectId,
+          name,
+          tab_type: tabType,
+          visibility: "project",
+          config,
+        },
+        { onSuccess: onSuccess(true), onError, onSettled },
+      );
+    },
+    [projectId, userId, savedViewsData, createSavedView, updateSavedView],
+  );
 };

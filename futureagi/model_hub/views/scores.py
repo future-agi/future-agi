@@ -1,48 +1,68 @@
 import uuid
+from datetime import timedelta
+from decimal import Decimal, InvalidOperation
 
 import structlog
-from django.db import transaction
+from django.core import signing
+from django.core.exceptions import ValidationError
+from django.db import IntegrityError, transaction
 from django.db.models import Q
+from django.urls import reverse
 from django.utils import timezone
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
+from model_hub.constants import ANNOTATION_LABEL_VALUE_KEYS
 from model_hub.models.annotation_queues import QueueItem
-from model_hub.models.choices import QueueItemStatus
+from model_hub.models.choices import AnnotationTypeChoices, QueueItemStatus, ScoreSource
 from model_hub.models.develop_annotations import AnnotationsLabels
 from model_hub.models.score import SCORE_SOURCE_FK_MAP, Score
 from model_hub.serializers.scores import (
     BulkCreateScoresResponseSerializer,
     BulkCreateScoresSerializer,
     CreateScoreSerializer,
+    FeedbackAcceptedResponseSerializer,
+    FeedbackTokenResponseSerializer,
+    FeedbackTokenSerializer,
     ScoreDeleteResponseSerializer,
     ScoreForSourceQuerySerializer,
     ScoreForSourceResponseSerializer,
     ScoreListQuerySerializer,
     ScoreResponseSerializer,
     ScoreSerializer,
+    SubmitFeedbackSerializer,
     UpdateScoreSerializer,
 )
 from model_hub.utils.annotation_queue_helpers import (
+    _tenant_scoped_project_ids,
+    annotation_answer_unchanged,
     pinned_source_project_ids,
+    queue_item_notes_in_their_own_organization,
     resolve_default_queue_item_for_source,
     resolve_source_object,
+    scores_in_their_own_organization,
     source_project,
     tracer_project_id_for_source,
 )
 from tfc.constants.roles import OrganizationRoles
+from tfc.middleware.workspace_context import workspace_context
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_errors import ApiErrorCode
 from tfc.utils.api_serializers import ApiTextErrorResponseSerializer
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
-from tracer.models.span_notes import SpanNotes
+from tracer.models.span_notes import SpanNotes, span_notes_readable_in
+from tracer.utils.annotation_validation import validate_annotation_value
 
 logger = structlog.get_logger(__name__)
+
+FEEDBACK_TOKEN_SALT = "model_hub.scores.end_user_feedback.v1"
+FEEDBACK_TOKEN_MAX_AGE = 7 * 24 * 60 * 60
+FEEDBACK_TOKEN_ERROR = "Invalid or expired feedback token."
 
 ERROR_RESPONSES = {
     400: ApiTextErrorResponseSerializer,
@@ -67,6 +87,98 @@ def _span_source_trace_id(source_type, source_obj):
         return str(uuid.UUID(str(tid)))
     except (ValueError, TypeError, AttributeError):
         return None
+
+
+def _is_label_maximum(answer, label_settings):
+    """Whether a numeric *answer* is its label's maximum, compared as decimals
+    so that 10 and 10.0 match."""
+    try:
+        return Decimal(str(answer)) == Decimal(str(label_settings.get("max")))
+    except (InvalidOperation, TypeError, ValueError):
+        return False
+
+
+def _categorical_options(options):
+    """The labels a choice label offers, and the label each option value
+    stands for.
+
+    A plain string is its own label, and an entry that is neither a string
+    nor a dict with a ``label`` is skipped, so stored options of any shape
+    never raise. The queue takes a label-less entry's ``value``; here that
+    entry offers nothing.
+    """
+    labels = []
+    label_for_value = {}
+    if not isinstance(options, list):
+        options = []
+    for option in options:
+        if isinstance(option, str):
+            labels.append(option)
+        elif isinstance(option, dict) and option.get("label") is not None:
+            text = str(option["label"])
+            labels.append(text)
+            if option.get("value") is not None:
+                label_for_value.setdefault(str(option["value"]), text)
+    return labels, label_for_value
+
+
+def _label_settings_refusal(label, value):
+    """Why *value* breaks *label*'s settings, in the shared validator's words.
+
+    Returns ``None`` when it fits. Answers come as the drawers keep them
+    (``{"text": ...}``, ``{"value": n}``, ``{"rating": n}``,
+    ``{"selected": [...]}``, ``{"value": "up"}``) or bare, and are read the
+    way the trace's add_annotations reads a bare answer. A cleared answer
+    (empty, or no stars) is not checked.
+
+    The answers the queue accepts pass here too: a numeric label's maximum
+    even when it falls between steps, and a choice given by an option's
+    value. The answer is stored as sent; only the check reads it this way.
+    """
+    answer = value
+    key = ANNOTATION_LABEL_VALUE_KEYS.get(label.type)
+    if isinstance(value, dict) and key in value:
+        answer = value[key]
+    if answer is None or answer in ("", []):
+        return None
+    if label.type == AnnotationTypeChoices.STAR.value and answer == 0:
+        return None
+
+    label_settings = label.settings if isinstance(label.settings, dict) else {}
+    fields = {}
+    if label.type == AnnotationTypeChoices.TEXT.value:
+        fields["value"] = str(answer)
+    elif label.type in (
+        AnnotationTypeChoices.NUMERIC.value,
+        AnnotationTypeChoices.STAR.value,
+    ):
+        fields["value_float"] = answer
+        is_numeric = label.type == AnnotationTypeChoices.NUMERIC.value
+        if is_numeric and _is_label_maximum(answer, label_settings):
+            # The range still applies; only the step check is left out.
+            label_settings = dict(label_settings)
+            label_settings.pop("step_size", None)
+    elif label.type == AnnotationTypeChoices.THUMBS_UP_DOWN.value:
+        if isinstance(answer, bool):
+            fields["value_bool"] = answer
+        elif isinstance(answer, str):
+            fields["value_bool"] = answer.lower() in ("up", "true", "1")
+    elif label.type == AnnotationTypeChoices.CATEGORICAL.value:
+        if isinstance(answer, str):
+            answer = [part.strip() for part in answer.split(",")]
+        if isinstance(answer, list):
+            labels, label_for_value = _categorical_options(
+                label_settings.get("options")
+            )
+            selected = [str(item) for item in answer]
+            fields["value_str_list"] = [
+                entry if entry in labels else label_for_value.get(entry, entry)
+                for entry in selected
+            ]
+            if "options" in label_settings:
+                readable = [{"label": text} for text in labels]
+                label_settings = {**label_settings, "options": readable}
+    return validate_annotation_value(label.type, label_settings, **fields)
 
 
 def _resolve_queue_item(queue_item_id, source_type, source_obj, organization, user):
@@ -240,6 +352,9 @@ def _auto_create_queue_items_for_default_queues(
     that belongs to the queue's scope (project, dataset, or agent_definition).
     This enables lazy queue item creation — labels show up for all sources in
     the scope, but queue items are only created when someone actually annotates.
+
+    With an *organization*, only that organization's default queues gain an
+    item. An item made here records its queue's project.
     """
     from model_hub.models.annotation_queues import (
         SOURCE_TYPE_FK_MAP,
@@ -297,9 +412,17 @@ def _auto_create_queue_items_for_default_queues(
     if not scope_q:
         return
 
+    # With an organization given, only its own default queues: a default queue
+    # of another organization over the same scope gains no item.
+    in_organization = Q()
+    if organization is not None:
+        organization_id = getattr(organization, "pk", organization)
+        in_organization = Q(organization_id=organization_id)
+
     # Find default queues for this scope that include any of these labels
     default_queues = AnnotationQueue.objects.filter(
         scope_q,
+        in_organization,
         is_default=True,
         deleted=False,
         status=AnnotationQueueStatusChoices.ACTIVE.value,
@@ -316,6 +439,10 @@ def _auto_create_queue_items_for_default_queues(
             defaults={
                 "organization": queue.organization,
                 "workspace": queue.workspace,
+                # A tracer default queue is over the source's project; the
+                # item records it, as resolve_default_queue_item_for_source
+                # does. Other default queues have no project.
+                "project_id": queue.project_id,
                 "status": QueueItemStatus.PENDING.value,
             },
         )
@@ -346,10 +473,193 @@ class ScoreViewSet(viewsets.ModelViewSet):
     pagination_class = ExtendedPageNumberPagination
     _gm = GeneralMethods()
 
-    def get_queryset(self):
-        qs = Score.objects.filter(
-            organization=self.request.organization,
+    @validated_request(
+        request_serializer=FeedbackTokenSerializer,
+        responses={200: FeedbackTokenResponseSerializer, **ERROR_RESPONSES},
+    )
+    @action(detail=False, methods=["post"], url_path="feedback-token")
+    def feedback_token(self, request):
+        """Mint a write-only, single-use capability for a trace/span feedback key.
+
+        Keys reuse an unambiguous project label by name. New keys get a numeric
+        label (ratings/thumbs can be numbers); structured values remain JSON.
+        Neither the API key nor any trace content is included in the token.
+        """
+        data = request.validated_data
+        organization = getattr(request, "organization", None)
+        if organization is None:
+            return self._gm.bad_request("Invalid feedback source or key.")
+        source_type = "observation_span" if data["source_type"] == "span" else "trace"
+        source = resolve_source_object(
+            source_type,
+            data["source_id"],
+            organization=organization,
+            workspace=getattr(request, "workspace", None),
+        )
+        if source is None:
+            return self._gm.bad_request("Invalid feedback source or key.")
+        project = source_project(source, organization)
+        if project is None:
+            return self._gm.bad_request("Invalid feedback source or key.")
+
+        try:
+            with transaction.atomic():
+                # Serialize our key provisioning within the project, avoiding
+                # competing get_or_create/full_clean calls for a brand-new key.
+                type(project).no_workspace_objects.select_for_update().get(
+                    pk=project.pk
+                )
+                labels = list(
+                    AnnotationsLabels.objects.filter(
+                        organization=organization,
+                        project=project,
+                        name=data["key"],
+                        deleted=False,
+                    )[:2]
+                )
+                if len(labels) > 1:
+                    return self._gm.bad_request("Invalid feedback source or key.")
+                label = labels[0] if labels else AnnotationsLabels.objects.create(
+                    name=data["key"],
+                    type=AnnotationTypeChoices.NUMERIC.value,
+                    settings={},
+                    allow_notes=True,
+                    organization=organization,
+                    workspace=project.workspace or getattr(request, "workspace", None),
+                    project=project,
+                )
+                item = _resolve_queue_item(
+                    None, source_type, source, organization, request.user
+                )
+                if item is None or item.project_id != project.pk:
+                    raise ValidationError("No feedback queue for this project.")
+                payload = {
+                    "source_type": source_type,
+                    "source_id": str(getattr(source, "pk", None) or source.id),
+                    "key": data["key"],
+                    "label_id": str(label.pk),
+                    "organization_id": str(organization.pk),
+                    "workspace_id": str(item.workspace_id) if item.workspace_id else None,
+                    "project_id": str(project.pk),
+                    "queue_item_id": str(item.pk),
+                    "score_id": str(uuid.uuid4()),
+                    "expires_in": data["expires_in"],
+                }
+                token = signing.dumps(payload, salt=FEEDBACK_TOKEN_SALT)
+        except (ValidationError, IntegrityError):
+            return self._gm.bad_request("Invalid feedback source or key.")
+        response = self._gm.success_response({
+            "token": token,
+            "url_path": reverse("scores-feedback"),
+            "expires_at": (
+                timezone.now().replace(microsecond=0) + timedelta(seconds=data["expires_in"])
+            ).isoformat(),
+        })
+        response["Cache-Control"] = "no-store"
+        return response
+
+    @validated_request(
+        request_serializer=SubmitFeedbackSerializer,
+        responses={200: FeedbackAcceptedResponseSerializer, **ERROR_RESPONSES},
+    )
+    @action(
+        detail=False,
+        methods=["post"],
+        url_path="feedback",
+        authentication_classes=[],
+        permission_classes=[AllowAny],
+    )
+    def feedback(self, request):
+        """Accept only the signed capability; never return source or score data."""
+        data = request.validated_data
+        try:
+            payload = signing.loads(
+                data["token"], salt=FEEDBACK_TOKEN_SALT, max_age=FEEDBACK_TOKEN_MAX_AGE
+            )
+            # The shorter, per-token lifetime is itself signature-protected.
+            signing.loads(
+                data["token"], salt=FEEDBACK_TOKEN_SALT, max_age=payload["expires_in"]
+            )
+        except (signing.BadSignature, ValueError, TypeError, KeyError):
+            return self._gm.bad_request(FEEDBACK_TOKEN_ERROR)
+
+        source_type = payload["source_type"]
+        fk_field = SCORE_SOURCE_FK_MAP[source_type]
+        item = QueueItem.no_workspace_objects.select_related(
+            "organization", "workspace", "queue"
+        ).filter(
+            pk=payload["queue_item_id"],
+            organization_id=payload["organization_id"],
+            workspace_id=payload["workspace_id"],
+            project_id=payload["project_id"],
+            queue__organization_id=payload["organization_id"],
+            queue__project_id=payload["project_id"],
+            queue__deleted=False,
+            source_type=source_type,
+            **{f"{fk_field}_id": payload["source_id"]},
             deleted=False,
+        ).first()
+        label = AnnotationsLabels.no_workspace_objects.filter(
+            pk=payload["label_id"],
+            name=payload["key"],
+            organization_id=payload["organization_id"],
+            project_id=payload["project_id"],
+            deleted=False,
+        ).first()
+        if item is None or label is None:
+            return self._gm.bad_request(FEEDBACK_TOKEN_ERROR)
+
+        # Scope all resolver/model hooks to the capability, not browser headers,
+        # cookies or an ambient authenticated workspace.
+        with workspace_context(item.workspace, organization=item.organization):
+            source = resolve_source_object(
+                source_type,
+                payload["source_id"],
+                organization=item.organization,
+                workspace=item.workspace,
+                project_id=payload["project_id"],
+            )
+            if source is None or str(source.project_id) != payload["project_id"]:
+                return self._gm.bad_request(FEEDBACK_TOKEN_ERROR)
+            if "score" in data and "value" in data:
+                value = {"score": data["score"], "value": data["value"]}
+            else:
+                value = data.get("value", data.get("score"))
+                if not isinstance(value, dict):
+                    value = {"value": value}
+            trace_id = _span_source_trace_id(source_type, source)
+            try:
+                with transaction.atomic():
+                    # A token's random Score PK makes retries single-use, even
+                    # concurrently or after soft deletion. Different tokens can
+                    # collect independent anonymous feedback on the same key.
+                    Score.no_workspace_objects.create(
+                        id=payload["score_id"],
+                        source_type=source_type,
+                        **{f"{fk_field}_id": payload["source_id"]},
+                        **({"trace_id": trace_id} if trace_id else {}),
+                        label=label,
+                        queue_item=item,
+                        annotator=None,
+                        score_source=ScoreSource.END_USER.value,
+                        value=value,
+                        notes=data.get("comment", ""),
+                        organization=item.organization,
+                        workspace=item.workspace,
+                        tracer_project_id=payload["project_id"],
+                    )
+            except IntegrityError:
+                return self._gm.bad_request(FEEDBACK_TOKEN_ERROR)
+        return self._gm.success_response({"accepted": True})
+
+    def get_queryset(self):
+        # A score filed here over another organization's source is not listed,
+        # fetched or changed here (scores_in_their_own_organization).
+        qs = scores_in_their_own_organization(
+            Score.objects.filter(
+                organization=self.request.organization,
+                deleted=False,
+            )
         ).select_related("label", "annotator", "queue_item__queue")
 
         query_params = getattr(self, "_validated_score_list_query", {})
@@ -587,6 +897,12 @@ class ScoreViewSet(viewsets.ModelViewSet):
 
         created_scores = []
         errors = []
+        # Which labels saved and which did not, with the validator's reason for
+        # each label whose value its settings refuse, under the label's id: the
+        # answer the trace's add_annotations gives.
+        success_labels = []
+        failed_labels = []
+        failed_reasons = {}
         source_trace_id = _span_source_trace_id(source_type, source_obj)
         # SpanNotes.span (db_constraint=False FK) rejects a CHSpan object on assignment;
         # write the id form so collector-only spans work.
@@ -598,6 +914,19 @@ class ScoreViewSet(viewsets.ModelViewSet):
         )
 
         with transaction.atomic():
+            # This annotator's stored answers on this item. An answer left as it
+            # was stored is not checked again: the label's limits may have
+            # changed since it was saved, and it must not block the others.
+            stored_values = dict(
+                Score.no_workspace_objects.filter(
+                    **{f"{fk_field}_id": source_obj.pk},
+                    label_id__in=[s["label_id"] for s in data["scores"]],
+                    annotator_id=request.user.pk,
+                    queue_item=queue_item,
+                    deleted=False,
+                ).values_list("label_id", "value")
+            )
+
             for score_data in data["scores"]:
                 label_id = score_data["label_id"]
                 value = score_data["value"]
@@ -606,7 +935,19 @@ class ScoreViewSet(viewsets.ModelViewSet):
                     label = AnnotationsLabels.objects.get(pk=label_id, deleted=False)
                 except AnnotationsLabels.DoesNotExist:
                     errors.append(f"Label not found: {label_id}")
+                    failed_labels.append(str(label_id))
                     continue
+
+                stored = stored_values.get(label.pk)
+                if stored is None or not annotation_answer_unchanged(
+                    label.type, stored, value
+                ):
+                    reason = _label_settings_refusal(label, value)
+                    if reason:
+                        errors.append(reason)
+                        failed_labels.append(str(label_id))
+                        failed_reasons[str(label_id)] = reason
+                        continue
 
                 # Per-score notes: only saved if the label has allow_notes=True.
                 per_score_notes = (
@@ -641,6 +982,7 @@ class ScoreViewSet(viewsets.ModelViewSet):
                     },
                 )
                 created_scores.append(score)
+                success_labels.append(str(label_id))
 
             # span_notes is None when the field was omitted from the request.
             # For call annotations, labels save on the trace while item notes
@@ -694,11 +1036,11 @@ class ScoreViewSet(viewsets.ModelViewSet):
             # Same rationale as in ``create()``: run side-effects after commit
             # so a failure can't poison the transaction that just wrote the
             # Score rows. Single hooks per side-effect (not N) since both
-            # operate on the source object, not per-score.
-            scored_label_ids = [s["label_id"] for s in data["scores"]]
+            # operate on the source object, not per-score. Only the labels
+            # that saved join their default queues, as in add_annotations.
             transaction.on_commit(
                 lambda: _safe_auto_create_queue_items_for_default_queues(
-                    source_type, source_obj, scored_label_ids, request.organization
+                    source_type, source_obj, success_labels, request.organization
                 )
             )
             transaction.on_commit(
@@ -711,6 +1053,9 @@ class ScoreViewSet(viewsets.ModelViewSet):
             {
                 "scores": ScoreSerializer(created_scores, many=True).data,
                 "errors": errors,
+                "failed_labels": failed_labels,
+                "failed_reasons": failed_reasons,
+                "success_labels": success_labels,
             }
         )
 
@@ -808,14 +1153,17 @@ class ScoreViewSet(viewsets.ModelViewSet):
                 project_filter |= Q(tracer_project_id__isnull=True)
 
         scores = (
-            Score.objects.filter(
-                project_filter,
-                # Pin source_type: span Scores carry a denormalized trace_id (for the
-                # trace-detail rollup), so a trace_id= filter alone would also match them.
-                source_type=source_type,
-                **{f"{fk_field}_id": source_id},
-                organization=request.organization,
-                deleted=False,
+            scores_in_their_own_organization(
+                Score.objects.filter(
+                    project_filter,
+                    # Pin source_type: span Scores carry a denormalized trace_id (for
+                    # the trace-detail rollup), so a trace_id= filter alone would also
+                    # match them.
+                    source_type=source_type,
+                    **{f"{fk_field}_id": source_id},
+                    organization=request.organization,
+                    deleted=False,
+                )
             )
             .select_related("label", "annotator", "queue_item__queue")
             .order_by("label__name", "-created_at")
@@ -857,9 +1205,20 @@ class ScoreViewSet(viewsets.ModelViewSet):
             # FK that's still in PG). Read the lean ``scope_by_ids`` projection
             # (project_id + trace_id only): pulling the full span row here blows
             # the shared ClickHouse memory limit (code 241) on fat voice spans.
+            # Without a pin, read only the requester's own projects: a span id
+            # can be held by another organization's project too, and an
+            # unscoped read keeps one arbitrary copy per id.
+            scope_project_ids = (
+                pinned_project_ids
+                if pinned_project_ids is not None
+                else _tenant_scoped_project_ids(
+                    organization=request.organization,
+                    workspace=getattr(request, "workspace", None),
+                )
+            )
             with get_reader() as reader:
                 span_scope = reader.scope_by_ids(
-                    [str(source_id)], project_ids=pinned_project_ids
+                    [str(source_id)], project_ids=scope_project_ids
                 ).get(str(source_id))
             span_belongs_to_org = False
             trace_id = None
@@ -879,12 +1238,14 @@ class ScoreViewSet(viewsets.ModelViewSet):
 
             queue_notes = (
                 (
-                    QueueItemNote.no_workspace_objects.filter(
-                        queue_note_filter,
-                        organization=request.organization,
-                        queue_item__organization=request.organization,
-                        queue_item__deleted=False,
-                        deleted=False,
+                    queue_item_notes_in_their_own_organization(
+                        QueueItemNote.no_workspace_objects.filter(
+                            queue_note_filter,
+                            organization=request.organization,
+                            queue_item__organization=request.organization,
+                            queue_item__deleted=False,
+                            deleted=False,
+                        )
                     )
                     .select_related(
                         "annotator",
@@ -943,10 +1304,15 @@ class ScoreViewSet(viewsets.ModelViewSet):
             # context until the SpanNotes backfill runs. Gated on the
             # org-scoped span check above so cross-org callers can't read
             # this org's legacy notes. SpanNotes carry no project, so a pinned
-            # read keeps them on every copy.
+            # read keeps them on every copy. They carry no organization either:
+            # only notes written in this organization are listed, since another
+            # organization can hold a span with the same id.
             legacy_notes = (
                 (
-                    SpanNotes.objects.filter(span_id=source_id)
+                    SpanNotes.objects.filter(
+                        span_notes_readable_in(request.organization),
+                        span_id=source_id,
+                    )
                     .exclude(created_by_user_id__in=users_with_queue_notes)
                     .select_related("created_by_user")
                     .order_by("-created_at")

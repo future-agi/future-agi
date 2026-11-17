@@ -17,6 +17,10 @@ This module focuses on:
 - Provider-specific API key configuration
 """
 
+# Pre-existing lint debt, exempted file-wide so a security fix can touch this
+# module behaviour-neutrally (an unused local and typing rewrites).
+# ruff: noqa: F841, UP006, UP035, UP045
+
 import copy
 import json
 from typing import Any, Dict, Optional
@@ -30,8 +34,21 @@ from agentic_eval.core_evals.run_prompt.runprompt_handlers.utils.parameter_valid
     ParametersValidator,
 )
 from model_hub.utils.azure_endpoints import normalize_azure_custom_model_config
+from model_hub.utils.model_endpoints import (
+    refuse_vertex_call_without_a_service_account_key,
+)
 
 logger = structlog.get_logger(__name__)
+
+
+def vertex_credentials_and_location(configuration: Dict[str, Any]):
+    """A customer's stored Vertex configuration (a dict) as a model call
+    takes it: the service-account key without its location, as JSON text,
+    and the location it gives (None when it gives none). The one split for
+    Run Prompt's chat, image and speech calls."""
+    vertex_location = configuration.get("location")
+    creds = {k: v for k, v in configuration.items() if k != "location"}
+    return json.dumps(creds), vertex_location
 
 
 class PayloadBuilder:
@@ -99,6 +116,7 @@ class PayloadBuilder:
         payload = {
             "messages": messages,
             "model": context.model,
+            "seed": context.run_prompt_config.get("seed"),
             "temperature": float(context.temperature)
             if context.temperature is not None
             else None,
@@ -359,9 +377,8 @@ class PayloadBuilder:
 
             elif provider_for_payload.startswith("vertex_ai"):
                 # Vertex AI uses JSON credentials
-                vertex_location = api_key.get("location") if isinstance(api_key, dict) else None
-                creds = {k: v for k, v in api_key.items() if k != "location"} if isinstance(api_key, dict) else api_key
-                payload["vertex_credentials"] = json.dumps(creds)
+                creds, vertex_location = vertex_credentials_and_location(api_key)
+                payload["vertex_credentials"] = creds
                 if vertex_location:
                     payload["vertex_location"] = vertex_location
 
@@ -373,3 +390,12 @@ class PayloadBuilder:
             if provider != "openai":
                 payload["custom_llm_provider"] = provider
             payload["api_key"] = api_key
+
+        # A customer's Vertex model is not called with a key alone, no
+        # configuration, or one that gives nothing but its location. Every
+        # handler sends this payload through the shared entry points, which
+        # send a model that runs on the organization's Future AGI credits to
+        # the gateway's managed route: such a payload is not refused.
+        refuse_vertex_call_without_a_service_account_key(
+            provider, payload, managed_route=True
+        )

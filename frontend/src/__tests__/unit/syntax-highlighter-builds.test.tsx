@@ -9,6 +9,7 @@ import MetricEmptyState from "src/sections/workbench/createPrompt/Metrics/Metric
 
 const mocks = vi.hoisted(() => ({
   copy: vi.fn(),
+  copyText: vi.fn(async () => true),
   snackbar: vi.fn(),
   snippets: {
     python: 'message = f"Hello {name}"\nprint(message)',
@@ -19,6 +20,11 @@ const mocks = vi.hoisted(() => ({
 vi.mock("src/utils/utils", () => ({
   copyToClipboard: mocks.copy,
   camelCaseToTitleCase: (value: string) => value,
+}));
+// Setup snippets copy through the code panels' helper, which also works on a
+// plain-http self-hosted stack; it resolves true once the text is copied.
+vi.mock("src/sections/omega/code/clipboard", () => ({
+  copyText: mocks.copyText,
 }));
 vi.mock("src/components/snackbar", () => ({
   enqueueSnackbar: mocks.snackbar,
@@ -122,16 +128,22 @@ describe("light syntax highlighter builds", () => {
       expect(container.querySelector("pre code")).toHaveTextContent(
         text.replace(/\s+/g, " "),
       );
+      // Long lines wrap inside the box and keep their indentation.
       expect(container.querySelector("pre")).toHaveStyle({
         fontSize: "12px",
-        whiteSpace: "pre",
+        whiteSpace: "pre-wrap",
         overflowX: "auto",
       });
-      fireEvent.click(screen.getByRole("button"));
-      expect(mocks.copy).toHaveBeenCalledWith(text);
-      expect(mocks.snackbar).toHaveBeenCalledWith("Copied to clipboard", {
-        variant: "success",
-      });
+      fireEvent.click(screen.getByRole("button", { name: "Copy code" }));
+      await vi.waitFor(() =>
+        expect(mocks.snackbar).toHaveBeenCalledWith("Copied to clipboard", {
+          variant: "success",
+        }),
+      );
+      expect(mocks.copyText).toHaveBeenCalledWith(
+        text,
+        expect.any(HTMLElement),
+      );
       expect(onCopy).toHaveBeenCalledOnce();
     },
   );

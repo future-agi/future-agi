@@ -1,46 +1,141 @@
+import re
+
 from model_hub.models.metric import Metric
+from model_hub.models.optimize_dataset import OptimizeDataset
 from model_hub.utils.constant import journey_operator_map
 from tfc.utils.clickhouse import ClickHouseClientSingleton
 from tfc.utils.functions import add_one_day_in_date
-from tfc.utils.types import Environments
+
+_WHOLE_NUMBER = re.compile(r"\s*[+-]?\d+\s*")
+
+
+def event_filters(org_id, model_id, dataset, start_date, end_date, filter_end_date):
+    """The model, organisation, dataset and date filters of a Performance read.
+
+    Returns the filter text and the parameters it names. Each value travels as
+    a parameter the driver quotes. The environment is the events number the
+    shared helper gives for a name or the number "1" to "4", or None, which
+    matches no event.
+    """
+    params = {
+        "model_id": str(model_id),
+        "org_id": str(org_id),
+        "version": str(dataset["version"]),
+        "environment": OptimizeDataset.EnvTypes.events_number(dataset["environment"]),
+        "start_date": str(start_date),
+        "end_date": str(end_date),
+        "filter_end_date": str(filter_end_date),
+    }
+    prep_filters = [
+        " AIModel = %(model_id)s ",
+        " OrgID = %(org_id)s ",
+        " ModelVersion = %(version)s ",
+        " Environment = %(environment)s ",
+        " EventDateTime BETWEEN %(start_date)s AND %(filter_end_date)s ",
+        " deleted = 0 ",
+    ]
+    return prep_filters, params
+
+
+def value_list(values):
+    """A filter's values as a list of text and numbers for the driver to quote."""
+    if not isinstance(values, list) or any(
+        isinstance(item, bool) or not isinstance(item, str | int | float)
+        for item in values
+    ):
+        raise ValueError("Filter values must be a list of text or numbers.")
+    return values
+
+
+def number_value(value):
+    """A number filter's value as an int or a float.
+
+    The Performance page sends the number as text and an API caller may send a
+    JSON number; both read as the same number. Anything else is refused.
+    """
+    if isinstance(value, str):
+        value = int(value) if _WHOLE_NUMBER.fullmatch(value) else float(value)
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise ValueError("A number filter value must be a number.")
+    return value
+
+
+def _filter_condition(index, request_filter, metric_id, params):
+    """The condition text for one request filter, or "" when it has no value.
+
+    The filter's key, values and metric key join params; the operator maps
+    through the fixed operator table.
+    """
+    filter_type = request_filter["type"]
+    values = request_filter["values"]
+    operator = journey_operator_map[request_filter["operator"]]
+    name = f"filter_{index}"
+
+    if filter_type == "property":
+        params[f"{name}_key"] = str(request_filter["key"])
+        if request_filter["datatype"] == "string":
+            params[f"{name}_values"] = value_list(values)
+            return (
+                f"arrayElement(Features.Value, indexOf(Features.Key, 'conversation_id')) \
+                IN (SELECT DISTINCT arrayElement(Features.Value, indexOf(Features.Key, 'conversation_id')) \
+                AS conv_id FROM events WHERE hasAll(splitByString(';',arrayElement(EvalResults.Value, \
+                indexOf(EvalResults.Key, %({name}_key)s))),%({name}_values)s) \
+                AND NOT has(Features.Key, 'node_id') AND deleted = 0)"
+            )
+        params[f"{name}_value"] = number_value(values[0])
+        return f"toFloat32(arrayElement(EvalResults.Value, indexOf(EvalResults.Key, %({name}_key)s))) {operator} %({name}_value)s"
+
+    if filter_type == "performanceMetric":
+        if values[0] == "":
+            return ""
+        values[0] = str(float(values[0]) / 10)
+        params[f"{name}_score_key"] = f"metric_{request_filter['key_id']}_score"
+        params[f"{name}_value"] = float(values[0])
+        metric_value = f"arrayElement(EvalResults.Value, indexOf(EvalResults.Key, %({name}_score_key)s))"
+        return f"if(isNotNull({metric_value}) AND {metric_value} != '', toFloat32({metric_value}), 0) {operator} %({name}_value)s"
+
+    if filter_type == "performanceTag":
+        params["metric_tags_key"] = f"metric_{metric_id}_tags"
+        params[f"{name}_values"] = value_list(values)
+        return f"hasAll(splitByString(';',arrayElement(EvalResults.Value, indexOf(EvalResults.Key, %(metric_tags_key)s))),%({name}_values)s)"
+
+    return ""
 
 
 def calculate_performance(
     org_id, model_id, dataset, metric, filters, positive_class=None, k=None
 ):
-    version = dataset["version"]
-    environment = Environments.convert_to_type(dataset["environment"])
     start_date = dataset["start_date"]
     end_date = add_one_day_in_date(dataset["end_date"])
-    agg_by = dataset["agg_by"]
     tags = dataset["tags"] if "tags" in dataset else []
 
-    prep_filters = [
-        f" AIModel = '{model_id}' ",
-        f" OrgID = '{org_id}' ",
-        f" ModelVersion = '{version}' ",
-        f" Environment = {environment} ",
-        f" EventDateTime BETWEEN '{start_date}' AND '{end_date}' ",
-        " deleted = 0 ",
-    ]
+    prep_filters, params = event_filters(
+        org_id, model_id, dataset, start_date, end_date, end_date
+    )
+    params["agg_by"] = str(dataset["agg_by"])
+    params["metric_score_key"] = f"metric_{metric.id}_score"
 
     additional_select = []
 
     if len(tags) > 0:
+        params["metric_tags_key"] = f"metric_{metric.id}_tags"
+        params["tags"] = value_list(tags)
         prep_filters.append(
-            f" hasAll(splitByString(';', EvalResults.Value[indexOf(EvalResults.Key, 'metric_{metric.id}_tags')]), {tags}) "
+            " hasAll(splitByString(';', EvalResults.Value[indexOf(EvalResults.Key, %(metric_tags_key)s)]), %(tags)s) "
         )
 
     for filter_index, filter in enumerate(filters):
         # filter_type = filter["type"]
         # property = filter["property"]
         comparison = get_comparison_sign(filter["comparison"])
-        dataset_to_filter_version = filter["dataset"]["version"]
         # dataset_to_filter_environment = filter["dataset"]["environment"]
         filter_vals = filter["values"]
         conversion_function = get_conversion_function(filter["dataType"])
+        if comparison is None or conversion_function is None:
+            raise ValueError("Unknown filter comparison or data type.")
 
         feat_name = f"filter_{filter_index}"
+        params[f"{feat_name}_version"] = str(filter["dataset"]["version"])
 
         # db_nested_prop = ""
         # if filter_type == "feature":
@@ -61,18 +156,20 @@ def calculate_performance(
 
         query_arr = []
 
-        for filter_val in filter_vals:
+        for value_index, filter_val in enumerate(filter_vals):
+            placeholder = f"{feat_name}_value_{value_index}"
+            params[placeholder] = str(filter_val)
             query_arr.append(
-                f" {feat_name} {comparison} {conversion_function}('{filter_val}') "
+                f" {feat_name} {comparison} {conversion_function}(%({placeholder})s) "
             )
 
         query = " OR ".join(query_arr)
         query = f"""(
             ({query}) AND (
-                AIModel = '{model_id}',
-                OrgID = '{org_id}',
-                ModelVersion = '{dataset_to_filter_version}',
-                Environment = '{environment}'
+                AIModel = %(model_id)s,
+                OrgID = %(org_id)s,
+                ModelVersion = %({feat_name}_version)s,
+                Environment = %(environment)s
             )
         )"""
 
@@ -128,25 +225,25 @@ def calculate_performance(
     # DONT ASK HOW I WROTE THIS :)
     final_query = f"""
         WITH
-            toDateTime('{start_date}') AS start_date,
-            toDateTime('{end_date}') AS end_date,
+            toDateTime(%(start_date)s) AS start_date,
+            toDateTime(%(end_date)s) AS end_date,
             CASE
-                WHEN '{agg_by}' = 'hourly' THEN toStartOfHour(start_date)
-                WHEN '{agg_by}' = 'daily' THEN toDate(start_date)
-                WHEN '{agg_by}' = 'weekly' THEN toStartOfWeek(toDate(start_date))
-                WHEN '{agg_by}' = 'monthly' THEN toStartOfMonth(start_date)
+                WHEN %(agg_by)s = 'hourly' THEN toStartOfHour(start_date)
+                WHEN %(agg_by)s = 'daily' THEN toDate(start_date)
+                WHEN %(agg_by)s = 'weekly' THEN toStartOfWeek(toDate(start_date))
+                WHEN %(agg_by)s = 'monthly' THEN toStartOfMonth(start_date)
             END AS interval_start,
             CASE
-                WHEN '{agg_by}' = 'hourly' THEN toStartOfHour(end_date)
-                WHEN '{agg_by}' = 'daily' THEN toDate(end_date)
-                WHEN '{agg_by}' = 'weekly' THEN toLastDayOfWeek(toDate(end_date))
-                WHEN '{agg_by}' = 'monthly' THEN toStartOfMonth(end_date)
+                WHEN %(agg_by)s = 'hourly' THEN toStartOfHour(end_date)
+                WHEN %(agg_by)s = 'daily' THEN toDate(end_date)
+                WHEN %(agg_by)s = 'weekly' THEN toLastDayOfWeek(toDate(end_date))
+                WHEN %(agg_by)s = 'monthly' THEN toStartOfMonth(end_date)
             END AS interval_end,
             CASE
-                WHEN '{agg_by}' = 'hourly' THEN 'hour'
-                WHEN '{agg_by}' = 'daily' THEN 'day'
-                WHEN '{agg_by}' = 'weekly' THEN 'week'
-                WHEN '{agg_by}' = 'monthly' THEN 'month'
+                WHEN %(agg_by)s = 'hourly' THEN 'hour'
+                WHEN %(agg_by)s = 'daily' THEN 'day'
+                WHEN %(agg_by)s = 'weekly' THEN 'week'
+                WHEN %(agg_by)s = 'monthly' THEN 'month'
             END AS interval_type
 
         SELECT
@@ -175,15 +272,15 @@ def calculate_performance(
                 SELECT
                     UUID,
                     CASE
-                        WHEN '{agg_by}' = 'hourly' THEN toStartOfHour(EventDateTime)
-                        WHEN '{agg_by}' = 'daily' THEN toDate(EventDate)
-                        WHEN '{agg_by}' = 'weekly' THEN toStartOfWeek(EventDate)
-                        WHEN '{agg_by}' = 'monthly' THEN toStartOfMonth(EventDate)
+                        WHEN %(agg_by)s = 'hourly' THEN toStartOfHour(EventDateTime)
+                        WHEN %(agg_by)s = 'daily' THEN toDate(EventDate)
+                        WHEN %(agg_by)s = 'weekly' THEN toStartOfWeek(EventDate)
+                        WHEN %(agg_by)s = 'monthly' THEN toStartOfMonth(EventDate)
                     END AS agg_time,
-                    arrayElement(EvalResults.Value, indexOf(EvalResults.Key, 'metric_{metric.id}_score')) AS metricValue
+                    arrayElement(EvalResults.Value, indexOf(EvalResults.Key, %(metric_score_key)s)) AS metricValue
                     {select_query}
                 FROM events
-                WHERE EventDateTime BETWEEN '{start_date}' AND '{end_date}'
+                WHERE EventDateTime BETWEEN %(start_date)s AND %(end_date)s
                     {filter_query}
                     {metric_type_filter}
             )
@@ -196,7 +293,7 @@ def calculate_performance(
     # if metric == "":
 
     clickhouse_client = ClickHouseClientSingleton()  # Your ClickHouse client class
-    results = clickhouse_client.execute_read(final_query)
+    results = clickhouse_client.execute_read(final_query, params)
     return results
 
 
@@ -211,49 +308,22 @@ def calculate_performance_details(
     limit=10,
     unpaginated=False,
 ):
-    version = dataset["version"]
-    environment = Environments.convert_to_type(dataset["environment"])
     metric_id = dataset["metric_id"]
 
-    prep_filters = [
-        f" AIModel = '{model_id}' ",
-        f" OrgID = '{org_id}' ",
-        f" ModelVersion = '{version}' ",
-        f" Environment = {environment} ",
-        f" EventDateTime BETWEEN '{start_date}' AND '{add_one_day_in_date(end_date)}' ",
-        " deleted = 0 ",
-    ]
+    prep_filters, params = event_filters(
+        org_id,
+        model_id,
+        dataset,
+        start_date,
+        end_date,
+        add_one_day_in_date(end_date),
+    )
+    params["metric_score_key"] = f"metric_{metric_id}_score"
+    params["metric_explanation_key"] = f"metric_{metric_id}_explanation"
+    params["metric_tags_key"] = f"metric_{metric_id}_tags"
 
-    for _filter_index, filter in enumerate(filters):
-        filter_type = filter["type"]
-        filter_data_type = filter["datatype"]
-        filter_key = filter["key"]
-        filter_value = filter["values"]
-        filter_operator = journey_operator_map[filter["operator"]]
-        filter_key_id = filter["key_id"]
-
-        query = ""
-        if filter_type == "property":
-            if filter_data_type == "string":
-                query = f"hasAll(splitByString(';',arrayElement(EvalResults.Value, indexOf(EvalResults.Key, '{filter_key}'))),{filter_value})"
-                query = (
-                    f"arrayElement(Features.Value, indexOf(Features.Key, 'conversation_id')) \
-                IN (SELECT DISTINCT arrayElement(Features.Value, indexOf(Features.Key, 'conversation_id')) \
-                AS conv_id FROM events WHERE hasAll(splitByString(';',arrayElement(EvalResults.Value, \
-                indexOf(EvalResults.Key, '{filter_key}'))),{filter_value}) \
-                AND NOT has(Features.Key, 'node_id') AND deleted = 0)"
-                )
-            else:
-                query = f"toFloat32(arrayElement(EvalResults.Value, indexOf(EvalResults.Key, '{filter_key}'))) {filter_operator} {filter_value[0]}"
-
-        elif filter_type == "performanceMetric":
-            if filter_value[0] == "":
-                continue
-            filter_value[0] = str(float(filter_value[0]) / 10)
-            metric_value = f"arrayElement(EvalResults.Value, indexOf(EvalResults.Key, 'metric_{filter_key_id}_score'))"
-            query = f"if(isNotNull({metric_value}) AND {metric_value} != '', toFloat32({metric_value}), 0) {filter_operator} {filter_value[0]}"
-        elif filter_type == "performanceTag":
-            query = f"hasAll(splitByString(';',arrayElement(EvalResults.Value, indexOf(EvalResults.Key, 'metric_{metric_id}_tags'))),{filter_value})"
+    for filter_index, filter in enumerate(filters):
+        query = _filter_condition(filter_index, filter, metric_id, params)
 
         if query.strip() != "":
             prep_filters.append(query)
@@ -274,8 +344,10 @@ def calculate_performance_details(
     offset_query = ""
 
     if unpaginated is False:
-        limit_query = f"LIMIT {limit + 1}"
-        offset_query = f"OFFSET {offset or 0}"
+        params["limit"] = limit + 1
+        params["offset"] = offset or 0
+        limit_query = "LIMIT %(limit)s"
+        offset_query = "OFFSET %(offset)s"
 
     metric_type_filter = " AND  has(Features.Key, 'node_id') "
 
@@ -302,18 +374,18 @@ def calculate_performance_details(
     # if metric == "accuracy":
     final_query = f"""
             WITH
-                arrayElement(EvalResults.Value, indexOf(EvalResults.Key, 'metric_{metric_id}_score')) AS raw_metric_score
+                arrayElement(EvalResults.Value, indexOf(EvalResults.Key, %(metric_score_key)s)) AS raw_metric_score
             SELECT
                 UUID,
                 EventDateTime,
                 if(isNotNull(raw_metric_score) AND raw_metric_score != '', toFloat32(raw_metric_score), 0) AS metric_score,
-                arrayElement(EvalResults.Value, indexOf(EvalResults.Key, 'metric_{metric_id}_explanation')) AS metric_explanation,
+                arrayElement(EvalResults.Value, indexOf(EvalResults.Key, %(metric_explanation_key)s)) AS metric_explanation,
                 arrayElement(Features.Value, indexOf(Features.Key, 'node_id')) AS input_node_id,
                 arrayElement(PredictionLabel.Value, indexOf(PredictionLabel.Key, 'node_id')) AS output_node_id,
-                arrayElement(EvalResults.Value, indexOf(EvalResults.Key, 'metric_{metric_id}_tags')) AS metric_tags,
+                arrayElement(EvalResults.Value, indexOf(EvalResults.Key, %(metric_tags_key)s)) AS metric_tags,
                 arrayElement(Features.Value, indexOf(Features.Key, 'conversation_id')) AS conversation_id
             FROM events
-            WHERE EventDateTime BETWEEN '{start_date}' AND '{end_date}'
+            WHERE EventDateTime BETWEEN %(start_date)s AND %(end_date)s
                 {filter_query}
                 {metric_type_filter}
                 AND deleted=0
@@ -323,29 +395,25 @@ def calculate_performance_details(
         """
 
     clickhouse_client = ClickHouseClientSingleton()  # Your ClickHouse client class
-    results = clickhouse_client.execute_read(final_query)
+    results = clickhouse_client.execute_read(final_query, params)
     return results
 
 
 def calculate_performance_processing(org_id, model_id, dataset, metric):
-    version = dataset["version"]
-    environment = Environments.convert_to_type(dataset["environment"])
     start_date = dataset["start_date"]
     end_date = add_one_day_in_date(dataset["end_date"])
     # agg_by = dataset["agg_by"]
     tags = dataset["tags"] if "tags" in dataset else []
-    prep_filters = [
-        f" AIModel = '{model_id}' ",
-        f" OrgID = '{org_id}' ",
-        f" ModelVersion = '{version}' ",
-        f" Environment = {environment} ",
-        f" EventDateTime BETWEEN '{start_date}' AND '{end_date}' ",
-        " deleted = 0 ",
-    ]
+    prep_filters, params = event_filters(
+        org_id, model_id, dataset, start_date, end_date, end_date
+    )
+    params["metric_score_key"] = f"metric_{metric.id}_score"
 
     if len(tags) > 0:
+        params["metric_tags_key"] = f"{metric.id}_tags"
+        params["tags"] = value_list(tags)
         prep_filters.append(
-            f" arrayAll(x -> has(splitByString(';', EvalResults.Value[indexOf(EvalResults.Key, '{metric.id}_tags')]), x), {tags}) "
+            " arrayAll(x -> has(splitByString(';', EvalResults.Value[indexOf(EvalResults.Key, %(metric_tags_key)s)]), x), %(tags)s) "
         )
 
     if len(prep_filters):
@@ -369,9 +437,9 @@ def calculate_performance_processing(org_id, model_id, dataset, metric):
                 COUNTIf(metric_score = '') AS empty_metric_score_records
             FROM (
                 SELECT
-                    arrayElement(EvalResults.Value, indexOf(EvalResults.Key, 'metric_{metric.id}_score')) AS metric_score
+                    arrayElement(EvalResults.Value, indexOf(EvalResults.Key, %(metric_score_key)s)) AS metric_score
                 FROM events
-                WHERE EventDateTime BETWEEN '{start_date}' AND '{end_date}'
+                WHERE EventDateTime BETWEEN %(start_date)s AND %(end_date)s
                     {filter_query}
                     {metric_type_filter}
                     AND deleted = 0
@@ -379,7 +447,7 @@ def calculate_performance_processing(org_id, model_id, dataset, metric):
         """
 
     clickhouse_client = ClickHouseClientSingleton()  # Your ClickHouse client class
-    results = clickhouse_client.execute_read(final_query)
+    results = clickhouse_client.execute_read(final_query, params)
     return results
 
 
@@ -409,49 +477,21 @@ def get_conversion_function(val_type):
 def get_performance_details_query(
     org_id, model_id, dataset, filters, agg_by, start_date, end_date
 ):
-    version = dataset["version"]
-    environment = Environments.convert_to_type(dataset["environment"])
     metricId = dataset["metric_id"]
 
-    prep_filters = [
-        f" AIModel = '{model_id}' ",
-        f" OrgID = '{org_id}' ",
-        f" ModelVersion = '{version}' ",
-        f" Environment = {environment} ",
-        f" EventDateTime BETWEEN '{start_date}' AND '{add_one_day_in_date(end_date)}' ",
-        " deleted = 0 ",
-    ]
+    prep_filters, params = event_filters(
+        org_id,
+        model_id,
+        dataset,
+        start_date,
+        end_date,
+        add_one_day_in_date(end_date),
+    )
+    params["agg_by"] = agg_by
+    params["metric_score_key"] = f"metric_{metricId}_score"
 
-    for _filter_index, filter in enumerate(filters):
-        filter_type = filter["type"]
-        filter_data_type = filter["datatype"]
-        filter_key = filter["key"]
-        filter_value = filter["values"]
-        filter_operator = journey_operator_map[filter["operator"]]
-        filter_key_id = filter["key_id"]
-
-        query = ""
-        if filter_type == "property":
-            if filter_data_type == "string":
-                query = f"hasAll(splitByString(';',arrayElement(EvalResults.Value, indexOf(EvalResults.Key, '{filter_key}'))),{filter_value})"
-                query = (
-                    f"arrayElement(Features.Value, indexOf(Features.Key, 'conversation_id')) \
-                IN (SELECT DISTINCT arrayElement(Features.Value, indexOf(Features.Key, 'conversation_id')) \
-                AS conv_id FROM events WHERE hasAll(splitByString(';',arrayElement(EvalResults.Value, \
-                indexOf(EvalResults.Key, '{filter_key}'))),{filter_value}) \
-                AND NOT has(Features.Key, 'node_id') AND deleted = 0)"
-                )
-            else:
-                query = f"toFloat32(arrayElement(EvalResults.Value, indexOf(EvalResults.Key, '{filter_key}'))) {filter_operator} {filter_value[0]}"
-
-        elif filter_type == "performanceMetric":
-            if filter_value[0] == "":
-                continue
-            filter_value[0] = str(float(filter_value[0]) / 10)
-            metric_value = f"arrayElement(EvalResults.Value, indexOf(EvalResults.Key, 'metric_{filter_key_id}_score'))"
-            query = f"if(isNotNull({metric_value}) AND {metric_value} != '', toFloat32({metric_value}), 0) {filter_operator} {filter_value[0]}"
-        elif filter_type == "performanceTag":
-            query = f"hasAll(splitByString(';',arrayElement(EvalResults.Value, indexOf(EvalResults.Key, 'metric_{metricId}_tags'))),{filter_value})"
+    for filter_index, filter in enumerate(filters):
+        query = _filter_condition(filter_index, filter, metricId, params)
 
         if query.strip() != "":
             prep_filters.append(query)
@@ -463,25 +503,25 @@ def get_performance_details_query(
 
     final_query = f"""
         WITH
-            toDateTime('{start_date}') AS start_date,
-            toDateTime('{end_date}') AS end_date,
+            toDateTime(%(start_date)s) AS start_date,
+            toDateTime(%(end_date)s) AS end_date,
             CASE
-                WHEN '{agg_by}' = 'hourly' THEN toStartOfHour(start_date)
-                WHEN '{agg_by}' = 'daily' THEN toDate(start_date)
-                WHEN '{agg_by}' = 'weekly' THEN toStartOfWeek(toDate(start_date))
-                WHEN '{agg_by}' = 'monthly' THEN toStartOfMonth(start_date)
+                WHEN %(agg_by)s = 'hourly' THEN toStartOfHour(start_date)
+                WHEN %(agg_by)s = 'daily' THEN toDate(start_date)
+                WHEN %(agg_by)s = 'weekly' THEN toStartOfWeek(toDate(start_date))
+                WHEN %(agg_by)s = 'monthly' THEN toStartOfMonth(start_date)
             END AS interval_start,
             CASE
-                WHEN '{agg_by}' = 'hourly' THEN toStartOfHour(end_date)
-                WHEN '{agg_by}' = 'daily' THEN toDate(end_date)
-                WHEN '{agg_by}' = 'weekly' THEN toLastDayOfWeek(toDate(end_date))
-                WHEN '{agg_by}' = 'monthly' THEN toStartOfMonth(end_date)
+                WHEN %(agg_by)s = 'hourly' THEN toStartOfHour(end_date)
+                WHEN %(agg_by)s = 'daily' THEN toDate(end_date)
+                WHEN %(agg_by)s = 'weekly' THEN toLastDayOfWeek(toDate(end_date))
+                WHEN %(agg_by)s = 'monthly' THEN toStartOfMonth(end_date)
             END AS interval_end,
             CASE
-                WHEN '{agg_by}' = 'hourly' THEN 'hour'
-                WHEN '{agg_by}' = 'daily' THEN 'day'
-                WHEN '{agg_by}' = 'weekly' THEN 'week'
-                WHEN '{agg_by}' = 'monthly' THEN 'month'
+                WHEN %(agg_by)s = 'hourly' THEN 'hour'
+                WHEN %(agg_by)s = 'daily' THEN 'day'
+                WHEN %(agg_by)s = 'weekly' THEN 'week'
+                WHEN %(agg_by)s = 'monthly' THEN 'month'
             END AS interval_type
 
         SELECT
@@ -509,15 +549,15 @@ def get_performance_details_query(
                 SELECT
                     UUID,
                     CASE
-                        WHEN '{agg_by}' = 'hourly' THEN toStartOfHour(EventDateTime)
-                        WHEN '{agg_by}' = 'daily' THEN toDate(EventDate)
-                        WHEN '{agg_by}' = 'weekly' THEN toStartOfWeek(EventDate)
-                        WHEN '{agg_by}' = 'monthly' THEN toStartOfMonth(EventDate)
+                        WHEN %(agg_by)s = 'hourly' THEN toStartOfHour(EventDateTime)
+                        WHEN %(agg_by)s = 'daily' THEN toDate(EventDate)
+                        WHEN %(agg_by)s = 'weekly' THEN toStartOfWeek(EventDate)
+                        WHEN %(agg_by)s = 'monthly' THEN toStartOfMonth(EventDate)
                     END AS agg_time,
-                    arrayElement(EvalResults.Value, indexOf(EvalResults.Key, 'metric_{metricId}_score')) AS metricValue
+                    arrayElement(EvalResults.Value, indexOf(EvalResults.Key, %(metric_score_key)s)) AS metricValue
                 FROM events
-                WHERE EventDateTime BETWEEN '{start_date}' AND '{end_date}'
-                    {filter_query} AND has(EvalResults.Key, 'metric_{metricId}_score')
+                WHERE EventDateTime BETWEEN %(start_date)s AND %(end_date)s
+                    {filter_query} AND has(EvalResults.Key, %(metric_score_key)s)
             )
             GROUP BY time_interval
         ) AS event_data ON time_series.time_interval = event_data.time_interval
@@ -526,57 +566,32 @@ def get_performance_details_query(
     """
 
     clickhouse_client = ClickHouseClientSingleton()  # Your ClickHouse client class
-    results = clickhouse_client.execute_read(final_query)
+    results = clickhouse_client.execute_read(final_query, params)
     return results
 
 
 def get_all_tags_distribution(
     org_id, model_id, dataset, filters, agg_by, start_date, end_date, tag_type
 ):
-    version = dataset["version"]
-    environment = Environments.convert_to_type(dataset["environment"])
     metric_id = dataset.get("metric_id", "")
 
-    prep_filters = [
-        f" AIModel = '{model_id}' ",
-        f" OrgID = '{org_id}' ",
-        f" ModelVersion = '{version}' ",
-        f" Environment = {environment} ",
-        f" EventDateTime BETWEEN '{start_date}' AND '{add_one_day_in_date(end_date)}' ",
-        " deleted = 0 ",
-    ]
+    prep_filters, params = event_filters(
+        org_id,
+        model_id,
+        dataset,
+        start_date,
+        end_date,
+        add_one_day_in_date(end_date),
+    )
+    params["agg_by"] = agg_by
+    params["metric_tags_key"] = f"metric_{metric_id}_tags"
+    params["tag_prefix"] = "POSITIVE" if tag_type == "good" else "NEGATIVE"
 
-    for _filter_index, filter in enumerate(filters):
-        filter_type = filter["type"]
-        filter_data_type = filter["datatype"]
-        filter_key = filter["key"]
-        filter_value = filter["values"]
-        filter_operator = journey_operator_map[filter["operator"]]
-        filter_key_id = filter["key_id"]
+    for filter_index, filter in enumerate(filters):
+        query = _filter_condition(filter_index, filter, metric_id, params)
 
-        if filter_type == "property":
-            if filter_data_type == "string":
-                query = f"hasAll(splitByString(';',arrayElement(EvalResults.Value, indexOf(EvalResults.Key, '{filter_key}'))),{filter_value})"
-                query = (
-                    f"arrayElement(Features.Value, indexOf(Features.Key, 'conversation_id')) \
-                IN (SELECT DISTINCT arrayElement(Features.Value, indexOf(Features.Key, 'conversation_id')) \
-                AS conv_id FROM events WHERE hasAll(splitByString(';',arrayElement(EvalResults.Value, \
-                indexOf(EvalResults.Key, '{filter_key}'))),{filter_value}) \
-                AND NOT has(Features.Key, 'node_id') AND deleted = 0)"
-                )
-            else:
-                query = f"toFloat32(arrayElement(EvalResults.Value, indexOf(EvalResults.Key, '{filter_key}'))) {filter_operator} {filter_value[0]}"
-
-        elif filter_type == "performanceMetric":
-            if filter_value[0] == "":
-                continue
-            filter_value[0] = str(float(filter_value[0]) / 10)
-            metric_value = f"arrayElement(EvalResults.Value, indexOf(EvalResults.Key, 'metric_{filter_key_id}_score'))"
-            query = f"if(isNotNull({metric_value}) AND {metric_value} != '', toFloat32({metric_value}), 0) {filter_operator} {filter_value[0]}"
-        elif filter_type == "performanceTag":
-            query = f"hasAll(splitByString(';',arrayElement(EvalResults.Value, indexOf(EvalResults.Key, 'metric_{metric_id}_tags'))),{filter_value})"
-
-        prep_filters.append(query)
+        if query.strip() != "":
+            prep_filters.append(query)
 
     if len(prep_filters):
         filter_query = " AND " + "(" + " ) AND ( ".join(prep_filters) + ")"
@@ -585,25 +600,25 @@ def get_all_tags_distribution(
 
     final_query = f"""
         WITH
-            toDateTime('{start_date}') AS start_date,
-            toDateTime('{end_date}') AS end_date,
+            toDateTime(%(start_date)s) AS start_date,
+            toDateTime(%(end_date)s) AS end_date,
             CASE
-                WHEN '{agg_by}' = 'hourly' THEN toStartOfHour(start_date)
-                WHEN '{agg_by}' = 'daily' THEN toDate(start_date)
-                WHEN '{agg_by}' = 'weekly' THEN toStartOfWeek(toDate(start_date))
-                WHEN '{agg_by}' = 'monthly' THEN toStartOfMonth(start_date)
+                WHEN %(agg_by)s = 'hourly' THEN toStartOfHour(start_date)
+                WHEN %(agg_by)s = 'daily' THEN toDate(start_date)
+                WHEN %(agg_by)s = 'weekly' THEN toStartOfWeek(toDate(start_date))
+                WHEN %(agg_by)s = 'monthly' THEN toStartOfMonth(start_date)
             END AS interval_start,
             CASE
-                WHEN '{agg_by}' = 'hourly' THEN toStartOfHour(end_date)
-                WHEN '{agg_by}' = 'daily' THEN toDate(end_date)
-                WHEN '{agg_by}' = 'weekly' THEN toLastDayOfWeek(toDate(end_date))
-                WHEN '{agg_by}' = 'monthly' THEN toStartOfMonth(end_date)
+                WHEN %(agg_by)s = 'hourly' THEN toStartOfHour(end_date)
+                WHEN %(agg_by)s = 'daily' THEN toDate(end_date)
+                WHEN %(agg_by)s = 'weekly' THEN toLastDayOfWeek(toDate(end_date))
+                WHEN %(agg_by)s = 'monthly' THEN toStartOfMonth(end_date)
             END AS interval_end,
             CASE
-                WHEN '{agg_by}' = 'hourly' THEN 'hour'
-                WHEN '{agg_by}' = 'daily' THEN 'day'
-                WHEN '{agg_by}' = 'weekly' THEN 'week'
-                WHEN '{agg_by}' = 'monthly' THEN 'month'
+                WHEN %(agg_by)s = 'hourly' THEN 'hour'
+                WHEN %(agg_by)s = 'daily' THEN 'day'
+                WHEN %(agg_by)s = 'weekly' THEN 'week'
+                WHEN %(agg_by)s = 'monthly' THEN 'month'
             END AS interval_type
 
         SELECT
@@ -631,18 +646,18 @@ def get_all_tags_distribution(
                 SELECT
                     UUID,
                     CASE
-                        WHEN '{agg_by}' = 'hourly' THEN toStartOfHour(EventDateTime)
-                        WHEN '{agg_by}' = 'daily' THEN toDate(EventDate)
-                        WHEN '{agg_by}' = 'weekly' THEN toStartOfWeek(EventDate)
-                        WHEN '{agg_by}' = 'monthly' THEN toStartOfMonth(EventDate)
+                        WHEN %(agg_by)s = 'hourly' THEN toStartOfHour(EventDateTime)
+                        WHEN %(agg_by)s = 'daily' THEN toDate(EventDate)
+                        WHEN %(agg_by)s = 'weekly' THEN toStartOfWeek(EventDate)
+                        WHEN %(agg_by)s = 'monthly' THEN toStartOfMonth(EventDate)
                     END AS agg_time,
                     arrayMap(
-                        x -> length(arrayFilter(x -> startsWith(x, {"'POSITIVE'" if tag_type == "good" else "'NEGATIVE'"}), splitByString(';', arrayElement(EvalResults.Value, indexOf(EvalResults.Key, toString(x))) ))),
-                        ['metric_{metric_id}_tags']
+                        x -> length(arrayFilter(x -> startsWith(x, %(tag_prefix)s), splitByString(';', arrayElement(EvalResults.Value, indexOf(EvalResults.Key, toString(x))) ))),
+                        [%(metric_tags_key)s]
                     ) AS metricValue
                 FROM events
-                WHERE EventDateTime BETWEEN '{start_date}' AND '{end_date}'
-                    {filter_query} AND has(EvalResults.Key, 'metric_{metric_id}_tags')
+                WHERE EventDateTime BETWEEN %(start_date)s AND %(end_date)s
+                    {filter_query} AND has(EvalResults.Key, %(metric_tags_key)s)
             )
             GROUP BY time_interval
         ) AS event_data ON time_series.time_interval = event_data.time_interval
@@ -650,57 +665,31 @@ def get_all_tags_distribution(
     """
 
     clickhouse_client = ClickHouseClientSingleton()  # Your ClickHouse client class
-    results = clickhouse_client.execute_read(final_query)
+    results = clickhouse_client.execute_read(final_query, params)
     return results
 
 
 def get_top_tags_distribution(
     org_id, model_id, dataset, filters, start_date, end_date, tag_type
 ):
-    version = dataset["version"]
-    environment = Environments.convert_to_type(dataset["environment"])
     metric_id = dataset.get("metric_id", "")
 
-    prep_filters = [
-        f" AIModel = '{model_id}' ",
-        f" OrgID = '{org_id}' ",
-        f" ModelVersion = '{version}' ",
-        f" Environment = {environment} ",
-        f" EventDateTime BETWEEN '{start_date}' AND '{add_one_day_in_date(end_date)}' ",
-        " deleted = 0 ",
-    ]
+    prep_filters, params = event_filters(
+        org_id,
+        model_id,
+        dataset,
+        start_date,
+        end_date,
+        add_one_day_in_date(end_date),
+    )
+    params["metric_tags_key"] = f"metric_{metric_id}_tags"
+    params["tag_prefix"] = "POSITIVE" if tag_type == "good" else "NEGATIVE"
 
-    for _filter_index, filter in enumerate(filters):
-        filter_type = filter["type"]
-        filter_data_type = filter["datatype"]
-        filter_key = filter["key"]
-        filter_value = filter["values"]
-        filter_operator = journey_operator_map[filter["operator"]]
-        filter_key_id = filter["key_id"]
+    for filter_index, filter in enumerate(filters):
+        query = _filter_condition(filter_index, filter, metric_id, params)
 
-        if filter_type == "property":
-            if filter_data_type == "string":
-                query = f"hasAll(splitByString(';',arrayElement(EvalResults.Value, indexOf(EvalResults.Key, '{filter_key}'))),{filter_value})"
-                query = (
-                    f"arrayElement(Features.Value, indexOf(Features.Key, 'conversation_id')) \
-                IN (SELECT DISTINCT arrayElement(Features.Value, indexOf(Features.Key, 'conversation_id')) \
-                AS conv_id FROM events WHERE hasAll(splitByString(';',arrayElement(EvalResults.Value, \
-                indexOf(EvalResults.Key, '{filter_key}'))),{filter_value}) \
-                AND NOT has(Features.Key, 'node_id') AND deleted = 0)"
-                )
-            else:
-                query = f"toFloat32(arrayElement(EvalResults.Value, indexOf(EvalResults.Key, '{filter_key}'))) {filter_operator} {filter_value[0]}"
-
-        elif filter_type == "performanceMetric":
-            if filter_value[0] == "":
-                continue
-            filter_value[0] = str(float(filter_value[0]) / 10)
-            metric_value = f"arrayElement(EvalResults.Value, indexOf(EvalResults.Key, 'metric_{filter_key_id}_score'))"
-            query = f"if(isNotNull({metric_value}) AND {metric_value} != '', toFloat32({metric_value}), 0) {filter_operator} {filter_value[0]}"
-        elif filter_type == "performanceTag":
-            query = f"hasAll(splitByString(';',arrayElement(EvalResults.Value, indexOf(EvalResults.Key, 'metric_{metric_id}_tags'))),{filter_value})"
-
-        prep_filters.append(query)
+        if query.strip() != "":
+            prep_filters.append(query)
 
     if len(prep_filters):
         filter_query = " AND " + "(" + " ) AND ( ".join(prep_filters) + ")"
@@ -718,13 +707,13 @@ def get_top_tags_distribution(
                     arrayFlatten(
                         arrayMap(
                             x -> splitByString(';', arrayElement(EvalResults.Value, indexOf(EvalResults.Key, toString(x)))),
-                            ['metric_{metric_id}_tags']
+                            [%(metric_tags_key)s]
                         )
                     )
                 ) AS tag
             FROM events
-            WHERE startsWith(tag, {"'POSITIVE'" if tag_type == "good" else "'NEGATIVE'"})
-            {filter_query} AND has(EvalResults.Key, 'metric_{metric_id}_tags')
+            WHERE startsWith(tag, %(tag_prefix)s)
+            {filter_query} AND has(EvalResults.Key, %(metric_tags_key)s)
         )
         GROUP BY tag
         ORDER BY tag_count DESC
@@ -732,5 +721,5 @@ def get_top_tags_distribution(
     """
 
     clickhouse_client = ClickHouseClientSingleton()  # Your ClickHouse client class
-    results = clickhouse_client.execute_read(final_query)
+    results = clickhouse_client.execute_read(final_query, params)
     return results

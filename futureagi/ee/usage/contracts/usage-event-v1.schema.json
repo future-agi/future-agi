@@ -1,0 +1,385 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://futureagi.com/contracts/billing/usage-event-v1.schema.json",
+  "title": "usage-event-v1",
+  "description": "The one usage event every product meter emits into the Future AGI billing ledger. The root validates one event ($defs/Event). $defs/IngestRequest and $defs/IngestResponse are the service-authenticated batch ingest, and $defs/StoredEvent is the record the ingest keeps. Every key of Event, Source and Attribution is required and is null when unknown, so an event has exactly one canonical encoding and one payload hash. Rating, funding and Stripe reporting happen after ingest and are outside this contract.",
+  "$ref": "#/$defs/Event",
+  "$defs": {
+    "Uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "DerivedEventId": {
+      "type": "string",
+      "description": "A lowercase version-5 UUID derived from the source object (usage-event-v1.md section 3). A random (version-4) id is refused with event_id_not_derived.",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "UtcInstant": {
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC 3339 in UTC with a Z suffix, at most microsecond precision. Offsets are refused: the billing period is the UTC calendar month of this instant.",
+      "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]([.][0-9]{1,6})?Z$"
+    },
+    "Period": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$"
+    },
+    "Quantity": {
+      "type": "string",
+      "description": "A positive decimal in the dimension's native unit: at most 14 integer and 6 fraction digits (UsageEventLog.amount_raw is Decimal(20,6)). No exponent, sign or leading zero. Zero and negative quantities are refused; corrections are ledger adjustments, never negative usage.",
+      "pattern": "^(?!0+([.]0+)?$)(0|[1-9][0-9]{0,13})([.][0-9]{1,6})?$"
+    },
+    "IntegerQuantity": {
+      "type": "string",
+      "pattern": "^[1-9][0-9]{0,13}$"
+    },
+    "Product": {
+      "type": "string",
+      "enum": [
+        "gateway",
+        "agents",
+        "sandboxes",
+        "deployments",
+        "evals",
+        "platform"
+      ]
+    },
+    "Source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["system", "ref"],
+      "properties": {
+        "system": {
+          "type": "string",
+          "enum": [
+            "fa_platform",
+            "fa_gateway_ingest",
+            "fa_gateway_settlement",
+            "ee_daemon"
+          ],
+          "description": "The producer. The ingest credential names the systems and products it may emit; anything else is refused with source_not_permitted. An out-of-process credential is also bound to orgs and workspaces; any other org_id is refused with org_not_permitted before the org is looked up."
+        },
+        "ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255,
+          "description": "The source object the event_id is derived from: a task id, a request id, a delivery-group hash. Stored as the ledger's source_ref."
+        }
+      }
+    },
+    "Attribution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["agent_id", "agent_run_id", "api_key_id", "purpose"],
+      "properties": {
+        "agent_id": {
+          "anyOf": [
+            { "type": "string", "minLength": 1, "maxLength": 128 },
+            { "type": "null" }
+          ]
+        },
+        "agent_run_id": {
+          "anyOf": [
+            { "type": "string", "minLength": 1, "maxLength": 128 },
+            { "type": "null" }
+          ]
+        },
+        "api_key_id": {
+          "anyOf": [
+            { "type": "string", "minLength": 1, "maxLength": 255 },
+            { "type": "null" }
+          ]
+        },
+        "purpose": {
+          "anyOf": [
+            { "type": "string", "enum": ["learning"] },
+            { "type": "null" }
+          ],
+          "description": "learning marks work the managed learning service did for this agent. It has no meter of its own. null is ordinary use."
+        }
+      }
+    },
+    "Attributes": {
+      "type": "object",
+      "maxProperties": 16,
+      "propertyNames": { "pattern": "^[a-z][a-z0-9_]{0,31}$" },
+      "additionalProperties": { "type": "string", "maxLength": 256 },
+      "description": "Context the rater may read. Unknown keys are stored and ignored. The reserved keys are typed here.",
+      "properties": {
+        "credential_type": { "type": "string", "enum": ["managed", "byok"] },
+        "request_id": { "type": "string", "minLength": 1, "maxLength": 255 },
+        "model": { "type": "string", "maxLength": 255 },
+        "task_disposition": { "type": "string", "maxLength": 64 },
+        "occurred_at_source": {
+          "type": "string",
+          "enum": ["source_time", "entry_timestamp"]
+        }
+      }
+    },
+    "Event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "v",
+        "event_id",
+        "org_id",
+        "workspace_id",
+        "product",
+        "dimension",
+        "event_type",
+        "quantity",
+        "unit",
+        "occurred_at",
+        "source",
+        "attribution",
+        "attributes"
+      ],
+      "properties": {
+        "v": { "const": "1" },
+        "event_id": { "$ref": "#/$defs/DerivedEventId" },
+        "org_id": {
+          "$ref": "#/$defs/Uuid",
+          "description": "The Future AGI Organization id. Never an EE native org id: EE takes host_org from its host binding."
+        },
+        "workspace_id": {
+          "anyOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }],
+          "description": "The Future AGI workspace id (EE: the binding's host_workspace). null only when the source has no workspace."
+        },
+        "product": { "$ref": "#/$defs/Product" },
+        "dimension": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{1,29}$",
+          "description": "The id of a price-catalog-v1 dimensions[] row, validated against the catalog chosen by price-catalog-v1.md section 1. The catalog fixes the dimension's product and native unit."
+        },
+        "event_type": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{1,49}$",
+          "description": "The catalog call type (today a BillingEventType value, a billing.yaml api_call_types key). It must map to dimension."
+        },
+        "quantity": { "$ref": "#/$defs/Quantity" },
+        "unit": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,31}$",
+          "description": "Must equal the catalog native unit of dimension. The ingest never multiplies by per_call."
+        },
+        "occurred_at": {
+          "$ref": "#/$defs/UtcInstant",
+          "description": "When the usage happened, a stable property of the source object. Never the emit or retry time."
+        },
+        "source": { "$ref": "#/$defs/Source" },
+        "attribution": { "$ref": "#/$defs/Attribution" },
+        "attributes": { "$ref": "#/$defs/Attributes" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "product": { "const": "agents" } } },
+          "then": {
+            "properties": {
+              "attribution": {
+                "properties": {
+                  "agent_id": { "type": "string" },
+                  "agent_run_id": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "attribution": {
+                "properties": { "purpose": { "const": "learning" } }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "attribution": {
+                "properties": { "agent_id": { "type": "string" } }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "source": { "properties": { "system": { "const": "ee_daemon" } } }
+            }
+          },
+          "then": {
+            "properties": { "workspace_id": { "$ref": "#/$defs/Uuid" } }
+          }
+        },
+        {
+          "if": { "properties": { "unit": { "const": "usd_micros" } } },
+          "then": {
+            "properties": { "quantity": { "$ref": "#/$defs/IntegerQuantity" } }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "source": {
+                "properties": { "system": { "const": "fa_gateway_ingest" } }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "product": { "const": "gateway" },
+              "dimension": {
+                "enum": ["gateway_requests", "gateway_cache_hits"]
+              },
+              "event_type": {
+                "enum": ["gateway_request", "gateway_cache_hit"]
+              },
+              "quantity": { "$ref": "#/$defs/IntegerQuantity" }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "source": {
+                "properties": { "system": { "const": "fa_gateway_settlement" } }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "product": { "const": "gateway" },
+              "dimension": { "const": "managed_spend" },
+              "event_type": { "const": "gateway_managed_spend" },
+              "unit": { "const": "usd_micros" },
+              "attributes": { "required": ["request_id"] }
+            }
+          }
+        }
+      ]
+    },
+    "RefusalReason": {
+      "type": "string",
+      "enum": [
+        "malformed_event",
+        "event_id_not_derived",
+        "unknown_org",
+        "workspace_not_in_org",
+        "source_not_permitted",
+        "org_not_permitted",
+        "unknown_dimension",
+        "unknown_event_type",
+        "event_type_dimension_mismatch",
+        "product_mismatch",
+        "unit_mismatch",
+        "occurred_at_in_future",
+        "beyond_lateness_window",
+        "idempotency_conflict"
+      ]
+    },
+    "NotBillableReason": {
+      "type": "string",
+      "enum": [
+        "legacy_period",
+        "legacy_ee",
+        "legacy_period_closed",
+        "failed_infra",
+        "marketplace_dimension_unmapped"
+      ]
+    },
+    "IngestRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["events"],
+      "properties": {
+        "events": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 500,
+          "description": "Each item is validated against $defs/Event on its own. An invalid item is refused (malformed_event) and never fails the rest of the batch.",
+          "items": { "type": "object" }
+        }
+      }
+    },
+    "EventResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["index", "event_id", "status"],
+      "properties": {
+        "index": { "type": "integer", "minimum": 0, "maximum": 499 },
+        "event_id": {
+          "anyOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }],
+          "description": "null only when the item had no readable event_id."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["accepted", "duplicate", "refused"]
+        },
+        "reason": { "$ref": "#/$defs/RefusalReason" },
+        "detail": { "type": "string", "maxLength": 500 }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "status": { "const": "refused" } } },
+          "then": { "required": ["reason"] },
+          "else": { "not": { "required": ["reason"] } }
+        }
+      ]
+    },
+    "IngestResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["results"],
+      "properties": {
+        "results": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 500,
+          "description": "One result per request item, in request order. accepted and duplicate both mean the event is durably stored.",
+          "items": { "$ref": "#/$defs/EventResult" }
+        }
+      }
+    },
+    "StoredEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "event",
+        "received_at",
+        "payload_sha256",
+        "period",
+        "booked_period",
+        "rated_entry_id",
+        "not_billable_reason"
+      ],
+      "properties": {
+        "event": { "$ref": "#/$defs/Event" },
+        "received_at": { "$ref": "#/$defs/UtcInstant" },
+        "payload_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "SHA-256 of the RFC 8785 canonical JSON of event."
+        },
+        "period": {
+          "$ref": "#/$defs/Period",
+          "description": "The UTC month of event.occurred_at."
+        },
+        "booked_period": {
+          "anyOf": [{ "$ref": "#/$defs/Period" }, { "type": "null" }],
+          "description": "The period the rating was booked in; later than period for a late event; null until rated."
+        },
+        "rated_entry_id": {
+          "anyOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }]
+        },
+        "not_billable_reason": {
+          "anyOf": [{ "$ref": "#/$defs/NotBillableReason" }, { "type": "null" }]
+        }
+      },
+      "not": {
+        "properties": {
+          "rated_entry_id": { "type": "string" },
+          "not_billable_reason": { "type": "string" }
+        }
+      }
+    }
+  }
+}

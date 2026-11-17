@@ -626,6 +626,9 @@ export const TestRunLoadingStatus = [
   TestRunExecutionStatus.RUNNING,
   TestRunExecutionStatus.EVALUATING,
   TestRunExecutionStatus.CANCELLING,
+  TestRunExecutionStatus.QUEUED,
+  TestRunExecutionStatus.ONGOING,
+  TestRunExecutionStatus.ANALYZING,
 ];
 
 // Per-call statuses for which eval data may still arrive. Used by cell
@@ -684,6 +687,10 @@ const IGNORED_KEYS = [
   // would paint a phantom eval. The simulate harness reads
   // `kpis.completed_calls` directly and never comes through here.
   "completed_calls",
+  // The run page reads this count directly to draw its skipped-rows line.
+  // It is not an eval, a system metric or a call detail; a number left to
+  // fall through here would paint a phantom eval on every run.
+  "skipped_dataset_row_count",
   "avg_response",
   "avg_user_interruption_count",
   "avg_ai_interruption_rate",

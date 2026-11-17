@@ -7,13 +7,14 @@ import os
 from pathlib import Path
 
 import pytest
+from cryptography.fernet import Fernet
 
 from tfc.middleware.workspace_context import (
     clear_workspace_context,
     set_workspace_context,
 )
 
-TEST_INTEGRATION_ENCRYPTION_KEY = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+TEST_INTEGRATION_ENCRYPTION_KEY = Fernet.generate_key().decode("ascii")
 
 
 @pytest.fixture

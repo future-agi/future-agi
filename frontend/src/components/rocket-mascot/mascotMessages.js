@@ -1,34 +1,9 @@
-// Fun messages for mascot-themed states — loading, empty, failed.
+// Messages for mascot-themed empty and failed states. Loaders do not use
+// them: the app loader says "Loading…" only (see loading-screen.jsx).
 // Keep the voice consistent with the 404 / error fallback pages:
 // - Short
 // - Space/AI/dev humor
 // - Friendly, never blaming the user
-
-export const LOADING_MESSAGES = [
-  // Space-themed
-  "Fueling the rocket...",
-  "Running pre-flight checks...",
-  "Plotting a course through the data...",
-  "Warming up the warp drive...",
-  "Igniting the boosters...",
-  "Clearing the launch pad...",
-  "Calibrating the star charts...",
-  "Handshaking with mission control...",
-  "Aligning the thrusters...",
-  "Checking oxygen levels... all good.",
-
-  // AI / dev flavor
-  "Summoning the neurons...",
-  "Tokenizing your request...",
-  "Loading the training wheels...",
-  "Teaching the AI manners...",
-  "Compiling good vibes...",
-  "Thinking at the speed of light. Almost.",
-  "Crunching numbers the old-fashioned way... kidding, it's GPUs.",
-  "Waking up the hamsters...",
-  "Polishing the pixels...",
-  "Fetching data from the cloud... the actual clouds.",
-];
 
 export const EMPTY_MESSAGES = [
   // Space flavored "nothing here yet"
@@ -74,4 +49,5 @@ export const FAILED_MESSAGES = [
   "A cosmic ray flipped a bit. Happens.",
 ];
 
-export const pickRandom = (list) => list[Math.floor(Math.random() * list.length)];
+export const pickRandom = (list) =>
+  list[Math.floor(Math.random() * list.length)];

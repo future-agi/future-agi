@@ -192,9 +192,20 @@ async def run_cluster_rca(
             return await _fail("No cluster was supplied to analyse.")
         return None
 
-    resolved = await sync_to_async(_resolve_cluster, thread_sensitive=False)(
-        tool_context.organization, tool_context.workspace, str(label), project_id
+    from ee.falcon_ai.tool_scope import (
+        authenticated_tool_scope,
+        workspace_access_allowed,
     )
+
+    def resolve_for_caller():
+        with authenticated_tool_scope(tool_context):
+            if not workspace_access_allowed(tool_context, tool_context.workspace):
+                return None
+            return _resolve_cluster(
+                tool_context.organization, tool_context.workspace, str(label), project_id
+            )
+
+    resolved = await sync_to_async(resolve_for_caller, thread_sensitive=False)()
     if resolved is None:
         # Resolution is workspace-scoped, so a cluster whose project sits
         # outside this socket's workspace fails here every time — reproducibly,
@@ -280,40 +291,42 @@ async def run_cluster_rca(
             )
         loop.call_soon_threadsafe(events_q.put_nowait, (event_type, payload))
 
-    def run_agent() -> Any:
+    def run_scoped_agent() -> Any:
         from ee.agenthub.cluster_rca.agent import ClusterAnalysisAgent
 
-        try:
-            agent = ClusterAnalysisAgent(
-                cluster_id=cluster_uuid,
-                project_id=project_uuid,
-                question=user_message or None,
-                on_event=on_event,
-                stop_event=stop_event,
-            )
-            result = agent.run()
-            # Persist from the thread so the run survives the consumer
-            # coroutine being cancelled by a client disconnect mid-run.
-            if getattr(result, "synthesis", None) is not None:
-                try:
-                    close_old_connections()
-                    _persist_synthesis(
-                        cluster_uuid, result.synthesis, error_count, trace
-                    )
-                except Exception:
-                    logger.exception(
-                        "cluster_rca_bridge_persist_failed", cluster_id=cluster_uuid
-                    )
-            # On an explicit Stop the consumer coroutine is cancelled before it
-            # can bill, so the partial spend would go un-billed. Bill it here
-            # from the thread (same reasoning as thread-side persistence above).
-            # Guarded on the Event so the normal path still bills in the consumer.
-            if stop_event.is_set():
-                _bill_cost_from_thread(
-                    tool_context.organization,
-                    getattr(result, "cost_usd", 0.0) or 0.0,
+        if not workspace_access_allowed(tool_context, tool_context.workspace):
+            raise PermissionError("Workspace is no longer available.")
+        agent = ClusterAnalysisAgent(
+            cluster_id=cluster_uuid,
+            project_id=project_uuid,
+            question=user_message or None,
+            on_event=on_event,
+            stop_event=stop_event,
+        )
+        agent._falcon_tool_context = tool_context
+        result = agent.run()
+        # Persist from the worker, but not after the caller's access changes.
+        if getattr(result, "synthesis", None) is not None and workspace_access_allowed(
+            tool_context, tool_context.workspace
+        ):
+            try:
+                close_old_connections()
+                _persist_synthesis(cluster_uuid, result.synthesis, error_count, trace)
+            except Exception:
+                logger.exception(
+                    "cluster_rca_bridge_persist_failed", cluster_id=cluster_uuid
                 )
-            return result
+        if stop_event.is_set():
+            _bill_cost_from_thread(
+                tool_context.organization, getattr(result, "cost_usd", 0.0) or 0.0
+            )
+        return result
+
+    def run_agent() -> Any:
+        try:
+            # run_in_executor does not carry ContextVars into the worker.
+            with authenticated_tool_scope(tool_context):
+                return run_scoped_agent()
         finally:
             loop.call_soon_threadsafe(events_q.put_nowait, _DONE)
 

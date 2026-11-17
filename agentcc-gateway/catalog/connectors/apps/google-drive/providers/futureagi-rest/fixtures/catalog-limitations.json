@@ -1,0 +1,7 @@
+{
+  "synthetic": true,
+  "liveValidated": false,
+  "deployment": "off",
+  "limitations": "Manage files explicitly authorized for this app; no whole-drive access or binary uploads.",
+  "scopeNotes": "drive.file: non-sensitive, only app-authorized files"
+}

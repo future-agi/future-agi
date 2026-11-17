@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: planetscale
+version: 1.0.0
+name: PlanetScale
+description: "Manage databases and branches, inspect query insights and execute SQL on PlanetScale."
+vendor:
+  name: PlanetScale
+  domains: [planetscale.com, pscale.dev]
+eeCategory: developer
+group: other
+categories: [developer, database]
+tags: [sql, database]
+docsUrl: https://planetscale.com/docs/connect/mcp
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://planetscale.com/docs/connect/mcp
+    fetchedAt: 2026-11-09

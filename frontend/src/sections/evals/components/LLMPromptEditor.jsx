@@ -10,12 +10,14 @@ import {
   Typography,
   ButtonBase,
 } from "@mui/material";
+import { useSnackbar } from "notistack";
 import PropTypes from "prop-types";
 import React, { useCallback, useRef, useState } from "react";
 import Iconify from "src/components/iconify";
 import SvgColor from "src/components/svg-color";
 import { ShowComponent } from "src/components/show";
 import axios, { endpoints } from "src/utils/axios";
+import { getThrottledMessage } from "src/utils/errorUtils";
 import MessageEditor from "./MessageEditor";
 
 const TEMPLATE_FORMATS = [
@@ -56,6 +58,7 @@ const LLMPromptEditor = ({
   outputType,
   choiceCount,
 }) => {
+  const { enqueueSnackbar } = useSnackbar();
   const [aiOpen, setAiOpen] = useState(false);
   const [aiPrompt, setAiPrompt] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
@@ -96,12 +99,17 @@ const LLMPromptEditor = ({
             content: m.content || "",
           }));
       } catch (err) {
-        // eslint-disable-next-line no-console
-        console.warn("LLM-as-a-Judge AI: request failed", err?.message);
+        const limitMessage = getThrottledMessage(err);
+        if (limitMessage) {
+          enqueueSnackbar(limitMessage, { variant: "error" });
+        } else {
+          // eslint-disable-next-line no-console
+          console.warn("LLM-as-a-Judge AI: request failed", err?.message);
+        }
         return null;
       }
     },
-    [messages, templateFormat],
+    [messages, templateFormat, enqueueSnackbar],
   );
 
   const handleSubmit = useCallback(

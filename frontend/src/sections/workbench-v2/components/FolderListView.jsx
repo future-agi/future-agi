@@ -14,9 +14,11 @@ import { useDebounce } from "../../../hooks/use-debounce";
 import { useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "../../../utils/axios";
 import EmptyLayout from "src/components/EmptyLayout/EmptyLayout";
+import ErrorState from "src/components/error-state";
 import { EMPTY_MESSAGE } from "../common";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
+import { getInlineLoadErrorMessage } from "src/utils/errorUtils";
 
 export default function FolderListView({ sortConfig }) {
   const { folder } = useParams();
@@ -27,7 +29,15 @@ export default function FolderListView({ sortConfig }) {
   const debouncedSearchQuery = useDebounce(searchQuery, 300);
 
   //search is always in prompt folders
-  const { data, isLoading } = useQuery({
+  const {
+    data,
+    isLoading,
+    isFetching,
+    isError,
+    isPaused,
+    error: promptsError,
+    refetch: refetchPrompts,
+  } = useQuery({
     queryKey: [
       "folder-items",
       folder,
@@ -68,7 +78,15 @@ export default function FolderListView({ sortConfig }) {
     enabled: folder !== "my-templates",
   });
 
-  const { data: promptTemplates, isLoading: loadingTemplates } = useQuery({
+  const {
+    data: promptTemplates,
+    isLoading: loadingTemplates,
+    isFetching: fetchingTemplates,
+    isError: templatesIsError,
+    isPaused: templatesIsPaused,
+    error: templatesError,
+    refetch: refetchTemplates,
+  } = useQuery({
     queryKey: [
       "prompt-templates",
       debouncedSearchQuery,
@@ -98,23 +116,55 @@ export default function FolderListView({ sortConfig }) {
     enabled: folder === "my-templates",
   });
 
+  // Until a response arrives the list has no rows to show: a failed or offline
+  // (paused) load is reported as such, never as an empty workspace, and a
+  // Retry after it shows the loading rows.
   const combinedData = useMemo(() => {
     if (folder === "my-templates") {
+      const hasResponse = promptTemplates !== undefined;
       return {
         data: promptTemplates?.result ?? [],
         totalCount: promptTemplates?.totalCount ?? 0,
         totalPages: promptTemplates?.totalPages ?? 1,
-        isLoading: loadingTemplates,
+        isLoading: loadingTemplates || (fetchingTemplates && !hasResponse),
+        hasResponse,
+        loadFailed:
+          !hasResponse &&
+          !fetchingTemplates &&
+          (templatesIsError || templatesIsPaused),
+        error: templatesError,
+        refetch: refetchTemplates,
       };
     }
 
+    const hasResponse = data !== undefined;
     return {
       data: data?.prompts ?? [],
       totalCount: data?.totalCount ?? 0,
       totalPages: data?.totalPages ?? 1,
-      isLoading,
+      isLoading: isLoading || (isFetching && !hasResponse),
+      hasResponse,
+      loadFailed: !hasResponse && !isFetching && (isError || isPaused),
+      error: promptsError,
+      refetch: refetchPrompts,
     };
-  }, [folder, data, isLoading, promptTemplates, loadingTemplates]);
+  }, [
+    folder,
+    data,
+    isLoading,
+    isFetching,
+    isError,
+    isPaused,
+    promptsError,
+    refetchPrompts,
+    promptTemplates,
+    loadingTemplates,
+    fetchingTemplates,
+    templatesIsError,
+    templatesIsPaused,
+    templatesError,
+    refetchTemplates,
+  ]);
 
   // The count renders beside the list heading (ActionBar), not on its own row.
   const setTotalCount = usePromptStore((s) => s.setTotalCount);
@@ -135,6 +185,7 @@ export default function FolderListView({ sortConfig }) {
 
   const isEmpty =
     !combinedData.isLoading &&
+    combinedData.hasResponse &&
     !debouncedSearchQuery &&
     page === 1 &&
     (!combinedData?.data || combinedData?.data?.length === 0);
@@ -145,7 +196,27 @@ export default function FolderListView({ sortConfig }) {
     };
   }, []);
 
+  if (combinedData.loadFailed) {
+    return (
+      <ErrorState
+        role="alert"
+        title={
+          folder === "my-templates"
+            ? "Couldn't load your templates"
+            : "Couldn't load your prompts"
+        }
+        detail={getInlineLoadErrorMessage(
+          combinedData.error,
+          "Check your connection and try again.",
+        )}
+        onRetry={() => combinedData.refetch()}
+        sx={{ height: "auto", flexGrow: 0 }}
+      />
+    );
+  }
+
   if (isEmpty) {
+    const canCreate = RolePermission.PROMPTS[PERMISSIONS.CREATE][role];
     return (
       <EmptyLayout
         {...(folder === "my-templates"
@@ -160,10 +231,15 @@ export default function FolderListView({ sortConfig }) {
             variant="contained"
             color="primary"
             size="small"
-            disabled={!RolePermission.PROMPTS[PERMISSIONS.CREATE][role]}
+            disabled={!canCreate}
           >
             Create prompt
           </Button>
+        }
+        actionDisabledReason={
+          canCreate
+            ? undefined
+            : "Viewers can't create prompts. Ask a workspace admin for Member access."
         }
       />
     );

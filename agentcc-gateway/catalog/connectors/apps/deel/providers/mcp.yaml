@@ -1,0 +1,154 @@
+# Deel's MCP server with OAuth from Deel's authorization server (issuer
+# https://api.letsdeel.com), which takes a client ID metadata document or
+# registers clients dynamically (RFC 7591, the method Deel's page
+# recommends), and takes public clients only (token endpoint auth "none",
+# PKCE S256). Tools act for the Deel user who signs in. Access tokens last
+# an hour; refresh tokens last 30 days, are single-use and rotate on every
+# refresh. The endpoints below are recorded from the metadata, not pinned:
+# each sign-in discovers them again, and goes on only where the server's
+# protected-resource metadata names this server as its resource and the
+# issuer as its authorization server, the issuer's metadata names itself,
+# PKCE S256 is supported and every endpoint is https. No metadata fetch
+# follows a redirect, and the callback checks the iss the issuer returns.
+# The protected-resource metadata lists 105 scopes: 53 read scopes and 52
+# that write or create. The record lists 56, read first: every read scope,
+# and the three writes Deel's MCP authorization page names among the scopes
+# its tools use (contracts:write, timesheets:write and
+# invoice-adjustments:write). The sign-in asks only for those of them the
+# metadata still lists. EE reads a pre-registered client from its
+# environment and cannot register one, so it gets none.
+schema: "connector-manifest/v1#provider"
+app: deel
+id: mcp
+version: 2.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://api.letsdeel.com/mcp
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent, user]
+auth:
+  kind: oauth2
+  oauth2:
+    authorizeUrl: https://api.letsdeel.com/oauth/authorize
+    tokenUrl: https://api.letsdeel.com/oauth/tokens
+    scopes:
+      - "accounting:read"
+      - "adjustments:read"
+      - "ai:read"
+      - "api-logs:read"
+      - "approvals:read"
+      - "apps:read"
+      - "ats:read"
+      - "benefits:read"
+      - "candidates:read"
+      - "compensation-management:read"
+      - "contracts:read"
+      - "contracts:write"
+      - "conversation:read"
+      - "equities:read"
+      - "files:read"
+      - "forms:read"
+      - "global-payroll:read"
+      - "groups:read"
+      - "hr-suite:read"
+      - "i-9:read"
+      - "immigration:read"
+      - "invoice-adjustments:read"
+      - "invoice-adjustments:write"
+      - "it-agreements:read"
+      - "it-assets:read"
+      - "it-orders:read"
+      - "it-policies:read"
+      - "it-products:read"
+      - "it-seats:read"
+      - "it-service-requests:read"
+      - "job-architecture:read"
+      - "jobs:read"
+      - "knowledge-hub:read"
+      - "legal-entity:read"
+      - "milestones:read"
+      - "off-cycle-payments:read"
+      - "on-demand-payroll:read"
+      - "organizations:read"
+      - "partners:read"
+      - "payments:read"
+      - "payment-statements:read"
+      - "payslips:read"
+      - "people:read"
+      - "profile:read"
+      - "screenings:read"
+      - "talents:read"
+      - "tasks:read"
+      - "time-off:read"
+      - "timesheets:read"
+      - "timesheets:write"
+      - "time-tracking:read"
+      - "tokens:read"
+      - "Users:read"
+      - "webhooks:read"
+      - "withdrawals:read"
+      - "worker:read"
+    pkce: true
+    tokenBody: form
+    clientAuth: body
+    refresh: { supported: true, rotates: true }
+    revocation:
+      url: https://api.letsdeel.com/oauth/revoke
+      method: POST
+      tokenBody: form
+      tokenField: token
+      clientAuth: body
+    registration: [cimd, dcr]
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://developer.deel.com/mcp/introduction
+    fetchedAt: 2026-11-12
+  - fact: transport.url
+    url: https://api.letsdeel.com/.well-known/oauth-protected-resource/mcp
+    fetchedAt: 2026-11-12
+  - fact: auth.kind
+    url: https://developer.deel.com/mcp/authorization
+    fetchedAt: 2026-11-12
+  - fact: auth.oauth2.authorizeUrl
+    url: https://api.letsdeel.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-11-12
+  - fact: auth.oauth2.tokenUrl
+    url: https://api.letsdeel.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-11-12
+  - fact: auth.oauth2.scopes
+    url: https://api.letsdeel.com/.well-known/oauth-protected-resource/mcp
+    fetchedAt: 2026-11-12
+  - fact: auth.oauth2.scopes
+    url: https://developer.deel.com/mcp/authorization
+    fetchedAt: 2026-11-12
+  - fact: auth.oauth2.pkce
+    url: https://api.letsdeel.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-11-12
+  - fact: auth.oauth2.pkce
+    url: https://developer.deel.com/mcp/authorization
+    fetchedAt: 2026-11-12
+  - fact: auth.oauth2.clientAuth
+    url: https://api.letsdeel.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-11-12
+  - fact: auth.oauth2.refresh
+    url: https://developer.deel.com/mcp/authorization
+    fetchedAt: 2026-11-12
+  - fact: auth.oauth2.revocation.url
+    url: https://api.letsdeel.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-11-12
+  - fact: auth.oauth2.registration
+    url: https://api.letsdeel.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-11-12
+  - fact: auth.oauth2.registration
+    url: https://developer.deel.com/mcp/authorization
+    fetchedAt: 2026-11-12
+x-omega: { ee: exclude }

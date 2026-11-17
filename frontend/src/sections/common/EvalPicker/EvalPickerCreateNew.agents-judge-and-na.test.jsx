@@ -1,0 +1,309 @@
+import React from "react";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { render } from "src/utils/test-utils";
+import { screen, fireEvent, act } from "@testing-library/react";
+
+import EvalPickerProvider from "./context/EvalPickerProvider";
+import EvalPickerCreateNew from "./EvalPickerCreateNew";
+
+const { capturedProps, enqueueSnackbarSpy, createDraft, updateDraft, mode } =
+  vi.hoisted(() => ({
+    capturedProps: { simulation: null, tracing: null, dataset: null },
+    enqueueSnackbarSpy: vi.fn(),
+    createDraft: vi.fn(async () => ({ id: "draft-1" })),
+    updateDraft: vi.fn(async () => ({})),
+    mode: { prototype: false },
+  }));
+
+vi.mock("src/utils/prototype", async (importOriginal) => ({
+  ...(await importOriginal()),
+  isPrototypeMode: () => mode.prototype,
+}));
+
+vi.mock("src/sections/evals/components/SimulationTestMode", () => {
+  const M = React.forwardRef((props, _ref) => {
+    capturedProps.simulation = props;
+    return <div data-testid="simulation-test-mode" />;
+  });
+  M.displayName = "SimulationTestModeMock";
+  return { default: M };
+});
+
+vi.mock("src/sections/evals/components/TracingTestMode", () => {
+  const M = React.forwardRef((props, _ref) => {
+    capturedProps.tracing = props;
+    return <div data-testid="tracing-test-mode" />;
+  });
+  M.displayName = "TracingTestModeMock";
+  return { default: M };
+});
+
+vi.mock("src/sections/evals/components/DatasetTestMode", () => {
+  const M = React.forwardRef((props, _ref) => {
+    capturedProps.dataset = props;
+    return <div data-testid="dataset-test-mode" />;
+  });
+  M.displayName = "DatasetTestModeMock";
+  return { default: M, JsonValueTree: () => <div /> };
+});
+
+vi.mock("src/sections/evals/components/TestPlayground", () => {
+  const M = React.forwardRef(() => <div />);
+  M.displayName = "TestPlaygroundMock";
+  return { default: M };
+});
+
+vi.mock("src/api/evaluations/decision-models", () => ({
+  default: () => ({ data: [] }),
+  decisionModelsQueryKey: ["eval-decision-models"],
+}));
+vi.mock("src/sections/evals/components/ModelSelector", () => ({
+  default: () => <div />,
+  FAGI_MODEL_VALUES: new Set(),
+}));
+
+vi.mock("src/sections/evals/components/InstructionEditor", () => ({
+  // eslint-disable-next-line react/prop-types
+  default: ({ value, onChange }) => (
+    <textarea
+      aria-label="Instructions"
+      value={value ?? ""}
+      onChange={(e) => onChange?.(e.target.value)}
+    />
+  ),
+}));
+
+vi.mock("src/sections/evals/components/LLMPromptEditor", () => ({
+  default: () => <div />,
+}));
+
+vi.mock("src/sections/evals/components/CodeEvalEditor", () => ({
+  default: () => <div />,
+}));
+
+vi.mock("src/sections/evals/components/OutputTypeConfig", () => ({
+  default: () => <div />,
+}));
+
+vi.mock("src/sections/evals/components/FewShotExamples", () => ({
+  default: () => <div />,
+}));
+
+vi.mock("src/sections/evals/components/CompositeDetailPanel", () => ({
+  default: () => <div />,
+}));
+
+vi.mock("src/sections/tasks/components/TaskFilterBar", () => ({
+  default: () => <div />,
+}));
+
+// Real buildApiFilterArray so the task time-window test exercises the
+// actual created_at filter construction.
+vi.mock(
+  "src/sections/tasks/components/TaskLivePreview",
+  async (importOriginal) => {
+    const actual = await importOriginal();
+    return { buildApiFilterArray: actual.buildApiFilterArray };
+  },
+);
+
+// Transitive import of the real TaskLivePreview; its module-scope
+// localStorage read breaks under the test environment.
+vi.mock("src/sections/evals/components/EvalResultDisplay", () => ({
+  default: () => <div />,
+}));
+
+vi.mock("src/sections/evals/hooks/useCreateEval", () => ({
+  useCreateEval: () => ({
+    mutateAsync: createDraft,
+  }),
+}));
+
+vi.mock("src/sections/evals/hooks/useEvalDetail", () => ({
+  useUpdateEval: () => ({
+    mutate: vi.fn(),
+    mutateAsync: updateDraft,
+  }),
+}));
+
+vi.mock("src/sections/evals/hooks/useCompositeEval", () => ({
+  useCreateCompositeEval: () => ({ mutateAsync: vi.fn() }),
+}));
+
+vi.mock("src/sections/evals/hooks/useCompositeChildrenKeys", () => ({
+  useCompositeChildrenUnionKeys: () => [],
+}));
+
+vi.mock("src/hooks/useCapabilities", async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    useFeatureAllowed: () => ({ allowed: true, isLoading: false }),
+    useFeatureLocked: () => ({ locked: false, isLoading: false }),
+    useFeatureDenied: () => false,
+    useCapabilities: () => ({ data: undefined, isLoading: false }),
+  };
+});
+vi.mock("src/hooks/useDeploymentMode", () => ({
+  useDeploymentMode: () => ({ isOSS: false, isCloud: true }),
+}));
+
+vi.mock("notistack", async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    useSnackbar: () => ({ enqueueSnackbar: enqueueSnackbarSpy }),
+  };
+});
+
+const renderWithSource = (
+  source,
+  { onSave = () => {}, ...providerProps } = {},
+) =>
+  render(
+    <EvalPickerProvider
+      source={source}
+      sourceId="sim-1"
+      sourceColumns={[]}
+      existingEvals={[]}
+      onEvalAdded={() => {}}
+      onClose={() => {}}
+      {...providerProps}
+    >
+      <EvalPickerCreateNew onBack={() => {}} onSave={onSave} />
+    </EvalPickerProvider>,
+  );
+
+// The mapping step normally reports at least one mapped input, but an eval
+// stored with an empty mapping reads back as a result column and is never
+// graded, so with requireInputs the save must refuse one outright.
+describe("EvalPickerCreateNew — requireInputs", () => {
+  beforeEach(() => {
+    capturedProps.simulation = null;
+    enqueueSnackbarSpy.mockClear();
+  });
+
+  const NO_INPUTS_MESSAGE =
+    "This evaluation has no inputs to map, so it can't run in an environment.";
+
+  it("blocks saving a new single eval with no inputs when requireInputs is set", async () => {
+    const onSave = vi.fn();
+    renderWithSource("simulation", { onSave, requireInputs: true });
+
+    // Code is offered, but this case saves an Agents judge: with instructions
+    // that name a variable it needs nothing else to pass `validate()`.
+    expect(screen.getByRole("tab", { name: "Code" })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Instructions"), {
+      target: { value: "Pass if {{output}} is polite." },
+    });
+    fireEvent.change(
+      screen.getByPlaceholderText("e.g. hallucination_detector"),
+      { target: { value: "my_polite_eval" } },
+    );
+
+    // Simulate the (mocked) SimulationTestMode reporting "ready" with an
+    // empty mapping — a state the mapping step should never report; the
+    // save must still refuse it.
+    await act(async () => {
+      capturedProps.simulation.onReadyChange(true, {});
+    });
+
+    const saveBtn = screen.getByRole("button", {
+      name: "Save & Add Evaluation",
+    });
+    await act(async () => {
+      fireEvent.click(saveBtn);
+    });
+
+    expect(onSave).not.toHaveBeenCalled();
+    expect(enqueueSnackbarSpy).toHaveBeenCalledWith(
+      NO_INPUTS_MESSAGE,
+      expect.objectContaining({ variant: "error" }),
+    );
+  });
+
+  it("saves normally when requireInputs is absent, even with an empty mapping", async () => {
+    const onSave = vi.fn();
+    renderWithSource("simulation", { onSave });
+
+    fireEvent.change(screen.getByLabelText("Instructions"), {
+      target: { value: "Pass if {{output}} is polite." },
+    });
+    fireEvent.change(
+      screen.getByPlaceholderText("e.g. hallucination_detector"),
+      { target: { value: "my_polite_eval" } },
+    );
+
+    await act(async () => {
+      capturedProps.simulation.onReadyChange(true, {});
+    });
+
+    const saveBtn = screen.getByRole("button", {
+      name: "Save & Add Evaluation",
+    });
+    await act(async () => {
+      fireEvent.click(saveBtn);
+    });
+
+    expect(enqueueSnackbarSpy).not.toHaveBeenCalledWith(
+      NO_INPUTS_MESSAGE,
+      expect.anything(),
+    );
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({ mapping: {} }),
+    );
+  });
+});
+
+describe.each([false, true])(
+  "Create New dev parity (prototype=%s)",
+  (prototype) => {
+    beforeEach(() => {
+      mode.prototype = prototype;
+      createDraft.mockClear();
+      updateDraft.mockClear();
+    });
+    afterEach(() => {
+      mode.prototype = false;
+    });
+
+    it("keeps N/A prototype-only in the switch, draft, publish and added binding", async () => {
+      const onSave = vi.fn();
+      renderWithSource("dataset", { onSave });
+      const toggle = screen.queryByTestId("allow-na-switch");
+      expect(Boolean(toggle)).toBe(prototype);
+      if (prototype)
+        fireEvent.click(screen.getByLabelText("Let the judge answer N/A"));
+      fireEvent.change(screen.getByLabelText("Instructions"), {
+        target: { value: "Pass if {{output}} is polite." },
+      });
+      fireEvent.change(
+        screen.getByPlaceholderText("e.g. hallucination_detector"),
+        {
+          target: { value: "my_polite_eval" },
+        },
+      );
+      await act(async () => {
+        capturedProps.dataset.onReadyChange(true, { output: "output-column" });
+      });
+      await act(async () => {
+        fireEvent.click(
+          screen.getByRole("button", { name: "Save & Add Evaluation" }),
+        );
+      });
+      expect(createDraft).toHaveBeenCalledTimes(1);
+      expect(updateDraft).toHaveBeenCalled();
+      expect(onSave).toHaveBeenCalledTimes(1);
+      // JSON is the actual wire contract: undefined properties are not sent.
+      expect(createDraft.mock.calls[0][0]).not.toHaveProperty("allow_na");
+      for (const [payload] of updateDraft.mock.calls) {
+        const wire = JSON.parse(JSON.stringify(payload));
+        if (prototype) expect(wire.allow_na).toBe(true);
+        else expect(wire).not.toHaveProperty("allow_na");
+      }
+      const binding = onSave.mock.calls[0][0];
+      if (prototype) expect(binding.config.allow_na).toBe(true);
+      else expect(binding.config || {}).not.toHaveProperty("allow_na");
+    });
+  },
+);

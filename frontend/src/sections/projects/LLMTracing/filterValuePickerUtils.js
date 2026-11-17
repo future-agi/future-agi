@@ -16,10 +16,9 @@ export function getPickerOptionValue(option) {
   } else {
     value = option?.value ?? option?.label ?? "";
   }
-  // Applied picker values are normalized by `normalizePickerValues`. Do the
-  // same at the option boundary so retained/catalog values such as `"True "`
-  // compare equal to the applied `"True"` value and render as selected.
-  return typeof value === "string" ? value.trim() : value;
+  // Exact filter values and their selection identities must preserve the
+  // original string, including leading/trailing whitespace and newlines.
+  return value;
 }
 
 export function getPickerOptionType(option) {
@@ -46,7 +45,10 @@ export function getPickerOptionLabel(option) {
   return option?.label ?? option?.value ?? "";
 }
 
-export function getPickerOptionSecondaryLabel(option, { showType = false } = {}) {
+export function getPickerOptionSecondaryLabel(
+  option,
+  { showType = false } = {},
+) {
   if (typeof option === "string") return "";
   const label = getPickerOptionLabel(option);
   const email = option?.email || option?.description || "";
@@ -108,7 +110,6 @@ export function normalizePickerValues(values) {
       : [];
   const cleanValues = rawValues
     .map((item) => getPickerOptionValue(item))
-    .map((item) => (typeof item === "string" ? item.trim() : item))
     .filter(
       (item) =>
         (typeof item === "string" && item.length > 0) ||

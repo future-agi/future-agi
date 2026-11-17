@@ -1,0 +1,46 @@
+# Teamwork documents a manually supplied permanent bearer token on its hosted HTTP endpoint.
+# Obtain that token using the vendor's helper/login flow; do not supply a basic-auth API key.
+schema: "connector-manifest/v1#provider"
+app: teamwork-com
+id: api-key
+version: 1.1.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.ai.teamwork.com
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: Teamwork bearer token
+      help: "Generate a permanent bearer token with Teamwork's teamwork-get-bearer-token helper or documented app-login flow. Supply the resulting token without the Bearer prefix, not a basic-auth API key. A paid account and administrator-enabled MCP under Settings > AI are required."
+      helpUrl: https://github.com/teamwork/mcp/blob/main/docs/usage/teamwork-cli.md
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_plan
+  source: https://www.teamwork.com/ai/mcp/
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://github.com/teamwork/mcp/blob/main/docs/usage/claude-code.md
+    fetchedAt: 2026-11-09
+  - fact: transport.variant
+    url: https://github.com/teamwork/mcp/blob/main/docs/usage/claude-code.md
+    fetchedAt: 2026-11-09
+  - fact: auth.kind
+    url: https://github.com/teamwork/mcp/blob/main/docs/usage/claude-code.md
+    fetchedAt: 2026-11-09
+  - fact: auth.credentialParts
+    url: https://github.com/teamwork/mcp/blob/main/docs/usage/claude-code.md
+    fetchedAt: 2026-11-09

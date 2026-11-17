@@ -20,7 +20,12 @@ from integrations.models import (
     IntegrationConnection,
     IntegrationPlatform,
 )
-from integrations.services.credentials import CredentialManager
+from integrations.permissions import CanManageIntegrations, can_manage_integrations
+from integrations.services.credentials import (
+    UNREADABLE_CREDENTIALS,
+    CredentialManager,
+    UnreadableCredentials,
+)
 from integrations.services.slack_oauth import (
     consume_slack_state,
     exchange_slack_code,
@@ -68,7 +73,7 @@ class SlackChannelsResponseSerializer(serializers.Serializer):
 
 
 class SlackInstallView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, CanManageIntegrations]
 
     @validated_request(
         SlackInstallSerializer, responses={200: SlackInstallResponseSerializer}
@@ -124,7 +129,11 @@ def slack_oauth_callback(request):
         workspace = Workspace.objects.get(
             pk=context["workspace_id"], organization=organization, is_active=True
         )
-        if not user.is_active or not user.can_write_to_workspace(workspace):
+        if (
+            not user.is_active
+            or not user.can_write_to_workspace(workspace)
+            or not can_manage_integrations(user, organization, workspace)
+        ):
             return _callback_redirect(state="error")
 
         credentials = exchange_slack_code(request.GET["code"])
@@ -145,12 +154,17 @@ def slack_oauth_callback(request):
                     platform=IntegrationPlatform.SLACK,
                     deleted=False,
                 )
-                if (
-                    CredentialManager.decrypt(
+                try:
+                    team_id = CredentialManager.decrypt(
                         bytes(connection.encrypted_credentials)
                     ).get("team_id")
-                    != credentials["team_id"]
-                ):
+                except UnreadableCredentials:
+                    # A Slack connection also keeps its workspace's team id as
+                    # its external project name, so one whose saved
+                    # credentials cannot be read still reconnects only to the
+                    # same Slack workspace.
+                    team_id = connection.external_project_name
+                if team_id != credentials["team_id"]:
                     return _callback_redirect(state="error")
                 connection.encrypted_credentials = encrypted
                 connection.display_name = credentials["team_name"] or "Slack"
@@ -235,6 +249,11 @@ class SlackChannelsView(APIView):
             )
             result = SlackService().get_channels(credentials, cursor=cursor)
             return Response({"status": True, "result": result})
+        except UnreadableCredentials:
+            return Response(
+                build_error_envelope(UNREADABLE_CREDENTIALS, status_code=409),
+                status=409,
+            )
         except (SlackApiError, ValueError):
             logger.warning(
                 "Slack channel listing failed",

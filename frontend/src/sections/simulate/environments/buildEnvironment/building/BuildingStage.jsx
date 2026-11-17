@@ -23,7 +23,17 @@ import BuildingPane from "./BuildingPane";
  * to the active ALK run and watch its reading events while it authors. `chat`
  * falls back to `progress` when absent (e.g. a mock-only build).
  */
-export default function BuildingStage({ progress, chat, env, envState, patch, primed, source, world }) {
+export default function BuildingStage({
+  progress,
+  chat,
+  env,
+  envState,
+  patch,
+  primed,
+  source,
+  world,
+  onStartNewBuild,
+}) {
   const p = progress || {};
   const console_ = chat || p;
   return (
@@ -57,6 +67,7 @@ export default function BuildingStage({ progress, chat, env, envState, patch, pr
           primed={primed}
           source={source}
           world={world}
+          onStartNewBuild={onStartNewBuild}
         />
       </PanelBoundary>
     </ChatSplitPane>
@@ -72,6 +83,7 @@ BuildingStage.propTypes = {
       title: PropTypes.string,
       detail: PropTypes.string,
       retryable: PropTypes.bool,
+      canceled: PropTypes.bool,
     }),
     turns: PropTypes.array,
     send: PropTypes.func,
@@ -92,4 +104,5 @@ BuildingStage.propTypes = {
   primed: PropTypes.bool,
   source: PropTypes.string,
   world: PropTypes.object,
+  onStartNewBuild: PropTypes.func,
 };

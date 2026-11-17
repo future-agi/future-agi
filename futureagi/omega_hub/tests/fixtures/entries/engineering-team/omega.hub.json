@@ -1,0 +1,95 @@
+{
+  "schema": "omega-hub/v1",
+  "id": "engineering-team",
+  "version": "1.0.0",
+  "title": "An engineering team that survives a kill -9",
+  "tagline": "Three engineers build three helpers, CI decides each one, and a SIGKILL halfway costs only the unfinished work.",
+  "kind": "team",
+  "cover": {
+    "emoji": "🏗️",
+    "from": "indigo",
+    "to": "blue"
+  },
+  "author": {
+    "github": "future-agi",
+    "name": "Future AGI",
+    "kind": "maintainer"
+  },
+  "tags": [
+    "team",
+    "ci",
+    "durable",
+    "resume"
+  ],
+  "difficulty": "advanced",
+  "license": "Apache-2.0",
+  "added": "2026-10-08",
+  "models": {
+    "keyless": "scripted",
+    "live": [
+      {
+        "model": "openai:gpt-5.4",
+        "keys": [
+          "OPENAI_API_KEY"
+        ],
+        "checked": "2026-10-09"
+      },
+      {
+        "model": "anthropic:claude-sonnet-4-6",
+        "keys": [
+          "ANTHROPIC_API_KEY"
+        ]
+      },
+      {
+        "model": "vertex:gemini-3.5-flash",
+        "keys": [
+          "OMEGA_VERTEX_CREDS"
+        ]
+      }
+    ],
+    "maxCalls": 30
+  },
+  "keys": [
+    {
+      "name": "OPENAI_API_KEY",
+      "why": "The model behind the agent, on OpenAI.",
+      "get": "https://platform.openai.com/api-keys",
+      "for": "live",
+      "secret": true
+    },
+    {
+      "name": "ANTHROPIC_API_KEY",
+      "why": "The model behind the agent, on Anthropic.",
+      "get": "https://console.anthropic.com/settings/keys",
+      "for": "live",
+      "secret": true
+    },
+    {
+      "name": "OMEGA_VERTEX_CREDS",
+      "why": "The model behind the agent, on Vertex AI.",
+      "get": "https://cloud.google.com/vertex-ai/docs/start/cloud-environment",
+      "for": "live",
+      "secret": true
+    }
+  ],
+  "run": {
+    "keyless": [
+      "node",
+      "--import",
+      "tsx",
+      "main.ts"
+    ]
+  },
+  "test": "main.test.ts",
+  "demo": {
+    "cast": "demo.cast"
+  },
+  "disclosure": {
+    "summary": "A team of agents writes small helper modules and checks them with generated tests.",
+    "network": "Keyless: none. Live: your chosen model vendor only.",
+    "files": "Writes generated modules and their checks into a temporary work folder.",
+    "shell": "Runs the generated checks, and one copy of itself, with the same Node binary.",
+    "background": "None. Every process it starts exits before it does.",
+    "credentials": "Reads the model key named under Keys needed for a live run. Stores nothing."
+  }
+}

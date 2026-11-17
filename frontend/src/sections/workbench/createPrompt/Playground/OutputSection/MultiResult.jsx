@@ -28,7 +28,11 @@ import {
   isValidUrl,
 } from "src/utils/utils";
 import { FormSearchSelectFieldState } from "src/components/FromSearchSelectField";
-import { PROMPT_RESULT_TYPE_OPTIONS, PROMPT_RESULT_TYPES } from "../common";
+import {
+  PROMPT_RESULT_TYPE_INPUT_CH,
+  PROMPT_RESULT_TYPE_OPTIONS,
+  PROMPT_RESULT_TYPES,
+} from "../common";
 import { parseThinkingContent } from "./thinkingUtils";
 import ThinkingBlock from "./ThinkingBlock";
 import TestAudioPlayer from "src/components/custom-audio/TestAudioPlayer";
@@ -312,11 +316,8 @@ const MultiResult = ({
               placeholder="Output Type"
               options={PROMPT_RESULT_TYPE_OPTIONS}
               inputProps={{
-                size: Math.max(
-                  PROMPT_RESULT_TYPE_OPTIONS.find((o) => o.value === outputType)
-                    ?.label?.length ?? 0,
-                  3,
-                ),
+                size: PROMPT_RESULT_TYPE_INPUT_CH,
+                style: { minWidth: `${PROMPT_RESULT_TYPE_INPUT_CH}ch` },
               }}
               sx={{
                 width: "fit-content",

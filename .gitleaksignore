@@ -1,0 +1,2 @@
+# Public wire-format fixtures contain only labelled test_only_* material.
+api_contracts/service_envelope/v1/vectors.json

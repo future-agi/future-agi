@@ -13,7 +13,11 @@ def pipeline_settings(value):
     """Require tenant opt-in; never use Python truthiness on wire values.
 
     Historical camelCase names are accepted. Conflicting aliases are refused
-    instead of making policy depend on which consumer reads the document.
+    instead of making policy depend on which consumer reads the document. A
+    setting the document gives in neither spelling is left out, not defaulted:
+    an organization that never saved Fail Open or a pipeline mode keeps its
+    gateway node's own, as every organization had in v1.58.0 (release-lead
+    11-14).
     """
     flags = [
         _BOOLEAN.validate_python(value[key])
@@ -31,10 +35,12 @@ def pipeline_settings(value):
         raise ValueError("pipeline_mode must be parallel or sequential")
     if len(set(modes)) > 1:
         raise ValueError("conflicting pipeline_mode aliases")
-    return {
-        "fail_open": flags[0] if flags else False,
-        "pipeline_mode": modes[0] if modes else "parallel",
-    }
+    settings = {}
+    if flags:
+        settings["fail_open"] = flags[0]
+    if modes:
+        settings["pipeline_mode"] = modes[0]
+    return settings
 
 
 def saved_pipeline_settings(value):
@@ -45,27 +51,30 @@ def saved_pipeline_settings(value):
     organization could not load, edit or push its settings. Fail Open counts
     only when every present spelling agrees it is on. The canonical
     pipeline_mode wins over its alias, and anything other than sequential runs
-    in parallel, as the gateway does. Where pipeline_settings accepts a
-    document, both functions return the same result.
+    in parallel, as the gateway does. A setting with no value in either
+    spelling is left out, as in pipeline_settings. Where pipeline_settings
+    accepts a document, both functions return the same result.
     """
-    try:
-        flags = {
-            _BOOLEAN.validate_python(value[key])
-            for key in _FAIL_OPEN_KEYS
-            if value.get(key) is not None
-        }
-    except ValueError:
-        flags = set()
+    settings = {}
+    if any(value.get(key) is not None for key in _FAIL_OPEN_KEYS):
+        try:
+            flags = {
+                _BOOLEAN.validate_python(value[key])
+                for key in _FAIL_OPEN_KEYS
+                if value.get(key) is not None
+            }
+        except ValueError:
+            flags = set()
+        settings["fail_open"] = flags == {True}
     mode = next(
         (value[key] for key in _PIPELINE_MODE_KEYS if value.get(key) is not None),
-        "parallel",
+        None,
     )
-    return {
-        "fail_open": flags == {True},
-        "pipeline_mode": (
+    if mode is not None:
+        settings["pipeline_mode"] = (
             "sequential" if str(mode).strip().lower() == "sequential" else "parallel"
-        ),
-    }
+        )
+    return settings
 
 
 def canonical_setting_keys(patch):

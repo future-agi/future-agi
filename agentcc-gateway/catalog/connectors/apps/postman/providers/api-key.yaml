@@ -1,0 +1,56 @@
+# Postman's remote MCP server with a Postman API key as the bearer
+# ("Authorization: Bearer <POSTMAN_API_KEY>"). The US server also takes
+# OAuth (see mcp); the EU server takes only an API key, so this provider is
+# the one that serves EU teams. Minimal tool configuration, as in mcp.
+schema: "connector-manifest/v1#provider"
+app: postman
+id: api-key
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://{mcpHost}/minimal
+  urlVariables:
+    mcpHost:
+      description: "Your Postman region: mcp.postman.com (US) or mcp.eu.postman.com (EU)."
+      pattern: '^mcp(\.eu)?\.postman\.com$'
+      default: mcp.postman.com
+      scope: org
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: API key
+      help: "A Postman API key, from Settings > API keys in Postman. The EU server accepts only API keys."
+      helpUrl: https://learning.postman.com/docs/reference/postman-api/postman-mcp-server/postman-mcp-remote-server
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://learning.postman.com/docs/reference/postman-api/postman-mcp-server/postman-mcp-remote-server
+    fetchedAt: 2026-11-11
+  - fact: transport.urlVariables.mcpHost
+    url: https://learning.postman.com/docs/reference/postman-api/postman-mcp-server/postman-mcp-remote-server
+    fetchedAt: 2026-11-11
+  - fact: transport.variant
+    url: https://learning.postman.com/docs/reference/postman-api/postman-mcp-server/postman-mcp-remote-server
+    fetchedAt: 2026-11-11
+  - fact: auth.kind
+    url: https://learning.postman.com/docs/reference/postman-api/postman-mcp-server/overview
+    fetchedAt: 2026-11-11
+  - fact: auth.credentialParts
+    url: https://learning.postman.com/docs/reference/postman-api/postman-mcp-server/postman-mcp-remote-server
+    fetchedAt: 2026-11-11
+x-omega: { oss: exclude }

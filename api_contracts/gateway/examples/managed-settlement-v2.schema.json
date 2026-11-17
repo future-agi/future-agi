@@ -1,0 +1,385 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://futureagi.com/contracts/gateway/examples/managed-settlement-v2.schema.json",
+  "title": "managed-settlement-v2",
+  "description": "Opt-in dimensional outbox contract. All v1 fields retain their meaning. dimensions is compact JSON; missing quantity means unknown, never zero. estimated_bound is a conservative charge, not measured provider cost. Do not enable a producer until the consumer supports v2.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "v",
+    "kind",
+    "request_id",
+    "generation_id",
+    "org_id",
+    "api_key_id",
+    "billed_micros",
+    "upstream_micros",
+    "markup_micros",
+    "markup_bps",
+    "hold_micros",
+    "landed_micros",
+    "upstream_fee_bps",
+    "processing_fee_bps",
+    "served_upstream_provider",
+    "upstream_key_id",
+    "model",
+    "provider",
+    "endpoint_id",
+    "cost_source",
+    "usage_estimated",
+    "attempts",
+    "catalog_snapshot_id",
+    "policy_version",
+    "agent_run_id",
+    "agent_id",
+    "ts_ms",
+    "dimensions"
+  ],
+  "properties": {
+    "v": {
+      "const": "2"
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "spend",
+        "void"
+      ]
+    },
+    "request_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "generation_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "org_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "api_key_id": {
+      "type": "string"
+    },
+    "billed_micros": {
+      "$ref": "#/$defs/Micros"
+    },
+    "upstream_micros": {
+      "$ref": "#/$defs/Micros"
+    },
+    "markup_micros": {
+      "$ref": "#/$defs/Micros"
+    },
+    "markup_bps": {
+      "$ref": "#/$defs/Micros"
+    },
+    "hold_micros": {
+      "$ref": "#/$defs/Micros"
+    },
+    "landed_micros": {
+      "$ref": "#/$defs/Micros"
+    },
+    "upstream_fee_bps": {
+      "$ref": "#/$defs/Micros"
+    },
+    "processing_fee_bps": {
+      "$ref": "#/$defs/Micros"
+    },
+    "served_upstream_provider": {
+      "type": "string"
+    },
+    "upstream_key_id": {
+      "type": "string",
+      "description": "key_hash of the per-org upstream key, or empty. Never the key."
+    },
+    "model": {
+      "type": "string"
+    },
+    "provider": {
+      "type": "string"
+    },
+    "endpoint_id": {
+      "type": "string"
+    },
+    "cost_source": {
+      "type": "string",
+      "enum": [
+        "provider_reported",
+        "catalog",
+        "catalog_max",
+        "price_card",
+        "modeldb",
+        "org_custom",
+        "unpriced"
+      ]
+    },
+    "usage_estimated": {
+      "type": "string",
+      "enum": [
+        "0",
+        "1"
+      ]
+    },
+    "attempts": {
+      "type": "string",
+      "contentMediaType": "application/json",
+      "contentSchema": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/AttemptSummary"
+        }
+      }
+    },
+    "catalog_snapshot_id": {
+      "type": "string"
+    },
+    "policy_version": {
+      "type": "string"
+    },
+    "agent_run_id": {
+      "type": "string"
+    },
+    "agent_id": {
+      "type": "string"
+    },
+    "ts_ms": {
+      "type": "string",
+      "pattern": "^[0-9]+$"
+    },
+    "dimensions": {
+      "type": "string",
+      "contentMediaType": "application/json",
+      "contentSchema": {
+        "$ref": "#/$defs/DimensionalReceipt"
+      }
+    }
+  },
+  "$defs": {
+    "Micros": {
+      "type": "string",
+      "pattern": "^[0-9]+$"
+    },
+    "AttemptSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "attempt_id",
+        "kind",
+        "provider",
+        "model",
+        "credential_type",
+        "upstream_micros",
+        "billed_micros",
+        "outcome"
+      ],
+      "properties": {
+        "attempt_id": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "primary",
+            "retry",
+            "failover",
+            "model_fallback",
+            "auto_fallback",
+            "request_fallback",
+            "hedge",
+            "selector"
+          ]
+        },
+        "provider": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "credential_type": {
+          "type": "string",
+          "enum": [
+            "managed",
+            "byok"
+          ]
+        },
+        "upstream_micros": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "billed_micros": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "outcome": {
+          "type": "string",
+          "enum": [
+            "success",
+            "error",
+            "timeout",
+            "cancelled",
+            "discarded",
+            "skipped",
+            "circuit_open"
+          ]
+        }
+      }
+    },
+    "DimensionalReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contract",
+        "model",
+        "endpoint",
+        "snapshot",
+        "state",
+        "lines"
+      ],
+      "properties": {
+        "contract": {
+          "type": "string",
+          "minLength": 1
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1
+        },
+        "endpoint": {
+          "type": "string",
+          "minLength": 1
+        },
+        "snapshot": {
+          "type": "string",
+          "minLength": 1
+        },
+        "state": {
+          "enum": [
+            "measured",
+            "estimated_bound",
+            "provider_total",
+            "estimated_pending_reconciliation"
+          ]
+        },
+        "inclusive_attempts": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "items": {
+            "$ref": "#/$defs/InclusiveAttempt"
+          }
+        },
+        "provider_total_usd": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]+)?$"
+        },
+        "lines": {
+          "type": "array",
+          "minItems": 0,
+          "maxItems": 11,
+          "items": {
+            "$ref": "#/$defs/DimensionalLine"
+          }
+        }
+      }
+    },
+    "DimensionalLine": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "unit",
+        "rate_usd",
+        "cap",
+        "estimated",
+        "covered_by_total"
+      ],
+      "properties": {
+        "unit": {
+          "enum": [
+            "uncached_input_token",
+            "cache_read_token",
+            "cache_write_token",
+            "text_output_token",
+            "reasoning_token",
+            "input_image",
+            "output_image",
+            "song",
+            "clip",
+            "search_query",
+            "request"
+          ]
+        },
+        "rate_usd": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]+)?$"
+        },
+        "cap": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000000
+        },
+        "quantity": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000000
+        },
+        "estimated": {
+          "type": "boolean"
+        },
+        "covered_by_total": {
+          "type": "boolean"
+        }
+      }
+    },
+    "InclusiveAttempt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "attempt_id",
+        "model",
+        "served_model",
+        "generation_id",
+        "hold_micros",
+        "upstream_micros",
+        "billed_micros",
+        "estimated"
+      ],
+      "properties": {
+        "attempt_id": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "served_model": {
+          "type": "string"
+        },
+        "generation_id": {
+          "type": "string"
+        },
+        "anomaly": {
+          "type": "string"
+        },
+        "provider_total_usd": {
+          "type": "string"
+        },
+        "hold_micros": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "upstream_micros": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "billed_micros": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "estimated": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

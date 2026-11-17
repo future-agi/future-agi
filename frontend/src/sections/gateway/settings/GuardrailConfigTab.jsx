@@ -1,22 +1,76 @@
 /* eslint-disable react/prop-types */
+import Section from "src/components/section";
 import React, { useState } from "react";
 import {
   Stack,
+  Card,
   Typography,
-  TextField,
-  MenuItem,
-  FormControlLabel,
-  Switch,
-  IconButton,
-  Button,
   Divider,
+  FormControlLabel,
+  MenuItem,
 } from "@mui/material";
-import Section from "src/components/section";
 import Iconify from "src/components/iconify";
 import InheritedBadge from "../components/InheritedBadge";
+import Chip from "@mui/material/Chip";
+import ConfirmDialog from "../components/ConfirmDialog";
+import {
+  AdminButton,
+  AdminButton as Button,
+  AdminSwitch as Switch,
+  AdminTextField as TextField,
+  AdminIconButton as IconButton,
+} from "../components/GatewayWriteControls";
+import { useConfirmRemoval } from "../hooks/useConfirmRemoval";
+import { GUARDRAILS_OFF_REASON as GUARDRAILS_OFF_TEXT } from "../utils/guardrailPipeline";
+import {
+  STORED_ONLY_CHECKS,
+  STORED_ONLY_PARTNER_HELP,
+  STORED_ONLY_PARTNER_TITLE,
+  storedOnlyOffMessage,
+} from "../constants/storedOnlyChecks";
+import {
+  storedSettings,
+  storedToolSettings,
+  storedCheckThreshold,
+  storedCheckOn,
+  NEVER_TRIGGERS_WARNING,
+} from "./storedCheckSummary";
 import GuardrailCheckDialog from "./GuardrailCheckDialog";
+import { isStoredChecksMap } from "../hooks/useConfigPatch";
+import {
+  NOT_OFFERED_CHECKS,
+  needsSetup,
+  partnerConfigured,
+  scoresOneOnMatch,
+} from "../guardrails/catalog";
+import { BUILT_IN_CHECKS } from "../guardrails/catalog/builtin-checks";
+import {
+  listEntryAsCheck,
+  ruleAsCheck,
+} from "../guardrails/catalog/rule-model";
+import { storedThreshold } from "../guardrails/catalog/form-model";
 
-const GUARDRAIL_CHECKS = [
+// The settings a built-in check cannot run without, as the Guardrails page
+// asks for them (topics for Topic Restriction, scripts for Language
+// Detection): with none set, the gateway's check passes every request.
+const builtInSettings = (name) => {
+  const entry = BUILT_IN_CHECKS.find((check) => check.name === name);
+  return {
+    description: entry.description,
+    fields: entry.fields,
+    ...(entry.requiresOneOf
+      ? {
+          requiresOneOf: entry.requiresOneOf,
+          requiresOneOfReason: entry.requiresOneOfReason,
+        }
+      : {}),
+  };
+};
+
+// The check catalogs are exported for checkActions.test.jsx, which pins them
+// to api_contracts/gateway/guardrail-check-actions.json.
+// eslint-disable-next-line react-refresh/only-export-components
+export const GUARDRAIL_CHECKS = [
   {
     name: "pii-detection",
     label: "PII Detection",
@@ -58,11 +112,13 @@ const GUARDRAIL_CHECKS = [
     name: "topic-restriction",
     label: "Topic Restriction",
     icon: "solar:shield-keyhole-linear",
+    ...builtInSettings("topic-restriction"),
   },
   {
     name: "language-detection",
-    label: "Language Detection",
+    label: "Script Detection",
     icon: "solar:translation-linear",
+    ...builtInSettings("language-detection"),
   },
   {
     name: "system-prompt-protection",
@@ -82,7 +138,7 @@ const GUARDRAIL_CHECKS = [
 ];
 
 // Future AGI star logo as inline SVG icon
-const FutureAGIIcon = ({ size = 20, enabled }) => (
+const FutureAgiIcon = ({ size = 20, enabled }) => (
   <svg
     width={size}
     height={size}
@@ -164,7 +220,8 @@ const FutureAGIIcon = ({ size = 20, enabled }) => (
   </svg>
 );
 
-const MODEL_GUARDRAIL_CHECKS = [
+// eslint-disable-next-line react-refresh/only-export-components
+export const MODEL_GUARDRAIL_CHECKS = [
   {
     name: "futureagi-eval",
     label: "Future AGI Eval",
@@ -391,7 +448,7 @@ const MODEL_GUARDRAIL_CHECKS = [
     label: "Aporia Guardrails",
     icon: "solar:shield-check-linear",
     provider: "aporia",
-    description: "Hallucination, injection, PII & topic restriction guardrails",
+    description: "Checks the request with your Aporia project's guardrails",
     fields: [
       { key: "api_key", label: "API Key", type: "password", required: true },
       {
@@ -406,19 +463,10 @@ const MODEL_GUARDRAIL_CHECKS = [
         type: "text",
         required: true,
       },
-      {
-        key: "policies",
-        label: "Policies",
-        type: "multiselect",
-        options: [
-          "hallucination",
-          "injection",
-          "pii",
-          "topic_restriction",
-          "rag_validation",
-        ],
-        defaultValue: ["hallucination", "injection", "pii"],
-      },
+      // No "Policies": the gateway never sent the selection, only the
+      // request text to the project, and an org's check reads the request
+      // only, so answer policies (hallucination, RAG validation) could not
+      // apply.
     ],
   },
   {
@@ -477,13 +525,8 @@ const MODEL_GUARDRAIL_CHECKS = [
         type: "text",
         placeholder: "Optional DynamoGuard model ID",
       },
-      {
-        key: "text_type",
-        label: "Text Type",
-        type: "select",
-        options: ["MODEL_INPUT", "MODEL_RESPONSE"],
-        defaultValue: "MODEL_INPUT",
-      },
+      // No text type: an org's check reads the request only, so the text it
+      // sends is model input (MODEL_INPUT, the gateway's default).
     ],
   },
   {
@@ -558,7 +601,8 @@ const MODEL_GUARDRAIL_CHECKS = [
           "profanity",
           "sexual_content",
           "unethical_behavior",
-          "groundedness",
+          // No "groundedness": it judges a response against its context, and
+          // an org's check reads the request only.
         ],
         defaultValue: "harm",
       },
@@ -717,13 +761,8 @@ const MODEL_GUARDRAIL_CHECKS = [
         required: true,
         placeholder: "Comma-separated tool patterns, e.g. file_*, db_write",
       },
-      {
-        key: "apply_to",
-        label: "Apply To",
-        type: "select",
-        options: ["request", "response", "both"],
-        defaultValue: "both",
-      },
+      // No "Apply To": an org's check reads the request only, so it checks
+      // the tools the request offers and never the model's tool calls.
     ],
   },
   {
@@ -732,14 +771,8 @@ const MODEL_GUARDRAIL_CHECKS = [
     icon: "solar:shield-network-linear",
     provider: "mcp_security",
     description:
-      "Model Context Protocol safety — validate MCP tool inputs/outputs",
+      "Checks the tool definitions and tool calls a request carries.",
     fields: [
-      {
-        key: "allowed_servers",
-        label: "Allowed Servers",
-        type: "text",
-        placeholder: "Comma-separated server names or URLs",
-      },
       {
         key: "blocked_tools",
         label: "Blocked Tools",
@@ -753,13 +786,8 @@ const MODEL_GUARDRAIL_CHECKS = [
         options: ["true", "false"],
         defaultValue: "true",
       },
-      {
-        key: "validate_outputs",
-        label: "Validate Outputs",
-        type: "select",
-        options: ["true", "false"],
-        defaultValue: "true",
-      },
+      // No "Validate Outputs": an org's check reads the request only, so it
+      // never sees the model's tool calls.
       {
         key: "max_calls_per_request",
         label: "Max Calls Per Request",
@@ -814,10 +842,10 @@ function checksArrayToObject(checks) {
     const originalName = check.name;
     if (!originalName) continue;
     const catalogName = RULE_TO_CATALOG[originalName] || originalName;
-    normalized[catalogName] = {
-      ...check,
-      _originalName: originalName,
-    };
+    // As the Guardrails page reads it (rule-model normalizeGuardrails), so a
+    // whole-section save sends an untouched entry back exactly as stored
+    // (useConfigPatch guardrailsForSave).
+    normalized[catalogName] = listEntryAsCheck(check);
   }
 
   return normalized;
@@ -850,26 +878,70 @@ function normalizeGuardrails(raw) {
   for (const rule of rules) {
     // Map org-config name to catalog name so toggles light up
     const catalogName = RULE_TO_CATALOG[rule.name] || rule.name;
-    checks[catalogName] = {
-      enabled: rule.enabled !== false,
-      action: rule.action || "block",
-      confidence_threshold: rule.threshold ?? 0.8,
-      stage: rule.stage || rule.phase,
-      mode: rule.mode,
-      config: rule.config,
-      _originalName: rule.name, // preserve for save
-    };
+    // As the Guardrails page reads it (rule-model ruleAsCheck): the threshold
+    // the config push sends, 0.8 when none is stored and 0 (none sent) for a
+    // stored null, so an untouched rule is saved back exactly as stored.
+    checks[catalogName] = ruleAsCheck(rule);
   }
   return { ...raw, checks };
 }
 
-const GuardrailConfigTab = ({ guardrails, onChange }) => {
+// What the gateway runs a check with when it carries no action or no
+// threshold, by how the saved section is stored (see GuardrailCheckDialog).
+const FAIL_OPEN_NOT_SET =
+  "Not set for this organization. The gateway's own Fail Open setting applies (on by default).";
+const MODE_NOT_SET =
+  "Not set for this organization. Checks run one at a time, and the first check that blocks stops the rest.";
+const modeLabel = (value) =>
+  value === "sequential"
+    ? "Sequential"
+    : value === "parallel"
+      ? "Parallel"
+      : value || "Not set";
+
+const RULE_DEFAULTS = { action: "block", threshold: 0.8 };
+const CHECKS_MAP_DEFAULTS = { action: "log", threshold: 0 };
+
+// `saved` is the section as stored, which decides that meaning: a draft of a
+// section stored as rules or as a list becomes a checks map once edited.
+const GuardrailConfigTab = ({
+  guardrails,
+  saved = undefined,
+  onChange,
+  nodePipeline = undefined,
+}) => {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingCheck, setEditingCheck] = useState(null);
   const [editingMeta, setEditingMeta] = useState(null);
+  const [pendingOff, setPendingOff] = useState(null);
 
   const config = normalizeGuardrails(guardrails || {});
   const checks = config.checks || {};
+  // Stored-only checks remain visible regardless of credential completeness.
+  const storedOnlyChecks = MODEL_GUARDRAIL_CHECKS.filter(
+    (meta) => STORED_ONLY_CHECKS.has(meta.name) && checks[meta.name] != null,
+  );
+  const absent = isStoredChecksMap(saved ?? guardrails)
+    ? CHECKS_MAP_DEFAULTS
+    : RULE_DEFAULTS;
+  // 850(a): the node flag changes enforcement, not stored edits. The parent
+  // OrgConfigEditor shows GUARDRAILS_OFF_BANNER; write controls still gate roles.
+  const guardrailsOff = nodePipeline?.enabled === false;
+  const [requestRemoval, confirmation] = useConfirmRemoval();
+
+  // Mode and Fail Open are written only when the admin changes them: an
+  // organization that never set one keeps it unset, so the gateway's own
+  // setting goes on applying. Until then the switch shows the position the
+  // gateway reports (on when it reports none) with a caption.
+  const storedFailOpen = config.fail_open ?? config.failOpen;
+  const failOpenSet = storedFailOpen !== undefined && storedFailOpen !== null;
+  const failOpenOn = failOpenSet
+    ? [true, "true"].includes(storedFailOpen)
+    : typeof nodePipeline?.fail_open === "boolean"
+      ? nodePipeline.fail_open
+      : true;
+  const storedMode = config.pipeline_mode || config.pipelineMode || "";
+  const modeSet = storedMode !== "";
 
   const handlePipelineChange = (field, value) => {
     onChange({ ...config, [field]: value });
@@ -881,23 +953,25 @@ const GuardrailConfigTab = ({ guardrails, onChange }) => {
     setDialogOpen(true);
   };
 
+  // The dialog gives the whole check: a saved check as stored apart from the
+  // fields the admin changed, or a new one.
   const handleSaveCheck = (checkName, data) => {
-    const existing = checks[checkName] || {};
-
     onChange({
       ...config,
       checks: {
         ...checks,
-        [checkName]: {
-          ...existing,
-          ...data,
-          config: data.config ?? existing.config,
-        },
+        [checkName]: data,
       },
     });
   };
 
   const handleToggleCheck = (checkName, enabled, meta) => {
+    // A check that cannot run without its settings (no topics, no scripts,
+    // no keywords) opens them instead of being turned on as it is.
+    if (enabled && meta?.fields && needsSetup(meta, checks[checkName] || {})) {
+      handleEdit(checkName, meta);
+      return;
+    }
     const existing = checks[checkName] || {
       action: "block",
       confidence_threshold: 0.8,
@@ -923,18 +997,160 @@ const GuardrailConfigTab = ({ guardrails, onChange }) => {
     onChange({ ...config, checks: updated });
   };
 
+  // Turns a stored-only check off in the draft and changes nothing else it is
+  // saved with (handleToggleCheck would also give it a provider).
+  const handleTurnOff = (checkName) => {
+    const stored = checks[checkName];
+    onChange({
+      ...config,
+      checks: {
+        ...checks,
+        [checkName]: {
+          ...(stored && typeof stored === "object" ? stored : {}),
+          enabled: false,
+        },
+      },
+    });
+  };
+
+  // Whether the gateway runs a stored-only check once the draft is saved:
+  // as the config push reads its saved entry (storedCheckOn), not from the
+  // editor's normalized draft, which reads a rule saved with a null `enabled`
+  // as on. A rule or a policy-sync list entry saved without `enabled` runs;
+  // one saved with null, or a checks-map entry without it or with null, does
+  // not. The draft counts only when it turns the check off, the one change
+  // the editors make to one (keptAsStored in useConfigPatch).
+  const isOn = (name, check) => {
+    if (check === false || check?.enabled === false) return false;
+    return storedCheckOn(saved ?? guardrails, name);
+  };
+
+  // A stored partner check this release does not offer: what it is saved
+  // with, read-only, and the two changes the console allows, each confirmed:
+  // turn it off (when on) and remove it, both in the draft.
+  const renderStoredOnlyCard = (meta) => {
+    const { name, label, icon } = meta;
+    const check = checks[name];
+    const stored = check && typeof check === "object" ? check : {};
+    const on = isOn(name, check);
+    const action = stored.action || absent.action;
+    const threshold = storedCheckThreshold(saved ?? guardrails, name);
+    const details = [
+      `Action: ${action}`,
+      ...(!meta.hideConfidence || Number(threshold) >= 1
+        ? [`Threshold: ${Number(threshold).toFixed(2)}`]
+        : []),
+      ...(name === "tool-permissions"
+        ? storedToolSettings(stored)
+        : storedSettings(meta, stored)),
+    ];
+
+    return (
+      <Section
+        component={Card}
+        elevation={0}
+        key={name}
+        variant="panel"
+        data-stored-only-check={name}
+      >
+        <Stack
+          direction="row"
+          justifyContent="space-between"
+          alignItems="center"
+        >
+          <Stack direction="row" alignItems="center" spacing={1}>
+            <Iconify
+              icon={icon}
+              width={20}
+              sx={{ color: on ? "primary.main" : "text.disabled" }}
+            />
+            <Stack>
+              <Typography variant="subtitle2">{label}</Typography>
+              {meta.description && (
+                <Typography variant="caption" color="text.secondary">
+                  {meta.description}
+                </Typography>
+              )}
+            </Stack>
+            <Chip label="Read-only" size="small" variant="outlined" />
+          </Stack>
+          <Stack direction="row" alignItems="center" spacing={0.5}>
+            {guardrailsOff ? (
+              <Chip
+                label="Not enforced"
+                size="small"
+                variant="outlined"
+                title={GUARDRAILS_OFF_TEXT}
+              />
+            ) : (
+              <Chip
+                label={on ? "On" : "Off"}
+                size="small"
+                variant="outlined"
+                color={on ? "success" : "default"}
+              />
+            )}
+            {on && (
+              <AdminButton
+                size="small"
+                color="inherit"
+                aria-label={`Turn off ${label}`}
+                onClick={() => setPendingOff({ name, label })}
+              >
+                Turn off
+              </AdminButton>
+            )}
+            <AdminButton
+              size="small"
+              color="inherit"
+              aria-label={`Remove ${label}`}
+              onClick={() =>
+                requestRemoval(label, () => handleResetCheck(name))
+              }
+            >
+              Remove
+            </AdminButton>
+          </Stack>
+        </Stack>
+        <Stack
+          direction="row"
+          spacing={2}
+          sx={{ mt: 0.5, pl: 3.5 }}
+          flexWrap="wrap"
+        >
+          {details.map((text) => (
+            <Typography
+              key={text}
+              variant="caption"
+              color="text.secondary"
+              sx={{ overflowWrap: "anywhere" }}
+            >
+              {text}
+            </Typography>
+          ))}
+        </Stack>
+        {Number(threshold) >= 1 && (
+          <Typography variant="caption" color="warning.main">
+            {NEVER_TRIGGERS_WARNING}
+          </Typography>
+        )}
+      </Section>
+    );
+  };
+
   const renderCheckCard = ({ name, label, icon }, meta) => {
     const check = checks[name];
     const isCustom = Boolean(check);
     const enabled = check?.enabled ?? false;
-    const action = check?.action || "block";
-    const threshold =
-      check?.confidence_threshold ?? check?.confidenceThreshold ?? 0.8;
+    const action = check?.action || absent.action;
+    // What the gateway runs it at: a saved confidence_threshold, even null
+    // (run as 0), wins over confidenceThreshold (form-model storedThreshold).
+    const threshold = storedThreshold(check, absent.threshold);
     const hasMeta = Boolean(meta);
     const summary = meta?.provider ? getProviderSummary(check, meta) : null;
 
     return (
-      <Section variant="panel" key={name}>
+      <Section component={Card} elevation={0} key={name} variant="panel">
         <Stack
           direction="row"
           justifyContent="space-between"
@@ -942,7 +1158,7 @@ const GuardrailConfigTab = ({ guardrails, onChange }) => {
         >
           <Stack direction="row" alignItems="center" spacing={1}>
             {icon === "__futureagi__" ? (
-              <FutureAGIIcon size={20} enabled={enabled} />
+              <FutureAgiIcon size={20} enabled={enabled} />
             ) : (
               <Iconify
                 icon={icon}
@@ -961,21 +1177,31 @@ const GuardrailConfigTab = ({ guardrails, onChange }) => {
             <InheritedBadge variant={isCustom ? "custom" : "inherited"} />
           </Stack>
           <Stack direction="row" alignItems="center" spacing={0.5}>
+            {guardrailsOff && isCustom && (
+              <Chip label="Not enforced" size="small" variant="outlined" />
+            )}
             <Switch
               size="small"
               checked={enabled}
+              inputProps={{ "aria-label": `Turn ${label} on or off` }}
               onChange={(e) => handleToggleCheck(name, e.target.checked, meta)}
             />
-            <IconButton size="small" onClick={() => handleEdit(name, meta)}>
+            <IconButton
+              size="small"
+              aria-label={`Configure ${label}`}
+              onClick={() => handleEdit(name, meta)}
+            >
               <Iconify icon="solar:pen-linear" width={20} />
             </IconButton>
             {isCustom && (
               <Button
                 size="small"
                 color="inherit"
-                onClick={() => handleResetCheck(name)}
+                onClick={() =>
+                  requestRemoval(label, () => handleResetCheck(name))
+                }
               >
-                Reset
+                Remove
               </Button>
             )}
           </Stack>
@@ -990,9 +1216,11 @@ const GuardrailConfigTab = ({ guardrails, onChange }) => {
             <Typography variant="caption" color="text.secondary">
               Action: {action}
             </Typography>
-            <Typography variant="caption" color="text.secondary">
-              Threshold: {Number(threshold).toFixed(2)}
-            </Typography>
+            {!meta?.hideConfidence && !scoresOneOnMatch(name, check) && (
+              <Typography variant="caption" color="text.secondary">
+                Threshold: {Number(threshold).toFixed(2)}
+              </Typography>
+            )}
             {summary && (
               <Typography variant="caption" color="text.secondary">
                 {summary}
@@ -1004,10 +1232,33 @@ const GuardrailConfigTab = ({ guardrails, onChange }) => {
     );
   };
 
+  const partnerCards = MODEL_GUARDRAIL_CHECKS.filter(
+    (item) =>
+      !NOT_OFFERED_CHECKS.has(item.name) &&
+      !STORED_ONLY_CHECKS.has(item.name) &&
+      partnerConfigured(item, checks[item.name]),
+  );
+
   return (
     <Stack spacing={2}>
+      {confirmation}
+      <ConfirmDialog
+        open={Boolean(pendingOff)}
+        title="Turn off check"
+        message={
+          pendingOff
+            ? storedOnlyOffMessage(pendingOff.label, "Save & Activate")
+            : ""
+        }
+        confirmLabel="Turn off"
+        onClose={() => setPendingOff(null)}
+        onConfirm={() => {
+          if (pendingOff) handleTurnOff(pendingOff.name);
+          setPendingOff(null);
+        }}
+      />
       {/* Pipeline-level settings */}
-      <Section variant="panel">
+      <Section component={Card} elevation={0} variant="panel">
         <Typography variant="subtitle2" gutterBottom>
           Pipeline Settings
         </Typography>
@@ -1016,10 +1267,12 @@ const GuardrailConfigTab = ({ guardrails, onChange }) => {
             select
             size="small"
             label="Mode"
-            value={config.pipeline_mode || config.pipelineMode || "parallel"}
+            value={storedMode}
             onChange={(e) =>
               handlePipelineChange("pipeline_mode", e.target.value)
             }
+            InputLabelProps={{ shrink: true }}
+            SelectProps={{ displayEmpty: true, renderValue: modeLabel }}
             sx={{ minWidth: 140 }}
           >
             <MenuItem value="parallel">Parallel</MenuItem>
@@ -1029,9 +1282,7 @@ const GuardrailConfigTab = ({ guardrails, onChange }) => {
             control={
               <Switch
                 size="small"
-                checked={
-                  [true, "true"].includes(config.fail_open ?? config.failOpen)
-                }
+                checked={failOpenOn}
                 onChange={(e) =>
                   handlePipelineChange("fail_open", e.target.checked)
                 }
@@ -1050,17 +1301,58 @@ const GuardrailConfigTab = ({ guardrails, onChange }) => {
             sx={{ width: 120 }}
           />
         </Stack>
+        {!modeSet && (
+          <Typography typography="s2" color="text.secondary" sx={{ mt: 1 }}>
+            {MODE_NOT_SET}
+          </Typography>
+        )}
+        {!failOpenSet && (
+          <Typography typography="s2" color="text.secondary" sx={{ mt: 1 }}>
+            {FAIL_OPEN_NOT_SET}
+          </Typography>
+        )}
+        <Typography typography="s2" color="text.secondary" sx={{ mt: 1 }}>
+          Fail Open never applies to a check that rewrites the request: if one
+          does not finish, the request is refused.
+        </Typography>
       </Section>
 
-      {/* AI-powered / model-based checks */}
-      <Typography variant="subtitle1">AI-Powered Checks</Typography>
-      <Typography variant="body2" color="text.secondary" sx={{ mt: -1 }}>
-        External ML models and services for advanced content safety, PII
-        detection, and prompt injection prevention.
-      </Typography>
-      {MODEL_GUARDRAIL_CHECKS.map((item) => renderCheckCard(item, item))}
+      {/* Partner and Future AGI checks: each calls a service outside the
+          gateway, and is listed only once the organization's config holds
+          that service's account (partnerConfigured). */}
+      {partnerCards.length > 0 && (
+        <>
+          <Typography variant="subtitle1">AI-Powered Checks</Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: -1 }}>
+            External ML models and services for advanced content safety, PII
+            detection, and prompt injection prevention.
+          </Typography>
+          {partnerCards.map((item) => renderCheckCard(item, item))}
+          <Divider sx={{ my: 1 }} />
+        </>
+      )}
 
-      <Divider sx={{ my: 1 }} />
+      {storedOnlyChecks
+        .filter((meta) => meta.name === "tool-permissions")
+        .map((meta) => renderStoredOnlyCard(meta))}
+
+      {/* Partner checks the org saved that this release does not offer:
+          read-only, kept and pushed as stored. */}
+      {storedOnlyChecks.some((meta) => meta.name !== "tool-permissions") && (
+        <>
+          <Typography variant="subtitle1">
+            {STORED_ONLY_PARTNER_TITLE}
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: -1 }}>
+            {STORED_ONLY_PARTNER_HELP}
+          </Typography>
+          {storedOnlyChecks
+            .filter((meta) => meta.name !== "tool-permissions")
+            .map((meta) => renderStoredOnlyCard(meta))}
+
+          <Divider sx={{ my: 1 }} />
+        </>
+      )}
 
       {/* Rule-based checks */}
       <Typography variant="subtitle1">Rule-Based Checks</Typography>
@@ -1076,6 +1368,8 @@ const GuardrailConfigTab = ({ guardrails, onChange }) => {
         checkName={editingCheck}
         initialData={editingCheck ? checks[editingCheck] : null}
         providerMeta={editingMeta}
+        absentAction={absent.action}
+        absentThreshold={absent.threshold}
       />
     </Stack>
   );

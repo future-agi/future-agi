@@ -157,6 +157,13 @@ export const annotationQueueEndpoints = {
         id,
       },
     ),
+  // Pairwise actions are mounted by the same DRF item router. Build from its
+  // contracted, parameter-encoded base until the schema snapshot is refreshed.
+  addPairs: (queueId) => `${annotationQueueEndpoints.items(queueId)}add-pairs/`,
+  submitPairwise: (queueId, id) =>
+    `${annotationQueueEndpoints.itemDetail(queueId, id)}pairwise/submit/`,
+  pairwiseResults: (queueId) =>
+    `${annotationQueueEndpoints.items(queueId)}pairwise-results/`,
   completeItem: (queueId, id) =>
     apiPath("/model-hub/annotation-queues/{queue_id}/items/{id}/complete/", {
       queue_id: queueId,
@@ -226,6 +233,7 @@ export const annotationQueueKeys = {
   progress: (queueId) => ["annotation-queues", "progress", queueId],
   analytics: (queueId) => ["annotation-queues", "analytics", queueId],
   agreement: (queueId) => ["annotation-queues", "agreement", queueId],
+  pairwiseResults: (queueId) => ["annotation-queues", "pairwise-results", queueId],
 };
 
 // ---------------------------------------------------------------------------
@@ -337,6 +345,7 @@ export const useHardDeleteAnnotationQueue = () => {
 export const useRestoreAnnotationQueue = () => {
   const queryClient = useQueryClient();
   return useMutation({
+    meta: { errorHandled: true },
     mutationFn: (id) => axios.post(annotationQueueEndpoints.restore(id), {}),
     onSuccess: () => {
       enqueueSnackbar("Queue restored. Rule cadence reset.", {
@@ -344,8 +353,11 @@ export const useRestoreAnnotationQueue = () => {
       });
       queryClient.invalidateQueries({ queryKey: annotationQueueKeys.all });
     },
-    onError: () => {
-      enqueueSnackbar("Failed to restore queue", { variant: "error" });
+    onError: (error) => {
+      enqueueSnackbar(
+        getSafeActionErrorMessage(error, "Failed to restore queue"),
+        { variant: "error" },
+      );
     },
   });
 };
@@ -1153,6 +1165,58 @@ export const useSubmitAnnotations = () => {
       enqueueSnackbar(typeof msg === "string" ? msg : JSON.stringify(msg), {
         variant: "error",
       });
+    },
+  });
+};
+
+export const useAddQueuePairs = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ queueId, pairs }) =>
+      axios.post(annotationQueueEndpoints.addPairs(queueId), { pairs }),
+    onSuccess: (_, { queueId }) => {
+      queryClient.invalidateQueries({ queryKey: queueItemKeys.all(queueId) });
+      queryClient.invalidateQueries({ queryKey: annotationQueueKeys.all });
+      queryClient.invalidateQueries({ queryKey: annotateKeys.nextItem(queueId) });
+    },
+  });
+};
+
+export const usePairwiseResults = (queueId, options = {}) =>
+  useQuery({
+    queryKey: annotationQueueKeys.pairwiseResults(queueId),
+    queryFn: () => axios.get(annotationQueueEndpoints.pairwiseResults(queueId)),
+    select: (d) => extractData(d),
+    enabled: !!queueId,
+    staleTime: 0,
+    ...options,
+  });
+
+export const useSubmitPairwise = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ queueId, itemId, choice, comment }) =>
+      axios.post(annotationQueueEndpoints.submitPairwise(queueId, itemId), {
+        choice,
+        comment,
+      }),
+    onSuccess: (_, variables) => {
+      invalidateAnnotateItem(queryClient, variables.queueId, variables.itemId);
+      queryClient.invalidateQueries({
+        queryKey: queueItemKeys.all(variables.queueId),
+      });
+      // Includes progress, detail and pairwise results, since submit also
+      // completes the item (or moves it into review) on the server.
+      queryClient.invalidateQueries({ queryKey: annotationQueueKeys.all });
+      queryClient.invalidateQueries({
+        queryKey: annotateKeys.nextItem(variables.queueId),
+      });
+    },
+    onError: (error) => {
+      enqueueSnackbar(
+        extractErrorMessage(error, "Failed to submit pairwise vote"),
+        { variant: "error" },
+      );
     },
   });
 };

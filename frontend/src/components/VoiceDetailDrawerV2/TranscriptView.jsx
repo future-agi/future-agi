@@ -67,10 +67,11 @@ const useSpeakerColors = () => {
   const theme = useTheme();
   return useMemo(
     () => ({
-      assistant:
-        theme.palette.mode === "dark"
-          ? theme.palette.primary.light
-          : theme.palette.primary.main,
+      // The agent reads purple: the design system's first data colour,
+      // #7857FC in light (as primary.main) and #A792FD in dark. The dark
+      // primary.light is a 26% tint that all but vanished on the dark
+      // transcript.
+      assistant: theme.palette.data?.[0] || theme.palette.primary.main,
       // The caller (customer) reads orange, as in the live product — the
       // design system's orange data colour (light and dark).
       user: theme.palette.data?.[5] || statusColors(theme, "warning").fg,
@@ -298,6 +299,65 @@ const TurnRow = React.forwardRef(
   ) => {
     const color = colors[turn.role] || colors.unknown;
     const isFunctionCall = turn.role === "tool" && turn.toolCalls?.length > 0;
+    const showStart = showTemporalMetadata && turn.start != null;
+    const showDuration =
+      showTemporalMetadata && turn.duration != null && turn.duration > 0;
+    const showInterrupt = showTemporalMetadata && turn.overlapsPrev;
+    // A turn with no time, duration or interruption to show (a transcript
+    // that only says who said what, or a chat) has nothing for the meta row
+    // but the hover actions, which are invisible until hover and left an
+    // empty band above the text. Those actions float over the row's
+    // top-right corner instead.
+    const hasMeta = showStart || showDuration || showInterrupt;
+
+    const actions = (
+      <Stack
+        direction="row"
+        spacing={0.25}
+        className="turn-actions"
+        sx={{
+          opacity: 0,
+          transition: "opacity 120ms",
+          ...(hasMeta
+            ? {}
+            : {
+                position: "absolute",
+                top: 2,
+                right: 4,
+                zIndex: 1,
+                bgcolor: "background.paper",
+                borderRadius: "4px",
+              }),
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <Tooltip title="Copy turn" arrow>
+          <IconButton
+            aria-label={isFunctionCall ? "Copy function call" : "Copy turn"}
+            size="small"
+            onClick={(e) => {
+              e.stopPropagation();
+              onCopy?.(turn);
+            }}
+          >
+            <Iconify icon="solar:copy-linear" width={12} />
+          </IconButton>
+        </Tooltip>
+        {onAnnotate && (
+          <Tooltip title="Annotate turn" arrow>
+            <IconButton
+              size="small"
+              onClick={(e) => {
+                e.stopPropagation();
+                onAnnotate?.(turn);
+              }}
+            >
+              <Iconify icon="solar:chat-round-line-linear" width={12} />
+            </IconButton>
+          </Tooltip>
+        )}
+      </Stack>
+    );
 
     return (
       <Box
@@ -340,31 +400,31 @@ const TurnRow = React.forwardRef(
           },
         }}
       >
-        {/* Meta row: timestamp · duration · actions */}
-        <Stack
-          direction="row"
-          alignItems="center"
-          gap={1}
-          sx={{ minHeight: 16 }}
-        >
-          {showTemporalMetadata && turn.start != null && (
-            <Typography
-              sx={{
-                fontFamily: "monospace",
-                fontSize: 12,
-                color: "text.secondary",
-                px: 0.5,
-                borderRadius: "4px",
-                pointerEvents: "none",
-              }}
-            >
-              {formatClock(turn.start)}
-            </Typography>
-          )}
+        {/* Meta row: timestamp · duration · actions. Rendered only when it
+            has something to show; otherwise the actions float (hasMeta). */}
+        {hasMeta ? (
+          <Stack
+            direction="row"
+            alignItems="center"
+            gap={1}
+            sx={{ minHeight: 16 }}
+          >
+            {showStart && (
+              <Typography
+                sx={{
+                  fontFamily: "monospace",
+                  fontSize: 12,
+                  color: "text.secondary",
+                  px: 0.5,
+                  borderRadius: "4px",
+                  pointerEvents: "none",
+                }}
+              >
+                {formatClock(turn.start)}
+              </Typography>
+            )}
 
-          {showTemporalMetadata &&
-            turn.duration != null &&
-            turn.duration > 0 && (
+            {showDuration && (
               <Typography
                 sx={{
                   fontFamily: "monospace",
@@ -376,74 +436,45 @@ const TurnRow = React.forwardRef(
               </Typography>
             )}
 
-          {showTemporalMetadata && turn.overlapsPrev && (
-            <Tooltip
-              title="Interruption — started before previous turn ended"
-              arrow
-            >
-              <Box
-                sx={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: "2px",
-                  px: 0.5,
-                  bgcolor: "status.danger.bg",
-                  color: "status.danger.fg",
-                  borderRadius: "4px",
-                  fontSize: 12,
-                  fontWeight: 600,
-                  letterSpacing: "0.02em",
-                  textTransform: "none",
-                }}
+            {showInterrupt && (
+              <Tooltip
+                title="Interruption — started before previous turn ended"
+                arrow
               >
-                <Iconify icon="solar:danger-circle-linear" width={12} />
-                interrupt
-              </Box>
-            </Tooltip>
-          )}
-
-          <Box sx={{ flex: 1 }} />
-
-          {/* Hover actions */}
-          <Stack
-            direction="row"
-            spacing={0.25}
-            className="turn-actions"
-            sx={{ opacity: 0, transition: "opacity 120ms" }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <Tooltip title="Copy turn" arrow>
-              <IconButton
-                aria-label={isFunctionCall ? "Copy function call" : "Copy turn"}
-                size="small"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onCopy?.(turn);
-                }}
-              >
-                <Iconify icon="solar:copy-linear" width={12} />
-              </IconButton>
-            </Tooltip>
-            {onAnnotate && (
-              <Tooltip title="Annotate turn" arrow>
-                <IconButton
-                  size="small"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onAnnotate?.(turn);
+                <Box
+                  sx={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "2px",
+                    px: 0.5,
+                    bgcolor: "status.danger.bg",
+                    color: "status.danger.fg",
+                    borderRadius: "4px",
+                    fontSize: 12,
+                    fontWeight: 600,
+                    letterSpacing: "0.02em",
+                    textTransform: "none",
                   }}
                 >
-                  <Iconify icon="solar:chat-round-line-linear" width={12} />
-                </IconButton>
+                  <Iconify icon="solar:danger-circle-linear" width={12} />
+                  interrupt
+                </Box>
               </Tooltip>
             )}
+
+            <Box sx={{ flex: 1 }} />
+
+            {/* Hover actions */}
+            {actions}
           </Stack>
-        </Stack>
+        ) : (
+          actions
+        )}
 
         {/* Content */}
         <Box
           sx={{
-            mt: 0.25,
+            mt: hasMeta ? 0.25 : 0,
             fontSize: 12,
             lineHeight: 1.45,
             color: "text.primary",
@@ -547,6 +578,7 @@ const FILTERS = [
 
 const TranscriptView = ({
   transcript,
+  callStartedAt,
   onAnnotate,
   embedded = false,
   // Header-row customization hooks used by the chat drawer to repurpose
@@ -588,8 +620,8 @@ const TranscriptView = ({
   const [autoScroll, setAutoScroll] = useState(true);
 
   const turns = useMemo(
-    () => enrichTurns(transcript, { enableTemporalFeatures }),
-    [transcript, enableTemporalFeatures],
+    () => enrichTurns(transcript, { enableTemporalFeatures, callStartedAt }),
+    [transcript, enableTemporalFeatures, callStartedAt],
   );
 
   const totals = useMemo(() => computeTotals(turns), [turns]);
@@ -821,16 +853,17 @@ const TranscriptView = ({
         </ShowComponent>
       </Stack>
 
-      {/* Toolbar: search + filter pills */}
+      {/* Toolbar: search + filter pills. In a narrow pane the pills wrap
+          below the search box as one group instead of being clipped. */}
       <Stack
         direction="row"
         alignItems="center"
-        spacing={0.75}
-        sx={{ flexShrink: 0 }}
+        sx={{ flexShrink: 0, flexWrap: "wrap", gap: 0.75 }}
       >
         <Box
           sx={{
-            flex: 1,
+            flex: "1 1 160px",
+            minWidth: 160,
             display: "flex",
             alignItems: "center",
             gap: 0.5,
@@ -854,6 +887,7 @@ const TranscriptView = ({
             onChange={(e) => setQuery(e.target.value)}
             sx={{
               flex: 1,
+              minWidth: 0,
               border: "none",
               outline: "none",
               bgcolor: "transparent",
@@ -881,6 +915,7 @@ const TranscriptView = ({
         <Box
           sx={{
             display: "inline-flex",
+            flexShrink: 0,
             border: "1px solid",
             borderColor: "divider",
             borderRadius: "4px",
@@ -896,6 +931,7 @@ const TranscriptView = ({
                 px: 1,
                 py: 0.4,
                 fontSize: 12,
+                whiteSpace: "nowrap",
                 fontWeight: filter === f.id ? 600 : 400,
                 color: filter === f.id ? "text.primary" : "text.secondary",
                 bgcolor: filter === f.id ? "background.neutral" : "transparent",
@@ -916,7 +952,7 @@ const TranscriptView = ({
           <Iconify
             icon="solar:keyboard-linear"
             width={14}
-            sx={{ color: "text.disabled" }}
+            sx={{ color: "text.disabled", flexShrink: 0 }}
           />
         </Tooltip>
       </Stack>
@@ -1022,6 +1058,7 @@ const TranscriptView = ({
 
 TranscriptView.propTypes = {
   transcript: PropTypes.array,
+  callStartedAt: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
   onAnnotate: PropTypes.func,
   hideTimelineStrip: PropTypes.bool,
   hideTalkRatioLabel: PropTypes.bool,

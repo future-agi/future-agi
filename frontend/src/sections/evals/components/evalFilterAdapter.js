@@ -1,6 +1,9 @@
 // Eval library filter: the shared Filter panel over the eval list's fields.
 // State stays the API-shaped object EvalsListView and EvalPickerList read:
 //   { search, owner, template_type, eval_type[], output_type[], tags[] }
+// Option values are the API strings; labels are what the picker table shows
+// for them (EvalTypeBadge, the Output column's OUTPUT_TYPE_LABELS, TypeBadge,
+// the Created By fallback in useEvalPickerData).
 export const EVAL_FILTER_FIELDS = [
   {
     id: "name",
@@ -14,7 +17,11 @@ export const EVAL_FILTER_FIELDS = [
     label: "Eval Type",
     type: "enum",
     multiple: true,
-    options: ["llm", "code", "agent"],
+    options: [
+      { value: "llm", label: "LLM" },
+      { value: "code", label: "Code" },
+      { value: "agent", label: "Agent" },
+    ],
     operators: ["in"],
   },
   {
@@ -22,21 +29,31 @@ export const EVAL_FILTER_FIELDS = [
     label: "Output Type",
     type: "enum",
     multiple: true,
-    options: ["pass_fail", "percentage", "deterministic"],
+    options: [
+      { value: "pass_fail", label: "Pass/fail" },
+      { value: "percentage", label: "Percentage" },
+      { value: "deterministic", label: "Choices" },
+    ],
     operators: ["in"],
   },
   {
     id: "template_type",
     label: "Type",
     type: "enum",
-    options: ["single", "composite"],
+    options: [
+      { value: "single", label: "Single" },
+      { value: "composite", label: "Composite" },
+    ],
     operators: ["equals"],
   },
   {
     id: "owner",
     label: "Owner",
     type: "enum",
-    options: ["user", "system"],
+    options: [
+      { value: "user", label: "User" },
+      { value: "system", label: "System" },
+    ],
     operators: ["equals"],
   },
   { id: "tags", label: "Tags", type: "text", operators: ["in"] },

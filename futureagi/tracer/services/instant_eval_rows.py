@@ -27,6 +27,7 @@ from collections import defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from functools import partial
 from typing import Any
 
 import structlog
@@ -320,10 +321,28 @@ ANALYZE_AFTER = 1000
 
 
 def analyze(table: str) -> None:
-    from django.db import connection
+    """Refresh a table's planner statistics, if the database lets us.
 
-    with connection.cursor() as cur:
-        cur.execute(f"ANALYZE {table}")
+    Only an optimizer hint, so it never fails its caller: the hard-erase SQL
+    guard refuses a raw ANALYZE naming a table its census protects (as it does
+    ``tracer_instant_eval_row``), and a lock or statement timeout is no reason
+    to lose the rows just written. A savepoint keeps a database error from
+    aborting an enclosing transaction.
+    """
+    from django.db import DatabaseError, connection
+
+    from accounts.services.hard_erase import HardEraseRefused
+
+    try:
+        with transaction.atomic(), connection.cursor() as cur:
+            cur.execute(f"ANALYZE {table}")
+    except (HardEraseRefused, DatabaseError) as exc:
+        logger.warning(
+            "instant_eval_analyze_skipped",
+            table=table,
+            reason=type(exc).__name__,
+            detail=str(exc)[:200],
+        )
 
 
 def _chunks(items: list, size: int):
@@ -822,7 +841,10 @@ def write_rows(
         for chunk in _chunks(objs, _WRITE_BATCH):
             InstantEvalRow.objects.bulk_create(chunk, ignore_conflicts=True)
     if len(objs) >= ANALYZE_AFTER:
-        analyze("tracer_instant_eval_row")
+        # After the caller's transaction commits: the statistics then count
+        # the committed rows, the table's ANALYZE lock is not held until the
+        # caller finishes, and nothing the hint does can undo the write.
+        transaction.on_commit(partial(analyze, "tracer_instant_eval_row"))
     return len(objs)
 
 

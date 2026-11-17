@@ -1,0 +1,105 @@
+[
+  {
+    "tool": "list_joined_teams",
+    "arguments": {}
+  },
+  {
+    "tool": "list_channels",
+    "arguments": {
+      "team-id": "tm-1"
+    }
+  },
+  {
+    "tool": "list_channel_messages",
+    "arguments": {
+      "team-id": "tm-1",
+      "channel-id": "ch-1",
+      "top": 20
+    }
+  },
+  {
+    "tool": "list_replies",
+    "arguments": {
+      "team-id": "tm-1",
+      "channel-id": "ch-1",
+      "chatMessage-id": "cm-1",
+      "top": 10
+    }
+  },
+  {
+    "tool": "get_channel_message",
+    "arguments": {
+      "team-id": "tm-1",
+      "channel-id": "ch-1",
+      "chatMessage-id": "cm-1"
+    }
+  },
+  {
+    "tool": "post_channel_message",
+    "arguments": {
+      "team-id": "tm-1",
+      "channel-id": "ch-1",
+      "body": {
+        "subject": "Release",
+        "body": {
+          "contentType": "text",
+          "content": "Release 2.4 is out"
+        }
+      }
+    }
+  },
+  {
+    "tool": "reply_to_channel_message",
+    "arguments": {
+      "team-id": "tm-1",
+      "channel-id": "ch-1",
+      "chatMessage-id": "cm-1",
+      "body": {
+        "body": {
+          "contentType": "text",
+          "content": "On it."
+        }
+      }
+    }
+  },
+  {
+    "tool": "list_chats",
+    "arguments": {
+      "filter": "chatType eq 'oneOnOne'",
+      "top": 10
+    }
+  },
+  {
+    "tool": "list_chat_messages",
+    "arguments": {
+      "chat-id": "c-1",
+      "top": 5,
+      "orderby": "createdDateTime desc"
+    }
+  },
+  {
+    "tool": "list_chat_members",
+    "arguments": {
+      "chat-id": "c-1"
+    }
+  },
+  {
+    "tool": "send_chat_message",
+    "arguments": {
+      "chat-id": "c-1",
+      "body": {
+        "body": {
+          "contentType": "text",
+          "content": "Can we move to 3pm?"
+        }
+      }
+    }
+  },
+  {
+    "tool": "list_channel_messages",
+    "arguments": {
+      "team-id": "tm-9",
+      "channel-id": "ch-1"
+    }
+  }
+]

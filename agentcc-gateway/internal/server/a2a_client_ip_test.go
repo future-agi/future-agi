@@ -35,9 +35,10 @@ func a2aAccessServer(t *testing.T, upstreamURL string, rules accessRules, truste
 	})
 }
 
-// a2aCall sends one JSON-RPC call to /v1/a2a from peer, with forwardedFor as
-// X-Forwarded-For when set, and returns the task in the result.
-func a2aCall(t *testing.T, s *Server, peer, forwardedFor, method string, params any) agentcca2a.Task {
+// a2aCallFrom sends one JSON-RPC call to /v1/a2a from peer, with forwardedFor as
+// X-Forwarded-For when set, and returns the task in the result and the HTTP
+// status: a 403 from the key gate comes back with no task.
+func a2aCallFrom(t *testing.T, s *Server, peer, forwardedFor, method string, params any) (agentcca2a.Task, int) {
 	t.Helper()
 	data, err := json.Marshal(params)
 	if err != nil {
@@ -56,6 +57,9 @@ func a2aCall(t *testing.T, s *Server, peer, forwardedFor, method string, params 
 	}
 	w := httptest.NewRecorder()
 	s.httpServer.Handler.ServeHTTP(w, r)
+	if w.Code == http.StatusForbidden {
+		return agentcca2a.Task{}, w.Code
+	}
 	if w.Code != http.StatusOK {
 		t.Fatalf("%s from %s: got %d %s, want 200", method, peer, w.Code, w.Body.String())
 	}
@@ -70,7 +74,7 @@ func a2aCall(t *testing.T, s *Server, peer, forwardedFor, method string, params 
 	if err := json.Unmarshal(resp.Result, &task); err != nil {
 		t.Fatalf("parsing task: %v", err)
 	}
-	return task
+	return task, w.Code
 }
 
 func a2aSendParams(returnImmediately bool) agentcca2a.MessageSendParams {
@@ -87,19 +91,20 @@ func a2aSendParams(returnImmediately bool) agentcca2a.MessageSendParams {
 	return p
 }
 
-// a2aSend sends message/send and returns the finished task. With
-// returnImmediately it polls tasks/get until the task leaves "working".
-func a2aSend(t *testing.T, s *Server, peer, forwardedFor string, returnImmediately bool) agentcca2a.Task {
+// a2aSendFrom sends message/send and returns the finished task and the HTTP
+// status. With returnImmediately it polls tasks/get until the task leaves
+// "working".
+func a2aSendFrom(t *testing.T, s *Server, peer, forwardedFor string, returnImmediately bool) (agentcca2a.Task, int) {
 	t.Helper()
-	task := a2aCall(t, s, peer, forwardedFor, agentcca2a.MethodMessageSend, a2aSendParams(returnImmediately))
-	for deadline := time.Now().Add(5 * time.Second); task.Status.State == agentcca2a.TaskStatusWorking; {
+	task, status := a2aCallFrom(t, s, peer, forwardedFor, agentcca2a.MethodMessageSend, a2aSendParams(returnImmediately))
+	for deadline := time.Now().Add(5 * time.Second); status == http.StatusOK && task.Status.State == agentcca2a.TaskStatusWorking; {
 		if time.Now().After(deadline) {
 			t.Fatalf("task %s from %s still working", task.ID, peer)
 		}
 		time.Sleep(5 * time.Millisecond)
-		task = a2aCall(t, s, peer, forwardedFor, agentcca2a.MethodTasksGet, agentcca2a.TaskGetParams{TaskID: task.ID})
+		task, status = a2aCallFrom(t, s, peer, forwardedFor, agentcca2a.MethodTasksGet, agentcca2a.TaskGetParams{TaskID: task.ID})
 	}
-	return task
+	return task, status
 }
 
 func taskText(task agentcca2a.Task) string {
@@ -111,15 +116,28 @@ func taskText(task agentcca2a.Task) string {
 }
 
 // checkA2AAccess sends from peer (with forwardedFor) and checks the task
-// state and whether the provider was called.
-func checkA2AAccess(t *testing.T, s *Server, upstreamHits func() int64, peer, forwardedFor string, returnImmediately, wantServed bool) {
+// state and whether the provider was called. gateRefuses is set where the
+// line's key gate judges the rule: the call is refused 403 before any task.
+func checkA2AAccess(t *testing.T, s *Server, upstreamHits func() int64, peer, forwardedFor string, returnImmediately, wantServed, gateRefuses bool) {
 	t.Helper()
 	before := upstreamHits()
-	task := a2aSend(t, s, peer, forwardedFor, returnImmediately)
+	task, status := a2aSendFrom(t, s, peer, forwardedFor, returnImmediately)
 	called := upstreamHits() - before
 	label := peer
 	if forwardedFor != "" {
 		label += " (X-Forwarded-For " + forwardedFor + ")"
+	}
+	if !wantServed && gateRefuses {
+		if status != http.StatusForbidden {
+			t.Errorf("message/send from %s: status %d, want the key gate's 403", label, status)
+		}
+		if called != 0 {
+			t.Errorf("message/send from %s: provider called %d times, want 0", label, called)
+		}
+		return
+	}
+	if status != http.StatusOK {
+		t.Fatalf("message/send from %s: status %d, want 200", label, status)
 	}
 	if wantServed {
 		if task.Status.State != agentcca2a.TaskStatusCompleted {
@@ -148,8 +166,14 @@ func TestA2AMessageSendJudgesAccessRulesOnCaller(t *testing.T) {
 			t.Run(label, func(t *testing.T) {
 				upstream, hits := accessUpstream(t, a2aChatReply)
 				s := a2aAccessServer(t, upstream.URL, rules, 0)
-				checkA2AAccess(t, s, hits.Load, outsideClient, "", returnImmediately, false)
-				checkA2AAccess(t, s, hits.Load, allowedClient, "", returnImmediately, true)
+				// DEV CHANGE NOT KEPT: dev answers every refused caller with a
+				// failed task. The line's key gate judges the node's allow
+				// list and a key's allowed_ips on /v1/a2a itself, so those
+				// callers are refused 403 before a task exists; an org's list
+				// is judged in the pipeline and fails the task, as on dev.
+				gate := rules.org == nil
+				checkA2AAccess(t, s, hits.Load, outsideClient, "", returnImmediately, false, gate)
+				checkA2AAccess(t, s, hits.Load, allowedClient, "", returnImmediately, true, gate)
 			})
 		}
 	}
@@ -162,6 +186,6 @@ func TestA2AMessageSendUsesTrustedForwardedHop(t *testing.T) {
 	s := a2aAccessServer(t, upstream.URL, accessRules{
 		org: &tenant.IPACLConfig{Enabled: true, Allow: []string{"10.0.0.0/8"}},
 	}, 1)
-	checkA2AAccess(t, s, hits.Load, proxyOutsideAllow, outsideClient, false, false)
-	checkA2AAccess(t, s, hits.Load, proxyOutsideAllow, allowedClient, false, true)
+	checkA2AAccess(t, s, hits.Load, proxyOutsideAllow, outsideClient, false, false, false)
+	checkA2AAccess(t, s, hits.Load, proxyOutsideAllow, allowedClient, false, true, false)
 }

@@ -79,14 +79,20 @@ describe.each(["chat", "markdown"])(
       },
     );
 
+    // The raw input is a plain prompt, not a readable message list, so the
+    // attribute messages are the history the preview shows.
     it.each(malformedRoles)(
       "keeps attribute input content with a %s role",
       (_kind, role) => {
         render(
-          preview(mode, {
-            "llm.input_messages.0.message.role": role,
-            "llm.input_messages.0.message.content": "Attribute prompt",
-          }),
+          preview(
+            mode,
+            {
+              "llm.input_messages.0.message.role": role,
+              "llm.input_messages.0.message.content": "Attribute prompt",
+            },
+            prompt,
+          ),
         );
         expect(screen.getByText("Attribute prompt")).toBeVisible();
         expect(screen.getByText("unknown")).toBeVisible();

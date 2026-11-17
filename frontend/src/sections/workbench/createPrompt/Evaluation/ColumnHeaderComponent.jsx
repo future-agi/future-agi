@@ -19,7 +19,7 @@ const CustomWorkbenchEvaluationColumn = (props) => {
     useWorkbenchEvaluationContext();
   const theme = useTheme();
   const iconStyle = {
-    color: "text.disabled",
+    color: "text.secondary",
   };
 
   const renderIcon = () => {
@@ -51,7 +51,7 @@ const CustomWorkbenchEvaluationColumn = (props) => {
           <Typography
             fontWeight={"fontWeightBold"}
             typography={"s1"}
-            color={"text.disabled"}
+            color={"text.secondary"}
           >
             Model
           </Typography>
@@ -144,10 +144,11 @@ const CustomWorkbenchEvaluationColumn = (props) => {
           setCompareOpen(true);
         }}
         startIcon={
-          <SvgColor width={16}
+          <SvgColor
+            width={16}
             src="/assets/icons/action_buttons/ic_add.svg"
             color="primary.main"
-            sx={{ }}
+            sx={{}}
           />
         }
         fullWidth
@@ -185,7 +186,7 @@ const CustomWorkbenchEvaluationColumn = (props) => {
           <Typography
             fontWeight={"fontWeightBold"}
             typography={"s1"}
-            color={"text.disabled"}
+            color={"text.secondary"}
           >
             {displayName}
           </Typography>
@@ -213,10 +214,11 @@ const CustomWorkbenchEvaluationColumn = (props) => {
             )
           }
         >
-          <SvgColor width={16}
+          <SvgColor
+            width={16}
             src="/assets/icons/ic_delete.svg"
             color="text.primary"
-            sx={{ }}
+            sx={{}}
           />
         </IconButton>
       </ShowComponent>

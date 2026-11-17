@@ -1,6 +1,6 @@
 import React, { useEffect, useCallback } from "react";
 import PropTypes from "prop-types";
-import { IconButton, Stack, Tooltip, Typography } from "@mui/material";
+import { Button, IconButton, Stack, Tooltip, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { enqueueSnackbar } from "notistack";
 
@@ -71,6 +71,8 @@ const DrawerHeader = ({
   onOpenNewTab,
   onDownload,
   onShare,
+  onCompare,
+  isComparing = false,
 }) => {
   // Keyboard shortcuts: J = next, K = prev, Esc = close. They belong to the
   // open drawer only: the persistent Drawer keeps this header mounted while
@@ -139,6 +141,8 @@ const DrawerHeader = ({
         borderColor: "divider",
         flexShrink: 0,
         minHeight: 48,
+        flexWrap: "wrap",
+        gap: 1,
       }}
     >
       {/* ── Left: Trace ID + Copy + Nav arrows ── */}
@@ -209,6 +213,16 @@ const DrawerHeader = ({
       <Stack direction="row" alignItems="center" spacing={1.5}>
         {/* Action buttons group */}
         <Stack direction="row" spacing={0.5}>
+          {onCompare && (
+            <Button
+              size="small"
+              color="inherit"
+              onClick={onCompare}
+              aria-pressed={isComparing}
+            >
+              {isComparing ? "Close compare" : "Compare"}
+            </Button>
+          )}
           {onFullscreen && (
             <HeaderButton
               icon={
@@ -282,6 +296,8 @@ DrawerHeader.propTypes = {
   onOpenNewTab: PropTypes.func,
   onDownload: PropTypes.func,
   onShare: PropTypes.func,
+  onCompare: PropTypes.func,
+  isComparing: PropTypes.bool,
 };
 
 export default React.memo(DrawerHeader);

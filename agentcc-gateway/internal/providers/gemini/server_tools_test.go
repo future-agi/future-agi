@@ -246,7 +246,7 @@ func TestTranslateResponse_GroundingSourcesBecomeAnnotations(t *testing.T) {
 		t.Fatal("the grounding sources were dropped")
 	}
 
-	var got []struct {
+	var all []struct {
 		Type        string `json:"type"`
 		URLCitation struct {
 			URL        string `json:"url"`
@@ -255,11 +255,19 @@ func TestTranslateResponse_GroundingSourcesBecomeAnnotations(t *testing.T) {
 			EndIndex   int    `json:"end_index"`
 		} `json:"url_citation"`
 	}
-	if err := json.Unmarshal(annotations, &got); err != nil {
+	if err := json.Unmarshal(annotations, &all); err != nil {
 		t.Fatalf("reading annotations: %v", err)
 	}
+	// One url_citation per web source; the groundingMetadata itself follows
+	// as its own annotation (grounding_test.go), unmodified.
+	got := all[:0:0]
+	for _, a := range all {
+		if a.Type == "url_citation" {
+			got = append(got, a)
+		}
+	}
 	if len(got) != 2 {
-		t.Fatalf("annotations = %d, want 2: %s", len(got), annotations)
+		t.Fatalf("url_citation annotations = %d, want 2: %s", len(got), annotations)
 	}
 	if got[0].Type != "url_citation" {
 		t.Errorf("type = %q, want %q", got[0].Type, "url_citation")

@@ -17,7 +17,7 @@
  * Quick filters, validators and request builders downstream keep reading the
  * same state, so nothing but the editing surface changes.
  */
-import { format } from "date-fns";
+import { format, parse } from "date-fns";
 import {
   AdvanceNumberFilterOperators,
   FilterColTypes,
@@ -63,9 +63,20 @@ const formatDateInput = (value) => {
   return Number.isNaN(date.getTime()) ? "" : format(date, DATE_INPUT_FORMAT);
 };
 
-const parseDateInput = (value) => {
+// A day without a time ('yyyy-MM-dd') is that day in the user's time zone;
+// `new Date` would read it as UTC midnight. As a range's upper bound it covers
+// the whole day (23:59, the last minute the date + time inputs can show).
+const DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const parseDateInput = (value, { endOfDay = false } = {}) => {
   if (isBlank(value)) return "";
-  const date = new Date(value);
+  const date =
+    typeof value === "string" && DATE_ONLY_PATTERN.test(value.trim())
+      ? parse(
+          `${value.trim()}T${endOfDay ? "23:59" : "00:00"}`,
+          DATE_INPUT_FORMAT,
+          new Date(),
+        )
+      : new Date(value);
   return Number.isNaN(date.getTime()) ? "" : date;
 };
 
@@ -643,6 +654,8 @@ const filterFromRow = (leaf, row) => {
   const { def, chain, kind } = leaf;
   const op = row.operator;
   const value = row.value;
+  const booleanInput =
+    Array.isArray(value) && value.length === 1 ? value[0] : value;
 
   switch (kind) {
     case "presetGroup": {
@@ -711,7 +724,10 @@ const filterFromRow = (leaf, row) => {
         filter_type: "datetime",
         filter_op: op,
         filter_value: RANGE_OPERATORS.has(op)
-          ? [parseDateInput(values[0]), parseDateInput(values[1])]
+          ? [
+              parseDateInput(values[0]),
+              parseDateInput(values[1], { endOfDay: true }),
+            ]
           : [parseDateInput(values[0]), ""],
       });
     }
@@ -726,7 +742,7 @@ const filterFromRow = (leaf, row) => {
       return buildFilter(def, chain, {
         filter_type: "boolean",
         filter_op: op,
-        filter_value: value === true || value === "true",
+        filter_value: booleanInput === true || booleanInput === "true",
       });
     }
     case "text":
@@ -738,7 +754,7 @@ const filterFromRow = (leaf, row) => {
           return buildFilter(def, chain, {
             filter_type: "boolean",
             filter_op: op,
-            filter_value: value === true || value === "true",
+            filter_value: booleanInput === true || booleanInput === "true",
           });
         }
       }

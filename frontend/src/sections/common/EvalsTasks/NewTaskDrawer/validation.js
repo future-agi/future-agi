@@ -1,4 +1,5 @@
 import { getNumberValidation } from "src/utils/validation";
+import { webhookErrors, webhookPayload } from "../task_webhook";
 import { z } from "zod";
 import {
   presetToRange,
@@ -128,6 +129,12 @@ export const NewTaskValidationSchema = () =>
         getNumberValidation("Max Spans is required"),
       ]),
       samplingRate: getNumberValidation("Sampling Rate is required"),
+      webhook_url: z.string().max(2048).optional(),
+      webhook_condition: z.object({
+        eval_config_id: z.string().optional(),
+        operator: z.string().optional(),
+        value: z.union([z.string(), z.number(), z.boolean()]).nullable().optional(),
+      }).nullable().optional(),
       samplingPolicy: z
         .object({})
         .passthrough()
@@ -208,11 +215,17 @@ export const NewTaskValidationSchema = () =>
         path: ["spansLimit"],
       },
     )
+    .superRefine((data, ctx) => {
+      Object.entries(webhookErrors(data)).forEach(([path, message]) => {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: path.split("."), message });
+      });
+    })
     .transform((data) => {
       const { filters, attributeFilters } =
         getNewTaskFilters(data, data?.project) ?? {};
 
       const finalData = {
+        ...webhookPayload(data),
         name: data?.name,
         project: data?.project,
         // The custom row-limit input yields a string; the API contract

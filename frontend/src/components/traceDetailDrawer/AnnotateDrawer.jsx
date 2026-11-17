@@ -12,7 +12,7 @@ import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDeleteAnnotationLabel } from "./useDeleteAnnotationLabel";
 import PropTypes from "prop-types";
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useSelectedNode } from "./useSelectedNode";
 import axios, { endpoints } from "src/utils/axios";
 import Iconify from "src/components/iconify";
@@ -41,6 +41,7 @@ const AnnotateDrawerChild = ({
   projectId,
   onAnnotationChanges = null,
   showCreateLabel = false,
+  failedReasons = null,
 }) => {
   const [openCreateEditLabel, setOpenCreateEditLabel] = useState(null);
   const { labels, fetchNextPage, isPending, isFetchingNextPage } =
@@ -61,12 +62,44 @@ const AnnotateDrawerChild = ({
   const {
     control,
     handleSubmit,
-    formState: { errors, isDirty },
+    setError,
+    formState: { errors, isDirty, dirtyFields },
   } = useForm({
     defaultValues,
     resolver: zodResolver(formSchema),
     mode: "onChange",
   });
+
+  // A save sends the answers the person changed to a value, with the notes;
+  // an answer left as it was stored, or changed back to it, is not sent
+  // again. With no such answer, changed notes are sent with the answers as
+  // they are, so a note is never lost. With nothing to send, the drawer closes.
+  const submitChangedAnswers = (values, event) => {
+    const { notes, ...answers } = values;
+    const changed = Object.fromEntries(
+      Object.entries(answers).filter(
+        ([labelId, value]) =>
+          dirtyFields[labelId] && value !== "" && value !== undefined,
+      ),
+    );
+    if (Object.keys(changed).length > 0) {
+      return onSubmit({ ...changed, notes }, event);
+    }
+    if (dirtyFields.notes) {
+      return onSubmit({ ...answers, notes }, event);
+    }
+    return onClose();
+  };
+
+  // The server's reason for each label it did not save shows under that
+  // label's field until the field is changed or the form is sent again.
+  useEffect(() => {
+    Object.entries(failedReasons ?? {}).forEach(([labelId, reason]) => {
+      if (reason) {
+        setError(labelId, { type: "server", message: reason });
+      }
+    });
+  }, [failedReasons, setError]);
   const scrollContainer = useScrollEnd(() => {
     if (isPending || isFetchingNextPage) return;
     fetchNextPage();
@@ -128,6 +161,22 @@ const AnnotateDrawerChild = ({
                   setDeleteLabelId(transformedItem.id);
                 }}
               />
+              {/* A text field shows its message in its own helper text. */}
+              <ShowComponent
+                condition={
+                  transformedItem.type !== "text" &&
+                  Boolean(errors[transformedItem.id]?.message)
+                }
+              >
+                <Typography
+                  component="p"
+                  variant="caption"
+                  color="error.main"
+                  sx={{ mt: 0.5 }}
+                >
+                  {errors[transformedItem.id]?.message}
+                </Typography>
+              </ShowComponent>
             </Box>
           );
         })}
@@ -183,7 +232,7 @@ const AnnotateDrawerChild = ({
             if (!isDirty) {
               onClose();
             } else {
-              handleSubmit(onSubmit)();
+              handleSubmit(submitChangedAnswers)();
             }
           }}
         >
@@ -207,6 +256,7 @@ AnnotateDrawerChild.propTypes = {
   projectId: PropTypes.string,
   showCreateLabel: PropTypes.bool,
   onAnnotationChanges: PropTypes.func,
+  failedReasons: PropTypes.object,
 };
 
 const AnnotateDrawer = ({
@@ -219,6 +269,7 @@ const AnnotateDrawer = ({
   projectId,
   voiceObserveSpanId = null,
   listSpanId = null,
+  failedReasons = null,
 }) => {
   const { selectedNode } = useSelectedNode();
   const { user } = useAuthContext();
@@ -352,6 +403,7 @@ const AnnotateDrawer = ({
               defaultValues={formDefaultValues}
               projectId={projectId}
               showCreateLabel={Boolean(voiceObserveSpanId)}
+              failedReasons={failedReasons}
             />
           </ShowComponent>
         </Box>
@@ -370,6 +422,7 @@ AnnotateDrawer.propTypes = {
   projectId: PropTypes.string,
   voiceObserveSpanId: PropTypes.string,
   listSpanId: PropTypes.string,
+  failedReasons: PropTypes.object,
 };
 
 export default AnnotateDrawer;

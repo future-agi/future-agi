@@ -78,6 +78,7 @@ export default function EmptyContent({
         <Typography
           component="span"
           sx={{
+            typography: "title_xs",
             fontSize: 12,
             lineHeight: "20px",
             fontWeight: 600,
@@ -92,6 +93,7 @@ export default function EmptyContent({
         <Typography
           component="span"
           sx={{
+            typography: "body_sm",
             fontSize: 12,
             lineHeight: "18px",
             fontWeight: 400,
@@ -113,7 +115,7 @@ EmptyContent.propTypes = {
   action: PropTypes.node,
   description: PropTypes.node,
   filled: PropTypes.bool,
-  /** Iconify name, or a node sized 20px (e.g. <SvgColor width={24} />). */
+  /** Iconify name, or a node sized 20px (e.g. <SvgColor />). */
   icon: PropTypes.oneOfType([PropTypes.string, PropTypes.node]),
   img: PropTypes.string,
   imgUrl: PropTypes.string,

@@ -1,104 +1,134 @@
-import React from "react";
+import React, { createContext, useContext } from "react";
 import PropTypes from "prop-types";
 import { Box, Stack, Typography } from "@mui/material";
+import { dsTypography, dsRadius, dsSize } from "src/theme/ds-tokens";
 
-// Future AGI Design System · Section. A titled block of a page: 14px/600
-// title, optional one-line description and actions, then the content.
-// `variant="plain"` (default) sits on the page with no box; `"panel"` adds
-// the one panel style (1px border.default, radius 8, no shadow). Never nest
-// a panel inside a panel — use plain inside. Pass `onClick` for a whole-panel
-// click target (hover tint, keyboard activation).
-
+// Adapted from Vel 05a5f9f77a; v0.2 panels use 36px headers/12px bodies.
+const PanelContext = createContext(false);
+// fillBody: the body takes the height left under the header, so a chart that
+// sizes itself from its box gets the panel's height instead of growing it.
+// The caller gives the panel a height and a flex column.
+const BODY_FILL = {
+  flex: 1,
+  minHeight: 0,
+  display: "flex",
+  flexDirection: "column",
+};
 export default function Section({
   title,
   description,
   actions,
-  variant,
+  variant = "plain",
   onClick,
   disabled,
+  fillBody,
   children,
   sx,
   ...other
 }) {
-  const panel = variant === "panel";
+  const insidePanel = useContext(PanelContext);
+  const panel = variant === "panel" && !insidePanel;
   const clickable = Boolean(onClick) && !disabled;
   return (
-    <Box
-      {...other}
-      {...(onClick && {
-        role: "button",
-        tabIndex: disabled ? -1 : 0,
-        "aria-disabled": disabled || undefined,
-        onClick: clickable ? onClick : undefined,
-        onKeyDown: (e) => {
-          if (
-            clickable &&
-            e.target === e.currentTarget &&
-            (e.key === "Enter" || e.key === " ")
-          ) {
-            e.preventDefault();
-            onClick(e);
-          }
-        },
-      })}
-      sx={{
-        ...(onClick && {
-          cursor: clickable ? "pointer" : "default",
-          "&:hover": clickable ? { bgcolor: "action.hover" } : undefined,
-        }),
-        ...(panel && {
-          border: "1px solid",
-          borderColor: "divider",
-          borderRadius: "8px",
-          p: 2,
-        }),
-        ...sx,
-      }}
-    >
-      {(title || actions) && (
-        <Stack
-          direction="row"
-          alignItems="center"
-          justifyContent="space-between"
-          sx={{ mb: 1.5 }}
+    <PanelContext.Provider value={insidePanel || panel}>
+      <Box
+        {...other}
+        {...(onClick && {
+          role: "button",
+          tabIndex: disabled ? -1 : 0,
+          "aria-disabled": disabled || undefined,
+          onClick: clickable ? onClick : undefined,
+          onKeyDown: (event) => {
+            if (
+              clickable &&
+              event.target === event.currentTarget &&
+              ["Enter", " "].includes(event.key)
+            ) {
+              event.preventDefault();
+              onClick(event);
+            }
+          },
+        })}
+        sx={{
+          minWidth: 0,
+          ...(onClick && {
+            cursor: clickable ? "pointer" : "default",
+            "&:hover": clickable ? { bgcolor: "action.hover" } : undefined,
+          }),
+          ...(panel && {
+            border: "1px solid",
+            borderColor: "divider",
+            borderRadius: `${dsRadius.lg}px`,
+            bgcolor: "background.paper",
+          }),
+          ...sx,
+        }}
+      >
+        {(title || description || actions) && (
+          <Stack
+            direction="row"
+            alignItems="center"
+            justifyContent="space-between"
+            sx={{
+              gap: 1,
+              flexWrap: "wrap",
+              ...(panel
+                ? {
+                    minHeight: dsSize.control.lg,
+                    px: 1.5,
+                    py: 0.5,
+                    borderBottom: "1px solid",
+                    borderColor: "divider",
+                  }
+                : { mb: 1.5 }),
+            }}
+          >
+            <Box sx={{ minWidth: 0 }}>
+              {title && (
+                <Typography
+                  component="h2"
+                  sx={{
+                    ...dsTypography.title_xs,
+                    fontSize: 14,
+                    lineHeight: "20px",
+                    fontWeight: 600,
+                    color: "text.primary",
+                  }}
+                >
+                  {title}
+                </Typography>
+              )}
+              {description && (
+                <Typography
+                  sx={{
+                    ...dsTypography.body_sm,
+                    lineHeight: "20px",
+                    color: "text.tertiary",
+                  }}
+                >
+                  {description}
+                </Typography>
+              )}
+            </Box>
+            {actions && (
+              <Stack direction="row" spacing={1} sx={{ flexWrap: "wrap" }}>
+                {actions}
+              </Stack>
+            )}
+          </Stack>
+        )}
+        <Box
+          sx={{
+            ...(panel ? { p: 1.5, minWidth: 0 } : { minWidth: 0 }),
+            ...(fillBody && BODY_FILL),
+          }}
         >
-          <Box sx={{ minWidth: 0 }}>
-            {title && (
-              <Typography
-                sx={{
-                  fontSize: 14,
-                  lineHeight: "20px",
-                  fontWeight: 600,
-                  color: "text.primary",
-                }}
-              >
-                {title}
-              </Typography>
-            )}
-            {description && (
-              <Typography
-                sx={{
-                  fontSize: 12,
-                  lineHeight: "20px",
-                  color: "text.tertiary",
-                }}
-              >
-                {description}
-              </Typography>
-            )}
-          </Box>
-          {actions && (
-            <Stack direction="row" spacing={1}>
-              {actions}
-            </Stack>
-          )}
-        </Stack>
-      )}
-      {children}
-    </Box>
+          {children}
+        </Box>
+      </Box>
+    </PanelContext.Provider>
   );
 }
-
 Section.propTypes = {
   title: PropTypes.node,
   description: PropTypes.node,
@@ -106,8 +136,7 @@ Section.propTypes = {
   variant: PropTypes.oneOf(["plain", "panel"]),
   onClick: PropTypes.func,
   disabled: PropTypes.bool,
+  fillBody: PropTypes.bool,
   children: PropTypes.node,
   sx: PropTypes.object,
 };
-
-Section.defaultProps = { variant: "plain" };

@@ -758,6 +758,24 @@ class Migration(migrations.Migration):
             state_operations=[migrations.RunSQL('SELECT 1')])
         self.assertEqual(self.risks(op), [{'risk_class': 'data_migration', 'operation': 'RunSQL'}])
 
+    def test_migration_bridge_operation_is_classified_by_the_operations_it_wraps(self):
+        from tfc.migration_bridge import SkipDatabaseIfLegacyApplied
+        legacy = ("fixed_label", "0099_legacy_name")
+        backfill = SkipDatabaseIfLegacyApplied(legacy, [migrations.RunPython(print, migrations.RunPython.noop)])
+        self.assertEqual(self.risks(backfill), [{"risk_class": "data_migration", "operation": "RunPython"}])
+        index = SkipDatabaseIfLegacyApplied(legacy, [migrations.AddIndex("event", models.Index(fields=["value"], name="hot_value_idx"))])
+        self.assertIn({"table": "postgres:hot_events", "risk_class": "index", "operation": "AddIndex"}, self.risks(index))
+        noop = SkipDatabaseIfLegacyApplied(legacy, [migrations.RunPython(migrations.RunPython.noop, migrations.RunPython.noop)])
+        self.assertEqual(self.risks(noop), [])
+
+    def test_migration_bridge_subclass_is_not_trusted(self):
+        from tfc.migration_bridge import SkipDatabaseIfLegacyApplied
+
+        class HiddenBridge(SkipDatabaseIfLegacyApplied):
+            pass
+        with self.assertRaisesRegex(gate.GateError, "unclassified custom migration operation"):
+            self.risks(HiddenBridge(("fixed_label", "0099_legacy_name"), []))
+
     def test_index_and_constraint_changes_require_high_volume_review(self):
         for op in (migrations.RemoveIndex('event', 'existing'), migrations.RenameIndex('event', 'new', old_name='old'),
                    migrations.RemoveConstraint('event', 'existing')):

@@ -33,8 +33,16 @@ func New(rdb RedisClient, enabled bool) *Plugin {
 	return &Plugin{rdb: rdb, enabled: enabled}
 }
 
-func (p *Plugin) Name() string  { return "quota" }
-func (p *Plugin) Priority() int { return 35 }
+func (p *Plugin) Name() string { return "quota" }
+
+// Priority 33: after auth (20), whose org it reads, and RBAC (30); before the
+// guardrails (34), the response cache (35) and the budget (40). An org the
+// quota refuses (its free-tier request limit reached, or paused when its
+// budget limit is reached) is refused before any check reads its requests:
+// a check would spend its work, and an external or FutureAGI check its call,
+// on a request that is not served, and a request both refused here and
+// blocked by a check gets this 429, which says why the org is refused.
+func (p *Plugin) Priority() int { return 33 }
 
 func (p *Plugin) ProcessRequest(_ context.Context, rc *models.RequestContext) pipeline.PluginResult {
 	if !p.enabled || p.rdb == nil {

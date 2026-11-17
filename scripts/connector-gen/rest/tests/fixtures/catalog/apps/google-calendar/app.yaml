@@ -1,0 +1,20 @@
+# Fixture for the REST generator's tests, not catalog data (see ../gmail/app.yaml).
+schema: "connector-manifest/v1#app"
+id: google-calendar
+version: 1.0.0
+name: Google Calendar
+description: "List, create and change events, and check free and busy times."
+vendor: { name: Google, domains: [google.com, googleapis.com] }
+eeCategory: productivity
+group: google
+categories: [productivity, calendar]
+tags: [calendar, scheduling]
+docsUrl: https://developers.google.com/workspace/calendar/api
+archetype: calendar
+defaultProvider: futureagi-rest
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://developers.google.com/workspace/calendar/api
+    fetchedAt: 2026-10-21
+x-omega: { ee: exclude, oss: exclude }

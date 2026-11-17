@@ -104,6 +104,11 @@ class DenialReason(str, Enum):
     # Runtime compatibility
     LICENSE_VERSION_UNSUPPORTED = "LICENSE_VERSION_UNSUPPORTED"
 
+    # Controlled rollout of the hosted Omega products (READINESS 3.13): the org or workspace is not
+    # admitted (the product stays hidden), or it is admitted and the product is paused (kill switch).
+    PRODUCT_NOT_ADMITTED = "PRODUCT_NOT_ADMITTED"
+    PRODUCT_PAUSED = "PRODUCT_PAUSED"
+
 
 @dataclass(frozen=True)
 class LicenseSnapshot:

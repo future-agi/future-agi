@@ -18,7 +18,7 @@ const AnnotatorPerformace = ({ annotatorList = [] }) => {
       }}
     >
       <Typography typography={"s1"} fontWeight={"fontWeightMedium"}>
-        Annotator perfomance
+        Annotator performance
       </Typography>
       <Box display="flex" gap={2} flexWrap={"wrap"}>
         {annotatorList.map((item, index) => {
@@ -139,7 +139,7 @@ const AnnotatorPerformace = ({ annotatorList = [] }) => {
                     Avg. time
                   </Typography>
                   <Typography typography={"m1"} fontWeight={"fontWeightMedium"}>
-                    {item.avgTime || 0} mins
+                    {item.avgTime != null ? `${item.avgTime} mins` : "—"}
                   </Typography>
                 </Box>
               </Box>

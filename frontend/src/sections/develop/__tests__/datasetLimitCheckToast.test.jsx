@@ -60,6 +60,16 @@ vi.mock("notistack", async (importOriginal) => {
   };
 });
 
+vi.mock("src/hooks/useCapabilities", async (importOriginal) => ({
+  ...(await importOriginal()),
+  useCapabilities: () => ({
+    data: { features: { huggingface_import: { allowed: true } } },
+    isLoading: false,
+    isError: false,
+    refetch: vi.fn(),
+  }),
+}));
+
 vi.mock("src/utils/Mixpanel", async (importOriginal) => ({
   ...(await importOriginal()),
   trackEvent: () => {},

@@ -13,6 +13,8 @@ import {
   pagerFlagsForPage,
 } from "./listPagerState";
 
+const EMPTY_PAGE_ROW_COUNTS = Object.freeze({});
+
 const requestRenderFrame = (callback) => {
   if (
     typeof window !== "undefined" &&
@@ -101,6 +103,10 @@ export default function useCursorGridPagination(gridRef, gridElementRef) {
   // last-write-wins flag from the terminal page would stay false and kill
   // forward navigation until the next full refresh.
   const [frontier, setFrontier] = useState(EMPTY_PAGER_FRONTIER);
+  // Rows each page of this generation published, keyed by page number, for
+  // the footer's "26–50" range. A page not yet published has no entry, so no
+  // range is drawn for it.
+  const [pageRowCounts, setPageRowCounts] = useState(EMPTY_PAGE_ROW_COUNTS);
   const discoveredRowCountRef = useRef(0);
   const pageLoadRequestRef = useRef(0);
   const activePageLoadRequestRef = useRef(null);
@@ -239,6 +245,7 @@ export default function useCursorGridPagination(gridRef, gridElementRef) {
       setPage(1);
       setPageCount(1);
       setFrontier(EMPTY_PAGER_FRONTIER);
+      setPageRowCounts(EMPTY_PAGE_ROW_COUNTS);
       if (moveGrid) {
         withLiveGridApi(gridRef?.current?.api, (api) =>
           api.paginationGoToFirstPage?.(),
@@ -267,6 +274,15 @@ export default function useCursorGridPagination(gridRef, gridElementRef) {
     // pageCount stays the navigation bound for goToPage. It is no longer
     // rendered; CursorGridPagination draws the window instead.
     setPageCount(Math.max(1, Math.ceil(discoveredRowCount / requestPageSize)));
+
+    // These are the rows of `publishedPage` whichever page is on screen, so
+    // record them before the transition guard below.
+    const publishedRowCount = rows.length;
+    setPageRowCounts((previous) =>
+      previous[publishedPage] === publishedRowCount
+        ? previous
+        : { ...previous, [publishedPage]: publishedRowCount },
+    );
 
     // AG Grid can load a server-side block in the background while an explicit
     // navigation is still in flight. Skip only when a transition is active
@@ -306,6 +322,11 @@ export default function useCursorGridPagination(gridRef, gridElementRef) {
             provenNext: isLastPage
               ? false
               : pagerState.provenNext || bufferedOverflowPage,
+            // The exact total the list API reported with this page, or null
+            // when it reported a lower bound or none (listPagerState.js). It
+            // rides with the frontier so a cached revisit of an earlier page,
+            // which never re-invokes the datasource, still shows it.
+            exactTotal: pagerState.exactTotal,
           },
     );
 
@@ -391,9 +412,15 @@ export default function useCursorGridPagination(gridRef, gridElementRef) {
     // the ellipsis from `hasMore` makes it reappear on page 1 after the user
     // has already walked to the last page, which reads as new pages arriving.
     const endUnknown = frontier.page > 0 && frontier.hasMore === true;
+    const visibleRowCount = Number.isSafeInteger(pageRowCounts[page])
+      ? pageRowCounts[page]
+      : null;
     return {
       beginPageLoad,
       endUnknown,
+      // Exact list total for CursorGridPagination's "of N"; null unless the
+      // list API reported one for this pagination generation.
+      exactTotal: frontier.exactTotal ?? null,
       // The deepest page this generation has ever published — callers gate
       // this on `listCursorPagination`'s `canReachPage` before drawing it as
       // the pager's right-hand boundary; this hook only tracks it.
@@ -409,6 +436,8 @@ export default function useCursorGridPagination(gridRef, gridElementRef) {
       isPageLoading,
       publishPage,
       resetPagination,
+      // Rows on the page now on screen, or null until that page is published.
+      visibleRowCount,
     };
   }, [
     beginPageLoad,
@@ -419,6 +448,7 @@ export default function useCursorGridPagination(gridRef, gridElementRef) {
     isPageLoading,
     page,
     pageCount,
+    pageRowCounts,
     pageSize,
     publishPage,
     resetPagination,

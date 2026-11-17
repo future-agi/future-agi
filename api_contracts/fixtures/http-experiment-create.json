@@ -1,0 +1,25 @@
+{
+  "name": "HTTP contract fixture",
+  "dataset_id": "8d3c1f7e-2b6a-4c11-9d0e-5f6a7b8c9d01",
+  "prompt_config": [
+    {
+      "target_type": "http",
+      "name": "Answer endpoint",
+      "http": {
+        "url": "https://fixture.example/run",
+        "method": "POST",
+        "headers": [{"name": "X-Test", "secret_ref": "HTTP_FIXTURE_REFERENCE"}],
+        "body_template": "{}",
+        "output_path": "$",
+        "streaming": false,
+        "audio": "text",
+        "timeout_seconds": 23
+      },
+      "variable_mapping": {
+        "fixed": {"kind": "constant", "value": "bounded fixture"},
+        "empty": {"kind": "empty"}
+      }
+    }
+  ],
+  "user_eval_metrics": []
+}

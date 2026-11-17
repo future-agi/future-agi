@@ -1,6 +1,6 @@
 import React, { useState, useCallback } from "react";
 import PropTypes from "prop-types";
-import { Box, Popover, Stack, Typography } from "@mui/material";
+import { Popover, Stack, Typography } from "@mui/material";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import axios from "src/utils/axios";
 import { apiPath } from "src/api/contracts/api-surface";
@@ -9,6 +9,10 @@ import { normalizeTags } from "./tagUtils";
 import TagChip from "./TagChip";
 import TagInput from "./TagInput";
 
+// One shared empty list: a fresh `[]` on every render would re-run the
+// reset effect below on every render while the popover is open.
+const EMPTY_TAGS = [];
+
 const AddTagsPopover = ({
   anchorEl,
   open,
@@ -16,20 +20,32 @@ const AddTagsPopover = ({
   traceId,
   spanId,
   bulkItems,
-  currentTags = [],
+  currentTags = EMPTY_TAGS,
   onSuccess,
 }) => {
   const items = Array.isArray(bulkItems) ? bulkItems : [];
   const isBulk = items.length > 1;
 
+  // A one-item selection is edited like a single trace or span: start from
+  // that item's tags and save to its id. Callers that pass bulkItems pass
+  // no traceId/spanId, so those props must not be used for it.
+  const single = items.length === 1 ? items[0] : null;
+  let targetTraceId = traceId;
+  let targetSpanId = spanId;
+  if (single) {
+    targetTraceId = single.type === "span" ? undefined : single.id;
+    targetSpanId = single.type === "span" ? single.id : undefined;
+  }
+  const seedTags = single ? single.currentTags || EMPTY_TAGS : currentTags;
+
   const [tags, setTags] = useState(() =>
-    isBulk ? [] : normalizeTags(currentTags),
+    isBulk ? [] : normalizeTags(seedTags),
   );
   const queryClient = useQueryClient();
 
   React.useEffect(() => {
-    if (open) setTags(isBulk ? [] : normalizeTags(currentTags));
-  }, [open, currentTags, isBulk]);
+    if (open) setTags(isBulk ? [] : normalizeTags(seedTags));
+  }, [open, seedTags, isBulk]);
 
   const patchTrace = (id, newTags) =>
     axios.patch(apiPath("/tracer/trace/{id}/tags/", { id }), { tags: newTags });
@@ -57,10 +73,10 @@ const AddTagsPopover = ({
           }),
         );
       }
-      if (spanId) {
-        return patchSpan(spanId, newTags);
+      if (targetSpanId) {
+        return patchSpan(targetSpanId, newTags);
       }
-      return patchTrace(traceId, newTags);
+      return patchTrace(targetTraceId, newTags);
     },
     onSuccess: () => {
       enqueueSnackbar(
@@ -73,7 +89,7 @@ const AddTagsPopover = ({
       onSuccess?.();
     },
     onError: () => {
-      if (!isBulk) setTags(normalizeTags(currentTags));
+      if (!isBulk) setTags(normalizeTags(seedTags));
       enqueueSnackbar("Failed to update tags", { variant: "error" });
     },
   });

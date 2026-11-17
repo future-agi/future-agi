@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"math"
 	"net/http"
 	"slices"
@@ -15,6 +16,7 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/middleware"
 	"github.com/futureagi/agentcc-gateway/internal/modeldb"
 	"github.com/futureagi/agentcc-gateway/internal/models"
+	"github.com/futureagi/agentcc-gateway/internal/requestview"
 	"github.com/futureagi/agentcc-gateway/internal/tenant"
 )
 
@@ -90,9 +92,10 @@ func (h *Handlers) serveDecision(w http.ResponseWriter, r *http.Request, routeFo
 
 	rc.Model = req.Model
 	rc.DecisionRequest = req
-	rc.Metadata["client_ip"] = h.clientIP(r)
+	rc.Metadata["client_ip"] = middleware.ClientIP(r)
 	setAuthMetadataFromRequest(rc, r)
 	applyCallerMetadata(rc, r, nil)
+	readGuardrailPolicyHeader(rc, r)
 	rc.Metadata["endpoint_type"] = "decision"
 	rc.Metadata["decision_format"] = req.Format
 	rc.Metadata["decision_question_count"] = strconv.Itoa(len(req.QuestionIDs))
@@ -125,6 +128,15 @@ func (h *Handlers) serveDecision(w http.ResponseWriter, r *http.Request, routeFo
 	}
 	rc.Provider = target.providerID
 	req.SetUpstreamModel(target.upstreamModel)
+	// The checks on the request read what the decision model reads: the state
+	// or input, each question's id or name, type and instructions, and every
+	// other field but the model (rc.PassThrough), as they read a chat
+	// request's messages. A check's rewrite (pii-detection's mask) is written
+	// into the body the vendor is sent, or the request is refused
+	// (remediation_unavailable), as a rewrite of a question's id, name or type
+	// is. X-Guardrail-Policy applies as on chat.
+	view := requestview.Decision(req.Body)
+	rc.PassThrough = view
 
 	providerCall := func(ctx context.Context, rc *models.RequestContext) error {
 		// The auth plugin has run by now. Check again what it learned.
@@ -133,6 +145,11 @@ func (h *Handlers) serveDecision(w http.ResponseWriter, r *http.Request, routeFo
 		}
 		if err := checkDecisionProviderACL(rc); err != nil {
 			return err
+		}
+		// The decision the vendor gets is the one the checks left.
+		if err := rc.DecisionRequest.SetBody(view.Body()); err != nil {
+			slog.Warn("a check's rewrite of a decision could not be sent", "request_id", rc.RequestID, "error", err)
+			return errDecisionRewriteUnsent()
 		}
 		resp, err := target.send(ctx, rc.DecisionRequest)
 		if err != nil {
@@ -147,14 +164,12 @@ func (h *Handlers) serveDecision(w http.ResponseWriter, r *http.Request, routeFo
 			rc.ResolvedModel = rc.DecisionRequest.UpstreamModel
 		}
 		// Cost, budget, prometheus and logging read Response.Usage. The
-		// decision itself stays off the chat-shaped response.
+		// decision itself stays off the chat-shaped response. A count the
+		// vendor did not report is not marked measured (TokenUsage), so a
+		// budget never settles it as a measured zero.
 		rc.Response = &models.ChatCompletionResponse{
 			Model: rc.ResolvedModel,
-			Usage: &models.Usage{
-				PromptTokens:     resp.Usage.InputTokens,
-				CompletionTokens: resp.Usage.OutputTokens,
-				TotalTokens:      resp.Usage.InputTokens + resp.Usage.OutputTokens,
-			},
+			Usage: resp.TokenUsage(),
 		}
 		return nil
 	}
@@ -172,6 +187,17 @@ func (h *Handlers) serveDecision(w http.ResponseWriter, r *http.Request, routeFo
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	w.Write(rc.DecisionResponse.Body)
+}
+
+// errDecisionRewriteUnsent refuses a decision whose rewrite by a check
+// (pii-detection's mask) the gateway wrote but cannot send as a decision,
+// before the vendor is called. The guardrail plugin has already checked that
+// the rewrite reads back as the checks left it, so this does not happen in
+// practice; if it does, the decision is not sent without the rewrite.
+func errDecisionRewriteUnsent() *models.APIError {
+	return models.ErrGuardrailBlocked("remediation_unavailable",
+		"A check on this request rewrote the decision (for example, it masked personal data), and the rewritten decision could not be sent. "+
+			"Change the check in Guardrails, or send the decision without that text.")
 }
 
 // checkDecisionProviderACL enforces a key's allowed providers. The auth plugin
@@ -226,6 +252,10 @@ func (h *Handlers) DecisionModels(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 	}
+	writeDecisionModels(w, entries)
+}
+
+func writeDecisionModels(w http.ResponseWriter, entries []decisionModel) {
 	sort.Slice(entries, func(i, j int) bool { return entries[i].ID < entries[j].ID })
 
 	w.Header().Set("Content-Type", "application/json")

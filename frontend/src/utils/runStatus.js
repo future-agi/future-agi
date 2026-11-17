@@ -90,7 +90,8 @@ const key = (v) =>
 // Negated and partial forms are checked before success, so "unhealthy",
 // "incomplete" or "not_connected" never read as green. They land where the
 // map puts their nearest entry: unreachable is danger, partial and open are
-// warning, not_run and disconnected are neutral.
+// warning, not_run and disconnected are neutral. Stopped, cancelled and
+// inactive values stay neutral even when they carry a word like "run".
 function inferRole(k) {
   if (!k) return "neutral";
   if (/fail|error|broken|reject|denied|invalid|unsuccess|unhealth/.test(k))
@@ -101,7 +102,8 @@ function inferRole(k) {
     /(^|_)(not|non|no)_|(^|_)(un|dis)(connect|start|run)/.test(k) ||
     /(^|_)(un|in|non|dis)(pass|success|ok|complete|resolved|healthy|connected)/.test(
       k,
-    )
+    ) ||
+    /cancel|stopped|unmeasured|inactive/.test(k)
   )
     return "neutral";
   if (/pass|success|ok\b|^ok|complete|resolved|healthy|connected/.test(k))
@@ -118,7 +120,9 @@ function inferRole(k) {
 /** { role, label, shape } for any status value. */
 export function runStatusOf(status, label) {
   const k = key(status);
-  const known = RUN_STATUS[k];
+  // Own keys only: "constructor" or "__proto__" in an API string must not
+  // resolve to something on Object.prototype.
+  const known = Object.hasOwn(RUN_STATUS, k) ? RUN_STATUS[k] : undefined;
   if (known) return { ...known, label: label ?? known.label };
   const text = status?.toString?.() ?? "";
   return {

@@ -1,0 +1,6 @@
+{
+  "synthetic": true,
+  "liveValidated": false,
+  "deployment": "off",
+  "limitations": "Only app-created spaces. Recordings are metadata, not media downloads. No live vendor validation."
+}

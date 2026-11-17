@@ -1,0 +1,39 @@
+schema: "connector-manifest/v1#provider"
+# Todoist's vendor MCP server runs locally over standard input and output.
+# The user supplies their Todoist API token through the environment.
+app: todoist
+id: local
+version: 1.0.0
+kind: vendor_local
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: stdio
+  command: npx
+  args:
+    - "-p"
+    - "@todoist/mcp"
+    - todoist-mcp
+  env:
+    TODOIST_API_KEY: Required Todoist API token for the user the MCP tools act as; supply it locally.
+hosted: false
+trusted: false
+accountModes: [agent]
+auth: { kind: local_setup }
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.command
+    url: https://github.com/todoist/todoist-mcp/blob/main/docs/mcp-server.md
+    fetchedAt: 2026-11-16
+  - fact: transport.args
+    url: https://github.com/todoist/todoist-mcp/blob/main/docs/mcp-server.md
+    fetchedAt: 2026-11-16
+  - fact: transport.env
+    url: https://github.com/todoist/todoist-mcp/blob/main/docs/mcp-server.md
+    fetchedAt: 2026-11-16
+  - fact: auth.kind
+    url: https://github.com/todoist/todoist-mcp/blob/main/docs/mcp-server.md
+    fetchedAt: 2026-11-16

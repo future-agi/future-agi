@@ -162,7 +162,7 @@ describe("UploadKnowledgeBaseFile", () => {
     triggerDrop([], [rejection]);
 
     expect(mockEnqueue).toHaveBeenCalledWith(
-      "Unsupported file type. Please upload a PDF, DOCX, RTF, or TXT file.",
+      "Unsupported file type. Please upload a TXT, MD or RTF file.",
       { variant: "error" },
     );
   });

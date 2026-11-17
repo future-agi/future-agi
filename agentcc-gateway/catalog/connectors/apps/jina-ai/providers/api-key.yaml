@@ -1,0 +1,44 @@
+schema: "connector-manifest/v1#provider"
+app: jina-ai
+id: api-key
+version: 1.1.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.jina.ai/v1
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: API key
+      help: "Get a Jina AI API key at jina.ai. It unlocks search, reranking and PDF extraction, raises reader limits, and charges token usage to your key."
+      helpUrl: https://github.com/jina-ai/MCP
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_metered
+  source: https://github.com/jina-ai/MCP
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://github.com/jina-ai/MCP
+    fetchedAt: 2026-11-09
+  - fact: transport.variant
+    url: https://github.com/jina-ai/MCP
+    fetchedAt: 2026-11-09
+  - fact: auth.kind
+    url: https://github.com/jina-ai/MCP
+    fetchedAt: 2026-11-09
+  - fact: auth.credentialParts
+    url: https://github.com/jina-ai/MCP
+    fetchedAt: 2026-11-09

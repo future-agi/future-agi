@@ -1,0 +1,496 @@
+{
+  "conformance_version": "1.4.0",
+  "file": "b8-fixtures",
+  "contract": "b8/1.1",
+  "contract_note": "b8/1 plus one additive rule (rules.context: webhook_context values are valid Unicode and finite) and three clarifications that change no b8/1 answer: strict UTF-8 and RFC 8259 at parse, the exact protocol rule, and the canonical measure of the 1,024-byte rule",
+  "schema": "schemas/b8/notice.v1.schema.json",
+  "order": "parse (invalid_field ''), protocol major and event known (else 503 protocol_unsupported), identity deny list (identity_not_allowed), context values (b8/1.1, invalid_field run.webhook_context), schema (invalid_field with the failing path), semantic rules in contract order; each fixture names its step",
+  "steps": [
+    "parse",
+    "protocol",
+    "identity",
+    "context",
+    "schema",
+    "semantic",
+    "accepted"
+  ],
+  "rules": {
+    "parse": "Decode the body as strict UTF-8 (no BOM, no invalid byte, no encoded surrogate; never substitute U+FFFD) and parse it as RFC 8259 JSON (no NaN, Infinity or -Infinity literal). Failure, or a value that is not an object: 400 invalid_field, field ''.",
+    "protocol": "503 protocol_unsupported (EE: 503 relay_unavailable, reason protocol_unsupported) when either protocol is a JSON string matching ^omega-deploy-run-event/v([1-9][0-9]*)$ whose major is not 1, or event is a JSON string other than run.completed and run.failed. Nothing else answers 503: an absent protocol, one that is not a string, or any other text (omega-deploy-run-event/v01, /v1.1, 'v1 ') goes on to the schema, which answers 400 invalid_field 'protocol'; likewise an event that is absent or not a string gives 'event'.",
+    "identity": "the deny list: top level deployment, organization_id, workspace_id, project_id, relay, then in run deployment_id, organization_id, workspace_id, project_id; the first present, in that order, is the field of 400 identity_not_allowed.",
+    "context": "b8/1.1, checked before the schema so the answer does not depend on a validator's number handling (Ajv's default strictNumbers refuses Infinity inside the schema step): when run is an object and run.webhook_context is an object, a key or string value holding a lone surrogate (a \\ud800-\\udfff escape not part of a pair), or a number value that is not finite (1e400 parses to Infinity), is 400 invalid_field 'run.webhook_context'.",
+    "schema": "notice.v1.schema.json. field is the path of the failing value, dot-joined (for a required failure the missing key is appended; inside a oneOf, the value that fails). field is normative only when the notice has exactly one schema error, as every fixture here has: with several, jsonschema's best_match and Ajv may name different ones, and EE and FA may differ.",
+    "semantic": "in contract order: event_status_mismatch (field event); run.error null iff succeeded; created_at <= started_at <= ended_at when started_at is set and created_at <= ended_at always, reporting the later field; run.webhook in URL form with no userinfo and no fragment; run.webhook_context at most 1,024 bytes, measured as the UTF-8 length of the context written by the canonical serializer of payloads.json (JSON.stringify: raw UTF-8, never \\u escapes; numbers as ECMAScript writes them). Not Python's json.dumps, not characters or UTF-16 units.",
+    "accepted": "202 with the answer of accepted.v1.schema.json."
+  },
+  "fixtures": [
+    {
+      "file": "b8/valid/run-completed-api-whep.json",
+      "kind": "valid",
+      "bytes": 745,
+      "sha256": "040256445075186f045ed16266ef7cc2b4a3678ce8b2be6892060dfd4be0f0f1",
+      "description": "Contract section 12.1, byte for byte",
+      "expect": {
+        "status": 202
+      },
+      "step": "accepted"
+    },
+    {
+      "file": "b8/valid/run-cancelled-queued-cron.json",
+      "kind": "valid",
+      "bytes": 586,
+      "sha256": "f4f3c7c27a8fbcea84de3480c52d0be96c9bfaa77666f23c3ddf24609670c469",
+      "description": "Contract section 12.4, byte for byte",
+      "expect": {
+        "status": 202
+      },
+      "step": "accepted"
+    },
+    {
+      "file": "b8/valid/run-failed-timeout-studio-url-webhook.json",
+      "kind": "valid",
+      "bytes": 749,
+      "sha256": "d0577625743302097e6633ff60a6eeebf32d49227444c0972355f52e1761cf26",
+      "description": "status failed (timeout), trigger studio, webhook in URL form with a query",
+      "expect": {
+        "status": 202
+      },
+      "step": "accepted"
+    },
+    {
+      "file": "b8/valid/run-failed-tool-error-batch.json",
+      "kind": "valid",
+      "bytes": 810,
+      "sha256": "ab072895b5472eda7a1de03d8206c533cef2b3522d9dc0fcd4f6776224317731",
+      "description": "status failed (tool_error with http_status and host), trigger batch, every context value type",
+      "expect": {
+        "status": 202
+      },
+      "step": "accepted"
+    },
+    {
+      "file": "b8/valid/run-interrupted-api.json",
+      "kind": "valid",
+      "bytes": 754,
+      "sha256": "3e8f6921bf06dd233f7b7c0a17207a2b7ae81e47c6363b79744924d0e78d6ca3",
+      "description": "status interrupted (crash)",
+      "expect": {
+        "status": 202
+      },
+      "step": "accepted"
+    },
+    {
+      "file": "b8/valid/run-interrupted-shutdown-attempt-2.json",
+      "kind": "valid",
+      "bytes": 777,
+      "sha256": "f59d926252aea9ab940b21fa2b3d8e3a0d7e3a78171b05be5db163f2982b831a",
+      "description": "status interrupted (shutdown), attempt 2",
+      "expect": {
+        "status": 202
+      },
+      "step": "accepted"
+    },
+    {
+      "file": "b8/valid/run-failed-model-error-preview.json",
+      "kind": "valid",
+      "bytes": 774,
+      "sha256": "9e9fb7528a1739512e4e246d616fdcc43539bbf17b18609808c1442db315c684",
+      "description": "environment preview, model_error",
+      "expect": {
+        "status": 202
+      },
+      "step": "accepted"
+    },
+    {
+      "file": "b8/valid/run-completed-unknown-fields.json",
+      "kind": "valid",
+      "bytes": 856,
+      "sha256": "00eece5a9b59b1195affd9451e142a526aeaefeab6a2041f93e33cfbfc5b832b",
+      "description": "unknown fields at the top level, in run, trigger and usage: accepted and ignored (contract section 10)",
+      "expect": {
+        "status": 202
+      },
+      "step": "accepted"
+    },
+    {
+      "file": "b8/valid/run-completed-new-enum-values.json",
+      "kind": "valid",
+      "bytes": 749,
+      "sha256": "a79459d2a9f8f9a4613882b8f162c4288bed02893ae29ae63141a082eab23b9b",
+      "description": "an environment and a trigger kind v1 does not list: additive values pass the patterns",
+      "expect": {
+        "status": 202
+      },
+      "step": "accepted"
+    },
+    {
+      "file": "b8/valid/run-completed-context-1024-bytes.json",
+      "kind": "valid",
+      "bytes": 1733,
+      "sha256": "c3f0384ab23573563bca78f24bca85fd045c06db956b9bda82c08a6418401cb8",
+      "description": "webhook_context of exactly 1,024 bytes",
+      "expect": {
+        "status": 202
+      },
+      "step": "accepted"
+    },
+    {
+      "file": "b8/invalid/identity-top-level.json",
+      "kind": "invalid",
+      "bytes": 788,
+      "sha256": "28ee84304057e720d1d17c867c2f4b3ab714ff0d4e9b883f7adb43d4dd22b5d0",
+      "description": "an identity field at the top level",
+      "expect": {
+        "status": 400,
+        "code": "identity_not_allowed",
+        "field": "deployment"
+      },
+      "step": "identity"
+    },
+    {
+      "file": "b8/invalid/identity-in-run.json",
+      "kind": "invalid",
+      "bytes": 799,
+      "sha256": "2580e128ffe0c68902c6956d96b8363530cfc876ac9819481398e5c1819c8b09",
+      "description": "an identity field inside run",
+      "expect": {
+        "status": 400,
+        "code": "identity_not_allowed",
+        "field": "run.workspace_id"
+      },
+      "step": "identity"
+    },
+    {
+      "file": "b8/invalid/event-status-mismatch.json",
+      "kind": "invalid",
+      "bytes": 778,
+      "sha256": "a5949d6ba2be048f98cbf03729e6ae8192abf73d18874ae3ac4729f7258dfb3f",
+      "description": "event run.completed with run.status failed",
+      "expect": {
+        "status": 400,
+        "code": "event_status_mismatch",
+        "field": "event"
+      },
+      "step": "semantic"
+    },
+    {
+      "file": "b8/invalid/started-after-ended.json",
+      "kind": "invalid",
+      "bytes": 745,
+      "sha256": "5e79a7649b68e06890db4a77810a275a22314a889f24f606d9db0de607eb81aa",
+      "description": "started_at later than ended_at",
+      "expect": {
+        "status": 400,
+        "code": "invalid_field",
+        "field": "run.ended_at"
+      },
+      "step": "semantic"
+    },
+    {
+      "file": "b8/invalid/webhook-context-1025-bytes.json",
+      "kind": "invalid",
+      "bytes": 1734,
+      "sha256": "1984b021275fa5617288e5430bc480134c8c3b5ab4c384577af0ef48657c6349",
+      "description": "webhook_context of 1,025 bytes",
+      "expect": {
+        "status": 400,
+        "code": "invalid_field",
+        "field": "run.webhook_context"
+      },
+      "step": "semantic"
+    },
+    {
+      "file": "b8/invalid/webhook-userinfo.json",
+      "kind": "invalid",
+      "bytes": 750,
+      "sha256": "02b885302d5f5e0f132cec3ee4118a9a9ed141a50ec78247f94a3a4049510971",
+      "description": "a webhook URL with userinfo (the schema pattern already refuses '@')",
+      "expect": {
+        "status": 400,
+        "code": "invalid_field",
+        "field": "run.webhook"
+      },
+      "step": "schema"
+    },
+    {
+      "file": "b8/invalid/trace-id-all-zeros.json",
+      "kind": "invalid",
+      "bytes": 745,
+      "sha256": "9b724fe1cc5bef9efc3db3d788a9b554ca978a010e6e1486cb9a22a36ee401db",
+      "description": "trace_id of 32 zeros",
+      "expect": {
+        "status": 400,
+        "code": "invalid_field",
+        "field": "run.trace_id"
+      },
+      "step": "schema"
+    },
+    {
+      "file": "b8/invalid/notice-id-not-v7.json",
+      "kind": "invalid",
+      "bytes": 745,
+      "sha256": "724fa09f0c01cabae303692ffaf19407b613cf610f997f7b40da2050b4c84a78",
+      "description": "a UUIDv4 notice_id",
+      "expect": {
+        "status": 400,
+        "code": "invalid_field",
+        "field": "notice_id"
+      },
+      "step": "schema"
+    },
+    {
+      "file": "b8/invalid/error-on-succeeded.json",
+      "kind": "invalid",
+      "bytes": 777,
+      "sha256": "d6a37c02d8faec81fe532c364bbd025c647b1660d3d86797b29709e2fccc65f2",
+      "description": "run.error set on a succeeded run",
+      "expect": {
+        "status": 400,
+        "code": "invalid_field",
+        "field": "run.error"
+      },
+      "step": "semantic"
+    },
+    {
+      "file": "b8/invalid/usage-missing.json",
+      "kind": "invalid",
+      "bytes": 659,
+      "sha256": "e721b91e387c724ed77e80bf158e2bb8a536c7f2f9d31775e0c4352bdc2eeb0d",
+      "description": "the required usage key is absent",
+      "expect": {
+        "status": 400,
+        "code": "invalid_field",
+        "field": "usage"
+      },
+      "step": "schema"
+    },
+    {
+      "file": "b8/invalid/created-after-started.json",
+      "kind": "invalid",
+      "bytes": 745,
+      "sha256": "e564f4ecb85ea7cc4361c1ff6e4c5ee92f200976263331a02b16686a52230d8f",
+      "description": "created_at later than started_at",
+      "expect": {
+        "status": 400,
+        "code": "invalid_field",
+        "field": "run.started_at"
+      },
+      "step": "semantic"
+    },
+    {
+      "file": "b8/invalid/not-an-object.json",
+      "kind": "invalid",
+      "bytes": 17,
+      "sha256": "7c09dbb729eb717c9dc9b3d50649b3cd8cdb6cb82e5ecfc471269f662455d511",
+      "description": "JSON that is not an object",
+      "expect": {
+        "status": 400,
+        "code": "invalid_field",
+        "field": ""
+      },
+      "step": "parse"
+    },
+    {
+      "file": "b8/invalid/not-json.json",
+      "kind": "invalid",
+      "bytes": 12,
+      "sha256": "f9ecc86f44b69124aee2f79343774c0adb38972e652a6bac866b34e2fae70e9c",
+      "description": "bytes that are not JSON",
+      "expect": {
+        "status": 400,
+        "code": "invalid_field",
+        "field": ""
+      },
+      "step": "parse"
+    },
+    {
+      "file": "b8/invalid/protocol-v2.json",
+      "kind": "invalid",
+      "bytes": 745,
+      "sha256": "bb672a9133c21f32fe8bc4008224ace6d38ead06afce6a0b575af201a8c28743",
+      "description": "an unknown protocol major: retried, never refused (contract sections 4.2 step 5, 5.1 step 5, 10)",
+      "expect": {
+        "status": 503,
+        "code": "protocol_unsupported"
+      },
+      "step": "protocol"
+    },
+    {
+      "file": "b8/invalid/event-unknown.json",
+      "kind": "invalid",
+      "bytes": 743,
+      "sha256": "3f47e329c55034f2798e107fadc8d2ffe6b5feb775ecf99486e9a436cbe37c59",
+      "description": "an event value v1 does not know: retried, never refused",
+      "expect": {
+        "status": 503,
+        "code": "protocol_unsupported"
+      },
+      "step": "protocol"
+    },
+    {
+      "file": "b8/invalid/not-utf8.json",
+      "kind": "invalid",
+      "bytes": 741,
+      "sha256": "f3180edb4a7543f6af56da2bacb2244ed1a361acd03e9efd8a24643facd81701",
+      "description": "a 0xFF byte inside a string: not UTF-8, so not JSON (decode strictly; never replace with U+FFFD)",
+      "expect": {
+        "status": 400,
+        "code": "invalid_field",
+        "field": ""
+      },
+      "step": "parse"
+    },
+    {
+      "file": "b8/invalid/nan-literal.json",
+      "kind": "invalid",
+      "bytes": 738,
+      "sha256": "49dec9ef017a3a42403fb9038cbc02f33f3cff1492ba6135e7db7fdfa668245d",
+      "description": "a NaN literal is not JSON (Python's json.loads accepts it unless parse_constant refuses)",
+      "expect": {
+        "status": 400,
+        "code": "invalid_field",
+        "field": ""
+      },
+      "step": "parse"
+    },
+    {
+      "file": "b8/invalid/protocol-missing.json",
+      "kind": "invalid",
+      "bytes": 706,
+      "sha256": "b33593a29614b629142c60763756b7b452140b2c7255f5b8bc6d6b436022d231",
+      "description": "no protocol key",
+      "expect": {
+        "status": 400,
+        "code": "invalid_field",
+        "field": "protocol"
+      },
+      "step": "schema"
+    },
+    {
+      "file": "b8/invalid/protocol-malformed.json",
+      "kind": "invalid",
+      "bytes": 747,
+      "sha256": "e14aab22fed1e37b87d4fdef9ad039a50f8095ad85ab98dd9468034d4ec62221",
+      "description": "not omega-deploy-run-event/v<N>, so not an unknown major: 400",
+      "expect": {
+        "status": 400,
+        "code": "invalid_field",
+        "field": "protocol"
+      },
+      "step": "schema"
+    },
+    {
+      "file": "b8/invalid/protocol-v01.json",
+      "kind": "invalid",
+      "bytes": 746,
+      "sha256": "c6d89332b0cc574b9ad77806d4a8deda5e2849ea528c4c7d05408cc8b8d198ad",
+      "description": "a major has no leading zero: 400",
+      "expect": {
+        "status": 400,
+        "code": "invalid_field",
+        "field": "protocol"
+      },
+      "step": "schema"
+    },
+    {
+      "file": "b8/invalid/protocol-not-a-string.json",
+      "kind": "invalid",
+      "bytes": 719,
+      "sha256": "d82ce90c21927cccb63ae6f07617df07b4281faecdf07f6487c0e666036bfd19",
+      "description": "a number, not a string: 400",
+      "expect": {
+        "status": 400,
+        "code": "invalid_field",
+        "field": "protocol"
+      },
+      "step": "schema"
+    },
+    {
+      "file": "b8/invalid/event-not-a-string.json",
+      "kind": "invalid",
+      "bytes": 731,
+      "sha256": "f72875d7b65db338cb41b1d2b7cb79ce8a2d4bddb35262ba54da89721e2138ea",
+      "description": "an event that is not a string is malformed, not unknown: 400",
+      "expect": {
+        "status": 400,
+        "code": "invalid_field",
+        "field": "event"
+      },
+      "step": "schema"
+    },
+    {
+      "file": "b8/invalid/webhook-context-lone-surrogate.json",
+      "kind": "invalid",
+      "bytes": 743,
+      "sha256": "47bb772d4dc927f329460a1cebd97cd47cd29b3aef1ac4e869676d66ca004e93",
+      "description": "b8/1.1: a lone surrogate escape; JSON-valid, but no UTF-8 body can carry it, so the event could never be built",
+      "expect": {
+        "status": 400,
+        "code": "invalid_field",
+        "field": "run.webhook_context"
+      },
+      "step": "context"
+    },
+    {
+      "file": "b8/invalid/webhook-context-non-finite.json",
+      "kind": "invalid",
+      "bytes": 740,
+      "sha256": "e3aaec229173052fc2af0ec31256a1449c656c6324a7c6e6942bcc0ac4cc18d2",
+      "description": "b8/1.1: 1e400 parses to Infinity in both languages; the event body cannot carry it",
+      "expect": {
+        "status": 400,
+        "code": "invalid_field",
+        "field": "run.webhook_context"
+      },
+      "step": "context"
+    },
+    {
+      "file": "b8/valid/run-completed-context-1024-bytes-non-ascii.json",
+      "kind": "valid",
+      "bytes": 1733,
+      "sha256": "73bac95792e70b2fcbe320c0dde52262b495ff09305c2ea2feeb458aee681418",
+      "description": "webhook_context of exactly 1,024 bytes of raw UTF-8 ('é' and an emoji); measured with \\u escapes it would be 2848 bytes",
+      "expect": {
+        "status": 202
+      },
+      "step": "accepted"
+    },
+    {
+      "file": "b8/invalid/webhook-context-1025-bytes-non-ascii.json",
+      "kind": "invalid",
+      "bytes": 1734,
+      "sha256": "a6363c5d8ea32c2c2f654c7213047ee566bd00ffd21af4cb5d79fcf446e0a0cf",
+      "description": "1,025 bytes of raw UTF-8 but only 469 code points (569 UTF-16 units): a measure in characters would wrongly accept it",
+      "expect": {
+        "status": 400,
+        "code": "invalid_field",
+        "field": "run.webhook_context"
+      },
+      "step": "semantic"
+    },
+    {
+      "file": "b8/valid/run-completed-context-1024-bytes-float.json",
+      "kind": "valid",
+      "bytes": 1733,
+      "sha256": "c40b9c5dbe4bff309ba7c2095aeb491ccd453094ddf7a8e26e2afb8b2fa88de2",
+      "description": "exactly 1,024 bytes with 1.5e-7 written as JSON.stringify does; Python's json.dumps writes 1.5e-07, 1,025 bytes",
+      "expect": {
+        "status": 202
+      },
+      "step": "accepted"
+    },
+    {
+      "file": "b8/invalid/webhook-context-1025-bytes-float.json",
+      "kind": "invalid",
+      "bytes": 1734,
+      "sha256": "fc828ec9bf72de060417701a5a9cdd5af58a70dd374486dc941c9b122e9900a4",
+      "description": "1,025 bytes with 0.00001 as JSON.stringify writes it; Python's json.dumps writes 1e-05, 1,023 bytes",
+      "expect": {
+        "status": 400,
+        "code": "invalid_field",
+        "field": "run.webhook_context"
+      },
+      "step": "semantic"
+    }
+  ]
+}

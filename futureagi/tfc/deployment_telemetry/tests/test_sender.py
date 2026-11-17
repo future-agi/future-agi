@@ -1,3 +1,4 @@
+import json
 import os
 from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
@@ -32,9 +33,19 @@ from tfc.temporal.schedules.deployment_telemetry import (
 
 
 @pytest.fixture(autouse=True)
+def telemetry_opt_out_unset(monkeypatch):
+    """Start each test at the default (telemetry on), whatever the runner
+    exports: a CI kit may set FUTURE_AGI_TELEMETRY_DISABLED=true. A test that
+    needs the opt-out sets it in its body, which runs after this fixture."""
+    monkeypatch.delenv("FUTURE_AGI_TELEMETRY_DISABLED", raising=False)
+
+
+@pytest.fixture(autouse=True)
 def telemetry_buffer_dir(monkeypatch, tmp_path):
     buffer_dir = tmp_path / "deployment-telemetry"
     monkeypatch.setenv("FUTURE_AGI_TELEMETRY_BUFFER_DIR", str(buffer_dir))
+    # Admin emails are opt-in; a test that wants them sets this itself.
+    monkeypatch.delenv("FUTURE_AGI_TELEMETRY_SHARE_ADMIN_EMAILS", raising=False)
     return buffer_dir
 
 
@@ -140,6 +151,7 @@ def test_heartbeat_post_is_hmac_signed():
 @pytest.mark.django_db
 def test_enabled_registration_sends_users_and_persists_full_state(monkeypatch):
     monkeypatch.setenv("FUTURE_AGI_TELEMETRY_DISABLED", "false")
+    monkeypatch.setenv("FUTURE_AGI_TELEMETRY_SHARE_ADMIN_EMAILS", "true")
     monkeypatch.setenv("FUTURE_AGI_VERSION", "1.2.3")
     User.objects.create_user(
         email="admin@example.com",
@@ -171,7 +183,7 @@ def test_enabled_registration_sends_users_and_persists_full_state(monkeypatch):
 
 
 @pytest.mark.django_db
-def test_disabled_registration_is_minimal_and_sends_no_heartbeat(monkeypatch):
+def test_disabled_registration_sends_nothing(monkeypatch):
     monkeypatch.setenv("FUTURE_AGI_TELEMETRY_DISABLED", "true")
     with (
         patch(
@@ -188,13 +200,12 @@ def test_disabled_registration_is_minimal_and_sends_no_heartbeat(monkeypatch):
         result = run_telemetry_cycle()
 
     state = DeploymentTelemetryState.objects.get(singleton_key=1)
-    assert state.registration_kind == (
-        DeploymentTelemetryState.RegistrationKind.MINIMAL_DISABLED
-    )
-    assert "users" not in state.registration_metadata
+    assert state.telemetry_disabled is True
+    assert state.registered_at is None
+    assert state.registration_kind == ""
+    assert state.registration_metadata == {}
     assert result == {"skipped": True, "reason": "disabled"}
-    assert post.call_count == 1
-    assert post.call_args.args[0] == "/telemetry/register/"
+    post.assert_not_called()
 
 
 @pytest.mark.django_db
@@ -217,6 +228,7 @@ def test_enabled_without_users_releases_registration_claim(monkeypatch):
 
 @pytest.mark.django_db
 def test_registration_transitions_from_full_to_disabled(monkeypatch):
+    monkeypatch.setenv("FUTURE_AGI_TELEMETRY_SHARE_ADMIN_EMAILS", "true")
     User.objects.create_user(
         email="admin@example.com",
         name="Admin",
@@ -254,15 +266,15 @@ def test_registration_transitions_from_full_to_disabled(monkeypatch):
 
     state = DeploymentTelemetryState.objects.get(singleton_key=1)
     assert state.telemetry_disabled is True
-    assert state.registration_kind == (
-        DeploymentTelemetryState.RegistrationKind.MINIMAL_DISABLED
-    )
-    assert "users" not in state.registration_metadata
+    # Keep the historical registration intact; opt-out is local, not a new ping.
+    assert state.registration_kind == DeploymentTelemetryState.RegistrationKind.FULL
+    assert state.registration_metadata["users"][0]["email"] == "admin@example.com"
 
 
 @pytest.mark.django_db
 def test_registration_transitions_from_disabled_to_full(monkeypatch):
     monkeypatch.setenv("FUTURE_AGI_TELEMETRY_DISABLED", "true")
+    monkeypatch.setenv("FUTURE_AGI_TELEMETRY_SHARE_ADMIN_EMAILS", "true")
     with (
         patch(
             "tfc.deployment_telemetry.sender.is_self_hosted_deployment",
@@ -324,7 +336,7 @@ def test_fresh_registration_claim_prevents_duplicate_send(monkeypatch):
 
 
 @pytest.mark.django_db
-def test_stale_registration_claim_is_recovered(monkeypatch):
+def test_disabled_stale_registration_claim_is_cancelled(monkeypatch):
     monkeypatch.setenv("FUTURE_AGI_TELEMETRY_DISABLED", "true")
     state = get_or_create_telemetry_state()
     state.registration_status = DeploymentTelemetryState.RegistrationStatus.IN_PROGRESS
@@ -345,10 +357,11 @@ def test_stale_registration_claim_is_recovered(monkeypatch):
     ):
         assert ensure_registration()[0] is False
 
-    post.assert_called_once()
+    post.assert_not_called()
     state.refresh_from_db()
     assert state.registration_status == DeploymentTelemetryState.RegistrationStatus.IDLE
-    assert state.registered_at is not None
+    assert state.registration_claimed_at is None
+    assert state.registered_at is None
 
 
 @pytest.mark.django_db
@@ -615,7 +628,8 @@ def test_disabling_telemetry_clears_buffer(monkeypatch, telemetry_buffer_dir):
 
 
 @pytest.mark.django_db
-def test_registration_caps_users_at_500():
+def test_registration_caps_users_at_500(monkeypatch):
+    monkeypatch.setenv("FUTURE_AGI_TELEMETRY_SHARE_ADMIN_EMAILS", "true")
     state = get_or_create_telemetry_state()
     org = Organization.objects.create(name="Example Org")
     users = [
@@ -649,7 +663,8 @@ def test_registration_caps_users_at_500():
 
 
 @pytest.mark.django_db
-def test_user_selection_prefers_recent_login():
+def test_user_selection_prefers_recent_login(monkeypatch):
+    monkeypatch.setenv("FUTURE_AGI_TELEMETRY_SHARE_ADMIN_EMAILS", "true")
     state = get_or_create_telemetry_state()
     org = Organization.objects.create(name="Example Org")
     older = User.objects.create_user(
@@ -699,7 +714,8 @@ def test_user_selection_prefers_recent_login():
 
 
 @pytest.mark.django_db
-def test_registration_excludes_active_non_admin_users():
+def test_registration_excludes_active_non_admin_users(monkeypatch):
+    monkeypatch.setenv("FUTURE_AGI_TELEMETRY_SHARE_ADMIN_EMAILS", "true")
     state = get_or_create_telemetry_state()
     org = Organization.objects.create(name="Example Org")
     admin = User.objects.create_user(
@@ -739,6 +755,89 @@ def test_registration_excludes_active_non_admin_users():
 
     assert payload is not None
     assert [user["email"] for user in payload["users"]] == ["admin@example.com"]
+
+
+@pytest.mark.django_db
+def test_default_registration_waits_for_an_eligible_account_without_emails(
+    monkeypatch,
+):
+    """Opt-in off: the same owner/admin/staff filter decides when registration
+    happens, but the payload carries no users and no email or domain."""
+    monkeypatch.delenv("FUTURE_AGI_TELEMETRY_SHARE_ADMIN_EMAILS", raising=False)
+    state = get_or_create_telemetry_state()
+    org = Organization.objects.create(name="Example Org")
+    member = User.objects.create_user(
+        email="member@example.com",
+        name="Member",
+        password="password",
+        organization=org,
+        organization_role=OrganizationRoles.MEMBER,
+    )
+    OrganizationMembership.objects.create(
+        user=member,
+        organization=org,
+        role=OrganizationRoles.MEMBER,
+        level=Level.MEMBER,
+        is_active=True,
+    )
+
+    assert build_full_registration_payload(state.instance_id) is None
+
+    admin = User.objects.create_user(
+        email="admin@example.com",
+        name="Admin",
+        password="password",
+        organization=org,
+        organization_role=OrganizationRoles.ADMIN,
+    )
+    OrganizationMembership.objects.create(
+        user=admin,
+        organization=org,
+        role=OrganizationRoles.ADMIN,
+        level=Level.ADMIN,
+        is_active=True,
+    )
+
+    payload = build_full_registration_payload(state.instance_id)
+
+    assert payload is not None
+    assert "users" not in payload
+    assert "@" not in json.dumps(payload)
+    assert "example.com" not in json.dumps(payload)
+
+
+@pytest.mark.django_db
+def test_default_registration_persists_full_state_without_users(monkeypatch):
+    monkeypatch.setenv("FUTURE_AGI_TELEMETRY_DISABLED", "false")
+    monkeypatch.delenv("FUTURE_AGI_TELEMETRY_SHARE_ADMIN_EMAILS", raising=False)
+    User.objects.create_user(
+        email="admin@example.com",
+        name="Admin",
+        password="password",
+    )
+
+    with (
+        patch(
+            "tfc.deployment_telemetry.sender.is_self_hosted_deployment",
+            return_value=True,
+        ),
+        patch(
+            "tfc.deployment_telemetry.sender.TelemetryClient.post",
+            return_value=TelemetryResponse(
+                ok=True, data={"instance_secret": "test-secret"}
+            ),
+        ) as post,
+    ):
+        assert ensure_registration()[0] is True
+        assert ensure_registration()[0] is True
+
+    post.assert_called_once()
+    assert post.call_args.args[0] == "/telemetry/register/"
+    assert "users" not in post.call_args.args[1]
+    state = DeploymentTelemetryState.objects.get(singleton_key=1)
+    assert state.registration_kind == DeploymentTelemetryState.RegistrationKind.FULL
+    assert state.instance_secret == "test-secret"
+    assert "users" not in state.registration_metadata
 
 
 def test_cycle_failures_are_silent():

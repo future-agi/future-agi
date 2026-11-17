@@ -1,3 +1,4 @@
+import { localProviderLogo } from "src/utils/localProviderLogo";
 import { Box, InputAdornment, TextField } from "@mui/material";
 import PropTypes from "prop-types";
 import React, { forwardRef, useCallback, useRef } from "react";
@@ -22,6 +23,7 @@ const SearchField = forwardRef(
       modelRef,
       showIcon,
       logoUrl,
+      provider,
       multiple,
       onClick,
       // Used by the dropdown menu, not the TextField input.
@@ -161,11 +163,11 @@ const SearchField = forwardRef(
                     width: theme.spacing(2.5),
                     objectFit: "cover",
                     ...(theme.palette.mode === "dark" &&
-                      isBlackBackgroundLogo(logoUrl) && {
+                      isBlackBackgroundLogo(localProviderLogo(provider)) && {
                         filter: "invert(1) brightness(2)",
                       }),
                   })}
-                  src={logoUrl}
+                  src={localProviderLogo(provider)}
                   alt="icon"
                 />
               </InputAdornment>
@@ -234,6 +236,7 @@ SearchField.propTypes = {
   modelRef: PropTypes.oneOfType([PropTypes.object, PropTypes.func]),
   showIcon: PropTypes.bool,
   logoUrl: PropTypes.string,
+  provider: PropTypes.oneOfType([PropTypes.string, PropTypes.array]),
   multiple: PropTypes.bool,
   openDropdown: PropTypes.bool,
   onClick: PropTypes.func,

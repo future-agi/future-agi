@@ -1,0 +1,6 @@
+The Omega Hub rules changed (version {{ version }}).
+
+{{ summary }}
+
+Listed versions have 30 days to meet a new content rule. Nothing is removed for a rules change alone.
+The rules: {{ app_url }}/publish

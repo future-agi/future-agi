@@ -36,6 +36,8 @@ const WorkbenchLandingPage = () => {
     createDraft(createDraftPayload);
   }, [createDraft]);
 
+  // Generate and Improve are not built in this release: their cards stay
+  // visible with a disabled action that says so, and clicking them does nothing.
   const prompts = useMemo(() => {
     return [
       {

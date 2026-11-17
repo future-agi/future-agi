@@ -40,7 +40,7 @@ describe("TaskUsageTab stats", () => {
   it("summarizes successful runs only, without an error count or completion rate", () => {
     render(<TaskUsageTab taskId="task-1" />);
 
-    expect(screen.getByText("Runs:")).toBeInTheDocument();
+    expect(screen.getByText("Successful runs:")).toBeInTheDocument();
     expect(screen.queryByText("Success:")).not.toBeInTheDocument();
     expect(screen.queryByText("Errors:")).not.toBeInTheDocument();
     expect(screen.queryByText(/completion rate/i)).not.toBeInTheDocument();

@@ -3,7 +3,10 @@ Tests for the spend-summary endpoint used by the gateway to seed
 budget counters on startup.
 """
 
+import json
+import secrets
 from decimal import Decimal
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -13,7 +16,8 @@ from rest_framework.test import APIClient
 
 from agentcc.models import AgentccRequestLog
 
-ADMIN_TOKEN = "agentcc-admin-secret"
+# Generated per run: a published literal would now be refused (agentcc/admin_token.py).
+ADMIN_TOKEN = secrets.token_hex(32)
 
 
 @pytest.fixture(autouse=True)
@@ -77,6 +81,8 @@ def request_logs(organization, workspace, now):
                 request_id=f"req-{len(logs)}",
                 started_at=now,
                 status_code=200,
+                # The gateway logs the key's name (its budget key) with its id.
+                metadata={"auth_key_name": entry["api_key_id"]},
                 **entry,
             )
         )
@@ -207,3 +213,168 @@ class TestSpendSummary:
         response = admin_client.get("/agentcc/spend-summary/?period=daily")
         data = response.json()
         assert data["result"]["orgs"] == {}
+
+
+# One period of two organizations' requests and the summary the view writes
+# for them, shared with the gateway's restart tests: the gateway seeds its
+# budgets from this shape, so the two sides read one file.
+RESTART_FIXTURE = (
+    Path(__file__).resolve().parents[3]
+    / "agentcc-gateway/internal/tenant/testdata/spend_summary_restart.json"
+)
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestSpendSummaryBudgetLevels:
+    """per_key by the key's name (the gateway's budget key), per_user with
+    the key's owner (each user once per request), per_team and per_tag."""
+
+    @staticmethod
+    def _log(org, request_id, cost, metadata, **fields):
+        return AgentccRequestLog.objects.create(
+            organization=org,
+            request_id=request_id,
+            model=fields.pop("model", "gpt-4o"),
+            cost=Decimal(str(cost)),
+            started_at=timezone.now(),
+            status_code=200,
+            metadata=metadata,
+            **fields,
+        )
+
+    def test_the_summary_is_what_the_gateway_counted(
+        self, admin_client, organization, db
+    ):
+        from accounts.models.organization import Organization
+        from agentcc.models import AgentccAPIKey
+
+        fixture = json.loads(RESTART_FIXTURE.read_text())
+        other = Organization.objects.create(name="Restart Org B")
+        orgs = {"<ORG_A>": organization, "<ORG_B>": other}
+        keys = {}
+        for k in fixture["keys"]:
+            keys[k["gateway_key_id"]] = k
+            AgentccAPIKey.no_workspace_objects.create(
+                organization=orgs[k["org"]],
+                gateway_key_id=k["gateway_key_id"],
+                name=k["name"],
+                owner=k["owner"],
+                key_hash=secrets.token_hex(32),
+                key_prefix="sk-agentcc-restart",
+            )
+        for r in fixture["requests"]:
+            key = keys[r["key"]]
+            metadata = {}
+            if r["logged_key_fields"]:
+                metadata = {
+                    "auth_key_id": r["key"],
+                    "auth_key_name": key["name"],
+                    "auth_key_owner": key["owner"],
+                }
+            if r["team"]:
+                metadata["key_team"] = r["team"]
+            for name, value in r["tags"].items():
+                metadata[f"tag:{name}"] = value
+            self._log(
+                orgs[r["org"]], r["request_id"], r["cost"], metadata,
+                model=r["model"], api_key_id=r["key"], user_id=r["user"],
+            )
+
+        response = admin_client.get("/agentcc/spend-summary/?period=monthly")
+        assert response.status_code == status.HTTP_200_OK
+        got = response.json()["result"]["orgs"]
+        for placeholder, expected in fixture["summary"]["orgs"].items():
+            org = got[str(orgs[placeholder].id)]
+            for field, value in expected.items():
+                assert org[field] == pytest.approx(value, abs=0.001), (placeholder, field)
+
+    def test_a_request_user_who_owns_the_key_is_counted_once(
+        self, admin_client, organization, db
+    ):
+        self._log(organization, "own-1", 2, {"auth_key_name": "k", "auth_key_owner": "alice"}, user_id="alice")
+        self._log(organization, "own-2", 3, {"auth_key_name": "k", "auth_key_owner": "alice"}, user_id="bob")
+        org = admin_client.get("/agentcc/spend-summary/").json()["result"]["orgs"][str(organization.id)]
+        assert org["per_user"] == {
+            "alice": pytest.approx(5.0, abs=0.001),
+            "bob": pytest.approx(3.0, abs=0.001),
+        }
+
+    def test_logs_without_a_team_or_tag_add_none(self, admin_client, request_logs, organization):
+        org = admin_client.get("/agentcc/spend-summary/").json()["result"]["orgs"][
+            str(organization.id)
+        ]
+        assert org["per_team"] == {}
+        assert org["per_tag"] == {}
+
+    def test_a_log_whose_metadata_is_not_an_object_counts_only_its_columns(
+        self, admin_client, organization, db
+    ):
+        self._log(organization, "t-list", 2, ["not", "an", "object"], user_id="alice")
+        self._log(organization, "t-tag", 1, {"tag:project": "atlas", "rbac_team": "ops"})
+        org = admin_client.get("/agentcc/spend-summary/").json()["result"]["orgs"][
+            str(organization.id)
+        ]
+        assert org["total_spend"] == pytest.approx(3.0, abs=0.001)
+        assert org["per_user"] == {"alice": pytest.approx(2.0, abs=0.001)}
+        assert org["per_tag"] == {"project:atlas": pytest.approx(1.0, abs=0.001)}
+        assert org["per_team"] == {"ops": pytest.approx(1.0, abs=0.001)}
+
+    def test_a_platform_funded_key_counts_in_no_level(self, admin_client, organization, db):
+        # A key the platform pays for itself (billing: platform_funded, logged
+        # as key_billing): the gateway's budgets never count its calls, so the
+        # summary they are seeded from leaves them out of every level, even
+        # under a name, user, team or tag that other calls count under.
+        counted = {
+            "auth_key_name": "svc",
+            "auth_key_owner": "alice",
+            "key_team": "eng",
+            "tag:project": "atlas",
+        }
+        self._log(organization, "pf-counted", 2, counted, user_id="alice")
+        self._log(
+            organization, "pf-same-names", 7,
+            {**counted, "key_billing": "platform_funded"}, user_id="alice",
+        )
+        self._log(
+            organization, "pf-own-names", 5,
+            {
+                "auth_key_name": "hosted-run",
+                "auth_key_owner": "platform",
+                "key_billing": "platform_funded",
+                "rbac_team": "ops",
+                "tag:run": "r1",
+            },
+            user_id="bob", model="claude-3",
+        )
+        org = admin_client.get("/agentcc/spend-summary/").json()["result"]["orgs"][
+            str(organization.id)
+        ]
+        assert org["total_spend"] == pytest.approx(2.0, abs=0.001)
+        assert org["per_key"] == {"svc": pytest.approx(2.0, abs=0.001)}
+        assert org["per_user"] == {"alice": pytest.approx(2.0, abs=0.001)}
+        assert org["per_model"] == {"gpt-4o": pytest.approx(2.0, abs=0.001)}
+        assert org["per_team"] == {"eng": pytest.approx(2.0, abs=0.001)}
+        assert org["per_tag"] == {"project:atlas": pytest.approx(2.0, abs=0.001)}
+
+    def test_an_org_whose_only_spend_is_platform_funded_is_not_listed(
+        self, admin_client, organization, db
+    ):
+        self._log(
+            organization, "pf-only", 4,
+            {"auth_key_name": "hosted-run", "key_billing": "platform_funded"},
+        )
+        assert admin_client.get("/agentcc/spend-summary/").json()["result"]["orgs"] == {}
+
+    def test_old_spend_is_outside_the_period(self, admin_client, organization, db):
+        from datetime import timedelta
+
+        log = self._log(
+            organization, "t-old", 5,
+            {"auth_key_name": "k", "key_team": "eng", "tag:project": "atlas"},
+        )
+        AgentccRequestLog.objects.filter(pk=log.pk).update(
+            started_at=timezone.now() - timedelta(days=60)
+        )
+        response = admin_client.get("/agentcc/spend-summary/?period=daily")
+        assert response.json()["result"]["orgs"] == {}

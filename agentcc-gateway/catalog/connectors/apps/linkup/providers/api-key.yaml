@@ -1,0 +1,44 @@
+schema: "connector-manifest/v1#provider"
+app: linkup
+id: api-key
+version: 1.1.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.linkup.so/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: API key
+      help: "Create a Linkup account at app.linkup.so and copy its API key. Supply the key without the Bearer prefix. Search, fetch and research calls consume your account's usage."
+      helpUrl: https://docs.linkup.so/pages/integrations/mcp/mcp
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_metered
+  source: https://www.linkup.so/pricing
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://docs.linkup.so/pages/integrations/mcp/mcp
+    fetchedAt: 2026-11-09
+  - fact: transport.variant
+    url: https://github.com/LinkupPlatform/linkup-mcp-server
+    fetchedAt: 2026-11-09
+  - fact: auth.kind
+    url: https://docs.linkup.so/pages/integrations/mcp/mcp
+    fetchedAt: 2026-11-09
+  - fact: auth.credentialParts
+    url: https://docs.linkup.so/pages/integrations/mcp/mcp
+    fetchedAt: 2026-11-09

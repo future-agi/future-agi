@@ -1,0 +1,94 @@
+# Zendesk Bridge is in Open EAP, represented as preview with an active lifecycle.
+# Protected-resource metadata names the shared MCP URL below and the issuer
+# https://mcp.zendesk.com/integrations/mcp/oauth. The setup guide instead tells
+# admins to copy their connection's Setup URL and shows an account-host example;
+# no second endpoint or subdomain template is inferred from that example.
+# OAuth endpoints are recorded, not pinned: sign-in must rediscover them and
+# require matching resource and issuer metadata, PKCE S256 and HTTPS endpoints,
+# without following metadata redirects, and check the returned authorization iss.
+# Bring your own provider uses an OAuth client registered in Zendesk Admin Center
+# before connection, with Allowed scopes left blank and tools/groups assigned.
+# This is preregistration, not DCR or CIMD; EE can use a pre-registered client.
+# Each user consents and remains subject to their existing Zendesk permissions.
+# The issuer advertises read/write, S256 and none/client_secret_post/basic auth.
+# tokenBody: form is the conservative choice for advertised client_secret_post;
+# a Bridge-specific token request example was not found. Refresh-token grants
+# are advertised, but rotation was not verified, so the refresh object is omitted.
+# No revocation endpoint is advertised. Deleting an external agent removes its
+# associated access tokens; its OAuth client and provider configuration remain.
+# Transport variant and a pre-registered, secretless loopback login were not
+# verified; variant and publicClient are omitted. No live sign-in was performed.
+schema: "connector-manifest/v1#provider"
+app: zendesk
+id: mcp
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus:
+  label: preview
+  source: https://support.zendesk.com/api/v2/help_center/en-us/articles/11458059060250.json
+transport:
+  kind: http
+  url: https://mcp.zendesk.com/integrations/mcp
+  era: auto
+hosted: true
+trusted: false
+accountModes: [user]
+auth:
+  kind: oauth2
+  oauth2:
+    authorizeUrl: https://mcp.zendesk.com/integrations/mcp/oauth/authorize
+    tokenUrl: https://mcp.zendesk.com/integrations/mcp/oauth/token
+    scopes: [read, write]
+    pkce: true
+    tokenBody: form
+    clientAuth: body
+    registration: [preregistered]
+  help: "An admin must enroll in the External AI EAP, register an OAuth client and grant the external agent tools and group access. Your existing Zendesk permissions still apply."
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_plan
+  notes: "Requires a Zendesk account and EAP enrollment; Bridge adds no charge during EAP. General-availability packaging is not final."
+  source: https://support.zendesk.com/api/v2/help_center/en-us/articles/11458059060250.json
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: vendorStatus.label
+    url: https://support.zendesk.com/api/v2/help_center/en-us/articles/11458059060250.json
+    fetchedAt: 2026-11-15
+  - fact: transport.url
+    url: https://mcp.zendesk.com/.well-known/oauth-protected-resource/integrations/mcp
+    fetchedAt: 2026-11-15
+  - fact: auth.kind
+    url: https://support.zendesk.com/api/v2/help_center/en-us/articles/11400026079130.json
+    fetchedAt: 2026-11-15
+  - fact: auth.oauth2.authorizeUrl
+    url: https://mcp.zendesk.com/.well-known/oauth-authorization-server/integrations/mcp/oauth
+    fetchedAt: 2026-11-15
+  - fact: auth.oauth2.tokenUrl
+    url: https://mcp.zendesk.com/.well-known/oauth-authorization-server/integrations/mcp/oauth
+    fetchedAt: 2026-11-15
+  - fact: auth.oauth2.scopes
+    url: https://mcp.zendesk.com/.well-known/oauth-protected-resource/integrations/mcp
+    fetchedAt: 2026-11-15
+  - fact: auth.oauth2.pkce
+    url: https://mcp.zendesk.com/.well-known/oauth-authorization-server/integrations/mcp/oauth
+    fetchedAt: 2026-11-15
+  - fact: auth.oauth2.tokenBody
+    url: https://mcp.zendesk.com/.well-known/oauth-authorization-server/integrations/mcp/oauth
+    fetchedAt: 2026-11-15
+  - fact: auth.oauth2.clientAuth
+    url: https://mcp.zendesk.com/.well-known/oauth-authorization-server/integrations/mcp/oauth
+    fetchedAt: 2026-11-15
+  - fact: auth.oauth2.registration
+    url: https://support.zendesk.com/api/v2/help_center/en-us/articles/11400026079130.json
+    fetchedAt: 2026-11-15
+  - fact: accountModes
+    url: https://www.zendesk.com/blog/product-news/zendesk-bridge/
+    fetchedAt: 2026-11-15
+  - fact: auth.help
+    url: https://support.zendesk.com/api/v2/help_center/en-us/articles/11458059060250.json
+    fetchedAt: 2026-11-15
+  - fact: pricing.model
+    url: https://support.zendesk.com/api/v2/help_center/en-us/articles/11458059060250.json
+    fetchedAt: 2026-11-15

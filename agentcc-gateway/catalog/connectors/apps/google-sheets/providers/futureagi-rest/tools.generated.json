@@ -1,0 +1,442 @@
+{
+  "schema": "connector-manifest/v1#tools-generated",
+  "spec": {
+    "url": "https://raw.githubusercontent.com/googleapis/google-api-go-client/b2487a489315d16e91d98a8d940dca2e59e0bd9d/sheets/v4/sheets-api.json",
+    "sha256": "e0b64d710fae6daa5e2ea48f268de0ccc592530e979790b24a16f128df74ba45"
+  },
+  "tools": [
+    {
+      "name": "get_spreadsheet",
+      "title": "Get spreadsheet",
+      "description": "Read an app-authorized spreadsheet and sheet metadata. Set includeGridData=false for a light response.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "auto",
+      "scopes": ["https://www.googleapis.com/auth/drive.file"],
+      "operation": {
+        "method": "GET",
+        "path": "/v4/spreadsheets/{spreadsheetId}"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "spreadsheetId": {
+            "type": "string",
+            "description": "The spreadsheet to request."
+          },
+          "commentsViewMode": {
+            "type": "string",
+            "enum": [
+              "COMMENTS_VIEW_MODE_UNSPECIFIED",
+              "COMMENTS_VIEW_MODE_DEFAULT_FOR_CURRENT_ACCESS",
+              "COMMENTS_VIEW_MODE_OMITTED",
+              "COMMENTS_VIEW_MODE_INCLUDED"
+            ],
+            "description": "The comments view mode to apply to the spreadsheet. This allows viewing the spreadsheet with comments omitted or included. If one is not specified, COMMENTS_VIEW_MODE_OMITTED is used."
+          },
+          "excludeTablesInBandedRanges": {
+            "type": "boolean",
+            "description": "True if tables should be excluded in the banded ranges. False if not set."
+          },
+          "includeGridData": {
+            "type": "boolean",
+            "description": "True if grid data should be returned. This parameter is ignored if a field mask was set in the request."
+          },
+          "ranges": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The ranges to retrieve from the spreadsheet."
+          }
+        },
+        "required": ["spreadsheetId"],
+        "additionalProperties": false,
+        "x-origin": "https://sheets.googleapis.com"
+      }
+    },
+    {
+      "name": "create_spreadsheet",
+      "title": "Create spreadsheet",
+      "description": "Create a spreadsheet, for example body.properties.title=\"Budget\".",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "posture": "ask",
+      "scopes": ["https://www.googleapis.com/auth/drive.file"],
+      "operation": {
+        "method": "POST",
+        "path": "/v4/spreadsheets"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "body": {
+            "type": "object",
+            "description": "Create a spreadsheet, for example body.properties.title=\"Budget\".",
+            "properties": {
+              "properties": {
+                "type": "object",
+                "description": "Overall properties of a spreadsheet.",
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "description": "The title of the spreadsheet."
+                  }
+                },
+                "additionalProperties": false,
+                "required": ["title"]
+              }
+            },
+            "additionalProperties": false,
+            "required": ["properties"]
+          }
+        },
+        "required": ["body"],
+        "additionalProperties": false,
+        "x-origin": "https://sheets.googleapis.com"
+      }
+    },
+    {
+      "name": "get_values",
+      "title": "Get values",
+      "description": "Read an A1 range, for example Sheet1!A1:B2, from the app-authorized spreadsheet.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "auto",
+      "scopes": ["https://www.googleapis.com/auth/drive.file"],
+      "operation": {
+        "method": "GET",
+        "path": "/v4/spreadsheets/{spreadsheetId}/values/{range}"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "spreadsheetId": {
+            "type": "string",
+            "description": "The ID of the spreadsheet to retrieve data from."
+          },
+          "range": {
+            "type": "string",
+            "description": "The [A1 notation or R1C1 notation](https://developers.google.com/workspace/sheets/api/guides/concepts#cell) of the range to retrieve values from."
+          },
+          "dateTimeRenderOption": {
+            "type": "string",
+            "enum": ["SERIAL_NUMBER", "FORMATTED_STRING"],
+            "description": "How dates, times, and durations should be represented in the output. This is ignored if value_render_option is FORMATTED_VALUE. The default dateTime render option is SERIAL_NUMBER."
+          },
+          "majorDimension": {
+            "type": "string",
+            "enum": ["DIMENSION_UNSPECIFIED", "ROWS", "COLUMNS"],
+            "description": "The major dimension that results should use. For example, if the spreadsheet data in Sheet1 is: `A1=1,B1=2,A2=3,B2=4`, then requesting `range=Sheet1!A1:B2?majorDimension=ROWS` returns `[[1,2],[3,4]]`, whereas requesting `range=Sheet1!A1:B2?majorDimension=COLUMNS` returns `[[1,3],[2,4]]`."
+          },
+          "valueRenderOption": {
+            "type": "string",
+            "enum": ["FORMATTED_VALUE", "UNFORMATTED_VALUE", "FORMULA"],
+            "description": "How values should be represented in the output. The default render option is FORMATTED_VALUE."
+          }
+        },
+        "required": ["spreadsheetId", "range"],
+        "additionalProperties": false,
+        "x-origin": "https://sheets.googleapis.com"
+      }
+    },
+    {
+      "name": "batch_get_values",
+      "title": "Batch get values",
+      "description": "Read multiple A1 ranges, for example ranges=[\"Sheet1!A1:B2\"].",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "ask",
+      "scopes": ["https://www.googleapis.com/auth/drive.file"],
+      "operation": {
+        "method": "GET",
+        "path": "/v4/spreadsheets/{spreadsheetId}/values:batchGet"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "spreadsheetId": {
+            "type": "string",
+            "description": "The ID of the spreadsheet to retrieve data from."
+          },
+          "dateTimeRenderOption": {
+            "type": "string",
+            "enum": ["SERIAL_NUMBER", "FORMATTED_STRING"],
+            "description": "How dates, times, and durations should be represented in the output. This is ignored if value_render_option is FORMATTED_VALUE. The default dateTime render option is SERIAL_NUMBER."
+          },
+          "majorDimension": {
+            "type": "string",
+            "enum": ["DIMENSION_UNSPECIFIED", "ROWS", "COLUMNS"],
+            "description": "The major dimension that results should use. For example, if the spreadsheet data is: `A1=1,B1=2,A2=3,B2=4`, then requesting `ranges=[\"A1:B2\"],majorDimension=ROWS` returns `[[1,2],[3,4]]`, whereas requesting `ranges=[\"A1:B2\"],majorDimension=COLUMNS` returns `[[1,3],[2,4]]`."
+          },
+          "ranges": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The [A1 notation or R1C1 notation](https://developers.google.com/workspace/sheets/api/guides/concepts#cell) of the range to retrieve values from."
+          },
+          "valueRenderOption": {
+            "type": "string",
+            "enum": ["FORMATTED_VALUE", "UNFORMATTED_VALUE", "FORMULA"],
+            "description": "How values should be represented in the output. The default render option is ValueRenderOption.FORMATTED_VALUE."
+          }
+        },
+        "required": ["spreadsheetId"],
+        "additionalProperties": false,
+        "x-origin": "https://sheets.googleapis.com"
+      }
+    },
+    {
+      "name": "update_values",
+      "title": "Update values",
+      "description": "Replace an A1 range with a two-dimensional values array. Use valueInputOption=RAW for literal values.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "deny",
+      "scopes": ["https://www.googleapis.com/auth/drive.file"],
+      "operation": {
+        "method": "PUT",
+        "path": "/v4/spreadsheets/{spreadsheetId}/values/{range}"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "spreadsheetId": {
+            "type": "string",
+            "description": "The ID of the spreadsheet to update."
+          },
+          "range": {
+            "type": "string",
+            "description": "The [A1 notation](https://developers.google.com/workspace/sheets/api/guides/concepts#cell) of the values to update."
+          },
+          "includeValuesInResponse": {
+            "type": "boolean",
+            "description": "Determines if the update response should include the values of the cells that were updated. By default, responses do not include the updated values. If the range to write was larger than the range actually written, the response includes all values in the requested range (excluding trailing empty rows and columns)."
+          },
+          "responseDateTimeRenderOption": {
+            "type": "string",
+            "enum": ["SERIAL_NUMBER", "FORMATTED_STRING"],
+            "description": "Determines how dates, times, and durations in the response should be rendered. This is ignored if response_value_render_option is FORMATTED_VALUE. The default dateTime render option is SERIAL_NUMBER."
+          },
+          "responseValueRenderOption": {
+            "type": "string",
+            "enum": ["FORMATTED_VALUE", "UNFORMATTED_VALUE", "FORMULA"],
+            "description": "Determines how values in the response should be rendered. The default render option is FORMATTED_VALUE."
+          },
+          "valueInputOption": {
+            "type": "string",
+            "enum": ["INPUT_VALUE_OPTION_UNSPECIFIED", "RAW", "USER_ENTERED"],
+            "description": "How the input data should be interpreted."
+          },
+          "body": {
+            "type": "object",
+            "description": "Replace an A1 range with a two-dimensional values array. Use valueInputOption=RAW for literal values.",
+            "properties": {
+              "values": {
+                "type": "array",
+                "description": "The data that was read or to be written. This is an array of arrays, the outer array representing all the data and each inner array representing a major dimension. Each item in the inner array corresponds with one cell. For output, empty trailing rows and columns will not be included. For input, supported value types are: bool, string, and double. Null values will be skipped. To set a cell to an empty value, set the string value to an empty string.",
+                "items": {
+                  "type": "array",
+                  "items": {}
+                }
+              },
+              "majorDimension": {
+                "type": "string",
+                "enum": ["DIMENSION_UNSPECIFIED", "ROWS", "COLUMNS"],
+                "description": "The major dimension of the values. For output, if the spreadsheet data is: `A1=1,B1=2,A2=3,B2=4`, then requesting `range=A1:B2,majorDimension=ROWS` will return `[[1,2],[3,4]]`, whereas requesting `range=A1:B2,majorDimension=COLUMNS` will return `[[1,3],[2,4]]`. For input, with `range=A1:B2,majorDimension=ROWS` then `[[1,2],[3,4]]` will set `A1=1,B1=2,A2=3,B2=4`. With `range=A1:B2,majorDimension=COLUMNS` then `[[1,2],[3,4]]` will set `A1=1,B1=3,A2=2,B2=4`. When writing, if this field is not set, it defaults to ROWS."
+              }
+            },
+            "additionalProperties": false,
+            "required": ["values"]
+          }
+        },
+        "required": ["spreadsheetId", "range", "body"],
+        "additionalProperties": false,
+        "x-origin": "https://sheets.googleapis.com"
+      }
+    },
+    {
+      "name": "append_values",
+      "title": "Append values",
+      "description": "Append rows after the table in an A1 range. Use valueInputOption=RAW and body.values, for example [[\"Travel\",20]].",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "posture": "ask",
+      "scopes": ["https://www.googleapis.com/auth/drive.file"],
+      "operation": {
+        "method": "POST",
+        "path": "/v4/spreadsheets/{spreadsheetId}/values/{range}:append"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "spreadsheetId": {
+            "type": "string",
+            "description": "The ID of the spreadsheet to update."
+          },
+          "range": {
+            "type": "string",
+            "description": "The [A1 notation](https://developers.google.com/workspace/sheets/api/guides/concepts#cell) of a range to search for a logical table of data. Values are appended after the last row of the table."
+          },
+          "includeValuesInResponse": {
+            "type": "boolean",
+            "description": "Determines if the update response should include the values of the cells that were appended. By default, responses do not include the updated values."
+          },
+          "insertDataOption": {
+            "type": "string",
+            "enum": ["OVERWRITE", "INSERT_ROWS"],
+            "description": "How the input data should be inserted."
+          },
+          "responseDateTimeRenderOption": {
+            "type": "string",
+            "enum": ["SERIAL_NUMBER", "FORMATTED_STRING"],
+            "description": "Determines how dates, times, and durations in the response should be rendered. This is ignored if response_value_render_option is FORMATTED_VALUE. The default dateTime render option is SERIAL_NUMBER."
+          },
+          "responseValueRenderOption": {
+            "type": "string",
+            "enum": ["FORMATTED_VALUE", "UNFORMATTED_VALUE", "FORMULA"],
+            "description": "Determines how values in the response should be rendered. The default render option is FORMATTED_VALUE."
+          },
+          "valueInputOption": {
+            "type": "string",
+            "enum": ["INPUT_VALUE_OPTION_UNSPECIFIED", "RAW", "USER_ENTERED"],
+            "description": "How the input data should be interpreted."
+          },
+          "body": {
+            "type": "object",
+            "description": "Append rows after the table in an A1 range. Use valueInputOption=RAW and body.values, for example [[\"Travel\",20]].",
+            "properties": {
+              "values": {
+                "type": "array",
+                "description": "The data that was read or to be written. This is an array of arrays, the outer array representing all the data and each inner array representing a major dimension. Each item in the inner array corresponds with one cell. For output, empty trailing rows and columns will not be included. For input, supported value types are: bool, string, and double. Null values will be skipped. To set a cell to an empty value, set the string value to an empty string.",
+                "items": {
+                  "type": "array",
+                  "items": {}
+                }
+              },
+              "majorDimension": {
+                "type": "string",
+                "enum": ["DIMENSION_UNSPECIFIED", "ROWS", "COLUMNS"],
+                "description": "The major dimension of the values. For output, if the spreadsheet data is: `A1=1,B1=2,A2=3,B2=4`, then requesting `range=A1:B2,majorDimension=ROWS` will return `[[1,2],[3,4]]`, whereas requesting `range=A1:B2,majorDimension=COLUMNS` will return `[[1,3],[2,4]]`. For input, with `range=A1:B2,majorDimension=ROWS` then `[[1,2],[3,4]]` will set `A1=1,B1=2,A2=3,B2=4`. With `range=A1:B2,majorDimension=COLUMNS` then `[[1,2],[3,4]]` will set `A1=1,B1=3,A2=2,B2=4`. When writing, if this field is not set, it defaults to ROWS."
+              }
+            },
+            "additionalProperties": false,
+            "required": ["values"]
+          }
+        },
+        "required": ["spreadsheetId", "range", "body"],
+        "additionalProperties": false,
+        "x-origin": "https://sheets.googleapis.com"
+      }
+    },
+    {
+      "name": "clear_values",
+      "title": "Clear values",
+      "description": "Clear values in the A1 range while preserving formatting; for example Sheet1!A1:B2.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "posture": "deny",
+      "scopes": ["https://www.googleapis.com/auth/drive.file"],
+      "operation": {
+        "method": "POST",
+        "path": "/v4/spreadsheets/{spreadsheetId}/values/{range}:clear"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "spreadsheetId": {
+            "type": "string",
+            "description": "The ID of the spreadsheet to update."
+          },
+          "range": {
+            "type": "string",
+            "description": "The [A1 notation or R1C1 notation](https://developers.google.com/workspace/sheets/api/guides/concepts#cell) of the values to clear."
+          },
+          "body": {
+            "type": "object",
+            "description": "The request for clearing a range of values in a spreadsheet.",
+            "properties": {}
+          }
+        },
+        "required": ["spreadsheetId", "range", "body"],
+        "additionalProperties": false,
+        "x-origin": "https://sheets.googleapis.com"
+      }
+    },
+    {
+      "name": "copy_sheet",
+      "title": "Copy sheet",
+      "description": "Copy one sheet to another app-authorized spreadsheet. Use numeric sheetId=0 and destinationSpreadsheetId.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "posture": "ask",
+      "scopes": ["https://www.googleapis.com/auth/drive.file"],
+      "operation": {
+        "method": "POST",
+        "path": "/v4/spreadsheets/{spreadsheetId}/sheets/{sheetId}:copyTo"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "spreadsheetId": {
+            "type": "string",
+            "description": "The ID of the spreadsheet containing the sheet to copy."
+          },
+          "sheetId": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The ID of the sheet to copy."
+          },
+          "body": {
+            "type": "object",
+            "description": "Copy one sheet to another app-authorized spreadsheet. Use numeric sheetId=0 and destinationSpreadsheetId.",
+            "properties": {
+              "destinationSpreadsheetId": {
+                "type": "string",
+                "description": "The ID of the spreadsheet to copy the sheet to."
+              }
+            },
+            "additionalProperties": false,
+            "required": ["destinationSpreadsheetId"]
+          }
+        },
+        "required": ["spreadsheetId", "sheetId", "body"],
+        "additionalProperties": false,
+        "x-origin": "https://sheets.googleapis.com"
+      }
+    }
+  ]
+}

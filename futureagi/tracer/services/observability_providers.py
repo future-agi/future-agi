@@ -23,6 +23,7 @@ logger = structlog.get_logger(__name__)
 
 VAPI_PAGE_LIMIT = 100
 VAPI_MAX_PAGES = 10
+ELEVEN_LABS_MAX_PAGES = 20
 OBSERVABILITY_VERIFY_TIMEOUT_SECONDS = 30
 RETELL_LIST_PAGE_LIMIT = 100
 RETELL_REQUEST_TIMEOUT_SECONDS = 30
@@ -105,6 +106,10 @@ class RetellCursorRejected(Exception):
     def __init__(self, *, cause: str):
         super().__init__(cause)
         self.cause = cause
+
+
+def _cents_to_dollars(cents: Any) -> float | None:
+    return None if cents is None else float(cents) / 100
 
 
 def _normalize_voice_call_status(value: object) -> str | None:
@@ -575,7 +580,7 @@ class ObservabilityService:
         )
         chosen = rows.first() or legacy
         try:
-            key = chosen.get_api_key() if chosen else (agent.api_key or None)
+            key = chosen.get_api_key() if chosen else (agent.get_api_key() or None)
         except ValueError as exc:
             raise RetellConfigurationError(
                 "Retell credential could not be decrypted"
@@ -768,6 +773,9 @@ class ObservabilityService:
         """
         Lists all conversations for a given ElevenLabs agent.
 
+        Follows ``next_cursor`` while the response says ``has_more``, for at
+        most ELEVEN_LABS_MAX_PAGES pages.
+
         Returns:
             List of conversations, or empty list if API key is missing.
         """
@@ -790,14 +798,31 @@ class ObservabilityService:
         if end_time:
             params["call_start_before_unix"] = int(end_time.timestamp())
 
-        response = requests.get(
-            ObservabilityRoutes.ELEVEN_LABS_CONVERSATIONS_URL.value,
-            headers=headers,
-            params=params,
-            timeout=30,
-        )
-        response.raise_for_status()
-        return response.json().get("conversations", [])
+        conversations = []
+        cursor = None
+        pages = 0
+        while True:
+            response = requests.get(
+                ObservabilityRoutes.ELEVEN_LABS_CONVERSATIONS_URL.value,
+                headers=headers,
+                params={**params, "cursor": cursor} if cursor else params,
+                timeout=30,
+            )
+            response.raise_for_status()
+            payload = response.json()
+            conversations.extend(payload.get("conversations") or [])
+            pages += 1
+            cursor = payload.get("next_cursor")
+            if not (payload.get("has_more") and cursor):
+                return conversations
+            if pages >= ELEVEN_LABS_MAX_PAGES:
+                logger.warning(
+                    "eleven_labs_listing_capped",
+                    provider_id=str(provider.id),
+                    pages=pages,
+                    conversations=len(conversations),
+                )
+                return conversations
 
     @staticmethod
     def _fetch_eleven_labs_conversation_details(
@@ -821,6 +846,36 @@ class ObservabilityService:
         response = requests.get(detail_url, headers=headers, timeout=30)
         response.raise_for_status()
         return response.json()
+
+    @staticmethod
+    def fetch_eleven_labs_conversations(
+        provider: ObservabilityProvider, conversation_ids
+    ) -> list[dict]:
+        """Fresh details for conversations already stored, by id.
+
+        The listing only returns conversations that started inside the poll
+        window, so one stored mid-call is re-read here until it ends. A
+        conversation that cannot be read is skipped (and retried by the next
+        poll), so one deleted conversation never fails the provider's poll.
+        """
+        detailed_logs = []
+        for conversation_id in conversation_ids:
+            try:
+                details = ObservabilityService._fetch_eleven_labs_conversation_details(
+                    provider, conversation_id
+                )
+            except requests.RequestException as exc:
+                status = getattr(getattr(exc, "response", None), "status_code", None)
+                logger.warning(
+                    "eleven_labs_conversation_refresh_failed",
+                    provider_id=str(provider.id),
+                    status_code=status,
+                    error_type=type(exc).__name__,
+                )
+                continue
+            if details:
+                detailed_logs.append(details)
+        return detailed_logs
 
     @staticmethod
     def _fetch_bland_logs(
@@ -958,7 +1013,7 @@ class ObservabilityService:
         Returns:
             The API key if valid, None if missing (logs a warning)
         """
-        api_key = getattr(agent, "api_key", None) if agent else None
+        api_key = agent.get_api_key() if agent else None
         if not api_key:
             logger.warning(
                 "missing_api_key_for_provider",
@@ -1291,14 +1346,16 @@ class ObservabilityService:
             else None
         )
 
-        # Retell cost breakdown from call_cost
+        # Retell cost breakdown from call_cost. Retell reports cents (as
+        # cost_cents above takes it); the breakdown is in dollars, the unit
+        # Vapi's breakdown uses and the call grid's tooltip prints.
         retell_cost_breakdown = None
         if call_cost_object:
             retell_cost_breakdown = {
-                "stt": call_cost_object.get("stt_cost"),
-                "llm": call_cost_object.get("llm_cost"),
-                "tts": call_cost_object.get("tts_cost"),
-                "total": call_cost_object.get("combined_cost"),
+                "stt": _cents_to_dollars(call_cost_object.get("stt_cost")),
+                "llm": _cents_to_dollars(call_cost_object.get("llm_cost")),
+                "tts": _cents_to_dollars(call_cost_object.get("tts_cost")),
+                "total": _cents_to_dollars(call_cost_object.get("combined_cost")),
             }
 
         processed_log = {

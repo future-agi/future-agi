@@ -1,51 +1,92 @@
 import React from "react";
 import PropTypes from "prop-types";
 import { Box, Stack, Tooltip, Typography } from "@mui/material";
-
 import Iconify from "src/components/iconify";
+import { dsTypography } from "src/theme/ds-tokens";
 
-// Future AGI Design System · Page header. One header for every page: a 16px
-// title (with an optional status badge next to it), one line of description
-// in fg.tertiary, actions on the right — at most one primary button. No icon
-// tiles, no coloured titles. `info` puts the description in a tooltip instead.
-// Page rhythm: header → tabs 12px, tabs → toolbar 12px, toolbar → table 8px.
-
-export default function PageHeader({ title, badge, description, info, actions, back, sx }) {
+// Adapted from Vel 05a5f9f77a. One title, one description, one primary action.
+export default function PageHeader({
+  title,
+  badge,
+  description,
+  info,
+  actions,
+  back,
+  sx,
+}) {
   return (
     <Stack
-      direction="row"
+      direction={{ xs: "column", sm: "row" }}
       alignItems="flex-start"
       justifyContent="space-between"
-      spacing={2}
-      sx={{ mb: 1.5, ...sx }}
+      spacing={1.5}
+      sx={{ mb: 1.5, minWidth: 0, ...sx }}
     >
-      <Stack direction="row" alignItems="flex-start" spacing={1} sx={{ minWidth: 0 }}>
+      <Stack
+        direction="row"
+        alignItems="flex-start"
+        spacing={1}
+        sx={{ minWidth: 0, maxWidth: "100%" }}
+      >
         {back}
         <Box sx={{ minWidth: 0 }}>
-          <Stack direction="row" alignItems="center" spacing={1}>
+          <Stack
+            direction="row"
+            alignItems="center"
+            spacing={1}
+            sx={{ flexWrap: "wrap" }}
+          >
             <Typography
               component="h1"
-              noWrap
-              sx={{ fontSize: 15, lineHeight: "22px", fontWeight: 600, color: "text.primary" }}
+              sx={{
+                ...dsTypography.title_md,
+                fontSize: 15,
+                lineHeight: "22px",
+                fontWeight: 600,
+                color: "text.primary",
+                overflowWrap: "anywhere",
+              }}
             >
               {title}
             </Typography>
             {info && (
               <Tooltip title={info} arrow>
-                <Iconify icon="solar:info-circle-linear" width={14} sx={{ color: "text.disabled" }} />
+                <Box
+                  component="span"
+                  tabIndex={0}
+                  aria-label="More information"
+                  sx={{ display: "inline-flex" }}
+                >
+                  <Iconify
+                    icon="solar:info-circle-linear"
+                    width={14}
+                    sx={{ color: "text.secondary" }}
+                  />
+                </Box>
               </Tooltip>
             )}
             {badge}
           </Stack>
           {description && (
-            <Typography sx={{ fontSize: 12, lineHeight: "20px", color: "text.tertiary" }}>
+            <Typography
+              sx={{
+                ...dsTypography.body_sm,
+                lineHeight: "20px",
+                color: "text.tertiary",
+              }}
+            >
               {description}
             </Typography>
           )}
         </Box>
       </Stack>
       {actions && (
-        <Stack direction="row" spacing={1} alignItems="center" sx={{ flexShrink: 0 }}>
+        <Stack
+          direction="row"
+          spacing={1}
+          alignItems="center"
+          sx={{ flexWrap: "wrap", maxWidth: "100%" }}
+        >
           {actions}
         </Stack>
       )}

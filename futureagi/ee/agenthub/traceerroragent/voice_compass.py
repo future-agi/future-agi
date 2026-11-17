@@ -18,14 +18,17 @@ Output matches the same schema as text Agent Compass so
 from __future__ import annotations
 
 import uuid
-from typing import Any, Optional
+from typing import Any
 
 import structlog
 
+from agentic_eval.core.llm.audio_utils import download_audio_url_to_base64
+from agentic_eval.core.llm.llm import LLM
+from agentic_eval.core.utils.model_config import ModelConfigs
+from agentic_eval.core_evals.fi_utils.json import JsonHelper
 from ee.agenthub.traceerroragent.analysis_service import (
     TraceErrorAnalysisService,
 )
-from agentic_eval.core_evals.fi_utils.json import JsonHelper
 from ee.agenthub.traceerroragent.voice_prompts import (
     VOICE_ERROR_TAXONOMY,
     VOICE_EVALUATOR_SYSTEM_PROMPT,
@@ -41,9 +44,6 @@ from ee.agenthub.traceerroragent.voice_summary_builder import (
     VoiceCallData,
     VoiceSummaryBuilder,
 )
-from agentic_eval.core.llm.audio_utils import download_audio_url_to_base64
-from agentic_eval.core.llm.llm import LLM
-from agentic_eval.core.utils.model_config import ModelConfigs
 from tracer.models.observation_span import ObservationSpan
 from tracer.queries.error_analysis import TraceErrorAnalysisDB
 
@@ -121,9 +121,9 @@ class VoicePreplanner:
         if not result.get("key_observations"):
             result["key_observations"] = []
         if not result.get("per_category_hints"):
-            result["per_category_hints"] = {
-                cat: "" for cat in result["selected_categories"]
-            }
+            result["per_category_hints"] = dict.fromkeys(
+                result["selected_categories"], ""
+            )
 
         return result
 
@@ -185,7 +185,7 @@ class VoiceCategoryEvaluator:
         errors_detected = raw.get("errors_detected", [])
         if not isinstance(errors_detected, list):
             return []
-        
+
         span_id = voice_data.span_id
 
         # Normalize to DB schema
@@ -250,7 +250,22 @@ class VoiceCompassAgent:
     # ------------------------------------------------------------------
 
     def summarize(self) -> dict[str, Any]:
-        """Run the full voice compass pipeline and return the analysis result."""
+        from tracer.services.analysis_result_binding import legacy_attempt
+        from tracer.services.clickhouse.v2 import get_reader
+
+        if not self.save_to_db:
+            return self._summarize_owned()
+        with get_reader() as reader:
+            root = reader.root_ids_by_trace_ids([str(self.trace_id)]).get(
+                str(self.trace_id)
+            )
+        if not root:
+            raise ValueError("Trace not found")
+        with legacy_attempt(root[1], self.trace_id):
+            return self._summarize_owned()
+
+    def _summarize_owned(self) -> dict[str, Any]:
+        """Run the full voice compass pipeline under its admitted generation."""
         logger.info("Voice compass starting", trace_id=self.trace_id)
 
         # 1. Find the conversation span
@@ -288,7 +303,9 @@ class VoiceCompassAgent:
         all_errors: list[dict[str, Any]] = []
         for cat_name in selected_categories:
             if cat_name not in VOICE_ERROR_TAXONOMY:
-                logger.warning("Unknown category from preplanner, skipping", category=cat_name)
+                logger.warning(
+                    "Unknown category from preplanner, skipping", category=cat_name
+                )
                 continue
             hint = plan.get("per_category_hints", {}).get(cat_name, "")
             errors = evaluator.run(cat_name, voice_data, call_summary, hint)
@@ -352,7 +369,7 @@ class VoiceCompassAgent:
     # Private helpers
     # ------------------------------------------------------------------
 
-    def _find_conversation_span(self) -> Optional[ObservationSpan]:
+    def _find_conversation_span(self) -> ObservationSpan | None:
         """Find the conversation span for the trace."""
         return (
             ObservationSpan.objects.filter(
@@ -533,7 +550,11 @@ def _group_errors(errors: list[dict[str, Any]]) -> list[dict[str, Any]]:
     groups = []
     for group_name, group_errors in buckets.items():
         impacts = [e.get("impact", "MEDIUM") for e in group_errors]
-        combined_impact = "HIGH" if "HIGH" in impacts else ("MEDIUM" if "MEDIUM" in impacts else "LOW")
+        combined_impact = (
+            "HIGH"
+            if "HIGH" in impacts
+            else ("MEDIUM" if "MEDIUM" in impacts else "LOW")
+        )
         groups.append(
             {
                 "cluster_id": f"G-{uuid.uuid4().hex[:8]}",

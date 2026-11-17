@@ -1,7 +1,15 @@
 import React from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen, userEvent, within } from "src/utils/test-utils";
-import MetadataCell from "../MetadataCell";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  userEvent,
+  waitForElementToBeRemoved,
+  within,
+} from "src/utils/test-utils";
+import MetadataCell, { MetadataValue } from "../MetadataCell";
 import { CUSTOM_COLUMN_TEXT_WIDTH, CUSTOM_COLUMN_WIDTH } from "../columnModel";
 
 // The real MUI Tooltip, not a mock: the cell must open it from the keyboard.
@@ -118,6 +126,90 @@ describe("MetadataCell keyboard access", () => {
     await user.tab();
 
     expect(screen.getByRole("button", { name: "After" })).toHaveFocus();
+    expect(screen.queryByRole("tooltip")).toBeNull();
+  });
+});
+
+// In the logs grid the keyboard moves from cell to cell (AG Grid focuses the
+// cell, not the value inside it), so the tooltip follows its grid cell's focus.
+describe("MetadataValue in a grid cell", () => {
+  function renderGridCell(value) {
+    const cellElement = document.createElement("div");
+    cellElement.setAttribute("role", "gridcell");
+    cellElement.tabIndex = -1;
+    cellElement.dataset.testNode = "cell";
+    document.body.appendChild(cellElement);
+    const outside = document.createElement("button");
+    outside.dataset.testNode = "outside";
+    outside.textContent = "Outside";
+    document.body.appendChild(outside);
+    const view = render(
+      <MetadataValue
+        metadata={{ note: value }}
+        name="note"
+        cell={cellElement}
+      />,
+      { container: cellElement },
+    );
+    return { ...view, cellElement, outside };
+  }
+
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+    document.body
+      .querySelectorAll("[data-test-node]")
+      .forEach((node) => node.remove());
+  });
+
+  it("shows a truncated value in full while its grid cell has focus, and hides it after", async () => {
+    const value = `${"tenant-".repeat(20)}end`;
+    const { cellElement, outside } = renderGridCell(value);
+    expect(screen.queryByRole("tooltip")).toBeNull();
+
+    cellElement.focus();
+
+    const tooltip = await screen.findByRole("tooltip");
+    expect(tooltip.textContent).toBe(value);
+
+    outside.focus();
+
+    await waitForElementToBeRemoved(() => screen.queryByRole("tooltip"));
+  });
+
+  it("opens nothing when a click, not the keyboard, focuses the cell", async () => {
+    const value = `${"tenant-".repeat(20)}end`;
+    const { cellElement } = renderGridCell(value);
+    // A pointer focus shows no focus ring: the cell does not match :focus-visible.
+    const matches = cellElement.matches.bind(cellElement);
+    vi.spyOn(cellElement, "matches").mockImplementation((selector) =>
+      selector === ":focus-visible" ? false : matches(selector),
+    );
+
+    cellElement.focus();
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(screen.queryByRole("tooltip")).toBeNull();
+  });
+
+  it("closes on Escape while the cell keeps focus", async () => {
+    const value = `${"tenant-".repeat(20)}end`;
+    const { cellElement } = renderGridCell(value);
+    cellElement.focus();
+    expect(await screen.findByRole("tooltip")).toBeInTheDocument();
+
+    fireEvent.keyDown(cellElement, { key: "Escape" });
+
+    await waitForElementToBeRemoved(() => screen.queryByRole("tooltip"));
+    expect(cellElement).toHaveFocus();
+  });
+
+  it("opens nothing on a focused cell whose value fits", async () => {
+    const { cellElement } = renderGridCell("acme");
+
+    cellElement.focus();
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
     expect(screen.queryByRole("tooltip")).toBeNull();
   });
 });

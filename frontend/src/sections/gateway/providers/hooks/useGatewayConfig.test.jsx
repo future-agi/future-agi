@@ -271,6 +271,7 @@ describe("useFetchProviderModels", () => {
 
     expect(post.mock.calls[0][1]).toEqual({
       provider_name: "perplexity",
+      api_format: "openai",
       api_path_prefix: "/openai/v1",
     });
   });

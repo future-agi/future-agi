@@ -18,6 +18,7 @@ import uuid
 from unittest.mock import MagicMock, patch
 
 import pytest
+from django.test import TestCase
 from rest_framework import status
 from rest_framework.test import APIClient
 
@@ -1331,6 +1332,713 @@ class TestPreviewRunPromptColumnView:
         ]
 
 
+# ==================== Run Prompt Error Disclosure Tests ====================
+
+
+@pytest.fixture
+def execute_prompt_error_case(auth_client, dataset, row, organization, monkeypatch):
+    """Exercise the public preview and both row writers without provider calls."""
+    from types import SimpleNamespace
+
+    from model_hub.services import credit_ledger_port as credit_ledger
+    from model_hub.services import selective_rerun
+    from model_hub.views import run_prompt as module
+
+    # The line's selective-rerun bookkeeping and payer routing are outside these
+    # tests; stub them as the line's own run-prompt tests do (BYOK route).
+    monkeypatch.setattr(selective_rerun, "input_fingerprints", lambda *args: {})
+    monkeypatch.setattr(selective_rerun, "save_fingerprints", lambda *args: None)
+
+    def execute(path, *, phase=None, failure=None):
+        config = {
+            "model": "gpt-4o",
+            "messages": [{"role": "user", "content": "Hello"}],
+            "output_format": "string",
+            "run_prompt_config": {},
+        }
+        column = SimpleNamespace(id=uuid.uuid4())
+        with (
+            patch.object(module, "RunPrompt") as provider,
+            patch.object(module, "populate_placeholders") as populate,
+            patch.object(module, "logger") as logger,
+            patch.object(module, "log_and_deduct_cost_for_api_request", None),
+            patch.object(module, "close_old_connections"),
+            patch.object(module.Cell.objects, "create") as create_cell,
+            patch.object(module.Cell.objects, "get") as get_cell,
+            patch.object(module.Cell.objects, "update_or_create") as update_cell,
+            patch.dict(
+                "sys.modules",
+                {
+                    "ee.usage.schemas.events": MagicMock(),
+                    "ee.usage.services.emitter": MagicMock(),
+                },
+            ),
+        ):
+            populate.return_value = config["messages"]
+            provider.return_value.litellm_response.return_value = (
+                "Successful answer",
+                {"data": {"response": "Successful answer"}, "metadata": {}},
+            )
+            if phase == "preparation":
+                populate.side_effect = failure
+            elif phase == "constructor":
+                provider.side_effect = failure
+            elif phase == "provider":
+                provider.return_value.litellm_response.side_effect = failure
+
+            if path == "preview":
+                response = auth_client.post(
+                    "/model-hub/develops/preview_run_prompt_column/",
+                    {
+                        "dataset_id": str(dataset.id),
+                        "name": "Preview",
+                        "first_n_rows": 1,
+                        "config": config,
+                    },
+                    format="json",
+                )
+                assert response.status_code == status.HTTP_200_OK
+                result = response.json()["result"]
+                assert result["token_usage"] == {}
+                assert result["cost"] == {}
+                messages = result["responses"]
+                cell_status = None
+            elif path == "direct":
+                module.LitellmAPIView().process_row(
+                    row,
+                    config,
+                    dataset,
+                    column,
+                    SimpleNamespace(organization=organization),
+                )
+                saved = update_cell.call_args.kwargs["defaults"]
+                messages = [saved["value"], json.loads(saved["value_infos"])["reason"]]
+                cell_status = saved["status"]
+            else:
+                runner = module.RunPrompts(run_prompt_id=uuid.uuid4())
+                runner.run_prompt_model = MagicMock(
+                    dataset=dataset, organization=organization, **config
+                )
+                runner.is_editing = path == "edit"
+                runner.process_row(row, column)
+                if path == "edit":
+                    saved_cell = get_cell.return_value
+                    saved_cell.save.assert_called_once()
+                    saved = {
+                        "value": saved_cell.value,
+                        "value_infos": saved_cell.value_infos,
+                        "status": saved_cell.status,
+                    }
+                else:
+                    saved = create_cell.call_args.kwargs
+                messages = [saved["value"], json.loads(saved["value_infos"])["reason"]]
+                cell_status = saved["status"]
+
+            # The saved cell fields of the last row writer call (None for the
+            # preview, which saves no cell), for tests that read value_infos.
+            execute.saved = None if path == "preview" else saved
+            return messages, cell_status, logger, provider
+
+    with credit_ledger.use_route_resolver(
+        lambda **_kwargs: credit_ledger.PayerRoute.byok(provider="openai")
+    ):
+        yield execute
+
+
+@pytest.fixture
+def custom_endpoint_model(user, workspace, monkeypatch):
+    """A provider "custom" model (Settings > AI Providers) and its endpoint.
+
+    The model row, RunPrompt, the handler factory, CustomModelHandler and
+    ``tfc.utils.ssrf_guard.guarded_post`` are real; the endpoint's DNS and
+    transport are the guarded_post fakes, so nothing leaves the process.
+    ``call`` runs one real ``RunPrompt.litellm_response`` for the model. Given
+    as the provider failure of ``execute_prompt_error_case``, it is what each
+    path's RunPrompt call does, so every path gets the error text the real
+    handler and litellm_response raise.
+    """
+    from types import SimpleNamespace
+
+    from django.test import override_settings
+
+    from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
+    from model_hub.models.custom_models import CustomAIModel
+    from tfc.utils.tests.guarded_post_fakes import (
+        FakeResolver,
+        FakeTransport,
+        UnguardedHttp,
+    )
+    from tfc.utils.tests.loopback_endpoints import clear_proxy_env
+
+    name = "tenant-custom-endpoint"
+    CustomAIModel.objects.create(
+        user_model_id=name,
+        provider="custom",
+        input_token_cost=0,
+        output_token_cost=0,
+        organization=user.organization,
+        workspace=workspace,
+        key_config={
+            "api_base": "https://api.example.com/v1/chat/completions",
+            "headers": {"Authorization": "Bearer tenant"},
+            "custom_provider": True,
+        },
+        user=user,
+        deleted=False,
+    )
+    # guarded_post honours HTTP(S)_PROXY; these tests use the fake transport.
+    clear_proxy_env(monkeypatch)
+    monkeypatch.delenv("CUSTOM_MODEL_DENY_PRIVATE_ENDPOINTS", raising=False)
+    resolver = FakeResolver().install(monkeypatch)
+    resolver.add("api.example.com", "93.184.216.34")
+    transport = FakeTransport().install(monkeypatch)
+    unguarded = UnguardedHttp().install(monkeypatch)
+
+    def call(*_args, **_kwargs):
+        return RunPrompt(
+            model=name,
+            messages=[{"role": "user", "content": [{"type": "text", "text": "Hello"}]}],
+            organization_id=user.organization.id,
+            output_format="string",
+            temperature=None,
+            frequency_penalty=None,
+            presence_penalty=None,
+            max_tokens=None,
+            top_p=None,
+            response_format=None,
+            tool_choice=None,
+            tools=None,
+            workspace_id=workspace.id,
+        ).litellm_response()
+
+    with override_settings(CLOUD_DEPLOYMENT="US"):
+        yield SimpleNamespace(call=call, transport=transport, unguarded=unguarded)
+
+
+@pytest.mark.django_db
+class TestRunPromptErrorDisclosure:
+    GENERIC_ERROR = (
+        "Unable to run prompt. Please try again or contact support if the problem persists."
+    )
+
+    @pytest.mark.parametrize("path", ["preview", "worker", "edit", "direct"])
+    @pytest.mark.parametrize("phase", ["preparation", "constructor", "provider"])
+    @pytest.mark.parametrize("error_type", [RuntimeError, ValueError])
+    def test_unexpected_errors_are_redacted_and_logged(
+        self, execute_prompt_error_case, path, phase, error_type
+    ):
+        # A ValueError is not proof of local validation. I/O and providers use it too.
+        error = error_type("upstream body: internal connection at /srv/private/client.py")
+        messages, cell_status, logger, provider = execute_prompt_error_case(
+            path, phase=phase, failure=error
+        )
+
+        assert messages == [self.GENERIC_ERROR] * len(messages)
+        assert str(error) not in json.dumps(messages)
+        assert cell_status == (None if path == "preview" else CellStatus.ERROR.value)
+        assert logger.exception.called
+        assert str(error) in str(logger.exception.call_args_list)
+        if phase == "preparation":
+            provider.assert_not_called()
+
+    @pytest.mark.parametrize("path", ["preview", "worker", "edit", "direct"])
+    @pytest.mark.parametrize(
+        "validation,expected",
+        [
+            ("placeholder", "'missing_column'"),
+            ("template", "unexpected 'end of print statement'"),
+            ("image", "Model gpt-4o does not support image input."),
+            ("audio", "Model gpt-4o does not support audio input."),
+            ("pdf", "Model gpt-4o does not support PDF input."),
+        ],
+        ids=["placeholder", "template", "image", "audio", "pdf"],
+    )
+    def test_local_validation_remains_actionable(
+        self, execute_prompt_error_case, monkeypatch, path, validation, expected
+    ):
+        from model_hub.views import run_prompt as module
+
+        monkeypatch.setattr(module.litellm.utils, "supports_vision", lambda **kw: False)
+        monkeypatch.setattr(
+            module.litellm.utils, "supports_audio_input", lambda **kw: False
+        )
+        monkeypatch.setattr(module.litellm.utils, "supports_pdf_input", lambda **kw: False)
+        monkeypatch.setattr(
+            "model_hub.views.prompt_template.get_model_mode", lambda model: "chat"
+        )
+
+        def validate(*args, **kwargs):
+            if validation in ("placeholder", "template"):
+                text = (
+                    "{missing_column}" if validation == "placeholder" else "{{ missing + }}"
+                )
+                template_format = "f-string" if validation == "placeholder" else "jinja2"
+                return module.process_text_with_media(
+                    text, {}, {}, 0, "gpt-4o", template_format=template_format
+                )
+            media_type = f"{validation}_url"
+            return module.process_list_content(
+                [{"type": media_type, media_type: {"url": "https://example.com/media"}}],
+                {},
+                {},
+                0,
+                "gpt-4o",
+            )
+
+        messages, cell_status, _, provider = execute_prompt_error_case(
+            path, phase="preparation", failure=validate
+        )
+
+        assert messages == [expected] * len(messages)
+        assert cell_status == (None if path == "preview" else CellStatus.ERROR.value)
+        provider.assert_not_called()
+
+    @pytest.mark.parametrize("path", ["preview", "worker", "edit", "direct"])
+    def test_validation_shaped_provider_error_is_not_allowlisted(
+        self, execute_prompt_error_case, monkeypatch, path
+    ):
+        from model_hub.views import run_prompt as module
+
+        # Even the local validation exception type is not trusted outside that phase.
+        monkeypatch.setattr(module.litellm.utils, "supports_vision", lambda **kw: False)
+        with pytest.raises(ValueError) as raised:
+            module.process_media_markers(
+                "marker", {"marker": {"type": "image", "counter": 0}}, "gpt-4o"
+            )
+        messages, _, logger, _ = execute_prompt_error_case(
+            path, phase="provider", failure=raised.value
+        )
+
+        assert messages == [self.GENERIC_ERROR] * len(messages)
+        assert logger.exception.called
+
+    @pytest.mark.parametrize("path", ["preview", "worker", "edit", "direct"])
+    def test_successful_answers_are_unchanged(self, execute_prompt_error_case, path):
+        messages, cell_status, _, _ = execute_prompt_error_case(path)
+
+        assert messages == ["Successful answer"] * len(messages)
+        assert cell_status == (None if path == "preview" else CellStatus.PASS.value)
+
+    def test_preview_setup_error_is_redacted(self, auth_client, dataset):
+        error = ValueError("internal query failed at /srv/private/query.py")
+        with (
+            patch("model_hub.views.run_prompt.Row.objects.filter", side_effect=error),
+            patch("model_hub.views.run_prompt.logger") as logger,
+        ):
+            response = auth_client.post(
+                "/model-hub/develops/preview_run_prompt_column/",
+                {
+                    "dataset_id": str(dataset.id),
+                    "name": "Preview",
+                    "first_n_rows": 1,
+                    "config": {
+                        "model": "gpt-4o",
+                        "messages": [{"role": "user", "content": "Hello"}],
+                        "output_format": "string",
+                    },
+                },
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+        assert self.GENERIC_ERROR in json.dumps(response.json())
+        assert str(error) not in json.dumps(response.json())
+        assert logger.exception.called
+        assert str(error) in str(logger.exception.call_args_list)
+
+    @pytest.mark.parametrize("path", ["preview", "worker", "edit", "direct"])
+    @pytest.mark.parametrize(
+        "category,extra",
+        [
+            ("redirect", ""),
+            ("blocked", ""),
+            ("failed", ""),
+            ("blocked", " Host 169.254.169.254 answered: secret-body"),
+        ],
+        ids=["redirect", "blocked", "failed", "copy_plus_text_is_redacted"],
+    )
+    def test_endpoint_error_copy_reaches_the_answer(
+        self, execute_prompt_error_case, path, category, extra
+    ):
+        from tfc.utils.ssrf_guard import ENDPOINT_ERROR_MESSAGES
+
+        # A tenant endpoint's failure leaves litellm_response as a plain
+        # Exception whose text is exactly one ENDPOINT_ERROR_MESSAGES value.
+        # Only that exact text is shown; anything added to it is not.
+        copy = ENDPOINT_ERROR_MESSAGES[category]
+        messages, cell_status, logger, _ = execute_prompt_error_case(
+            path, phase="provider", failure=Exception(copy + extra)
+        )
+
+        expected = self.GENERIC_ERROR if extra else copy
+        assert messages == [expected] * len(messages)
+        assert "secret-body" not in json.dumps(messages)
+        assert cell_status == (None if path == "preview" else CellStatus.ERROR.value)
+        assert logger.exception.called
+
+    @pytest.mark.parametrize("path", ["preview", "worker", "edit", "direct"])
+    @pytest.mark.parametrize("code", [401, 403, 429, 500, 503])
+    def test_endpoint_status_copy_reaches_the_answer(
+        self, execute_prompt_error_case, path, code
+    ):
+        from tfc.utils.ssrf_guard import endpoint_status_message
+
+        # An endpoint that answers an error status leaves litellm_response as
+        # a plain Exception whose text is exactly endpoint_status_message(code):
+        # the code and its standard phrase, never the server's text or body.
+        copy = endpoint_status_message(code)
+        messages, cell_status, logger, _ = execute_prompt_error_case(
+            path, phase="provider", failure=Exception(copy)
+        )
+
+        assert messages == [copy] * len(messages)
+        assert cell_status == (None if path == "preview" else CellStatus.ERROR.value)
+        assert logger.exception.called
+
+    @pytest.mark.parametrize("path", ["preview", "worker", "edit", "direct"])
+    def test_endpoint_status_copy_with_text_is_redacted(
+        self, execute_prompt_error_case, path
+    ):
+        from tfc.utils.ssrf_guard import endpoint_status_message
+
+        # Status copy with anything added to it is not the fixed copy.
+        failure = Exception(endpoint_status_message(401) + " body: secret-body")
+        messages, cell_status, logger, _ = execute_prompt_error_case(
+            path, phase="provider", failure=failure
+        )
+
+        assert messages == [self.GENERIC_ERROR] * len(messages)
+        assert "secret-body" not in json.dumps(messages)
+        assert cell_status == (None if path == "preview" else CellStatus.ERROR.value)
+        assert logger.exception.called
+
+    @pytest.mark.parametrize("path", ["preview", "worker", "edit", "direct"])
+    def test_non_error_status_copy_is_not_passed(self, execute_prompt_error_case, path):
+        from tfc.utils.ssrf_guard import endpoint_status_message
+
+        # Only error statuses have fixed copy; a 200 in this shape is not one.
+        failure = Exception(endpoint_status_message(200))
+        messages, cell_status, logger, _ = execute_prompt_error_case(
+            path, phase="provider", failure=failure
+        )
+
+        assert messages == [self.GENERIC_ERROR] * len(messages)
+        assert cell_status == (None if path == "preview" else CellStatus.ERROR.value)
+        assert logger.exception.called
+
+    def test_preview_out_of_credits_refusal_shows_its_typed_copy(
+        self, execute_prompt_error_case, organization, monkeypatch
+    ):
+        from decimal import Decimal
+
+        from model_hub.services import credit_ledger_port as credit_ledger
+
+        # A managed preview row with no credits left is refused before the
+        # provider call and shows the typed credits copy, not the generic one.
+        monkeypatch.setattr(
+            credit_ledger, "estimate_call_cost", lambda *a, **kw: Decimal("0.10")
+        )
+        monkeypatch.setattr(credit_ledger, "_sleep", lambda *_args: None)
+        ledger = credit_ledger.MockCreditLedger(
+            balances={organization.id: Decimal("0")}
+        )
+        credit_ledger.reset_meter_safety()
+        try:
+            with (
+                credit_ledger.use_credit_ledger(ledger),
+                credit_ledger.use_route_resolver(
+                    lambda **_kwargs: credit_ledger.PayerRoute.managed(provider="openai")
+                ),
+            ):
+                messages, cell_status, _, provider = execute_prompt_error_case(
+                    "preview"
+                )
+        finally:
+            credit_ledger.reset_meter_safety()
+
+        expected = credit_ledger.CreditsExhaustedError().message
+        assert expected != self.GENERIC_ERROR
+        assert messages == [expected]
+        assert cell_status is None
+        provider.return_value.litellm_response.assert_not_called()
+        assert "hold" in [call[0] for call in ledger.calls]
+        assert "settle" not in [call[0] for call in ledger.calls]
+
+    @pytest.mark.parametrize("path", ["preview", "worker", "edit", "direct"])
+    @pytest.mark.parametrize(
+        "endpoint,expected",
+        [
+            (
+                "status_401",
+                "Custom model API request failed: "
+                "The endpoint answered HTTP 401 Unauthorized.",
+            ),
+            (
+                "connect",
+                "Custom model API request failed: Could not connect to the endpoint.",
+            ),
+            (
+                "timeout",
+                "Custom model request timed out after 300 seconds: "
+                "The endpoint did not answer in time.",
+            ),
+        ],
+        ids=["status_401", "connect", "timeout"],
+    )
+    def test_custom_model_endpoint_copy_reaches_the_answer(
+        self, execute_prompt_error_case, custom_endpoint_model, path, endpoint, expected
+    ):
+        import urllib3
+
+        from tfc.utils.tests.guarded_post_fakes import FakeResponse
+
+        # A provider "custom" model's endpoint fails. CustomModelHandler puts
+        # one of its two fixed prefixes before the guard's copy, and
+        # litellm_response raises that text unchanged. The answer shows it,
+        # as cut 2a did, never the endpoint's body or address.
+        transport = custom_endpoint_model.transport
+        if endpoint == "status_401":
+            transport.respond(
+                FakeResponse(401, {"Content-Type": "text/plain"}, b"secret-body")
+            )
+        elif endpoint == "connect":
+            transport.fail_with(
+                urllib3.exceptions.NewConnectionError(None, "refused 93.184.216.34:443")
+            )
+        else:
+            transport.fail_with(
+                urllib3.exceptions.ConnectTimeoutError(None, "timed out 93.184.216.34")
+            )
+
+        messages, cell_status, logger, _ = execute_prompt_error_case(
+            path, phase="provider", failure=custom_endpoint_model.call
+        )
+
+        assert messages == [expected] * len(messages)
+        assert "secret-body" not in json.dumps(messages)
+        assert "93.184.216.34" not in json.dumps(messages)
+        assert cell_status == (None if path == "preview" else CellStatus.ERROR.value)
+        assert len(transport.requests) == 1
+        assert custom_endpoint_model.unguarded.calls == []
+        assert logger.exception.called
+
+    @pytest.mark.parametrize("path", ["preview", "worker", "edit", "direct"])
+    @pytest.mark.parametrize(
+        "endpoint,expected",
+        [
+            (
+                "read_timeout_443",
+                "Custom model request timed out after 300 seconds: "
+                "The endpoint did not answer in time.",
+            ),
+            (
+                "remote_disconnected",
+                "Custom model API request failed: "
+                "The endpoint's response could not be read.",
+            ),
+            (
+                "tls_hostname_mismatch",
+                "Custom model API request failed: The TLS connection to the "
+                "endpoint failed (certificate or handshake).",
+            ),
+        ],
+        ids=["read_timeout_443", "remote_disconnected", "tls_hostname_mismatch"],
+    )
+    def test_custom_model_transport_failure_keeps_the_custom_model_copy(
+        self, execute_prompt_error_case, custom_endpoint_model, path, endpoint, expected
+    ):
+        import http.client
+
+        import urllib3
+        from urllib3.connectionpool import HTTPSConnectionPool
+        from urllib3.util.ssl_match_hostname import CertificateError
+
+        from tfc.utils import ssrf_guard
+
+        # The https endpoint (port 443) accepts the connection, then fails:
+        # it does not answer within the read timeout, it closes the
+        # connection without an answer, or its certificate names other
+        # hosts. urllib3 raises from the transport inside guarded_post's
+        # except clause, so its own text (the pinned address and port) stays
+        # in the error chain as __context__. The answer still shows
+        # CustomModelHandler's prefixed copy, never the generic sentence,
+        # urllib3's text, the address or the certificate's names.
+        if endpoint == "read_timeout_443":
+            # urllib3's own pool class: the fake transport replaces the
+            # urllib3.HTTPSConnectionPool name.
+            error = urllib3.exceptions.ReadTimeoutError(
+                HTTPSConnectionPool("93.184.216.34", port=443),
+                "/v1/chat/completions",
+                "Read timed out. (read timeout=300)",
+            )
+        elif endpoint == "remote_disconnected":
+            error = urllib3.exceptions.ProtocolError(
+                "Connection aborted.",
+                http.client.RemoteDisconnected(
+                    "Remote end closed connection without response"
+                ),
+            )
+        else:
+            error = urllib3.exceptions.SSLError(
+                CertificateError(
+                    "hostname 'api.example.com' doesn't match either of "
+                    "'*.shared-edge.example.net', 'shared-edge.example.net', "
+                    "'origin.shared-edge.example.net'"
+                )
+            )
+        transport = custom_endpoint_model.transport
+        transport.fail_with(error)
+
+        messages, cell_status, logger, _ = execute_prompt_error_case(
+            path, phase="provider", failure=custom_endpoint_model.call
+        )
+
+        assert messages == [expected] * len(messages)
+        shown = json.dumps(messages)
+        for text in (
+            "93.184.216.34",
+            "port=443",
+            "Read timed out",
+            "Connection aborted",
+            "RemoteDisconnected",
+            "doesn't match",
+            "shared-edge.example.net",
+        ):
+            assert text not in shown
+        assert cell_status == (None if path == "preview" else CellStatus.ERROR.value)
+        assert len(transport.requests) == 1
+        assert custom_endpoint_model.unguarded.calls == []
+        assert logger.exception.called
+
+        # The premise: the guard's error keeps urllib3's error as its
+        # __context__, because it is raised inside guarded_post's except.
+        with pytest.raises(ssrf_guard.GuardedRequestError) as raised:
+            ssrf_guard.guarded_post(
+                "https://api.example.com/v1/chat/completions",
+                json={"messages": []},
+                timeout=300,
+            )
+        assert raised.value.__context__ is error
+
+    @pytest.mark.parametrize("path", ["preview", "worker", "edit", "direct"])
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "Custom model API request failed: "
+            "The endpoint URL is not allowed: its host is, or resolves to, a "
+            "private, loopback, link-local or cloud metadata address.",
+            "Custom model API request failed: The endpoint answered HTTP 503 "
+            "Service Unavailable.",
+            "Custom model request timed out after 30 seconds: "
+            "The endpoint did not answer in time.",
+        ],
+        ids=["failed_prefix_blocked", "failed_prefix_status_503", "timeout_30_seconds"],
+    )
+    def test_custom_model_prefixed_copy_is_shown_as_it_is(
+        self, execute_prompt_error_case, path, text
+    ):
+        # Either fixed prefix followed by exactly one fixed copy is shown as
+        # it is; the timeout's whole seconds are the only variable part.
+        messages, cell_status, logger, _ = execute_prompt_error_case(
+            path, phase="provider", failure=Exception(text)
+        )
+
+        assert messages == [text] * len(messages)
+        assert cell_status == (None if path == "preview" else CellStatus.ERROR.value)
+        assert logger.exception.called
+
+    @pytest.mark.parametrize("path", ["preview", "worker", "edit", "direct"])
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "Custom model API request failed: "
+            "The endpoint answered HTTP 401 Unauthorized. body: secret-body",
+            "Custom model API request failed: secret-body",
+            "Custom model API request failed: The endpoint answered HTTP 200 OK.",
+            "secret-body Custom model API request failed: "
+            "Could not connect to the endpoint.",
+            "Custom model API request failed: Custom model API request failed: "
+            "Could not connect to the endpoint.",
+            "Custom model API request failed: Could not connect to the endpoint.\n",
+            "Custom model request failed: Could not connect to the endpoint.",
+            "Custom model request timed out after 300 seconds: "
+            "The endpoint did not answer in time. secret-body",
+            "Custom model request timed out after 300 seconds: secret-body",
+            "Custom model request timed out after 3e2 seconds: "
+            "The endpoint did not answer in time.",
+            "Custom model request timed out after  seconds: "
+            "The endpoint did not answer in time.",
+            "Custom model request timed out after ٣٠٠ seconds: "
+            "The endpoint did not answer in time.",
+        ],
+        ids=[
+            "copy_plus_text",
+            "prefix_plus_other_text",
+            "prefix_plus_non_error_status",
+            "text_before_prefix",
+            "prefix_twice",
+            "trailing_newline",
+            "other_prefix",
+            "timeout_copy_plus_text",
+            "timeout_prefix_plus_other_text",
+            "timeout_seconds_not_digits",
+            "timeout_seconds_missing",
+            "timeout_seconds_non_ascii_digits",
+        ],
+    )
+    def test_custom_model_prefix_with_anything_else_is_redacted(
+        self, execute_prompt_error_case, path, text
+    ):
+        # Only the two fixed prefixes, then exactly one fixed copy, pass; any
+        # other text, before, after or in place of the copy, does not.
+        messages, cell_status, logger, _ = execute_prompt_error_case(
+            path, phase="provider", failure=Exception(text)
+        )
+
+        assert messages == [self.GENERIC_ERROR] * len(messages)
+        assert "secret-body" not in json.dumps(messages)
+        assert cell_status == (None if path == "preview" else CellStatus.ERROR.value)
+        assert logger.exception.called
+
+    def test_direct_out_of_credits_refusal_shows_its_typed_copy(
+        self, execute_prompt_error_case
+    ):
+        from model_hub.services import credit_ledger_port as credit_ledger
+
+        # A managed direct run (POST /model-hub/run-prompt/) refused for
+        # credits shows the typed credits copy in the cell and its reason, as
+        # the worker and preview paths do, not the generic sentence.
+        messages, cell_status, logger, provider = execute_prompt_error_case(
+            "direct", phase="provider", failure=credit_ledger.CreditsExhaustedError()
+        )
+
+        expected = credit_ledger.CreditsExhaustedError().message
+        assert expected != self.GENERIC_ERROR
+        assert messages == [expected, expected]
+        assert cell_status == CellStatus.ERROR.value
+        provider.return_value.litellm_response.assert_called_once()
+        assert logger.exception.called
+
+    def test_direct_out_of_credits_refusal_saves_its_typed_cell_info(
+        self, execute_prompt_error_case
+    ):
+        from model_hub.services import credit_ledger_port as credit_ledger
+
+        # The direct path saves the refusal's typed cell info as the cell's
+        # value_infos (its reason and its error: code, message, billing
+        # link), as the worker does; no provider text.
+        execute_prompt_error_case(
+            "direct", phase="provider", failure=credit_ledger.CreditsExhaustedError()
+        )
+
+        value_infos = json.loads(execute_prompt_error_case.saved["value_infos"])
+        assert value_infos == credit_ledger.refusal_cell_info(
+            credit_ledger.CreditsExhaustedError()
+        )
+        assert value_infos["error"]["code"] == credit_ledger.CreditsExhaustedError.code
+        assert value_infos["error"]["message"] == value_infos["reason"]
+
+
 # ==================== RetrieveRunPromptColumnConfigView Tests ====================
 
 
@@ -1918,7 +2626,8 @@ class TestRunPromptDatabaseState:
     def test_edit_run_prompt_updates_database_entries(
         self, auth_client, dataset, run_prompt_column, run_prompter
     ):
-        """Verify database entries are updated correctly on edit."""
+        """Verify an edit saves configuration and completes when there are no rows."""
+        assert not Row.objects.filter(dataset=dataset, deleted=False).exists()
         # Link run_prompt_column to run_prompter
         run_prompt_column.source_id = run_prompter.id
         run_prompt_column.save()
@@ -1952,11 +2661,13 @@ class TestRunPromptDatabaseState:
         with patch(
             "model_hub.tasks.run_prompt.process_prompts_single.apply_async"
         ) as mock_task:
-            response = auth_client.post(
-                "/model-hub/develops/edit_run_prompt_column/",
-                payload,
-                format="json",
-            )
+            with TestCase.captureOnCommitCallbacks(execute=True):
+                response = auth_client.post(
+                    "/model-hub/develops/edit_run_prompt_column/",
+                    payload,
+                    format="json",
+                )
+            mock_task.assert_not_called()
 
         assert response.status_code == status.HTTP_200_OK
 
@@ -1967,7 +2678,8 @@ class TestRunPromptDatabaseState:
         assert run_prompter.temperature == 0.3
         assert run_prompter.max_tokens == 300
         assert run_prompter.output_format == "object"
-        assert run_prompter.status == StatusType.RUNNING.value
+        # With no selected rows, the saved edit is a completed no-op.
+        assert run_prompter.status == StatusType.COMPLETED.value
 
         # Verify Column updates
         run_prompt_column.refresh_from_db()
@@ -3819,3 +4531,330 @@ class TestRunPromptToolPayload:
 
         assert payload["tools"][0]["type"] == "function"
         assert payload["tools"][0]["function"]["parameters"] == self.PARAMETERS
+
+
+# ==================== Prompts that use a deleted column ====================
+
+# The cell text a row gets when its prompt still uses a deleted column.
+DELETED_COLUMN_SENTENCE = (
+    "This prompt uses a column that was deleted. Edit the prompt to remove it."
+)
+
+
+def _ref(column):
+    return "{{" + str(column.id) + "}}"
+
+
+def _user_message(text):
+    return [{"role": "user", "content": [{"type": "text", "text": text}]}]
+
+
+def _other_dataset_column(organization, workspace, name="Other column"):
+    other = Dataset.objects.create(
+        name="Other Dataset",
+        organization=organization,
+        workspace=workspace,
+        source=DatasetSourceChoices.BUILD.value,
+    )
+    return Column.objects.create(
+        name=name,
+        dataset=other,
+        data_type=DataTypeChoices.TEXT.value,
+        source=SourceChoices.OTHERS.value,
+    )
+
+
+@pytest.fixture
+def deleted_reference_setup(
+    db, dataset, input_column, run_prompt_column, row, organization, workspace
+):
+    """A Run Prompt column whose saved prompt uses a column deleted later.
+
+    The column is deleted as DeleteColumnView deletes it: soft-deleted and
+    taken out of the dataset's column order. The saved prompt keeps {{<id>}}.
+    """
+    from types import SimpleNamespace
+
+    from django.utils import timezone
+
+    gone = Column.objects.create(
+        name="Old answer",
+        dataset=dataset,
+        data_type=DataTypeChoices.TEXT.value,
+        source=SourceChoices.OTHERS.value,
+    )
+    dataset.column_order.append(str(gone.id))
+    dataset.save()
+    Cell.objects.create(
+        dataset=dataset, column=input_column, row=row, value="What is 2 + 2?"
+    )
+    Cell.objects.create(dataset=dataset, column=gone, row=row, value="4")
+    Column.objects.filter(id=gone.id).update(deleted=True, deleted_at=timezone.now())
+    dataset.column_order.remove(str(gone.id))
+    dataset.save()
+
+    messages = _user_message(f"Answer {_ref(input_column)} like {_ref(gone)}")
+    run_prompter = RunPrompter.objects.create(
+        name="Run Prompt Output",
+        dataset=dataset,
+        organization=organization,
+        workspace=workspace,
+        status=StatusType.COMPLETED.value,
+        model="gpt-4o",
+        messages=messages,
+        temperature=0.7,
+        output_format="string",
+        run_prompt_config={},
+    )
+    run_prompt_column.source_id = str(run_prompter.id)
+    run_prompt_column.save()
+    Cell.objects.create(
+        dataset=dataset,
+        column=run_prompt_column,
+        row=row,
+        value="old answer",
+        status=CellStatus.PASS.value,
+    )
+    return SimpleNamespace(
+        dataset=dataset,
+        live=input_column,
+        gone=gone,
+        column=run_prompt_column,
+        run_prompter=run_prompter,
+        messages=messages,
+        row=row,
+    )
+
+
+@pytest.mark.django_db
+class TestRunPromptDeletedColumnReference:
+    """A saved prompt that uses a column deleted later.
+
+    Production let a column be deleted while a Run Prompt column used it, and
+    dataset copies remap ids, so such prompts exist. Editing one must not 404
+    on the reference it already had; only references the edit adds are
+    checked. The editor is told which references are deleted, and a run says
+    in each cell why it cannot run, with no model call and no charge.
+    """
+
+    EDIT_URL = "/model-hub/develops/edit_run_prompt_column/"
+    CONFIG_URL = "/model-hub/develops/retrieve_run_prompt_column_config/"
+
+    @pytest.fixture
+    def queued(self, monkeypatch):
+        tasks = []
+        monkeypatch.setattr(
+            "model_hub.tasks.run_prompt.process_prompts_single.apply_async",
+            lambda *args, **kwargs: tasks.append((args, kwargs)),
+        )
+        return tasks
+
+    def _edit(self, auth_client, setup, config):
+        return auth_client.post(
+            self.EDIT_URL,
+            {
+                "dataset_id": str(setup.dataset.id),
+                "column_id": str(setup.column.id),
+                "config": config,
+            },
+            format="json",
+        )
+
+    # (a) an edit that leaves the saved prompt as it is
+    @pytest.mark.parametrize("change", ["temperature_only", "model_with_messages"])
+    def test_edit_keeps_a_saved_deleted_column_reference(
+        self, auth_client, deleted_reference_setup, queued, change
+    ):
+        setup = deleted_reference_setup
+        if change == "temperature_only":
+            config = {"run_prompt_config": {"temperature": 0.2}}
+        else:
+            # What the editor sends: the saved messages unchanged, a new model.
+            config = {"model": "gpt-4", "messages": setup.messages}
+
+        response = self._edit(auth_client, setup, config)
+
+        assert response.status_code == status.HTTP_200_OK, response.content
+        setup.run_prompter.refresh_from_db()
+        assert setup.run_prompter.messages == setup.messages
+        if change == "temperature_only":
+            assert setup.run_prompter.temperature == 0.2
+            assert setup.run_prompter.model == "gpt-4o"
+        else:
+            assert setup.run_prompter.model == "gpt-4"
+        assert len(queued) == 1
+
+    # (b) an edit that adds a reference to a deleted or foreign column
+    @pytest.mark.parametrize(
+        "added", ["deleted", "other_dataset", "other_dataset_next_to_a_kept_deleted"]
+    )
+    def test_edit_that_adds_a_dead_reference_is_refused(
+        self, auth_client, deleted_reference_setup, organization, workspace, queued, added
+    ):
+        setup = deleted_reference_setup
+        if added == "other_dataset_next_to_a_kept_deleted":
+            saved = setup.messages
+            target = _other_dataset_column(organization, workspace)
+            text = f"Answer {_ref(setup.live)} like {_ref(setup.gone)} or {_ref(target)}"
+        else:
+            saved = _user_message(f"Answer {_ref(setup.live)}")
+            target = (
+                setup.gone
+                if added == "deleted"
+                else _other_dataset_column(organization, workspace)
+            )
+            text = f"Answer {_ref(setup.live)} like {_ref(target)}"
+        RunPrompter.objects.filter(id=setup.run_prompter.id).update(messages=saved)
+
+        response = self._edit(
+            auth_client, setup, {"model": "gpt-4", "messages": _user_message(text)}
+        )
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        assert target.name not in response.content.decode()
+        setup.run_prompter.refresh_from_db()
+        assert setup.run_prompter.messages == saved
+        assert setup.run_prompter.model == "gpt-4o"
+        assert setup.run_prompter.status == StatusType.COMPLETED.value
+        assert queued == []
+
+    # (c) the config the editor reads marks the dead reference as deleted
+    def test_config_marks_dead_references_as_deleted(
+        self, auth_client, deleted_reference_setup, organization, workspace
+    ):
+        setup = deleted_reference_setup
+        foreign = _other_dataset_column(
+            organization, workspace, name="Secret other column"
+        )
+        RunPrompter.objects.filter(id=setup.run_prompter.id).update(
+            messages=_user_message(
+                f"Answer {_ref(setup.live)} like {_ref(setup.gone)} or {_ref(foreign)}"
+            )
+        )
+
+        response = auth_client.get(self.CONFIG_URL, {"column_id": str(setup.column.id)})
+
+        assert response.status_code == status.HTTP_200_OK
+        config = response.json()["result"]["config"]
+        by_id = lambda item: item["id"]  # noqa: E731
+        assert sorted(config["deleted_column_references"], key=by_id) == sorted(
+            [
+                {"id": str(setup.gone.id), "name": "Old answer"},
+                # Not this dataset's column: marked, its name never shown.
+                {"id": str(foreign.id), "name": None},
+            ],
+            key=by_id,
+        )
+        text = config["messages"][0]["content"][0]["text"]
+        assert "{{Input Column}}" in text
+        assert _ref(setup.gone) in text and _ref(foreign) in text
+        assert "Secret other column" not in response.content.decode()
+
+    def test_config_without_dead_references_lists_none(
+        self, auth_client, deleted_reference_setup
+    ):
+        setup = deleted_reference_setup
+        RunPrompter.objects.filter(id=setup.run_prompter.id).update(
+            messages=_user_message(f"Answer {_ref(setup.live)}")
+        )
+
+        response = auth_client.get(self.CONFIG_URL, {"column_id": str(setup.column.id)})
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["result"]["config"]["deleted_column_references"] == []
+
+    # (d) a run gives each row the plain sentence: no model call, no charge
+    @pytest.mark.parametrize("route", ["managed", "byok"])
+    def test_run_says_why_it_cannot_run_without_a_call_or_charge(
+        self, auth_client, deleted_reference_setup, organization, monkeypatch, route
+    ):
+        from decimal import Decimal
+        from types import SimpleNamespace
+
+        from model_hub.services import credit_ledger_port as credit_ledger
+        from model_hub.services import selective_rerun
+        from model_hub.views import run_prompt as module
+        from tfc.constants.api_calls import APICallStatusChoices
+
+        setup = deleted_reference_setup
+        second_row = Row.objects.create(dataset=setup.dataset, order=1)
+        Cell.objects.create(
+            dataset=setup.dataset, column=setup.live, row=second_row, value="3 + 3?"
+        )
+        Cell.objects.create(
+            dataset=setup.dataset,
+            column=setup.column,
+            row=second_row,
+            value="old answer 2",
+            status=CellStatus.PASS.value,
+        )
+        monkeypatch.setattr(selective_rerun, "input_fingerprints", lambda *args: {})
+        monkeypatch.setattr(selective_rerun, "save_fingerprints", lambda *args: None)
+        monkeypatch.setattr(module, "close_old_connections", lambda: None)
+        monkeypatch.setattr(
+            credit_ledger, "estimate_call_cost", lambda *a, **kw: Decimal("0.10")
+        )
+        monkeypatch.setattr(credit_ledger, "_sleep", lambda *_args: None)
+        # The legacy per-call charge (BYOK rows) and the usage dual-write.
+        charge = MagicMock(
+            return_value=SimpleNamespace(
+                id=uuid.uuid4(),
+                status=APICallStatusChoices.PROCESSING.value,
+                save=lambda: None,
+            )
+        )
+        monkeypatch.setattr(
+            module,
+            "log_and_deduct_cost_for_api_request",
+            charge if route == "byok" else None,
+        )
+        usage = MagicMock()
+        # Real meter objects: a managed hold would be recorded by this ledger.
+        ledger = credit_ledger.MockCreditLedger(
+            balances={organization.id: Decimal("2")}
+        )
+        payer = (
+            credit_ledger.PayerRoute.managed
+            if route == "managed"
+            else credit_ledger.PayerRoute.byok
+        )
+
+        runner = module.RunPrompts(run_prompt_id=setup.run_prompter.id)
+        credit_ledger.reset_meter_safety()
+        try:
+            with (
+                patch.object(module, "RunPrompt") as provider,
+                patch.dict(
+                    "sys.modules",
+                    {
+                        "ee.usage.schemas.events": MagicMock(),
+                        "ee.usage.services.emitter": usage,
+                    },
+                ),
+                credit_ledger.use_credit_ledger(ledger),
+                credit_ledger.use_route_resolver(
+                    lambda **_kwargs: payer(provider="openai")
+                ),
+            ):
+                provider.return_value.litellm_response.return_value = (
+                    "answer",
+                    {"data": {"response": "answer"}, "metadata": {}},
+                )
+                runner.load_run_prompt_id()
+                runner.is_editing = True
+                for each in (setup.row, second_row):
+                    runner.process_row(each, setup.column)
+        finally:
+            credit_ledger.reset_meter_safety()
+
+        provider.assert_not_called()
+        assert ledger.calls == []
+        charge.assert_not_called()
+        usage.emit.assert_not_called()
+        for each in (setup.row, second_row):
+            cell = Cell.objects.get(
+                dataset=setup.dataset, column=setup.column, row=each, deleted=False
+            )
+            assert cell.status == CellStatus.ERROR.value
+            assert cell.value == DELETED_COLUMN_SENTENCE
+            assert json.loads(cell.value_infos)["reason"] == DELETED_COLUMN_SENTENCE

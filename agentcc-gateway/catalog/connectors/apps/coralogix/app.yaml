@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: coralogix
+version: 1.0.0
+name: Coralogix
+description: "Query observability data and investigate logs, metrics, traces and alerts in the EU2 region."
+vendor:
+  name: Coralogix
+  domains: [coralogix.com]
+eeCategory: developer
+group: other
+categories: [developer, observability]
+tags: [logs, metrics, tracing, alerts]
+docsUrl: https://coralogix.com/docs/user-guides/mcp-server/setup/
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://coralogix.com/docs/user-guides/mcp-server/setup/
+    fetchedAt: 2026-11-09

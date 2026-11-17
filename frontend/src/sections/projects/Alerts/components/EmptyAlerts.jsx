@@ -25,6 +25,8 @@ const STEPS = [
 
 export default function EmptyAlerts({ onStartCreatingAlerts, mainPage }) {
   const { role } = useAuthContext();
+  const canCreate =
+    RolePermission.OBSERVABILITY[PERMISSIONS.ADD_TASKS_ALERTS][role];
   return (
     <EmptyState
       icon="solar:bell-linear"
@@ -38,12 +40,15 @@ export default function EmptyAlerts({ onStartCreatingAlerts, mainPage }) {
           size="small"
           startIcon={<Iconify icon="solar:add-circle-linear" width={16} />}
           onClick={() => onStartCreatingAlerts()}
-          disabled={
-            !RolePermission.OBSERVABILITY[PERMISSIONS.ADD_TASKS_ALERTS][role]
-          }
+          disabled={!canCreate}
         >
           Create alert
         </Button>
+      }
+      actionDisabledReason={
+        canCreate
+          ? undefined
+          : "Viewers can't create alerts. Ask a workspace admin for Member access."
       }
       docsHref="https://docs.futureagi.com/docs/observe/features/alerts"
       onDocsClick={() =>

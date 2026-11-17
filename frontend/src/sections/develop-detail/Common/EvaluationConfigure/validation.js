@@ -309,6 +309,7 @@ export const generateValidationSchema = (
 
   return z.object({
     name: z.string().min(1, "Name is required"),
+    description: z.string().optional(),
     saveAsTemplate: z.boolean(),
     config: z.object({
       mapping: z.object(mappingSchema).superRefine((mapping, ctx) => {

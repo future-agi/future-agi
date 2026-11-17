@@ -1,14 +1,13 @@
-/* eslint-disable react/prop-types */
-import React from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   act,
+  cleanup,
   fireEvent,
   render,
   screen,
   waitFor,
-} from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+} from "src/utils/test-utils";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import TaskListView from "./TaskListView";
 
 const axiosGetMock = vi.hoisted(() => vi.fn());
@@ -49,6 +48,7 @@ vi.mock("src/components/iconify", () => ({
   default: () => null,
 }));
 
+/* eslint-disable react/prop-types */
 vi.mock("src/components/FormSearchField/FormSearchField", () => ({
   default: ({ searchQuery, onChange }) => (
     <input aria-label="Search tasks" value={searchQuery} onChange={onChange} />
@@ -78,7 +78,7 @@ vi.mock("src/components/data-table", () => ({
         Sort by name
       </button>
       {data.length > 0 && (
-        <button type="button" onClick={() => onRowSelectionChange({ 0: true })}>
+        <button type="button" onClick={() => onRowSelectionChange({ [data[0].id]: true }, [data[0]])}>
           Select first row
         </button>
       )}
@@ -103,6 +103,7 @@ vi.mock("./DeleteConfirmation", () => ({
       </button>
     ) : null,
 }));
+/* eslint-enable react/prop-types */
 
 const task = (id, name) => ({
   id,
@@ -162,6 +163,9 @@ describe("TaskListView server pagination", () => {
     axiosPostMock.mockReset();
     axiosPostMock.mockResolvedValue({ data: { status: true } });
   });
+
+  // Unmount each case so screen queries cannot match earlier renders.
+  afterEach(cleanup);
 
   it("keeps the previous rows and total visible while the next page loads", async () => {
     const nextPage = deferred();
@@ -352,7 +356,11 @@ describe("TaskListView server pagination", () => {
       expect(screen.getByTestId("task-page")).toHaveTextContent("0"),
     );
     expect(await screen.findByText("Task zero")).toBeInTheDocument();
-    expect(screen.getByTestId("task-total")).toHaveTextContent("25");
+    // Page zero's cached row can render before its post-delete refetch updates
+    // the count. Seeing that row alone is not the completion signal.
+    await waitFor(() =>
+      expect(screen.getByTestId("task-total")).toHaveTextContent("25"),
+    );
     expect(axiosPostMock).toHaveBeenCalledWith("/delete-tasks", {
       eval_task_ids: ["task-final"],
     });

@@ -15,9 +15,17 @@ import {
 import { enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
 
-const RecoveryCodesDialog = ({ open, onClose, codes }) => {
+// What just happened, so the banner names the factor the user actually set up.
+const BANNER_BY_REASON = {
+  totp: "Authenticator app configured.",
+  passkey: "Passkey added.",
+  regenerated: "Recovery codes regenerated. Your old codes no longer work.",
+};
+
+const RecoveryCodesDialog = ({ open, onClose, codes, reason }) => {
   const theme = useTheme();
   const [saved, setSaved] = useState(false);
+  const banner = BANNER_BY_REASON[reason];
 
   const handleCopyAll = async () => {
     try {
@@ -86,27 +94,29 @@ const RecoveryCodesDialog = ({ open, onClose, codes }) => {
             gap: theme.spacing(2),
           }}
         >
-          <Box
-            sx={{
-              display: "flex",
-              alignItems: "center",
-              gap: theme.spacing(1),
-              backgroundColor: "success.lighter",
-              borderRadius: theme.spacing(0.5),
-              padding: theme.spacing(1),
-            }}
-          >
-            <Iconify
-              icon="solar:check-circle-bold"
-              sx={{ width: "20px", height: "20px", color: "success.main" }}
-            />
-            <Typography
-              variant="s2"
-              sx={{ color: "success.dark", fontWeight: "fontWeightMedium" }}
+          {banner && (
+            <Box
+              sx={{
+                display: "flex",
+                alignItems: "center",
+                gap: theme.spacing(1),
+                backgroundColor: "success.lighter",
+                borderRadius: theme.spacing(0.5),
+                padding: theme.spacing(1),
+              }}
             >
-              Authenticator app configured!
-            </Typography>
-          </Box>
+              <Iconify
+                icon="solar:check-circle-bold"
+                sx={{ width: "20px", height: "20px", color: "success.main" }}
+              />
+              <Typography
+                variant="s2"
+                sx={{ color: "success.dark", fontWeight: "fontWeightMedium" }}
+              >
+                {banner}
+              </Typography>
+            </Box>
+          )}
 
           <Box
             sx={{
@@ -133,8 +143,8 @@ const RecoveryCodesDialog = ({ open, onClose, codes }) => {
               sx={{ color: "warning.dark", fontWeight: "fontWeightRegular" }}
             >
               Save these recovery codes in a safe place. If you lose access to
-              your authenticator app, you can use these codes to sign in. Each
-              code can only be used once.
+              your authenticator app or passkey, you can sign in with one of
+              these codes. Each code works once.
             </Typography>
           </Box>
 
@@ -234,6 +244,7 @@ RecoveryCodesDialog.propTypes = {
   open: PropTypes.bool.isRequired,
   onClose: PropTypes.func.isRequired,
   codes: PropTypes.arrayOf(PropTypes.string).isRequired,
+  reason: PropTypes.oneOf(["totp", "passkey", "regenerated"]).isRequired,
 };
 
 export default RecoveryCodesDialog;

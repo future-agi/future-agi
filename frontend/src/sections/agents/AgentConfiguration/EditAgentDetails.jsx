@@ -1,3 +1,8 @@
+import {
+  OBSERVE_KNOWN_ISSUES_URL,
+  VOICE_OBSERVE_NOTICE,
+  SANDBOX_OBSERVE_NOTICE,
+} from "src/utils/platformObserveAvailability";
 import React, {
   useCallback,
   useEffect,
@@ -7,6 +12,7 @@ import React, {
 } from "react";
 import {
   Box,
+  Link,
   Typography,
   Grid,
   Stack,
@@ -27,6 +33,7 @@ import { useKnowledgeBaseList } from "src/api/knowledge-base/files";
 import { useParams } from "react-router";
 import SwitchField from "src/components/Switch/SwitchField";
 import LanguageMultiSelect from "../CreateNewAgent/AgentBasicInfoStep/LanguageMultiSelect";
+import VapiPublicKeyField from "./VapiPublicKeyField";
 import { useWatch } from "react-hook-form";
 import {
   AGENT_TYPES,
@@ -38,6 +45,7 @@ import {
   VOICE_TRANSPORT,
   VOICE_TRANSPORT_COPY,
   isLiveKitProvider,
+  livekitValidationStatus,
   supportsConcurrency,
   validateLiveKitCredentials,
 } from "../constants";
@@ -50,6 +58,7 @@ import axios, { endpoints } from "src/utils/axios";
 import { spin } from "../../../animations/animations";
 import { formatDistanceToNow } from "date-fns";
 import CustomModelDropdownControl from "src/components/custom-model-dropdown/CustomModelDropdownControl";
+import PickedModelNotice from "src/components/custom-model-dropdown/PickedModelNotice";
 import { MODEL_TYPES } from "../../develop-detail/RunPrompt/common";
 import { useAuthContext } from "src/auth/hooks";
 
@@ -110,6 +119,11 @@ const EditAgentDetails = ({
     name: "agentType",
     defaultValue: getValues("agentType"),
   });
+  const pickedModel = useWatch({
+    control,
+    name: "model",
+    defaultValue: getValues("model"),
+  });
 
   const inbound = useWatch({
     control,
@@ -124,10 +138,12 @@ const EditAgentDetails = ({
   const livekitAgentName = useWatch({ control, name: "livekitAgentName" });
   const [livekitValidation, setLivekitValidation] = useState("idle");
   const [livekitValidationError, setLivekitValidationError] = useState("");
+  const [livekitValidationMessage, setLivekitValidationMessage] = useState("");
 
   const validateLivekitCredentials = async () => {
     setLivekitValidation("validating");
     setLivekitValidationError("");
+    setLivekitValidationMessage("");
     const result = await validateLiveKitCredentials({
       livekitUrl,
       livekitApiKey,
@@ -135,12 +151,12 @@ const EditAgentDetails = ({
       livekitAgentName,
       agentDefinitionId,
     });
-    if (result.valid) {
-      setLivekitValidation("valid");
-    } else {
-      setLivekitValidation("invalid");
-      setLivekitValidationError(result.error);
-    }
+    // "skipped" (Future AGI Cloud) is shown as not verified, never as
+    // connected or failed; saving does not depend on this check.
+    const status = livekitValidationStatus(result);
+    setLivekitValidation(status);
+    if (status === "skipped") setLivekitValidationMessage(result.message);
+    if (status === "invalid") setLivekitValidationError(result.error);
   };
 
   const { mutate, isPending } = useMutation({
@@ -329,6 +345,7 @@ const EditAgentDetails = ({
                 modelObjectKey={"modelDetails"}
                 extraParams={{ model_type: MODEL_TYPES.LLM }}
               />
+              <PickedModelNotice modelName={pickedModel} />
             </ShowComponent>
           </Box>
           <Box>
@@ -590,6 +607,13 @@ const EditAgentDetails = ({
                 }}
               />
             </ShowComponent>
+            <ShowComponent
+              condition={
+                agentType === AGENT_TYPES.VOICE && selectedProvider === "vapi"
+              }
+            >
+              <VapiPublicKeyField control={control} setValue={setValue} />
+            </ShowComponent>
           </ShowComponent>
           {/* LiveKit-specific fields */}
           <ShowComponent condition={isLiveKitProvider(selectedProvider)}>
@@ -678,7 +702,9 @@ const EditAgentDetails = ({
                     ? "Connected"
                     : livekitValidation === "invalid"
                       ? "Failed"
-                      : "Test Connection"}
+                      : livekitValidation === "skipped"
+                        ? "Not verified"
+                        : "Test Connection"}
               </Button>
             </Stack>
             {livekitValidation === "invalid" && livekitValidationError && (
@@ -688,6 +714,15 @@ const EditAgentDetails = ({
                 sx={{ mt: -1 }}
               >
                 {livekitValidationError}
+              </Typography>
+            )}
+            {livekitValidation === "skipped" && livekitValidationMessage && (
+              <Typography
+                typography="s3"
+                color="text.secondary"
+                sx={{ mt: -1 }}
+              >
+                {livekitValidationMessage}
               </Typography>
             )}
             <FormTextFieldV2
@@ -1105,7 +1140,14 @@ const EditAgentDetails = ({
               sx={{ marginLeft: 1 }}
               fontWeight="500"
             >
-              Enable if you want to monitor this agent
+              {isSourceAgent ? SANDBOX_OBSERVE_NOTICE : VOICE_OBSERVE_NOTICE}{" "}
+              <Link
+                href={OBSERVE_KNOWN_ISSUES_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Release notes: Known issues
+              </Link>
             </Typography>
           </Stack>
         </ShowComponent>

@@ -57,8 +57,14 @@ _SAFE_AMBIGUOUS_SPAN_MESSAGE = (
 _engine_entry_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "eval_engine_entry_id", default=None
 )
-_engine_task_selection: contextvars.ContextVar[dict[str, Any] | None] = (
-    contextvars.ContextVar("eval_engine_task_selection", default=None)
+_engine_preserved_metadata: contextvars.ContextVar[dict[str, Any] | None] = (
+    contextvars.ContextVar("eval_engine_preserved_metadata", default=None)
+)
+# The resolved config hash the engine runs the entry under. With the entry it
+# names one evaluation: the same when the entry is run again after a lost
+# worker or a retry, new when an edit requeues the entry under a new hash.
+_engine_entry_config_hash: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "eval_engine_entry_config_hash", default=None
 )
 # The claim this run owns, as the ``updated_at`` stamp the row carried when the
 # run began. ``RUNNING`` on its own is not an identity: the reaper can requeue
@@ -102,21 +108,28 @@ def writing_onto_entry(
     entry_id: str,
     *,
     output_metadata: dict[str, Any] | None = None,
+    config_hash: str | None = None,
 ) -> Iterator[None]:
     """Within this block, eval result writes update the materialized entry in
-    place instead of creating a new (colliding) EvalLogger row."""
+    place instead of creating a new (colliding) EvalLogger row, and the usage
+    event of the evaluation is keyed to the entry and ``config_hash``."""
     token = _engine_entry_id.set(str(entry_id))
-    selection = (
-        deepcopy(output_metadata.get("_task_selection"))
-        if isinstance(output_metadata, dict)
-        and isinstance(output_metadata.get("_task_selection"), dict)
-        else None
-    )
-    selection_token = _engine_task_selection.set(selection)
+    # Model output cannot replace the task's selection or the source snapshot
+    # identity. Preserve only engine-owned keys, not stale evaluator metadata.
+    preserved = {}
+    if isinstance(output_metadata, dict):
+        if isinstance(output_metadata.get("_task_selection"), dict):
+            preserved["_task_selection"] = deepcopy(output_metadata["_task_selection"])
+        revision = output_metadata.get("_session_conversation_revision")
+        if isinstance(revision, str):
+            preserved["_session_conversation_revision"] = revision
+    metadata_token = _engine_preserved_metadata.set(preserved)
+    config_hash_token = _engine_entry_config_hash.set(config_hash)
     try:
         yield
     finally:
-        _engine_task_selection.reset(selection_token)
+        _engine_entry_config_hash.reset(config_hash_token)
+        _engine_preserved_metadata.reset(metadata_token)
         _engine_entry_id.reset(token)
 
 
@@ -137,6 +150,24 @@ def in_engine_write_mode() -> bool:
     return _engine_entry_id.get() is not None
 
 
+def engine_entry_run() -> tuple[str, str | None] | None:
+    """The entry the eval-task engine is running and the config hash it runs
+    it under, or None outside the engine."""
+    entry_id = _engine_entry_id.get()
+    if entry_id is None:
+        return None
+    config_hash = _engine_entry_config_hash.get()
+    revision = (_engine_preserved_metadata.get() or {}).get(
+        "_session_conversation_revision"
+    )
+    # A changed conversation is a new paid evaluation, but retries of the same
+    # snapshot remain idempotent. This is only the usage-event identity; the
+    # stored config_hash continues to describe evaluator configuration alone.
+    if revision:
+        return entry_id, f"{config_hash or ''}:{revision}"
+    return entry_id, config_hash
+
+
 def persist_eval_result(logger_kwargs: dict[str, Any]) -> EvalLogger | None:
     """Persist an eval result. In engine mode (inside ``writing_onto_entry``)
     update the materialized entry — a queryset update that skips the live-unique
@@ -149,15 +180,12 @@ def persist_eval_result(logger_kwargs: dict[str, Any]) -> EvalLogger | None:
     fields = {
         k: v for k, v in logger_kwargs.items() if k in valid and k not in _RESULT_SKIP
     }
-    selection = _engine_task_selection.get()
-    if selection is not None and "output_metadata" in fields:
+    preserved = _engine_preserved_metadata.get()
+    if preserved and "output_metadata" in fields:
         result_metadata = fields.get("output_metadata")
         if not isinstance(result_metadata, dict):
             result_metadata = {}
-        fields["output_metadata"] = {
-            **result_metadata,
-            "_task_selection": deepcopy(selection),
-        }
+        fields["output_metadata"] = {**result_metadata, **deepcopy(preserved)}
     # Fence on the claim this run owns so a stale worker's late result write
     # no-ops after a reaper requeue + re-claim (see mark_terminal). RUNNING
     # alone does not distinguish the abandoned claim from the live one.

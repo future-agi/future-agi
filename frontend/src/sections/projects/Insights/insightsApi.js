@@ -221,6 +221,14 @@ export const runFailureReason = (run) =>
     "The report could not be completed. Try again in a moment.",
   );
 
+// A run retired with the data it read (a trace or session deleted, or past
+// retention): its results are gone, and only running the report again over
+// current data brings new ones. The report's latest run says so; opening the
+// run itself is refused with the same code.
+const SOURCE_EXPIRED = "source_expired";
+export const runResultsRemoved = (run) => run?.error_code === SOURCE_EXPIRED;
+export const resultsRemovedError = (error) => error?.code === SOURCE_EXPIRED;
+
 /**
  * What a failed run offers next, by its `error_code`: someone stopped it
  * ("stopped": run it again), only an administrator can fix it ("license":
@@ -461,6 +469,25 @@ export const fetchScopeCount = async (
     credits: creditsFrom(data),
   };
 };
+
+/** A count or cost the server didn't answer: another try may work. */
+export const COST_UNCHECKED =
+  "The report cost could not be checked. Try again in a moment.";
+
+/**
+ * Why the server refused to count a scope (filters it can't read or count,
+ * a date range it can't use: a 400 or 422), in its own words; null for any
+ * other failure. Asking again gets the same refusal: the date or filters
+ * have to change.
+ */
+export function scopeRefusal(error) {
+  const status = errorStatus(error);
+  if (status !== 400 && status !== 422) return null;
+  return insightsErrorMessage(
+    error,
+    "These filters can't be read for a report.",
+  );
+}
 
 // A Users count that checks each user is counted a few seconds at a time:
 // until it is exact it is read again this often, and shows as "N+".

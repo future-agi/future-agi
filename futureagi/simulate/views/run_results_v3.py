@@ -243,6 +243,16 @@ class RunFixRunSerializer(serializers.Serializer):
     label = serializers.CharField(allow_blank=True)
 
 
+class RunFailureSerializer(serializers.Serializer):
+    """Why a failed run's job failed: a code the run page names, never the message."""
+
+    domain = serializers.ChoiceField(choices=HARNESS_FAILURE_DOMAINS, allow_null=True)
+    code = serializers.CharField()
+
+    class Meta:
+        ref_name = "SimulateRunV3Failure"
+
+
 class RunResumeEntrySerializer(serializers.Serializer):
     at = serializers.DateTimeField()
     by = serializers.UUIDField(allow_null=True)
@@ -281,6 +291,8 @@ class RunExecutionSerializer(serializers.Serializer):
     summary = RunSummarySerializer()
     # Set on a fix's check run, which is not one of the user's runs; null otherwise.
     fix_run = RunFixRunSerializer(allow_null=True, required=False)
+    # Set on a failed run whose job recorded a typed failure; null otherwise.
+    failure = RunFailureSerializer(allow_null=True, required=False)
 
 
 class PersonaDetailsSerializer(serializers.Serializer):
@@ -636,6 +648,27 @@ def _execution_for_request(request, execution_id) -> TestExecution:
     )
 
 
+def _run_failure(execution: TestExecution, job: Any) -> dict[str, Any] | None:
+    """A failed run's typed failure reason, from its job, when the run page has words
+    for its code. A guest's terminal event can set the code and the message, so no
+    other code is sent, and the message never is."""
+    from simulate.services.hosted_harness_gateway import PRIVATE_GITHUB_UNAVAILABLE_CODE
+
+    # The codes the run page has words for: its reason map lists the same ones.
+    shown_codes = {PRIVATE_GITHUB_UNAVAILABLE_CODE}
+    if job is None or execution.status != TestExecution.ExecutionStatus.FAILED:
+        return None
+    failure = job.failure if isinstance(job.failure, dict) else {}
+    code = failure.get("code")
+    if not isinstance(code, str) or code not in shown_codes:
+        return None
+    domain = failure.get("domain")
+    return {
+        "domain": domain if domain in HARNESS_FAILURE_DOMAINS else None,
+        "code": code,
+    }
+
+
 def _execution_payload(
     execution: TestExecution, summary: dict[str, Any]
 ) -> dict[str, Any]:
@@ -678,6 +711,7 @@ def _execution_payload(
         "resume": asdict(resume_state(execution)),
         "summary": summary,
         "fix_run": fix_run,
+        "failure": _run_failure(execution, job),
     }
 
 

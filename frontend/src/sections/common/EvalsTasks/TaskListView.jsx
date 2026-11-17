@@ -13,6 +13,8 @@ import { useDebounce } from "src/hooks/use-debounce";
 import axios, { endpoints } from "src/utils/axios";
 import { enqueueSnackbar } from "src/components/snackbar";
 import { useAuthContext } from "src/auth/hooks";
+import { RouterLink } from "src/routes/components";
+import { paths } from "src/routes/paths";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import DeleteConfirmation from "./DeleteConfirmation";
 import { QUERY_FAILED_RETRY_MESSAGE } from "src/utils/queryReadState";
@@ -21,6 +23,12 @@ import { isResumableTaskStatus } from "./task_status";
 import { compactSamplingLabel } from "src/sections/tasks/components/simpleSamplingPolicy";
 
 const POLL_INTERVAL_MS = 5000;
+
+const VIEWER_CREATE_REASON =
+  "Viewers can't create tasks. Ask a workspace admin for Member access.";
+// The create endpoint needs a project in this workspace.
+const NO_OBSERVE_PROJECT_REASON =
+  "A task runs on an Observe project, and this workspace has none.";
 
 // Continuous tasks stay in "running" forever — only poll their pending → running flip.
 const shouldPollRow = (row) => {
@@ -255,6 +263,8 @@ const TaskListView = ({
   refreshKey,
 }) => {
   const { role } = useAuthContext();
+  const canCreateTask =
+    RolePermission.OBSERVABILITY[PERMISSIONS.ADD_TASKS_ALERTS][role];
   const [searchQuery, setSearchQuery] = useState("");
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(25);
@@ -360,6 +370,38 @@ const TaskListView = ({
   const lastPage = Math.max(0, Math.ceil(total / pageSize) - 1);
   // Nothing exists yet (not a search that matched nothing).
   const isFirstRun = !isLoading && !isError && total === 0 && !debouncedSearch;
+
+  // A task needs an Observe project. On the workspace-wide page, an empty
+  // first run checks for one (same request and cache as the create form), so
+  // a new org is sent to Observe setup instead of a form it cannot fill in.
+  const { data: observeProjects, isSuccess: projectsLoaded } = useQuery({
+    queryKey: ["project-list"],
+    queryFn: () =>
+      axios.get(endpoints.project.listProjects(), {
+        params: { project_type: "observe" },
+      }),
+    select: (res) => res.data?.result?.projects,
+    enabled: !observeId && isFirstRun,
+  });
+  const noObserveProjects =
+    !observeId &&
+    projectsLoaded &&
+    Array.isArray(observeProjects) &&
+    observeProjects.length === 0;
+
+  // Shown under the first-run actions when Create task is disabled.
+  let createTaskDisabledReason = canCreateTask
+    ? undefined
+    : VIEWER_CREATE_REASON;
+  if (noObserveProjects) {
+    createTaskDisabledReason = (
+      <>
+        <span>{NO_OBSERVE_PROJECT_REASON}</span>
+        {!canCreateTask && <span> {VIEWER_CREATE_REASON}</span>}
+      </>
+    );
+  }
+
   useEffect(() => {
     if (page > lastPage) setPage(lastPage);
   }, [lastPage, page]);
@@ -436,10 +478,7 @@ const TaskListView = ({
 
   // Selected rows
   const selectedItems = useMemo(() => {
-    return Object.keys(rowSelection)
-      .filter((key) => rowSelection[key])
-      .map((key) => items[parseInt(key, 10)])
-      .filter(Boolean);
+    return items.filter((item) => rowSelection[item.id]);
   }, [rowSelection, items]);
 
   // Columns
@@ -651,7 +690,7 @@ const TaskListView = ({
                 startIcon={
                   <Iconify icon="solar:trash-bin-trash-linear" width={16} />
                 }
-                onClick={() => setDeleteTarget(selectedItems)}
+                onClick={() => setDeleteTarget(selectedItems.map((item) => item.id))}
                 disabled={
                   !RolePermission.OBSERVABILITY[PERMISSIONS.ADD_TASKS_ALERTS][
                     role
@@ -711,23 +750,49 @@ const TaskListView = ({
         <EmptyState
           icon="solar:checklist-minimalistic-linear"
           title="No tasks yet"
-          description="A task runs evals on your traces automatically, on new data or on a sample of what's already there."
-          action={
-            <Button
-              variant="contained"
-              color="primary"
-              size="small"
-              startIcon={<Iconify icon="solar:add-linear" width={16} />}
-              onClick={onCreateTask}
-              disabled={
-                !RolePermission.OBSERVABILITY[PERMISSIONS.ADD_TASKS_ALERTS][
-                  role
-                ]
-              }
-            >
-              Create task
-            </Button>
+          description={
+            noObserveProjects
+              ? "A task runs evals on the traces in an Observe project. There are no Observe projects yet: send your first trace to create one."
+              : "A task runs evals on your traces automatically, on new data or on a sample of what's already there."
           }
+          action={
+            noObserveProjects ? (
+              <Button
+                variant="contained"
+                color="primary"
+                size="small"
+                component={RouterLink}
+                href={paths.dashboard.observe}
+              >
+                Set up Observe
+              </Button>
+            ) : (
+              <Button
+                variant="contained"
+                color="primary"
+                size="small"
+                startIcon={<Iconify icon="solar:add-linear" width={16} />}
+                onClick={onCreateTask}
+                disabled={!canCreateTask}
+              >
+                Create task
+              </Button>
+            )
+          }
+          secondaryAction={
+            noObserveProjects ? (
+              <Button
+                variant="outlined"
+                color="primary"
+                size="small"
+                startIcon={<Iconify icon="solar:add-linear" width={16} />}
+                disabled
+              >
+                Create task
+              </Button>
+            ) : undefined
+          }
+          actionDisabledReason={createTaskDisabledReason}
           docsHref="https://docs.futureagi.com/docs/observe/features/evals"
         />
       ) : (
@@ -740,6 +805,7 @@ const TaskListView = ({
             sorting={sorting}
             onSortingChange={handleSortingChange}
             rowSelection={rowSelection}
+            selectionScope={[observeId, queryPage, pageSize, searchQuery, debouncedSearch]}
             onRowSelectionChange={setRowSelection}
             onRowClick={(row) => onRowClick?.(row)}
             getRowId={(row) => row.id}
@@ -769,6 +835,7 @@ const TaskListView = ({
       {deleteTarget && (
         <DeleteConfirmation
           open={Boolean(deleteTarget)}
+          selectedItems={Array.isArray(deleteTarget) ? deleteTarget : [deleteTarget]}
           title={`Delete ${Array.isArray(deleteTarget) ? deleteTarget.length : 1} task(s)?`}
           content="This action cannot be undone. The task(s) and their logs will be permanently removed."
           onClose={() => setDeleteTarget(null)}

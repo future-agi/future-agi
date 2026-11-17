@@ -1,0 +1,67 @@
+# H8: a second agentcc-gateway process for the walks that must show a change
+# reaching every gateway (W08 cross-replica revocation, W11 an approval used
+# once across gateways). bin/e2e adds it when E2E_GATEWAY_REPLICAS=2, on the
+# Standalone stack with an MCP profile only, and starts `agentcc-gateway-2`.
+#
+# Shape. The replica is the same binary from the same futureagi/standalone
+# image, with the same mounted profile file, sharing the app container's
+# network namespace (network_mode service:app). So it reaches what the app's
+# own gateway reaches on loopback: Redis at 127.0.0.1:6379 (bound to loopback
+# inside app, deploy/standalone/bin/start), the API at 127.0.0.1:8000 for its
+# start-up and periodic sync (AGENTCC_SYNC_INTERVAL, 60s), and nothing else the
+# app cannot reach. It listens on 8081 (AGENTCC_PORT), published by the app on
+# 127.0.0.1:28091 (E2E_GATEWAY_REPLICA_URL in lib/env.ts).
+#
+# Both replicas share Redis: AGENTCC_REDIS_ADDRESS on the app's gateway and on
+# the replica, the app's own password, database 4 (Django uses 0-3). Django pushes
+# config and keys to one internal URL (agentcc/services/gateway_client.py
+# AGENTCC_GATEWAY_INTERNAL_URL), the app's own gateway; the replica receives the
+# same state through its sync from the control plane and through Redis, which
+# is exactly the cross-replica path the walks must prove (POLL.GATEWAY_SYNC
+# bounds the sync-only half).
+#
+# The inspector validates the shared namespace, exact image/mount/entrypoint,
+# loopback Redis and fixed test-only values. This does NOT turn sync into pushes:
+# W08/W11 must use POLL.GATEWAY_SYNC; Django fan-out is a product prerequisite.
+services:
+  app:
+    environment:
+      AGENTCC_REDIS_ADDRESS: 127.0.0.1:6379
+      AGENTCC_REDIS_PASSWORD: ${REDIS_PASSWORD:-local-dev-only-redis-password}
+      AGENTCC_REDIS_DB: "4"
+    ports:
+      - "127.0.0.1:${E2E_GATEWAY_REPLICA_PORT:-28091}:8081"
+  agentcc-gateway-2:
+    image: futureagi/standalone:${FUTURE_AGI_VERSION:-latest}
+    network_mode: "service:app"
+    depends_on:
+      app:
+        condition: service_healthy
+    entrypoint: ["agentcc-gateway"]
+    command: ["--config", "/etc/futureagi/secrets/agentcc.yaml"]
+    environment:
+      AGENTCC_MCP_UPSTREAM_OAUTH_ENABLED: ${AGENTCC_MCP_UPSTREAM_OAUTH_ENABLED:-false}
+      AGENTCC_MCP_CLIENT_OAUTH_ENABLED: ${AGENTCC_MCP_CLIENT_OAUTH_ENABLED:-false}
+      AGENTCC_MCP_K2_APPS_ENABLED: ${AGENTCC_MCP_K2_APPS_ENABLED:-false}
+      AGENTCC_PORT: "8081"
+      AGENTCC_REDIS_ADDRESS: 127.0.0.1:6379
+      AGENTCC_REDIS_PASSWORD: ${REDIS_PASSWORD:-local-dev-only-redis-password}
+      AGENTCC_REDIS_DB: "4"
+      AGENTCC_INTERNAL_API_KEY: ${AGENTCC_INTERNAL_API_KEY:-local-dev-only-shared-secret-replace-me}
+      AGENTCC_WEBHOOK_SECRET: ${AGENTCC_WEBHOOK_SECRET:-}
+      AGENTCC_CONTROL_PLANE_URL: http://127.0.0.1:8000
+      AGENTCC_CONTROL_PLANE_TOKEN: ${AGENTCC_ADMIN_TOKEN:-local-dev-only-admin-token-replace-me}
+      AGENTCC_ADMIN_TOKEN: ${AGENTCC_ADMIN_TOKEN:-local-dev-only-admin-token-replace-me}
+      AGENTCC_ALLOW_INSECURE_ADMIN_TOKEN: ${AGENTCC_ALLOW_INSECURE_ADMIN_TOKEN:-}
+      AGENTCC_ALLOW_PRIVATE_PROVIDER_URLS: "false"
+      AGENTCC_SYNC_ON_STARTUP: "true"
+      AGENTCC_SYNC_INTERVAL: ${AGENTCC_SYNC_INTERVAL:-60s}
+      AGENTCC_MCP_STATE_KEYS: e2e-only-mcp-state-key-not-a-secret-0000
+      FUTURE_AGI_TELEMETRY_DISABLED: "true"
+    volumes:
+      - ./${AGENTCC_CONFIG_PATH:-e2e/stack/gateway.e2e.yaml}:/etc/futureagi/secrets/agentcc.yaml:ro
+    # The Standalone image declares VOLUME /data. The gateway-only replica
+    # needs no persistent app data: override the anonymous volume with tmpfs.
+    tmpfs:
+      - /data:rw,noexec,nosuid,size=16m
+    restart: "no"

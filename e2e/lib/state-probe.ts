@@ -10,6 +10,13 @@ export const POLL = {
   // past 90s under parallel load. Used by any read of a CDC-fed table.
   CDC_VISIBLE: { timeout: 180_000, intervals: [2000, 5000] },
   ASYNC_JOB: { timeout: 60_000, intervals: [2000, 5000] },
+  // The gateway's periodic org-config/key sync (AGENTCC_SYNC_INTERVAL 60s in
+  // both stacks) plus a 15s margin: a change the save's push did not carry.
+  GATEWAY_SYNC: { timeout: 75_000, intervals: [2000, 5000] },
+  // A Temporal schedule's next tick after a retry backoff: a 30-60s interval
+  // (agentcc_alerts.py, webhook delivery) after webhook_delivery.retry_delay's
+  // 30s, plus the run itself.
+  SCHEDULE_TICK: { timeout: 150_000, intervals: [2000, 5000] },
 };
 
 export class StateProbe {

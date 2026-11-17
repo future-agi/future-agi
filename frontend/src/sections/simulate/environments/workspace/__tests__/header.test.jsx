@@ -159,16 +159,24 @@ describe("EnvVersionPin", () => {
     moveCalls.length = 0;
   });
 
-  it("renders nothing while versioning is off", () => {
+  it("shows the pin disabled, with the reason, while versioning is off", () => {
     versionsResponse.current = VERSIONS;
-    const { container } = render(<EnvVersionPin env={ENV} />);
-    expect(container).toBeEmptyDOMElement();
+    render(<EnvVersionPin env={ENV} />);
+    const pin = screen.getByRole("button", { name: /no versions recorded/ });
+    expect(pin).toBeDisabled();
+    expect(pin).toHaveAccessibleDescription(
+      "Versioning is off for this install, so this isn't available.",
+    );
   });
 
-  it("renders nothing when the server has switched versioning off", () => {
+  it("shows the pin disabled, with the reason, when the server has switched versioning off", () => {
     versionsResponse.current = "disabled";
-    const { container } = render(<EnvVersionPin env={VERSIONED_ENV} />);
-    expect(container).toBeEmptyDOMElement();
+    render(<EnvVersionPin env={VERSIONED_ENV} />);
+    const pin = screen.getByRole("button", { name: /no versions recorded/ });
+    expect(pin).toBeDisabled();
+    expect(pin).toHaveAccessibleDescription(
+      "Versioning is off for this install, so this isn't available.",
+    );
   });
 
   it.each(["loading", "error"])("renders nothing while the versions are %s", (answer) => {
@@ -440,7 +448,9 @@ describe("SystemBanners", () => {
         env={{ ...ENV, buildStatus: "building", buildProgress: { done: 5, total: 7 } }}
       />
     );
-    expect(screen.getByText("Environment is still being built")).toBeInTheDocument();
+    expect(
+      screen.getByText("Environment is still being built"),
+    ).toBeInTheDocument();
     expect(screen.getByText(/5 of 7 steps done/)).toBeInTheDocument();
   });
 
@@ -474,10 +484,17 @@ describe("WorkspaceHeader", () => {
 
     render(
       withRouter(
-        <WorkspaceHeader {...baseProps} env={{ ...ENV, buildStatus: "building" }} canRun={false} locked />,
+        <WorkspaceHeader
+          {...baseProps}
+          env={{ ...ENV, buildStatus: "building" }}
+          canRun={false}
+          locked
+        />,
       ),
     );
-    expect(screen.getByRole("button", { name: /Cancel build/ })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Cancel build/ }),
+    ).toBeInTheDocument();
   });
 
   it("hides Cancel build once a cancel is in flight", () => {
@@ -518,12 +535,16 @@ describe("WorkspaceHeader", () => {
 
   it("hides the rename pencil for a non-backed env (no §8 row to PATCH)", () => {
     render(withRouter(<WorkspaceHeader {...baseProps} />));
-    expect(screen.queryByRole("button", { name: "Rename environment" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Rename environment" }),
+    ).toBeNull();
   });
 
   it("hides the rename pencil when locked", () => {
     render(withRouter(<WorkspaceHeader {...baseProps} backed locked />));
-    expect(screen.queryByRole("button", { name: "Rename environment" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Rename environment" }),
+    ).toBeNull();
   });
 
   it("offers Delete in the overflow for a backend-backed env and opens the confirm", async () => {
@@ -531,7 +552,9 @@ describe("WorkspaceHeader", () => {
     render(withRouter(<WorkspaceHeader {...baseProps} backed />));
 
     await user.click(screen.getByRole("button", { name: "More actions" }));
-    await user.click(screen.getByRole("menuitem", { name: /Delete environment/ }));
+    await user.click(
+      screen.getByRole("menuitem", { name: /Delete environment/ }),
+    );
     expect(screen.getByText("Delete environment?")).toBeInTheDocument();
   });
 
@@ -546,17 +569,27 @@ describe("WorkspaceHeader", () => {
   it.skip("forks from the overflow menu when unlocked", async () => {
     const user = userEvent.setup();
     const onFork = vi.fn();
-    render(withRouter(<WorkspaceHeader {...baseProps} onFork={onFork} locked={false} />));
+    render(
+      withRouter(
+        <WorkspaceHeader {...baseProps} onFork={onFork} locked={false} />,
+      ),
+    );
 
     await user.click(screen.getByRole("button", { name: "More actions" }));
-    await user.click(screen.getByRole("menuitem", { name: /Fork environment/ }));
+    await user.click(
+      screen.getByRole("menuitem", { name: /Fork environment/ }),
+    );
     expect(onFork).toHaveBeenCalledTimes(1);
   });
 
   it("starts a run-all (no ids) directly on Run, with no config dialog", async () => {
     const user = userEvent.setup();
     const onStartRun = vi.fn();
-    render(withRouter(<WorkspaceHeader {...baseProps} canRun onStartRun={onStartRun} />));
+    render(
+      withRouter(
+        <WorkspaceHeader {...baseProps} canRun onStartRun={onStartRun} />,
+      ),
+    );
 
     await user.click(screen.getByRole("button", { name: "Run simulation" }));
     expect(screen.queryByRole("dialog")).toBeNull();
@@ -566,7 +599,11 @@ describe("WorkspaceHeader", () => {
   it("runs with the repeats picked in the header dropdown", async () => {
     const user = userEvent.setup();
     const onStartRun = vi.fn();
-    render(withRouter(<WorkspaceHeader {...baseProps} canRun onStartRun={onStartRun} />));
+    render(
+      withRouter(
+        <WorkspaceHeader {...baseProps} canRun onStartRun={onStartRun} />,
+      ),
+    );
 
     await user.click(screen.getByText(/^Repeats:/));
     await user.click(screen.getByText("3×"));
@@ -583,7 +620,9 @@ describe("WorkspaceHeader", () => {
   });
 
   it("hides the header Run + Repeats while a scenario selection is active", () => {
-    render(withRouter(<WorkspaceHeader {...baseProps} canRun selectionActive />));
+    render(
+      withRouter(<WorkspaceHeader {...baseProps} canRun selectionActive />),
+    );
     expect(screen.queryByRole("button", { name: "Run simulation" })).toBeNull();
     // The Repeats button's accessible name is its tooltip, so match its text.
     expect(screen.queryByText(/^Repeats:/)).toBeNull();
@@ -594,14 +633,106 @@ describe("WorkspaceHeader", () => {
     const reason = "Add scenarios on the Scenarios tab";
     render(
       withRouter(
-        <WorkspaceHeader {...baseProps} canRun={false} runBlockedReason={reason} />
-      )
+        <WorkspaceHeader
+          {...baseProps}
+          canRun={false}
+          runBlockedReason={reason}
+        />,
+      ),
     );
 
     const btn = screen.getByRole("button", { name: "Run simulation" });
     expect(btn).toBeDisabled();
+    // CustomTooltip opens on hover intent: after any click (earlier tests in
+    // this file click) the pointer must really move first. jsdom puts every
+    // pointer event at (0, 0), so move it the way a mouse would.
+    await user.pointer({ coords: { clientX: 30, clientY: 30 } });
     await user.hover(btn.parentElement);
     expect(await screen.findByText(reason)).toBeInTheDocument();
+  });
+});
+
+describe("VersionBar and the pin while versioning is off or being enabled", () => {
+  afterEach(() => {
+    versionsResponse.current = undefined;
+  });
+  const OFF_ENV = { ...ENV, versioning: { enabled: false, nudges_enabled: false, state: "off" } };
+  const ENABLING_ENV = {
+    ...ENV,
+    versioning: { enabled: true, nudges_enabled: false, state: "enabling" },
+  };
+  const NO_VERSIONS = { agent: [], environment: [], suite: [] };
+
+  it("says versioning is off for this install beside the scenario count", () => {
+    render(<VersionBar env={OFF_ENV} envState={{ scenarios: [1, 2] }} />);
+    expect(screen.getByText("Versioning is off for this install.")).toBeInTheDocument();
+    expect(screen.getByText("2 scenarios, shared across agent versions")).toBeInTheDocument();
+  });
+
+  it("says versioning is being enabled while no version is pinned yet", () => {
+    versionsResponse.current = NO_VERSIONS;
+    render(<VersionBar env={ENABLING_ENV} envState={{ scenarios: [1] }} />);
+    expect(screen.getByText("Versioning is being enabled.")).toBeInTheDocument();
+    expect(screen.queryByText("Versioning is off for this install.")).toBeNull();
+    // The pairing names the missing environment version plainly.
+    expect(screen.getByText("no versions recorded")).toBeInTheDocument();
+    expect(screen.queryByText("before versioning")).toBeNull();
+  });
+
+  const FAILED = { state: "failed", outcome_code: "interrupted", updated_at: "2026-11-14T20:00:00Z", progress: null };
+
+  it("says versioning couldn't finish being enabled when this environment's backfill failed", () => {
+    versionsResponse.current = NO_VERSIONS;
+    render(<VersionBar env={{ ...ENABLING_ENV, versioning: { ...ENABLING_ENV.versioning, backfill: FAILED } }} envState={{ scenarios: [1] }} />);
+    expect(screen.getByText("Versioning couldn't finish being enabled for this environment. The team that runs Future AGI here can run it again.")).toBeInTheDocument();
+    expect(screen.queryByText("Versioning is being enabled.")).toBeNull();
+  });
+
+  it("keeps off's own words while versioning is off, whatever the backfill says", () => {
+    render(<VersionBar env={{ ...OFF_ENV, versioning: { ...OFF_ENV.versioning, backfill: FAILED } }} envState={{ scenarios: [1] }} />);
+    expect(screen.getByText("Versioning is off for this install.")).toBeInTheDocument();
+    expect(screen.queryByText(/couldn't finish being enabled/)).toBeNull();
+  });
+
+  it("states no failure once versioning is ready, even after an older failed backfill", () => {
+    versionsResponse.current = VERSIONS;
+    render(
+      <VersionBar
+        env={{ ...VERSIONED_ENV, versioning: { ...VERSIONED_ENV.versioning, state: "ready", backfill: FAILED } }}
+        envState={{ scenarios: [1] }}
+      />,
+    );
+    expect(screen.queryByTestId("versioning-state-line")).toBeNull();
+    expect(screen.queryByText(/couldn't finish being enabled/)).toBeNull();
+  });
+
+  it("gives the pin the failed reason when this environment's backfill failed", () => {
+    versionsResponse.current = NO_VERSIONS;
+    render(<EnvVersionPin env={{ ...ENABLING_ENV, versioning: { ...ENABLING_ENV.versioning, backfill: FAILED } }} />);
+    const pin = screen.getByRole("button", { name: /no versions recorded/ });
+    expect(pin).toBeDisabled();
+    expect(pin).toHaveAccessibleDescription("Versioning couldn't finish being enabled, so this isn't available yet.");
+  });
+
+  it("states no versioning line once versioning is ready", () => {
+    versionsResponse.current = VERSIONS;
+    render(
+      <VersionBar
+        env={{ ...VERSIONED_ENV, versioning: { ...VERSIONED_ENV.versioning, state: "ready" } }}
+        envState={{ scenarios: [1] }}
+      />,
+    );
+    expect(screen.queryByTestId("versioning-state-line")).toBeNull();
+  });
+
+  it("shows the pin disabled, with the being-enabled reason, before a version is recorded", () => {
+    versionsResponse.current = NO_VERSIONS;
+    render(<EnvVersionPin env={ENABLING_ENV} />);
+    const pin = screen.getByRole("button", { name: /no versions recorded/ });
+    expect(pin).toBeDisabled();
+    expect(pin).toHaveAccessibleDescription(
+      "Versioning is being enabled, so this isn't available yet.",
+    );
   });
 });
 
@@ -634,10 +765,11 @@ describe("VersionBar", () => {
     expect(screen.getByText("12 scenarios, shared across agent versions")).toBeInTheDocument();
   });
 
-  it("says before versioning when the environment has no versions yet", () => {
+  it("says no versions recorded when the environment has no versions yet", () => {
     versionsResponse.current = { agent: [], environment: [], suite: [] };
     render(<VersionBar env={VERSIONED_ENV} envState={{ scenarios: [1] }} />);
-    expect(screen.getAllByText("before versioning")).toHaveLength(1);
+    expect(screen.getAllByText("no versions recorded")).toHaveLength(1);
+    expect(screen.queryByText("before versioning")).toBeNull();
     expect(screen.getByText("1 scenario, shared across agent versions")).toBeInTheDocument();
   });
 
@@ -731,10 +863,14 @@ describe("VersionBar", () => {
     expect(screen.queryByText(/^env$/)).toBeNull();
   });
 
-  it("calls an agent with no name on record \"Agent\", as the Overview card does", () => {
+  it('calls an agent with no name on record "Agent", as the Overview card does', () => {
     render(
       <VersionBar
-        env={{ ...ENV, testSubject: { ...SUBJECT, name: null }, counts: { scenarios: 3 } }}
+        env={{
+          ...ENV,
+          testSubject: { ...SUBJECT, name: null },
+          counts: { scenarios: 3 },
+        }}
         envState={{ scenarios: [1] }}
       />,
     );
@@ -749,14 +885,21 @@ describe("VersionBar", () => {
         envState={{ scenarios: [1, 2, 3, 4] }}
       />,
     );
-    expect(screen.getByText("42 scenarios, shared across agent versions")).toBeInTheDocument();
+    expect(
+      screen.getByText("42 scenarios, shared across agent versions"),
+    ).toBeInTheDocument();
   });
 
   it("leaves the agent out when no agent is connected yet", () => {
     render(
-      <VersionBar env={{ ...ENV, testSubject: null, counts: { scenarios: 0 } }} envState={{}} />,
+      <VersionBar
+        env={{ ...ENV, testSubject: null, counts: { scenarios: 0 } }}
+        envState={{}}
+      />,
     );
     expect(screen.queryByText("Test subject")).toBeNull();
-    expect(screen.getByText("0 scenarios, shared across agent versions")).toBeInTheDocument();
+    expect(
+      screen.getByText("0 scenarios, shared across agent versions"),
+    ).toBeInTheDocument();
   });
 });

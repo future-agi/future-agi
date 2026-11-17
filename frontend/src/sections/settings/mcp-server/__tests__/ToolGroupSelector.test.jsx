@@ -6,8 +6,9 @@ import ToolGroupSelector, {
   normalizeMCPToolGroups,
 } from "../ToolGroupSelector";
 
-const { mockMutate } = vi.hoisted(() => ({
+const { mockMutate, workspace } = vi.hoisted(() => ({
   mockMutate: vi.fn(),
+  workspace: { currentWorkspaceDisplayName: null, currentWorkspaceName: null },
 }));
 
 vi.mock("src/api/mcp", () => ({
@@ -19,6 +20,10 @@ vi.mock("src/api/mcp", () => ({
 
 vi.mock("src/components/iconify", () => ({
   default: ({ icon }) => <span data-testid="iconify" data-icon={icon} />,
+}));
+
+vi.mock("src/contexts/WorkspaceContext", () => ({
+  useWorkspace: () => workspace,
 }));
 
 const backendConfig = {
@@ -44,6 +49,8 @@ const backendConfig = {
 describe("ToolGroupSelector", () => {
   beforeEach(() => {
     mockMutate.mockReset();
+    workspace.currentWorkspaceDisplayName = null;
+    workspace.currentWorkspaceName = null;
     mockMutate.mockImplementation((payload, options) => {
       options?.onSuccess?.();
     });
@@ -123,7 +130,9 @@ describe("ToolGroupSelector", () => {
       },
     };
     render(<ToolGroupSelector config={config} />);
-    await user.click(screen.getByRole("button", { name: /Tool Groups/i }));
+    await user.click(
+      screen.getByRole("button", { name: /Your editor's tools/i }),
+    );
     const switches = screen.getAllByRole("checkbox");
     expect(switches).toHaveLength(4);
     expect(switches[3]).not.toBeChecked();
@@ -139,7 +148,9 @@ describe("ToolGroupSelector", () => {
     const user = userEvent.setup();
     render(<ToolGroupSelector config={backendConfig} />);
 
-    await user.click(screen.getByRole("button", { name: /Tool Groups/i }));
+    await user.click(
+      screen.getByRole("button", { name: /Your editor's tools/i }),
+    );
 
     const switches = screen.getAllByRole("checkbox");
     expect(switches).toHaveLength(2);
@@ -153,5 +164,41 @@ describe("ToolGroupSelector", () => {
       { enabled_groups: ["context", "evaluations"] },
       expect.objectContaining({ onSuccess: expect.any(Function) }),
     );
+  });
+
+  it("names the section as the signed-in person's own editor in the current workspace", () => {
+    workspace.currentWorkspaceDisplayName = "Acme Research";
+    render(<ToolGroupSelector config={backendConfig} />);
+
+    const summary = screen.getByRole("button", {
+      name: /Your editor's tools in Acme Research/,
+    });
+    expect(summary).toHaveTextContent(
+      "Only affects your own editor. It does not change other members' editors.",
+    );
+    expect(
+      screen.queryByText(/Restrict which tools are available/i),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("Tool Groups")).not.toBeInTheDocument();
+  });
+
+  it("falls back to the workspace's name, then to 'this workspace'", () => {
+    workspace.currentWorkspaceName = "acme-research";
+    const { unmount } = render(<ToolGroupSelector config={backendConfig} />);
+    expect(
+      screen.getByText("Your editor's tools in acme-research"),
+    ).toBeInTheDocument();
+    unmount();
+
+    workspace.currentWorkspaceName = null;
+    render(<ToolGroupSelector config={backendConfig} />);
+    expect(
+      screen.getByText("Your editor's tools in this workspace"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Only affects your own editor. It does not change other members' editors.",
+      ),
+    ).toBeInTheDocument();
   });
 });

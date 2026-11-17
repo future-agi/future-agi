@@ -54,7 +54,9 @@ def _request(*, mode, schema=None, source=None):
         body["source"] = source
     request = APIRequestFactory().post("/model-hub/ai-filter/", body, format="json")
     request.workspace = mock.Mock()
-    force_authenticate(request, user=SimpleNamespace(is_authenticated=True))
+    force_authenticate(
+        request, user=SimpleNamespace(is_authenticated=True, organization=None)
+    )
     return request
 
 

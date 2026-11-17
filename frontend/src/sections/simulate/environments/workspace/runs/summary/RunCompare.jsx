@@ -125,6 +125,9 @@ export default function RunCompare({ open, onClose, env, current, against }) {
   );
   const pairs = [...(data?.pairs ?? [])].sort((a, b) => rank(a) - rank(b));
   const summary = data?.summary;
+  const missingSuiteVersion = !(
+    data?.versions?.current?.suite && data?.versions?.against?.suite
+  );
   const counts = summary
     ? Object.entries(COPY.summary)
         .filter(([key]) => summary[key])
@@ -155,6 +158,11 @@ export default function RunCompare({ open, onClose, env, current, against }) {
           {" · "}
           {COPY.versions(against?.label, versionLine(data.versions?.against))}
         </Typography>
+        {missingSuiteVersion && (
+          <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+            {COPY.editedScenarioNote}
+          </Typography>
+        )}
         {counts.length > 0 && (
           <Typography sx={{ mt: 0.5, typography: "s1" }}>
             {counts.join(" · ")}

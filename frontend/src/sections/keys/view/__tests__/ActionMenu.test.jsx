@@ -54,6 +54,6 @@ describe("ActionMenu expiry", () => {
     });
 
     expect(screen.queryByText("Re-enable key")).not.toBeInTheDocument();
-    expect(screen.getByText("Delete Key")).toBeInTheDocument();
+    expect(screen.getByText("Delete key")).toBeInTheDocument();
   });
 });

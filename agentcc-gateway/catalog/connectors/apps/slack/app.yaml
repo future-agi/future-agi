@@ -1,0 +1,20 @@
+schema: "connector-manifest/v1#app"
+id: slack
+version: 1.0.0
+name: Slack
+description: "Read channels and post messages."
+vendor:
+  name: Slack
+  domains: [slack.com]
+eeCategory: communication
+group: other
+categories: [communication, team-messaging]
+tags: [chat, messages]
+docsUrl: https://docs.slack.dev/ai/slack-mcp-server/
+archetype: team-messaging
+defaultProvider: mcp
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://docs.slack.dev/ai/slack-mcp-server/
+    fetchedAt: 2026-10-20

@@ -26,6 +26,7 @@ from tracer.views.feed._permissions import (
     is_authorized_empty_feed_scope,
     resolve_requested_project_ids,
 )
+from tracer.views.feed._schema import WORKSPACE_QUERY_PARAMETER
 
 logger = structlog.get_logger(__name__)
 
@@ -47,6 +48,7 @@ class FeedListView(ErrorFeedLicenseRequired, APIView):
 
     @validated_request(
         query_serializer=FeedListQuerySerializer,
+        manual_parameters=[WORKSPACE_QUERY_PARAMETER],
         responses={200: FeedListApiResponseSerializer, **ERROR_RESPONSES},
     )
     def get(self, request):
@@ -58,8 +60,8 @@ class FeedListView(ErrorFeedLicenseRequired, APIView):
         if project_ids is None:
             return self._gm.forbidden_response("Access denied to this project")
         # An empty list is only a denial when the request has no established
-        # organization; a valid scope with zero projects lists as empty
-        # (TH-8209). The service handles an empty id list without reads.
+        # organization; a valid scope with zero projects lists as empty. The
+        # service handles an empty id list without reads.
         if not project_ids and not is_authorized_empty_feed_scope(request):
             return self._gm.forbidden_response(NO_ORGANIZATION_MESSAGE)
 

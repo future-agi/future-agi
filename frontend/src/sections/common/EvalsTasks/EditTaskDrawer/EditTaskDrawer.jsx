@@ -4,7 +4,7 @@ import DetailsEdit from "./DetailsEdit";
 import PropTypes from "prop-types";
 import { useGetTaskData } from "../common";
 import { Alert, Box, Button, Drawer } from "@mui/material";
-import { getSafeActionErrorMessage } from "src/utils/errorUtils";
+import { getInlineLoadErrorMessage } from "src/utils/errorUtils";
 import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 import ContentSkeleton from "src/components/content-skeleton";
 
@@ -83,7 +83,7 @@ const EditTaskDrawerChild = ({
               </Button>
             }
           >
-            {getSafeActionErrorMessage(
+            {getInlineLoadErrorMessage(
               error,
               "Task details could not be loaded.",
             )}
@@ -116,7 +116,7 @@ const EditTaskDrawerChild = ({
             maxWidth: 440,
           }}
         >
-          {getSafeActionErrorMessage(
+          {getInlineLoadErrorMessage(
             error,
             "Task details could not be refreshed.",
           )}{" "}

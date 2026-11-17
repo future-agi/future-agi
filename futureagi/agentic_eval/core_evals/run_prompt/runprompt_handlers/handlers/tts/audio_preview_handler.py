@@ -16,15 +16,24 @@ Features:
 - Provider-specific payload adaptation
 """
 
+# Pre-existing lint debt, exempted file-wide so a security fix can touch this
+# module behaviour-neutrally (import reordering, exception chaining and
+# typing rewrites).
+# ruff: noqa: B904, I001, UP006, UP035
+
 import copy
 import time
 from typing import Any, Dict
 
-import litellm
 import structlog
 from asgiref.sync import sync_to_async
 
 from agentic_eval.core_evals.run_prompt.error_handler import litellm_try_except
+from model_hub.utils.model_endpoints import (
+    guarded_acompletion,
+    guarded_completion,
+    is_endpoint_error,
+)
 
 from agentic_eval.core_evals.run_prompt.runprompt_handlers.base_handler import (
     BaseModelHandler,
@@ -314,7 +323,7 @@ class AudioPreviewHandler(BaseModelHandler):
             # Execute completion with drop_params=True
             completion_response = None
             with litellm_try_except():
-                completion_response = litellm.completion(**payload, drop_params=True)
+                completion_response = guarded_completion(**payload, drop_params=True)
 
             # Validate response is not None
             self._validate_response_not_empty(
@@ -356,7 +365,16 @@ class AudioPreviewHandler(BaseModelHandler):
             )
 
         except Exception as e:
-            self.logger.exception(f"Audio-preview TTS execution failed: {str(e)}")
+            if is_endpoint_error(e):
+                # A tenant endpoint's error: generic already; logged without
+                # text or traceback.
+                self.logger.warning(
+                    "Audio-preview TTS execution failed",
+                    error_type=type(e).__name__,
+                    category=getattr(e, "category", None),
+                )
+            else:
+                self.logger.exception(f"Audio-preview TTS execution failed: {str(e)}")
             return self._build_handler_response(
                 response=None,
                 start_time=start_time,
@@ -398,11 +416,11 @@ class AudioPreviewHandler(BaseModelHandler):
                 # Gemini TTS only supports sync litellm.completion (acompletion not supported)
                 with litellm_try_except():
                     completion_response = await sync_to_async(
-                        litellm.completion, thread_sensitive=False
+                        guarded_completion, thread_sensitive=False
                     )(**payload, drop_params=True)
             else:
                 with litellm_try_except():
-                    completion_response = await litellm.acompletion(
+                    completion_response = await guarded_acompletion(
                         **payload, drop_params=True
                     )
 
@@ -448,7 +466,18 @@ class AudioPreviewHandler(BaseModelHandler):
             )
 
         except Exception as e:
-            self.logger.exception(f"Audio-preview TTS async execution failed: {str(e)}")
+            if is_endpoint_error(e):
+                # A tenant endpoint's error: generic already; logged without
+                # text or traceback.
+                self.logger.warning(
+                    "Audio-preview TTS async execution failed",
+                    error_type=type(e).__name__,
+                    category=getattr(e, "category", None),
+                )
+            else:
+                self.logger.exception(
+                    f"Audio-preview TTS async execution failed: {str(e)}"
+                )
             return self._build_handler_response(
                 response=None,
                 start_time=start_time,

@@ -98,6 +98,9 @@ class Score(BaseModel):
     )
     value = models.JSONField()
     value_history = models.JSONField(default=list, blank=True)
+    value_updated_at = models.DateTimeField(
+        null=True, default=timezone.now, editable=False
+    )
 
     # ── Who scored it ────────────────────────────────────────────────────
     annotator = models.ForeignKey(
@@ -203,14 +206,16 @@ class Score(BaseModel):
             # NULL in Postgres uniqueness — so a (source, label, queue_item)
             # constraint would silently allow duplicate auto-scores. Keep
             # the strict (source, label) uniqueness for programmatic scores
-            # and accept that they aren't per-queue.
+            # and accept that they aren't per-queue. End-user trace/span feedback
+            # is instead one row per signed capability (the Score primary key),
+            # so independent respondents must not collide on this constraint.
             models.UniqueConstraint(
                 fields=["trace", "label"],
                 condition=Q(
                     deleted=False,
                     trace__isnull=False,
                     annotator__isnull=True,
-                ),
+                ) & ~Q(score_source=ScoreSource.END_USER.value),
                 name="unique_score_trace_label_null_annotator",
             ),
             models.UniqueConstraint(
@@ -219,7 +224,7 @@ class Score(BaseModel):
                     deleted=False,
                     observation_span__isnull=False,
                     annotator__isnull=True,
-                ),
+                ) & ~Q(score_source=ScoreSource.END_USER.value),
                 name="unique_score_span_label_null_annotator",
             ),
             models.UniqueConstraint(
@@ -287,18 +292,26 @@ class Score(BaseModel):
                     "value_history",
                     "created_at",
                     "updated_at",
+                    "value_updated_at",
                 ).get(pk=self.pk)
             except self.__class__.DoesNotExist:
                 previous = None
 
-            if previous is not None and previous.value != self.value:
-                self.value_history = self.appended_value_history(
-                    previous.value,
-                    previous.value_history,
-                    previous.updated_at or previous.created_at,
-                )
-                if update_fields is not None:
-                    kwargs["update_fields"] = set(update_fields) | {"value_history"}
+            if previous is not None:
+                # Metadata saves must not make an older review the latest vote.
+                self.value_updated_at = previous.value_updated_at
+                if previous.value != self.value:
+                    self.value_history = self.appended_value_history(
+                        previous.value,
+                        previous.value_history,
+                        previous.updated_at or previous.created_at,
+                    )
+                    self.value_updated_at = timezone.now()
+                    if update_fields is not None:
+                        kwargs["update_fields"] = set(update_fields) | {
+                            "value_history",
+                            "value_updated_at",
+                        }
 
         super().save(*args, **kwargs)
 

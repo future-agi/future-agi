@@ -4,8 +4,8 @@ import React, {
   useCallback,
   useMemo,
   useRef,
+  useId,
 } from "react";
-import ButtonBase from "@mui/material/ButtonBase";
 import PropTypes from "prop-types";
 import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
@@ -21,8 +21,13 @@ import Button from "@mui/material/Button";
 import Chip from "@mui/material/Chip";
 import CircularProgress from "@mui/material/CircularProgress";
 import { alpha, useTheme } from "@mui/material/styles";
+import { LoadingButton } from "@mui/lab";
 import Iconify from "src/components/iconify";
+import { importWithRecovery } from "src/utils/chunkRecovery";
 import CustomTooltip from "src/components/tooltip";
+import { ConfirmDialog } from "src/components/custom-dialog";
+import { getSafeActionErrorMessage } from "src/utils/errorUtils";
+import { buildConnectorSavePayload } from "src/sections/settings/falcon-ai-connectors/utils";
 import {
   listSkills,
   fetchConnectors,
@@ -31,6 +36,7 @@ import {
   discoverConnectorTools,
 } from "../hooks/useFalconAPI";
 import useFalconStore from "../store/useFalconStore";
+import { captureFalconRequest } from "../store/falconRequestGuard";
 import ToolsSkeleton from "./ToolsSkeleton";
 import ConnectorDetailError from "./ConnectorDetailError";
 import { useConnectorToolPermissions } from "../hooks/useConnectorToolPermissions";
@@ -40,6 +46,7 @@ import {
   resolveEnabledNames,
   toolActionErrorMessage,
 } from "./connectorTools";
+import { connectorErrorText } from "./connectorErrors";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -51,6 +58,11 @@ const CONNECTOR_CATEGORIES = {
   Cloud: ["aws", "gcp", "azure", "vercel"],
   Custom: [],
 };
+
+// The sign-in window opens after a server round trip, which a pop-up blocker
+// may refuse; without this the connector would just sit at Pending.
+const SIGN_IN_BLOCKED =
+  "Your browser blocked the sign-in window. Allow pop-ups for this site, then click Re-authenticate.";
 
 function categorizeConnector(connector) {
   const name = (connector.name || connector.type || "").toLowerCase();
@@ -674,6 +686,41 @@ ConnectorsListPanel.propTypes = {
 // ---------------------------------------------------------------------------
 // Panel 3: Skill detail + inline editor
 // ---------------------------------------------------------------------------
+
+// Same rules and messages as the Create Skill window (validateSkillForm in
+// SkillEditorDialog.jsx), which also has an Icon field. Change both together.
+function withPendingPhrase(phrases, pending) {
+  const phrase = pending.trim();
+  return phrase && !phrases.includes(phrase) ? [...phrases, phrase] : phrases;
+}
+
+function validateSkillForm(form, phrases) {
+  const name = form.name.trim();
+  const instructions = form.instructions.trim();
+  if (!name) {
+    return { field: "name", message: "Name is required" };
+  }
+  if (name.length < 2) {
+    return { field: "name", message: "Name must be at least 2 characters" };
+  }
+  if (!instructions) {
+    return { field: "instructions", message: "Instructions are required" };
+  }
+  if (instructions.length < 10) {
+    return {
+      field: "instructions",
+      message: "Instructions should be at least 10 characters",
+    };
+  }
+  if (phrases.length === 0) {
+    return {
+      field: "trigger_phrases",
+      message: "Add at least one trigger phrase",
+    };
+  }
+  return null;
+}
+
 function SkillDetailPanel({
   skill,
   isEditing,
@@ -696,6 +743,7 @@ function SkillDetailPanel({
   const [phraseInput, setPhraseInput] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
 
   useEffect(() => {
     if (isEditing && skill) {
@@ -737,53 +785,67 @@ function SkillDetailPanel({
   };
 
   const handleSave = async () => {
-    if (!form.name.trim()) {
-      setError("Name is required");
+    const phrases = withPendingPhrase(form.trigger_phrases, phraseInput);
+    const invalid = validateSkillForm(form, phrases);
+    if (invalid) {
+      setError(invalid);
       return;
     }
-    if (!form.instructions.trim()) {
-      setError("Instructions are required");
-      return;
-    }
-    if (form.trigger_phrases.length === 0) {
-      setError("At least one trigger phrase is required");
-      return;
-    }
+    const payload = { ...form, trigger_phrases: phrases };
+    const isCurrent = captureFalconRequest();
     setSaving(true);
     setError(null);
     try {
-      const { createSkill, updateSkill } = await import(
-        "../hooks/useFalconAPI"
+      const { createSkill, updateSkill } = await importWithRecovery(
+        () => import("../hooks/useFalconAPI"),
       );
+      if (!isCurrent()) return;
       if (skill?.id && !skill.is_builtin && !skill.is_system) {
-        await updateSkill(skill.id, form);
+        await updateSkill(skill.id, payload);
       } else {
-        await createSkill(form);
+        await createSkill(payload);
       }
+      if (!isCurrent()) return;
       onSaved?.();
     } catch (err) {
-      setError(
-        err?.response?.data?.error ||
+      setError({
+        field: null,
+        message:
+          err?.response?.data?.error ||
           err?.response?.data?.detail ||
           err?.message ||
-          "Failed to save",
-      );
+          "Failed to save skill.",
+      });
     } finally {
       setSaving(false);
     }
   };
 
+  // Runs only from the confirm dialog; the Delete button just opens it.
   const handleDelete = async () => {
     if (!skill?.id || isSystem) return;
+    const isCurrent = captureFalconRequest();
     setSaving(true);
+    setError(null);
     try {
-      const { deleteSkill } = await import("../hooks/useFalconAPI");
+      const { deleteSkill } = await importWithRecovery(
+        () => import("../hooks/useFalconAPI"),
+      );
+      if (!isCurrent()) return;
       await deleteSkill(skill.id);
+      if (!isCurrent()) return;
       onSaved?.();
-    } catch {
-      /* silent */
+    } catch (err) {
+      setError({
+        field: null,
+        message: getSafeActionErrorMessage(
+          err,
+          "Skill could not be deleted. Try again.",
+        ),
+      });
     } finally {
       setSaving(false);
+      setConfirmDeleteOpen(false);
     }
   };
 
@@ -841,7 +903,7 @@ function SkillDetailPanel({
 
         {error && (
           <Typography sx={{ fontSize: 12, color: "error.main", mb: 1.5 }}>
-            {error}
+            {error.message}
           </Typography>
         )}
 
@@ -865,7 +927,7 @@ function SkillDetailPanel({
           required
           value={form.name}
           onChange={handleChange("name")}
-          error={!!error && !form.name.trim()}
+          error={error?.field === "name"}
           sx={{
             mb: 2,
             "& .MuiInputBase-root": { fontSize: 12, borderRadius: "8px" },
@@ -914,10 +976,10 @@ function SkillDetailPanel({
           minRows={6}
           maxRows={16}
           required
-          placeholder="Write detailed instructions for how Chat should behave when this skill is active..."
+          placeholder="Write detailed instructions for how Falcon should behave when this skill is active..."
           value={form.instructions}
           onChange={handleChange("instructions")}
-          error={!!error && !form.instructions.trim()}
+          error={error?.field === "instructions"}
           sx={{
             mb: 2,
             "& .MuiInputBase-root": {
@@ -951,7 +1013,7 @@ function SkillDetailPanel({
           size="small"
           fullWidth
           placeholder="e.g. /build-dataset"
-          error={!!error && form.trigger_phrases.length === 0}
+          error={error?.field === "trigger_phrases"}
           value={phraseInput}
           onChange={(e) => setPhraseInput(e.target.value)}
           onKeyDown={handleAddPhrase}
@@ -997,7 +1059,7 @@ function SkillDetailPanel({
               variant="text"
               size="small"
               color="error"
-              onClick={handleDelete}
+              onClick={() => setConfirmDeleteOpen(true)}
               disabled={saving}
               sx={{
                 ml: "auto",
@@ -1007,6 +1069,32 @@ function SkillDetailPanel({
             </Button>
           )}
         </Box>
+
+        <ConfirmDialog
+          open={confirmDeleteOpen}
+          onClose={() => {
+            if (!saving) setConfirmDeleteOpen(false);
+          }}
+          closeDisabled={saving}
+          title="Delete skill?"
+          content={
+            <Typography typography="s1" color="text.secondary">
+              <strong>{skill?.name}</strong> and its instructions are removed,
+              and Falcon stops using it. You can&apos;t undo this.
+            </Typography>
+          }
+          action={
+            <LoadingButton
+              size="small"
+              variant="contained"
+              color="error"
+              loading={saving}
+              onClick={handleDelete}
+            >
+              Delete skill
+            </LoadingButton>
+          }
+        />
       </Box>
     );
   }
@@ -1254,8 +1342,9 @@ SkillDetailPanel.propTypes = {
 function ConnectorDetailPanel({
   connector,
   isEditing,
-  onDisconnect,
+  onDelete,
   onReauth,
+  connecting,
   onToolToggle,
   onToolsAllow,
   toolError,
@@ -1268,62 +1357,132 @@ function ConnectorDetailPanel({
   onEdit,
 }) {
   const theme = useTheme();
+  const oauthClientReasonId = useId();
 
   // ── Inline editor state ──
+  // Only the fields the connector API stores, as the Settings editor sends
+  // them. The API never returns a saved secret, so that field starts blank.
   const [form, setForm] = useState({
     name: "",
     server_url: "",
-    api_key: "",
+    auth_type: "none",
+    auth_header_name: "",
+    auth_header_value: "",
     oauth_client_id: "",
     oauth_client_secret: "",
   });
-  const [showAdvanced, setShowAdvanced] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  // Kept with the connector it belongs to, so it never shows on another one.
+  const [deleteError, setDeleteError] = useState(null);
 
   useEffect(() => {
     if (isEditing && connector?.id) {
       setForm({
         name: connector.name || "",
         server_url: connector.server_url || connector.serverUrl || "",
-        api_key: "",
-        oauth_client_id:
-          connector.oauth_client_id || connector.oauthClientId || "",
+        auth_type: connector.auth_type || "none",
+        auth_header_name: connector.auth_header_name || "",
+        auth_header_value: "",
+        oauth_client_id: connector.oauth_client_id || "",
         oauth_client_secret: "",
       });
-      setShowAdvanced(!!(connector.oauth_client_id || connector.oauthClientId));
     } else if (isEditing) {
       setForm({
         name: "",
         server_url: "",
-        api_key: "",
+        auth_type: "none",
+        auth_header_name: "",
+        auth_header_value: "",
         oauth_client_id: "",
         oauth_client_secret: "",
       });
-      setShowAdvanced(false);
     }
     setError(null);
-  }, [isEditing, connector]);
+    // Keyed on the id, not the object: a connection answer or an OAuth
+    // callback replaces this connector's record while the user may be typing,
+    // and refilling the form then would throw their changes away.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isEditing, connector?.id]);
 
   const handleChange = (field) => (e) =>
     setForm((p) => ({ ...p, [field]: e.target.value }));
+
+  const usesSecret =
+    form.auth_type === "api_key" || form.auth_type === "bearer";
+  // A blank key keeps the saved one only if one of this kind was saved.
+  const keepsSavedSecret =
+    usesSecret &&
+    Boolean(connector?.id) &&
+    (connector.auth_type || "none") === form.auth_type;
+
+  // The saved client ID, and whether a secret is saved with it. A different
+  // client ID drops the saved secret, so then none is shown as saved.
+  const savedClientId = connector?.oauth_client_id || "";
+  const keepsSavedClientSecret =
+    form.auth_type === "oauth" &&
+    Boolean(connector?.id) &&
+    connector.auth_type === "oauth" &&
+    Boolean(connector.has_oauth_client_secret) &&
+    form.oauth_client_id.trim() === savedClientId;
 
   const handleSave = async () => {
     if (!form.name.trim() || !form.server_url.trim()) {
       setError("Name and Server URL are required");
       return;
     }
+    if (
+      form.auth_type === "oauth" &&
+      form.oauth_client_secret.trim() &&
+      !form.oauth_client_id.trim()
+    ) {
+      setError("Enter the OAuth client ID for this secret");
+      return;
+    }
+    if (form.auth_type === "api_key" && !form.auth_header_name.trim()) {
+      setError("Enter the header name for the API key");
+      return;
+    }
+    if (usesSecret && !keepsSavedSecret && !form.auth_header_value.trim()) {
+      setError(
+        form.auth_type === "api_key"
+          ? "Enter the API key"
+          : "Enter the bearer token",
+      );
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
-      const { createConnector, updateConnector } = await import(
-        "../hooks/useFalconAPI"
+      const { createConnector, updateConnector } = await importWithRecovery(
+        () => import("../hooks/useFalconAPI"),
       );
-      const payload = { ...form };
-      // Don't send empty optional fields
-      if (!payload.api_key) delete payload.api_key;
-      if (!payload.oauth_client_id) delete payload.oauth_client_id;
-      if (!payload.oauth_client_secret) delete payload.oauth_client_secret;
+      const fields = {
+        name: form.name,
+        server_url: form.server_url,
+        auth_type: form.auth_type,
+      };
+      if (form.auth_type === "api_key") {
+        fields.auth_header_name = form.auth_header_name;
+      }
+      if (usesSecret) fields.auth_header_value = form.auth_header_value;
+      if (form.auth_type === "oauth") {
+        // A new connector sends a client ID only if one was typed. A saved
+        // one is sent when it changed, and a blank value removes it. A blank
+        // secret is never sent: the server keeps the saved one.
+        const clientId = form.oauth_client_id.trim();
+        if (connector?.id ? clientId !== savedClientId : clientId) {
+          fields.oauth_client_id = clientId;
+        }
+        if (form.oauth_client_secret.trim()) {
+          fields.oauth_client_secret = form.oauth_client_secret.trim();
+        }
+      }
+      const payload = buildConnectorSavePayload(fields, {
+        preserveEmptySecret: Boolean(connector?.id),
+      });
 
       let result;
       if (connector?.id) {
@@ -1332,31 +1491,9 @@ function ConnectorDetailPanel({
         result = await createConnector(payload);
       }
 
-      const connectorData = result?.result || result;
-      onSaved?.();
-
-      // After creating/updating, auto-trigger authentication
-      if (connectorData?.id) {
-        try {
-          const { authenticateConnector } = await import(
-            "../hooks/useFalconAPI"
-          );
-          const authResult = await authenticateConnector(connectorData.id);
-          const authUrl =
-            authResult?.authorization_url ||
-            authResult?.auth_url ||
-            authResult?.oauth_url;
-          if (authUrl) {
-            window.open(
-              authUrl,
-              "falcon_oauth",
-              "width=600,height=700,popup=yes",
-            );
-          }
-        } catch {
-          // Auth will be retried via Re-authenticate button
-        }
-      }
+      // The panel selects the saved connector and authenticates it there, so
+      // a failed connection is shown on it instead of being dropped.
+      onSaved?.(result?.result || result);
     } catch (err) {
       setError(
         err?.response?.data?.error ||
@@ -1366,6 +1503,27 @@ function ConnectorDetailPanel({
       );
     } finally {
       setSaving(false);
+    }
+  };
+
+  // Runs only from the confirm dialog; the Delete connector button opens it.
+  const handleConfirmDelete = async () => {
+    const id = connector.id;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await onDelete(id);
+    } catch (err) {
+      setDeleteError({
+        id,
+        message: getSafeActionErrorMessage(
+          err,
+          "Connector could not be deleted. Try again.",
+        ),
+      });
+    } finally {
+      setDeleting(false);
+      setConfirmDeleteOpen(false);
     }
   };
 
@@ -1408,6 +1566,8 @@ function ConnectorDetailPanel({
   // ── Inline editor ──
   if (isEditing) {
     const isNew = !connector?.id;
+    const secretLabel =
+      form.auth_type === "api_key" ? "API key" : "Bearer token";
     const inputSx = {
       mb: 2,
       "& .MuiInputBase-root": {
@@ -1483,61 +1643,105 @@ function ConnectorDetailPanel({
           sx={inputSx}
         />
 
-        {/* Advanced settings — collapsible */}
-        <ButtonBase
-          component="div"
-          onClick={() => setShowAdvanced(!showAdvanced)}
+        <Typography
           sx={{
-            justifyContent: "flex-start",
-            textAlign: "left",
-            display: "flex",
-            alignItems: "center",
-            gap: 0.75,
-            mb: 2,
-            cursor: "pointer",
-            userSelect: "none",
+            fontSize: 12,
+            fontWeight: 600,
+            color: "text.secondary",
+            mb: 0.5,
           }}
         >
-          <Iconify
-            icon={
-              showAdvanced
-                ? "solar:alt-arrow-up-linear"
-                : "solar:alt-arrow-down-linear"
-            }
-            width={20}
-            sx={{ color: "text.secondary" }}
-          />
-          <Typography sx={{ fontSize: 12, fontWeight: 600 }}>
-            Advanced settings
-          </Typography>
-        </ButtonBase>
+          Authentication
+        </Typography>
+        <TextField
+          select
+          fullWidth
+          value={form.auth_type}
+          onChange={handleChange("auth_type")}
+          SelectProps={{ native: true }}
+          inputProps={{ "aria-label": "Authentication" }}
+          sx={inputSx}
+        >
+          <option value="none">None</option>
+          <option value="oauth">OAuth 2.0</option>
+          <option value="api_key">API Key</option>
+          <option value="bearer">Bearer Token</option>
+        </TextField>
 
-        {showAdvanced && (
+        {form.auth_type === "oauth" && (
           <>
+            <Typography
+              sx={{ fontSize: 12, color: "text.secondary", mt: -1, mb: 2 }}
+            >
+              After you save, Falcon opens the server&apos;s sign-in page in a
+              new window.
+            </Typography>
+            {/* The client the server issued for this connector. Left blank,
+                Falcon registers itself with the server. The secret is never
+                shown again once saved. */}
             <TextField
               fullWidth
               placeholder="OAuth Client ID (optional)"
               value={form.oauth_client_id}
               onChange={handleChange("oauth_client_id")}
+              inputProps={{
+                "aria-label": "OAuth Client ID (optional)",
+                "aria-describedby": oauthClientReasonId,
+              }}
               sx={inputSx}
             />
             <TextField
               fullWidth
-              placeholder="OAuth Client Secret (optional)"
               type="password"
+              autoComplete="new-password"
+              placeholder={
+                keepsSavedClientSecret
+                  ? "Saved (leave blank to keep it)"
+                  : "OAuth Client Secret (optional)"
+              }
               value={form.oauth_client_secret}
               onChange={handleChange("oauth_client_secret")}
+              inputProps={{
+                "aria-label": "OAuth Client Secret (optional)",
+                "aria-describedby": oauthClientReasonId,
+              }}
               sx={inputSx}
             />
-            <TextField
-              fullWidth
-              placeholder="API Key / Bearer Token (optional)"
-              type="password"
-              value={form.api_key}
-              onChange={handleChange("api_key")}
-              sx={inputSx}
-            />
+            <Typography
+              id={oauthClientReasonId}
+              sx={{ fontSize: 12, color: "text.secondary", mt: -1, mb: 2 }}
+            >
+              {keepsSavedClientSecret
+                ? "A client secret is saved. Leave the field blank to keep it."
+                : "Enter the client ID and secret the server issued. Leave both blank and Falcon registers itself."}
+            </Typography>
           </>
+        )}
+
+        {form.auth_type === "api_key" && (
+          <TextField
+            fullWidth
+            placeholder="Header name, e.g. X-API-Key"
+            value={form.auth_header_name}
+            onChange={handleChange("auth_header_name")}
+            sx={inputSx}
+          />
+        )}
+
+        {usesSecret && (
+          <TextField
+            fullWidth
+            type="password"
+            autoComplete="new-password"
+            placeholder={
+              keepsSavedSecret
+                ? `${secretLabel} (leave blank to keep the saved one)`
+                : secretLabel
+            }
+            value={form.auth_header_value}
+            onChange={handleChange("auth_header_value")}
+            sx={inputSx}
+          />
         )}
 
         {/* Trust warning */}
@@ -1576,6 +1780,7 @@ function ConnectorDetailPanel({
   }
 
   const tools = connector.tools || connector.discovered_tools || [];
+  const toolCount = tools.length || connector.tool_count || 0;
   const enabledNames = connector.enabled_tool_names || [];
   const isVerified = connector.is_verified ?? false;
   const isActive = connector.is_active ?? true;
@@ -1709,38 +1914,83 @@ function ConnectorDetailPanel({
       {/* Error banner */}
       {lastError && (
         <Alert severity="error" sx={{ mb: 2 }}>
-          {lastError}
+          {connectorErrorText(lastError)}
         </Alert>
       )}
 
-      {/* Action buttons */}
+      {deleteError?.id === connector.id && (
+        <Alert severity="error" sx={{ mb: 2 }}>
+          {deleteError.message}
+        </Alert>
+      )}
+
+      {/* Action buttons. Edit waits for a connection in flight: its answer
+          would land on the record being edited, after the new settings. */}
       <Box sx={{ display: "flex", gap: 1, mb: 3 }}>
         <Button
           size="small"
           variant="outlined"
           startIcon={<Iconify icon="solar:pen-linear" width={14} />}
           onClick={() => onEdit(connector)}
+          disabled={connecting}
         >
           Edit
         </Button>
         <Button
           size="small"
           variant="outlined"
-          startIcon={<Iconify icon="solar:refresh-linear" width={14} />}
+          startIcon={
+            connecting ? (
+              <CircularProgress size={12} color="inherit" />
+            ) : (
+              <Iconify icon="solar:refresh-linear" width={14} />
+            )
+          }
           onClick={() => onReauth?.(connector.id)}
+          disabled={connecting}
         >
-          Re-authenticate
+          {connecting ? "Connecting..." : "Re-authenticate"}
         </Button>
         <Button
           size="small"
           variant="outlined"
           color="error"
-          startIcon={<Iconify icon="solar:link-broken-linear" width={14} />}
-          onClick={() => onDisconnect(connector.id)}
+          startIcon={<Iconify icon="solar:trash-bin-trash-linear" width={14} />}
+          onClick={() => setConfirmDeleteOpen(true)}
         >
-          Disconnect
+          Delete connector
         </Button>
       </Box>
+
+      <ConfirmDialog
+        open={confirmDeleteOpen}
+        onClose={() => {
+          if (!deleting) setConfirmDeleteOpen(false);
+        }}
+        closeDisabled={deleting}
+        title="Delete connector?"
+        content={
+          <Typography typography="s1" color="text.secondary">
+            Falcon AI will lose access to <strong>{connector.name}</strong>
+            {toolCount > 0
+              ? ` and its ${toolCount} tool${toolCount === 1 ? "" : "s"}`
+              : ""}
+            . Its saved settings and credentials are removed and cannot be
+            recovered.
+          </Typography>
+        }
+        action={
+          <LoadingButton
+            size="small"
+            variant="contained"
+            color="error"
+            loading={deleting}
+            onClick={handleConfirmDelete}
+          >
+            Delete connector
+          </LoadingButton>
+        }
+      />
 
       {/* Tool permissions */}
       {tools.length > 0 && (
@@ -1918,8 +2168,9 @@ function ConnectorDetailPanel({
             sx={{ color: "text.disabled", mb: 1 }}
           />
           <Typography sx={{ fontSize: 12, color: "text.disabled" }}>
-            No tools discovered yet. Tools will appear after the connector
-            successfully connects.
+            {connecting
+              ? "Connecting to the server. Tools will appear here once it answers."
+              : "No tools discovered yet. Tools will appear after the connector successfully connects."}
           </Typography>
         </Box>
       )}
@@ -1951,12 +2202,15 @@ ConnectorDetailPanel.propTypes = {
     is_custom: PropTypes.bool,
     last_error: PropTypes.string,
     auth_type: PropTypes.string,
+    auth_header_name: PropTypes.string,
     oauth_client_id: PropTypes.string,
-    oauthClientId: PropTypes.string,
+    has_oauth_client_secret: PropTypes.bool,
+    tool_count: PropTypes.number,
   }),
   isEditing: PropTypes.bool,
-  onDisconnect: PropTypes.func,
+  onDelete: PropTypes.func,
   onReauth: PropTypes.func,
+  connecting: PropTypes.bool,
   onToolToggle: PropTypes.func,
   onToolsAllow: PropTypes.func,
   toolError: PropTypes.string,
@@ -2099,6 +2353,15 @@ export default function CustomizePanel() {
   const [loadingConnectors, setLoadingConnectors] = useState(false);
   const [isEditingSkill, setIsEditingSkill] = useState(false);
   const [isEditingConnector, setIsEditingConnector] = useState(false);
+  // Connectors whose authenticate request is in flight; their pane says so.
+  const [connectingIds, setConnectingIds] = useState([]);
+
+  // Read by the OAuth callback, which lands seconds after it starts:
+  // re-selecting the connector would close an editor opened meanwhile.
+  const editingConnectorRef = useRef(false);
+  useEffect(() => {
+    editingConnectorRef.current = isEditingConnector;
+  }, [isEditingConnector]);
 
   // Monotonic ticket for the detail fetch kicked off by handleSelectItem.
   // Bumped whenever the selection is cleared/changed out from under it, so a
@@ -2115,9 +2378,11 @@ export default function CustomizePanel() {
 
   // ---- Load data ----
   const loadSkills = useCallback(async () => {
+    const isCurrent = captureFalconRequest();
     setLoadingSkills(true);
     try {
       const data = await listSkills();
+      if (!isCurrent()) return;
       const results = data.results || data || [];
       const skillList = Array.isArray(results) ? results : [];
       setSkills(skillList);
@@ -2184,7 +2449,9 @@ export default function CustomizePanel() {
       // render what it is for.
       setConnectorDetailLoading(selectedTab === "connectors");
       try {
-        const api = await import("../hooks/useFalconAPI");
+        const api = await importWithRecovery(
+          () => import("../hooks/useFalconAPI"),
+        );
         if (selectedTab === "skills") {
           const resp = await api.getSkill(item.id);
           if (isStale()) return;
@@ -2259,13 +2526,6 @@ export default function CustomizePanel() {
     [abandonDetailRequest],
   );
 
-  const handleConnectorSaved = useCallback(() => {
-    abandonDetailRequest();
-    loadConnectors();
-    setSelectedItem(null);
-    setIsEditingConnector(false);
-  }, [loadConnectors, abandonDetailRequest]);
-
   // Listen for OAuth callback postMessage from popup
   useEffect(() => {
     const handler = async (event) => {
@@ -2298,7 +2558,20 @@ export default function CustomizePanel() {
           const data = await fetchConnectors();
           const results = data.results || data || [];
           const updated = results.find((c) => c.id === connectorId);
-          if (updated) await handleSelectItem(updated);
+          if (updated && !editingConnectorRef.current) {
+            await handleSelectItem(updated);
+          } else if (updated) {
+            // Re-selecting would close the editor and lose what the user
+            // typed in it. Refresh the record under it instead, so Cancel
+            // shows the signed-in connector; the form keeps its fields.
+            const { getConnector } = await importWithRecovery(
+              () => import("../hooks/useFalconAPI"),
+            );
+            const detail = await getConnector(connectorId);
+            setSelectedItem((prev) =>
+              prev?.id === connectorId ? detail : prev,
+            );
+          }
         } catch {
           // silent — loadConnectors already refreshed the list
         }
@@ -2310,8 +2583,11 @@ export default function CustomizePanel() {
 
   const handleReauth = useCallback(
     async (connectorId) => {
+      setConnectingIds((prev) => [...prev, connectorId]);
       try {
-        const { authenticateConnector } = await import("../hooks/useFalconAPI");
+        const { authenticateConnector } = await importWithRecovery(
+          () => import("../hooks/useFalconAPI"),
+        );
         const result = await authenticateConnector(connectorId);
         // Check for OAuth authorization URL (API may return camelCase or snake_case)
         const authUrl =
@@ -2322,10 +2598,18 @@ export default function CustomizePanel() {
           result?.result?.authorizationUrl ||
           result?.result?.authorization_url;
         if (authUrl) {
-          window.open(
+          const popup = window.open(
             authUrl,
             "falcon_oauth",
             "width=600,height=700,popup=yes",
+          );
+          // A blocked window comes back null: say so on the connector, and
+          // drop that note once a later try gets the window open.
+          setSelectedItem((prev) =>
+            prev?.id === connectorId &&
+            (!popup || prev.last_error === SIGN_IN_BLOCKED)
+              ? { ...prev, last_error: popup ? "" : SIGN_IN_BLOCKED }
+              : prev,
           );
           return; // postMessage handler will refresh when popup completes
         }
@@ -2333,34 +2617,56 @@ export default function CustomizePanel() {
         loadConnectors();
         const updatedConnector = result?.result || result;
         if (updatedConnector?.id) {
-          setSelectedItem(updatedConnector);
+          // A slow answer must not replace a connector picked since.
+          setSelectedItem((prev) =>
+            prev?.id === updatedConnector.id ? updatedConnector : prev,
+          );
         }
       } catch (err) {
-        const connector = connectors.find((c) => c.id === connectorId);
-        if (connector) {
-          setSelectedItem({
-            ...connector,
-            last_error:
-              err?.response?.data?.error ||
-              err?.response?.data?.message ||
-              "Authentication failed",
-          });
-        }
+        // Mark the record on screen, which keeps its tools; the list row has
+        // none, and a connector saved a moment ago is not in the list yet.
+        setSelectedItem((prev) =>
+          prev?.id === connectorId
+            ? {
+                ...prev,
+                last_error: toolActionErrorMessage(
+                  err,
+                  "Authentication failed.",
+                ),
+              }
+            : prev,
+        );
+      } finally {
+        setConnectingIds((prev) => prev.filter((id) => id !== connectorId));
       }
     },
-    [loadConnectors, connectors],
+    [loadConnectors],
   );
 
-  const handleDisconnect = useCallback(
+  // Select what was just saved (the save answers with the full record) and
+  // authenticate it there: an OAuth sign-in opens, and a failed connection
+  // shows on the connector instead of vanishing with the editor.
+  const handleConnectorSaved = useCallback(
+    (saved) => {
+      abandonDetailRequest();
+      loadConnectors();
+      setIsEditingConnector(false);
+      setToolError(null);
+      setDetailError(null);
+      setSelectedItem(saved?.id ? saved : null);
+      if (saved?.id) handleReauth(saved.id);
+    },
+    [loadConnectors, abandonDetailRequest, handleReauth, setToolError],
+  );
+
+  // Asked for by the confirm dialog. A failure reaches the dialog, which
+  // shows it on the connector.
+  const handleDeleteConnector = useCallback(
     async (connectorId) => {
-      try {
-        await deleteConnector(connectorId);
-        abandonDetailRequest();
-        setConnectors((prev) => prev.filter((c) => c.id !== connectorId));
-        setSelectedItem(null);
-      } catch {
-        // silent
-      }
+      await deleteConnector(connectorId);
+      abandonDetailRequest();
+      setConnectors((prev) => prev.filter((c) => c.id !== connectorId));
+      setSelectedItem(null);
     },
     [abandonDetailRequest],
   );
@@ -2415,8 +2721,9 @@ export default function CustomizePanel() {
           <ConnectorDetailPanel
             connector={selectedItem}
             isEditing={isEditingConnector}
-            onDisconnect={handleDisconnect}
+            onDelete={handleDeleteConnector}
             onReauth={handleReauth}
+            connecting={connectingIds.includes(selectedItem?.id)}
             onToolToggle={handleToolToggle}
             onToolsAllow={handleToolsAllow}
             toolError={toolError}

@@ -493,6 +493,55 @@ class BackupTests(unittest.TestCase):
         self.assertFalse(self.mutation_calls())
 
 
+class AutomaticLayoutTests(unittest.TestCase):
+    """The backup consumes the gate-owned layout; services and volumes it names as not covered get no backup."""
+
+    def layout(self, mutate=None):
+        raw = (ROOT / 'deploy/update/automatic-layout.json').read_bytes()
+        if mutate:
+            value = json.loads(raw)
+            mutate(value)
+            raw = json.dumps(value).encode()
+
+        class LayoutPath:
+            def __init__(self, *args):
+                pass
+
+            def with_name(self, name):
+                assert name == 'automatic-layout.json'
+                return self
+
+            def open(self, mode):
+                assert mode == 'rb'
+                return io.BytesIO(raw)
+
+        with mock.patch.object(backup, 'Path', LayoutPath):
+            return backup._automatic_layout()
+
+    def test_shipped_layout_names_hub_and_its_volumes_and_backs_up_exactly_three_volumes(self):
+        value = json.loads((ROOT / 'deploy/update/automatic-layout.json').read_bytes())
+        self.assertTrue({'hub-checker', 'hub-runner'} <= set(value['automatic_unsupported']['services']))
+        self.assertEqual(set(value['backup_coverage']), set(backup.VOLUMES))
+        self.assertFalse(set(value['automatic_unsupported']['volumes']) & set(backup.VOLUMES))
+        self.assertEqual(self.layout(), hashlib.sha256((ROOT / 'deploy/update/automatic-layout.json').read_bytes()).hexdigest())
+
+    def test_layout_without_the_not_covered_list_refuses(self):
+        with self.assertRaises(backup.BackupError):
+            self.layout(lambda value: value.pop('automatic_unsupported'))
+
+    def test_not_covered_list_cannot_claim_a_backed_up_volume(self):
+        def claim(value):
+            value['automatic_unsupported']['volumes']['app-data'] = 'Would drop the object store from the backup'
+        with self.assertRaises(backup.BackupError):
+            self.layout(claim)
+
+    def test_a_not_covered_volume_given_backup_coverage_refuses(self):
+        def cover(value):
+            value['backup_coverage']['hub-runner-data'] = copy.deepcopy(value['backup_coverage']['app-data'])
+        with self.assertRaises(backup.BackupError):
+            self.layout(cover)
+
+
 class ArchiveTests(unittest.TestCase):
     def verify(self, raw, volume_root=None):
         with tempfile.NamedTemporaryFile() as stream, tempfile.NamedTemporaryFile() as members:

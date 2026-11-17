@@ -10,6 +10,7 @@ against a row in that state.
 import importlib
 
 import pytest
+from django.db import connection
 
 from ee.falcon_ai.models import Skill
 
@@ -42,7 +43,7 @@ def test_builtin_whose_yaml_was_deleted_is_deactivated():
         workspace=None,
     )
 
-    _migration.resync_builtin_skills(_Apps(), None)
+    _migration.resync_builtin_skills(_Apps(), connection.schema_editor())
 
     retired = Skill.objects.get(slug="localize-errors", is_builtin=True)
     # Deactivated, not deleted: Conversation.active_skill points at these rows.
@@ -64,7 +65,7 @@ def test_workspace_skills_are_never_touched():
         workspace=None,
     )
 
-    _migration.resync_builtin_skills(_Apps(), None)
+    _migration.resync_builtin_skills(_Apps(), connection.schema_editor())
 
     mine.refresh_from_db()
     assert mine.is_active is True
@@ -73,7 +74,7 @@ def test_workspace_skills_are_never_touched():
 def test_surviving_builtins_match_the_yaml_tool_lists():
     from ai_tools.registry import registry
 
-    _migration.resync_builtin_skills(_Apps(), None)
+    _migration.resync_builtin_skills(_Apps(), connection.schema_editor())
 
     stale = {
         skill.slug: [n for n in skill.tool_names if registry.get(n) is None]
@@ -97,8 +98,8 @@ def test_cost_skill_resync_removes_the_cloud_only_dependency():
             "workspace": None,
         },
     )
-    _migration.resync_builtin_skills(_Apps(), None)
-    _migration.resync_builtin_skills(_Apps(), None)
+    _migration.resync_builtin_skills(_Apps(), connection.schema_editor())
+    _migration.resync_builtin_skills(_Apps(), connection.schema_editor())
     skill.refresh_from_db()
     assert skill.is_active
     assert "get_usage_overview" not in skill.tool_names

@@ -1,3 +1,5 @@
+from accounts.services.auth_cache import refresh_cached_access_user
+
 import base64
 import io
 
@@ -127,18 +129,12 @@ def _refresh_user_in_cached_tokens(user_id):
     active_tokens = AuthToken.objects.filter(user_id=user_id, is_active=True)
 
     for token in active_tokens.filter(auth_type=AuthTokenType.ACCESS.value):
-        cache_key = f"access_token_{token.id}"
-        if fresh_user is None:
-            cache.delete(cache_key)
-            continue
-        cached = cache.get(cache_key)
-        if cached:
-            cached["user"] = fresh_user
-            cache.set(
-                cache_key,
-                cached,
-                timeout=AUTH_TOKEN_EXPIRATION_TIME_IN_MINUTES * 60,
-            )
+        refresh_cached_access_user(
+            token.id,
+            fresh_user,
+            timeout=AUTH_TOKEN_EXPIRATION_TIME_IN_MINUTES * 60,
+            cache_backend=cache,
+        )
 
     for token in active_tokens.filter(auth_type=AuthTokenType.REFRESH.value):
         cache_key = f"refresh_token_{token.id}"

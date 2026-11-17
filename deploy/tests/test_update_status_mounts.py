@@ -422,7 +422,12 @@ class StatusOverlayComposeTests(StatusMountAssertions, unittest.TestCase):
         # Supply only test data for production's explicit interpolation requirements.
         production = (ROOT / "deploy/docker-compose.production.yml").read_text()
         for key in re.findall(r"\$\{([A-Z_0-9]+):\?", production):
-            self.environment[key] = "s08-test"
+            # A *_DIR key is a bind source (OMEGA_HUB_RUNNER_TLS_DIR for
+            # hub-checker): a bare word would read as an undeclared named volume.
+            if key.endswith("_DIR"):
+                self.environment[key] = str(self.directory / ("s08-" + key.lower()))
+            else:
+                self.environment[key] = "s08-test"
         self.environment.update({
             "FI_HOST_UPDATE_STATUS_DIR": str(self.source),
             "FI_HOST_UPDATE_STATUS_SLOT": SLOT,

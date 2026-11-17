@@ -1,0 +1,20 @@
+schema: "connector-manifest/v1#app"
+id: pylon
+version: 1.0.0
+name: Pylon
+description: "Support issues, accounts, contacts and knowledge base articles in Pylon."
+vendor:
+  name: Pylon
+  domains: [usepylon.com]
+eeCategory: communication
+group: other
+categories: [communication, customer-support]
+tags: [support, issues, knowledge-base]
+docsUrl: https://docs.usepylon.com/pylon-docs/integrations/pylon-mcp
+archetype: support-desk
+defaultProvider: mcp
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://docs.usepylon.com/pylon-docs/integrations/pylon-mcp
+    fetchedAt: 2026-10-21

@@ -1,0 +1,45 @@
+# Cronitor's SDK Integration key is the documented headless MCP credential.
+schema: "connector-manifest/v1#provider"
+app: cronitor
+id: api-key
+version: 1.1.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://cronitor.io/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: SDK Integration API key
+      help: "Copy your organization's existing SDK Integration key from API Settings. This organization-wide key may also be used by SDK or CLI installations; rotating it affects those consumers. MCP must be enabled for the organization. Supply the key without the Bearer prefix."
+      helpUrl: https://cronitor.io/docs/mcp-server
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_plan
+  source: https://cronitor.io/docs/mcp-server
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://cronitor.io/docs/mcp-server
+    fetchedAt: 2026-11-09
+  - fact: transport.variant
+    url: https://cronitor.io/docs/mcp-server
+    fetchedAt: 2026-11-09
+  - fact: auth.kind
+    url: https://cronitor.io/docs/mcp-server
+    fetchedAt: 2026-11-09
+  - fact: auth.credentialParts
+    url: https://cronitor.io/docs/mcp-server
+    fetchedAt: 2026-11-09

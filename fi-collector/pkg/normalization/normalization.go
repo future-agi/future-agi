@@ -94,6 +94,9 @@ func Normalize(attrs pcommon.Map, profile *Profile, names ...string) {
 			attrs.PutStr("fi.usage.scope", "turn")
 		}
 	}
+	// A Langfuse span is qualified by its own langfuse.* namespace, not by
+	// scope, and only fills keys the profile pass above left absent.
+	normalizeLangfuse(attrs)
 	if !NonAdditive(attrs) {
 		return
 	}

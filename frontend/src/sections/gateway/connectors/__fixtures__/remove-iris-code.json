@@ -1,0 +1,11 @@
+{
+  "result": {
+    "app": "iris-code",
+    "gateway_synced": true,
+    "removed_servers": ["iris-code"],
+    "removed_virtual_servers": ["iris-code"],
+    "revoked_credentials": [],
+    "version": 5
+  },
+  "status": true
+}

@@ -3,6 +3,7 @@
 // overlay shadow and the top of the scale the modal shadow (ds-tokens.js).
 import { dsCustomShadows } from "./ds-tokens";
 
+/** @returns {import("@mui/material/styles").Shadows} */
 export function shadows(mode) {
   const s = dsCustomShadows(mode);
   const scale = ["none"];

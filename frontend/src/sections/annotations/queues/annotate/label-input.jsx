@@ -20,8 +20,14 @@ import {
   useTheme,
 } from "@mui/material";
 import { alpha } from "@mui/material/styles";
-import { enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
+import { useNumberDraft } from "src/sections/annotations/queues/drafts/useNumberDraft";
+import NumberRule from "src/sections/annotations/queues/drafts/NumberRule";
+import { valueProblem } from "src/sections/annotations/queues/utils/label-rules";
+import {
+  isLabelValueEmpty,
+  isSameLabelValue,
+} from "src/sections/annotations/queues/utils/label-value";
 
 const LABEL_COLORS = {
   // eslint-disable-next-line no-restricted-syntax -- ds: encoding (annotation label type)
@@ -64,11 +70,13 @@ const Kbd = ({ children }) => (
 export default function LabelInput({
   label,
   value,
+  loadedValue,
   onChange,
   index,
   focused,
   hasError,
   textFlushRef,
+  entryRef,
   labelNotes,
   onLabelNotesChange,
 }) {
@@ -76,6 +84,19 @@ export default function LabelInput({
   const { palette } = useTheme();
   const color = LABEL_COLORS[type] || palette.text.disabled;
   const inputRef = useRef(null);
+  // Why a filled value does not fit the label's limits: said quietly while
+  // it is the answer the item was opened with (the limits changed since it
+  // was saved), and as an error once another value that breaks them was
+  // refused. Numbers say it in their own rule line.
+  const kept = isSameLabelValue(type, loadedValue, value);
+  const fitProblem =
+    type !== "numeric" && !isLabelValueEmpty(type, value) && (kept || hasError)
+      ? valueProblem(label, value)
+      : null;
+  const fitIsError = Boolean(fitProblem) && hasError && !kept;
+  // "(required)" means the field is empty; a refused filled field names its
+  // problem under the input instead.
+  const missing = hasError && isLabelValueEmpty(type, value);
 
   return (
     <Box
@@ -131,7 +152,7 @@ export default function LabelInput({
           <Typography component="span" color="error.main" sx={{ ml: 0.25 }}>
             *
           </Typography>
-          {hasError && (
+          {missing && (
             <Typography
               component="span"
               color="error.main"
@@ -196,10 +217,13 @@ export default function LabelInput({
 
         {type === "numeric" && (
           <NumericInput
+            name={label.name}
             settings={settings}
             value={value?.value ?? null}
             onChange={(val) => onChange({ value: val })}
             inputRef={inputRef}
+            entryRef={entryRef}
+            kept={kept}
           />
         )}
 
@@ -217,6 +241,18 @@ export default function LabelInput({
 
         {type === "thumbs_up_down" && (
           <ThumbsInput value={value} onChange={onChange} focused={focused} />
+        )}
+
+        {fitProblem && (
+          <Typography
+            typography="s3"
+            color={fitIsError ? "error.main" : "text.secondary"}
+            role={fitIsError ? "alert" : undefined}
+            data-testid="label-value-problem"
+            sx={{ display: "block", mt: 0.5 }}
+          >
+            {fitProblem.text}
+          </Typography>
         )}
       </Box>
 
@@ -252,11 +288,15 @@ Kbd.propTypes = {
 LabelInput.propTypes = {
   label: PropTypes.object.isRequired,
   value: PropTypes.any,
+  // The value the item was opened with (the stored answer), if any.
+  loadedValue: PropTypes.any,
   onChange: PropTypes.func.isRequired,
   index: PropTypes.number,
   focused: PropTypes.bool,
   hasError: PropTypes.bool,
   textFlushRef: PropTypes.any,
+  // KH B1: a numeric field's pending refusal (useEntryRefusals().refFor(id)).
+  entryRef: PropTypes.any,
   labelNotes: PropTypes.string,
   onLabelNotesChange: PropTypes.func,
 };
@@ -650,33 +690,31 @@ CategoricalInput.propTypes = {
 // ---------------------------------------------------------------------------
 // Numeric
 // ---------------------------------------------------------------------------
-function NumericInput({ settings, value, onChange, inputRef }) {
+function NumericInput({
+  name,
+  settings,
+  value,
+  onChange,
+  inputRef,
+  entryRef,
+  kept,
+}) {
   const min = settings.min ?? 0;
   const max = settings.max ?? 10;
   const rawStep = settings.step_size ?? settings.step ?? 1;
   const step = Number(rawStep) > 0 ? Number(rawStep) : 1;
   const displayType = settings.display_type || "slider";
 
-  const handleNumberChange = (event) => {
-    const raw = event.target.value;
-    if (raw === "") {
-      onChange(null);
-      return;
-    }
-    const n = Number(raw);
-    if (Number.isNaN(n)) return;
-    if (n > max) {
-      enqueueSnackbar(`Maximum value is ${max} only`, { variant: "warning" });
-      return;
-    }
-
-    if (/^-?0\d/.test(raw)) event.target.value = String(n);
-    onChange(n);
-  };
-
-  const handleNumberBlur = () => {
-    if (value !== null && value !== undefined && value < min) onChange(min);
-  };
+  // KH B1: a typed number reaches the score only when it fits the rule;
+  // the rule and any refusal show under the field (no silent clamp).
+  const entry = useNumberDraft({
+    name,
+    settings,
+    value,
+    onChange,
+    entryRef,
+    kept,
+  });
 
   if (displayType === "button") {
     const buttonValues = [];
@@ -714,51 +752,74 @@ function NumericInput({ settings, value, onChange, inputRef }) {
           inputRef={inputRef}
           type="number"
           size="small"
-          value={value ?? ""}
-          onChange={handleNumberChange}
-          onBlur={handleNumberBlur}
-          inputProps={{ min, max, step }}
+          value={entry.text}
+          onChange={entry.onChange}
+          onBlur={entry.onBlur}
+          error={Boolean(entry.error)}
+          inputProps={{ min, max, step, "aria-label": name }}
           sx={{
             width: 96,
             "& .MuiOutlinedInput-root": { fontSize: 12, color: "text.primary" },
             "& input": { textAlign: "center", px: 0.5 },
           }}
         />
+        <NumberRule entry={entry} />
       </Stack>
     );
   }
 
+  // HO S5: an unscored label is not a score at the
+  // minimum: no thumb, no filled track, read as `Not scored`. Its value sits
+  // one step below the rail, so a click anywhere on the rail (the minimum
+  // too) is a change and sets the stepped value; the thumb then shows.
+  const unscored = value == null;
   return (
-    <Stack direction="row" spacing={2} alignItems="center">
-      <Slider
-        value={value ?? min}
-        min={min}
-        max={max}
-        step={step}
-        onChange={(_, v) => onChange(v)}
-        sx={{ flex: 1, color: "status.info.fg" }}
-      />
-      <TextField
-        inputRef={inputRef}
-        type="number"
-        size="small"
-        value={value ?? min}
-        onChange={handleNumberChange}
-        onBlur={handleNumberBlur}
-        inputProps={{ min, max, step }}
-        sx={{
-          width: 64,
-          "& .MuiOutlinedInput-root": { fontSize: 12, color: "text.primary" },
-          "& input": { textAlign: "center", px: 0.5 },
-        }}
-      />
+    <Stack spacing={0.5}>
+      <Stack direction="row" spacing={2} alignItems="center">
+        <Slider
+          value={unscored ? min - step : value}
+          min={min}
+          max={max}
+          step={step}
+          onChange={(_, v) => onChange(v)}
+          getAriaValueText={unscored ? () => "Not scored" : undefined}
+          data-unscored={unscored ? "true" : undefined}
+          sx={{
+            flex: 1,
+            color: "status.info.fg",
+            ...(unscored && {
+              "& .MuiSlider-track": { display: "none" },
+              "& .MuiSlider-thumb:not(.Mui-focusVisible)": { opacity: 0 },
+            }),
+          }}
+        />
+        <TextField
+          inputRef={inputRef}
+          type="number"
+          size="small"
+          value={entry.text}
+          onChange={entry.onChange}
+          onBlur={entry.onBlur}
+          error={Boolean(entry.error)}
+          inputProps={{ min, max, step, "aria-label": name }}
+          sx={{
+            width: 64,
+            "& .MuiOutlinedInput-root": { fontSize: 12, color: "text.primary" },
+            "& input": { textAlign: "center", px: 0.5 },
+          }}
+        />
+      </Stack>
+      <NumberRule entry={entry} />
     </Stack>
   );
 }
 
 NumericInput.propTypes = {
+  name: PropTypes.string,
   settings: PropTypes.object,
   value: PropTypes.number,
   onChange: PropTypes.func.isRequired,
   inputRef: PropTypes.any,
+  entryRef: PropTypes.any,
+  kept: PropTypes.bool,
 };

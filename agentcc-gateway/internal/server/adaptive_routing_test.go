@@ -238,6 +238,9 @@ func TestAdaptiveReloadSharesLiveCircuitBreaker(t *testing.T) {
 		"slow": {BaseURL: slow.URL, APIFormat: "openai", Models: []string{"adaptive-sample"}},
 	}
 	cfg.Routing = adaptiveRoutingConfig()
+	// The failing provider is listed first, so the failover's first selection
+	// is the one that fails whichever strategy instance makes it.
+	cfg.Routing.Targets = map[string][]config.RoutingTargetConfig{"adaptive-sample": {{Provider: "slow"}, {Provider: "fast"}}}
 	cfg.Routing.Adaptive.UpdateInterval = time.Hour
 	cfg.Routing.CircuitBreaker = config.CircuitBreakerConfig{Enabled: true, FailureThreshold: 1, Cooldown: time.Hour}
 	cfg.Routing.Failover = config.FailoverConfig{Enabled: true, MaxAttempts: 2}
@@ -253,7 +256,7 @@ func TestAdaptiveReloadSharesLiveCircuitBreaker(t *testing.T) {
 	if err := srv.handlers.ReloadRouting(cfg, srv.registry); err != nil {
 		t.Fatal(err)
 	}
-	// Resolution picks fast; failover's next selection tries slow, opens its
+	// The failover tries slow first, opens its
 	// breaker and succeeds on fast. The monitor must see that same open breaker.
 	if status, _ := adaptiveHTTP(t, gateway, "adaptive-sample", "synthetic-reload-probe", false); status != http.StatusOK || slowCalls.Load() == 0 {
 		t.Fatal("expected successful failover after a synthetic upstream failure")

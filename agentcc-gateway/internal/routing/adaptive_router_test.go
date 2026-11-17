@@ -23,10 +23,27 @@ func adaptiveTestConfig() config.RoutingConfig {
 	}
 }
 
+// bindRouterHealth gives r's adaptive strategy the router's own latency
+// tracker and health monitor, as the server does at startup.
+func bindRouterHealth(r *Router) {
+	BindStrategyDeps(r, func() StrategyDeps {
+		return StrategyDeps{Latency: r.GetLatencyTracker(), Health: r.GetHealthMonitor()}
+	})
+}
+
+// The factory never hands back round-robin for "adaptive": it returns the
+// adaptive strategy itself, which waits for its deps and says so.
 func TestAdaptiveFactoryDoesNotSilentlyUseRoundRobin(t *testing.T) {
 	strategy, err := NewStrategy("adaptive")
-	if err == nil || strategy != nil {
-		t.Fatalf("NewStrategy(adaptive) = (%v, %v), want an explicit dependency error", strategy, err)
+	if err != nil {
+		t.Fatalf("NewStrategy(adaptive): %v", err)
+	}
+	a, ok := strategy.(*AdaptiveStrategy)
+	if !ok || a.Name() != "adaptive" {
+		t.Fatalf("NewStrategy(adaptive) = %T named %q, want *AdaptiveStrategy named adaptive", strategy, strategy.Name())
+	}
+	if !a.strategyDepsCell().awaits() {
+		t.Fatal("an adaptive strategy built without deps must report that it awaits them")
 	}
 }
 
@@ -46,6 +63,10 @@ func TestAdaptiveRouterLearnsFromLiveHealth(t *testing.T) {
 	if hm == nil || hm.tracker != r.GetLatencyTracker() {
 		t.Fatal("router must expose the monitor backed by its latency tracker")
 	}
+	if !StrategyAwaitsDeps(r) {
+		t.Fatal("the router's adaptive strategy must await its deps until the server binds them")
+	}
+	bindRouterHealth(r)
 
 	for i, want := range []string{"fast", "slow"} {
 		selected, err := r.Select("model")
@@ -65,18 +86,11 @@ func TestAdaptiveRouterLearnsFromLiveHealth(t *testing.T) {
 	r.RecordLatency("fast", 15*time.Millisecond)
 	r.RecordLatency("slow", 750*time.Millisecond)
 
-	adaptive, ok := r.defaultStrategy.(*AdaptiveStrategy)
-	if !ok {
+	if _, ok := r.defaultStrategy.(*AdaptiveStrategy); !ok {
 		t.Fatalf("default strategy type = %T, want *AdaptiveStrategy", r.defaultStrategy)
 	}
-	// Advance deterministically without sleeping for the periodic ticker.
-	adaptive.phase.Store(1)
-	adaptive.recalculateWeights()
-	weights := adaptive.GetWeights()
-	if weights["fast"] <= weights["slow"] {
-		t.Fatalf("adaptive weights did not favor the healthy/fast provider: %v", weights)
-	}
-
+	// The strategy reads the live health at every selection: no update tick
+	// is needed between recording the results and ranking by them.
 	fastSelections := 0
 	for i := 0; i < 300; i++ {
 		selected, err := r.Select("model")
@@ -88,7 +102,7 @@ func TestAdaptiveRouterLearnsFromLiveHealth(t *testing.T) {
 		}
 	}
 	if fastSelections <= 200 {
-		t.Fatalf("adaptive selection ignored healthy provider weighting: %d/300", fastSelections)
+		t.Fatalf("adaptive selection ignored the healthy, fast provider: %d/300", fastSelections)
 	}
 }
 
@@ -122,6 +136,9 @@ func TestAdaptiveRouterReusesMonitorAfterRebuild(t *testing.T) {
 	replacement.Close()
 }
 
+// Close never waits on anything: adaptive routing owns no background updater,
+// so closing a router returns at once, also while the health monitor is busy
+// and also when called again.
 func TestAdaptiveCloseWaitsForUpdater(t *testing.T) {
 	cfg := adaptiveTestConfig()
 	cfg.Adaptive.UpdateInterval = time.Millisecond
@@ -129,42 +146,20 @@ func TestAdaptiveCloseWaitsForUpdater(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer r.Close()
-	adaptive := r.defaultStrategy.(*AdaptiveStrategy)
-	// Block the real updater in GetAllHealth after it enters the active phase.
 	r.healthMonitor.mu.Lock()
-	adaptive.requestCount.Store(int64(cfg.Adaptive.LearningRequests))
-	deadline := time.Now().Add(5 * time.Second)
-	for adaptive.GetPhase() != "active" && time.Now().Before(deadline) {
-		time.Sleep(time.Millisecond)
-	}
-	if adaptive.GetPhase() != "active" {
-		r.healthMonitor.mu.Unlock()
-		t.Fatal("background updater did not enter the active phase")
-	}
 	stopped := make(chan struct{})
 	go func() {
+		r.Close()
 		r.Close()
 		close(stopped)
 	}()
 	select {
 	case <-stopped:
 		r.healthMonitor.mu.Unlock()
-		t.Fatal("Close returned while the adaptive updater was still running")
-	case <-time.After(20 * time.Millisecond):
-	}
-	r.healthMonitor.mu.Unlock()
-	select {
-	case <-stopped:
 	case <-time.After(5 * time.Second):
-		t.Fatal("Close did not finish after the updater was released")
+		r.healthMonitor.mu.Unlock()
+		t.Fatal("Close waited on the health monitor: adaptive routing has no updater to join")
 	}
-	select {
-	case <-adaptive.doneCh:
-	default:
-		t.Fatal("Close returned without joining the updater")
-	}
-	r.Close()
 }
 
 func TestAdaptiveRouterRejectsMonitorWithNoLatencyTracker(t *testing.T) {

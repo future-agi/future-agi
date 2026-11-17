@@ -18,6 +18,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import axios, { endpoints } from "src/utils/axios";
 import logger from "src/utils/logger";
+import { getAgentDefinitionCreationErrorMessage } from "src/api/agent-definition/agent-definition-version";
 import { useNavigate } from "react-router";
 import { paths } from "src/routes/paths";
 import { useSnackbar } from "notistack";
@@ -64,6 +65,9 @@ const CreateNewAgentDefinitionView = () => {
   const { enqueueSnackbar } = useSnackbar();
   const [_, setError] = useState("");
   const livekitValidated = watch("_livekitCredentialsValid");
+  // On Future AGI Cloud the check is skipped (never verified); that must not
+  // block creating the agent.
+  const livekitSkipped = watch("_livekitCredentialsSkipped");
 
   const watchedValues = watch();
   const canProceed = useMemo(() => {
@@ -112,13 +116,19 @@ const CreateNewAgentDefinitionView = () => {
 
     const hasErrors = currentRequired.some((field) => !!errors[field]);
 
-    // LiveKit credentials must be validated on step 1
-    if (currentStep === 1 && isLiveKitProvider(provider) && !livekitValidated) {
+    // LiveKit credentials must be validated on step 1, unless the server
+    // skipped the check (Future AGI Cloud), which never blocks the step.
+    if (
+      currentStep === 1 &&
+      isLiveKitProvider(provider) &&
+      !livekitValidated &&
+      !livekitSkipped
+    ) {
       return false;
     }
 
     return allFilled && !hasErrors;
-  }, [watchedValues, errors, currentStep, livekitValidated]); // 👈 dependencies
+  }, [watchedValues, errors, currentStep, livekitValidated, livekitSkipped]); // 👈 dependencies
 
   const handleNext = async () => {
     // @ts-ignore
@@ -279,23 +289,7 @@ const CreateNewAgentDefinitionView = () => {
         },
       });
     } catch (err) {
-      const apiError = err.response?.data;
-      let message = "Failed to create agent definition. Please try again.";
-      if (apiError) {
-        if (apiError.error) {
-          message = apiError.error;
-        }
-
-        if (apiError.details) {
-          // Flatten all field errors into a single string
-          const fieldErrors = Object.values(apiError.details).flat().join(" ");
-          if (fieldErrors) message = fieldErrors;
-        }
-
-        if (apiError.details?.non_field_errors?.length) {
-          message = apiError.details.non_field_errors.join(" ");
-        }
-      }
+      const message = getAgentDefinitionCreationErrorMessage(err);
 
       setError(message);
       enqueueSnackbar(message, { variant: "error" });

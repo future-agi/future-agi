@@ -25,9 +25,10 @@ from rest_framework import status
 from rest_framework.test import APIClient, APITestCase
 
 from accounts.models.organization import Organization
+from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.user import User
 from accounts.models.workspace import Workspace
-from model_hub.models.api_key import SecretModel
+from model_hub.models.api_key import ApiKey, SecretModel
 from model_hub.models.choices import (
     CellStatus,
     DatasetSourceChoices,
@@ -43,6 +44,7 @@ from model_hub.views.dynamic_columns import (
     ExtractEntitiesView,
     ExtractJsonColumnView,
 )
+from tfc.constants.levels import Level
 from tfc.constants.roles import OrganizationRoles
 from tfc.middleware.workspace_context import set_workspace_context
 
@@ -63,6 +65,13 @@ class DynamicColumnsBaseTestCase(APITestCase):
             name="Test User",
             organization=cls.organization,
             organization_role=OrganizationRoles.OWNER,
+        )
+        OrganizationMembership.no_workspace_objects.create(
+            user=cls.user,
+            organization=cls.organization,
+            role=OrganizationRoles.OWNER,
+            level=Level.OWNER,
+            is_active=True,
         )
 
         cls.other_user = User.objects.create_user(
@@ -841,11 +850,8 @@ class TestGetOperationConfigView(DynamicColumnsBaseTestCase):
 
         assert response.status_code == status.HTTP_200_OK
         result = response.json()["result"]
-        # Check column_id is present
-        assert "column_id" in result
-        # Check metadata is present and non-empty
-        assert "metadata" in result
-        assert result["metadata"] is not None
+        assert result["column_id"] == str(column.id)
+        assert result["metadata"] == {"json_key": "name", "concurrency": 5}
 
     def test_get_config_other_organization(self):
         """Test that column from other organization is not accessible."""
@@ -969,7 +975,7 @@ class TestRerunOperationView(DynamicColumnsBaseTestCase):
     @patch("model_hub.views.dynamic_columns.classify_column_async.delay")
     def test_rerun_uses_stored_metadata_when_config_is_omitted(self, mock_task):
         """Test rerun uses stored operation config when no override is sent."""
-        dataset, columns, _ = self.create_test_dataset()
+        dataset, columns, rows = self.create_test_dataset()
         column = columns[0]
         labels = ["positive", "negative"]
         column.metadata = {
@@ -983,9 +989,11 @@ class TestRerunOperationView(DynamicColumnsBaseTestCase):
 
         url = reverse("rerun-operation", kwargs={"column_id": str(column.id)})
 
-        response = self.client.post(
-            url, data={"operation_type": "classify"}, format="json"
-        )
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.post(
+                url, data={"operation_type": "classify"}, format="json"
+            )
+            mock_task.assert_not_called()
 
         assert response.status_code == status.HTTP_200_OK
         mock_task.assert_called_once_with(
@@ -996,12 +1004,13 @@ class TestRerunOperationView(DynamicColumnsBaseTestCase):
             dataset.id,
             str(column.id),
             True,
+            row_ids=[str(row.id) for row in rows],
         )
 
     @patch("model_hub.views.dynamic_columns.add_api_column_async.delay")
     def test_rerun_api_call_uses_flat_stored_metadata(self, mock_task):
         """Test API-call rerun accepts metadata shape created by add-api-column."""
-        dataset, columns, _ = self.create_test_dataset()
+        dataset, columns, rows = self.create_test_dataset()
         column = columns[0]
         column.metadata = {
             "url": "https://example.com/data",
@@ -1016,9 +1025,11 @@ class TestRerunOperationView(DynamicColumnsBaseTestCase):
 
         url = reverse("rerun-operation", kwargs={"column_id": str(column.id)})
 
-        response = self.client.post(
-            url, data={"operation_type": "api_call"}, format="json"
-        )
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.post(
+                url, data={"operation_type": "api_call"}, format="json"
+            )
+            mock_task.assert_not_called()
 
         assert response.status_code == status.HTTP_200_OK
         mock_task.assert_called_once_with(
@@ -1034,6 +1045,7 @@ class TestRerunOperationView(DynamicColumnsBaseTestCase):
             3,
             str(column.id),
             True,
+            row_ids=[str(row.id) for row in rows],
         )
 
     @patch("model_hub.views.dynamic_columns.classify_column_async.delay")
@@ -1055,22 +1067,33 @@ class TestRerunOperationView(DynamicColumnsBaseTestCase):
 
         url = reverse("rerun-operation", kwargs={"column_id": str(column.id)})
 
-        response = self.client.post(
-            url,
-            data={
-                "operation_type": "classify",
-                "config": {
-                    "labels": ["positive", "negative"],
-                    "language_model_id": "gpt-4o",
-                    "column_id": str(columns[1].id),
-                    "concurrency": 5,
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.post(
+                url,
+                data={
+                    "operation_type": "classify",
+                    "config": {
+                        "labels": ["positive", "negative"],
+                        "language_model_id": "gpt-4o",
+                        "column_id": str(columns[1].id),
+                        "concurrency": 5,
+                    },
                 },
-            },
-            format="json",
-        )
+                format="json",
+            )
+            mock_task.assert_not_called()
 
         assert response.status_code == status.HTTP_200_OK
-        mock_task.assert_called_once()
+        mock_task.assert_called_once_with(
+            str(columns[1].id),
+            ["positive", "negative"],
+            "gpt-4o",
+            5,
+            dataset.id,
+            str(column.id),
+            True,
+            row_ids=[str(row.id) for row in rows],
+        )
 
 
 # =============================================================================
@@ -1318,8 +1341,9 @@ class TestAddVectorDBColumnView(DynamicColumnsBaseTestCase):
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
+    @patch("model_hub.views.dynamic_columns.serving_available", return_value=True)
     @patch("model_hub.views.dynamic_columns.add_vector_db_column_async.delay")
-    def test_vector_db_success(self, mock_task):
+    def test_vector_db_success(self, mock_task, _serving_available):
         """Test successful vector DB column creation."""
         dataset, columns, _ = self.create_test_dataset()
 
@@ -1328,6 +1352,14 @@ class TestAddVectorDBColumnView(DynamicColumnsBaseTestCase):
             name="Test Pinecone Key",
             key="test-pinecone-api-key",  # key is encrypted on save
             organization=self.organization,
+            workspace=self.workspace,
+        )
+        ApiKey.no_workspace_objects.create(
+            organization=self.organization,
+            workspace=self.workspace,
+            user=self.user,
+            provider="openai",
+            key="synthetic-embedding-key",
         )
 
         url = reverse("add_vector_db_column", kwargs={"dataset_id": str(dataset.id)})

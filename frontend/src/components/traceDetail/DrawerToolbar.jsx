@@ -18,6 +18,9 @@ import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import { useDeploymentMode } from "src/hooks/useDeploymentMode";
 
+// Shown on a control this release keeps visible but cannot run.
+const NOT_IN_RELEASE = "Not available in this release";
+
 // Shared 24px bordered pill button
 export const ToolbarPill = React.forwardRef(
   ({ icon, label, onClick, sx }, ref) => (
@@ -346,8 +349,41 @@ const DrawerToolbar = ({
           )}
         </Box>
 
-        {/* "+" create view button — hidden in read-only mode */}
-        {!readOnly && (
+        {/* "+" create view button — works only when the drawer can create a
+            view it shows as a tab; otherwise shown disabled with a reason and
+            no click path; hidden in read-only mode */}
+        {!readOnly && !onCreateTab && (
+          <CustomTooltip
+            show
+            describeChild
+            title={NOT_IN_RELEASE}
+            placement="bottom"
+            arrow
+            size="small"
+          >
+            <ButtonBase
+              aria-label="Create new view"
+              aria-disabled
+              disableRipple
+              sx={{
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                height: 20,
+                width: 20,
+                borderRadius: "4px",
+                ml: 0.5,
+                flexShrink: 0,
+                color: "text.disabled",
+                opacity: 0.5,
+                cursor: "not-allowed",
+              }}
+            >
+              <Iconify icon="solar:add-linear" width={14} />
+            </ButtonBase>
+          </CustomTooltip>
+        )}
+        {!readOnly && onCreateTab && (
           <CustomTooltip
             show
             title="Create new view"
@@ -356,7 +392,8 @@ const DrawerToolbar = ({
             size="small"
           >
             <ButtonBase
-              onClick={(e) => onCreateTab?.(e)}
+              aria-label="Create new view"
+              onClick={(e) => onCreateTab(e)}
               sx={{
                 display: "inline-flex",
                 alignItems: "center",

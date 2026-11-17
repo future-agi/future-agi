@@ -26,10 +26,34 @@ from django.db import migrations
 
 logger = logging.getLogger(__name__)
 
+UPDATE_SAFETY = {
+    "schema_version": 1,
+    "risk_classes": ["data_migration"],
+    "tables": ["postgres:tracer_eval_task"],
+    "mitigation": (
+        "Renames the inner key of tracer_eval_task.filters from "
+        "span_attributes_filters to filters; when both keys exist it keeps filters "
+        "and drops the legacy key. Reads every eval task with "
+        "iterator(chunk_size=500) and saves only a row that has the legacy key, with "
+        "save(update_fields=['filters']); a row that raises is logged and left "
+        "unchanged. The migration is atomic: every saved row stays locked until the "
+        "step commits, and a failed run rolls back as a whole. Row scale: one row per "
+        "eval task, soft-deleted rows included; tracer_eval_task is a registered "
+        "high-volume table. Second run: a renamed row no longer has the legacy key "
+        "and is skipped; a re-run would still rename rows written since that carry "
+        "the legacy key. No schema change. The reverse is not a no-op: it renames "
+        "filters back to span_attributes_filters on rows that have filters and no "
+        "legacy key."
+    ),
+    "reviewer": "<actual-github-login>",
+    "review": "<actual-PR-review-discussion-permalink>",
+    "large_volume_rehearsal": True,
+}
 
-def _rename_in_eval_task_filters(apps, stats):
+
+def _rename_in_eval_task_filters(apps, stats, alias):
     EvalTask = apps.get_model("tracer", "EvalTask")
-    for et in EvalTask.objects.iterator(chunk_size=500):
+    for et in EvalTask.objects.using(alias).iterator(chunk_size=500):
         try:
             f = et.filters
             if not isinstance(f, dict):
@@ -44,7 +68,7 @@ def _rename_in_eval_task_filters(apps, stats):
             else:
                 f.pop("span_attributes_filters")
             et.filters = f
-            et.save(update_fields=["filters"])
+            et.save(using=alias, update_fields=["filters"])
             stats["renamed"] += 1
         except Exception as e:
             stats["failed"] += 1
@@ -77,7 +101,7 @@ def _restore_in_eval_task_filters(apps, stats):
 
 def forwards(apps, schema_editor):
     stats = {"renamed": 0, "failed": 0}
-    _rename_in_eval_task_filters(apps, stats)
+    _rename_in_eval_task_filters(apps, stats, schema_editor.connection.alias)
     print(
         f"[rename_eval_task_filters_key] {stats['renamed']} eval tasks "
         f"renamed, {stats['failed']} rows skipped due to errors"

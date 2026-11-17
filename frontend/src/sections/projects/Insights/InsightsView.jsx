@@ -10,6 +10,7 @@ import {
   useMediaQuery,
 } from "@mui/material";
 import { paths } from "src/routes/paths";
+import ConfirmDialog from "src/sections/common/ux/ConfirmDialog";
 import {
   INSIGHTS_NEW_PARAM,
   INSIGHTS_SEED_PARAM,
@@ -74,6 +75,14 @@ export default function InsightsView() {
   });
   const [savedCollapsed, setCollapsed] = useState(readRailCollapsed);
   const collapsed = savedCollapsed ?? !railFits;
+  // A new report with work in it: leaving it asks first.
+  const newKey = seedKey || lens || "new";
+  const [newDirty, setNewDirty] = useState(false);
+  const [pendingLeave, setPendingLeave] = useState(null);
+  const leaveNew = (move) => {
+    if (isNew && newDirty) setPendingLeave(() => move);
+    else move();
+  };
 
   // Each move replaces the report's params but keeps the Observe page's
   // `tab=insights`; without it the tab bar falls back to Traces.
@@ -173,12 +182,15 @@ export default function InsightsView() {
           </Alert>
         )}
         <NewReport
-          key={seedKey || lens || "new"}
+          key={newKey}
           projectId={observeId}
           seed={seed}
           initialLens={lens}
           configs={configs.data}
-          onCancel={() => go(reportId ? { [REPORT_PARAM]: reportId } : {})}
+          onDirtyChange={setNewDirty}
+          onCancel={() =>
+            leaveNew(() => go(reportId ? { [REPORT_PARAM]: reportId } : {}))
+          }
           // Replace the new-report entry so Back from the report skips it.
           onStarted={(configId, nextRunId) =>
             showRun(configId, nextRunId, { replace: true })
@@ -245,8 +257,13 @@ export default function InsightsView() {
             if (collapsed) toggleRail();
           } else toggleRail();
         }}
-        onNew={newReport}
-        onOpen={openReport}
+        onNew={(nextLens) => {
+          const move = () => newReport(nextLens);
+          // The new report already open stays as it is.
+          if ((nextLens || "new") === newKey) move();
+          else leaveNew(move);
+        }}
+        onOpen={(id) => leaveNew(() => openReport(id))}
         onRerun={setRerunConfig}
         onDeleted={(id) => {
           if (id === reportId) go({}, { replace: true });
@@ -274,6 +291,18 @@ export default function InsightsView() {
           setRerunConfig(null);
           showRun(configId, nextRunId);
         }}
+      />
+      <ConfirmDialog
+        open={Boolean(pendingLeave)}
+        title="Discard this report setup?"
+        body="Your question, instructions, attributes and AI draft will be lost."
+        confirmLabel="Discard"
+        cancelLabel="Keep editing"
+        onConfirm={() => {
+          setPendingLeave(null);
+          pendingLeave?.();
+        }}
+        onClose={() => setPendingLeave(null)}
       />
     </Box>
   );

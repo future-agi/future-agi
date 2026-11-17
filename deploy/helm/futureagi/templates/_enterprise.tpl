@@ -81,7 +81,8 @@ validate.yaml requires the name. */}}
       "postgres" "postgres.existingSecret"
       "clickhouse" "clickhouse.existingSecret"
       "redis" "redis.existingSecret"
-      "objectStorage" "objectStorage.existingSecret" -}}
+      "objectStorage" "objectStorage.existingSecret"
+      "providerCredentials" "agentccGateway.providerCredentials.existingSecret" -}}
 {{- $name := $.Values -}}
 {{- range splitList "." $path }}{{ $name = get ($name | default dict) . }}{{ end -}}
 {{- $_ := set $out $group (dict "path" $path "name" ($name | default "" | toString)) -}}

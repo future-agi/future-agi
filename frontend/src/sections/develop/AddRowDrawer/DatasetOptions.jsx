@@ -1,4 +1,4 @@
-import { Box, Chip, Typography } from "@mui/material";
+import { Box, Typography } from "@mui/material";
 import PropTypes from "prop-types";
 import React from "react";
 import SvgColor from "src/components/svg-color";
@@ -11,7 +11,7 @@ import SvgColor from "src/components/svg-color";
  * if you make any change here please make sure you test in both places
  */
 
-const DatasetOptions = ({ title, subTitle, onClick, disabled, icons }) => {
+const DatasetOptions = ({ title, subTitle, onClick, icons }) => {
   return (
     <Box
       sx={{
@@ -23,7 +23,6 @@ const DatasetOptions = ({ title, subTitle, onClick, disabled, icons }) => {
         border: "1px solid",
         borderColor: "divider",
         cursor: "pointer",
-        opacity: disabled ? 0.5 : 1,
         "&:hover": {
           backgroundColor: "background.neutral",
         },
@@ -57,9 +56,6 @@ const DatasetOptions = ({ title, subTitle, onClick, disabled, icons }) => {
             >
               {title}
             </Typography>
-            {disabled && (
-              <Chip variant="outlined" label="Coming Soon" size="small" />
-            )}
           </Box>
           <Typography
             fontWeight={"fontWeightRegular"}
@@ -78,7 +74,6 @@ DatasetOptions.propTypes = {
   title: PropTypes.string,
   subTitle: PropTypes.string,
   onClick: PropTypes.func,
-  disabled: PropTypes.bool,
   icons: PropTypes.string,
 };
 

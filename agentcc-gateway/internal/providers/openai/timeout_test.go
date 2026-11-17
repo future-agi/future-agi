@@ -94,10 +94,8 @@ func TestStreamChatCompletion_ProviderCeilingIsAGatewayTimeout(t *testing.T) {
 // A transport failure that is not a timeout must stay an upstream error, or
 // the fix above would relabel every unreachable provider as a timeout.
 func TestChatCompletion_UnreachableProviderStaysAnUpstreamError(t *testing.T) {
-	// A server that is closed at once: connecting fails immediately.
-	ts := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
-	url := ts.URL
-	ts.Close()
+	// Refuse the connection without exhausting the request's time budget.
+	url := "http://" + refusedAddr(t)
 
 	p, err := New("test-openai", config.ProviderConfig{BaseURL: url, APIKey: "test-key"})
 	if err != nil {

@@ -1,5 +1,6 @@
 """Bulk API-key sync endpoint: expires_at wire format and expired-key filtering."""
 
+import secrets
 from datetime import datetime, timedelta
 from unittest.mock import patch
 
@@ -14,7 +15,8 @@ from agentcc.serializers.contracts import (
     APIKeyBulkResponseSerializer,
 )
 
-ADMIN_TOKEN = "agentcc-admin-secret"
+# Generated per run: a published literal would now be refused (agentcc/admin_token.py).
+ADMIN_TOKEN = secrets.token_hex(32)
 
 
 @pytest.fixture(autouse=True)
@@ -30,12 +32,13 @@ def admin_client():
     return client
 
 
-def _make_key(organization, workspace, gateway_key_id, key_hash, expires_at):
+def _make_key(organization, workspace, user, gateway_key_id, key_hash, expires_at):
     return AgentccAPIKey.objects.create(
         gateway_key_id=gateway_key_id,
         name=gateway_key_id,
         organization=organization,
         workspace=workspace,
+        user=user,
         key_hash=key_hash,
         status=AgentccAPIKey.ACTIVE,
         expires_at=expires_at,
@@ -44,11 +47,11 @@ def _make_key(organization, workspace, gateway_key_id, key_hash, expires_at):
 
 class TestAPIKeyBulkExpiresAt:
     def test_future_and_null_expiry_are_serialized_on_the_wire(
-        self, admin_client, organization, workspace
+        self, admin_client, organization, workspace, user
     ):
         future = timezone.now() + timedelta(days=7)
-        _make_key(organization, workspace, "gw-expiring", "a" * 64, future)
-        _make_key(organization, workspace, "gw-perpetual", "b" * 64, None)
+        _make_key(organization, workspace, user, "gw-expiring", "a" * 64, future)
+        _make_key(organization, workspace, user, "gw-perpetual", "b" * 64, None)
 
         response = admin_client.get("/agentcc/api-keys/bulk/")
         assert response.status_code == status.HTTP_200_OK
@@ -68,15 +71,16 @@ class TestAPIKeyBulkExpiresAt:
         assert by_id["gw-perpetual"]["expires_at"] is None
 
     def test_expired_keys_are_not_shipped(
-        self, admin_client, organization, workspace
+        self, admin_client, organization, workspace, user
     ):
         past = timezone.now() - timedelta(days=1)
-        _make_key(organization, workspace, "gw-expired", "c" * 64, past)
-        _make_key(organization, workspace, "gw-live", "d" * 64, None)
+        _make_key(organization, workspace, user, "gw-expired", "c" * 64, past)
+        _make_key(organization, workspace, user, "gw-live", "d" * 64, None)
 
-        ids = {item["id"] for item in admin_client.get(
-            "/agentcc/api-keys/bulk/"
-        ).json()["result"]}
+        ids = {
+            item["id"]
+            for item in admin_client.get("/agentcc/api-keys/bulk/").json()["result"]
+        }
 
         assert "gw-expired" not in ids  # filtered at the query level
         assert "gw-live" in ids
@@ -84,9 +88,9 @@ class TestAPIKeyBulkExpiresAt:
 
 class TestAPIKeyBulkPayload:
     def test_restored_keys_keep_their_id_prefix_and_org(
-        self, admin_client, organization, workspace
+        self, admin_client, organization, workspace, user
     ):
-        key = _make_key(organization, workspace, "key_2", "e" * 64, None)
+        key = _make_key(organization, workspace, user, "key_2", "e" * 64, None)
         key.key_prefix = "sk-agentcc-e..."
         key.save(update_fields=["key_prefix"])
 
@@ -101,9 +105,9 @@ class TestAPIKeyBulkPayload:
         assert item["metadata"]["org_id"] == str(organization.id)
 
     def test_every_field_served_is_declared(
-        self, admin_client, organization, workspace
+        self, admin_client, organization, workspace, user
     ):
-        _make_key(organization, workspace, "key_3", "f" * 64, None)
+        _make_key(organization, workspace, user, "key_3", "f" * 64, None)
 
         body = admin_client.get("/agentcc/api-keys/bulk/").json()
 

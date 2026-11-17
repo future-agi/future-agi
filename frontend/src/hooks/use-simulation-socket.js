@@ -1,6 +1,7 @@
 import { useEffect, useRef, useCallback } from "react";
 import { useAuthContext } from "src/auth/hooks";
-import { HOST_API } from "src/config-global";
+import { requestWebSocketUrl } from "src/components/websocket/use-socket";
+import { MAX_SOCKET_FAILURES, useSocketResume, useSocketSessionToken } from "src/components/websocket/socket-recovery";
 import logger from "src/utils/logger";
 
 /**
@@ -13,6 +14,7 @@ import logger from "src/utils/logger";
  */
 export const useSimulationSocket = (testId, onUpdate) => {
   const { user } = useAuthContext();
+  const token = useSocketSessionToken(user?.accessToken);
   const socketRef = useRef(null);
   const onUpdateRef = useRef(onUpdate);
   onUpdateRef.current = onUpdate;
@@ -20,10 +22,12 @@ export const useSimulationSocket = (testId, onUpdate) => {
   const timerRef = useRef(null);
   // Track whether the hook is still mounted
   const mountedRef = useRef(true);
+  const generationRef = useRef(0);
+  const pendingRef = useRef(false);
 
-  const connect = useCallback(() => {
-    const token = user?.accessToken;
-    if (!token || !testId) return;
+  const connect = useCallback(async () => {
+    if (!token || !testId || !mountedRef.current || pendingRef.current || retriesRef.current >= MAX_SOCKET_FAILURES) return;
+    timerRef.current = null;
 
     // Don't open a second socket if one is already connecting/open
     if (
@@ -34,12 +38,26 @@ export const useSimulationSocket = (testId, onUpdate) => {
       return;
     }
 
-    const isSecure = HOST_API.includes("https");
-    const wsHost = HOST_API.replace(/^https?:\/\//, "").replace(/\/+$/, "");
-    const protocol = isSecure ? "wss" : "ws";
-    const url = `${protocol}://${wsHost}/ws/simulation-updates/?token=${token}&test_id=${testId}`;
-
-    const ws = new WebSocket(url);
+    const generation = generationRef.current;
+    pendingRef.current = true;
+    let ws;
+    try {
+      const url = await requestWebSocketUrl(token, "/ws/simulation-updates/", { test_id: String(testId) });
+      if (!mountedRef.current || generation !== generationRef.current) return;
+      ws = new WebSocket(url);
+    } catch (error) {
+      if (mountedRef.current && generation === generationRef.current) {
+        if (error?.retryable === false) {
+          retriesRef.current = MAX_SOCKET_FAILURES;
+          return;
+        }
+        const delay = Math.min(1000 * 2 ** retriesRef.current++, 30000);
+        timerRef.current = setTimeout(connect, delay);
+      }
+      return;
+    } finally {
+      if (generation === generationRef.current) pendingRef.current = false;
+    }
     socketRef.current = ws;
 
     ws.onopen = () => {
@@ -69,7 +87,7 @@ export const useSimulationSocket = (testId, onUpdate) => {
       socketRef.current = null;
 
       // Auth-related errors → do NOT retry
-      if ([4001, 4401, 4403, 1008].includes(event.code)) {
+      if ([4001, 4003, 4401, 4403, 1008].includes(event.code)) {
         logger.warn("WebSocket auth/policy error:", event.code);
         return;
       }
@@ -80,13 +98,23 @@ export const useSimulationSocket = (testId, onUpdate) => {
         timerRef.current = setTimeout(connect, delay);
       }
     };
-  }, [user?.accessToken, testId]);
+  }, [token, testId]);
+
+  useSocketResume(() => {
+    if (socketRef.current?.readyState === WebSocket.OPEN || pendingRef.current) return;
+    clearTimeout(timerRef.current);
+    retriesRef.current = 0;
+    connect();
+  });
 
   useEffect(() => {
     mountedRef.current = true;
+    retriesRef.current = 0;
     connect();
     return () => {
       mountedRef.current = false;
+      generationRef.current += 1;
+      pendingRef.current = false;
       clearTimeout(timerRef.current);
       if (socketRef.current) {
         socketRef.current.close();

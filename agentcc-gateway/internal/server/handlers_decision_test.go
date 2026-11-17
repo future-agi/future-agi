@@ -44,22 +44,22 @@ import (
 // The keys a decision call could be sent with. Only the one that belongs to
 // the caller may ever reach a vendor.
 const (
-	fagiHeldKey     = "FAGI-HELD-KEY"
-	orgTypeSafeKey  = "ORG-TYPESAFE-KEY"
-	orgOpenAIKey    = "ORG-OPENAI-KEY"
-	callerOwnKey    = "CALLER-OWN-PROVIDER-KEY-CANARY"
-	keyByok         = "sk-agentcc-byok"
-	keyByokNoCred   = "sk-agentcc-byok-no-cred"
-	keyByokNoOrg    = "sk-agentcc-byok-no-org"
-	keyByokOrgB     = "sk-agentcc-byok-org-b"
-	keyByokACL      = "sk-agentcc-byok-acl"
-	keyByokACLOK    = "sk-agentcc-byok-acl-typesafe"
-	keyManaged      = "sk-agentcc-managed"
-	keyInternal     = "sk-agentcc-internal"
-	adminToken      = "decision-admin-token"
-	decisionSysBody = `{"model":"typesafe/jev-latest","state":{"ticket":"private-state"},"questions":{"resolved":{"type":"noul","instructions":"private-instructions"}}}`
-	decisionOAIBody = `{"model":"openai/gpt-6-luna","input":"private-input","questions":[{"type":"predicate","name":"resolved","instructions":"private-instructions"}]}`
-	decisionAnswer  = `{"model":"jev-1.13.0","answers":{"resolved":{"type":"noul","noul":0.9}},"usage":{"input_tokens":1000,"output_tokens":0}}`
+	fagiHeldKey        = "FAGI-HELD-KEY"
+	orgTypeSafeKey     = "ORG-TYPESAFE-KEY"
+	orgOpenAIKey       = "ORG-OPENAI-KEY"
+	callerOwnKey       = "CALLER-OWN-PROVIDER-KEY-CANARY"
+	keyByok            = "sk-agentcc-byok"
+	keyByokNoCred      = "sk-agentcc-byok-no-cred"
+	keyByokNoOrg       = "sk-agentcc-byok-no-org"
+	keyByokOrgB        = "sk-agentcc-byok-org-b"
+	keyByokACL         = "sk-agentcc-byok-acl"
+	keyByokACLOK       = "sk-agentcc-byok-acl-typesafe"
+	keyManaged         = "sk-agentcc-managed"
+	keyInternal        = "sk-agentcc-internal"
+	decisionAdminToken = "decision-admin-token"
+	decisionSysBody    = `{"model":"typesafe/jev-latest","state":{"ticket":"private-state"},"questions":{"resolved":{"type":"noul","instructions":"private-instructions"}}}`
+	decisionOAIBody    = `{"model":"openai/gpt-6-luna","input":"private-input","questions":[{"type":"predicate","name":"resolved","instructions":"private-instructions"}]}`
+	decisionAnswer     = `{"model":"jev-1.13.0","answers":{"resolved":{"type":"noul","noul":0.9}},"usage":{"input_tokens":1000,"output_tokens":0}}`
 )
 
 // decisionUpstream is a vendor that counts every call by the Authorization it
@@ -281,7 +281,7 @@ func newDecisionGateway(t *testing.T, opts decisionGatewayOptions) *decisionGate
 
 	remote := false
 	cfg := config.DefaultConfig()
-	cfg.Admin.Token = adminToken
+	cfg.Admin.Token = decisionAdminToken
 	cfg.Auth.Enabled = !opts.authOff
 	cfg.Auth.Keys = []config.AuthKeyConfig{
 		{Name: "byok", Key: keyByok, Owner: "u", KeyType: "byok", Metadata: map[string]string{"org_id": "org-a"}},
@@ -332,9 +332,10 @@ func newDecisionGateway(t *testing.T, opts decisionGatewayOptions) *decisionGate
 	db := modeldb.New(modeldb.BundledModels, nil)
 	g.logging = logging.New(config.RequestLoggingConfig{Enabled: true, IncludeBodies: opts.includeBodies, BufferSize: 64, Workers: 1}, g.tenants)
 	g.logging.SetFlusher(logging.NewLogFlusher(webhook.URL, "", time.Hour, 1000))
+	limits := ratelimit.New(config.RateLimitConfig{Enabled: true}, g.keyStore, nil)
 	engine := pipeline.NewEngine(
 		authplugin.New(g.keyStore, !opts.authOff),
-		ratelimit.New(config.RateLimitConfig{Enabled: true}, g.keyStore, nil),
+		limits,
 		cost.New(true, func() *modeldb.ModelDB { return db }, g.tenants, nil),
 		credits.New(true, g.keyStore),
 		g.logging,
@@ -342,8 +343,8 @@ func newDecisionGateway(t *testing.T, opts decisionGatewayOptions) *decisionGate
 		g.observer,
 	)
 	g.srv = New(cfg, "", registry, engine, g.keyStore, nil, nil, nil, testModelDBPtr(), g.tenants, nil)
+	releaseTestServer(t, g.srv, g.logging.Close, limits.Stop)
 	g.srv.ready.Store(true)
-	t.Cleanup(func() { g.srv.Shutdown(context.Background()) })
 	return g
 }
 
@@ -829,14 +830,18 @@ func TestDecisionProviderPushedThroughTheAdminContract(t *testing.T) {
 	g := newDecisionGateway(t, decisionGatewayOptions{config: func(cfg *config.Config, upstreamURL string) {
 		cfg.Providers["typesafe-legacy"] = config.ProviderConfig{APIFormat: "openai", BaseURL: upstreamURL, Models: []string{"jev-legacy"}}
 	}})
-	push := func(provider, apiFormat string, models ...string) {
+	push := func(provider, apiFormat, baseURL string, models ...string) {
 		t.Helper()
-		body := mustJSON(map[string]any{"providers": map[string]any{provider: map[string]any{
+		pcfg := map[string]any{
 			"api_key": "ORG-B-KEY", "api_format": apiFormat, "models": models,
 			"enabled": true, "timeout": 60, "max_concurrent": 100, "conn_pool_size": 100,
-		}}})
+		}
+		if baseURL != "" {
+			pcfg["base_url"] = baseURL
+		}
+		body := mustJSON(map[string]any{"providers": map[string]any{provider: pcfg}})
 		req := httptest.NewRequest(http.MethodPut, "/-/orgs/org-b/config", strings.NewReader(body))
-		req.Header.Set("Authorization", "Bearer "+adminToken)
+		req.Header.Set("Authorization", "Bearer "+decisionAdminToken)
 		rr := httptest.NewRecorder()
 		g.srv.httpServer.Handler.ServeHTTP(rr, req)
 		if rr.Code != http.StatusOK {
@@ -845,7 +850,7 @@ func TestDecisionProviderPushedThroughTheAdminContract(t *testing.T) {
 	}
 
 	for i, apiFormat := range []string{"systemone", "typesafe"} {
-		push("typesafe", apiFormat, "jev-1.13.0", "jev-latest")
+		push("typesafe", apiFormat, "", "jev-1.13.0", "jev-latest")
 		rr := g.post(t, keyByokOrgB, decisionSysBody)
 		if rr.Code != http.StatusOK || rr.Body.String() != decisionAnswer {
 			t.Fatalf("%s: status %d: %s", apiFormat, rr.Code, rr.Body.String())
@@ -853,7 +858,7 @@ func TestDecisionProviderPushedThroughTheAdminContract(t *testing.T) {
 		expectOnlyKey(t, g, "ORG-B-KEY", i+1)
 	}
 
-	push("typesafe-legacy", "openai", "jev-legacy")
+	push("typesafe-legacy", "openai", "", "jev-legacy")
 	e := expectError(t, g.post(t, keyByokOrgB, strings.Replace(decisionSysBody, "typesafe/jev-latest", "typesafe-legacy/jev-legacy", 1)),
 		http.StatusForbidden, models.CodeDecisionProviderWrongFormat)
 	if !strings.Contains(e.Message, `"openai"`) || !strings.Contains(e.Message, "api_format systemone") {
@@ -863,15 +868,17 @@ func TestDecisionProviderPushedThroughTheAdminContract(t *testing.T) {
 
 	// A provider config.yaml does not list is built from what was pushed
 	// alone, which is how a cloud gateway holds every customer's provider: the
-	// pushed api_format decides whether it serves System One. Resolved only,
-	// since its upstream is the vendor's own.
+	// pushed api_format decides whether it serves System One. Resolve only:
+	// the fixture supplies a valid endpoint, but this check must not call it.
 	req, _ := models.ParseDecisionRequest([]byte(strings.Replace(decisionSysBody, "typesafe/jev-latest", "typesafe-eu/jev-1.14.0", 1)))
 	for _, tt := range []struct{ apiFormat, code string }{
 		{"systemone", ""},
 		{"typesafe", ""},
 		{"openai", models.CodeDecisionProviderWrongFormat},
 	} {
-		push("typesafe-eu", tt.apiFormat, "jev-1.14.0")
+		// A literal documentation IP passes URL validation without a DNS
+		// lookup. This branch resolves only: no request is sent to it.
+		push("typesafe-eu", tt.apiFormat, "https://203.0.113.7", "jev-1.14.0")
 		rc := models.AcquireRequestContext()
 		rc.Metadata["authorization"] = "Bearer " + keyByokOrgB
 		target, err := g.srv.handlers.resolveDecision(context.Background(), http.Header{}, rc, req, "", false, "org-b", g.tenants.Get("org-b"))

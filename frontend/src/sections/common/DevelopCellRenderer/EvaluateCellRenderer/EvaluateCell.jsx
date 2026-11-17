@@ -17,7 +17,9 @@ const getScorePercentage = (s, decimalPlaces = 0) => {
 };
 
 const hasRenderableValue = (value) =>
-  value !== undefined && value !== null && value !== "";
+  value !== undefined &&
+  value !== null &&
+  (typeof value !== "string" || value.trim() !== "");
 
 // Normalise the `value_infos` blob into an object regardless of whether
 // the caller passed camelCase, snake_case, or a JSON string. The cell
@@ -175,7 +177,10 @@ const EvaluateCell = ({
         </Box>
       );
     }
-    const parsedValue = Number(value);
+    const parsedValue =
+      normalized.kind === "empty" || !hasRenderableValue(value)
+        ? NaN
+        : Number(value);
     const numericValue = Number.isFinite(parsedValue)
       ? parsedValue
       : normalized.score;

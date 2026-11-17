@@ -6,6 +6,10 @@ Provides centralized error parsing and formatting to ensure:
 - Verbose structured logging for debugging
 """
 
+# Pre-existing lint debt, exempted file-wide so a security fix can touch this
+# module behaviour-neutrally (typing rewrites).
+# ruff: noqa: UP006, UP035, UP045
+
 import json
 import re
 from contextlib import contextmanager
@@ -33,6 +37,7 @@ from litellm import (
     UnsupportedParamsError,
 )
 
+from model_hub.utils.model_endpoints import ENDPOINT_ERROR_TYPES
 from tfc.utils.error_codes import get_error_message
 
 _logger = structlog.get_logger(__name__)
@@ -76,6 +81,7 @@ def _as_context_dict(
         return {k: v for k, v in asdict(context).items() if v is not None}
     return context
 
+
 LITELLM_EXCEPTION_ERROR_CODES = {
     BadRequestError: "LITELLM_BAD_REQUEST",
     UnsupportedParamsError: "LITELLM_UNSUPPORTED_PARAMS",
@@ -108,6 +114,18 @@ def litellm_try_except(
     """
     try:
         yield
+    except ENDPOINT_ERROR_TYPES as exc:
+        # A call to a tenant's model endpoint failed: the guard already made
+        # the error generic and dropped its chain. Passed on unchanged (a
+        # re-wrap would lose its category), and logged without any text.
+        _logger.error(
+            "model endpoint call failed",
+            error_type=type(exc).__name__,
+            category=getattr(exc, "category", None),
+        )
+        if on_error:
+            on_error(str(exc))
+        raise
     except tuple(LITELLM_EXCEPTION_ERROR_CODES.keys()) as exc:
         root_exc = _find_root_api_error(exc)
         error_message = format_concise_error(parse_api_error(root_exc))

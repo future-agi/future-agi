@@ -12,6 +12,7 @@ const SessionHistory = ({
   isFetchingNextPage,
   activeSessionId,
   onTraceClick,
+  turnFields,
 }) => {
   const interactions =
     traceDetail?.map((trace) => ({
@@ -41,9 +42,10 @@ const SessionHistory = ({
         gap={2}
         sx={{ minWidth: 0, maxWidth: "100%" }}
       >
-        {interactions.map((interaction, index) => (
+        {interactions.map((interaction) => (
           <ShowTrace
-            key={index}
+            key={interaction.traceId}
+            turnFields={turnFields}
             traceId={interaction.traceId}
             human={interaction.Human}
             ai={interaction.AI}
@@ -62,7 +64,8 @@ const SessionHistory = ({
 };
 
 SessionHistory.propTypes = {
-  traceDetail: PropTypes.object,
+  traceDetail: PropTypes.array,
+  turnFields: PropTypes.array,
   loading: PropTypes.bool,
   isFetchingNextPage: PropTypes.bool,
   activeSessionId: PropTypes.string,

@@ -172,7 +172,7 @@ describe("ObserveListView", () => {
       await waitFor(() =>
         expect(screen.getByText("Healthy Project")).toBeInTheDocument(),
       );
-      expect(screen.getByText("2 minutes ago")).toBeInTheDocument();
+      expect(screen.getByText("This hour")).toBeInTheDocument();
     });
 
     it("falls back to a valid updated_at when last_active is a truthy but unparseable string", async () => {

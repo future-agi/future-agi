@@ -1,5 +1,6 @@
 from rest_framework import serializers
 
+from common.utils.page_limits import PageSizeIntegerField
 from tracer.models.project import Project
 from tracer.serializers.filters import (
     OBSERVE_GRAPH_METRIC_STATISTIC_CHOICES,
@@ -14,10 +15,55 @@ from tracer.serializers.usage_coverage import CostCoverageBucketSerializer
 from tracer.services.user_filter_capabilities import validate_users_filter_capabilities
 
 
+class ProjectPrivacySettingsSerializer(serializers.Serializer):
+    pii_redaction_enabled = serializers.BooleanField(required=False)
+    pii_redaction_mode = serializers.ChoiceField(
+        choices=("mask_pii", "hide_io"), required=False
+    )
+
+
 class ProjectSerializer(serializers.ModelSerializer):
     config = JsonValueField(required=False, allow_null=True)
     session_config = JsonValueField(required=False, allow_null=True)
     tags = JsonValueField(required=False, allow_null=True)
+    pii_redaction_enabled = serializers.BooleanField(required=False)
+    pii_redaction_mode = serializers.ChoiceField(
+        choices=("mask_pii", "hide_io"), required=False
+    )
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        # Non-object metadata (a list or string on older projects) is unconfigured.
+        metadata = data.get("metadata")
+        metadata = metadata if isinstance(metadata, dict) else {}
+        data["pii_redaction_enabled"] = bool(
+            metadata.get("pii_redaction_enabled", False)
+        )
+        data["pii_redaction_mode"] = metadata.get("pii_redaction_mode", "mask_pii")
+        return data
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        privacy = {
+            key: attrs.pop(key)
+            for key in ("pii_redaction_enabled", "pii_redaction_mode")
+            if key in attrs
+        }
+        if privacy:
+            # Flat privacy updates preserve metadata unless explicitly supplied.
+            metadata = attrs.get("metadata", getattr(self.instance, "metadata", None))
+            base = metadata if isinstance(metadata, dict) else {}
+            attrs["metadata"] = {**base, **privacy}
+        return attrs
+
+    def validate_metadata(self, value):
+        if value is None:
+            return value
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("Metadata must be an object.")
+        privacy = ProjectPrivacySettingsSerializer(data=value)
+        privacy.is_valid(raise_exception=True)
+        return {**value, **privacy.validated_data}
 
     class Meta:
         model = Project
@@ -27,6 +73,8 @@ class ProjectSerializer(serializers.ModelSerializer):
             "name",
             "trace_type",
             "metadata",
+            "pii_redaction_enabled",
+            "pii_redaction_mode",
             "organization",
             "workspace",
             "created_at",
@@ -105,6 +153,31 @@ class ProjectListResponseSerializer(serializers.Serializer):
     result = ProjectListResultSerializer()
 
 
+class ProjectTableRowSerializer(ProjectSerializer):
+    """A ``GET /tracer/project/`` row: the project and its annotated counts."""
+
+    trace_count = serializers.IntegerField()
+    run_count = serializers.IntegerField()
+
+    class Meta(ProjectSerializer.Meta):
+        fields = ProjectSerializer.Meta.fields + ["trace_count", "run_count"]
+
+
+class ProjectTableResultSerializer(serializers.Serializer):
+    projects = ProjectTableRowSerializer(many=True, read_only=True)
+    total_count = serializers.IntegerField()
+
+
+class ProjectTableApiResponseSerializer(serializers.Serializer):
+    """Wire contract for ``GET /tracer/project/`` (``ProjectView.list``)."""
+
+    status = serializers.BooleanField(default=True)
+    result = ProjectTableResultSerializer()
+
+    class Meta:
+        ref_name = None
+
+
 class ProjectListQuerySerializer(StrictInputSerializer):
     """Zero-based bounded query contract for the project table and pickers."""
 
@@ -136,21 +209,19 @@ class ProjectListQuerySerializer(StrictInputSerializer):
 
 
 class ProjectViewSetListQuerySerializer(ProjectListQuerySerializer):
-    """GET /tracer/project/ historically had no page_size ceiling.
+    """GET /tracer/project/ supports pages up to the shared read ceiling.
 
-    `list_projects` keeps the bounded contract on ProjectListQuerySerializer.
-    Documenting this ViewSet list must not start rejecting callers that already
-    passed page_size above 100.
+    `list_projects` retains its narrower ProjectListQuerySerializer contract.
     """
 
-    page_size = serializers.IntegerField(
+    page_size = PageSizeIntegerField(
         required=False,
         default=20,
         min_value=1,
     )
 
 
-class ProjectNameUpdateSerializer(serializers.Serializer):
+class ProjectNameUpdateSerializer(ProjectPrivacySettingsSerializer):
     sampling_contact_attribute = serializers.CharField(
         max_length=200, allow_blank=True, required=False
     )

@@ -20,6 +20,7 @@ module.exports = {
   },
   ignorePatterns: [
     "src/theme/**",
+    "src/generated/**",
     "src/**/_mock/**",
     "src/**/__tests__/**",
     "src/**/*.test.*",

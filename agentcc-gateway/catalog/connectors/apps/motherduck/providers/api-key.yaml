@@ -1,0 +1,46 @@
+# MotherDuck accepts an access token directly as the bearer, without OAuth.
+# Calls run as the token owner. Use a read scaling token for read-only queries.
+schema: "connector-manifest/v1#provider"
+app: motherduck
+id: api-key
+version: 1.1.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://api.motherduck.com/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: Access token
+      help: "Create a personal or service-account access token using MotherDuck's linked token guides. Tools run as its owner and use that identity's databases, shares and Duckling settings. A read scaling token limits queries to read-only access."
+      helpUrl: https://motherduck.com/docs/key-tasks/ai-and-motherduck/mcp-workflows/connect-with-access-token/
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_metered
+  source: https://motherduck.com/pricing/
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://motherduck.com/docs/key-tasks/ai-and-motherduck/mcp-workflows/connect-with-access-token/
+    fetchedAt: 2026-11-09
+  - fact: transport.variant
+    url: https://motherduck.com/docs/key-tasks/ai-and-motherduck/mcp-workflows/white-label-mcp-server/
+    fetchedAt: 2026-11-09
+  - fact: auth.kind
+    url: https://motherduck.com/docs/key-tasks/ai-and-motherduck/mcp-workflows/connect-with-access-token/
+    fetchedAt: 2026-11-09
+  - fact: auth.credentialParts
+    url: https://motherduck.com/docs/key-tasks/ai-and-motherduck/mcp-workflows/connect-with-access-token/
+    fetchedAt: 2026-11-09

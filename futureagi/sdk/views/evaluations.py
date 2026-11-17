@@ -1,6 +1,7 @@
 import uuid
 
 import structlog
+from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db.models import Q
 from drf_yasg.utils import swagger_auto_schema
@@ -9,9 +10,13 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.renderers import JSONRenderer
 from rest_framework.views import APIView
 
-from accounts.authentication import APIKeyAuthentication
+from accounts.authentication import (
+    APIKeyAuthentication,
+    ServiceEnvelopeEvalAuthentication,
+)
 from accounts.models import User, Workspace
 from agentic_eval.core_evals.fi_evals import *  # noqa: F403
+from agentic_eval.core_evals.fi_utils.exceptions import CodeEvalInternalServiceError
 from analytics.utils import (
     MixpanelEvents,
     MixpanelSources,
@@ -19,11 +24,13 @@ from analytics.utils import (
     get_mixpanel_properties,
     track_mixpanel_event,
 )
+from evaluations.ran_on import ran_on_label
 from model_hub.models.error_localizer_model import ErrorLocalizerStatus
 from model_hub.models.evals_metric import EvalTemplate
 from model_hub.models.evaluation import Evaluation
 from sdk.serializers.contracts import (
     ConfigureEvaluationsRequestSerializer,
+    SDKAdmissionErrorResponseSerializer,
     SDKConfigureEvaluationsResponseSerializer,
     SDKErrorResponseSerializer,
     SDKEvalTemplateResponseSerializer,
@@ -34,15 +41,25 @@ from sdk.serializers.contracts import (
     SDKStandaloneEvalV2RequestSerializer,
     SDKStandaloneEvalV2ResponseSerializer,
 )
-from sdk.serializers.evaluations import ConfigureEvaluationsSerializer
-from sdk.utils.api_errors import sdk_validation_error_response
+from sdk.serializers.evaluations import (
+    ConfigureEvaluationsSerializer,
+    StandaloneEvaluationsSerializer,
+)
+from sdk.utils.api_errors import (
+    SDKAdmissionError,
+    code_eval_setup_error,
+    code_eval_setup_error_response,
+    sdk_validation_error_response,
+)
 from sdk.utils.async_evaluations import _handle_async_eval
 from sdk.utils.evaluations import (
     StandaloneEvaluationError,
     _run_batched_standalone_eval,
     _run_protect,
     _run_standalone_eval,
+    stored_ran_on_model,
 )
+from sdk.utils.template_lookup import find_sdk_template, sdk_templates_q
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
@@ -187,7 +204,7 @@ class GetEvalStructureEvalIdView(APIView):
 
 class StandaloneEvalView(APIView):
     _gm = GeneralMethods()
-    authentication_classes = [APIKeyAuthentication]
+    authentication_classes = [ServiceEnvelopeEvalAuthentication, APIKeyAuthentication]
     permission_classes = [IsAuthenticated]
     parser_classes = (JSONParser,)
 
@@ -196,7 +213,10 @@ class StandaloneEvalView(APIView):
         responses={
             200: SDKStandaloneEvalResponseSerializer,
             400: SDKErrorResponseSerializer,
+            402: SDKAdmissionErrorResponseSerializer,
+            429: SDKAdmissionErrorResponseSerializer,
             500: SDKErrorResponseSerializer,
+            503: SDKAdmissionErrorResponseSerializer,
         },
         reject_unknown_fields=True,
         validation_error_response=sdk_validation_error_response,
@@ -261,6 +281,21 @@ class StandaloneEvalView(APIView):
             logger.info("Successfully completed all evaluations")
             return self._gm.success_response(output_entries)
 
+        except SDKAdmissionError as exc:
+            return exc.to_response()
+
+        except StandaloneEvaluationError as e:
+            setup_error = code_eval_setup_error(e)
+            if setup_error is not None:
+                return code_eval_setup_error_response(setup_error)
+            cause = e.args[0] if e.args else None
+            if isinstance(cause, CodeEvalInternalServiceError):
+                # Code that calls an internal service is the caller's to change.
+                return self._gm.bad_request(str(cause))
+            logger.exception(f"Error in running standalone eval: {str(e)}")
+            return self._gm.internal_server_error_response(
+                get_error_message("FAILED_TO_RUN_STANDALONE_EVAL")
+            )
         except Exception as e:
             logger.exception(f"Error in running standalone eval: {str(e)}")
             return self._gm.internal_server_error_response(
@@ -314,7 +349,12 @@ class StandaloneEvalView_v2(APIView):
                     "name": evaluation.eval_template.name,
                     "input_data": evaluation.input_data,
                     "reason": evaluation.reason,
-                    "runtime": evaluation.runtime,
+                    # A run that failed before the engine returned stored no
+                    # runtime. Send 0 so clients that read runtime as an
+                    # integer can parse the result.
+                    "runtime": (
+                        evaluation.runtime if evaluation.runtime is not None else 0
+                    ),
                     "model": evaluation.model_name,
                     "output_type": evaluation.output_type,
                     "value": evaluation.value,
@@ -336,6 +376,22 @@ class StandaloneEvalView_v2(APIView):
             if evaluation.status == StatusChoices.FAILED:
                 response_data["result"]["error_message"] = evaluation.error_message
 
+            if getattr(settings, "EVAL_RAN_ON_LABEL_ENABLED", True) is True:
+                ran_on_model = stored_ran_on_model(evaluation.metadata)
+                chosen_model = evaluation.model_name
+                if ran_on_model is not None:
+                    # Only an agent evaluation records a ran-on model, and its
+                    # model is the one the agent evaluator was given. The sync
+                    # path never records model_name.
+                    chosen_model = chosen_model or evaluation.model
+                response_data["result"]["model"] = chosen_model
+                # The label compares with the model the agent evaluator was
+                # given: a run_config model in the request can replace the
+                # requested one, which the result still names.
+                response_data["result"]["ran_on_label"] = ran_on_label(
+                    ran_on_model, evaluation.model or chosen_model
+                )
+
             return self._gm.success_response(response_data)
 
         except Evaluation.DoesNotExist:
@@ -352,7 +408,10 @@ class StandaloneEvalView_v2(APIView):
         responses={
             200: SDKStandaloneEvalResponseSerializer,
             400: SDKErrorResponseSerializer,
+            402: SDKAdmissionErrorResponseSerializer,
+            429: SDKAdmissionErrorResponseSerializer,
             500: SDKErrorResponseSerializer,
+            503: SDKAdmissionErrorResponseSerializer,
         },
         reject_unknown_fields=True,
         validation_error_response=sdk_validation_error_response,
@@ -361,7 +420,6 @@ class StandaloneEvalView_v2(APIView):
         try:
             eval_name = request.validated_data["eval_name"]
             inputs = request.validated_data.get("inputs", {})
-            model = request.validated_data.get("model", None)
             span_id = request.validated_data.get("span_id", None)
             custom_eval_name = request.validated_data.get("custom_eval_name", None)
             trace_eval = request.validated_data.get("trace_eval", False)
@@ -376,27 +434,25 @@ class StandaloneEvalView_v2(APIView):
             eval_config = {
                 "eval_templates": eval_name,
                 "inputs": inputs,
-                "model_name": model,
+                "model_name": request.validated_data.get("model", None),
                 "config": request.validated_data.get("config", {}),
             }
 
-            serializer = ConfigureEvaluationsSerializer(
+            serializer = StandaloneEvaluationsSerializer(
                 data=eval_config, context={"request": request}
             )
             if not serializer.is_valid():
                 return sdk_validation_error_response(serializer.errors)
+            # The model the request names, or the one the serializer resolved
+            # for an LLM judge sent without one.
+            model = serializer.validated_data.get("model_name")
 
-            eval_template = EvalTemplate.no_workspace_objects.get(
-                Q(name=eval_name)
-                & (
-                    Q(organization=organization, workspace=request.workspace)
-                    | Q(organization__isnull=True)
-                )
+            eval_template = find_sdk_template(
+                eval_name, organization, request.workspace
             )
 
-            is_batched = False
-            if inputs and isinstance(list(inputs.values())[0], list):
-                is_batched = True
+            is_batched = serializer.validated_data["is_batched"]
+            if is_batched:
                 properties = get_mixpanel_properties(
                     user=request.user,
                     type=MixpanelTypes.OBSERVE.value,
@@ -430,6 +486,7 @@ class StandaloneEvalView_v2(APIView):
                     model=model,
                     user=request.user,
                     workspace=request.workspace,
+                    organization=organization,
                     eval_config=serializer.validated_data.get("config", {}),
                     error_localizer_enabled=error_localizer_enabled,
                     trace_eval=trace_eval,
@@ -454,6 +511,7 @@ class StandaloneEvalView_v2(APIView):
                     model=model,
                     user=request.user,
                     workspace=request.workspace,
+                    organization=organization,
                     eval_config=serializer.validated_data.get("config", {}),
                     error_localizer_enabled=error_localizer_enabled,
                     trace_eval=trace_eval,
@@ -482,7 +540,13 @@ class StandaloneEvalView_v2(APIView):
             jev_error = jev_error_response(e)
             if jev_error is not None:
                 return jev_error
+            setup_error = code_eval_setup_error(e)
+            if setup_error is not None:
+                return code_eval_setup_error_response(setup_error)
             return self._gm.bad_request(str(e))
+
+        except SDKAdmissionError as exc:
+            return exc.to_response()
 
         except Exception as e:
             logger.exception(f"Error in running standalone eval: {str(e)}")
@@ -510,8 +574,7 @@ class GetEvalsView(APIView):
                 getattr(request, "organization", None) or request.user.organization
             )
             evals = EvalTemplate.no_workspace_objects.filter(
-                Q(organization=organization, workspace=request.workspace)
-                | Q(organization__isnull=True)
+                sdk_templates_q(organization, request.workspace)
             ).values(
                 "id",
                 "name",
@@ -561,6 +624,7 @@ class ConfigureEvaluationsView(APIView):
             200: SDKConfigureEvaluationsResponseSerializer,
             400: SDKErrorResponseSerializer,
             500: SDKErrorResponseSerializer,
+            503: SDKAdmissionErrorResponseSerializer,
         },
         validation_error_response=sdk_validation_error_response,
         serializer_context=lambda request: {"request": request},
@@ -585,9 +649,16 @@ class ConfigureEvaluationsView(APIView):
             if not serializer.is_valid():
                 return sdk_validation_error_response(serializer.errors)
 
-            eval_template = EvalTemplate.objects.get(
-                name=serializer.validated_data.get("eval_templates")
-            )
+            # The template the request check accepted, by the same lookup.
+            eval_templates = serializer.validated_data.get("eval_templates")
+            try:
+                eval_template = find_sdk_template(
+                    eval_templates, user_organization, request.workspace
+                )
+            except EvalTemplate.DoesNotExist:
+                return self._gm.bad_request(
+                    f"Evaluation template with name :{eval_templates} not found."
+                )
             from model_hub.utils.jev_templates import validate_jev_binding
 
             # Rejected here, as the dataset run path does, rather than
@@ -599,6 +670,20 @@ class ConfigureEvaluationsView(APIView):
             )
             if jev_error is not None:
                 return jev_error
+
+            # An evaluation this deployment will not run is refused here, with its
+            # sentence, rather than accepted and then failed by the background run.
+            from agentic_eval.core_evals.fi_utils.custom_code_pause import (
+                refuse_paused_custom_code_template,
+            )
+            from agentic_eval.core_evals.fi_utils.exceptions import (
+                CodeEvalSetupError,
+            )
+
+            try:
+                refuse_paused_custom_code_template(eval_template)
+            except CodeEvalSetupError as refused:
+                return code_eval_setup_error_response(refused)
 
             ExternalEvalConfig.objects.create(
                 organization=user_organization,

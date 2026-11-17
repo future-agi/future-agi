@@ -1,0 +1,176 @@
+schema: connector-gen/rest-overlay/v1
+spec: fixtures/spec/graph-v1.0-openapi.yaml.gz
+tools:
+  - name: list_worksheets
+    title: List worksheets
+    description: Read list worksheets from an Excel workbook in a business drive. Use IDs from list_worksheets or list_tables.
+    operation:
+      method: GET
+      path: /drives/{drive-id}/items/{driveItem-id}/workbook/worksheets
+    scopes:
+      - Files.ReadWrite
+    annotations:
+      openWorldHint: false
+    posture: auto
+    scopeSource: https://learn.microsoft.com/en-us/graph/api/workbook-list-worksheets?view=graph-rest-1.0
+    params:
+      rename:
+        $top: top
+        $skip: skip
+        $filter: filter
+        $orderby: orderby
+        $select: select
+      exclude:
+        - $search
+        - $count
+        - $expand
+      describe: {}
+  - name: get_worksheet
+    title: Get worksheet
+    description: Read get worksheet from an Excel workbook in a business drive. Use IDs from list_worksheets or list_tables.
+    operation:
+      method: GET
+      path: /drives/{drive-id}/items/{driveItem-id}/workbook/worksheets/{workbookWorksheet-id}
+    scopes:
+      - Files.ReadWrite
+    annotations:
+      openWorldHint: false
+    posture: auto
+    scopeSource: https://learn.microsoft.com/en-us/graph/api/worksheet-get?view=graph-rest-1.0
+    params:
+      rename:
+        $select: select
+      exclude:
+        - $expand
+      describe: {}
+  - name: list_tables
+    title: List tables
+    description: Read list tables from an Excel workbook in a business drive. Use IDs from list_worksheets or list_tables.
+    operation:
+      method: GET
+      path: /drives/{drive-id}/items/{driveItem-id}/workbook/tables
+    scopes:
+      - Files.ReadWrite
+    annotations:
+      openWorldHint: false
+    posture: auto
+    scopeSource: https://learn.microsoft.com/en-us/graph/api/workbook-list-tables?view=graph-rest-1.0
+    params:
+      rename:
+        $top: top
+        $skip: skip
+        $filter: filter
+        $orderby: orderby
+        $select: select
+      exclude:
+        - $search
+        - $count
+        - $expand
+      describe: {}
+  - name: get_table
+    title: Get table
+    description: Read get table from an Excel workbook in a business drive. Use IDs from list_worksheets or list_tables.
+    operation:
+      method: GET
+      path: /drives/{drive-id}/items/{driveItem-id}/workbook/tables/{workbookTable-id}
+    scopes:
+      - Files.ReadWrite
+    annotations:
+      openWorldHint: false
+    posture: auto
+    scopeSource: https://learn.microsoft.com/en-us/graph/api/table-get?view=graph-rest-1.0
+    params:
+      rename:
+        $select: select
+      exclude:
+        - $expand
+      describe: {}
+  - name: list_table_rows
+    title: List table rows
+    description: Read list table rows from an Excel workbook in a business drive. Use IDs from list_worksheets or list_tables.
+    operation:
+      method: GET
+      path: /drives/{drive-id}/items/{driveItem-id}/workbook/tables/{workbookTable-id}/rows
+    scopes:
+      - Files.ReadWrite
+    annotations:
+      openWorldHint: false
+    posture: auto
+    scopeSource: https://learn.microsoft.com/en-us/graph/api/tablerowcollection-list?view=graph-rest-1.0
+    params:
+      rename:
+        $top: top
+        $skip: skip
+        $filter: filter
+        $orderby: orderby
+        $select: select
+      exclude:
+        - $search
+        - $count
+        - $expand
+      describe: {}
+  - name: list_table_columns
+    title: List table columns
+    description: Read list table columns from an Excel workbook in a business drive. Use IDs from list_worksheets or list_tables.
+    operation:
+      method: GET
+      path: /drives/{drive-id}/items/{driveItem-id}/workbook/tables/{workbookTable-id}/columns
+    scopes:
+      - Files.ReadWrite
+    annotations:
+      openWorldHint: false
+    posture: auto
+    scopeSource: https://learn.microsoft.com/en-us/graph/api/table-list-columns?view=graph-rest-1.0
+    params:
+      rename:
+        $top: top
+        $skip: skip
+        $filter: filter
+        $orderby: orderby
+        $select: select
+      exclude:
+        - $search
+        - $count
+        - $expand
+      describe: {}
+  - name: list_names
+    title: List names
+    description: Read list names from an Excel workbook in a business drive. Use IDs from list_worksheets or list_tables.
+    operation:
+      method: GET
+      path: /drives/{drive-id}/items/{driveItem-id}/workbook/names
+    scopes:
+      - Files.ReadWrite
+    annotations:
+      openWorldHint: false
+    posture: auto
+    scopeSource: https://learn.microsoft.com/en-us/graph/api/workbook-list-names?view=graph-rest-1.0
+    params:
+      rename:
+        $top: top
+        $skip: skip
+        $filter: filter
+        $orderby: orderby
+        $select: select
+      exclude:
+        - $search
+        - $count
+        - $expand
+      describe: {}
+  - name: get_used_range
+    title: Get used range
+    description: Read get used range from an Excel workbook in a business drive. Use IDs from list_worksheets or list_tables.
+    operation:
+      method: GET
+      path: /drives/{drive-id}/items/{driveItem-id}/workbook/worksheets/{workbookWorksheet-id}/usedRange()
+    scopes:
+      - Files.ReadWrite
+    annotations:
+      openWorldHint: false
+    posture: auto
+    scopeSource: https://learn.microsoft.com/en-us/graph/api/worksheet-usedrange?view=graph-rest-1.0
+    params:
+      rename: {}
+      exclude: []
+      describe: {}
+server: https://graph.microsoft.com/v1.0

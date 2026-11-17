@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from 'node:crypto';
-import type { APIRequestContext } from '@playwright/test';
+import type { APIRequestContext, APIResponse } from '@playwright/test';
 import { deliverOtlp } from './otlp-delivery';
 
 /** `traceId` is the dashed-UUID form the collector writes to CH `spans.trace_id` /
@@ -47,6 +47,9 @@ export interface SendTraceConfig {
   /** Absent/empty preserves the original two-span payload byte for byte. Extra
    * spans have no inherited attributes and default to the trace's time range. */
   additionalSpans?: readonly AdditionalSpan[];
+  /** Extra request headers, e.g. the X-FI-Expected-* target an EE relay asserts.
+   *  The key pair and content type stay the harness's own. */
+  headers?: Readonly<Record<string, string>>;
   /** Omitted keeps the original e2e-harness scope and OK statuses. */
   scope?: OtlpScope;
   rootStatus?: OtlpStatus;
@@ -149,7 +152,11 @@ function timestamp(value: bigint | string): bigint {
   return nanos;
 }
 
-export async function sendTrace(req: APIRequestContext, cfg: SendTraceConfig): Promise<SeededTrace> {
+export interface TraceHttpResult extends SeededTrace { status: number; elapsedMs: number }
+
+/** Builds and validates one two-span trace without any I/O: its seeded identities and the
+ * OTLP JSON payload that sendTrace and sendTraceResult post. */
+function buildTrace(cfg: SendTraceConfig): { seeded: SeededTrace; payload: unknown } {
   const suppliedTraceId = cfg.traceId ?? randomUUID();
   const wireTraceId = hexId(/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(suppliedTraceId)
     ? suppliedTraceId.replaceAll('-', '') : suppliedTraceId, 32);
@@ -221,8 +228,39 @@ export async function sendTrace(req: APIRequestContext, cfg: SendTraceConfig): P
 
   validateScope(payload.resourceSpans[0].scopeSpans[0].scope);
   for (const item of payload.resourceSpans[0].scopeSpans[0].spans) validateDetails(item);
-  await postOtlp(req, cfg, payload);
-  return { traceId, spanIds: [rootId, childId, ...extras.map((item) => item.spanId)], projectName: cfg.projectName };
+  return { seeded: { traceId, spanIds: [rootId, childId, ...extras.map((item) => item.spanId)], projectName: cfg.projectName },
+    payload };
+}
+
+/** Non-throwing HTTP status, including refusal; never return/log response bodies or headers.
+ * Preassigned IDs use the same validation/encoding as the successful seeder.
+ * No redirects: a collector response cannot send credential headers elsewhere.
+ * One attempt: a refusal is reported as its status, never replayed. */
+export async function sendTraceResult(req: APIRequestContext, cfg: SendTraceConfig,
+  timeoutMs = 5_000): Promise<TraceHttpResult> {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error('OTLP timeout must be positive');
+  const { seeded, payload } = buildTrace(cfg);
+  const started = performance.now();
+  const res = await postOtlp(req, cfg, payload, timeoutMs);
+  return { ...seeded, status: res.status(), elapsedMs: performance.now() - started };
+}
+
+/** Throws unless the collector accepted the trace: a non-2xx status, or a 2xx whose OTLP
+ * partial_success reports a rejection or warning (assertOtlpSuccess). Reads the body only on 2xx.
+ * An explicit 503/429 refusal with a Retry-After hint is replayed with the same bytes (deliverOtlp). */
+export async function sendTrace(req: APIRequestContext, cfg: SendTraceConfig): Promise<SeededTrace> {
+  const { seeded, payload } = buildTrace(cfg);
+  await deliverToCollector(req, cfg, payload);
+  return seeded;
+}
+
+/** Value-free refusal text (no response body, no header). Three auto-merged specs pin different forms and
+ * none can change in this packet: the retained-credential harness (302) and the observe-link flow (403) pin
+ * `collector <status>` for a redirect or a refusal; the native-OTLP harness (500) pins `collector HTTP <status>`
+ * exactly for a server failure. Unify to one form after assembly and update those three specs together. */
+function assertCollectorStatus(status: number): void {
+  if (status >= 200 && status < 300) return;
+  throw new Error(status >= 500 ? `collector HTTP ${status}` : `collector ${status}`);
 }
 
 function check(condition: unknown, message: string): asserts condition {
@@ -433,14 +471,34 @@ export function assertOtlpSuccess(body: string): void {
     }
   }
 }
-async function postOtlp(req: APIRequestContext, cfg: SendOtlpConfig, payload: unknown): Promise<void> {
-  // Freeze wire bytes and credentials before the first await. A refused export
-  // is replayed verbatim, never regenerated with fresh IDs or timestamps.
-  await deliverOtlp(req, {
-    url: `${cfg.collectorUrl}/v1/traces`,
-    headers: { 'X-Api-Key': cfg.apiKey, 'X-Secret-Key': cfg.secretKey, 'Content-Type': 'application/json' },
-    data: JSON.stringify(payload),
-  }, assertOtlpSuccess);
+/** One collector POST, no replay (sendTraceResult). Credentials ride only in the harness's own key pair (cfg.headers cannot
+ * override it); no redirect is followed; a transport error is replaced because Playwright's request
+ * log can carry the credentials. Returns the response unread. */
+async function postOtlp(req: APIRequestContext, cfg: SendOtlpConfig & { headers?: Readonly<Record<string, string>> },
+  payload: unknown, timeoutMs: number): Promise<APIResponse> {
+  try {
+    return await req.post(`${cfg.collectorUrl}/v1/traces`, {
+      headers: { ...cfg.headers, 'X-Api-Key': cfg.apiKey, 'X-Secret-Key': cfg.secretKey, 'Content-Type': 'application/json' },
+      data: payload, timeout: timeoutMs, maxRedirects: 0,
+    });
+  } catch {
+    throw new Error('Collector transport failed (request details withheld)');
+  }
+}
+/** Delivers one export with the same header rules as postOtlp. URL, headers and the serialized
+ * body are fixed before the first await, so a refused export is replayed verbatim, never
+ * regenerated with fresh IDs or timestamps. A final refusal keeps assertCollectorStatus's text. */
+async function deliverToCollector(req: APIRequestContext,
+  cfg: SendOtlpConfig & { headers?: Readonly<Record<string, string>> }, payload: unknown): Promise<void> {
+  const headers = { ...cfg.headers, 'X-Api-Key': cfg.apiKey, 'X-Secret-Key': cfg.secretKey, 'Content-Type': 'application/json' };
+  try {
+    await deliverOtlp(req, { url: `${cfg.collectorUrl}/v1/traces`, headers, data: JSON.stringify(payload) },
+      assertOtlpSuccess);
+  } catch (error) {
+    const refused = error instanceof Error ? /^collector HTTP (\d+)$/.exec(error.message) : null;
+    if (refused) assertCollectorStatus(Number(refused[1]));
+    throw error;
+  }
 }
 /** Only JSON/HTTP to the caller's collector base + /v1/traces. This does not
  * activate disabled Python routes or qualify protobuf/gRPC transports. */
@@ -448,6 +506,6 @@ export async function sendOtlpExport(req: APIRequestContext, cfg: SendOtlpConfig
   fixture: OtlpExport): Promise<SeededOtlpExport> {
   const snapshot = createOtlpFixture(fixture);
   const receipt = inspectExport(snapshot);
-  await postOtlp(req, cfg, snapshot);
+  await deliverToCollector(req, cfg, snapshot);
   return receipt;
 }

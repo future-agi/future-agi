@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: bitbucket
+version: 1.0.0
+name: Bitbucket
+description: "Repositories, pull requests and pipelines through Atlassian's hosted MCP server."
+vendor:
+  name: Atlassian
+  domains: [atlassian.com]
+eeCategory: developer
+group: other
+categories: [developer, code-hosting]
+tags: [git, pull-requests, ci]
+docsUrl: https://support.atlassian.com/atlassian-rovo-mcp-server/docs/supported-tools/
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://support.atlassian.com/atlassian-rovo-mcp-server/docs/configuring-authentication-via-api-token/
+    fetchedAt: 2026-11-09

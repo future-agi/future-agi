@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: assemblyai
+version: 1.0.0
+name: AssemblyAI
+description: "Transcribe audio, retrieve transcripts, summarize speech, and extract speech insights."
+vendor:
+  name: AssemblyAI
+  domains: [assemblyai.com]
+eeCategory: data
+group: other
+categories: [data]
+tags: [extraction, parsing]
+docsUrl: https://www.assemblyai.com/docs/mcp-server
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://www.assemblyai.com/docs/mcp-server
+    fetchedAt: 2026-11-09

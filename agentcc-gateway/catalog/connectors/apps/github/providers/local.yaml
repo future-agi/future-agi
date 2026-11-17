@@ -1,0 +1,43 @@
+# GitHub's MCP server run locally in Docker, as OSS Omega's github entry
+# starts it. The customer supplies the token in the environment.
+schema: "connector-manifest/v1#provider"
+app: github
+id: local
+version: 1.0.0
+kind: vendor_local
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: stdio
+  command: docker
+  args:
+    - run
+    - "-i"
+    - "--rm"
+    - "-e"
+    - GITHUB_PERSONAL_ACCESS_TOKEN
+    - ghcr.io/github/github-mcp-server
+  env:
+    GITHUB_PERSONAL_ACCESS_TOKEN: A GitHub personal access token for the account the server acts as.
+hosted: false
+trusted: false
+accountModes: [agent]
+auth: { kind: local_setup }
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.command
+    url: https://github.com/github/github-mcp-server
+    fetchedAt: 2026-10-20
+  - fact: transport.args
+    url: https://github.com/github/github-mcp-server
+    fetchedAt: 2026-10-20
+  - fact: transport.env
+    url: https://github.com/github/github-mcp-server
+    fetchedAt: 2026-10-20
+  - fact: auth.kind
+    url: https://github.com/github/github-mcp-server
+    fetchedAt: 2026-10-20
+x-omega: { ossId: github }

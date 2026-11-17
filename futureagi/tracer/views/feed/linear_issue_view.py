@@ -14,12 +14,23 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
 from integrations.models.integration_connection import IntegrationPlatform
-from integrations.services.credentials import CredentialManager
+from integrations.services.credentials import (
+    UNREADABLE_CREDENTIALS,
+    CredentialManager,
+    UnreadableCredentials,
+)
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_serializers import ApiErrorResponseSerializer
 from tfc.utils.general_methods import GeneralMethods
-from tracer.models.trace_error_analysis import TraceErrorGroup
-from tracer.queries.feed import priority_to_severity, trace_judge
+from tracer.models.observation_span import EvalTargetType
+from tracer.models.trace_error_analysis import ClusterSource, TraceErrorGroup
+from tracer.queries.feed import (
+    _cluster_judge_q,
+    _session_judges_batch,
+    _trace_judges_batch,
+    priority_to_severity,
+)
+from tracer.services.clickhouse.v2 import get_reader
 from tracer.services.grouping.human_edits import (
     GroupingHumanEditUnavailable,
     edit_grouping_issue,
@@ -84,6 +95,50 @@ def _cluster_url(cluster_id: str) -> str:
     return f"{app_url}/dashboard/error-feed/{cluster_id}"
 
 
+def _request_organization(request):
+    """The organization the caller is working in.
+
+    Settings > Integrations stores and lists connections under the selected
+    organization, the one the authentication class resolved onto the request
+    (``request.organization``). The account's own ``organization`` field never
+    chooses: it is the organization the account was created in and stays there
+    after the user joins or switches to another one. A request without an
+    organization gets ``None``, which matches no connection, so it is answered
+    as "not connected". Resolved the same way as the project access check.
+    """
+    return getattr(request, "organization", None)
+
+
+def _issue_trace_judge(
+    cluster: TraceErrorGroup, trace_id: str
+) -> tuple[str | None, float | None]:
+    """The issue's own evaluator's reasoning and score for one trace.
+
+    Scoped like the Overview's judge card: an eval issue explains its own
+    evaluator at its own unit. A trace-wide pick quotes whichever eval scored
+    the trace lowest, so scanner and Omega issues, which have no evaluator of
+    their own, get none. Trace rows are read in the cluster's project: a trace
+    id can be held by other projects too.
+    """
+    if cluster.source != ClusterSource.EVAL:
+        return None, None
+    judge_q = _cluster_judge_q(cluster)
+    if cluster.eval_target_type == EvalTargetType.SESSION:
+        # Session results anchor to the session (trace FK NULL): read the
+        # sampled trace's session first.
+        with get_reader() as reader:
+            session_id = reader.trace_session_ids_by_trace_ids(
+                [trace_id], [str(cluster.project_id)]
+            ).get(trace_id)
+        if not session_id:
+            return None, None
+        return _session_judges_batch([session_id], judge_q).get(
+            session_id, (None, None)
+        )
+    judges = _trace_judges_batch([trace_id], str(cluster.project_id), judge_q)
+    return judges.get(trace_id, (None, None))
+
+
 def _build_issue_description(cluster: TraceErrorGroup, trace_id: str | None) -> str:
     """Build the Linear issue description.
 
@@ -136,10 +191,10 @@ def _build_issue_description(cluster: TraceErrorGroup, trace_id: str | None) -> 
     if trace_id is None:
         return "\n\n".join(parts)
 
-    # Eval clusters have no deep analysis; the evaluator's reasoning for the
-    # sampled trace is the per-trace context worth shipping instead.
+    # Eval clusters have no deep analysis; their own evaluator's reasoning
+    # for the sampled trace is the per-trace context worth shipping instead.
     try:
-        judge_reason, judge_score = trace_judge(str(trace_id))
+        judge_reason, judge_score = _issue_trace_judge(cluster, str(trace_id))
     except Exception:
         logger.warning("trace_judge_failed", exc_info=True)
         judge_reason, judge_score = None, None
@@ -193,7 +248,7 @@ class CreateLinearIssueView(ErrorFeedLicenseRequired, APIView):
 
         connection = (
             IntegrationConnection.objects.filter(
-                organization=request.user.organization,
+                organization=_request_organization(request),
                 platform=IntegrationPlatform.LINEAR,
                 deleted=False,
             )
@@ -207,7 +262,10 @@ class CreateLinearIssueView(ErrorFeedLicenseRequired, APIView):
                 "Connect Linear in Settings > Integrations first."
             )
 
-        credentials = CredentialManager.decrypt(connection.encrypted_credentials)
+        try:
+            credentials = CredentialManager.decrypt(connection.encrypted_credentials)
+        except UnreadableCredentials:
+            return self._gm.bad_request(UNREADABLE_CREDENTIALS)
 
         # Build default title/description from cluster if not provided
         title = request.validated_data.get("title") or ""
@@ -305,7 +363,7 @@ class LinearTeamsView(ErrorFeedLicenseRequired, APIView):
     """GET /tracer/feed/integrations/linear/teams/
 
     Returns the list of Linear teams for the team picker dropdown.
-    Requires an active Linear integration for the user's org.
+    Requires an active Linear integration for the selected org.
     """
 
     permission_classes = [IsAuthenticated]
@@ -322,7 +380,7 @@ class LinearTeamsView(ErrorFeedLicenseRequired, APIView):
 
         connection = (
             IntegrationConnection.objects.filter(
-                organization=request.user.organization,
+                organization=_request_organization(request),
                 platform=IntegrationPlatform.LINEAR,
                 deleted=False,
             )
@@ -338,7 +396,10 @@ class LinearTeamsView(ErrorFeedLicenseRequired, APIView):
                 }
             )
 
-        credentials = CredentialManager.decrypt(connection.encrypted_credentials)
+        try:
+            credentials = CredentialManager.decrypt(connection.encrypted_credentials)
+        except UnreadableCredentials:
+            return self._gm.bad_request(UNREADABLE_CREDENTIALS)
 
         try:
             from integrations.services.linear_service import LinearService

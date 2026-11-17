@@ -12,8 +12,8 @@
 //	  → message_stop
 //
 // OpenAI streams emit undifferentiated chat.completion.chunk events. We must
-// synthesize boundary events. The core invariant is: never buffer — emit each
-// event as soon as we have enough state to produce it so TTFT is preserved.
+// synthesize boundary events. Emit each event as soon as it is usable; only
+// incomplete tool identity and argument prefixes need bounded buffering.
 package anthropic
 
 import (
@@ -31,8 +31,10 @@ type streamState struct {
 	messageStarted    bool
 	messageID         string
 	currentBlockIdx   int
-	currentBlockType  string // "text" | "tool_use" | "thinking" | ""
-	currentToolCallID string
+	currentBlockType  string // "text" | "tool_use" | ""
+	tools             map[int]*streamTool
+	toolOrder         []int
+	toolBytes         int
 	pendingStopReason string
 	pendingUsage      *models.Usage
 	// toolNameMapping maps truncated tool name → original name, populated
@@ -101,6 +103,12 @@ func streamEvents(
 
 			case chunk, ok := <-chunks:
 				if !ok {
+					// End every indexed tool, including split identity/name prefixes.
+					if err := finishTools(ctx, state, events); err != nil {
+						errs <- err
+						emitStreamError(ctx, events, err)
+						return
+					}
 					// Stream closed — flush any pending stop reason.
 					if state.pendingStopReason != "" {
 						flushPendingStop(ctx, state, events)
@@ -134,6 +142,11 @@ func streamEvents(
 // handleChunk processes one OpenAI StreamChunk and emits the corresponding
 // Anthropic SSE events onto the events channel.
 func handleChunk(ctx context.Context, state *streamState, chunk models.StreamChunk, events chan<- []byte) error {
+	// Usage may be split across metadata, the finish, and trailing reports.
+	// A finish closes generation, not accounting: even a non-nil usage object
+	// can be partial or superseded. Only canonical EOF seals the final report.
+	state.pendingUsage = models.MergeUsage(state.pendingUsage, chunk.Usage)
+
 	// First chunk: emit message_start.
 	if !state.messageStarted {
 		state.messageStarted = true
@@ -142,31 +155,18 @@ func handleChunk(ctx context.Context, state *streamState, chunk models.StreamChu
 			state.messageID = generateMsgID()
 		}
 
-		var startUsage ResponseUsage
-		if chunk.Usage != nil {
-			startUsage = ResponseUsage{
-				InputTokens:  chunk.Usage.PromptTokens,
-				OutputTokens: chunk.Usage.CompletionTokens,
-			}
-		}
+		startUsage := dialectUsage(chunk.Usage)
 		emit(ctx, events, sseFrame("message_start", MessageStartEvent{
 			Type: "message_start",
 			Message: MessageStartMsg{
-				ID:    state.messageID,
-				Type:  "message",
-				Role:  "assistant",
-				Model: chunk.Model,
-				Usage: startUsage,
+				ID:      state.messageID,
+				Type:    "message",
+				Role:    "assistant",
+				Model:   chunk.Model,
+				Content: []ContentBlock{},
+				Usage:   startUsage,
 			},
 		}))
-	}
-
-	// If we previously stashed a pending stop reason AND this chunk carries
-	// usage, now is the time to flush.
-	if state.pendingStopReason != "" && chunk.Usage != nil {
-		state.pendingUsage = chunk.Usage
-		flushPendingStop(ctx, state, events)
-		return nil
 	}
 
 	if len(chunk.Choices) == 0 {
@@ -174,6 +174,10 @@ func handleChunk(ctx context.Context, state *streamState, chunk models.StreamChu
 	}
 	choice := chunk.Choices[0]
 	delta := choice.Delta
+
+	// RequestToCanonical reports thinking_unsupported. Ignore ReasoningContent,
+	// as the non-stream response translators do: it is neither a signed native
+	// thinking block nor visible text. Keep usage and finish metadata intact.
 
 	// ── Text delta ─────────────────────────────────────────────────────────────
 	if delta.Content != nil && *delta.Content != "" {
@@ -209,82 +213,20 @@ func handleChunk(ctx context.Context, state *streamState, chunk models.StreamChu
 
 	// ── Tool call deltas ───────────────────────────────────────────────────────
 	for _, tc := range delta.ToolCalls {
-		if tc.Function == nil {
-			continue
-		}
-
-		if tc.Function.Name != "" {
-			// New tool call starting: name (and id) are set on the same chunk
-			// as the first arguments fragment (LiteLLM streaming_iterator.py
-			// gotcha: name+id+first-args in the same chunk).
-			// Emit: close prior block → open tool_use block → emit first delta.
-			if state.currentBlockType != "" {
-				emit(ctx, events, sseFrame("content_block_stop", ContentBlockStopEvent{
-					Type:  "content_block_stop",
-					Index: state.currentBlockIdx,
-				}))
-			}
-			state.currentBlockIdx++
-			state.currentBlockType = "tool_use"
-			state.currentToolCallID = tc.ID
-
-			// Restore the original tool name if RequestToCanonical truncated
-			// it to fit OpenAI's 64-char limit (see tool_name_mapping in
-			// to_openai.go). The non-streaming path uses
-			// ResponseFromCanonicalWithMapping; streaming does the same via
-			// state.toolNameMapping populated by
-			// StreamEventsFromCanonicalWithMapping.
-			emittedName := tc.Function.Name
-			if state.toolNameMapping != nil {
-				if original, ok := state.toolNameMapping[emittedName]; ok {
-					emittedName = original
-				}
-			}
-
-			emit(ctx, events, sseFrame("content_block_start", ContentBlockStartEvent{
-				Type:  "content_block_start",
-				Index: state.currentBlockIdx,
-				ContentBlock: ContentBlock{
-					Type:  "tool_use",
-					ID:    tc.ID,
-					Name:  emittedName,
-					Input: json.RawMessage("{}"),
-				},
-			}))
-
-			// If the same chunk also carries arguments, emit a delta immediately.
-			if tc.Function.Arguments != "" {
-				emit(ctx, events, sseFrame("content_block_delta", ContentBlockDeltaEvent{
-					Type:  "content_block_delta",
-					Index: state.currentBlockIdx,
-					Delta: ContentDelta{
-						Type:        "input_json_delta",
-						PartialJSON: tc.Function.Arguments,
-					},
-				}))
-			}
-		} else if tc.Function.Arguments != "" {
-			// Continuation of an existing tool_use block.
-			emit(ctx, events, sseFrame("content_block_delta", ContentBlockDeltaEvent{
-				Type:  "content_block_delta",
-				Index: state.currentBlockIdx,
-				Delta: ContentDelta{
-					Type:        "input_json_delta",
-					PartialJSON: tc.Function.Arguments,
-				},
-			}))
+		if err := toolDelta(ctx, state, tc, events); err != nil {
+			return err
 		}
 	}
 
 	// ── Finish reason ──────────────────────────────────────────────────────────
 	// Don't emit stop events yet — OpenAI may send usage in a trailing chunk.
 	if choice.FinishReason != nil && *choice.FinishReason != "" {
-		state.pendingStopReason = reverseMapFinishReasonForStream(*choice.FinishReason)
-		if chunk.Usage != nil {
-			state.pendingUsage = chunk.Usage
-			flushPendingStop(ctx, state, events)
+		if err := finishTools(ctx, state, events); err != nil {
+			return err
 		}
-		// else: wait for a trailing usage chunk or stream close.
+		state.pendingStopReason = reverseMapFinishReasonForStream(*choice.FinishReason)
+		// Flush once when chunks close, after every trailing usage report.
+		// This does not wait for the provider's auxiliary error channel.
 	}
 
 	return nil
@@ -301,17 +243,14 @@ func flushPendingStop(ctx context.Context, state *streamState, events chan<- []b
 		state.currentBlockType = ""
 	}
 
-	var outputTokens int
-	if state.pendingUsage != nil {
-		outputTokens = state.pendingUsage.CompletionTokens
-	}
-
 	emit(ctx, events, sseFrame("message_delta", MessageDeltaEvent{
 		Type: "message_delta",
 		Delta: MessageDelta{
 			StopReason: state.pendingStopReason,
 		},
-		Usage: ResponseUsage{OutputTokens: outputTokens},
+		// Cumulative, as Anthropic's message_delta usage is: a canonical
+		// stream reports its usage only in its last chunks.
+		Usage: dialectUsage(state.pendingUsage),
 	}))
 
 	emit(ctx, events, sseFrame("message_stop", MessageStopEvent{Type: "message_stop"}))

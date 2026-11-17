@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: new-relic
+version: 1.0.0
+name: New Relic
+description: "Observability data: entities, NRQL queries, alerts and dashboards."
+vendor:
+  name: New Relic
+  domains: [newrelic.com]
+eeCategory: developer
+group: other
+categories: [developer, observability]
+tags: [apm, logs, alerts, dashboards]
+docsUrl: https://docs.newrelic.com/docs/agentic-ai/mcp/setup/
+defaultProvider: mcp
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://docs.newrelic.com/docs/agentic-ai/mcp/setup/
+    fetchedAt: 2026-11-11

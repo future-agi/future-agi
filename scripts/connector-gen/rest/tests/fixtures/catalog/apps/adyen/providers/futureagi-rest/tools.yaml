@@ -1,0 +1,92 @@
+# Fixture for the REST generator's tests, not catalog data (see ../../../gmail/app.yaml).
+# A Postman collection names requests, not operations: each tool picks its
+# request by name (and method and path where names repeat). The collection's
+# apikey auth (X-API-Key) is the credential, never a tool input.
+schema: connector-gen/rest-overlay/v1
+spec: fixtures/spec/adyen-transfers-v4.postman.json.gz
+tools:
+  - name: list_transactions
+    title: List transactions
+    description: >-
+      List the transactions of a balance account or account holder between createdSince and createdUntil
+      (ISO 8601, for example 2026-10-01T00:00:00Z). Pass the cursor from the response's _links for the next page.
+    operation: { name: Get all transactions }
+    annotations: { openWorldHint: false }
+    posture: auto
+    response:
+      maxBytes: 50000
+
+  - name: get_transaction
+    title: Read a transaction
+    description: Read one transaction by its id, for example EVJN4227C224222B5JQ8QC7B24C6Q8.
+    operation: { name: Get a transaction }
+    params:
+      describe:
+        id: "The transaction id."
+    annotations: { openWorldHint: false }
+    posture: auto
+
+  - name: list_transfers
+    title: List transfers
+    description: >-
+      List transfers between createdSince and createdUntil (ISO 8601), optionally for one balance account,
+      account holder or payment instrument, or one category such as bank, internal or card.
+    operation: { name: Get all transfers }
+    annotations: { openWorldHint: false }
+    posture: auto
+    response:
+      maxBytes: 50000
+
+  - name: get_transfer
+    title: Read a transfer
+    description: Read one transfer by its id, with its status and amount.
+    operation: { name: Get a transfer }
+    params:
+      describe:
+        id: "The transfer id."
+    annotations: { openWorldHint: false }
+    posture: auto
+
+  - name: transfer_between_balance_accounts
+    title: Move funds between balance accounts
+    description: >-
+      Move funds from one balance account to another on the same platform. amount is {"currency": "EUR",
+      "value": 1000} in minor units; counterparty is {"balanceAccountId": "BA..."}; category is internal.
+    operation: { name: Transfer funds to another balance account }
+    body:
+      description: The transfer to make.
+    annotations:
+      { destructiveHint: false, idempotentHint: false, openWorldHint: true }
+    posture: deny
+
+  - name: return_transfer
+    title: Return an incoming transfer
+    description: Return an incoming internal transfer, by its id, in full or in part (amount in minor units).
+    operation: { name: Return an incoming internal transfer }
+    params:
+      describe:
+        transferId: "The id of the incoming transfer to return."
+    body:
+      description: The amount to return and your reference.
+    annotations:
+      { destructiveHint: false, idempotentHint: false, openWorldHint: true }
+    posture: deny
+
+  - name: approve_transfers
+    title: Approve transfers
+    description: Approve transfers that wait for approval, by their ids, for example ["3JNC3O5ZVFLLGV4B"].
+    operation: { name: Approve transfers }
+    body:
+      description: The transfers to approve.
+    annotations:
+      { destructiveHint: false, idempotentHint: true, openWorldHint: true }
+    posture: deny
+
+  - name: cancel_transfers
+    title: Cancel transfers
+    description: Cancel transfers that wait for approval, by their ids.
+    operation: { name: Cancel transfers }
+    body:
+      description: The transfers to cancel.
+    annotations: { destructiveHint: true, openWorldHint: true }
+    posture: deny

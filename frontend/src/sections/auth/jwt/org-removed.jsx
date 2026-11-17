@@ -1,19 +1,33 @@
 import React, { useState } from "react";
-import { Box, Stack, Typography, TextField, Alert } from "@mui/material";
+import { Box, Stack, Typography, TextField, Alert, Link } from "@mui/material";
 import { LoadingButton } from "@mui/lab";
 import { useMutation } from "@tanstack/react-query";
 import { useSnackbar } from "src/components/snackbar";
 import axiosInstance, { endpoints } from "src/utils/axios";
 import { useAuthContext } from "src/auth/hooks";
+import { signOutToSignIn } from "src/auth/sign-out";
 import { paths } from "src/routes/paths";
+import { useRouter } from "src/routes/hooks";
 import Iconify from "src/components/iconify";
 import RightSectionAuth from "./RightSectionAuth";
+import {
+  authSplitSx,
+  authFormPanelSx,
+  authAsideSx,
+  authFormGutterSx,
+} from "src/layouts/auth/responsive-styles";
 import logger from "src/utils/logger";
 
 export default function OrgRemovedPage() {
-  const { initialize } = useAuthContext();
+  const router = useRouter();
+  const { initialize, logout, user } = useAuthContext();
   const { enqueueSnackbar } = useSnackbar();
   const [orgName, setOrgName] = useState("");
+
+  // Every route sends a signed-in user with no organization here, and the
+  // sign-in page sends a signed-in visitor back, so signing out (wrong
+  // account, shared device) has to be possible from this page.
+  const handleSignOut = () => signOutToSignIn(logout, router.replace);
 
   const { mutate: createOrg, isPending } = useMutation({
     mutationFn: async () => {
@@ -53,12 +67,11 @@ export default function OrgRemovedPage() {
   };
 
   return (
-    <Box sx={{ width: "100%", height: "100vh", display: "flex" }}>
+    <Box sx={authSplitSx}>
       {/* Left Side - Content */}
       <Box
         sx={{
-          width: "50%",
-          height: "100vh",
+          ...authFormPanelSx,
           display: "flex",
           justifyContent: "center",
           bgcolor: "background.paper",
@@ -70,7 +83,7 @@ export default function OrgRemovedPage() {
             maxWidth: "640px",
             paddingY: "100px",
             width: "100%",
-            px: 10,
+            ...authFormGutterSx,
             height: "fit-content",
           }}
         >
@@ -106,8 +119,9 @@ export default function OrgRemovedPage() {
               severity="info"
               sx={{ maxWidth: "440px" }}
             >
-              Your account is still active. Create a new organization to get
-              started, or contact your previous admin to be re-invited.
+              Your account is still active. Create a new organization, or ask
+              your admin to re-invite you and open the invitation email to
+              rejoin.
             </Alert>
 
             <form onSubmit={handleSubmit}>
@@ -137,18 +151,33 @@ export default function OrgRemovedPage() {
                 </LoadingButton>
               </Stack>
             </form>
+
+            <Typography
+              variant="body2"
+              color="text.secondary"
+              sx={{
+                maxWidth: "440px",
+                textAlign: "center",
+                overflowWrap: "anywhere",
+              }}
+            >
+              {user?.email ? `Signed in as ${user.email}. Not you? ` : null}
+              <Link
+                component="button"
+                type="button"
+                variant="subtitle2"
+                onClick={handleSignOut}
+                sx={{ color: "primary.main", verticalAlign: "baseline" }}
+              >
+                Sign out
+              </Link>
+            </Typography>
           </Stack>
         </Box>
       </Box>
 
       {/* Right Side */}
-      <Box
-        sx={{
-          width: "50%",
-          height: "100%",
-          backgroundColor: "background.neutral",
-        }}
-      >
+      <Box sx={authAsideSx}>
         <RightSectionAuth />
       </Box>
     </Box>

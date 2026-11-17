@@ -183,6 +183,9 @@ export default function AnnotatorPicker({
             highlightAutoAssigned &&
             currentRoles.includes(QUEUE_ROLES.ANNOTATOR);
           const rowReadOnly = !isManager;
+          const roleLabelColor = rowReadOnly
+            ? "text.disabled"
+            : "text.secondary";
           return (
             <Box
               key={m.id}
@@ -226,7 +229,7 @@ export default function AnnotatorPicker({
                     <Typography
                       component="span"
                       variant="caption"
-                      color="text.disabled"
+                      color="text.secondary"
                       sx={{ ml: 0.5 }}
                     >
                       (creator)
@@ -273,14 +276,25 @@ export default function AnnotatorPicker({
                         onChange={() =>
                           handleRoleToggle(m.id, opt.value, { isCreator })
                         }
-                        sx={{ p: 0.25 }}
+                        sx={{
+                          p: 0.25,
+                          // The theme draws a checked box in its checked
+                          // colour even when it is disabled. Grey it, so a
+                          // locked role looks locked.
+                          "&.Mui-disabled": { color: "action.disabled" },
+                        }}
                       />
                     }
                     sx={{
                       m: 0,
                       "& .MuiFormControlLabel-label": {
                         fontSize: 12,
-                        color: rowReadOnly ? "text.disabled" : "text.secondary",
+                        color: roleLabelColor,
+                        // MUI draws a disabled label (a locked role, such as
+                        // the creator's Manager) in text.disabled, about
+                        // 2.6:1. Keep the row's colour so it reads at 4.5:1;
+                        // the box, drawn in action.disabled, shows the lock.
+                        "&.Mui-disabled": { color: roleLabelColor },
                       },
                     }}
                   />

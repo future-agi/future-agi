@@ -1,7 +1,7 @@
 import React from "react";
 import PropTypes from "prop-types";
 import { useAuthContext } from "src/auth/hooks";
-import { Navigate } from "react-router";
+import NoAccessState from "./no-access-state";
 
 /**
  * RoleProtection - Role-based route protection
@@ -13,11 +13,13 @@ import { Navigate } from "react-router";
  * Workspace roles: "workspace_admin", "workspace_member", "workspace_viewer"
  *
  * Access is granted if EITHER the org role OR workspace role is in allowedRoles.
+ * Anyone else sees `fallback` when one is given, or a named access denial
+ * on the requested URL.
  *
  * TODO: Consider migrating to integer permission levels for consistent, hierarchical
  * comparisons (e.g. level >= ADMIN_LEVEL) instead of list-inclusion checks.
  */
-const RoleProtection = ({ allowedRoles, children }) => {
+const RoleProtection = ({ allowedRoles, children, fallback }) => {
   const { user, role: workspaceRole } = useAuthContext();
 
   // Get both organization role and workspace role
@@ -29,7 +31,13 @@ const RoleProtection = ({ allowedRoles, children }) => {
     workspaceRole && allowedRoles.includes(workspaceRole);
 
   if (!hasOrgAccess && !hasWorkspaceAccess) {
-    return <Navigate to="/dashboard/develop" />;
+    return fallback ?? (
+      <NoAccessState
+        allowedRoles={allowedRoles}
+        orgRole={orgRole}
+        workspaceRole={workspaceRole}
+      />
+    );
   }
 
   return <>{children}</>;
@@ -38,6 +46,7 @@ const RoleProtection = ({ allowedRoles, children }) => {
 RoleProtection.propTypes = {
   allowedRoles: PropTypes.array,
   children: PropTypes.any,
+  fallback: PropTypes.node,
 };
 
 export default RoleProtection;

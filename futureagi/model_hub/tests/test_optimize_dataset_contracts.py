@@ -1,3 +1,12 @@
+"""A line test's expected value changes: the knowledge-base create route now
+answers "RAG prompt optimization is not available." instead of the line's
+retirement sentence. That refusal is asserted in
+test_rag_prompt_optimization_unavailable.py, so the knowledge-base scope test
+here seeds its runs directly and no longer posts. A line test's expected value
+changes: the Prompt Template create is no longer refused; it writes its row and
+schedules its run.
+"""
+
 import uuid
 
 import pytest
@@ -285,7 +294,7 @@ def test_legacy_optimize_dataset_result_routes_scope_and_tolerate_empty_clickhou
     auth_client, organization, workspace, user, monkeypatch
 ):
     class EmptyClickHouseClient:
-        def execute_read(self, query):
+        def execute_read(self, query, params=None, **kwargs):
             if "COUNT(*)" in query:
                 return [(0,)]
             return []
@@ -347,7 +356,7 @@ def test_legacy_optimize_dataset_result_routes_tolerate_clickhouse_read_errors(
     auth_client, organization, workspace, monkeypatch
 ):
     class MissingEventsClickHouseClient:
-        def execute_read(self, query):
+        def execute_read(self, query, params=None, **kwargs):
             raise RuntimeError("ClickHouse events table is unavailable")
 
     monkeypatch.setattr(
@@ -422,14 +431,20 @@ def test_legacy_optimize_dataset_model_create_scopes_model_and_metrics(
         format="json",
     )
 
+    # A line test's expected value changes: the prompt-template optimizer is no
+    # longer retired. The create writes the run for the URL's model and its
+    # metric, and schedules one top-k task for that run.
     assert response.status_code == status.HTTP_200_OK
-    created_id = response.json()["data"]["id"]
-    created = OptimizeDataset.no_workspace_objects.get(id=created_id)
+    created = OptimizeDataset.no_workspace_objects.get(
+        name="Created legacy optimize run"
+    )
+    assert str(created.id) == str(response.json()["data"]["id"])
     assert created.model == model
-    assert created.organization == organization
-    assert created.workspace == workspace
     assert list(created.metrics.values_list("id", flat=True)) == [metric.id]
-    assert dispatched
+    ((dispatch_args, dispatch_kwargs),) = dispatched
+    assert dispatch_args == ()
+    assert dispatch_kwargs["args"][0] == str(model.id)
+    assert str(dispatch_kwargs["args"][4]) == str(created.id)
 
     mismatch_response = auth_client.post(
         f"/model-hub/optimize-dataset/{model.id}/",

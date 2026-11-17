@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: northflank
+version: 1.0.0
+name: Northflank
+description: "Deploy applications, manage databases and jobs, and inspect team infrastructure."
+vendor:
+  name: Northflank
+  domains: [northflank.com]
+eeCategory: developer
+group: other
+categories: [developer]
+tags: [projects, automation]
+docsUrl: https://northflank.com/docs/v1/application/ai-agents/mcp-server
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://northflank.com/docs/v1/application/ai-agents/mcp-server
+    fetchedAt: 2026-11-09

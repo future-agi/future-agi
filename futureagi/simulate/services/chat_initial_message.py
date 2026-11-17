@@ -10,8 +10,7 @@ import json
 
 import structlog
 
-from agentic_eval.core.llm.llm import LLM
-from simulate.services.chat_constants import CHAT_SIM_MODEL_CONFIG
+from agentic_eval.core.llm.platform_model import PlatformFeature, call_platform_model
 from simulate.constants.chat_initial_message_prompt import (
     build_chat_initial_message_messages,
 )
@@ -201,14 +200,8 @@ def _generate_chat_initial_message(
             guidance_lines=len(guidance.split("\n")) if guidance else 0,
             hint_present=bool(hint),
         )
-        model_cfg = CHAT_SIM_MODEL_CONFIG
-        llm = LLM(
-            model_name=model_cfg.model_name,
-            temperature=0.7,  # Higher for more natural variation
-            provider=model_cfg.provider,
-            api_key=None,
-        )
-        text = (llm.call_llm(messages, model_cfg.provider) or "").strip()
+        feature = PlatformFeature.CHAT_SIMULATOR_FIRST_MESSAGE
+        text = (call_platform_model(feature, messages) or "").strip()
 
         # Clean up any accidental formatting
         text = text.strip('"').strip("'").strip()

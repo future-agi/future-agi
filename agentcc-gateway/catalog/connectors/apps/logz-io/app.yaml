@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: logz-io
+version: 1.0.0
+name: Logz.io
+description: "Search logs, query metrics, manage dashboards and inspect alerts and observability insights."
+vendor:
+  name: Logz.io
+  domains: [logz.io]
+eeCategory: developer
+group: other
+categories: [developer, observability]
+tags: [logs, metrics, dashboards, alerts]
+docsUrl: https://docs.logz.io/docs/open360/logzio-mcp/
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://docs.logz.io/docs/open360/logzio-mcp/
+    fetchedAt: 2026-11-09

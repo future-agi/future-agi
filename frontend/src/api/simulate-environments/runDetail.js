@@ -38,6 +38,8 @@ import { fetchRunCalls, runSummaryKey } from "./runCalls";
  * @property {string} runState      Execution lifecycle shared with the runs list.
  * @property {?{id: string, label: string}} fixRun  The fix that started this
  *                                   check run; null on the user's own runs.
+ * @property {?{domain: ?string, code: string}} failure  Why a failed run's job
+ *                                   failed; null otherwise.
  */
 
 /**
@@ -233,6 +235,9 @@ export function useRunDetail(
       agentDiffers: Boolean(execution.agent_differs),
       // A fix's check run: `{ id, label }` of the fix that started it, else null.
       fixRun: execution.fix_run ?? null,
+      // A failed run's typed reason, `{ domain, code }`; null otherwise or from
+      // a server that does not send it.
+      failure: execution.failure ?? null,
       // How far an interrupted run got and whether it can resume; null when the
       // backend does not say.
       resume: execution.resume

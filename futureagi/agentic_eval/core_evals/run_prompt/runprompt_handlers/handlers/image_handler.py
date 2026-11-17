@@ -14,6 +14,11 @@ Features:
 - Retry on timeout with exponential backoff
 """
 
+# Older lint findings in this module (import pruning and ordering, an unused
+# local and typing rewrites) are exempted file-wide, so a change here does not
+# have to rewrite them.
+# ruff: noqa: F401, F841, I001, UP006, UP035
+
 import re
 import time
 from typing import Any, Dict, Optional, Tuple
@@ -22,12 +27,23 @@ import litellm
 import structlog
 
 from agentic_eval.core_evals.fi_utils.token_count_helper import calculate_total_cost
+from model_hub.utils.model_endpoints import (
+    audio_model_kwargs,
+    guarded_image_generation,
+    is_endpoint_error,
+    is_vertex_provider,
+    refuse_vertex_call_without_a_service_account_key,
+    refuse_vertex_model_sent_to_another_provider,
+)
 from tfc.utils.storage import upload_image_to_s3
 
 from agentic_eval.core_evals.run_prompt.runprompt_handlers.base_handler import (
     BaseModelHandler,
     HandlerResponse,
     ModelHandlerContext,
+)
+from agentic_eval.core_evals.run_prompt.runprompt_handlers.utils.payload_builder import (
+    vertex_credentials_and_location,
 )
 
 logger = structlog.get_logger(__name__)
@@ -196,13 +212,39 @@ class ImageHandler(BaseModelHandler):
 
         # Add API key based on provider
         api_key = self.context.api_key
-        if isinstance(api_key, dict):
+        if is_vertex_provider(self.context.provider) and isinstance(api_key, dict):
+            # A customer's Vertex model is called with the customer's own
+            # service-account key and its location, as the chat payload is.
+            creds, vertex_location = vertex_credentials_and_location(api_key)
+            image_params["vertex_credentials"] = creds
+            if vertex_location:
+                image_params["vertex_location"] = vertex_location
+        elif self.context.provider == "azure" and isinstance(api_key, dict):
+            # Reuse selected-key and Azure alias normalization without changing
+            # image options or the final guarded image transport.
+            image_params.update(audio_model_kwargs(self.context.provider, api_key))
+            if image_params.get(
+                "custom_llm_provider"
+            ) == "azure_ai" and actual_model.startswith("azure/"):
+                image_params["model"] = actual_model.removeprefix("azure/")
+        elif isinstance(api_key, dict):
             if "api_key" in api_key:
                 image_params["api_key"] = api_key["api_key"]
             if "api_base" in api_key:
                 image_params["api_base"] = api_key["api_base"]
         elif api_key:
             image_params["api_key"] = api_key
+        # A Vertex model given no service-account key of the customer's own
+        # (a key alone, no configuration, an empty one or a location alone)
+        # is refused before the call.
+        refuse_vertex_call_without_a_service_account_key(
+            self.context.provider, image_params
+        )
+        # So is a Vertex model whose name the model library sends to another
+        # provider.
+        refuse_vertex_model_sent_to_another_provider(
+            self.context.provider, image_params
+        )
 
         # Get configuration from run_prompt_config
         config = self.context.run_prompt_config or {}
@@ -250,9 +292,19 @@ class ImageHandler(BaseModelHandler):
 
         # Call litellm image_generation
         try:
-            response = litellm.image_generation(**image_params, drop_params=True)
+            # A tenant api_base is called through a guarded client.
+            response = guarded_image_generation(**image_params, drop_params=True)
         except Exception as e:
-            self.logger.exception("Image generation failed", error=str(e))
+            if is_endpoint_error(e):
+                # A tenant endpoint's error: generic already; logged without
+                # text or traceback.
+                self.logger.warning(
+                    "Image generation failed",
+                    error_type=type(e).__name__,
+                    category=getattr(e, "category", None),
+                )
+            else:
+                self.logger.exception("Image generation failed", error=str(e))
             raise
 
         # Validate response is not None
@@ -357,6 +409,7 @@ class ImageHandler(BaseModelHandler):
             },
             "cost": cost_payload,
             "response_time": completion_time,
+            "response_time_unit": "ms",
             "revised_prompt": revised_prompt,
             "size": image_params.get("size"),
             "quality": image_params.get("quality"),

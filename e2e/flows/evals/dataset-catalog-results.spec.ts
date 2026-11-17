@@ -1,3 +1,6 @@
+// SELECTOR_RECHECK_AFTER_FE(FE-DSX-DATASETS-EVALS, FE-DSX-DEVELOP-DETAIL): WHOLE_FILE, not only conflict regions.
+// Recheck every selector, imported grid/picker helper, declaration and repeated use,
+// including all auto-merged hunks; change dependent references together after FE lands.
 import { type Request, type Response } from '@playwright/test';
 import { isDeepStrictEqual } from 'node:util';
 import { test, expect } from '../../lib/mock-model-fixtures';
@@ -233,15 +236,18 @@ test('EVAL-E2E-004: executed dataset evaluations retain typed cells, exact filte
 
   // DATA001 / file_upload.py: real upload, never insert equivalent rows ourselves.
   await page.goto('/dashboard/develop', { waitUntil: 'domcontentloaded' });
-  await page.getByRole('button', { name: /^add dataset$/i }).first().click();
-  await page.getByText('Upload a file (JSON, CSV)', { exact: true }).click();
-  const uploadDialog = page.getByRole('dialog').filter({ has: page.getByText('Upload a File', { exact: true }) });
+  // DevelopView.jsx and AddDatasetDrawer/UploadFileModal.jsx: New dataset, then
+  // Upload a file; the dialog previews the file and imports it on "Import 3 rows"
+  // (catalog-regions.csv holds three rows).
+  await page.getByRole('button', { name: 'New dataset', exact: true }).click();
+  await page.getByText('Upload a file', { exact: true }).click();
+  const uploadDialog = page.getByRole('dialog', { name: 'Upload a file', exact: true });
   await uploadFixture(uploadDialog.locator('input[type="file"]'), 'catalog-regions.csv');
-  await uploadDialog.getByPlaceholder('Dataset Name').fill(datasetName);
+  await uploadDialog.getByPlaceholder('Dataset name', { exact: true }).fill(datasetName);
   const uploadAt = Date.now();
   const [uploaded] = await Promise.all([
     page.waitForResponse(r => fresh(r, UPLOAD, 'POST', uploadAt), { timeout: UI_READY }),
-    uploadDialog.getByRole('button', { name: 'Upload', exact: true }).click(),
+    uploadDialog.getByRole('button', { name: 'Import 3 rows', exact: true }).click(),
   ]);
   const uploadBody = await uploaded.json() as { result: { dataset_id: string; processing_status: string } };
   await attach('uploaded-dataset', { status: uploaded.status(), scope: scope(uploaded.request()), body: uploadBody });
@@ -286,7 +292,17 @@ test('EVAL-E2E-004: executed dataset evaluations retain typed cells, exact filte
       expect(created.result).toMatchObject({ name: family.name, version: 'V1' });
       await attach(`template-${family.key}`, { request: wire, body: created });
     }
-    await page.getByRole('button', { name: 'Evaluate', exact: true }).click();
+    // DevelopDataRightSection's ActionBar folds Evaluate into the grid bar's
+    // "More actions" menu. More also holds "Evaluate guide"; a disabled row's
+    // name adds its reason, so retry until the row is enabled.
+    const more = page.locator('[data-action-bar="grid"]').getByRole('button', { name: 'More actions', exact: true });
+    const evaluate = page.getByRole('menuitem', { name: /^Evaluate(?! guide)/ });
+    await expect(async () => {
+      if (await evaluate.isVisible()) await page.keyboard.press('Escape');
+      await more.click();
+      await expect(evaluate).toBeEnabled({ timeout: 2_000 });
+    }).toPass({ timeout: UI_READY });
+    await evaluate.click();
     for (const [index, family] of families.entries()) {
       // SavedEvalsList's populated header owns this Add; collapsed picker
       // rows can still contain other Add buttons while the drawer transitions.
@@ -331,9 +347,10 @@ test('EVAL-E2E-004: executed dataset evaluations retain typed cells, exact filte
       expect(wire.config.config).toMatchObject({ eval_type_id: 'CustomPromptEvaluator', output: family.output,
         check_internet: false, error_localizer_enabled: false, template_format: 'mustache' });
       // Hydration wraps this one instruction in one system message; no extra
-      // messages or few-shot examples are supplied by this journey.
+      // messages or few-shot examples are supplied by this journey, so the
+      // picker sends its empty list (EvalPickerConfigFull.jsx few_shot_examples).
       expect(wire.config.config.messages).toEqual([{ role: 'system', content: family.instructions }]);
-      expect(wire.config.config.few_shot_examples).toBeUndefined();
+      expect(wire.config.config.few_shot_examples).toEqual([]);
       expect(wire.config.run_config).toMatchObject({ model: mockModel.model, check_internet: false,
         error_localizer_enabled: false, data_injection: { variables_only: true } });
       // EvalPickerConfigFull.build_tools_payload returns an object, not a list.
@@ -384,13 +401,14 @@ test('EVAL-E2E-004: executed dataset evaluations retain typed cells, exact filte
     const selectionHeader = page.getByText('2 of 2 selected', { exact: true });
     await ui(selectionHeader).toBeVisible();
     await selectionHeader.locator('..').getByRole('checkbox').uncheck();
-    await ui(page.getByRole('button', { name: 'Run All (2)', exact: true })).toBeEnabled();
+    // SavedEvalsList's footer button reads "Run all (n)" while nothing is selected.
+    await ui(page.getByRole('button', { name: 'Run all (2)', exact: true })).toBeEnabled();
     const startedAt = Date.now();
     const runPath = `${DATASETS}${datasetId}/start_evals_process/`;
     const responses = families.map(f => page.waitForResponse(r => fresh(r, runPath, 'POST', startedAt) &&
       isDeepStrictEqual(r.request().postDataJSON(), { user_eval_ids: [f.bindingId] }), { timeout: UI_READY }));
     const [choiceRun, numberRun] = await Promise.all([...responses,
-      page.getByRole('button', { name: 'Run All (2)', exact: true }).click()]);
+      page.getByRole('button', { name: 'Run all (2)', exact: true }).click()]);
     expect((await receipt<{ status: boolean }>('run-all-choice', choiceRun! as Response)).status).toBe(true);
     expect((await receipt<{ status: boolean }>('run-all-number', numberRun! as Response)).status).toBe(true);
     // One shared terminal wall for both bindings, never two sequential 90s polls.
@@ -494,8 +512,11 @@ test('EVAL-E2E-004: executed dataset evaluations retain typed cells, exact filte
     await assertVisibleRows(aliases);
     await attach(`${label}-replay`, { params, body: replay, expectedIds: orderedIds(aliases) });
   };
+  // DevelopBarLeftSection's Filter button is named "Filter, N active" while
+  // filters are applied.
+  const filterButton = () => page.getByRole('button', { name: /^Filter(, \d+ active)?$/ });
   const openProperty = async (family: Family, append = false) => {
-    await page.getByRole('button', { name: 'Filter', exact: true }).click();
+    await filterButton().click();
     // TraceFilterPanel hydrates existing filters without an extra empty row.
     if (append) await page.getByRole('button', { name: 'Add filter', exact: true }).click();
     await page.getByRole('button', { name: 'Property', exact: true }).first().click();
@@ -504,8 +525,9 @@ test('EVAL-E2E-004: executed dataset evaluations retain typed cells, exact filte
   };
   let choiceValuesReceipt: ValuesBody;
   await test.step('backend check 4 / UI wall 1: typed chips and discovered choice filter', async () => {
-    // SavedEvalsList's Run All closes the drawer after both requests resolve.
-    await ui(page.getByText('All Evaluations', { exact: true })).not.toBeVisible();
+    // SavedEvalsList's Run all closes the drawer after both requests resolve;
+    // EvaluationDrawer's header reads "All evaluations".
+    await ui(page.getByText('All evaluations', { exact: true })).not.toBeVisible();
     await assertVisibleRows(['R2', 'R7', 'R3']);
     for (const wanted of ORACLE) {
       await ui(page.locator(`.ag-row[row-id="${ids[wanted.alias]}"] [col-id="${number.columnId}"]`)
@@ -541,7 +563,7 @@ test('EVAL-E2E-004: executed dataset evaluations retain typed cells, exact filte
   }, { timeout: UI_READY });
 
   await test.step('backend check 4 / UI wall 2: inclusive numeric boundary', async () => {
-    await page.getByRole('button', { name: 'Filter', exact: true }).click();
+    await filterButton().click();
     await page.getByRole('button', { name: 'Clear all', exact: true }).click();
     await openProperty(number);
     await page.getByRole('combobox').filter({ hasText: 'equals' }).click();

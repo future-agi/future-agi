@@ -38,7 +38,8 @@ const FeatureGateOverlay = ({
   image,
   imageDark,
   imageAlt = "Feature preview",
-  eyebrow = "Cloud feature",
+  // The card carries only the eyebrow its caller names.
+  eyebrow,
   title,
   description,
   steps = [],
@@ -52,6 +53,7 @@ const FeatureGateOverlay = ({
   blurFrom = "38%",
   minHeight = 480,
   maxCardWidth = 480,
+  plain = false,
   children,
   sx,
 }) => {
@@ -100,23 +102,26 @@ const FeatureGateOverlay = ({
         ...sx,
       }}
     >
-      <Box
-        aria-hidden
-        sx={{
-          width: "100%",
-          height: "100%",
-          minHeight,
-          pointerEvents: "none",
-          userSelect: "none",
-          ...(blurWhole && { filter: `blur(${blur}px)` }),
-        }}
-      >
-        {backdrop}
-      </Box>
+      {!plain && (
+        <Box
+          aria-hidden
+          sx={{
+            width: "100%",
+            height: "100%",
+            minHeight,
+            pointerEvents: "none",
+            userSelect: "none",
+            ...(blurWhole && { filter: `blur(${blur}px)` }),
+          }}
+        >
+          {backdrop}
+        </Box>
+      )}
 
       <Box
         aria-hidden
         sx={{
+          display: plain ? "none" : "block",
           position: "absolute",
           left: 0,
           right: 0,
@@ -316,6 +321,9 @@ FeatureGateOverlay.propTypes = {
   blurFrom: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
   minHeight: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
   maxCardWidth: PropTypes.number,
+  // No preview backdrop or blur: just the card on a neutral surface, for a
+  // feature with no preview image.
+  plain: PropTypes.bool,
   children: PropTypes.node,
   sx: PropTypes.object,
 };

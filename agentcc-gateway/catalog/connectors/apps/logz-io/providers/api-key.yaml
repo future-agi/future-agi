@@ -1,0 +1,46 @@
+# The same Logz.io API token covers logs, metrics, dashboards and alerts.
+# This fixed endpoint is the documented US deployment.
+schema: "connector-manifest/v1#provider"
+app: logz-io
+id: api-key
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://api.logz.io/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: X-API-TOKEN
+      secret: true
+      label: API token
+      help: "Create a Logz.io API token in your account settings for the US region. One token covers logs, metrics, dashboards and alerts within its permissions. Account-discovery tools may require admin access; AI-agent operations require AI enablement and consume AI usage."
+      helpUrl: https://docs.logz.io/docs/open360/logzio-mcp/
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_metered
+  source: https://docs.logz.io/docs/open360/logzio-mcp/
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://docs.logz.io/docs/open360/logzio-mcp/
+    fetchedAt: 2026-11-09
+  - fact: transport.variant
+    url: https://docs.logz.io/docs/open360/logzio-mcp/
+    fetchedAt: 2026-11-09
+  - fact: auth.kind
+    url: https://docs.logz.io/docs/open360/logzio-mcp/
+    fetchedAt: 2026-11-09
+  - fact: auth.credentialParts
+    url: https://docs.logz.io/docs/open360/logzio-mcp/
+    fetchedAt: 2026-11-09
+x-omega: { oss: exclude }

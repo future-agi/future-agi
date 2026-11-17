@@ -11,6 +11,7 @@ from django.test.utils import CaptureQueriesContext
 
 from tracer.models.instant_eval import InstantEvalAnswer, InstantEvalRow
 from tracer.services import instant_eval_summary as summary
+from tracer.services.instant_eval_rows import analyze
 from tracer.tests.test_instant_eval_scale import _question
 from tracer.tests.test_instant_eval_users_rollup import _users_run
 
@@ -63,9 +64,11 @@ def paging_run(observe_project, eval_template, request):
         batch_size=5000,
     )
     # Autovacuum cannot analyze rows inserted inside this test's transaction.
-    # Production's narrow tables are analyzed after large answer batches too.
+    # Production's narrow tables are analyzed after large answer batches too,
+    # through the same best-effort helper: the hard-erase SQL guard refuses a
+    # raw ANALYZE of the row table, whose census includes source_session_ids.
+    analyze("tracer_instant_eval_row")
     with connection.cursor() as cur:
-        cur.execute("ANALYZE tracer_instant_eval_row")
         cur.execute("ANALYZE tracer_instant_eval_answer")
     view = summary.RunView(
         task_id=str(task.id),

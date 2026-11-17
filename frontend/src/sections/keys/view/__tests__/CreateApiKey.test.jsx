@@ -20,6 +20,21 @@ vi.mock("src/components/svg-color", () => ({
   default: () => <span data-testid="svg-color" />,
 }));
 
+// The dialog renders for a signed-in person in an organization.
+vi.mock("src/auth/hooks/use-auth-context", () => ({
+  useSafeAuthContext: () => ({ user: { id: "synthetic-person" } }),
+}));
+vi.mock("src/contexts/OrganizationContext", () => ({
+  useOrganization: () => ({ currentOrganizationId: "synthetic-org" }),
+}));
+vi.mock("src/contexts/WorkspaceContext", () => ({
+  useWorkspace: () => ({
+    currentWorkspaceId: "synthetic-workspace",
+    currentWorkspaceName: "Synthetic workspace",
+  }),
+}));
+vi.mock("src/components/iconify", () => ({ default: () => null }));
+
 // Stand-in for the MUI picker: the dialog's job is turning the picked date
 // into the request, not the calendar UI itself.
 vi.mock("@mui/x-date-pickers/DatePicker", () => {
@@ -34,6 +49,15 @@ vi.mock("@mui/x-date-pickers/DatePicker", () => {
   DatePicker.propTypes = { label: PropTypes.string, onChange: PropTypes.func };
   return { DatePicker };
 });
+
+// The dialog sends the workspace choice in the body and both headers; with
+// no default workspace the key has no workspace restriction.
+const headers = {
+  headers: {
+    "X-Organization-Id": "synthetic-org",
+    "X-Workspace-Id": null,
+  },
+};
 
 const renderDialog = () => {
   const queryClient = new QueryClient({
@@ -71,12 +95,13 @@ describe("CreateApiKey expiry", () => {
     fireEvent.change(screen.getByLabelText(/Key name/), {
       target: { value: "ci key" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create a key" }));
 
     await waitFor(() => expect(mocks.post).toHaveBeenCalledTimes(1));
     expect(mocks.post).toHaveBeenCalledWith(
       "/accounts/key/generate_secret_key/",
-      { key_name: "ci key" },
+      { key_name: "ci key", workspace_id: null },
+      headers,
     );
   });
 
@@ -89,7 +114,7 @@ describe("CreateApiKey expiry", () => {
     fireEvent.change(screen.getByLabelText("Expires on (optional)"), {
       target: { value: "2099-01-15" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create a key" }));
 
     await waitFor(() => expect(mocks.post).toHaveBeenCalledTimes(1));
     expect(mocks.post).toHaveBeenCalledWith(
@@ -97,7 +122,9 @@ describe("CreateApiKey expiry", () => {
       {
         key_name: "ci key",
         expires_at: endOfDay(new Date(2099, 0, 15)).toISOString(),
+        workspace_id: null,
       },
+      headers,
     );
   });
 
@@ -111,7 +138,7 @@ describe("CreateApiKey expiry", () => {
       target: { value: "2000-01-15" },
     });
 
-    expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Create a key" })).toBeDisabled();
     fireEvent.keyDown(screen.getByLabelText(/Key name/), { key: "Enter" });
     expect(mocks.post).not.toHaveBeenCalled();
   });

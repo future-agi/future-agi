@@ -4,9 +4,10 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from django.db import DatabaseError
+from django.db.models import Q
 from rest_framework.response import Response
 
-from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
+from model_hub.models.develop_dataset import Cell, Column, Dataset
 from model_hub.utils import annotation_queue_helpers as helpers
 from model_hub.views.annotation_queues import (
     _AUTOMATION_RULE_READ_WALL_MS,
@@ -43,10 +44,52 @@ class _BoundedRows:
 
 def _resolve_dataset_ids(ids, cap):
     rows = _BoundedRows(ids)
-    rule = SimpleNamespace(organization=object())
+    organization = SimpleNamespace(pk="org-1")
+    workspace = SimpleNamespace(pk="workspace-1", organization=organization)
+    queue = SimpleNamespace(
+        organization=organization,
+        organization_id=organization.pk,
+        workspace=workspace,
+        workspace_id=workspace.pk,
+        is_default=False,
+        dataset_id="dataset-1",
+    )
+    dataset = SimpleNamespace(
+        pk="dataset-1",
+        organization=organization,
+        workspace=workspace,
+    )
+    rule = SimpleNamespace(
+        organization=organization,
+        queue=queue,
+        source_type="dataset_row",
+    )
+
+    def selected_rows(**kwargs):
+        assert kwargs == {"dataset": dataset}
+        return rows
+
+    # The dataset lookup applies the queue's workspace rule; it is a stand-in
+    # here because this resolver test runs without a database.
+    scope_q = Q(pk="queue-workspace-scope")
     with (
-        patch.object(Dataset.objects, "get", return_value=object()),
-        patch.object(Row.objects, "filter", return_value=rows),
+        patch.object(
+            helpers, "automation_rule_scope_is_allowed", return_value=True
+        ) as scope,
+        patch.object(
+            helpers, "_queue_scope_workspace", return_value=workspace
+        ) as scope_workspace,
+        patch.object(
+            helpers, "_queue_source_workspace_q", return_value=scope_q
+        ) as workspace_q,
+        patch.object(
+            Dataset.no_workspace_objects, "get", return_value=dataset
+        ) as get_dataset,
+        patch.object(
+            helpers,
+            "_queue_source_queryset",
+            return_value=SimpleNamespace(filter=selected_rows),
+        ) as selection,
         patch.object(Column.objects, "filter", return_value=[]),
         patch.object(Cell.objects, "filter", return_value=object()),
     ):
@@ -56,6 +99,18 @@ def _resolve_dataset_ids(ids, cap):
             dataset_id="dataset-1",
             cap=cap,
         )
+    scope.assert_called_once_with(
+        queue, "dataset_row", {"scope": {"dataset_id": "dataset-1"}}
+    )
+    scope_workspace.assert_called_once_with(queue)
+    workspace_q.assert_called_once_with(workspace)
+    get_dataset.assert_called_once_with(
+        scope_q,
+        id="dataset-1",
+        organization=organization,
+        deleted=False,
+    )
+    selection.assert_called_once_with(queue, "dataset_row")
     return result, rows.requested_slice
 
 

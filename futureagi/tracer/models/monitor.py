@@ -59,6 +59,22 @@ class ThresholdCalculationMethodChoices(models.TextChoices):
     # ANOMALY_DETECTION = "anomaly_detection", "Anomaly Detection"
 
 
+class ThresholdRuleChoices(models.TextChoices):
+    """How a monitor's saved thresholds are judged.
+
+    EARLIER: saved before the threshold update and not edited since. A
+    percentage-change threshold p is a band around the history's mean, mean
+    +/- stddev * (1 + p / 100), and a service-provider error rate is the share
+    of providers with no errors (tracer.utils.monitor_earlier_rule).
+    CURRENT: a percentage-change threshold compares with one previous period,
+    baseline * (1 +/- p / 100), and the service-provider error rate is the
+    share of providers with errors.
+    """
+
+    EARLIER = "earlier", "Earlier"
+    CURRENT = "current", "Current"
+
+
 class UserAlertMonitor(BaseModel):
     """Model for user-defined alert monitors that track various metrics."""
 
@@ -123,6 +139,15 @@ class UserAlertMonitor(BaseModel):
         default=60 * 24 * 7,  # 1 week
         help_text="For auto-thresholding. The time window in minutes to calculate the historical mean",
     )
+    # Rows saved before this column existed read the database default; a row
+    # the server saves now gets the Python default. Set by the server only.
+    threshold_rule = models.CharField(
+        max_length=16,
+        choices=ThresholdRuleChoices,
+        default=ThresholdRuleChoices.CURRENT.value,
+        db_default=ThresholdRuleChoices.EARLIER.value,
+        help_text="How the saved thresholds are judged: earlier for monitors saved before the threshold update and not edited since, current otherwise.",
+    )
     last_checked_at = models.DateTimeField(
         null=True,
         blank=True,
@@ -134,6 +159,7 @@ class UserAlertMonitor(BaseModel):
     slack_webhook_url = models.URLField(null=True, blank=True)
     slack_notes = models.TextField(null=True, blank=True)
     webhook_url = models.URLField(null=True, blank=True)
+    pagerduty_routing_key = models.CharField(max_length=255, null=True, blank=True)
 
     # Monitor state and configuration
     is_mute = models.BooleanField(default=False)

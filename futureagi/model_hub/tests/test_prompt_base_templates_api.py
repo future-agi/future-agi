@@ -1,6 +1,7 @@
 import pytest
 from rest_framework import status as http_status
 
+from accounts.models.organization import Organization
 from accounts.models.workspace import Workspace
 from model_hub.models.prompt_base_template import PromptBaseTemplate
 from model_hub.models.run_prompt import PromptTemplate, PromptVersion
@@ -231,3 +232,231 @@ def test_prompt_base_template_crud_scopes_workspace_and_samples(
     base_template.refresh_from_db()
     assert base_template.deleted is True
     assert base_template.deleted_at is not None
+
+
+CREATE_DRAFT_URL = "/model-hub/prompt-templates/create-draft/"
+
+
+def _base_template(*, name, organization, workspace, user=None, is_sample=False):
+    # Written with no workspace in context, so the save path cannot fill one in.
+    clear_workspace_context()
+    template = PromptBaseTemplate.no_workspace_objects.create(
+        name=name,
+        organization=organization,
+        workspace=workspace,
+        is_sample=is_sample,
+        category="Template Category",
+        prompt_config_snapshot={"messages": [{"role": "user", "content": name}]},
+        created_by=user,
+    )
+    template.refresh_from_db()
+    assert template.organization_id == (organization.id if organization else None)
+    assert template.workspace_id == (workspace.id if workspace else None)
+    return template
+
+
+def _listed_template_ids(auth_client):
+    response = auth_client.get(
+        "/model-hub/prompt-base-templates/",
+        {"page_size": 100, "page_number": 0},
+    )
+    assert response.status_code == http_status.HTTP_200_OK
+    return {row["id"] for row in _result(response)["data"]}
+
+
+def _use_template(auth_client, base_template, draft_name):
+    return auth_client.post(
+        CREATE_DRAFT_URL,
+        {
+            "name": draft_name,
+            "prompt_base_template": str(base_template.id),
+            "prompt_config": [
+                {"messages": [{"role": "user", "content": "Draft from a template"}]}
+            ],
+        },
+        format="json",
+    )
+
+
+def _assert_draft_made_from(response, base_template, organization):
+    assert response.status_code == http_status.HTTP_200_OK, response.json()
+    draft = PromptTemplate.no_workspace_objects.get(id=_result(response)["id"])
+    assert draft.organization_id == organization.id
+    version = PromptVersion.no_workspace_objects.get(original_template=draft)
+    assert version.template_version == "v1"
+    assert version.is_draft is True
+    assert version.prompt_base_template_id == base_template.id
+
+
+def _assert_refused(response, draft_name):
+    assert response.status_code == http_status.HTTP_400_BAD_REQUEST, response.json()
+    assert "Prompt base template not found" in str(response.json())
+    assert not PromptTemplate.no_workspace_objects.filter(name=draft_name).exists()
+
+
+@pytest.mark.django_db
+def test_use_this_template_creates_a_draft_from_a_listed_template_with_no_workspace(
+    auth_client, organization, workspace, user
+):
+    assert workspace.is_default
+    base_template = _base_template(
+        name="Template with no workspace",
+        organization=organization,
+        workspace=None,
+        user=user,
+    )
+    assert str(base_template.id) in _listed_template_ids(auth_client)
+
+    response = _use_template(
+        auth_client, base_template, "Draft from a template with no workspace"
+    )
+
+    _assert_draft_made_from(response, base_template, organization)
+    # Using a template only reads it.
+    base_template.refresh_from_db()
+    assert base_template.organization_id == organization.id
+    assert base_template.workspace_id is None
+    assert base_template.deleted is False
+
+
+@pytest.mark.django_db
+def test_use_this_template_creates_a_draft_from_a_template_in_the_same_workspace(
+    auth_client, organization, workspace, user
+):
+    base_template = _base_template(
+        name="Template in the same workspace",
+        organization=organization,
+        workspace=workspace,
+        user=user,
+    )
+    assert str(base_template.id) in _listed_template_ids(auth_client)
+
+    response = _use_template(
+        auth_client, base_template, "Draft from a template in the same workspace"
+    )
+
+    _assert_draft_made_from(response, base_template, organization)
+
+
+@pytest.mark.django_db
+def test_use_this_template_creates_a_draft_from_a_sample_template(
+    auth_client, organization, workspace
+):
+    sample_template = _base_template(
+        name="Sample template",
+        organization=None,
+        workspace=None,
+        is_sample=True,
+    )
+    assert str(sample_template.id) in _listed_template_ids(auth_client)
+
+    response = _use_template(
+        auth_client, sample_template, "Draft from a sample template"
+    )
+
+    _assert_draft_made_from(response, sample_template, organization)
+
+
+@pytest.mark.django_db
+def test_use_this_template_refuses_a_template_of_another_workspace(
+    auth_client, organization, workspace, user
+):
+    other_workspace = Workspace.objects.create(
+        name="Template Other Workspace",
+        organization=organization,
+        created_by=user,
+    )
+    assert not other_workspace.is_default
+    base_template = _base_template(
+        name="Template in another workspace",
+        organization=organization,
+        workspace=other_workspace,
+        user=user,
+    )
+    assert str(base_template.id) not in _listed_template_ids(auth_client)
+    draft_name = "Draft from a template in another workspace"
+
+    response = _use_template(auth_client, base_template, draft_name)
+
+    _assert_refused(response, draft_name)
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "in_a_workspace", [False, True], ids=["no-workspace", "default-workspace"]
+)
+def test_use_this_template_refuses_a_template_of_another_organization(
+    auth_client, workspace, user, in_a_workspace
+):
+    other_organization = Organization.objects.create(name="Template Other Organization")
+    other_workspace = None
+    if in_a_workspace:
+        other_workspace = Workspace.objects.create(
+            name="Other Organization Default Workspace",
+            organization=other_organization,
+            is_default=True,
+            created_by=user,
+        )
+    base_template = _base_template(
+        name="Template of another organization",
+        organization=other_organization,
+        workspace=other_workspace,
+    )
+    assert str(base_template.id) not in _listed_template_ids(auth_client)
+    draft_name = "Draft from a template of another organization"
+
+    response = _use_template(auth_client, base_template, draft_name)
+
+    _assert_refused(response, draft_name)
+
+
+@pytest.mark.django_db
+def test_use_this_template_refuses_a_sample_marked_template_the_list_does_not_show(
+    auth_client, workspace
+):
+    # The list shows sample templates that belong to no organization. A
+    # template the list does not show cannot be used.
+    other_organization = Organization.objects.create(name="Sample Other Organization")
+    base_template = _base_template(
+        name="Sample marked template not in the list",
+        organization=other_organization,
+        workspace=None,
+        is_sample=True,
+    )
+    assert str(base_template.id) not in _listed_template_ids(auth_client)
+    draft_name = "Draft from a sample marked template not in the list"
+
+    response = _use_template(auth_client, base_template, draft_name)
+
+    _assert_refused(response, draft_name)
+
+
+@pytest.mark.django_db
+def test_another_organizations_template_with_no_workspace_cannot_be_changed_or_deleted(
+    auth_client, workspace
+):
+    other_organization = Organization.objects.create(
+        name="Unchanged Template Other Organization"
+    )
+    base_template = _base_template(
+        name="Unchanged template of another organization",
+        organization=other_organization,
+        workspace=None,
+    )
+
+    patch_response = auth_client.patch(
+        f"/model-hub/prompt-base-templates/{base_template.id}/",
+        {"name": "Changed by another organization"},
+        format="json",
+    )
+    delete_response = auth_client.delete(
+        f"/model-hub/prompt-base-templates/{base_template.id}/"
+    )
+
+    assert patch_response.status_code == http_status.HTTP_404_NOT_FOUND
+    assert delete_response.status_code == http_status.HTTP_404_NOT_FOUND
+    base_template.refresh_from_db()
+    assert base_template.name == "Unchanged template of another organization"
+    assert base_template.organization_id == other_organization.id
+    assert base_template.workspace_id is None
+    assert base_template.deleted is False

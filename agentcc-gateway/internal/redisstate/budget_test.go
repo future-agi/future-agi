@@ -36,8 +36,7 @@ func TestBudgetStore_NilClient_Available(t *testing.T) {
 }
 
 func TestBudgetStore_UnavailableClient(t *testing.T) {
-	client := &Client{breaker: newCircuitBreaker(1, 10*time.Second)}
-	client.breaker.recordFailure()
+	client := openBreakerClient(t)
 
 	bs := NewBudgetStore(client, "test:budget:")
 	if bs.Available() {
@@ -156,7 +155,7 @@ func TestBudgetStore_Redis_SeedSpend(t *testing.T) {
 
 	org := "seed-org-" + ts
 	modelSpend := map[string]float64{
-		"gpt-4o":  15.50,
+		"gpt-4o":   15.50,
 		"claude-3": 8.25,
 	}
 

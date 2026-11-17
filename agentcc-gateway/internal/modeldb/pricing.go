@@ -12,15 +12,13 @@ type PricingInfo struct {
 	OutputPerImage      float64 `json:"output_per_image,omitempty"`
 	InputPerSecond      float64 `json:"input_per_second,omitempty"`
 	InputPerCharacter   float64 `json:"input_per_character,omitempty"`
+	InputPerQuery       float64 `json:"input_per_query,omitempty"`
+	PerPage             float64 `json:"per_page,omitempty"`
+	OutputPerSecond     float64 `json:"output_per_second,omitempty"`
 
-	// Prices in the units the non-token endpoints are billed in.
-	InputPerQuery       float64 `json:"input_per_query,omitempty"`   // rerank: per search unit
-	PerPage             float64 `json:"per_page,omitempty"`          // OCR
-	OutputPerSecond     float64 `json:"output_per_second,omitempty"` // video generation
-	InputPerPixel       float64 `json:"input_per_pixel,omitempty"`
-	OutputPerPixel      float64 `json:"output_per_pixel,omitempty"`
-	InputPerImageToken  float64 `json:"input_per_image_token,omitempty"`
-	OutputPerImageToken float64 `json:"output_per_image_token,omitempty"`
+	// Explicit zero/invalid operator overrides must not silently fall back
+	// to a bundled non-token price. Values are copied, not caller pointers.
+	inputPerQuerySet, perPageSet, outputPerImageSet bool
 }
 
 // CostOptions controls which pricing tier to use.

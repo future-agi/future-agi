@@ -12,10 +12,10 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
+import pytest
 from django.apps import AppConfig
 from django.test import override_settings
 
-from tfc.deployment_telemetry.models import DeploymentTelemetryState
 from tfc.deployment_telemetry.transport import TelemetryClient, TelemetryResponse
 
 NO_THIRD_PARTY_KEYS = {
@@ -23,6 +23,14 @@ NO_THIRD_PARTY_KEYS = {
     "SLACK_WEBHOOK_CHANNEL": "",
     "ERROR_LOGS_WEBHOOK": "",
 }
+
+
+@pytest.fixture(autouse=True)
+def telemetry_opt_out_unset(monkeypatch):
+    """Start each test at the default (telemetry on), whatever the runner
+    exports: a CI kit may set FUTURE_AGI_TELEMETRY_DISABLED=true. A test that
+    needs the opt-out sets it in its body, which runs after this fixture."""
+    monkeypatch.delenv("FUTURE_AGI_TELEMETRY_DISABLED", raising=False)
 
 
 @override_settings(**NO_THIRD_PARTY_KEYS)
@@ -78,9 +86,9 @@ def test_registration_goes_to_the_configured_url(monkeypatch):
     )
 
 
-def test_opted_out_registration_is_the_minimal_ping(monkeypatch):
-    """FUTURE_AGI_TELEMETRY_DISABLED=true sends one registration with no user
-    data, and never builds the email list at all."""
+def test_opted_out_registration_sends_nothing(monkeypatch):
+    """Opt-out sends nothing and never builds the email list, even if a
+    registration was claimed before telemetry was disabled."""
     from tfc.deployment_telemetry import sender
 
     monkeypatch.setenv("FUTURE_AGI_TELEMETRY_DISABLED", "true")
@@ -105,20 +113,8 @@ def test_opted_out_registration_is_the_minimal_ping(monkeypatch):
     ):
         assert sender.ensure_registration() == (False, state.instance_id)
 
-    path, payload = post.call_args.args
-    assert path == "/telemetry/register/"
-    assert payload["telemetry_disabled"] is True
-    assert set(payload) == {
-        "schema_version",
-        "instance_id",
-        "version",
-        "deployment_type",
-        "timestamp",
-        "telemetry_disabled",
-    }
-    assert complete.call_args.args[1] == (
-        DeploymentTelemetryState.RegistrationKind.MINIMAL_DISABLED
-    )
+    post.assert_not_called()
+    complete.assert_not_called()
 
 
 def test_opted_out_cycle_collects_and_sends_no_heartbeat(monkeypatch):

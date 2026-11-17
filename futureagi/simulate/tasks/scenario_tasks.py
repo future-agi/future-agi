@@ -1,17 +1,19 @@
 import asyncio
 import json
-import math
-import random
 import traceback
 import uuid
 from collections import defaultdict
-from typing import Any, Dict, List, Optional, Tuple, Union
 
 import pandas as pd
 import structlog
 from django.db import close_old_connections
 
+from model_hub.models.choices import CellStatus, SourceChoices, StatusType
+from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
+from simulate.models import Scenarios
+from simulate.utils.owned_relations import owned_scenario_graphs
 from tfc.ee_stub import _ee_stub
+from tfc.temporal.drop_in import temporal_activity
 
 try:
     from ee.agenthub.scenario_graph.enhanced_scenarios_agent import (
@@ -23,14 +25,8 @@ try:
 except ImportError:
     EnhancedScenariosAgent = _ee_stub("EnhancedScenariosAgent")
     SyntheticDataAgent = _ee_stub("SyntheticDataAgent")
-from agentic_eval.core.llm.llm import LLM
 
 logger = structlog.get_logger(__name__)
-from model_hub.models.choices import CellStatus, SourceChoices, StatusType
-from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
-from simulate.models import Scenarios
-from simulate.models.scenario_graph import NodeType, ScenarioGraph
-from tfc.temporal.drop_in import temporal_activity
 
 
 def generate_scenario_columns(
@@ -227,7 +223,7 @@ def add_scenario_columns_task(
         close_old_connections()
 
         dataset = Dataset.objects.get(id=dataset_id)
-        scenario = Scenarios.objects.get(id=scenario_id)
+        scenario = Scenarios.objects.get(id=scenario_id)  # noqa: F841
 
         logger.info(
             "Starting add_scenario_columns_task for dataset %s, scenario %s, columns: %s",
@@ -401,7 +397,10 @@ def generate_scenario_rows(
 
         # Fetch branches and generate cases using the agent's complete pipeline
         # Handles: branch extraction, parallel processing, SDA payload, validation, enrichment
-        scenario_graph = ScenarioGraph.objects.get(scenario=scenario)
+        scenario_graph = owned_scenario_graphs(
+            organization_id=scenario.organization_id,
+            workspace_id=scenario.workspace_id,
+        ).get(scenario=scenario)
         branches = scenario_agent.graph_generator.get_branches(
             graph_id=scenario_graph.id
         )

@@ -25,15 +25,16 @@ from django.views.static import serve
 from drf_yasg import openapi
 from drf_yasg.views import get_schema_view
 
+from agentcc.readiness import readiness
 from tfc.capabilities.views import CapabilitiesView
 from tfc.ee_loader import has_ee
 from tfc.views.deployment import DeploymentInfoView
-from tfc.views.host_update_status import HostUpdateStatusView
 from tfc.views.health import (
     AuthenticatedHealthView,
     HealthCheckView,
     LangfuseCompatTracesView,
 )
+from tfc.views.host_update_status import HostUpdateStatusView
 from tfc.views.setup_checks import SetupChecksView
 from tfc.views.socket import CallWebsocketView
 from tracer.views.clickhouse_health import ClickHouseHealthView
@@ -75,6 +76,8 @@ urlpatterns = [
     path("model-hub/", include("model_hub.urls")),
     path("simulate/", include("simulate.urls")),
     path("agent-playground/", include("agent_playground.urls")),
+    path("omega-hub/", include("omega_hub.urls")),
+    path("omega-rollout/", include("omega_rollout.urls")),
     re_path(
         r"^swagger(?P<format>\.json|\.yaml)$",
         schema_view.without_ui(cache_timeout=0),
@@ -100,9 +103,15 @@ urlpatterns = [
         name="api-public-ingestion",
     ),
     path("integrations/", include("integrations.urls")),
+    path("webhooks/", include("webhooks.urls")),
     path("agentcc/", include("agentcc.urls")),
+    # OAuth and MCP discovery documents must sit at /.well-known/.
+    path("", include("agentcc.urls_mcp_wellknown")),
     path("ai-tools/", include("ai_tools.urls")),
     path("mcp/", include("mcp_server.urls")),
+    # Webhooks operations, staff only (webhooks DESIGN.md section 13.2). Kept apart from the API's "webhooks/" line
+    # so the two branches merge without a conflict; that include has no "ops/" route, so either order resolves.
+    path("webhooks/ops/", include("webhooks.ops_urls")),
     path(
         "falcon-ai/",
         include(
@@ -119,6 +128,7 @@ urlpatterns = [
     path("saml2_auth/", include("saml2_auth.urls")),
     path("call-websocket/", CallWebsocketView.as_view(), name="call-websocket"),
     path("health/", HealthCheckView.as_view(), name="health-check"),
+    path("readyz/", readiness, name="hosted-readiness"),
     path(
         "api/health/clickhouse/",
         ClickHouseHealthView.as_view(),

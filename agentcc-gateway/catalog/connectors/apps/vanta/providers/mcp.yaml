@@ -1,0 +1,65 @@
+# Vanta's remote MCP server (US region, beta) with OAuth from Vanta's
+# authorization server, which registers clients dynamically and admits public
+# clients (token endpoint auth: none). A connection acts as the Vanta user
+# who signs in, with that user's role; non-Admin roles get all but a few
+# Admin-only tools. Vanta serves the protected-resource metadata at the host
+# root (resource https://mcp.vanta.com), not under /mcp. EU and AUS
+# instances use mcp.eu.vanta.com and mcp.aus.vanta.com, which this record
+# does not cover. EE reads a pre-registered client from its environment and
+# cannot register one, so it gets none.
+schema: "connector-manifest/v1#provider"
+app: vanta
+id: mcp
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus:
+  label: beta
+  source: https://developer.vanta.com/docs/vanta-mcp
+transport:
+  kind: http
+  url: https://mcp.vanta.com/mcp
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent, user]
+auth:
+  kind: oauth2
+  oauth2:
+    authorizeUrl: https://api.vanta.com/oauth/authorize
+    tokenUrl: https://api.vanta.com/oauth/token
+    scopes: ["mcp-api.all:write"]
+    pkce: true
+    tokenBody: form
+    clientAuth: body
+    registration: [dcr]
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://developer.vanta.com/docs/vanta-mcp
+    fetchedAt: 2026-11-11
+  - fact: auth.kind
+    url: https://developer.vanta.com/docs/vanta-mcp
+    fetchedAt: 2026-11-11
+  - fact: auth.oauth2.authorizeUrl
+    url: https://api.vanta.com/.well-known/oauth-authorization-server/mcp
+    fetchedAt: 2026-11-11
+  - fact: auth.oauth2.tokenUrl
+    url: https://api.vanta.com/.well-known/oauth-authorization-server/mcp
+    fetchedAt: 2026-11-11
+  - fact: auth.oauth2.scopes
+    url: https://mcp.vanta.com/.well-known/oauth-protected-resource
+    fetchedAt: 2026-11-11
+  - fact: auth.oauth2.scopes
+    url: https://api.vanta.com/.well-known/oauth-authorization-server/mcp
+    fetchedAt: 2026-11-11
+  - fact: auth.oauth2.pkce
+    url: https://api.vanta.com/.well-known/oauth-authorization-server/mcp
+    fetchedAt: 2026-11-11
+  - fact: auth.oauth2.registration
+    url: https://api.vanta.com/.well-known/oauth-authorization-server/mcp
+    fetchedAt: 2026-11-11
+x-omega: { ee: exclude }

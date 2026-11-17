@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: langfuse
+version: 1.0.0
+name: Langfuse
+description: "Query traces and observations, manage prompts and datasets, and inspect evaluations."
+vendor:
+  name: Langfuse
+  domains: [langfuse.com]
+eeCategory: developer
+group: other
+categories: [developer, observability]
+tags: [tracing, prompts, datasets, evaluations]
+docsUrl: https://langfuse.com/docs/api-and-data-platform/features/mcp-server
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://langfuse.com/docs/api-and-data-platform/features/mcp-server
+    fetchedAt: 2026-11-09

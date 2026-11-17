@@ -171,6 +171,9 @@ func (s *Service) settle(ctx context.Context, j *video.VideoJob, l video.Lease) 
 			rc := models.AcquireRequestContext()
 			defer rc.Release()
 			rc.EndpointType = "video"
+			// A settlement has no answer either: no check on the answer runs,
+			// so its request-log row records no guardrail trigger.
+			rc.Flags.NoAnswerToCheck = true
 			rc.Model = j.Model
 			rc.ResolvedModel = j.ModelID
 			rc.Provider = j.Service

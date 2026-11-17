@@ -1,0 +1,155 @@
+{
+  "base": "bf0577e91456abf6096f6743c0c90723e912559f",
+  "note": "Immutable P0 DSX prototype templates and backing surfaces. Contraction removes live exceptions, never claim eligibility. Each path requires its backing surface in the same WORKS slot.",
+  "owners": {
+    "/model-hub/datasets/{dataset_id}/versions/": ["dataset.versions"],
+    "/model-hub/datasets/{dataset_id}/versions/{version_id}/": [
+      "dataset.versions"
+    ],
+    "/model-hub/datasets/{dataset_id}/versions/{version_id}/table/": [
+      "dataset.versions"
+    ],
+    "/model-hub/datasets/{dataset_id}/versions/{version_id}/changes/": [
+      "dataset.versions"
+    ],
+    "/model-hub/datasets/{dataset_id}/splits/": ["dataset.splits"],
+    "/model-hub/datasets/{dataset_id}/splits/{split_id}/": ["dataset.splits"],
+    "/model-hub/datasets/{dataset_id}/rows/{row_id}/runs/": [
+      "dataset.rowExtras.runs"
+    ],
+    "/model-hub/datasets/{dataset_id}/rows/{row_id}/activity/": [
+      "dataset.rowExtras.activity"
+    ],
+    "/model-hub/datasets/{dataset_id}/runs/": ["palette.runs"],
+    "/model-hub/datasets/{dataset_id}/baseline/": ["exp.results.matrix"],
+    "/model-hub/datasets/{dataset_id}/results/": ["exp.results.matrix"],
+    "/model-hub/datasets/{dataset_id}/results/analysis/": [
+      "exp.results.summary"
+    ],
+    "/model-hub/datasets/{target_dataset_id}/rows/from-results/": [
+      "exp.results.addToDataset"
+    ],
+    "/model-hub/datasets/{dataset_id}/result-reviews/": [
+      "dataset.collab.reviews"
+    ],
+    "/model-hub/experiments/v2/{experiment_id}/resume/": ["exp.rerun"],
+    "/model-hub/experiments/v2/{experiment_id}/runs/{run_id}/results/": [
+      "exp.results.matrix"
+    ],
+    "/model-hub/experiments/v2/{experiment_id}/runs/": [
+      "exp.results.iterateDock"
+    ],
+    "/model-hub/experiments/v2/{experiment_id}/runs/{run_id}/session/": [
+      "exp.results.iterateDock"
+    ],
+    "/model-hub/datasets/imports/": ["dataset.imports.sources"],
+    "/model-hub/datasets/imports/jobs/{job_id}/": ["dataset.imports.sources"],
+    "/model-hub/datasets/{dataset_id}/sources/": ["dataset.imports.sources"],
+    "/model-hub/datasets/{dataset_id}/sources/{source_id}/": [
+      "dataset.imports.sources"
+    ],
+    "/model-hub/datasets/{dataset_id}/sources/{source_id}/refresh/": [
+      "dataset.imports.sources"
+    ],
+    "/model-hub/datasets/{dataset_id}/task-compare/": ["exp.compare"],
+    "/model-hub/datasets/{dataset_id}/task-compare/review/": ["exp.compare"],
+    "/model-hub/r3/saved-views/": ["dataset.savedViews"],
+    "/model-hub/r3/saved-views/{view_id}/": ["dataset.savedViews"],
+    "/model-hub/r4/run-sources/catalog/": ["exp.new.runningSources"],
+    "/model-hub/r4/calls/{call_id}/": ["dataset.rowExtras.conversation"],
+    "/model-hub/r4/calls/{call_id}/audio/{channel}": [
+      "dataset.rowExtras.conversation"
+    ],
+    "/model-hub/r4/connect/machines/": ["runners.connect"],
+    "/model-hub/r4/connect/machines/{machine_id}/": ["runners.connect"],
+    "/model-hub/r4/connect/tokens/": ["runners.connect"],
+    "/model-hub/r4/connect/sessions/{token}/": ["runners.connect"],
+    "/model-hub/r4/connect/sessions/{token}/simulate/": ["runners.connect"],
+    "/model-hub/r4/connect/agents/{agent_id}/try/": ["runners.connect"],
+    "/model-hub/r4/runs/{run_id}/activity/": ["runners.connect"],
+    "/model-hub/r4/runs/{run_id}/control/": ["runners.connect"],
+    "/model-hub/r4/runs/{run_id}/simulate-upload/": ["runners.connect"],
+    "/model-hub/r4/runs/{run_id}/rerun/": ["exp.rerun"],
+    "/model-hub/r4/runs/{run_id}/paths/": ["exp.results.paths"],
+    "/model-hub/r4/datasets/{dataset_id}/voice-summary/": [
+      "dataset.tab.summary"
+    ],
+    "/agentcc/decisions/models/": ["models.decision"],
+    "/model-hub/datasets/{dataset_id}/access/": ["dataset.share"],
+    "/model-hub/workspaces/{workspace_id}/sharing-policy/": ["dataset.share"],
+    "/model-hub/audit/": ["dataset.audit"],
+    "/model-hub/datasets/{dataset_id}/comments/": ["dataset.collab.comments"],
+    "/model-hub/datasets/{dataset_id}/rows/{row_id}/comments/": [
+      "dataset.collab.comments"
+    ],
+    "/model-hub/datasets/{dataset_id}/rows/{row_id}/comments/{comment_id}/": [
+      "dataset.collab.comments"
+    ],
+    "/model-hub/datasets/{dataset_id}/assignments/": [
+      "dataset.collab.assignments"
+    ],
+    "/model-hub/datasets/{dataset_id}/assignments/{assignment_id}/": [
+      "dataset.collab.assignments"
+    ],
+    "/model-hub/datasets/{dataset_id}/translate/": ["dataset.collab.translate"],
+    "/model-hub/datasets/{dataset_id}/corrections/": [
+      "dataset.collab.corrections"
+    ],
+    "/model-hub/datasets/{dataset_id}/corrections/{correction_id}/": [
+      "dataset.collab.corrections"
+    ],
+    "/model-hub/annotation-queues/{queue_id}/invites/": [
+      "dataset.collab.sendToQa"
+    ],
+    "/model-hub/annotation-queues/{queue_id}/invites/{invite_id}/": [
+      "dataset.collab.sendToQa"
+    ],
+    "/model-hub/review-links/{token}/": ["dataset.collab.reviews"],
+    "/model-hub/review-links/{token}/items/{item_id}/": [
+      "dataset.collab.reviews"
+    ],
+    "/model-hub/datasets/query/": ["list.organize.query"],
+    "/model-hub/datasets/{dataset_id}/star/": ["list.organize.star"],
+    "/model-hub/eval-templates/{template_id}/versions/{version}/preview/": [
+      "exp.results.evalVersionImpact"
+    ],
+    "/model-hub/datasets/{dataset_id}/result-columns/": ["exp.results.matrix"],
+    "/model-hub/datasets/{dataset_id}/result-columns/values/": [
+      "exp.results.matrix"
+    ],
+    "/model-hub/datasets/{dataset_id}/derived-metrics/": [
+      "exp.results.summary"
+    ],
+    "/model-hub/datasets/{dataset_id}/classification/": ["exp.results.summary"],
+    "/model-hub/results/match/": ["exp.compare"],
+    "/model-hub/datasets/{dataset_id}/best-of/": ["exp.results.bestOf"],
+    "/model-hub/tags/": ["dataset.collab.tags"],
+    "/model-hub/tags/{tag_id}/": ["dataset.collab.tags"],
+    "/model-hub/experiments/v2/{experiment_id}/tags/": ["dataset.collab.tags"],
+    "/model-hub/leaderboards/": ["exp.leaderboards"],
+    "/model-hub/leaderboards/{leaderboard_id}/": ["exp.leaderboards"],
+    "/model-hub/experiments/v2/{experiment_id}/runs/{run_id}/traces/": [
+      "exp.results.traces"
+    ],
+    "/model-hub/develops/{dataset_id}/add_expression_column/": [
+      "dataset.filtersSystem.expressions"
+    ],
+    "/model-hub/experiments/v2/{experiment_id}/runs/{run_id}/record/": [
+      "exp.new.record"
+    ],
+    "/model-hub/eval-templates/create-dag/": ["evals.dag"],
+    "/model-hub/eval-templates/{template_id}/dag/": ["evals.dag"],
+    "/model-hub/eval-templates/dag/execute-adhoc/": ["evals.dag"],
+    "/model-hub/eval-templates/{template_id}/dag/paths/": ["evals.dag"],
+    "/model-hub/eval-templates/{template_id}/composite/jury/": ["evals.jury"],
+    "/model-hub/eval-templates/{template_id}/agreement/": ["evals.agreement"],
+    "/model-hub/eval-templates/{template_id}/improve/": ["evals.agreement"],
+    "/model-hub/eval-templates/create-remote/": ["evals.remote"],
+    "/model-hub/eval-templates/{template_id}/remote/": ["evals.remote"],
+    "/model-hub/eval-templates/remote/test/": ["evals.remote"],
+    "/model-hub/eval-templates/{template_id}/remote/score-run/": [
+      "evals.remote"
+    ],
+    "/model-hub/eval-templates/remote/jobs/{job_id}/": ["evals.remote"]
+  }
+}

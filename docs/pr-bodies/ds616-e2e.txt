@@ -1,0 +1,31 @@
+## E2E coverage
+
+E2E: exempt (harness-gap catalogued e2e/ flows do not exercise the cross-route responsive-shell viewport/theme matrix; standalone frontend/scripts/check-responsive-shell.mjs covers 390/768/1440 in light/dark across Datasets, Observe, Settings and eight gateway routes, with 66/66 passing in writer j-20261027t1729-e459c8 and independent Sol j-20261027t1803-bd930d; no catalogued flow run is claimed)
+
+The missing catalogued capability is a responsive shell matrix rather than a
+backend user journey. The writing-e2e-flows harness-gaps guidance records the
+harness's desktop-only coverage. The standalone Chromium regression provisions
+an actor against the disposable E2E backend and checks document/main geometry,
+mobile drawer opening and persistence, Escape/focus restoration, gateway drawer
+link navigation, and desktop navigation across all 66 route/theme/viewport rows.
+It is not a flow under e2e/flows/ and is not listed in e2e/FLOWS.md.
+
+Existing browser evidence is for product head
+f48d63fdadb9b3066c5de0e0ee3fbeefc85bc701 against immutable base
+3330cfa4424e5fd11c5e6dd84422c531b82041eb. Each cited matrix's results.json
+contains 66 rows with zero row errors. The baseline reproduced the 1200px
+shared-shell overflow in all 44 narrow rows. This declaration-only follow-up
+does not change product or test source and does not claim a new browser run.
+
+The declaration covers the shared shell only, not complete mobile-screen
+acceptance, DSX/results, saved gateway-policy enforcement, billing or real-model
+calls. Screen-local clipping remains with the surface owners.
+
+This file is the no-PR body input, not an automatically discovered exemption.
+On a cloud checkout containing the verified base-to-head ancestry, run from the
+repository root:
+
+node e2e/scripts/e2e-coverage.mjs --base 3330cfa4424e5fd11c5e6dd84422c531b82041eb --head HEAD --title "feat(ds): adopt design-system foundation and responsive navigation" --body docs/pr-bodies/ds616-e2e.txt --json
+
+When an authorized PR is created, put this E2E coverage section in its body;
+committing this file alone does not supply the marker to a --pr invocation.

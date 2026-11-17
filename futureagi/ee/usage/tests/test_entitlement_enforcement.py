@@ -6,19 +6,20 @@ Tests that resource creation is gated by plan limits via Entitlements.can_create
 from unittest.mock import patch
 
 import pytest
+from rest_framework import status
+
 from accounts.models import Organization, User
+from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.workspace import Workspace
-from agentcc.models.email_alert import AgentccEmailAlert
 from conftest import WorkspaceAwareAPIClient
-from django.utils import timezone
 from ee.usage.schemas.events import CheckResult
 from model_hub.models.annotation_queues import (
     AnnotationQueue,
     AnnotationQueueAnnotator,
     AnnotatorRole,
-    AutomationRule,
 )
-from rest_framework import status
+from tfc.constants.levels import Level
+from tfc.constants.roles import OrganizationRoles
 
 
 @pytest.fixture
@@ -81,6 +82,21 @@ def _make_queue_manager(queue, user):
     return annotator
 
 
+def _make_org_owner(organization, user):
+    # A new rule's scope check needs its creator's live access to the queue's
+    # workspace, which reads an active organization membership; this file's
+    # user fixture creates none.
+    OrganizationMembership.no_workspace_objects.get_or_create(
+        user=user,
+        organization=organization,
+        defaults={
+            "role": OrganizationRoles.OWNER,
+            "level": Level.OWNER,
+            "is_active": True,
+        },
+    )
+
+
 class TestEmailAlertEnforcement:
     def test_create_allowed_under_limit(self, db, auth_client, organization):
         with patch("ee.usage.services.entitlements.Entitlements.can_create") as mock:
@@ -133,6 +149,7 @@ class TestAutomationRuleEnforcement:
             name="Test Queue", organization=organization, created_by=user
         )
         _make_queue_manager(queue, user)
+        _make_org_owner(organization, user)
         with patch("ee.usage.services.entitlements.Entitlements.can_create") as mock:
             mock.return_value = CheckResult(allowed=True)
             resp = auth_client.post(
@@ -178,6 +195,7 @@ class TestAutomationRuleEnforcement:
             name="Test Queue", organization=organization, created_by=user
         )
         _make_queue_manager(queue, user)
+        _make_org_owner(organization, user)
         with patch(
             "ee.usage.services.entitlements.Entitlements",
             side_effect=ImportError,

@@ -1,0 +1,135 @@
+# Box's hosted MCP server uses Box OAuth with a pre-registered client id and
+# secret. An admin enables MCP, creates Integration Credentials, registers
+# the redirect URI and selects access scopes. DCR is not supported. This
+# record accepts organization-supplied clients, not an inferred shared client.
+# The OAuth endpoints below are recorded, not pinned. Discovery must re-check
+# the resource, issuer and HTTPS endpoints rather than trust this snapshot.
+# Protected-resource metadata names https://api.box.com/ as the authorization
+# server, while the issuer metadata says https://api.box.com without the slash;
+# strict discovery compatibility has not been tested or silently normalized.
+# An empty scope list means no scope narrowing: omit the scope parameter so
+# Box uses the scopes configured on the client. The MCP setup guide names
+# root_readwrite, ai.readwrite and docgen.readwrite; the last requires an
+# Enterprise Advanced license. The admin chooses the required licensed scopes.
+# A connection acts as the user who signs in, including when an agent uses it.
+# Refresh tokens rotate and are single-use within 60 days. EE can use the
+# pre-registered client; it does not need to register one dynamically.
+# No transport variant or secretless public-client support is asserted here.
+# No authenticated smoke, tools snapshot or conformance run was performed.
+schema: "connector-manifest/v1#provider"
+app: box
+id: mcp
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus:
+  label: ga
+  source: https://support.box.com/hc/en-us/articles/43974584000659-Announcing-the-new-remote-Box-MCP-Server-GA-release-Aug-2025
+transport:
+  kind: http
+  url: https://mcp.box.com/
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent, user]
+auth:
+  kind: oauth2
+  help: "A Box admin must enable MCP and create integration credentials with your redirect URI and required scopes. Access stays within the signing-in user's Box permissions; DocGen requires Enterprise Advanced."
+  oauth2:
+    authorizeUrl: https://account.box.com/api/oauth2/authorize
+    tokenUrl: https://api.box.com/oauth2/token
+    scopes: []
+    pkce: true
+    tokenBody: form
+    clientAuth: body
+    refresh: { supported: true, rotates: true }
+    revocation:
+      url: https://api.box.com/oauth2/revoke
+      method: POST
+      tokenBody: form
+      tokenField: token
+      clientAuth: body
+    registration: [preregistered]
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_metered
+  notes: "Custom integration credentials incur metered API usage; tools remain subject to the Box plan."
+  source: https://support.box.com/hc/en-us/articles/43847256139923-Managing-Box-MCP-Servers
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: publisher
+    url: https://developer.box.com/guides/box-mcp
+    fetchedAt: 2026-11-15
+  - fact: vendorStatus.label
+    url: https://support.box.com/hc/en-us/articles/43974584000659-Announcing-the-new-remote-Box-MCP-Server-GA-release-Aug-2025
+    fetchedAt: 2026-11-15
+  - fact: transport.url
+    url: https://developer.box.com/guides/box-mcp/setup
+    fetchedAt: 2026-11-15
+  - fact: transport.url
+    url: https://mcp.box.com/.well-known/oauth-protected-resource
+    fetchedAt: 2026-11-15
+  - fact: accountModes
+    url: https://developer.box.com/guides/box-mcp/permission-aware-access
+    fetchedAt: 2026-11-15
+  - fact: auth.kind
+    url: https://developer.box.com/guides/box-mcp
+    fetchedAt: 2026-11-15
+  - fact: auth.help
+    url: https://developer.box.com/guides/box-mcp/setup
+    fetchedAt: 2026-11-15
+  - fact: auth.help
+    url: https://developer.box.com/guides/box-mcp/permission-aware-access
+    fetchedAt: 2026-11-15
+  - fact: auth.oauth2.authorizeUrl
+    url: https://api.box.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-11-15
+  - fact: auth.oauth2.authorizeUrl
+    url: https://developer.box.com/guides/box-mcp/setup
+    fetchedAt: 2026-11-15
+  - fact: auth.oauth2.tokenUrl
+    url: https://api.box.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-11-15
+  - fact: auth.oauth2.tokenUrl
+    url: https://developer.box.com/guides/box-mcp/setup
+    fetchedAt: 2026-11-15
+  - fact: auth.oauth2.scopes
+    url: https://developer.box.com/guides/api-calls/permissions-and-errors/scopes
+    fetchedAt: 2026-11-15
+  - fact: auth.oauth2.scopes
+    url: https://developer.box.com/reference/get-authorize
+    fetchedAt: 2026-11-15
+  - fact: auth.oauth2.pkce
+    url: https://api.box.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-11-15
+  - fact: auth.oauth2.tokenBody
+    url: https://developer.box.com/reference/post-oauth2-token
+    fetchedAt: 2026-11-15
+  - fact: auth.oauth2.clientAuth
+    url: https://api.box.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-11-15
+  - fact: auth.oauth2.refresh
+    url: https://developer.box.com/guides/authentication/tokens/refresh
+    fetchedAt: 2026-11-15
+  - fact: auth.oauth2.revocation
+    url: https://developer.box.com/guides/authentication/tokens/revoke
+    fetchedAt: 2026-11-15
+  - fact: auth.oauth2.revocation.url
+    url: https://api.box.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-11-15
+  - fact: auth.oauth2.revocation.clientAuth
+    url: https://api.box.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-11-15
+  - fact: auth.oauth2.registration
+    url: https://developer.box.com/guides/box-mcp/setup
+    fetchedAt: 2026-11-15
+  - fact: auth.oauth2.registration
+    url: https://support.box.com/hc/en-us/articles/43847256139923-Managing-Box-MCP-Servers
+    fetchedAt: 2026-11-15
+  - fact: tools.source
+    url: https://developer.box.com/guides/box-mcp
+    fetchedAt: 2026-11-15
+  - fact: pricing.model
+    url: https://support.box.com/hc/en-us/articles/43847256139923-Managing-Box-MCP-Servers
+    fetchedAt: 2026-11-15

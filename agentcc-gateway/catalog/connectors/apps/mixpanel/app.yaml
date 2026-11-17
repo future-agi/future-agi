@@ -1,0 +1,30 @@
+schema: "connector-manifest/v1#app"
+id: mixpanel
+version: 1.0.0
+name: Mixpanel
+description: "Read and write Mixpanel data through its hosted US MCP endpoint."
+vendor:
+  name: Mixpanel
+  domains: [mixpanel.com]
+eeCategory: data
+group: other
+categories: [data]
+docsUrl: https://docs.mixpanel.com/docs/mcp
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: name
+    url: https://docs.mixpanel.com/docs/mcp
+    fetchedAt: 2026-11-16
+  - fact: description
+    url: https://docs.mixpanel.com/docs/mcp
+    fetchedAt: 2026-11-16
+  - fact: vendor.name
+    url: https://docs.mixpanel.com/docs/mcp
+    fetchedAt: 2026-11-16
+  - fact: vendor.domains
+    url: https://docs.mixpanel.com/docs/mcp
+    fetchedAt: 2026-11-16
+  - fact: docsUrl
+    url: https://docs.mixpanel.com/docs/mcp
+    fetchedAt: 2026-11-16

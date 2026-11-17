@@ -1,0 +1,9 @@
+{
+  "code": "connector_already_added",
+  "detail": "acme-docs is already added; remove it to add it with another provider.",
+  "error": "acme-docs is already added; remove it to add it with another provider.",
+  "message": "acme-docs is already added; remove it to add it with another provider.",
+  "result": "acme-docs is already added; remove it to add it with another provider.",
+  "status": false,
+  "type": "conflict"
+}

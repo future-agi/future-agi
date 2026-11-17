@@ -1,3 +1,4 @@
+import { formatExactMoney } from "src/sections/common/format/money";
 import React, { useEffect } from "react";
 import PageHeader from "src/components/page-header";
 import { Helmet } from "react-helmet-async";
@@ -32,7 +33,7 @@ const BillingPage = () => {
   const [openBillingInfoModal, setOpenBillingInfoModal] = useState(false);
   const [openAddFundsModal, setOpenAddFundsModal] = useState(false);
   const [openEditSettingsModal, setOpenEditSettingsModal] = useState(false);
-  const [walletBalance, setWalletBalance] = useState(0);
+  const [walletBalance, setWalletBalance] = useState(null);
   const [last4digits, setLast4digits] = useState("");
   const [invoicesData, setInvoicesData] = useState([]);
   const [refreshBillingPage, setRefreshBillingPage] = useState(false);
@@ -54,7 +55,7 @@ const BillingPage = () => {
     useQuery({
       queryKey: ["wallet-balance"],
       queryFn: () => axios.get(endpoints.stripe.getWalletBalance),
-      select: (data) => Number(data.data.wallet_balance).toFixed(2),
+      select: (data) => data.data.wallet_balance,
       enabled: true,
     });
 
@@ -203,7 +204,7 @@ const BillingPage = () => {
 
   // Update state when query data changes
   useEffect(() => {
-    if (walletBalanceData) {
+    if (walletBalanceData !== undefined) {
       setWalletBalance(walletBalanceData);
     }
   }, [walletBalanceData]);
@@ -335,7 +336,7 @@ const BillingPage = () => {
                     sx={{ margin: "0 auto" }}
                   />
                 ) : (
-                  `$${walletBalance}`
+                  formatExactMoney(walletBalance)
                 )}
               </Typography>
             </Box>

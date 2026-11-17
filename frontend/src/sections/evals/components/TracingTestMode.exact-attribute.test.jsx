@@ -358,6 +358,8 @@ describe("TracingTestMode exact task attribute mapping", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // Clear queued one-shot responses even when a preceding test fails before POST.
+    mocks.post.mockReset();
     mocks.exactFields = ["final_status"];
     mocks.exactReadState = "complete";
     mocks.hasNextAttributePage = false;
@@ -609,6 +611,268 @@ describe("TracingTestMode exact task attribute mapping", () => {
     );
 
     expect(mocks.fetchNextAttributePage).toHaveBeenCalledOnce();
+  });
+
+  it("runs a populated session drawer test with server-side conversation paths", async () => {
+    mocks.exactFields = ["conversation_complete", "traces.1.input"];
+    const get = mocks.get.getMockImplementation();
+    mocks.get.mockImplementation(async (url, config) => {
+      if (url === "/sessions/")
+        return {
+          data: {
+            status: true,
+            result: {
+              config: [],
+              table: [{ session_id: "session-complete" }],
+              metadata: { total_rows: 1, has_more: false, next_cursor: null },
+            },
+          },
+        };
+      if (url === "/sessions/session-complete/")
+        return {
+          data: {
+            result: {
+              session_metadata: { name: "Populated conversation" },
+              response: [
+                { trace_id: "first-turn", input: "preview only" },
+                { trace_id: "last-turn", input: "partial preview" },
+              ],
+            },
+          },
+        };
+      if (url === "/traces/first-turn/")
+        return {
+          data: { status: true, result: { trace: {}, observation_spans: [] } },
+        };
+      return get(url, config);
+    });
+    mocks.post.mockResolvedValue({
+      data: { status: true, result: { output: 1 } },
+    });
+    const ready = vi.fn();
+    const result = vi.fn();
+    const ref = React.createRef();
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    // The attachment drawer owns the button and invokes this imperative API.
+    const view = render(
+      <QueryClientProvider client={client}>
+        <TracingTestMode
+          ref={ref}
+          templateId="eval-template-1"
+          variables={["evaluation_result", "last_input"]}
+          initialProjectId={PROJECT_ID}
+          initialRowType="sessions"
+          taskMapping
+          allowCustomFieldPath
+          initialMapping={{
+            evaluation_result: "conversation_complete",
+            last_input: "traces.1.input",
+          }}
+          onReadyChange={ready}
+          onTestResult={result}
+        />
+        <button onClick={() => ref.current.runTest()}>Run test</button>
+      </QueryClientProvider>,
+    );
+    const paths = {
+      evaluation_result: "conversation_complete",
+      last_input: "traces.1.input",
+    };
+    await waitFor(() => expect(ready).toHaveBeenLastCalledWith(true, paths));
+    await userEvent.click(screen.getByRole("button", { name: "Run test" }));
+    await waitFor(() => expect(mocks.post).toHaveBeenCalledOnce());
+    const [url, payload] = mocks.post.mock.calls[0];
+    expect(url).toBe("/eval-playground/");
+    expect(payload).toMatchObject({
+      session_id: "session-complete",
+      mapping_paths: paths,
+    });
+    // Even fields present in the partial preview must not override the server.
+    expect(payload.config).not.toHaveProperty("mapping");
+    await waitFor(() =>
+      expect(result).toHaveBeenCalledWith(true, { output: 1 }),
+    );
+    view.unmount();
+    client.clear();
+    mocks.post.mockReset();
+  });
+
+  it.each([
+    { field: "total_cost", value: 1.25, serverPaths: {} },
+    { field: "total_tokens", value: 0, serverPaths: {} },
+    {
+      field: "duration",
+      value: 1250,
+      serverPaths: {
+        conversation: "conversation_complete",
+        transcript: "transcript",
+        full_transcript: "transcript_full",
+        session_name: "name",
+        bookmarked: "bookmarked",
+        last_input: "traces.1.input",
+        span_input: "traces.0.spans.0.input",
+      },
+    },
+  ])(
+    "preserves non-task session $field without overriding server-resolved paths",
+    async ({ field, value, serverPaths }) => {
+      mocks.exactFields = Object.values(serverPaths);
+      const get = mocks.get.getMockImplementation();
+      mocks.get.mockImplementation(async (url, config) => {
+        if (url === "/sessions/") {
+          return {
+            data: {
+              status: true,
+              result: {
+                config: [],
+                table: [{ session_id: "session-aggregate" }],
+                metadata: { total_rows: 1, has_more: false, next_cursor: null },
+              },
+            },
+          };
+        }
+        if (url === "/sessions/session-aggregate/") {
+          return {
+            data: {
+              result: {
+                session_metadata: {
+                  name: "Populated conversation",
+                  bookmarked: false,
+                  [field]: value,
+                  conversation_complete: "incomplete preview",
+                  transcript: "incomplete transcript",
+                  transcript_full: "incomplete full transcript",
+                },
+                response: [
+                  { trace_id: "first-turn", input: "preview only" },
+                  { trace_id: "last-turn", input: "partial preview" },
+                ],
+              },
+            },
+          };
+        }
+        if (url === "/traces/first-turn/") {
+          return {
+            data: {
+              status: true,
+              result: {
+                trace: {},
+                observation_spans: [{ input: "partial span preview" }],
+              },
+            },
+          };
+        }
+        return get(url, config);
+      });
+      mocks.post.mockResolvedValueOnce({
+        data: { status: true, result: { output: 1 } },
+      });
+      const ready = vi.fn();
+      const readiness = vi.fn();
+      const result = vi.fn();
+      const ref = React.createRef();
+      // Playground and tracing attachment hosts do not set taskMapping.
+      const view = renderTaskMapping(ready, {
+        ref,
+        initialRowType: "sessions",
+        variables: ["evaluation_result", ...Object.keys(serverPaths)],
+        initialMapping: serverPaths,
+        onReadinessChange: readiness,
+        onTestResult: result,
+      });
+      // Session detail and first-trace spans load after the list. Loading
+      // toggles the tooltip wrapper and remounts the input, so do not retain
+      // an enabled-but-detached input from between those requests.
+      await waitFor(() =>
+        expect(readiness).toHaveBeenLastCalledWith(
+          expect.objectContaining({ sampleStatus: "ready" }),
+        ),
+      );
+      const input = screen.getAllByPlaceholderText(
+        "Search or type a path (e.g. attributes.input.value)",
+      )[0];
+      expect(input).toBeEnabled();
+      await userEvent.click(input);
+      // Verify discovery from session_metadata before freeSolo typing can
+      // add the current mapping to the options. exactFields omits aggregates.
+      expect(
+        await screen.findByRole("option", { name: field, exact: true }),
+      ).toBeVisible();
+      await userEvent.type(input, field);
+      await userEvent.click(
+        await screen.findByRole("option", { name: field, exact: true }),
+      );
+      await waitFor(() =>
+        expect(ready).toHaveBeenLastCalledWith(true, {
+          ...serverPaths,
+          evaluation_result: field,
+        }),
+      );
+      await act(async () => ref.current.runTest());
+      await waitFor(() => expect(mocks.post).toHaveBeenCalledOnce());
+      const [url, payload] = mocks.post.mock.calls[0];
+      expect(url).toBe("/eval-playground/");
+      expect(payload.session_id).toBe("session-aggregate");
+      // Exact equality prevents partial conversation/trace/span previews from
+      // taking precedence over authoritative server values in the endpoint merge.
+      expect(payload.config.mapping).toEqual({
+        evaluation_result: String(value),
+      });
+      if (Object.keys(serverPaths).length) {
+        expect(payload.mapping_paths).toEqual(serverPaths);
+      } else {
+        expect(payload).not.toHaveProperty("mapping_paths");
+      }
+      expect(result).toHaveBeenCalledWith(true, { output: 1 });
+      view.unmount();
+    },
+  );
+
+  it("selects the complete conversation from dynamic session attributes", async () => {
+    mocks.exactFields = [
+      "conversation_complete",
+      "transcript",
+      "transcript_full",
+    ];
+    const originalGet = mocks.get.getMockImplementation();
+    mocks.get.mockImplementation(async (url, ...args) => {
+      if (url === "/sessions/") {
+        return {
+          data: {
+            status: true,
+            result: {
+              config: [],
+              table: [],
+              metadata: { total_rows: 0, has_more: false, next_cursor: null },
+            },
+          },
+        };
+      }
+      return originalGet(url, ...args);
+    });
+    const onReadyChange = vi.fn();
+    renderTaskMapping(onReadyChange, {
+      initialRowType: "sessions",
+      taskMapping: true,
+    });
+    const input = await screen.findByPlaceholderText(
+      "Search or type a path (e.g. attributes.input.value)",
+    );
+    await waitFor(() => expect(input).not.toBeDisabled());
+    await userEvent.click(input);
+    await userEvent.type(input, "conversation_complete");
+    await userEvent.click(
+      await screen.findByRole("option", { name: "conversation_complete" }),
+    );
+    // Selection is retained even without a sample row; adding/testing remains
+    // disabled until the existing sample-readiness requirement is satisfied.
+    await waitFor(() =>
+      expect(onReadyChange).toHaveBeenCalledWith(false, {
+        evaluation_result: "conversation_complete",
+      }),
+    );
   });
 
   it("lists and selects final_status even when the preview row omits it", async () => {

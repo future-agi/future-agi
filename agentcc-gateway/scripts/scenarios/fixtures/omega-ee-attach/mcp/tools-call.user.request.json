@@ -1,0 +1,27 @@
+{
+  "http": {
+    "method": "POST",
+    "url": "https://gateway.example.com/mcp/v/vs_01K7CN5EEPERS0NM0DE0000002",
+    "headers": {
+      "content-type": "application/json",
+      "accept": "application/json, text/event-stream",
+      "authorization": "Bearer {{M24_ACCESS_TOKEN}}",
+      "mcp-session-id": "{{MCP_SESSION_ID_USER}}"
+    }
+  },
+  "body": {
+    "jsonrpc": "2.0",
+    "id": 3,
+    "method": "tools/call",
+    "params": {
+      "name": "linear__create_issue",
+      "arguments": {
+        "team": "ENG",
+        "title": "Checkout fails on Safari"
+      },
+      "_meta": {
+        "protocolVersion": "2025-06-18"
+      }
+    }
+  }
+}

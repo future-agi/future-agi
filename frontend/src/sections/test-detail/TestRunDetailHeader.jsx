@@ -27,6 +27,10 @@ import CallStatus from "../test/CallLogs/CallStatus";
 import CallMetadataSection from "./components/CallMetadataSection";
 import { formatStartTimeByRequiredFormat } from "src/utils/utils";
 import { formatDurationSafe } from "src/components/CallLogsDrawer/CustomCallLogHeader";
+import {
+  skippedSavedRowCount,
+  skippedSavedRowsMessage,
+} from "../test/skippedSavedRows";
 import { SourceType } from "../scenarios/common";
 
 const TestRunDetailHeader = () => {
@@ -55,8 +59,13 @@ const TestRunDetailHeader = () => {
   const { data: testData } = useTestRunDetails(testId);
   const { data: kpis } = useKpis(executionId);
   const agentType = kpis?.agent_type;
+  // A prompt simulation's run reports its calls as chats, but the server makes
+  // them again on a re-run, as it does a voice simulation's. Only a chat
+  // agent's run starts from the user's own code; only it opens the SDK steps.
+  const promptSimulation =
+    (testData?.source_type ?? testData?.sourceType) === SourceType.PROMPT;
   const handleRerun = () => {
-    if (agentType === AGENT_TYPES.VOICE) {
+    if (agentType === AGENT_TYPES.VOICE || promptSimulation) {
       setConfirmRerun(true);
     } else {
       setSdkCodeOpen(true);
@@ -96,6 +105,7 @@ const TestRunDetailHeader = () => {
     testData?.created_at,
     "dd-MM-yyyy HH:mm:ss",
   );
+  const skippedRows = skippedSavedRowsMessage(skippedSavedRowCount(kpis));
 
   return (
     <Box
@@ -186,13 +196,7 @@ const TestRunDetailHeader = () => {
                   </Typography>
                 </LoadingButton>
               </ShowComponent>
-              <ShowComponent
-                condition={
-                  !showStopButton &&
-                  (testData?.source_type ?? testData?.sourceType) !==
-                    SourceType.PROMPT
-                }
-              >
+              <ShowComponent condition={!showStopButton}>
                 <CustomTooltip
                   show={kpis?.total_calls === 0}
                   title="No completed calls to re-simulate. Run a new simulation first."
@@ -368,6 +372,11 @@ const TestRunDetailHeader = () => {
                 ]}
               />
             </Box>
+            <ShowComponent condition={Boolean(skippedRows)}>
+              <Typography typography="s1" color="text.secondary">
+                {skippedRows}
+              </Typography>
+            </ShowComponent>
           </Box>
           {/* Right Section - Auto Refresh, Export, Configure, Share */}
           <Box display="flex" alignItems="center"></Box>

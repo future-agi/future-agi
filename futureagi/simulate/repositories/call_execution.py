@@ -7,6 +7,7 @@ from typing import Any
 from uuid import UUID
 
 from simulate.models.test_execution import CallExecution
+from simulate.utils.ended_reason import set_ended_reason
 
 
 class CallExecutionRepository:
@@ -57,12 +58,17 @@ class CallExecutionRepository:
         duration_seconds: int | None = None,
         ended_reason: str | None = None,
         service_provider_call_id: str | None = None,
+        ended_reason_source: str | None = None,
     ) -> bool:
         """Update lifecycle fields on a CallExecution.
 
         Only fields that are not None are updated. Returns True if the
-        row was found and updated, False otherwise.
+        row was found and updated, False otherwise. ``ended_reason`` needs
+        ``ended_reason_source``, an ``EndedReasonSource`` value chosen by the
+        caller's own code (simulate/utils/ended_reason.py).
         """
+        if ended_reason is not None and ended_reason_source is None:
+            raise ValueError("ended_reason needs an ended_reason_source")
         try:
             ce = await CallExecution.objects.aget(id=call_id)
         except CallExecution.DoesNotExist:
@@ -94,8 +100,9 @@ class CallExecutionRepository:
             ce.duration_seconds = duration_seconds
             update_fields.append("duration_seconds")
         if ended_reason is not None:
-            ce.ended_reason = ended_reason
-            update_fields.append("ended_reason")
+            update_fields.extend(
+                set_ended_reason(ce, ended_reason, ended_reason_source)
+            )
         if service_provider_call_id is not None:
             ce.service_provider_call_id = service_provider_call_id
             update_fields.append("service_provider_call_id")

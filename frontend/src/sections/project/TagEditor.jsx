@@ -64,6 +64,30 @@ const fetchAllKnownTags = async ({ signal } = {}) => {
   return Array.from(tagSet).sort();
 };
 
+// The tags come from the project's own GET, so when the project cannot be
+// read, this read fails with it. A page that already says so on screen
+// declares it on its project read (`showsFailure`, see
+// api/project/project-detail.js). The app-wide toast (utils/queryErrorHandler)
+// reads meta.errorHandled when this read fails: true when a watcher of the
+// project read shows the failure, so it is not toasted on top. Where nothing
+// declares it (the project list, a project that has loaded), the failure
+// toasts as before.
+const tagsReadMeta = (queryClient, projectId) => ({
+  get errorHandled() {
+    const cache = queryClient.getQueryCache();
+    const tagsRead = cache.find({ queryKey: ["project-tags", projectId] });
+    const projectRead = cache.find({ queryKey: ["project-detail", projectId] });
+    return Boolean(
+      projectRead?.observers.some((observer) =>
+        observer.options.meta?.showsFailure?.(
+          tagsRead?.state.error,
+          projectRead,
+        ),
+      ),
+    );
+  },
+});
+
 // ── Component ──
 
 const TagEditor = ({ projectId, variant = "grid" }) => {
@@ -78,6 +102,7 @@ const TagEditor = ({ projectId, variant = "grid" }) => {
     queryFn: () => fetchProjectTags(projectId),
     enabled: !!projectId,
     staleTime: 30_000,
+    meta: tagsReadMeta(queryClient, projectId),
   });
 
   // ── Fetch all known tags (for the dropdown list) — only when popover is open ──

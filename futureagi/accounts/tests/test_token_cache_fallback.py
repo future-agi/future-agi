@@ -133,7 +133,7 @@ def test_database_outage_during_fallback_still_returns_503(api_client, access):
     with (
         patch("accounts.authentication.cache") as cache,
         patch(
-            "accounts.authentication.AuthToken.objects.filter",
+            "accounts.authentication.AuthToken.objects.using",
             side_effect=OperationalError("db-secret"),
         ),
     ):

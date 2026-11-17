@@ -32,8 +32,8 @@ SOURCE_DIGESTS = {
     "daemon_overlay2.py": "575b9968ad17d8126bf300ec9f029d34803a17822b595cd94e5d6cbd0ed4b84d",
     "standalone.py": "729b3b5c142b40c4d6f7a667bc8128c42f007f75aadde4997a362bc4f002037e",
     "volume_storage.py": "b4be2088a0fdf80fa82b3d92b0dd7766f9d73706cebe0a84e2a5cef5ab69a31a",
-    "migration-apps.json": "136402e5cb9ea3a6cbf401749756137924e9847af42e98a7f8f7c103632f6e38",
-    "automatic-layout.json": "99910d7fbef73f3a3d976c10b9d5ff06f9c1ce566f0b31aa15bbf83cbe2b07a4",
+    "migration-apps.json": "1d855476c37f975722aed58ee866ddaa25d78fdab0631efef833f99b22e9ea32",
+    "automatic-layout.json": "9b382eaa4f75fcef6e9f2d2ac3bb2e49d4924b253b5ae53f00ea7f429e24ac8c",
 }
 
 

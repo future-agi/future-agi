@@ -1,0 +1,8 @@
+The automated checks found problems in your upload of {{ ref }}@{{ version }}.
+
+Each finding, with its file and fix, is on the submission page:
+{{ status_url }}
+
+or run: omega hub status {{ submission.pk }}
+
+Fix them and publish again. A new upload is a new submission and may reuse the same version.

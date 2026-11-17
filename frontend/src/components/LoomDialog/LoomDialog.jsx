@@ -1,3 +1,4 @@
+import ExternalContentFrame from "src/components/external-content/ExternalContentFrame";
 import {
   Box,
   Dialog,
@@ -38,7 +39,7 @@ const LoomDialog = ({ open, onClose, title, loomUrl }) => {
             height: 0,
           }}
         >
-          <iframe
+          <ExternalContentFrame
             src={loomUrl}
             frameBorder="0"
             title={title}
@@ -49,7 +50,7 @@ const LoomDialog = ({ open, onClose, title, loomUrl }) => {
               width: "100%",
               height: "100%",
             }}
-          ></iframe>
+          ></ExternalContentFrame>
         </Box>
       </DialogContent>
     </Dialog>

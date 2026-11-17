@@ -392,7 +392,7 @@ class TestCustomEvalConfigRunEvaluationAPI:
         ]
 
     def test_run_evaluation_invalid_config(self, auth_client, project_version):
-        """Run evaluation with invalid config fails."""
+        """Run evaluation with a config id that names nothing answers 404."""
         response = auth_client.post(
             "/tracer/custom-eval-config/run_evaluation/",
             {
@@ -401,7 +401,7 @@ class TestCustomEvalConfigRunEvaluationAPI:
             },
             format="json",
         )
-        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.status_code == status.HTTP_404_NOT_FOUND
 
 
 @pytest.mark.unit

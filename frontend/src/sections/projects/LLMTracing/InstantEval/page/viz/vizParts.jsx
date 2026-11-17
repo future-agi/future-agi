@@ -176,14 +176,18 @@ export function VizCard({ title, caption, action, children, label }) {
         bgcolor: "background.paper",
       }}
     >
+      {/* On a narrow card (laptop width, history rail open) the controls drop
+          below the title and wrap among themselves, inside the card. */}
       <Stack
         direction="row"
         alignItems="flex-start"
         justifyContent="space-between"
         spacing={2}
-        sx={{ mb: 1.5 }}
+        useFlexGap
+        flexWrap="wrap"
+        sx={{ mb: 1.5, rowGap: 1 }}
       >
-        <Box sx={{ minWidth: 0 }}>
+        <Box sx={{ flex: "1 1 240px", minWidth: 0 }}>
           <Typography variant="subtitle2" component="h2" sx={{ fontSize: 15 }}>
             {title}
           </Typography>
@@ -202,8 +206,10 @@ export function VizCard({ title, caption, action, children, label }) {
           <Stack
             direction="row"
             spacing={1}
+            useFlexGap
+            flexWrap="wrap"
             alignItems="center"
-            sx={{ flexShrink: 0 }}
+            sx={{ flexShrink: 0, maxWidth: "100%" }}
           >
             {action}
           </Stack>

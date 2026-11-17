@@ -19,6 +19,13 @@ const StopOptimizationModal = ({ onSuccess }) => {
       setStopOptimizationId(null);
       onSuccess?.();
     },
+    // W6 C6: a run that finished before Stop answers 400 ("Cannot stop
+    // optimization with status: completed", shown by the axios toast); the
+    // dialog closes and the list re-reads, so the row shows its real status.
+    onError: () => {
+      setStopOptimizationId(null);
+      onSuccess?.();
+    },
   });
 
   return (

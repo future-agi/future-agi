@@ -2,7 +2,8 @@
 // Agentcc acts as both an MCP server (agents connect to Agentcc) and an MCP client
 // (Agentcc connects to upstream MCP tool servers).
 //
-// Protocol version: 2025-11-25
+// Protocol versions: 2026-07-28 (stateless, per-request _meta) and the
+// 2025-03-26 to 2025-11-25 session revisions, on one endpoint (the era rules are in package protocol).
 // Transport: Streamable HTTP (JSON-RPC 2.0 over HTTP + SSE)
 package mcp
 
@@ -10,6 +11,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+
+	"github.com/futureagi/agentcc-gateway/internal/mcp/protocol"
 )
 
 // Protocol version supported by this implementation.
@@ -20,11 +23,11 @@ const ProtocolVersion = "2025-11-25"
 // Message is a JSON-RPC 2.0 message (request, response, or notification).
 type Message struct {
 	JSONRPC string          `json:"jsonrpc"`
-	ID      json.RawMessage `json:"id,omitempty"`      // number or string; nil for notifications
-	Method  string          `json:"method,omitempty"`   // present for requests/notifications
-	Params  json.RawMessage `json:"params,omitempty"`   // present for requests/notifications
-	Result  json.RawMessage `json:"result,omitempty"`   // present for success responses
-	Error   *RPCError       `json:"error,omitempty"`    // present for error responses
+	ID      json.RawMessage `json:"id,omitempty"`     // number or string; nil for notifications
+	Method  string          `json:"method,omitempty"` // present for requests/notifications
+	Params  json.RawMessage `json:"params,omitempty"` // present for requests/notifications
+	Result  json.RawMessage `json:"result,omitempty"` // present for success responses
+	Error   *RPCError       `json:"error,omitempty"`  // present for error responses
 }
 
 // IsRequest returns true if this message is a request (has method and id).
@@ -60,6 +63,16 @@ const (
 	ErrCodeMethodNotFound = -32601
 	ErrCodeInvalidParams  = -32602
 	ErrCodeInternal       = -32603
+)
+
+// MCP error codes. Resource-not-found is -32002 on a legacy request and
+// ErrCodeInvalidParams on a 2026-07-28 one; the three 2026 codes answer with
+// HTTP 400 (package protocol).
+const (
+	ErrCodeResourceNotFoundLegacy     = -32002
+	ErrCodeHeaderMismatch             = protocol.CodeHeaderMismatch
+	ErrCodeMissingClientCapability    = protocol.CodeMissingClientCapability
+	ErrCodeUnsupportedProtocolVersion = protocol.CodeUnsupportedVersion
 )
 
 // NewResponse creates a success response for a given request ID.
@@ -125,12 +138,14 @@ type InitializeResult struct {
 type Implementation struct {
 	Name    string `json:"name"`
 	Version string `json:"version"`
+	Title   string `json:"title,omitempty"`
 }
 
 // ClientCapabilities declares what the client supports.
 type ClientCapabilities struct {
-	Sampling *SamplingCapability `json:"sampling,omitempty"`
-	Roots    *RootsCapability    `json:"roots,omitempty"`
+	Sampling    *SamplingCapability `json:"sampling,omitempty"`
+	Roots       *RootsCapability    `json:"roots,omitempty"`
+	Elicitation json.RawMessage     `json:"elicitation,omitempty"`
 }
 
 // SamplingCapability declares the client supports server-initiated LLM calls.
@@ -146,6 +161,21 @@ type ServerCapabilities struct {
 	Tools     *ToolsCapability     `json:"tools,omitempty"`
 	Resources *ResourcesCapability `json:"resources,omitempty"`
 	Prompts   *PromptsCapability   `json:"prompts,omitempty"`
+	// Logging is present when the server relays log messages.
+	Logging json.RawMessage `json:"logging,omitempty"`
+	// Extensions is the object of protocol extensions declared, by id
+	// (2026-07-28).
+	Extensions json.RawMessage `json:"extensions,omitempty"`
+}
+
+// DiscoverResult is the result of server/discover (2026-07-28). Its
+// serverInfo is _meta["io.modelcontextprotocol/serverInfo"], which the
+// gateway adds with resultType, ttlMs and cacheScope (package protocol).
+type DiscoverResult struct {
+	SupportedVersions []string           `json:"supportedVersions"`
+	Capabilities      ServerCapabilities `json:"capabilities"`
+	Instructions      string             `json:"instructions,omitempty"`
+	Meta              json.RawMessage    `json:"_meta,omitempty"`
 }
 
 // ToolsCapability declares the server exposes tools.
@@ -168,11 +198,23 @@ type PromptsCapability struct {
 
 // Tool describes an MCP tool exposed by a server.
 type Tool struct {
-	Name         string          `json:"name"`
-	Description  string          `json:"description,omitempty"`
-	InputSchema  json.RawMessage `json:"inputSchema"`
-	OutputSchema json.RawMessage `json:"outputSchema,omitempty"`
+	Name         string           `json:"name"`
+	Description  string           `json:"description,omitempty"`
+	InputSchema  json.RawMessage  `json:"inputSchema"`
+	OutputSchema json.RawMessage  `json:"outputSchema,omitempty"`
 	Annotations  *ToolAnnotations `json:"annotations,omitempty"`
+	Title        string           `json:"title,omitempty"`
+	Icons        json.RawMessage  `json:"icons,omitempty"`
+	Meta         json.RawMessage  `json:"_meta,omitempty"`
+	// Raw is the object exactly as the upstream sent it, kept by the decoder
+	// for pass-through; never marshalled.
+	Raw json.RawMessage `json:"-"`
+	// GatewayMeta holds the io.futureagi/* _meta entries the gateway itself
+	// sets on this definition (list assembly, price meta). The list
+	// writers merge only these into the definition the client gets, and drop
+	// every io.futureagi/* key the upstream sent (Meta and Raw are the
+	// upstream's own). Never marshalled.
+	GatewayMeta map[string]json.RawMessage `json:"-"`
 }
 
 // ToolAnnotations provides hints about tool behavior.
@@ -192,22 +234,45 @@ type ToolCallParams struct {
 
 // ToolCallResult is the result of tools/call.
 type ToolCallResult struct {
-	Content []ContentPart `json:"content"`
-	IsError bool          `json:"isError,omitempty"`
+	Content           []ContentPart   `json:"content"`
+	IsError           bool            `json:"isError,omitempty"`
+	StructuredContent json.RawMessage `json:"structuredContent,omitempty"`
+	ResultType        string          `json:"resultType,omitempty"`
+	Meta              json.RawMessage `json:"_meta,omitempty"`
+	// Raw is the object exactly as the upstream sent it, kept by the decoder
+	// for pass-through; never marshalled.
+	Raw json.RawMessage `json:"-"`
 }
 
-// ContentPart is a piece of content in a tool result.
+// ContentPart is a piece of content in a tool result: text, image, audio,
+// resource (embedded) or resource_link.
 type ContentPart struct {
-	Type     string `json:"type"` // "text", "image", "resource"
+	Type     string `json:"type"`
 	Text     string `json:"text,omitempty"`
 	Data     string `json:"data,omitempty"`
 	MIMEType string `json:"mimeType,omitempty"`
+	// URI, Name, Title, Description and Size describe a resource_link.
+	URI         string `json:"uri,omitempty"`
+	Name        string `json:"name,omitempty"`
+	Title       string `json:"title,omitempty"`
+	Description string `json:"description,omitempty"`
+	// Size is the size in bytes as the upstream sent it, kept raw: a number
+	// spelled 2048.0 or 1.5e3 (JSON Schema's integer, the SDKs' number), or
+	// any other value, never fails the decode of the result that carries it.
+	Size        json.RawMessage `json:"size,omitempty"`
+	Resource    json.RawMessage `json:"resource,omitempty"`
+	Annotations json.RawMessage `json:"annotations,omitempty"`
+	Icons       json.RawMessage `json:"icons,omitempty"`
+	Meta        json.RawMessage `json:"_meta,omitempty"`
 }
 
 // ListToolsResult is the result of tools/list.
 type ListToolsResult struct {
 	Tools      []Tool `json:"tools"`
 	NextCursor string `json:"nextCursor,omitempty"`
+	// Raw is the object exactly as the upstream sent it, kept by the decoder
+	// for pass-through; never marshalled.
+	Raw json.RawMessage `json:"-"`
 }
 
 // --- MCP Resource Types ---
@@ -218,6 +283,23 @@ type Resource struct {
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
 	MIMEType    string `json:"mimeType,omitempty"`
+	Title       string `json:"title,omitempty"`
+	// Size is the size in bytes as the upstream sent it, kept raw, as
+	// ContentPart.Size is: one resource whose size is not an integer literal
+	// never drops the upstream's whole resource list.
+	Size        json.RawMessage `json:"size,omitempty"`
+	Annotations json.RawMessage `json:"annotations,omitempty"`
+	Icons       json.RawMessage `json:"icons,omitempty"`
+	Meta        json.RawMessage `json:"_meta,omitempty"`
+	// Raw is the object exactly as the upstream sent it, kept by the decoder
+	// for pass-through; never marshalled.
+	Raw json.RawMessage `json:"-"`
+	// GatewayMeta holds the io.futureagi/* _meta entries the gateway itself
+	// sets on this definition (list assembly, price meta). The list
+	// writers merge only these into the definition the client gets, and drop
+	// every io.futureagi/* key the upstream sent (Meta and Raw are the
+	// upstream's own). Never marshalled.
+	GatewayMeta map[string]json.RawMessage `json:"-"`
 }
 
 // ResourceTemplate describes a parameterized resource URI template.
@@ -230,7 +312,11 @@ type ResourceTemplate struct {
 
 // ListResourcesResult is the result of resources/list.
 type ListResourcesResult struct {
-	Resources []Resource `json:"resources"`
+	Resources  []Resource `json:"resources"`
+	NextCursor string     `json:"nextCursor,omitempty"`
+	// Raw is the object exactly as the upstream sent it, kept by the decoder
+	// for pass-through; never marshalled.
+	Raw json.RawMessage `json:"-"`
 }
 
 // ReadResourceParams is the params for resources/read.
@@ -241,14 +327,19 @@ type ReadResourceParams struct {
 // ReadResourceResult is the result of resources/read.
 type ReadResourceResult struct {
 	Contents []ResourceContent `json:"contents"`
+	Meta     json.RawMessage   `json:"_meta,omitempty"`
+	// Raw is the object exactly as the upstream sent it, kept by the decoder
+	// for pass-through; never marshalled.
+	Raw json.RawMessage `json:"-"`
 }
 
 // ResourceContent is the content of a resource.
 type ResourceContent struct {
-	URI      string `json:"uri"`
-	MIMEType string `json:"mimeType,omitempty"`
-	Text     string `json:"text,omitempty"`
-	Blob     string `json:"blob,omitempty"` // base64-encoded binary
+	URI      string          `json:"uri"`
+	MIMEType string          `json:"mimeType,omitempty"`
+	Text     string          `json:"text,omitempty"`
+	Blob     string          `json:"blob,omitempty"` // base64-encoded binary
+	Meta     json.RawMessage `json:"_meta,omitempty"`
 }
 
 // --- MCP Prompt Types ---
@@ -258,6 +349,18 @@ type Prompt struct {
 	Name        string           `json:"name"`
 	Description string           `json:"description,omitempty"`
 	Arguments   []PromptArgument `json:"arguments,omitempty"`
+	Title       string           `json:"title,omitempty"`
+	Icons       json.RawMessage  `json:"icons,omitempty"`
+	Meta        json.RawMessage  `json:"_meta,omitempty"`
+	// Raw is the object exactly as the upstream sent it, kept by the decoder
+	// for pass-through; never marshalled.
+	Raw json.RawMessage `json:"-"`
+	// GatewayMeta holds the io.futureagi/* _meta entries the gateway itself
+	// sets on this definition (list assembly, price meta). The list
+	// writers merge only these into the definition the client gets, and drop
+	// every io.futureagi/* key the upstream sent (Meta and Raw are the
+	// upstream's own). Never marshalled.
+	GatewayMeta map[string]json.RawMessage `json:"-"`
 }
 
 // PromptArgument describes a parameter for a prompt.
@@ -269,7 +372,11 @@ type PromptArgument struct {
 
 // ListPromptsResult is the result of prompts/list.
 type ListPromptsResult struct {
-	Prompts []Prompt `json:"prompts"`
+	Prompts    []Prompt `json:"prompts"`
+	NextCursor string   `json:"nextCursor,omitempty"`
+	// Raw is the object exactly as the upstream sent it, kept by the decoder
+	// for pass-through; never marshalled.
+	Raw json.RawMessage `json:"-"`
 }
 
 // GetPromptParams is the params for prompts/get.
@@ -282,6 +389,10 @@ type GetPromptParams struct {
 type GetPromptResult struct {
 	Description string          `json:"description,omitempty"`
 	Messages    []PromptMessage `json:"messages"`
+	Meta        json.RawMessage `json:"_meta,omitempty"`
+	// Raw is the object exactly as the upstream sent it, kept by the decoder
+	// for pass-through; never marshalled.
+	Raw json.RawMessage `json:"-"`
 }
 
 // PromptMessage is a message in a prompt result.
@@ -303,15 +414,162 @@ func ValidateToolName(name string) bool {
 // --- MCP Method Constants ---
 
 const (
-	MethodInitialize          = "initialize"
-	MethodInitialized         = "notifications/initialized"
-	MethodToolsList           = "tools/list"
-	MethodToolsCall           = "tools/call"
-	MethodResourcesList       = "resources/list"
-	MethodResourcesRead       = "resources/read"
-	MethodPromptsList         = "prompts/list"
-	MethodPromptsGet          = "prompts/get"
-	MethodPing                = "ping"
-	MethodToolsListChanged    = "notifications/tools/list_changed"
-	MethodCancelled           = "notifications/cancelled"
+	MethodInitialize       = "initialize"
+	MethodInitialized      = "notifications/initialized"
+	MethodToolsList        = "tools/list"
+	MethodToolsCall        = "tools/call"
+	MethodResourcesList    = "resources/list"
+	MethodResourcesRead    = "resources/read"
+	MethodPromptsList      = "prompts/list"
+	MethodPromptsGet       = "prompts/get"
+	MethodPing             = "ping"
+	MethodToolsListChanged = "notifications/tools/list_changed"
+	MethodCancelled        = "notifications/cancelled"
+	MethodLogMessage       = protocol.MethodLogMessage
 )
+
+// --- Raw bytes ---
+//
+// Each decoder below is the type's default JSON decoding plus a copy of the
+// input in Raw, so today's json.Unmarshal calls (client.go) keep the bytes
+// the upstream sent without any change at the call sites.
+
+// keepRaw returns a private copy of b.
+func keepRaw(b []byte) json.RawMessage {
+	return append(json.RawMessage(nil), b...)
+}
+
+// UnmarshalJSON decodes a tool and keeps its raw bytes.
+func (t *Tool) UnmarshalJSON(b []byte) error {
+	type plain Tool
+	if string(b) == "null" {
+		return nil // as json.Unmarshal itself treats null
+	}
+	var v plain
+	if err := json.Unmarshal(b, &v); err != nil {
+		return err
+	}
+	*t = Tool(v)
+	t.Raw = keepRaw(b)
+	return nil
+}
+
+// UnmarshalJSON decodes a tools/call result and keeps its raw bytes.
+func (r *ToolCallResult) UnmarshalJSON(b []byte) error {
+	type plain ToolCallResult
+	if string(b) == "null" {
+		return nil // as json.Unmarshal itself treats null
+	}
+	var v plain
+	if err := json.Unmarshal(b, &v); err != nil {
+		return err
+	}
+	*r = ToolCallResult(v)
+	r.Raw = keepRaw(b)
+	return nil
+}
+
+// UnmarshalJSON decodes a tools/list result and keeps its raw bytes.
+func (r *ListToolsResult) UnmarshalJSON(b []byte) error {
+	type plain ListToolsResult
+	if string(b) == "null" {
+		return nil // as json.Unmarshal itself treats null
+	}
+	var v plain
+	if err := json.Unmarshal(b, &v); err != nil {
+		return err
+	}
+	*r = ListToolsResult(v)
+	r.Raw = keepRaw(b)
+	return nil
+}
+
+// UnmarshalJSON decodes a resource and keeps its raw bytes.
+func (r *Resource) UnmarshalJSON(b []byte) error {
+	type plain Resource
+	if string(b) == "null" {
+		return nil // as json.Unmarshal itself treats null
+	}
+	var v plain
+	if err := json.Unmarshal(b, &v); err != nil {
+		return err
+	}
+	*r = Resource(v)
+	r.Raw = keepRaw(b)
+	return nil
+}
+
+// UnmarshalJSON decodes a resources/list result and keeps its raw bytes.
+func (r *ListResourcesResult) UnmarshalJSON(b []byte) error {
+	type plain ListResourcesResult
+	if string(b) == "null" {
+		return nil // as json.Unmarshal itself treats null
+	}
+	var v plain
+	if err := json.Unmarshal(b, &v); err != nil {
+		return err
+	}
+	*r = ListResourcesResult(v)
+	r.Raw = keepRaw(b)
+	return nil
+}
+
+// UnmarshalJSON decodes a resources/read result and keeps its raw bytes.
+func (r *ReadResourceResult) UnmarshalJSON(b []byte) error {
+	type plain ReadResourceResult
+	if string(b) == "null" {
+		return nil // as json.Unmarshal itself treats null
+	}
+	var v plain
+	if err := json.Unmarshal(b, &v); err != nil {
+		return err
+	}
+	*r = ReadResourceResult(v)
+	r.Raw = keepRaw(b)
+	return nil
+}
+
+// UnmarshalJSON decodes a prompt and keeps its raw bytes.
+func (p *Prompt) UnmarshalJSON(b []byte) error {
+	type plain Prompt
+	if string(b) == "null" {
+		return nil // as json.Unmarshal itself treats null
+	}
+	var v plain
+	if err := json.Unmarshal(b, &v); err != nil {
+		return err
+	}
+	*p = Prompt(v)
+	p.Raw = keepRaw(b)
+	return nil
+}
+
+// UnmarshalJSON decodes a prompts/list result and keeps its raw bytes.
+func (r *ListPromptsResult) UnmarshalJSON(b []byte) error {
+	type plain ListPromptsResult
+	if string(b) == "null" {
+		return nil // as json.Unmarshal itself treats null
+	}
+	var v plain
+	if err := json.Unmarshal(b, &v); err != nil {
+		return err
+	}
+	*r = ListPromptsResult(v)
+	r.Raw = keepRaw(b)
+	return nil
+}
+
+// UnmarshalJSON decodes a prompts/get result and keeps its raw bytes.
+func (r *GetPromptResult) UnmarshalJSON(b []byte) error {
+	type plain GetPromptResult
+	if string(b) == "null" {
+		return nil // as json.Unmarshal itself treats null
+	}
+	var v plain
+	if err := json.Unmarshal(b, &v); err != nil {
+		return err
+	}
+	*r = GetPromptResult(v)
+	r.Raw = keepRaw(b)
+	return nil
+}

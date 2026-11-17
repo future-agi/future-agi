@@ -210,32 +210,60 @@ with using_prompt_template(
     )""",
                 "typescript": """import { context } from "@opentelemetry/api";
 import { register, ProjectType, setPromptTemplate } from "@traceai/fi-core";
-import { OpenAIInstrumentation } from "@traceai/fi-openai";
+import { OpenAIInstrumentation } from "@traceai/openai";
 import OpenAI from "openai";
 
+// Set up Environment Variables
+process.env.OPENAI_API_KEY = "your-openai-api-key";
+process.env.FI_API_KEY = "your-futureagi-api-key";
+process.env.FI_SECRET_KEY = "your-futureagi-secret-key";
 
-// Use OpenTelemetry context to add template information
-const updatedContext = setPromptTemplate(context.active(), {
-  template: promptTemplate,
-  variables: promptTemplateVariables,
-  version: "v1.0",
+// Setup OTel via our register function
+const tracerProvider = register({
+  projectType: ProjectType.EXPERIMENT,
+  projectName: "Project_name",
+  projectVersionName: "project_version_name",
 });
 
-// Execute the OpenAI call within the context
-const response = await context.with(updatedContext, async () => {
-  return await client.chat.completions.create({
-    model: "gpt-4o-mini",
-    messages: [
-      {
-        role: "user",
-        content: promptTemplate.replace("{city}", promptTemplateVariables.city)
-                              .replace("{date}", promptTemplateVariables.date)
-      },
-    ],
+// Instrument the imported OpenAI SDK
+const instrumentation = new OpenAIInstrumentation({});
+instrumentation.setTracerProvider(tracerProvider);
+instrumentation.manuallyInstrument(OpenAI);
+
+// Setup OpenAI
+const client = new OpenAI();
+
+// Define the prompt template and its variables
+const promptTemplate = "Please describe the weather forecast for {city} on {date}";
+const promptTemplateVariables = { city: "San Francisco", date: "March 27" };
+
+async function main() {
+  // Use OpenTelemetry context to add template information
+  const updatedContext = setPromptTemplate(context.active(), {
+    template: promptTemplate,
+    variables: promptTemplateVariables,
+    version: "v1.0",
   });
-});
 
-console.log(response);""",
+  // Execute the OpenAI call within the context
+  const response = await context.with(updatedContext, async () => {
+    return await client.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [
+        {
+          role: "user",
+          content: promptTemplate
+            .replace("{city}", promptTemplateVariables.city)
+            .replace("{date}", promptTemplateVariables.date),
+        },
+      ],
+    });
+  });
+
+  console.log(response);
+}
+
+main();""",
             }
             return self._gm.success_response(response)
 

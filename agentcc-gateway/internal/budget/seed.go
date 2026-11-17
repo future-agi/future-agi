@@ -6,11 +6,18 @@ import (
 )
 
 // SeedSpend sets the initial spend for a budget level so that counters
-// survive gateway restarts.  Called once at startup with data fetched
-// from the control plane spend-summary endpoint.
+// survive gateway restarts. Called at startup with the control plane's
+// spend summary, which is read for the node's default period: a level that
+// counts over another period is not seeded (it counts from the start).
+// A seed never lowers a counter: a level already in the current period keeps
+// the larger of what it counted and the seed, in total and per model (both
+// count real spend, the seed from the request logs).
 func (t *Tracker) SeedSpend(level, key string, totalSpend float64, modelSpend map[string]float64) {
 	lb := t.lookupLevel(level, key)
 	if lb == nil {
+		return
+	}
+	if RefusalPeriod(lb.period) != RefusalPeriod(t.defaultPeriod) {
 		return
 	}
 
@@ -18,8 +25,7 @@ func (t *Tracker) SeedSpend(level, key string, totalSpend float64, modelSpend ma
 	now := time.Now().UTC()
 	start := PeriodStart(lb.period, now)
 
-	// Only seed if counter is in the current period (not already populated).
-	if lb.counter.periodStart.Before(start) {
+	if !lb.counter.periodStart.Equal(start) || lb.counter.modelSpend == nil {
 		lb.counter.periodStart = start
 		lb.counter.totalSpend = 0
 		lb.counter.modelSpend = make(map[string]float64)
@@ -27,10 +33,15 @@ func (t *Tracker) SeedSpend(level, key string, totalSpend float64, modelSpend ma
 
 	// The local counter is the fallback view used while the shared ledger is
 	// unreadable, so it is seeded exactly as it is without a ledger.
-	lb.counter.totalSpend = totalSpend
-	for m, s := range modelSpend {
-		lb.counter.modelSpend[m] = s
+	if totalSpend > lb.counter.totalSpend {
+		lb.counter.totalSpend = totalSpend
 	}
+	for m, s := range modelSpend {
+		if s > lb.counter.modelSpend[m] {
+			lb.counter.modelSpend[m] = s
+		}
+	}
+	seeded := lb.counter.totalSpend
 	lb.counter.mu.Unlock()
 
 	if backend, ok := t.durable.(interface {
@@ -44,5 +55,5 @@ func (t *Tracker) SeedSpend(level, key string, totalSpend float64, modelSpend ma
 		backend.SeedSpendFloor("", "global_"+level, key, lb.period, totalSpend, modelSpend)
 	}
 
-	slog.Info("budget seeded", "level", level, "key", key, "spend", totalSpend)
+	slog.Info("budget seeded", "level", level, "key", key, "spend", seeded)
 }

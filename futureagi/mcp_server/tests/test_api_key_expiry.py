@@ -10,7 +10,7 @@ from uuid import uuid4
 import pytest
 from django.utils import timezone
 
-from accounts.models.user import OrgApiKey
+from accounts.tests.personal_keys import personal_key_for
 from mcp_server import mcp_app
 
 pytestmark = pytest.mark.django_db
@@ -23,12 +23,15 @@ def _reset_request_context():
 
 
 def _key(user, workspace, **fields):
-    return OrgApiKey.objects.create(
-        name=f"mcp-expiry-{uuid4().hex[:8]}",
-        organization=user.organization,
+    # The line admits only personal keys at MCP, so the expiry rule is
+    # exercised on the key a person actually holds.
+    return personal_key_for(
+        user,
+        user.organization,
         workspace=workspace,
-        user=user,
-        type="mcp",
+        name=f"mcp-expiry-{uuid4().hex[:8]}",
+        api_key=f"mcp-expiry-{uuid4().hex}",
+        secret_key=uuid4().hex,
         **fields,
     )
 

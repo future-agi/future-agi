@@ -45,6 +45,8 @@ import CustomInstruction from "./CustomInstruction";
 import { useAgentDefinitions } from "src/components/run-tests/common";
 import ModalWrapper from "src/components/ModalWrapper/ModalWrapper";
 import CategorizedSourceDropdown from "./CategorizedSourceDropdown";
+import { paths } from "src/routes/paths";
+import { CONNECT_AGENT_PATH } from "src/sections/agent-playground/agentsTabs";
 
 const tabOptions = [
   {
@@ -72,6 +74,10 @@ const tabOptions = [
       "Create Standard Operating Procedure (SOP) scenarios for call center and chat interactions.",
   },
 ];
+
+// "Select agent definition or prompt" needs about 250px in a field (its 12px
+// text plus padding, arrow and border).
+const SOURCE_ROW_FIELD_SX = { flexGrow: 1, flexBasis: "260px", minWidth: 0 };
 
 const CreateScenarioView = () => {
   const location = useLocation();
@@ -272,6 +278,14 @@ const CreateScenarioView = () => {
     promptTemplates,
     isLoadingPrompts,
   ]);
+
+  // Agents only come from connecting one (Simulate > Environment), so an
+  // empty source list says where to get one. A list that is still loading
+  // or failed to load is not "none": only a loaded, empty list counts.
+  const noConnectedAgents =
+    Array.isArray(agentDefinitions) && agentDefinitions.length === 0;
+  const noSavedPrompts =
+    Array.isArray(promptTemplatesData?.pages) && promptTemplates.length === 0;
 
   // Check if versions are loading
   const isLoadingVersions =
@@ -685,12 +699,17 @@ const CreateScenarioView = () => {
                 multiline
                 rows={3}
               />
-              {/* Combined Source Dropdown (Agent Definitions + Prompts) */}
+              {/* Combined Source Dropdown (Agent Definitions + Prompts).
+                  Each field starts at 260px, the room the source
+                  placeholder needs, and they share the rest; on a row
+                  narrower than both the version field moves under the
+                  source field. */}
               <Stack
                 direction={"row"}
                 justifyContent={"space-between"}
                 alignItems={"flex-start"}
                 gap={2}
+                sx={{ flexWrap: "wrap" }}
               >
                 <CategorizedSourceDropdown
                   control={control}
@@ -699,6 +718,7 @@ const CreateScenarioView = () => {
                   fullWidth
                   placeholder="Select agent definition or prompt"
                   size="small"
+                  sx={SOURCE_ROW_FIELD_SX}
                   options={combinedSourceOptions}
                   required
                   onScrollEnd={() => {
@@ -719,7 +739,7 @@ const CreateScenarioView = () => {
                   sx={{ flex: 1 }}
                   size="small"
                 >
-                  <Box sx={{ width: "100%" }}>
+                  <Box sx={{ width: "100%", ...SOURCE_ROW_FIELD_SX }}>
                     <FormSearchSelectFieldControl
                       fullWidth
                       disabled={!selectedSourceId || isLoadingVersions}
@@ -752,6 +772,42 @@ const CreateScenarioView = () => {
                   </Box>
                 </CustomTooltip>
               </Stack>
+              <ShowComponent condition={noConnectedAgents}>
+                <Typography
+                  typography="s2"
+                  color="text.secondary"
+                  data-testid="scenario-source-empty-hint"
+                  sx={{ mt: -1 }}
+                >
+                  {noSavedPrompts
+                    ? "No connected agents or saved prompts yet. "
+                    : "No connected agents yet. "}
+                  <Link
+                    href={CONNECT_AGENT_PATH}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    color="status.info.fg"
+                    fontWeight="fontWeightMedium"
+                    sx={{ textDecoration: "underline" }}
+                  >
+                    Connect an agent
+                  </Link>
+                  <ShowComponent condition={noSavedPrompts}>
+                    {" or "}
+                    <Link
+                      href={paths.dashboard.workbench}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      color="status.info.fg"
+                      fontWeight="fontWeightMedium"
+                      sx={{ textDecoration: "underline" }}
+                    >
+                      create a prompt
+                    </Link>
+                  </ShowComponent>
+                  {" in a new tab, then pick it here."}
+                </Typography>
+              </ShowComponent>
               <ShowComponent
                 condition={currentTab !== CreateScenarioType.DATASET}
               >
@@ -760,7 +816,8 @@ const CreateScenarioView = () => {
                   fieldName="noOfRows"
                   label="No. of scenarios"
                   fullWidth
-                  placeholder="Set how many scenario variations you want generate"
+                  placeholder="Set how many scenario variations you want to generate"
+                  helperText="At least 10, up to 20,000"
                   size="small"
                   fieldType="number"
                   required
@@ -776,12 +833,21 @@ const CreateScenarioView = () => {
                 gap: 2,
               }}
             >
+              {/* At 1024 px the four methods need about 445 px of a 423 px
+                  column: the strip wraps them whole onto a second line
+                  rather than scroll behind an arrow with "Upload script"
+                  cut. "Learn more" stays on one line at the right; when the
+                  strip needs the whole row it moves to the next line, still
+                  at the right. */}
               <Box
                 display="flex"
                 justifyContent="space-between"
                 alignItems="center"
+                flexWrap="wrap"
+                gap={1}
               >
                 <SegmentedTabs
+                  wrap
                   value={currentTab}
                   onChange={(e, value) => {
                     handleChangeScenarioType(value);
@@ -820,7 +886,12 @@ const CreateScenarioView = () => {
                   rel="noopener noreferrer"
                   fontWeight="fontWeightMedium"
                   fontSize="12px"
-                  sx={{ textDecoration: "underline" }}
+                  sx={{
+                    textDecoration: "underline",
+                    whiteSpace: "nowrap",
+                    flexShrink: 0,
+                    ml: "auto",
+                  }}
                 >
                   Learn more
                 </Link>

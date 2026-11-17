@@ -500,7 +500,7 @@ describe("AskPatterns", () => {
 });
 
 describe("AskHeatmap", () => {
-  it("replaces sparse time cells with a read-more state, without the pivot controls", () => {
+  it("keeps the pivot selector alongside the sparse read-more state", () => {
     const records = run.records.slice(0, 5).map((record, i) => ({
       ...record,
       time: new Date(2026, 8, 20 + i * 5, 10).toISOString(),
@@ -519,9 +519,84 @@ describe("AskHeatmap", () => {
       within(card).getByText("Not enough answers for time patterns"),
     ).toBeInTheDocument();
     expect(within(card).queryByRole("img")).toBeNull();
-    expect(within(card).queryByRole("combobox")).toBeNull();
+    expect(within(card).getByRole("combobox", { name: "Rows" })).toBeEnabled();
+    expect(within(card).queryByRole("combobox", { name: "Colour" })).toBeNull();
     fireEvent.click(within(card).getByRole("button", { name: "Read more" }));
     expect(onReadMore).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["Models", "Users", "Turns"])(
+    "opens %s from sparse daily answers and returns to Day × Hour",
+    (pivotLabel) => {
+      const records = run.records.slice(0, 7).map((record, i) => ({
+        ...record,
+        unit: "traces",
+        time: new Date(2026, 9, 9 + i, 10).toISOString(),
+        user_id: "shared-user",
+        end_user_id: "shared-user",
+        facets: { ...record.facets, model: "shared-model", turns: 1 },
+        answers: {
+          ...record.answers,
+          [RESOLVED]: { ...record.answers[RESOLVED], answer: "No" },
+        },
+      }));
+      renderViz(AskHeatmap, { records, unit: "traces" });
+      expect(
+        screen.getByText("Not enough answers for time patterns"),
+      ).toBeInTheDocument();
+      expect(screen.queryByRole("img")).toBeNull();
+
+      fireEvent.mouseDown(screen.getByRole("combobox", { name: "Rows" }));
+      fireEvent.click(screen.getByRole("option", { name: pivotLabel }));
+      expect(
+        within(
+          screen.getByRole("grid", { name: "Answers by group" }),
+        ).getByRole("gridcell", { name: /7 of 7 answered “No” \(100%\)/ }),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByText("Not enough answers for time patterns"),
+      ).toBeNull();
+
+      fireEvent.mouseDown(screen.getByRole("combobox", { name: "Rows" }));
+      fireEvent.click(screen.getByRole("option", { name: "Day × Hour" }));
+      expect(
+        screen.getByText("Not enough answers for time patterns"),
+      ).toBeInTheDocument();
+      expect(screen.queryByRole("grid")).toBeNull();
+      expect(screen.getByRole("combobox", { name: "Rows" })).toBeEnabled();
+      // No onReadMore, so no dead Read more.
+      expect(screen.queryByRole("button", { name: "Read more" })).toBeNull();
+    },
+  );
+
+  it("opens combined weekday answers from sparse daily cells", () => {
+    const records = run.records.slice(0, 3).map((record, i) => ({
+      ...record,
+      time: new Date(2026, 8, 29 + i * 7, 10).toISOString(),
+      answers: {
+        ...record.answers,
+        [RESOLVED]: { ...record.answers[RESOLVED], answer: "No" },
+      },
+    }));
+    renderViz(AskHeatmap, {
+      records,
+      window: [new Date(2026, 8, 29).toISOString(), run.window[1]],
+    });
+    expect(
+      screen.getByText("Not enough answers for time patterns"),
+    ).toBeInTheDocument();
+
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "Rows" }));
+    fireEvent.click(screen.getByRole("option", { name: "Weekday × Hour" }));
+    expect(
+      screen.queryByText("Not enough answers for time patterns"),
+    ).toBeNull();
+    const svg = screen.getByRole("img", {
+      name: /^Share of “No” by weekday and hour/,
+    });
+    // Three Tuesdays at 10 AM combine into the 9 AM–12 PM weekday cell.
+    expect(cellReader(svg)(1, 3)).toMatch(/3 of 3 “No” \(100%\)/);
+    expect(screen.getByRole("combobox", { name: "Rows" })).toBeEnabled();
   });
 
   it("keeps the heatmap once a populated cell has three answers", () => {

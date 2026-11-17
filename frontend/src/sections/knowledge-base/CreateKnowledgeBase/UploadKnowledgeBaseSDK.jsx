@@ -1,10 +1,13 @@
+import PersonalKeySnippet, {
+  PersonalKeyControl,
+} from "src/sections/keys/view/PersonalKeySnippet";
 import { Box, Tab } from "@mui/material";
-import { SegmentedTabs } from "src/components/tabs/tabs";
 import PropTypes from "prop-types";
 import React, { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { FormCodeEditor } from "src/components/form-code-editor";
 import { ShowComponent } from "src/components/show";
+import { SegmentedTabs } from "src/components/tabs/tabs";
 
 const editorOptions = {
   selectOnLineNumbers: true,
@@ -48,6 +51,7 @@ const UploadKnowledgeBaseSDK = ({ pythonCode }) => {
 
   return (
     <Box>
+      <PersonalKeyControl />
       <Box sx={{ mb: 1.5 }}>
         <SegmentedTabs
           value={currentTab}
@@ -111,4 +115,10 @@ UploadKnowledgeBaseSDK.propTypes = {
   pythonCode: PropTypes.string,
 };
 
-export default UploadKnowledgeBaseSDK;
+export default function KnowledgeBaseSnippet(props) {
+  return (
+    <PersonalKeySnippet>
+      <UploadKnowledgeBaseSDK {...props} />
+    </PersonalKeySnippet>
+  );
+}

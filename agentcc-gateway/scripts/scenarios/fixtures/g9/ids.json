@@ -1,0 +1,369 @@
+{
+  "about": "G9 rollout fixture: ids whose buckets fnv1a32(org + id) % 100 are precomputed (FNV-1a 32-bit over the UTF-8 bytes of the org id followed by the sticky id, no separator; offset 2166136261, prime 16777619). Each list holds 40 ids, exactly 20 with bucket below percent. keys: sticky_by=key, used by 17_g9_rollout.sh (the gateway never honours a client x-request-id). sessions: sticky_by=session, for the W1 gate check gates/W1_rollout_session.sh. Every key is a fake value for the local mock upstream. TestRolloutDistributionFixtureBuckets checks every bucket against the gateway's tenant.RolloutBucket.",
+  "org": "org-g9",
+  "percent": 50,
+  "keys": [
+    {
+      "id": "g9-key-01",
+      "bucket": 78,
+      "key": "scn-test-key-g9-01"
+    },
+    {
+      "id": "g9-key-02",
+      "bucket": 59,
+      "key": "scn-test-key-g9-02"
+    },
+    {
+      "id": "g9-key-03",
+      "bucket": 40,
+      "key": "scn-test-key-g9-03"
+    },
+    {
+      "id": "g9-key-04",
+      "bucket": 21,
+      "key": "scn-test-key-g9-04"
+    },
+    {
+      "id": "g9-key-05",
+      "bucket": 2,
+      "key": "scn-test-key-g9-05"
+    },
+    {
+      "id": "g9-key-06",
+      "bucket": 83,
+      "key": "scn-test-key-g9-06"
+    },
+    {
+      "id": "g9-key-07",
+      "bucket": 64,
+      "key": "scn-test-key-g9-07"
+    },
+    {
+      "id": "g9-key-08",
+      "bucket": 45,
+      "key": "scn-test-key-g9-08"
+    },
+    {
+      "id": "g9-key-09",
+      "bucket": 26,
+      "key": "scn-test-key-g9-09"
+    },
+    {
+      "id": "g9-key-10",
+      "bucket": 88,
+      "key": "scn-test-key-g9-10"
+    },
+    {
+      "id": "g9-key-11",
+      "bucket": 7,
+      "key": "scn-test-key-g9-11"
+    },
+    {
+      "id": "g9-key-12",
+      "bucket": 26,
+      "key": "scn-test-key-g9-12"
+    },
+    {
+      "id": "g9-key-13",
+      "bucket": 45,
+      "key": "scn-test-key-g9-13"
+    },
+    {
+      "id": "g9-key-14",
+      "bucket": 12,
+      "key": "scn-test-key-g9-14"
+    },
+    {
+      "id": "g9-key-15",
+      "bucket": 31,
+      "key": "scn-test-key-g9-15"
+    },
+    {
+      "id": "g9-key-16",
+      "bucket": 50,
+      "key": "scn-test-key-g9-16"
+    },
+    {
+      "id": "g9-key-17",
+      "bucket": 69,
+      "key": "scn-test-key-g9-17"
+    },
+    {
+      "id": "g9-key-18",
+      "bucket": 36,
+      "key": "scn-test-key-g9-18"
+    },
+    {
+      "id": "g9-key-19",
+      "bucket": 55,
+      "key": "scn-test-key-g9-19"
+    },
+    {
+      "id": "g9-key-20",
+      "bucket": 39,
+      "key": "scn-test-key-g9-20"
+    },
+    {
+      "id": "g9-key-21",
+      "bucket": 20,
+      "key": "scn-test-key-g9-21"
+    },
+    {
+      "id": "g9-key-22",
+      "bucket": 77,
+      "key": "scn-test-key-g9-22"
+    },
+    {
+      "id": "g9-key-23",
+      "bucket": 58,
+      "key": "scn-test-key-g9-23"
+    },
+    {
+      "id": "g9-key-24",
+      "bucket": 63,
+      "key": "scn-test-key-g9-24"
+    },
+    {
+      "id": "g9-key-25",
+      "bucket": 44,
+      "key": "scn-test-key-g9-25"
+    },
+    {
+      "id": "g9-key-26",
+      "bucket": 1,
+      "key": "scn-test-key-g9-26"
+    },
+    {
+      "id": "g9-key-27",
+      "bucket": 82,
+      "key": "scn-test-key-g9-27"
+    },
+    {
+      "id": "g9-key-28",
+      "bucket": 91,
+      "key": "scn-test-key-g9-28"
+    },
+    {
+      "id": "g9-key-29",
+      "bucket": 72,
+      "key": "scn-test-key-g9-29"
+    },
+    {
+      "id": "g9-key-30",
+      "bucket": 30,
+      "key": "scn-test-key-g9-30"
+    },
+    {
+      "id": "g9-key-31",
+      "bucket": 49,
+      "key": "scn-test-key-g9-31"
+    },
+    {
+      "id": "g9-key-32",
+      "bucket": 92,
+      "key": "scn-test-key-g9-32"
+    },
+    {
+      "id": "g9-key-33",
+      "bucket": 11,
+      "key": "scn-test-key-g9-33"
+    },
+    {
+      "id": "g9-key-34",
+      "bucket": 6,
+      "key": "scn-test-key-g9-34"
+    },
+    {
+      "id": "g9-key-35",
+      "bucket": 25,
+      "key": "scn-test-key-g9-35"
+    },
+    {
+      "id": "g9-key-36",
+      "bucket": 68,
+      "key": "scn-test-key-g9-36"
+    },
+    {
+      "id": "g9-key-37",
+      "bucket": 87,
+      "key": "scn-test-key-g9-37"
+    },
+    {
+      "id": "g9-key-38",
+      "bucket": 82,
+      "key": "scn-test-key-g9-38"
+    },
+    {
+      "id": "g9-key-42",
+      "bucket": 87,
+      "key": "scn-test-key-g9-42"
+    },
+    {
+      "id": "g9-key-43",
+      "bucket": 68,
+      "key": "scn-test-key-g9-43"
+    }
+  ],
+  "sessions": [
+    {
+      "id": "g9-session-01",
+      "bucket": 47
+    },
+    {
+      "id": "g9-session-02",
+      "bucket": 66
+    },
+    {
+      "id": "g9-session-03",
+      "bucket": 85
+    },
+    {
+      "id": "g9-session-04",
+      "bucket": 4
+    },
+    {
+      "id": "g9-session-05",
+      "bucket": 23
+    },
+    {
+      "id": "g9-session-06",
+      "bucket": 42
+    },
+    {
+      "id": "g9-session-07",
+      "bucket": 61
+    },
+    {
+      "id": "g9-session-08",
+      "bucket": 80
+    },
+    {
+      "id": "g9-session-09",
+      "bucket": 99
+    },
+    {
+      "id": "g9-session-10",
+      "bucket": 37
+    },
+    {
+      "id": "g9-session-11",
+      "bucket": 18
+    },
+    {
+      "id": "g9-session-12",
+      "bucket": 99
+    },
+    {
+      "id": "g9-session-13",
+      "bucket": 80
+    },
+    {
+      "id": "g9-session-14",
+      "bucket": 13
+    },
+    {
+      "id": "g9-session-15",
+      "bucket": 94
+    },
+    {
+      "id": "g9-session-16",
+      "bucket": 75
+    },
+    {
+      "id": "g9-session-17",
+      "bucket": 56
+    },
+    {
+      "id": "g9-session-18",
+      "bucket": 89
+    },
+    {
+      "id": "g9-session-19",
+      "bucket": 70
+    },
+    {
+      "id": "g9-session-20",
+      "bucket": 82
+    },
+    {
+      "id": "g9-session-21",
+      "bucket": 1
+    },
+    {
+      "id": "g9-session-22",
+      "bucket": 44
+    },
+    {
+      "id": "g9-session-23",
+      "bucket": 63
+    },
+    {
+      "id": "g9-session-24",
+      "bucket": 6
+    },
+    {
+      "id": "g9-session-25",
+      "bucket": 25
+    },
+    {
+      "id": "g9-session-26",
+      "bucket": 68
+    },
+    {
+      "id": "g9-session-27",
+      "bucket": 87
+    },
+    {
+      "id": "g9-session-28",
+      "bucket": 34
+    },
+    {
+      "id": "g9-session-29",
+      "bucket": 53
+    },
+    {
+      "id": "g9-session-30",
+      "bucket": 91
+    },
+    {
+      "id": "g9-session-31",
+      "bucket": 72
+    },
+    {
+      "id": "g9-session-32",
+      "bucket": 29
+    },
+    {
+      "id": "g9-session-33",
+      "bucket": 10
+    },
+    {
+      "id": "g9-session-34",
+      "bucket": 67
+    },
+    {
+      "id": "g9-session-35",
+      "bucket": 48
+    },
+    {
+      "id": "g9-session-36",
+      "bucket": 5
+    },
+    {
+      "id": "g9-session-38",
+      "bucket": 39
+    },
+    {
+      "id": "g9-session-39",
+      "bucket": 20
+    },
+    {
+      "id": "g9-session-40",
+      "bucket": 0
+    },
+    {
+      "id": "g9-session-41",
+      "bucket": 19
+    }
+  ]
+}

@@ -1981,3 +1981,28 @@ class RestoreMilestoneTests(unittest.TestCase):
                 if name=='interruption_restore':
                     self.assertIn('/interruption-*/*.json',upload['with']['path'])
                     self.assertIn('timeout --signal=TERM --kill-after=180s 354m',''.join(commands))
+
+
+class HomeDirectoryCheckTests(unittest.TestCase):
+    """The macOS home-directory checks follow whoever runs the rehearsal."""
+
+    def test_a_workspace_under_the_current_users_home_is_accepted_on_macos(self):
+        with tempfile.TemporaryDirectory() as home:
+            home=Path(home).resolve()
+            workspace=home/'work'/'rehearsal'
+            workspace.mkdir(parents=True)
+            with mock.patch.object(sys,'platform','darwin'), mock.patch.object(Path,'home',return_value=home):
+                rehearsal._validate_context('colima-fagi-update',str(workspace))
+
+    def test_a_workspace_outside_the_home_is_refused_on_macos(self):
+        with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as elsewhere:
+            with mock.patch.object(sys,'platform','darwin'), mock.patch.object(Path,'home',return_value=Path(home).resolve()):
+                with self.assertRaises(rehearsal.RehearsalError) as caught:
+                    rehearsal._validate_context('colima-fagi-update',elsewhere)
+        self.assertIn('home-only workspace required',str(caught.exception))
+
+    def test_no_rehearsal_script_names_one_persons_home_directory(self):
+        for name in ('rehearse_update_compatibility.py','update_rehearsal_shipping.py'):
+            source=(rehearsal.ROOT/'scripts'/name).read_text(encoding='utf-8')
+            with self.subTest(script=name):
+                self.assertNotRegex(source,r"""Path\(\s*['"]/(Users|home)/[^'"/]+['"]\s*\)""")

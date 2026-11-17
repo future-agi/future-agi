@@ -127,11 +127,11 @@ def _canonicalize_filter_list(filters):
 
 def canonicalize_performance_report_filters(apps, schema_editor):
     PerformanceReport = apps.get_model("model_hub", "PerformanceReport")
-    for report in PerformanceReport.objects.all().only("id", "filters").iterator():
+    for report in PerformanceReport.objects.using(schema_editor.connection.alias).all().only("id", "filters").iterator():
         next_filters, changed = _canonicalize_filter_list(report.filters or [])
         if changed:
             report.filters = next_filters
-            report.save(update_fields=["filters"])
+            report.save(using=schema_editor.connection.alias, update_fields=["filters"])
 
 
 class Migration(migrations.Migration):

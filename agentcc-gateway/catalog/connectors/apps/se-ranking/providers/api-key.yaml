@@ -1,0 +1,45 @@
+# SE Ranking's hosted MCP accepts X-Api-Key instead of an interactive OAuth flow.
+schema: "connector-manifest/v1#provider"
+app: se-ranking
+id: api-key
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://api.seranking.com/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: X-Api-Key
+      secret: true
+      label: SE Ranking API key
+      help: "Copy your key from the API Dashboard in your SE Ranking or SE Visible master account. Sub-account users need their administrator's key. The key has your account's access; restricted or read-only API keys are not available."
+      helpUrl: https://seranking.com/api/integrations/mcp/
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_metered
+  source: https://seranking.com/api-pricing.html
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://seranking.com/api/integrations/mcp/
+    fetchedAt: 2026-11-09
+  - fact: transport.variant
+    url: https://seranking.com/api/integrations/mcp/
+    fetchedAt: 2026-11-09
+  - fact: auth.kind
+    url: https://seranking.com/api/integrations/mcp/
+    fetchedAt: 2026-11-09
+  - fact: auth.credentialParts
+    url: https://seranking.com/api/integrations/mcp/
+    fetchedAt: 2026-11-09
+x-omega: { oss: exclude }

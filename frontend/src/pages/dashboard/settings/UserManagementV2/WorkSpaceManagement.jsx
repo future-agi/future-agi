@@ -19,7 +19,10 @@ import React, {
 } from "react";
 import { Helmet } from "react-helmet-async";
 import GridTable from "./GridTable";
-import { getWorkspaceQueryOptions } from "./getWorkspaceQueryOptions";
+import {
+  getWorkspaceQueryOptions,
+  workspaceDirectoryKey,
+} from "./getWorkspaceQueryOptions";
 import { useQueryClient } from "@tanstack/react-query";
 import { fDateTimeLocal } from "src/utils/format-time";
 import { LocalDateTime } from "src/components/date-time/LocalDateTime";
@@ -33,6 +36,7 @@ import { APP_CONSTANTS } from "src/utils/constants";
 import { useCreateWorkspace } from "src/api/workspaces/create";
 import { useSnackbar } from "notistack";
 import { useOrganization } from "src/contexts/OrganizationContext";
+import { isPrototypeMode } from "src/utils/prototype";
 
 const SelectionHeader = (props) => {
   const onCheckboxClick = (e) => {
@@ -61,9 +65,17 @@ SelectionHeader.propTypes = {
   }).isRequired,
 };
 
+// The list API accepts one scalar ordering field. Response date aliases must
+// map to model fields; admin names and updated_at are not sortable there.
+const WORKSPACE_SORT_FIELDS = {
+  display_name: "display_name",
+  start_data: "created_at",
+};
+
 const selectionColumnDef = {
   pinned: true,
   lockPinned: true,
+  sortable: false,
   headerComponent: SelectionHeader,
 };
 
@@ -72,7 +84,13 @@ const WorkSpaceManagement = () => {
   const queryClient = useQueryClient();
   const { enqueueSnackbar } = useSnackbar();
   const { orgLevel } = useOrganization();
-  const canCreateWorkspace = typeof orgLevel === "number" && orgLevel >= 8;
+  // L7c g1 (settings:pages): the prototype mocks no workspace creation, so
+  // the button is absent there rather than a door that does nothing.
+  const canCreateWorkspace =
+    typeof orgLevel === "number" && orgLevel >= 8 && !isPrototypeMode();
+  // L7c g1 (settings:pages): no workspace invite is mocked either, so the
+  // prototype has no row selection whose only action is Share invite.
+  const canInvite = !isPrototypeMode();
   const gridApiRef = useRef(null);
   const overlayTimeoutRef = useRef(null);
   const [searchQuery, setSearchQuery] = useState("");
@@ -87,7 +105,7 @@ const WorkSpaceManagement = () => {
       enqueueSnackbar("Workspace created", { variant: "success" });
       setCreateOpen(false);
       setNewWorkspaceName("");
-      queryClient.invalidateQueries({ queryKey: ["Workspace-detail"] });
+      queryClient.invalidateQueries({ queryKey: workspaceDirectoryKey });
       gridApiRef?.current?.api?.refreshServerSide({ purge: true });
     },
     onError: (err) => {
@@ -113,6 +131,7 @@ const WorkSpaceManagement = () => {
       {
         headerName: "Workspace name",
         field: "display_name",
+        sortable: true,
         flex: 1,
         valueGetter: (params) =>
           params?.data?.display_name || params?.data?.name || "",
@@ -120,11 +139,13 @@ const WorkSpaceManagement = () => {
       {
         headerName: "Admin names",
         field: "admin_names.0.name",
+        sortable: false,
         flex: 1,
       },
       {
         headerName: "Start date",
         field: "start_data",
+        sortable: true,
         flex: 1,
         valueFormatter: (params) => fDateTimeLocal(params.value),
         cellRenderer: (params) => (
@@ -138,6 +159,7 @@ const WorkSpaceManagement = () => {
       {
         headerName: "Last updated date",
         field: "last_update_date",
+        sortable: false,
         flex: 1,
         valueFormatter: (params) => fDateTimeLocal(params.value),
         cellRenderer: (params) => (
@@ -157,10 +179,11 @@ const WorkSpaceManagement = () => {
       getRows: async (params) => {
         const { request } = params;
         const pageNumber = Math.floor(request.startRow / 20);
-        const sort = request?.sortModel?.map(({ colId, sort }) => ({
-          columnId: colId,
-          type: sort === "asc" ? "ascending" : "descending",
-        }));
+        const primarySort = request?.sortModel?.[0];
+        const sortField = WORKSPACE_SORT_FIELDS[primarySort?.colId];
+        const sort = sortField
+          ? `${primarySort.sort === "desc" ? "-" : ""}${sortField}`
+          : undefined;
         const search = searchQuery || "";
 
         if (overlayTimeoutRef.current) {
@@ -334,7 +357,7 @@ const WorkSpaceManagement = () => {
             onChange={(e) => setSearchQuery(e.target.value)}
             size="small"
             sx={{ width: 400 }}
-            placeholder="Search by name or email"
+            placeholder="Search workspaces by name"
             InputProps={{
               startAdornment: (
                 <InputAdornment position="start">
@@ -349,7 +372,7 @@ const WorkSpaceManagement = () => {
             }}
           />
           <Box sx={{ display: "flex", gap: 2, alignItems: "center" }}>
-            {(selectedAll || toggledNodes.length > 0) && (
+            {canInvite && (selectedAll || toggledNodes.length > 0) && (
               <SelectionBar
                 count={selectedCount}
                 onCancel={() => unCheckedHandler()}
@@ -381,7 +404,7 @@ const WorkSpaceManagement = () => {
           </Box>
         </Box>
 
-        {inviteOpen && (
+        {canInvite && inviteOpen && (
           <AllActionForm
             openActionForm={{ action: "invite-workspace-user" }}
             onClose={() => setInviteOpen(null)}
@@ -396,8 +419,13 @@ const WorkSpaceManagement = () => {
             ref={gridApiRef}
             columnDefs={columnDefs}
             otherGridOption={{
-              rowSelection: { mode: "multiRow" },
-              selectionColumnDef: selectionColumnDef,
+              suppressMultiSort: true,
+              ...(canInvite
+                ? {
+                    rowSelection: { mode: "multiRow" },
+                    selectionColumnDef: selectionColumnDef,
+                  }
+                : {}),
               onCellClicked: (params) => {
                 if (
                   params?.column?.getColId() ===

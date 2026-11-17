@@ -36,13 +36,15 @@ def instance():
 
 
 def test_r17_usage_properties_and_attempt_ids():
+    """The answer's event is keyed to the run alone, and each other attempt to
+    the run and its attempt."""
     events = build_usage_events(
         instance(), org_id="trusted-org", cell_or_run_id="run-1", amount=0
     )
     assert len(events) == 2
     assert events[0].event_id == usage_event_id("run-1", 1)
     event = events[1]
-    assert event.event_id == usage_event_id("run-1", 2)
+    assert event.event_id == usage_event_id("run-1")
     assert event.org_id == "trusted-org"
     assert event.event_type == "jev_evaluator"
     assert event.amount == 0
@@ -144,6 +146,9 @@ def test_r17_dataset_runner_emits_jev_properties():
     runner.eval_template = SimpleNamespace(eval_type="llm", config={})
     runner.experiment_dataset = False
     runner.optimize = False
+    # As the constructor sets them: no version is pinned for this run.
+    runner.version_number = None
+    runner._resolved_version = None
     runner.update_config_list_values = Mock(return_value={})
     runner._handle_api_call = Mock(
         return_value=SimpleNamespace(log_id="run-1", config="{}", save=Mock())
@@ -174,7 +179,7 @@ def test_r17_dataset_runner_emits_jev_properties():
     assert [event.amount for event in events] == [0, 0.06]
     assert [event.event_id for event in events] == [
         usage_event_id("run-1", 1),
-        usage_event_id("run-1", 2),
+        usage_event_id("run-1"),
     ]
     assert events[-1].properties["output_tokens"] == 6
 

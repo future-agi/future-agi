@@ -28,7 +28,9 @@ type Filter = { column_id: string; property_id: string; display_name: string;
 type Metric = { id: string; name: string; property_id: string; display_name: string;
   type: string; source: string; aggregation: string };
 type Config = { project_ids: string[]; time_range: { preset: string }; granularity: string;
-  metrics: Metric[]; filters: Filter[]; breakdowns: Record<string, string>[] };
+  metrics: Metric[]; filters: Filter[]; breakdowns: Record<string, string>[];
+  // One trace-backed custom attribute breakdown defaults to top-5 grouping (WidgetEditorView buildWidgetGroupBy).
+  group_by?: { type: string; key: string; limit: number } };
 type Result = { query_complete: boolean; query_exact: boolean; granularity: string;
   time_range: { start: string; end: string }; metrics: { id: string; name: string;
     unit: string; aggregation: string; query_complete: boolean; query_exact: boolean;
@@ -215,7 +217,8 @@ test('DASH-E2E-006: a saved widget retains native array membership through popup
     time_range: { preset: '7D' }, granularity: 'day', metrics,
     filters: members === undefined ? [projectFilter] : [projectFilter,
       { ...arrayFilter, filter_config: { ...arrayFilter.filter_config, filter_value: members } }],
-    breakdowns: grouped ? [breakdown] : [] });
+    breakdowns: grouped ? [breakdown] : [],
+    ...(grouped ? { group_by: { type: 'attribute', key: cohortKey, limit: 5 } } : {}) });
   const memberIdentity = (value: Member) => `${typeof value}:${JSON.stringify(value)}`;
   // Only OR-member ordering is nonsemantic. Every other config field is exact;
   // duplicate members fail, and persistence comparisons never use this function.
@@ -339,7 +342,7 @@ test('DASH-E2E-006: a saved widget retains native array membership through popup
         await uiExpect(card.getByText('Distinct Count', { exact: true })).toBeVisible();
         await uiExpect(card.getByText('Project', { exact: true })).toHaveCount(0);
       }
-      await uiExpect(page.locator('.breakdown-section-title').locator('../..').getByText(cohortKey, { exact: true })).toBeVisible();
+      await uiExpect(page.getByRole('button', { name: `Change breakdown ${cohortKey}`, exact: true })).toBeVisible();
       await uiExpect(page.getByRole('combobox').filter({ hasText: 'Day' })).toBeVisible();
       await uiExpect(page.getByText('7D', { exact: true })).toBeVisible();
     };
@@ -567,7 +570,7 @@ test('DASH-E2E-006: a saved widget retains native array membership through popup
         expect(token.input.filters[1].filter_config.filter_op).toBe(EXPECTED_ARRAY_FILTER_OP); // Check1, not a matcher.
         await uiExpect(arrayCard.getByRole('combobox')).toHaveText('Contains');
         await queryAfter('token-cohort', configFor([h], true), [2, 4], async () => {
-          await page.locator('.breakdown-section-title').click();
+          await page.getByRole('button', { name: 'Add breakdown', exact: true }).click();
           for (const category of ['All', 'Trace Attributes']) for (const property of [arrayProperty, objectProperty]) {
             await selectCategory(category); await page.getByPlaceholder('Search breakdown attributes...').fill(property.name);
             await assertCatalog('', category === 'All' ? '' : 'custom_attribute', property.name, property);

@@ -1,0 +1,89 @@
+{
+  "catalog": {
+    "sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+    "source_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "version": "2026.10.20.1"
+  },
+  "count": 1,
+  "current_page": 1,
+  "next": null,
+  "previous": null,
+  "results": [
+    {
+      "categories": ["files"],
+      "connected": true,
+      "default_provider": "kite-mcp",
+      "description": "Files with read-only and destructive tools.",
+      "docs_url": "https://docs.kite-files.example.com/mcp",
+      "ee_category": "productivity",
+      "group": "other",
+      "icon": null,
+      "id": "kite-files",
+      "lifecycle": "active",
+      "name": "Kite Files",
+      "providers": [
+        {
+          "account_modes": ["agent"],
+          "catalog_ref": "kite-files/kite-mcp@1.0.0",
+          "credential": {
+            "header_name": "",
+            "help": "Create a key under Settings, API keys.",
+            "help_url": "https://docs.kite-files.example.com/keys",
+            "in": "header",
+            "kind": "bearer",
+            "label": "API key",
+            "mode": "shared",
+            "name": "Authorization"
+          },
+          "era": "auto",
+          "id": "kite-mcp",
+          "kind": "vendor_mcp",
+          "lifecycle": "active",
+          "publisher": "vendor",
+          "tier": "listed",
+          "tools": [],
+          "transport": "http",
+          "url_template": "https://mcp.kite-files.example.com/mcp",
+          "url_variables": [],
+          "vendor_status": "ga",
+          "version": "1.0.0"
+        }
+      ],
+      "servers": [
+        {
+          "catalog_ref": "kite-files/kite-mcp@1.0.0",
+          "connected": true,
+          "credential_mode": "shared",
+          "enabled": true,
+          "provider": "kite-mcp",
+          "server_id": "kite-files",
+          "tools": [
+            {
+              "access": "approval_required",
+              "name": "delete_file"
+            },
+            {
+              "access": "allowed",
+              "name": "echo"
+            },
+            {
+              "access": "allowed",
+              "name": "get_weather"
+            }
+          ],
+          "version": "1.0.0",
+          "virtual_server": {
+            "id": "vs_01M5F7JC4T2R8W6Y1N3B5D7K9Q",
+            "slug": "kite-files"
+          }
+        }
+      ],
+      "tags": ["files"],
+      "vendor": {
+        "domains": ["kite-files.example.com"],
+        "name": "Kite Files"
+      }
+    }
+  ],
+  "total_pages": 1
+}

@@ -1,0 +1,20 @@
+{
+  "query": "{{query}}",
+  "number_of_results": 1,
+  "results": [
+    {
+      "url": "https://example.com/capmock",
+      "title": "Capmock result",
+      "content": "Example content.",
+      "engine": "duckduckgo",
+      "engines": ["duckduckgo"],
+      "score": 1.0,
+      "category": "general"
+    }
+  ],
+  "answers": [],
+  "corrections": [],
+  "infoboxes": [],
+  "suggestions": [],
+  "unresponsive_engines": []
+}

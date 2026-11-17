@@ -4,6 +4,7 @@ import React, {
   useRef,
   useEffect,
   useMemo,
+  useId,
 } from "react";
 import Chip from "@mui/material/Chip";
 import PropTypes from "prop-types";
@@ -14,22 +15,141 @@ import IconButton from "@mui/material/IconButton";
 import Menu from "@mui/material/Menu";
 import MenuItem from "@mui/material/MenuItem";
 import ListItemText from "@mui/material/ListItemText";
-import Switch from "@mui/material/Switch";
 import Divider from "@mui/material/Divider";
+import Switch from "@mui/material/Switch";
+import Tooltip from "@mui/material/Tooltip";
 import CircularProgress from "@mui/material/CircularProgress";
 import { alpha, useTheme } from "@mui/material/styles";
+import { enqueueSnackbar } from "notistack";
 import { useRouter } from "src/routes/hooks";
 import Iconify from "src/components/iconify";
 import useFalconStore from "../store/useFalconStore";
-import { uploadFile } from "../hooks/useFalconAPI";
+import { captureFalconRequest } from "../store/falconRequestGuard";
+import {
+  uploadFile,
+  updateConnector,
+  fetchConnectors,
+} from "../hooks/useFalconAPI";
+import { useGatewayAdmin } from "src/sections/gateway/hooks/useGatewayAdmin";
 import ContextSelector from "./ContextSelector";
 import SlashCommandPicker from "./SlashCommandPicker";
 import AttachedFileChip from "./AttachedFileChip";
 import { paths } from "src/routes/paths";
+import { isPrototypeMode } from "src/utils/prototype";
+
+// Largest file that can be attached (10 MB).
+const MAX_FILE_BYTES = 10 * 1024 * 1024;
+
+// Most files one drop attaches.
+const MAX_DROPPED_FILES = 5;
+
+// File types Falcon can read. The file picker and drag-and-drop use the same
+// list, so a dropped file is checked just like a picked one.
+const ACCEPTED_EXTENSIONS = [
+  ".txt",
+  ".csv",
+  ".html",
+  ".md",
+  ".json",
+  ".pdf",
+  ".xlsx",
+  ".docx",
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".gif",
+  ".webp",
+];
+
+function isAcceptedType(file) {
+  const name = file.name.toLowerCase();
+  return ACCEPTED_EXTENSIONS.some((ext) => name.endsWith(ext));
+}
+
+// Why a file over the limit is not uploaded.
+const TOO_LARGE_REASON = "Files must be 10 MB or smaller.";
+
+// The sentence that says which files weren't attached, and why.
+function notAttachedMessage(names, reason) {
+  if (names.length === 0) return null;
+  const verb = names.length === 1 ? "wasn't" : "weren't";
+  return `${names.join(", ")} ${verb} attached. ${reason}`;
+}
+
+// Why an upload didn't attach, in the server's words when it gave any.
+function uploadFailureReason(failure) {
+  const message =
+    typeof failure?.message === "string" ? failure.message.trim() : "";
+  if (!message) return "The upload didn't finish. Try again.";
+  return /[.!?]$/.test(message) ? message : `${message}.`;
+}
+
+// What a connector's on/off switch does, and who can use it. The setting is
+// shared by the whole workspace, and only an organization owner or admin can
+// change it.
+const SWITCH_WORKSPACE_NOTE = "Applies to everyone in this workspace";
+const SWITCH_OWNER_OR_ADMIN_ONLY =
+  "Only an owner or admin can turn a connector on or off";
+
+// Shown when a switch change fails and the server gave no sentence for it.
+const SWITCH_FAILED = "The connector could not be changed. Try again.";
+
+// Why a switch change failed, in the server's words when it gave a short
+// one for a refused request. Anything else gets the fixed sentence.
+function switchFailureReason(error) {
+  const status = Number(error?.response?.status);
+  const data = error?.response?.data || {};
+  const message = [data.message, data.detail, data.error].find(
+    (m) => typeof m === "string" && m.trim(),
+  );
+  if (
+    !(status >= 400 && status < 500) ||
+    !message ||
+    message.length > 240 ||
+    /[\r\n]/.test(message)
+  ) {
+    return SWITCH_FAILED;
+  }
+  return message.trim();
+}
+
+// A connector's state in the words the Customize panel uses. The on/off
+// setting is shared by the whole workspace: the switch beside each connector
+// changes it for everyone, and clicking a connector opens the connectors
+// settings page.
+function connectorStatus(connector) {
+  const isActive = connector.is_active ?? true;
+  const isVerified = connector.is_verified ?? false;
+  if (!isActive) return { label: "Inactive", color: "text.disabled" };
+  if (!isVerified) return { label: "Pending", color: "warning.main" };
+  return { label: "Connected", color: "success.main" };
+}
+
+// A message runs a skill only when it starts with the skill's command
+// ("/<slug>"), so a prompt that starts with one has to start the box.
+const SKILL_COMMAND = /^\/[a-z0-9-]+(\s|$)/i;
+
+// The box's text once a prompt is put in it. An empty box, or a prompt that
+// starts with a skill command, takes the prompt as it is. Any other prompt
+// goes after what was typed, on a new line, so nothing typed is lost; a
+// prompt already at the end of the box is not added again.
+function withPrompt(typed, prompt) {
+  if (!typed.trim() || SKILL_COMMAND.test(prompt)) return prompt;
+  if (typed.trimEnd().endsWith(prompt.trimEnd())) return typed;
+  return typed.endsWith("\n") ? `${typed}${prompt}` : `${typed}\n${prompt}`;
+}
+
 export default function ChatInput({ onSend, onStop }) {
   const [text, setText] = useState("");
   const [slashDismissed, setSlashDismissed] = useState(false);
-  const [isUploading, setIsUploading] = useState(false);
+  // Uploads still running. A second drop can start before the first one
+  // ends, so this is a count, not a flag.
+  const [uploadsInFlight, setUploadsInFlight] = useState(0);
+  const isUploading = uploadsInFlight > 0;
+  // Why files from the last attach or drop weren't attached. Shown in the
+  // message box as well as in a toast: this box often sits in a drawer, and
+  // the reason stays next to it after the toast has gone.
+  const [notAttached, setNotAttached] = useState([]);
   const theme = useTheme();
   const inputContainerRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -40,7 +160,6 @@ export default function ChatInput({ onSend, onStop }) {
   const setCurrentConversation = useFalconStore(
     (s) => s.setCurrentConversation,
   );
-  const triggerSkillsMenu = useFalconStore((s) => s.triggerSkillsMenu);
   const currentConversationId = useFalconStore((s) => s.currentConversationId);
   const attachedFiles = useFalconStore((s) => s.attachedFiles);
   const addAttachedFile = useFalconStore((s) => s.addAttachedFile);
@@ -55,24 +174,27 @@ export default function ChatInput({ onSend, onStop }) {
   }, [text]);
 
   // Hydrate from a pending prompt set by external callers (e.g. "Fix with
-  // Falcon" buttons or the empty-state quick actions). Prefill only — user
-  // still presses send. Consume once to avoid re-hydrating on every re-render.
-  // After prefill, focus the textarea, scroll it to the top so the start of
-  // the prompt is visible, and place the caret at the end so the user can
-  // immediately edit/append.
+  // Falcon" buttons, Ask again or the empty-state quick actions). Prefill
+  // only — user still presses send. Consume once to avoid re-hydrating on
+  // every re-render. Text already typed in the box is kept (withPrompt).
+  // After prefill, focus the textarea and place the caret at the end so the
+  // user can immediately edit/append. A prompt that fills the box is scrolled
+  // to its start; one added after typed text is scrolled into view.
+  // The typed text is read here rather than through a state updater, so an
+  // effect run twice (React StrictMode) still adds the prompt once.
   useEffect(() => {
     if (!pendingPrompt) return;
-    setText(pendingPrompt);
+    const next = withPrompt(text, pendingPrompt);
+    setText(next);
     clearPendingPrompt();
     requestAnimationFrame(() => {
       const ta = textFieldRef.current?.querySelector("textarea");
       if (!ta) return;
       ta.focus();
-      ta.scrollTop = 0;
-      const end = pendingPrompt.length;
-      ta.setSelectionRange(end, end);
+      ta.scrollTop = next === pendingPrompt ? 0 : ta.scrollHeight;
+      ta.setSelectionRange(next.length, next.length);
     });
-  }, [pendingPrompt, clearPendingPrompt]);
+  }, [pendingPrompt, clearPendingPrompt, text]);
 
   // Detect skill slugs in text for inline chip display
   const detectedSkills = useMemo(() => {
@@ -100,13 +222,24 @@ export default function ChatInput({ onSend, onStop }) {
 
   const MAX_LENGTH = 10000;
 
+  // Say which files weren't attached, and why: in a toast and in the box.
+  const sayNotAttached = useCallback((names, reason) => {
+    const message = notAttachedMessage(names, reason);
+    if (!message) return;
+    enqueueSnackbar(message, { variant: "error" });
+    setNotAttached((shown) => [...shown, message]);
+  }, []);
+
   const handleSend = useCallback(() => {
+    // Wait for uploads to finish. Sent now, the message would go without the
+    // file, and starting a new chat would drop the upload's result unseen.
+    if (isUploading) return;
     const trimmed = text.trim();
     const hasFiles = useFalconStore.getState().attachedFiles.length > 0;
     if (!trimmed && !hasFiles) return;
     onSend?.(trimmed.slice(0, MAX_LENGTH) || "See attached files");
     setText("");
-  }, [text, onSend]);
+  }, [text, onSend, isUploading]);
 
   const handleFileSelect = useCallback(
     async (e) => {
@@ -114,25 +247,32 @@ export default function ChatInput({ onSend, onStop }) {
       if (!file) return;
       // Reset input so same file can be re-selected
       e.target.value = "";
+      setNotAttached([]);
 
-      if (file.size > 10 * 1024 * 1024) {
-        // Could show a snackbar; for now just alert
+      if (file.size > MAX_FILE_BYTES) {
+        sayNotAttached([file.name], TOO_LARGE_REASON);
         return;
       }
 
-      setIsUploading(true);
+      const isCurrent = captureFalconRequest({ conversation: true });
+      setUploadsInFlight((n) => n + 1);
       try {
         const resp = await uploadFile(file);
-        if (resp.status && resp.result) {
+        if (!isCurrent()) return;
+        if (resp?.status && resp?.result) {
           addAttachedFile(resp.result);
+        } else {
+          sayNotAttached([file.name], uploadFailureReason(resp));
         }
-      } catch {
-        // silent — upload error handled by UI state
+      } catch (err) {
+        if (isCurrent()) {
+          sayNotAttached([file.name], uploadFailureReason(err));
+        }
       } finally {
-        setIsUploading(false);
+        setUploadsInFlight((n) => n - 1);
       }
     },
-    [addAttachedFile],
+    [addAttachedFile, sayNotAttached],
   );
 
   const handleKeyDown = (e) => {
@@ -167,13 +307,23 @@ export default function ChatInput({ onSend, onStop }) {
         setCurrentConversation(null);
       }
     },
-    [onSend, triggerSkillsMenu, resetChat, setCurrentConversation],
+    [resetChat, setCurrentConversation],
   );
 
   const router = useRouter();
   const connectors = useFalconStore((s) => s.connectors);
   const [plusMenuAnchor, setPlusMenuAnchor] = useState(null);
   const [connectorsSubmenu, setConnectorsSubmenu] = useState(null);
+  const setConnectors = useFalconStore((s) => s.setConnectors);
+  const { canEdit: canEditConnectors } = useGatewayAdmin();
+  // Connectors whose switch change is still being saved, and the line that
+  // says why the last change did not save.
+  const [switching, setSwitching] = useState([]);
+  const [switchError, setSwitchError] = useState(null);
+  const switchReasonId = useId();
+  const switchNote = canEditConnectors
+    ? SWITCH_WORKSPACE_NOTE
+    : SWITCH_OWNER_OR_ADMIN_ONLY;
   const [isDragging, setIsDragging] = useState(false);
 
   const handleDragOver = useCallback((e) => {
@@ -194,32 +344,54 @@ export default function ChatInput({ onSend, onStop }) {
       e.stopPropagation();
       setIsDragging(false);
       const files = Array.from(e.dataTransfer?.files || []);
-      const validFiles = files
-        .filter((f) => f.size <= 10 * 1024 * 1024)
-        .slice(0, 5);
+      if (files.length === 0) return;
+      setNotAttached([]);
+      sayNotAttached(
+        files.filter((f) => f.size > MAX_FILE_BYTES).map((f) => f.name),
+        TOO_LARGE_REASON,
+      );
+      const fitting = files.filter((f) => f.size <= MAX_FILE_BYTES);
+      sayNotAttached(
+        fitting.filter((f) => !isAcceptedType(f)).map((f) => f.name),
+        `Supported file types: ${ACCEPTED_EXTENSIONS.join(", ")}.`,
+      );
+      const readable = fitting.filter(isAcceptedType);
+      sayNotAttached(
+        readable.slice(MAX_DROPPED_FILES).map((f) => f.name),
+        `You can drop up to ${MAX_DROPPED_FILES} files at a time.`,
+      );
+      const validFiles = readable.slice(0, MAX_DROPPED_FILES);
       if (validFiles.length === 0) return;
 
-      setIsUploading(true);
+      const isCurrent = captureFalconRequest({ conversation: true });
+      setUploadsInFlight((n) => n + 1);
       try {
         const results = await Promise.allSettled(
           validFiles.map((file) => uploadFile(file)),
         );
-        for (const result of results) {
-          if (
-            result.status === "fulfilled" &&
-            result.value.status &&
-            result.value.result
-          ) {
-            addAttachedFile(result.value.result);
+        if (!isCurrent()) return;
+        // Files that failed for the same reason share one notice.
+        const failedByReason = new Map();
+        results.forEach((result, i) => {
+          const resp = result.status === "fulfilled" ? result.value : null;
+          if (resp?.status && resp?.result) {
+            addAttachedFile(resp.result);
+            return;
           }
-        }
-      } catch {
-        // silent — upload error handled by UI state
+          const reason = uploadFailureReason(resp ?? result.reason);
+          failedByReason.set(reason, [
+            ...(failedByReason.get(reason) || []),
+            validFiles[i].name,
+          ]);
+        });
+        failedByReason.forEach((names, reason) =>
+          sayNotAttached(names, reason),
+        );
       } finally {
-        setIsUploading(false);
+        setUploadsInFlight((n) => n - 1);
       }
     },
-    [addAttachedFile],
+    [addAttachedFile, sayNotAttached],
   );
 
   const handlePlusClick = (e) => setPlusMenuAnchor(e.currentTarget);
@@ -228,6 +400,55 @@ export default function ChatInput({ onSend, onStop }) {
     setConnectorsSubmenu(null);
   };
   const handleConnectorsHover = (e) => setConnectorsSubmenu(e.currentTarget);
+  const openConnectorSettings = () => {
+    handlePlusClose();
+    router.push(paths.dashboard.settings.falconAIConnectors);
+  };
+
+  const showConnectorActive = useCallback(
+    (id, isActive) => {
+      const current = useFalconStore.getState().connectors || [];
+      setConnectors(
+        current.map((c) => (c.id === id ? { ...c, is_active: isActive } : c)),
+      );
+    },
+    [setConnectors],
+  );
+
+  // Turns a connector on or off for the whole workspace. The switch shows the
+  // new state at once; a failed save puts it back and says why. After a save
+  // the list is read again, so it shows what the server holds.
+  const toggleConnector = async (connector) => {
+    const { id } = connector;
+    if (!canEditConnectors || switching.includes(id)) return;
+    const next = connector.is_active === false;
+    setSwitching((ids) => [...ids, id]);
+    setSwitchError(null);
+    showConnectorActive(id, next);
+    try {
+      await updateConnector(id, { is_active: next });
+    } catch (error) {
+      const reason = switchFailureReason(error);
+      showConnectorActive(id, !next);
+      setSwitchError(reason);
+      enqueueSnackbar(reason, { variant: "error" });
+      setSwitching((ids) => ids.filter((x) => x !== id));
+      return;
+    }
+    try {
+      const isCurrent = captureFalconRequest();
+      const data = await fetchConnectors();
+      if (isCurrent()) setConnectors(data?.results || data || []);
+    } catch {
+      // The switch already shows the saved state; the list refreshes on the
+      // next load.
+    }
+    setSwitching((ids) => ids.filter((x) => x !== id));
+  };
+
+  const hasDraft = Boolean(text.trim()) || attachedFiles.length > 0;
+  // Send waits for uploads; the "Uploading..." line says why.
+  const canSend = hasDraft && !isUploading;
 
   return (
     <Box
@@ -273,12 +494,13 @@ export default function ChatInput({ onSend, onStop }) {
           ref={fileInputRef}
           type="file"
           hidden
-          accept=".txt,.csv,.html,.md,.json,.pdf,.xlsx,.docx,.png,.jpg,.jpeg,.gif,.webp"
+          accept={ACCEPTED_EXTENSIONS.join(",")}
           onChange={handleFileSelect}
         />
 
-        {/* Attached files chips */}
-        {attachedFiles.length > 0 && (
+        {/* Attached files chips, and the upload in progress (shown even
+            before the first file is attached) */}
+        {(attachedFiles.length > 0 || isUploading) && (
           <Box
             sx={{
               display: "flex",
@@ -312,6 +534,49 @@ export default function ChatInput({ onSend, onStop }) {
                 </Typography>
               </Box>
             )}
+          </Box>
+        )}
+
+        {/* Which files weren't attached, and why. Kept until the next attach
+            or drop, or until dismissed. */}
+        {notAttached.length > 0 && (
+          <Box
+            sx={{
+              display: "flex",
+              alignItems: "flex-start",
+              gap: 0.5,
+              px: 2,
+              pt: 1,
+            }}
+          >
+            <Box role="alert" sx={{ flex: 1, minWidth: 0 }}>
+              {notAttached.map((message, i) => (
+                <Typography
+                  key={i}
+                  sx={{
+                    fontSize: 12,
+                    lineHeight: 1.5,
+                    color: "error.main",
+                    overflowWrap: "anywhere",
+                  }}
+                >
+                  {message}
+                </Typography>
+              ))}
+            </Box>
+            <IconButton
+              size="small"
+              title="Dismiss"
+              aria-label="Dismiss"
+              onClick={() => setNotAttached([])}
+              sx={{
+                p: 0.25,
+                color: "text.disabled",
+                "&:hover": { color: "text.secondary" },
+              }}
+            >
+              <Iconify icon="solar:close-linear" width={14} />
+            </IconButton>
           </Box>
         )}
 
@@ -474,25 +739,36 @@ export default function ChatInput({ onSend, onStop }) {
                 />
               </MenuItem>
 
-              <MenuItem
-                onMouseEnter={handleConnectorsHover}
-                sx={{ gap: 1.5, py: 1, justifyContent: "space-between" }}
-              >
-                <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
+              {/* L7c g1 (settings:pages): no connector can be added in the
+                  prototype (Falcon AI Connectors is absent there). */}
+              {isPrototypeMode() ? null : (
+                <MenuItem
+                  onMouseEnter={handleConnectorsHover}
+                  sx={{ gap: 1.5, py: 1, justifyContent: "space-between" }}
+                >
+                  <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
+                    <Iconify
+                      icon="solar:widget-linear"
+                      width={16}
+                      sx={{ color: "text.secondary" }}
+                    />
+                    <Typography sx={{ fontSize: 12 }}>Connectors</Typography>
+                  </Box>
                   <Iconify
-                    icon="solar:widget-linear"
+                    icon="solar:alt-arrow-right-linear"
                     width={16}
-                    sx={{ color: "text.secondary" }}
+                    sx={{ color: "text.disabled" }}
                   />
-                  <Typography sx={{ fontSize: 12 }}>Connectors</Typography>
-                </Box>
-                <Iconify
-                  icon="solar:alt-arrow-right-linear"
-                  width={16}
-                  sx={{ color: "text.disabled" }}
-                />
-              </MenuItem>
+                </MenuItem>
+              )}
             </Menu>
+
+            {/* What each connector's switch says to screen readers: who it
+                applies to, or who can use it; the switch shows the same line
+                on hover. */}
+            <span id={switchReasonId} hidden>
+              {switchNote}
+            </span>
 
             {/* Connectors submenu */}
             <Menu
@@ -512,27 +788,69 @@ export default function ChatInput({ onSend, onStop }) {
               }}
             >
               {(connectors || []).length > 0 ? (
-                (connectors || []).map((c) => (
-                  <MenuItem
-                    key={c.id}
-                    sx={{ gap: 1.5, py: 0.75, justifyContent: "space-between" }}
-                  >
-                    <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                (connectors || []).map((c) => {
+                  const status = connectorStatus(c);
+                  return (
+                    <MenuItem
+                      key={c.id}
+                      onClick={openConnectorSettings}
+                      sx={{
+                        gap: 1.5,
+                        py: 0.75,
+                        justifyContent: "space-between",
+                      }}
+                    >
                       <Box
-                        sx={{
-                          width: 8,
-                          height: 8,
-                          borderRadius: "50%",
-                          bgcolor: c.is_verified
-                            ? "success.main"
-                            : "text.disabled",
-                        }}
-                      />
-                      <Typography sx={{ fontSize: 12 }}>{c.name}</Typography>
-                    </Box>
-                    <Switch size="small" checked={c.is_active !== false} />
-                  </MenuItem>
-                ))
+                        sx={{ display: "flex", alignItems: "center", gap: 1 }}
+                      >
+                        <Box
+                          sx={{
+                            width: 8,
+                            height: 8,
+                            borderRadius: "50%",
+                            bgcolor: status.color,
+                          }}
+                        />
+                        <Typography sx={{ fontSize: 12 }}>{c.name}</Typography>
+                      </Box>
+                      <Box
+                        sx={{ display: "flex", alignItems: "center", gap: 0.5 }}
+                      >
+                        <Typography
+                          sx={{ fontSize: 12, color: "text.secondary" }}
+                        >
+                          {status.label}
+                        </Typography>
+                        {/* Turns the connector on or off for the workspace.
+                            A click on it must not reach the row, which
+                            opens settings and would leave the Chat page and
+                            the message being typed. */}
+                        <Tooltip
+                          title={switchNote}
+                          placement="right"
+                          describeChild
+                        >
+                          <span onClick={(e) => e.stopPropagation()}>
+                            <Switch
+                              size="small"
+                              checked={c.is_active !== false}
+                              disabled={
+                                !canEditConnectors || switching.includes(c.id)
+                              }
+                              onChange={() => toggleConnector(c)}
+                              inputProps={{
+                                "aria-label": `Turn ${c.name} ${
+                                  c.is_active !== false ? "off" : "on"
+                                } for this workspace`,
+                                "aria-describedby": switchReasonId,
+                              }}
+                            />
+                          </span>
+                        </Tooltip>
+                      </Box>
+                    </MenuItem>
+                  );
+                })
               ) : (
                 <MenuItem disabled sx={{ py: 1 }}>
                   <Typography
@@ -546,12 +864,17 @@ export default function ChatInput({ onSend, onStop }) {
                   </Typography>
                 </MenuItem>
               )}
+              {switchError ? (
+                <Typography
+                  role="alert"
+                  sx={{ fontSize: 12, color: "error.main", px: 2, py: 0.75 }}
+                >
+                  {switchError}
+                </Typography>
+              ) : null}
               <Divider />
               <MenuItem
-                onClick={() => {
-                  handlePlusClose();
-                  router.push(paths.dashboard.settings.falconAIConnectors);
-                }}
+                onClick={openConnectorSettings}
                 sx={{ gap: 1.5, py: 1 }}
               >
                 <Iconify
@@ -583,23 +906,14 @@ export default function ChatInput({ onSend, onStop }) {
             <IconButton
               size="small"
               onClick={handleSend}
-              disabled={!text.trim() && attachedFiles.length === 0}
+              disabled={!canSend}
               title="Send"
               sx={{
-                bgcolor:
-                  text.trim() || attachedFiles.length > 0
-                    ? "text.primary"
-                    : "transparent",
-                color:
-                  text.trim() || attachedFiles.length > 0
-                    ? "background.paper"
-                    : "text.disabled",
+                bgcolor: canSend ? "text.primary" : "transparent",
+                color: canSend ? "background.paper" : "text.disabled",
                 transition: "all 0.15s ease",
                 "&:hover": {
-                  bgcolor:
-                    text.trim() || attachedFiles.length > 0
-                      ? "text.secondary"
-                      : "transparent",
+                  bgcolor: canSend ? "text.secondary" : "transparent",
                 },
                 "&.Mui-disabled": {
                   color: "text.disabled",

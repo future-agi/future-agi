@@ -25,6 +25,12 @@ case "$CLOUD_DEPLOYMENT" in
     "US"|"EU"|"DEV"|"us"|"eu"|"dev") CLOUD_STARTUP=true ;;
 esac
 
+# Runtime mode is derived from ENV_TYPE, independently of cloud mutation policy.
+PRODUCTION_RUNTIME=false
+case "$ENV_TYPE" in
+    [pP][rR][oO][dD]|[pP][rR][oO][dD][uU][cC][tT][iI][oO][nN]|[sS][tT][aA][gG][iI][nN][gG]) PRODUCTION_RUNTIME=true ;;
+esac
+
 STARTUP_DB_MUTATION_MODE=${STARTUP_DB_MUTATION_MODE:-disabled}
 case "$STARTUP_DB_MUTATION_MODE" in
     "disabled"|"operator") ;;
@@ -305,7 +311,7 @@ if [ "$FAST_STARTUP" != "true" ]; then
         echo "NO_STARTUP_DB_MUTATIONS=true: skipping cache-table, migration, and seed writes"
         if [ "$SERVICE_TYPE" = "backend" ]; then
             collect_static
-            if [ "$ENV_TYPE" = "prod" ] || [ "$ENV_TYPE" = "staging" ]; then
+            if [ "$PRODUCTION_RUNTIME" = "true" ]; then
                 validate_django
             fi
         fi
@@ -322,7 +328,7 @@ if [ "$FAST_STARTUP" != "true" ]; then
                 python manage.py seed_system_evals
             fi
             collect_static
-            if [ "$ENV_TYPE" = "prod" ] || [ "$ENV_TYPE" = "staging" ]; then
+            if [ "$PRODUCTION_RUNTIME" = "true" ]; then
                 validate_django
             fi
         fi
@@ -419,7 +425,7 @@ case "$SERVICE_TYPE" in
         # Start gRPC server in background if enabled
         if [ "$ENABLE_GRPC" = "true" ]; then
             echo "Starting gRPC server in background..."
-            if [ "$ENV_TYPE" = "prod" ] || [ "$ENV_TYPE" = "staging" ]; then
+            if [ "$PRODUCTION_RUNTIME" = "true" ]; then
                 python manage.py grpcrunaioserver &
             else
                 python manage.py grpcrunaioserver --dev &
@@ -434,7 +440,7 @@ case "$SERVICE_TYPE" in
 
         # Start HTTP server with Granian
         if [ "$ENABLE_HTTP" = "true" ]; then
-            if [ "$ENV_TYPE" = "prod" ] || [ "$ENV_TYPE" = "staging" ]; then
+            if [ "$PRODUCTION_RUNTIME" = "true" ]; then
                 echo "Starting production backend with Granian..."
                 granian --interface asgi tfc.asgi:application \
                     --workers $GRANIAN_WORKERS \
@@ -520,7 +526,7 @@ case "$SERVICE_TYPE" in
 
             echo "Starting worker for queue: $queue (concurrency=$final_concurrency, max_tasks=$final_max_tasks)"
 
-            if [ "$ENV_TYPE" = "prod" ] || [ "$ENV_TYPE" = "staging" ]; then
+            if [ "$PRODUCTION_RUNTIME" = "true" ]; then
                 celery -A tfc worker \
                     -Ofair \
                     -n worker-${queue}@%h \
@@ -559,7 +565,7 @@ case "$SERVICE_TYPE" in
 
     "beat")
         echo "Starting Celery beat scheduler..."
-        if [ "$ENV_TYPE" = "prod" ] || [ "$ENV_TYPE" = "staging" ]; then
+        if [ "$PRODUCTION_RUNTIME" = "true" ]; then
             echo "Starting production Celery beat scheduler..."
             celery -A tfc beat \
                 --loglevel=info \
@@ -576,7 +582,7 @@ case "$SERVICE_TYPE" in
 
     "flower")
         echo "Starting Flower monitoring interface..."
-        if [ "$ENV_TYPE" = "prod" ] || [ "$ENV_TYPE" = "staging" ]; then
+        if [ "$PRODUCTION_RUNTIME" = "true" ]; then
             echo "Starting production Flower monitoring interface..."
             celery -A tfc flower \
                 --port=5555 \
@@ -598,7 +604,7 @@ case "$SERVICE_TYPE" in
         echo "Starting standalone gRPC server..."
         echo "NOTE: gRPC is now integrated into the 'backend' service by default."
         echo "Use this standalone mode only if you need gRPC without the HTTP server."
-        if [ "$ENV_TYPE" = "prod" ] || [ "$ENV_TYPE" = "staging" ]; then
+        if [ "$PRODUCTION_RUNTIME" = "true" ]; then
             python manage.py grpcrunaioserver
         else
             python manage.py grpcrunaioserver --dev
@@ -636,7 +642,7 @@ case "$SERVICE_TYPE" in
             echo "Resource-based tuning: DISABLED (using fixed concurrency)"
         fi
 
-        if [ "$ENV_TYPE" = "prod" ] || [ "$ENV_TYPE" = "staging" ]; then
+        if [ "$PRODUCTION_RUNTIME" = "true" ]; then
             # Production: run worker with graceful shutdown handling
             exec ./bin/temporal-worker --task-queue "$TEMPORAL_TASK_QUEUE" $RESOURCE_TUNING_ARGS
         else

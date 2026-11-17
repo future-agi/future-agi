@@ -28,7 +28,7 @@ def clear_non_uuid_session_ids(apps, schema_editor):
 
     # Find all rows with non-null metadata, only load id and metadata fields
     rows_with_metadata = (
-        Row.objects.only("id", "metadata", "dataset_id")
+        Row.objects.using(schema_editor.connection.alias).only("id", "metadata", "dataset_id")
         .exclude(metadata__isnull=True)
         .exclude(metadata={})
     )
@@ -38,7 +38,7 @@ def clear_non_uuid_session_ids(apps, schema_editor):
     rows_to_update = []
     affected_datasets = set()
 
-    with transaction.atomic():
+    with transaction.atomic(using=schema_editor.connection.alias):
         for row in rows_with_metadata.iterator(chunk_size=batch_size):
             metadata = row.metadata
             if not isinstance(metadata, dict):
@@ -59,13 +59,13 @@ def clear_non_uuid_session_ids(apps, schema_editor):
 
                 # Bulk update in batches
                 if len(rows_to_update) >= batch_size:
-                    Row.objects.bulk_update(rows_to_update, ["metadata"])
+                    Row.objects.using(schema_editor.connection.alias).bulk_update(rows_to_update, ["metadata"])
                     rows_to_update.clear()
                     print(f"  Progress: {updated_count} rows processed...")
 
         # Update remaining rows
         if rows_to_update:
-            Row.objects.bulk_update(rows_to_update, ["metadata"])
+            Row.objects.using(schema_editor.connection.alias).bulk_update(rows_to_update, ["metadata"])
 
     if updated_count > 0:
         print(f"\n  Cleared non-UUID session_ids from {updated_count} rows")

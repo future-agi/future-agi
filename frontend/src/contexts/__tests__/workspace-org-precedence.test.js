@@ -16,6 +16,7 @@ const h = vi.hoisted(() => ({
 vi.mock("src/utils/axios", () => ({
   default: h.axios,
   endpoints: {
+    auth: { me: "/accounts/user-info/" },
     workspaces: { list: "/workspaces/", switch: "/workspaces/switch/" },
     organizations: {},
   },
@@ -96,10 +97,13 @@ describe("workspace org precedence — the resolved org wins over stale context"
     );
   });
 
-  it("still trusts the stored row while the org genuinely matches", async () => {
-    // The ordinary case: no org change, so the tab keeps its own workspace
-    // rather than resetting to the default on every load.
+  it("keeps an access-checked independent tab selection in the same org", async () => {
+    // A different default can belong to another tab. Revalidate this tab's
+    // selector rather than either blindly trusting it or replacing it.
     h.auth.user.organization = { id: ORG_A };
+    h.axios.get.mockResolvedValueOnce({
+      data: { ...h.auth.user, default_workspace_id: "ws-a" },
+    });
     const { result } = renderHook(() => useWorkspace(), {
       wrapper: WorkspaceProvider,
     });

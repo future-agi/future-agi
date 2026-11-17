@@ -7,27 +7,34 @@ _AUTO_CONTEXT_ROOTS = ("row", "span", "trace", "session", "call")
 
 def render_prompt(prompt, template_context, template_format, env):
     # Pre-process: handle variable names with spaces (e.g., {{TTS Testing}})
-    # Jinja2 doesn't allow spaces in variable names, so we do simple string
-    # replacement for these before Jinja2 parsing.
+    # Jinja2 doesn't allow spaces in variable names. Rewrite references to
+    # identifiers, never values, so input text cannot become template source.
     import re
 
-    prompt_to_render = prompt
     safe_context = dict(template_context)
+    spaced_values = {}
 
-    # Find all {{...}} variables and check for ones with spaces
+    def replace_spaced_variable(match):
+        name = match.group(1).strip()
+        if " " not in name or name not in template_context:
+            return match.group(0)
+
+        alias = f"_fa_spaced_var_{len(spaced_values)}"
+        while alias in safe_context or alias in prompt:
+            alias += "_"
+        spaced_values[alias] = str(template_context[name])
+        safe_context.pop(name, None)
+        return "{{" + alias + "}}"
+
+    prompt_to_render = re.sub(
+        r"\{\{\s*([^{}]+?)\s*\}\}", replace_spaced_variable, prompt
+    )
+
+    # Preserve the existing flat dotted-key handling.
     raw_vars = re.findall(r"\{\{\s*([^{}]+?)\s*\}\}", prompt_to_render)
     for var_name in raw_vars:
         stripped = var_name.strip()
-        if " " in stripped and stripped in safe_context:
-            # Replace the spaced variable with its value directly
-            prompt_to_render = prompt_to_render.replace(
-                "{{" + var_name + "}}", str(safe_context.pop(stripped))
-            )
-            # Also try with extra whitespace variants
-            prompt_to_render = prompt_to_render.replace(
-                "{{ " + stripped + " }}", str(template_context.get(stripped, ""))
-            )
-        elif "." in stripped and stripped in safe_context:
+        if "." in stripped and stripped in safe_context:
             # Dotted variable names (e.g., {{json_col.field}}) are flat
             # keys in template_context but Jinja2 interprets dots as
             # nested object access. Nest them into dicts so Jinja
@@ -58,5 +65,7 @@ def render_prompt(prompt, template_context, template_format, env):
                         pass
 
     template = env.from_string(prompt_to_render)
-    rendered_prompt = template.render(**safe_context)
+    # Spaced values retain their original string formatting, outside JSON
+    # normalization. Internal aliases are not exposed in the returned context.
+    rendered_prompt = template.render(**safe_context, **spaced_values)
     return rendered_prompt, safe_context

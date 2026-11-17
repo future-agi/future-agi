@@ -1,3 +1,6 @@
+// SELECTOR_RECHECK_AFTER_FE(FE-DSX-DATASETS-EVALS, FE-DSX-DEVELOP-DETAIL): WHOLE_FILE, not only conflict regions.
+// Recheck every selector, imported grid/picker helper, declaration and repeated use,
+// including all auto-merged hunks; change dependent references together after FE lands.
 import { test, expect } from '../../lib/fixtures';
 import { uploadFixture } from '../../lib/upload';
 import { POLL } from '../../lib/state-probe';
@@ -50,14 +53,16 @@ test('DASH-E2E-001: an imported numeric dataset column works in a saved widget',
   const widgetName = `e2e-dash1-sum-${suffix}`;
 
   await page.goto('/dashboard/develop', { waitUntil: 'domcontentloaded' });
-  await page.getByRole('button', { name: /^add dataset$/i }).first().click();
-  await page.getByText('Upload a file (JSON, CSV)', { exact: true }).click();
-  const uploadDialog = page.getByRole('dialog').filter({ has: page.getByText('Upload a File', { exact: true }) });
+  // The datasets page's labels: the "New dataset" button (DevelopView.jsx), the "Upload a file" option
+  // (importOptions.js), and the upload dialog's "Upload a file" title, "Dataset name" field and Import button.
+  await page.getByRole('button', { name: /^new dataset$/i }).first().click();
+  await page.getByText('Upload a file', { exact: true }).click();
+  const uploadDialog = page.getByRole('dialog').filter({ has: page.getByText('Upload a file', { exact: true }) });
   await uploadFixture(uploadDialog.locator('input[type="file"]'), 'catalog-regions.csv');
-  await uploadDialog.getByPlaceholder('Dataset Name').fill(datasetName);
+  await uploadDialog.getByPlaceholder('Dataset name').fill(datasetName);
   const uploaded = page.waitForResponse(r => new URL(r.url()).pathname === UPLOAD &&
     r.request().method() === 'POST', { timeout: UI_READY });
-  await uploadDialog.getByRole('button', { name: 'Upload', exact: true }).click();
+  await uploadDialog.getByRole('button', { name: /^Import/ }).click();
   const uploadResponse = await uploaded;
   expect(uploadResponse.status()).toBe(200);
   const datasetId = ((await uploadResponse.json()) as { result: { dataset_id: string } }).result.dataset_id;
@@ -76,7 +81,9 @@ test('DASH-E2E-001: an imported numeric dataset column works in a saved widget',
   // CustomDevelopDetailColumn's menu -> common.js Edit Column Name ->
   // EditColumnName.jsx PUT {new_column_name}; avoid a generic quantity locator.
   await expect(page).toHaveURL(new RegExp(`/dashboard/develop/${datasetId}`), { timeout: UI_READY });
-  await page.locator(`.ag-header-cell[col-id="${columnId}"]`).getByRole('button').click();
+  // The header also holds a stats-line role="button" box (HeaderLine2); the menu
+  // is the IconButton named `${displayName} column menu` (CustomDevelopDetailColumn.jsx).
+  await page.locator(`.ag-header-cell[col-id="${columnId}"]`).getByRole('button', { name: /column menu$/ }).click();
   await page.getByRole('menuitem', { name: 'Edit Column Name', exact: true }).click();
   const renameDialog = page.getByRole('dialog').filter({ has: page.getByText('Edit Column Name', { exact: true }) });
   await renameDialog.getByPlaceholder('Enter column name').fill(columnName);

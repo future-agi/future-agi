@@ -45,6 +45,8 @@ def _configure_active_license() -> None:
     )
 
 
+# The view also reads the Omega rollout store (READINESS 3.13).
+@pytest.mark.django_db
 def test_capabilities_view_handles_missing_organization_for_staff_user():
     _configure_active_license()
     request = APIRequestFactory().get("/api/capabilities/")
@@ -58,6 +60,8 @@ def test_capabilities_view_handles_missing_organization_for_staff_user():
     assert response.data["license"]["issued_to"] == "View Corp"
 
 
+# The view also reads the Omega rollout store (READINESS 3.13).
+@pytest.mark.django_db
 def test_capabilities_view_hides_license_details_for_non_admin_user():
     _configure_active_license()
     request = APIRequestFactory().get("/api/capabilities/")

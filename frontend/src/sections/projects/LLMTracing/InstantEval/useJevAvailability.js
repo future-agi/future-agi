@@ -16,6 +16,10 @@ export function useJevAvailability() {
   const selfHosted = deployment.isSuccess && !deployment.isCloud;
   const allowed = selfHosted || capability.allowed;
   const keys = useApiKeysStatus({ enabled: allowed });
+  // A key status that couldn't be read (no earlier read either) is not a
+  // missing key: the server checks the key at the start and refuses with
+  // JEV_KEY_MISSING, which the page links to AI Providers.
+  const keysUnknown = keys.isError && keys.data == null;
   const hasKey = Boolean(
     (keys.data || []).find((provider) => provider.provider === JEV_PROVIDER)
       ?.hasKey,
@@ -32,7 +36,7 @@ export function useJevAvailability() {
       reason:
         "Jev isn't available in this workspace yet. Ask your Future AGI admin to set it up.",
     };
-  if (!hasKey)
+  if (!hasKey && !keysUnknown)
     return {
       available: false,
       isLoading,

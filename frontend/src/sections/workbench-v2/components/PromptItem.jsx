@@ -63,6 +63,10 @@ const Wrapper = ({ type, id, onClick, children, theme }) => {
         display: "flex",
         alignItems: "center",
         flex: 1,
+        // Let the link
+        // shrink (its text ends in an ellipsis) so a long name or "Created
+        // by ... Last modified" line never pushes More actions off the row.
+        minWidth: 0,
         gap: theme.spacing(1.5),
       }}
     >
@@ -166,7 +170,7 @@ export default function PromptItem({
             typography={"s2"}
             fontWeight={"fontWeightRegular"}
             color={
-              !extraData?.prompt_folder ? "text.secondary" : "text.disabled"
+              !extraData?.prompt_folder ? "text.secondary" : "text.tertiary"
             }
           >
             All Prompts
@@ -209,6 +213,7 @@ export default function PromptItem({
           >
             <Box
               component="img"
+              alt=""
               src={PROMPT_ICON_MAPPER[type] ?? PROMPT_ICON_MAPPER["PROMPT"]}
               sx={{
                 height: 16,
@@ -287,6 +292,7 @@ export default function PromptItem({
           <IconButton
             ref={ref}
             size="small"
+            aria-label={`More actions for ${name}`}
             sx={{ ml: "auto" }}
             onClick={(e) => {
               e.stopPropagation();
@@ -296,7 +302,7 @@ export default function PromptItem({
             <SvgColor
               src="/assets/icons/ic_ellipsis.svg"
               sx={{
-                color: "text.disabled",
+                color: "text.secondary",
                 height: 16,
                 width: 16,
                 rotate: "90deg",

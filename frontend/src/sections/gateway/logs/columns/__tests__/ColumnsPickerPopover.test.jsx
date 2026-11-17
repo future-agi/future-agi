@@ -10,12 +10,19 @@ import {
 } from "src/utils/test-utils";
 import ColumnsPickerPopover from "../ColumnsPickerPopover";
 import {
-  DEFAULT_CONFIG,
+  BUILTIN_COLUMNS,
   MAX_COLUMN_ENTRIES,
   moveColumn,
   removeColumn,
   resolveColumns,
 } from "../columnModel";
+
+// Every built-in shown, in the canonical order (the default view hides three).
+const PLAIN = Object.freeze({
+  v: 1,
+  columns: BUILTIN_COLUMNS.map((col) => ({ id: col.id })),
+  hidden: [],
+});
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -25,7 +32,7 @@ function buildProps(overrides = {}) {
   const resolved = resolveColumns({
     config: overrides.config || {
       v: 1,
-      columns: [...DEFAULT_CONFIG.columns, { id: "metadata:tenant" }],
+      columns: [...PLAIN.columns, { id: "metadata:tenant" }],
       hidden: [],
     },
     declarations: overrides.declarations || [
@@ -58,7 +65,7 @@ function buildProps(overrides = {}) {
 // Re-renders on every move, as the real hook does, so focus is checked
 // against the moved row.
 function MovablePicker() {
-  const [config, setConfig] = React.useState(DEFAULT_CONFIG);
+  const [config, setConfig] = React.useState(PLAIN);
   const { movableIds } = resolveColumns({
     config,
     declarations: [],
@@ -80,7 +87,7 @@ function StalePicker() {
   const [config, setConfig] = React.useState({
     v: 1,
     columns: [
-      ...DEFAULT_CONFIG.columns,
+      ...PLAIN.columns,
       { id: "metadata:a" },
       { id: "metadata:b" },
       { id: "metadata:c" },
@@ -140,9 +147,9 @@ describe("ColumnsPickerPopover", () => {
   it("does not duplicate keyboard stops for fitting built-in, custom, or stale labels", () => {
     const props = buildProps({
       config: {
-        ...DEFAULT_CONFIG,
+        ...PLAIN,
         columns: [
-          ...DEFAULT_CONFIG.columns,
+          ...PLAIN.columns,
           { id: "metadata:tenant" },
           { id: "metadata:deleted" },
         ],
@@ -172,9 +179,9 @@ describe("ColumnsPickerPopover", () => {
     vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(108);
     const props = buildProps({
       config: {
-        ...DEFAULT_CONFIG,
+        ...PLAIN,
         columns: [
-          ...DEFAULT_CONFIG.columns,
+          ...PLAIN.columns,
           { id: `metadata:${name}` },
           { id: `metadata:${staleName}` },
         ],
@@ -389,7 +396,7 @@ describe("ColumnsPickerPopover", () => {
     const user = userEvent.setup();
     render(
       <ColumnsPickerPopover
-        {...buildProps({ config: DEFAULT_CONFIG, declarations: [] })}
+        {...buildProps({ config: PLAIN, declarations: [] })}
       />,
     );
     const dialog = screen.getByRole("dialog", { name: "Choose columns" });
@@ -506,9 +513,9 @@ describe("ColumnsPickerPopover", () => {
       status: "error",
       available: true,
       config: {
-        ...DEFAULT_CONFIG,
+        ...PLAIN,
         columns: [
-          ...DEFAULT_CONFIG.columns,
+          ...PLAIN.columns,
           { id: "metadata:tenant" },
           { id: "metadata:feature" },
         ],
@@ -641,7 +648,7 @@ describe("ColumnsPickerPopover", () => {
   it("points to Custom Properties when nothing is declared", () => {
     render(
       <ColumnsPickerPopover
-        {...buildProps({ config: DEFAULT_CONFIG, declarations: [] })}
+        {...buildProps({ config: PLAIN, declarations: [] })}
       />,
     );
     const dialog = screen.getByRole("dialog", { name: "Choose columns" });
@@ -663,7 +670,7 @@ describe("ColumnsPickerPopover", () => {
     render(
       <ColumnsPickerPopover
         {...buildProps({
-          config: DEFAULT_CONFIG,
+          config: PLAIN,
           declarations: [{ name: "application" }, { name: "service" }],
         })}
       />,
@@ -686,7 +693,7 @@ describe("ColumnsPickerPopover", () => {
 
   it("disables columns that cannot be added once the column limit is reached", () => {
     const names = Array.from(
-      { length: MAX_COLUMN_ENTRIES - DEFAULT_CONFIG.columns.length },
+      { length: MAX_COLUMN_ENTRIES - PLAIN.columns.length },
       (_, i) => `p${i}`,
     );
     render(
@@ -695,7 +702,7 @@ describe("ColumnsPickerPopover", () => {
           config: {
             v: 1,
             columns: [
-              ...DEFAULT_CONFIG.columns,
+              ...PLAIN.columns,
               ...names.map((name) => ({ id: `metadata:${name}` })),
             ],
             hidden: [],

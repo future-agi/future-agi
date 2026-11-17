@@ -61,7 +61,7 @@ def _project(manager, organization, workspace, name, deleted=False, **extra):
 
 # The answer of each read for a trace it will not serve (a missing trace).
 REFUSED_STATUS = {
-    "trace": status.HTTP_400_BAD_REQUEST,
+    "trace": status.HTTP_404_NOT_FOUND,
     "voice": status.HTTP_404_NOT_FOUND,
     "span": status.HTTP_400_BAD_REQUEST,
     "physical": status.HTTP_404_NOT_FOUND,

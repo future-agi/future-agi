@@ -9,8 +9,30 @@ These functions take explicit parameters instead of reading from `self`.
 
 import structlog
 
+from evaluations.constants import SERVING_EMBEDDING_EVAL_TYPES
+
 logger = structlog.get_logger(__name__)
 _DEFAULT_MODEL = object()
+
+#: ``create_eval_instance(managed_judge_billing=...)``: the caller settles a
+#: managed judge's provider cost only through the credit meter and bills
+#: no second amount for it (EvaluationRunner without the legacy combined
+#: billing). Any other caller gets the visible cut refusal for a managed judge
+#: (each of them bills the evaluation's LLM cost again).
+MANAGED_JUDGE_SINGLE_METER = "dsx_single_meter"
+
+#: Refusal for a pinned version whose model needs a key or provider the
+#: organization does not have. Raised before the evaluator is built.
+PINNED_VERSION_MODEL_KEY_MESSAGE = (
+    "This evaluation's saved version uses a different model than its key "
+    "allows. Pick a key for that model or unpin the version."
+)
+
+#: Refusal for an LLM-as-a-judge evaluator with no model. Raised before the
+#: evaluator is built.
+JUDGE_MODEL_REQUIRED_MESSAGE = (
+    "This evaluation has no model set. Pick a model for it and run it again."
+)
 
 
 # Per-evaluator allow-list for per-binding ``run_config`` overrides. Caps
@@ -77,62 +99,221 @@ _RUNTIME_ALLOWED_KEYS = {
 
 def resolve_version(eval_template, version_number=None, organization=None):
     """
-    Resolve the eval template version to use.
+    The live version ``version_number`` names, or None.
 
-    Returns the EvalTemplateVersion instance or None.
-    Increments usage_count on the resolved version.
+    Only an explicit number resolves: callers pass one for a version the
+    binding pins. With no number the run uses the live template, so the
+    template's default version is not looked up here.
 
     Extracted from EvaluationRunner._resolve_version (eval_runner.py:1630).
     """
-    try:
-        from django.db import models
-        from django.db.utils import DatabaseError, ProgrammingError
-
-        from model_hub.models.evals_metric import EvalTemplateVersion
-
-        if organization is None:
-            organization = getattr(eval_template, "organization", None)
-
-        if version_number is not None:
-            resolved = (
-                EvalTemplateVersion.all_objects.filter(
-                    eval_template=eval_template,
-                    version_number=version_number,
-                    deleted=False,
-                )
-                .filter(
-                    models.Q(organization__isnull=True)
-                    | models.Q(organization=organization)
-                )
-                .first()
-            )
-        else:
-            resolved = EvalTemplateVersion.objects.get_default(eval_template)
-
-        if resolved:
-            try:
-                EvalTemplateVersion.all_objects.filter(id=resolved.id).update(
-                    usage_count=models.F("usage_count") + 1
-                )
-            except (DatabaseError, ProgrammingError):
-                logger.warning(
-                    "usage_count_update_failed",
-                    version_id=str(resolved.id),
-                    exc_info=True,
-                )
-
-        return resolved
-
-    except Exception:
-        logger.debug("version_resolution_skipped")
+    if version_number is None:
         return None
+    from django.db import models
+
+    from model_hub.models.evals_metric import EvalTemplateVersion
+
+    if organization is None:
+        organization = getattr(eval_template, "organization", None)
+
+    # A lookup error is not swallowed: a pinned run must not quietly fall
+    # back to the live template.
+    return (
+        EvalTemplateVersion.all_objects.filter(
+            eval_template=eval_template,
+            version_number=version_number,
+            deleted=False,
+        )
+        .filter(
+            models.Q(organization__isnull=True) | models.Q(organization=organization)
+        )
+        .first()
+    )
 
 
-def apply_version_overrides(config, resolved_version, criteria=None):
+def _pinned_model_choice(
+    eval_template, version_model, *, model, model_override, keep_model, binding_model
+):
+    """(pinned_model, crosses_model) for a run whose version names a model.
+
+    pinned_model is the version's model when it is the model that runs: not
+    for a playground selection, a Jev selection or a caller that keeps its
+    own model (keep_model). crosses_model says it replaces another model, or
+    differs from the live template's model (whose stored provider belongs to
+    that model), so provider and key must be found for it.
+    """
+    template_model = (eval_template.config or {}).get("model")
+    supplied_model = None if model is _DEFAULT_MODEL else model
+    effective_model = (
+        model_override
+        or binding_model
+        or supplied_model
+        or version_model
+        or template_model
+    )
+    jev_selection = any(
+        isinstance(value, str) and value.lower().startswith("jev-")
+        for value in (template_model, version_model, effective_model)
+    )
+    if not version_model or jev_selection or model_override or keep_model:
+        return None, False
+    replaced = "turing_large" if model is _DEFAULT_MODEL else (model or template_model)
+    crosses = version_model != replaced or version_model != template_model
+    return version_model, crosses
+
+
+def _judge_scope(eval_template, organization_id=None, workspace_id=None):
+    """The organization and workspace a judge's key is looked up for."""
+    org_id = organization_id or (
+        str(eval_template.organization.id)
+        if getattr(eval_template, "organization", None)
+        else None
+    )
+    ws_id = workspace_id or (
+        str(eval_template.workspace.id)
+        if getattr(eval_template, "workspace", None)
+        else None
+    )
+    return org_id, ws_id
+
+
+def _require_pinned_model_key(model, organization_id, workspace_id):
+    """Refuse a pinned model the organization has no key or route for."""
+    from model_hub.models.choices import ModelChoices
+
+    keyless = {
+        ModelChoices.TURING_LARGE.value,
+        ModelChoices.TURING_SMALL.value,
+        ModelChoices.TURING_FLASH.value,
+    }
+    if not model or model in keyless:
+        return
+    try:
+        _get_api_key(model, organization_id, workspace_id, allow_managed=True)
+    except ValueError:
+        raise ValueError(PINNED_VERSION_MODEL_KEY_MESSAGE) from None
+
+
+def pinned_run_choice(
+    eval_template,
+    *,
+    version_number,
+    model=_DEFAULT_MODEL,
+    runtime_config=None,
+    organization_id=None,
+    keep_model=False,
+):
+    """(pinned_model, crosses_model) as create_eval_instance will choose them.
+
+    pinned_model is the pinned version's model when that is the model the
+    evaluator runs, else None (no version number, no model on the version,
+    a Jev selection or a caller that keeps its own model). Runners use it to
+    limit-check, debit and record the model that actually runs, and to refuse
+    a pinned model with no key before anything is charged.
+    """
+    if version_number is None or eval_template is None:
+        return None, False
+    if organization_id:
+        from accounts.models.organization import Organization
+
+        org = Organization.objects.filter(id=organization_id).first()
+    else:
+        org = getattr(eval_template, "organization", None)
+    resolved = resolve_version(eval_template, version_number, org)
+    binding = runtime_config or {}
+    binding_model = (binding.get("run_config") or {}).get("model") or binding.get(
+        "model"
+    )
+    return _pinned_model_choice(
+        eval_template,
+        getattr(resolved, "model", None),
+        model=model,
+        model_override=None,
+        keep_model=keep_model,
+        binding_model=binding_model,
+    )
+
+
+def charged_model_for_metric(metric):
+    """The model a run of ``metric`` is limit-checked and charged under.
+
+    The model that actually runs: the metric's live pin's model when the
+    engine runs it (the same choice as pinned_run_choice, which the runner
+    makes), else the metric's own model exactly as before. For callers that
+    check usage limits before a runner exists.
+    """
+    card = getattr(metric, "model", None)
+    if getattr(metric, "pinned_version_id", None) is None:
+        return card
+    pinned = metric.pinned_version
+    if pinned is None or getattr(pinned, "deleted", False):
+        return card
+    organization_id = getattr(metric, "organization_id", None)
+    pinned_model, _ = pinned_run_choice(
+        metric.template,
+        version_number=pinned.version_number,
+        model=card,
+        runtime_config=metric.config,
+        organization_id=str(organization_id) if organization_id else None,
+    )
+    return pinned_model or card
+
+
+def refuse_pinned_model_without_key(
+    eval_template,
+    *,
+    version_number,
+    model=_DEFAULT_MODEL,
+    runtime_config=None,
+    organization_id=None,
+    workspace_id=None,
+    keep_model=False,
+    choice=None,
+):
+    """Refuse, before anything is charged, a pinned model with no key.
+
+    The same model choice create_eval_instance makes (``choice`` when the
+    caller already has it from pinned_run_choice). Runners call this before
+    their up-front debit, so a refused evaluator leaves no charge and no
+    refund. The lookup is the one an unpinned evaluator naming that model
+    gets (_get_api_key with allow_managed): a stored key, else a managed
+    route the gateway admits, else the refusal. Only the LLM-as-judge
+    evaluator looks a key up before it runs, pinned or not, so only it is
+    checked here; an agent evaluator finds its own key when it runs, pinned
+    or not, and Turing models need none.
+    """
+    if version_number is None or eval_template is None:
+        return
+    eval_type_id = (eval_template.config or {}).get("eval_type_id", "")
+    if eval_type_id != "CustomPromptEvaluator":
+        return
+    pinned_model, crosses_model = choice or pinned_run_choice(
+        eval_template,
+        version_number=version_number,
+        model=model,
+        runtime_config=runtime_config,
+        organization_id=organization_id,
+        keep_model=keep_model,
+    )
+    if crosses_model:
+        _require_pinned_model_key(
+            pinned_model, *_judge_scope(eval_template, organization_id, workspace_id)
+        )
+
+
+def apply_version_overrides(
+    config, resolved_version, criteria=None, saved_choices=False, preserve_model=False
+):
     """
     Apply prompt overrides from the resolved version to the config.
 
     Returns (config, criteria) where criteria may be updated from the version.
+
+    The version's saved choice definition (choices, choice_scores,
+    multi_choice and output type) replaces the live one only with
+    ``saved_choices``, which callers set for a version the binding pins. A
+    default version resolved for an unpinned run keeps the template's live
+    choices, which the template editor changes in place.
 
     Extracted from EvaluationRunner._apply_version_overrides (eval_runner.py:1678).
     """
@@ -156,10 +337,102 @@ def apply_version_overrides(config, resolved_version, criteria=None):
             )
         criteria = criteria_text
 
-    if resolved_version.model:
+    if resolved_version.model and not preserve_model:
         config["model"] = resolved_version.model
 
+    from evaluations.engine.version_choices import version_choice_config
+
+    if saved_choices and "output_type" in config:
+        config.update(version_choice_config(None, resolved_version))
     return config, criteria
+
+
+#: Turn names in a version's prompt messages that were derived from a flat
+#: config (system evaluations and backfilled versions). Such versions apply
+#: through prompt_messages_to_flat_config in apply_version_overrides.
+_NAMED_PROMPT_TURNS = frozenset({"eval_prompt", "criteria"})
+
+
+def pinned_version_prompt(resolved_version):
+    """The prompt a version saved, or None when it applies as before.
+
+    A version whose prompt messages name their turns (eval_prompt, criteria)
+    applies through apply_version_overrides. A version saved from the
+    evaluation editor, or saved with the evaluation when it was created,
+    names no turn: its prompt is the config it saved (config_snapshot), the
+    one the evaluation ran with when the version was saved. A snapshot with
+    no rule prompt also applies as before.
+
+    Its system prompt is the snapshot's own. The editor's System turn is
+    sent as the rule prompt, and the editor never stores a system prompt,
+    so a version it saved runs the judge's generated system message, as the
+    evaluation did.
+    """
+    if resolved_version is None:
+        return None
+    turns = getattr(resolved_version, "prompt_messages", None) or []
+    if any(
+        isinstance(turn, dict) and turn.get("name") in _NAMED_PROMPT_TURNS
+        for turn in turns
+    ):
+        return None
+    snapshot = getattr(resolved_version, "config_snapshot", None)
+    if not isinstance(snapshot, dict):
+        return None
+    rule_prompt = snapshot.get("rule_prompt")
+    if not isinstance(rule_prompt, str) or not rule_prompt:
+        return None
+    saved = snapshot.get("messages")
+    messages = (
+        [turn for turn in saved if isinstance(turn, dict)]
+        if isinstance(saved, list)
+        else []
+    )
+    examples = snapshot.get("few_shot_examples")
+    return {
+        "rule_prompt": rule_prompt,
+        "system_prompt": snapshot.get("system_prompt"),
+        "messages": messages,
+        "few_shot_examples": examples if isinstance(examples, list) else [],
+    }
+
+
+def apply_pinned_version_prompt(config, resolved_version, eval_template):
+    """Run the prompt an explicitly pinned version saved.
+
+    ``resolved_version`` is the version a binding pins (create_eval_instance
+    resolves one only for an explicit version number). Its saved prompt
+    (pinned_version_prompt) replaces both the prompt the binding copied and
+    the live template's: the rule prompt of an LLM-as-judge or agent
+    evaluator, and for an LLM-as-judge also the system prompt, the extra
+    turns and the few-shot examples; a version saved without turns or
+    examples runs none. Model, threshold and choices are not changed here.
+    """
+    eval_type_id = (eval_template.config or {}).get("eval_type_id", "")
+    if eval_type_id not in ("CustomPromptEvaluator", "AgentEvaluator"):
+        return config
+    prompt = pinned_version_prompt(resolved_version)
+    if prompt is None:
+        return config
+    config["rule_prompt"] = prompt["rule_prompt"]
+    if eval_type_id != "CustomPromptEvaluator":
+        return config
+    config["system_prompt"] = prompt["system_prompt"]
+    if prompt["messages"]:
+        config["messages"] = prompt["messages"]
+    else:
+        config.pop("messages", None)
+    from model_hub.utils.few_shot_examples import expand_static_few_shot_examples
+
+    examples = expand_static_few_shot_examples(
+        prompt["few_shot_examples"],
+        organization=getattr(eval_template, "organization", None),
+    )
+    if examples:
+        config["few_shot_examples"] = examples
+    else:
+        config.pop("few_shot_examples", None)
+    return config
 
 
 def resolve_pass_threshold(
@@ -209,23 +482,242 @@ def resolve_binding_model(
     return template_config.get("model")
 
 
-def _get_api_key(model, organization_id, workspace_id=None):
+SUMMARY_TEMPLATE_UNAVAILABLE_MESSAGE = (
+    "Summary template is unavailable. Choose another summary."
+)
+
+
+class SummaryTemplateUnavailable(ValueError):
+    """A playground run names a saved summary template it cannot use."""
+
+
+def resolve_summary_config(summary, organization_id, *, strict=False):
+    """The summary the agent evaluator runs for the editor's ``custom:<id>``.
+
+    The evaluator takes inline custom criteria, not a saved-template id. With
+    ``strict`` (the eval playground request) the id resolves to the saved
+    template's criteria in the caller's organization; a malformed, missing,
+    deleted, other-organization or empty template raises
+    SummaryTemplateUnavailable before anything is billed. Every other run logs
+    a warning and keeps the concise summary it has always produced. Presets and
+    inline summaries are returned unchanged.
+    """
+    summary_type = summary.get("type") if isinstance(summary, dict) else None
+    if not isinstance(summary_type, str) or not summary_type.startswith("custom:"):
+        return summary
+
+    template_id = summary_type.removeprefix("custom:")
+    if not strict:
+        logger.warning(
+            "summary_template_not_applied",
+            summary_template_id=template_id,
+            fallback="concise",
+        )
+        return {"type": "concise"}
+
+    from uuid import UUID
+
+    try:
+        UUID(template_id)
+    except ValueError:
+        raise SummaryTemplateUnavailable(SUMMARY_TEMPLATE_UNAVAILABLE_MESSAGE) from None
+
+    template = None
+    if organization_id:
+        from model_hub.models.eval_summary_template import EvalSummaryTemplate
+
+        template = EvalSummaryTemplate.objects.filter(
+            id=template_id, organization_id=organization_id
+        ).first()
+    if template is None or not (template.criteria or "").strip():
+        raise SummaryTemplateUnavailable(SUMMARY_TEMPLATE_UNAVAILABLE_MESSAGE)
+    return {"type": "custom", "custom": template.criteria}
+
+
+def choice_score_override(runtime_config: dict | None) -> dict | None:
+    """The binding's per-evaluation choice score edit, or None.
+
+    Priority: runtime_config[run_config][choice_scores] > runtime_config[choice_scores]
+    (observe and simulate bindings store the edit at the top level). Only a
+    non-empty dict is an override.
+    """
+    if not isinstance(runtime_config, dict):
+        return None
+    run_config = runtime_config.get("run_config")
+    if isinstance(run_config, dict):
+        nested = run_config.get("choice_scores")
+        if isinstance(nested, dict) and nested:
+            return nested
+    top_level = runtime_config.get("choice_scores")
+    if isinstance(top_level, dict) and top_level:
+        return top_level
+    return None
+
+
+_CHOICE_SCORES_UNSET = object()
+
+
+def resolve_choice_scores(
+    eval_template,
+    runtime_config: dict | None = None,
+    *,
+    base_scores=_CHOICE_SCORES_UNSET,
+):
+    """Overlay named binding scores on the selected live or saved choice map.
+
+    Omitting ``base_scores`` preserves the two-argument live-template API.
+    An explicitly supplied None or empty saved map must not fall back to live
+    scores. Without an override the selected map is returned unchanged.
+    """
+    if base_scores is _CHOICE_SCORES_UNSET:
+        base_scores = getattr(eval_template, "choice_scores", None)
+    override = choice_score_override(runtime_config)
+    if override is None:
+        return base_scores
+    base = base_scores if isinstance(base_scores, dict) else {}
+    return {**base, **override}
+
+
+def _get_api_key(model, organization_id, workspace_id=None, *, allow_managed=False):
     """
     Get API key for the model via LiteLLMModelManager.
 
     Extracted from EvaluationRunner._get_api_key (eval_runner.py:1869).
+    With ``allow_managed`` a key-less organization whose judge model the
+    gateway admits gets a ``ManagedRouteBinding`` (one key; nothing is
+    admitted) instead of the refusal.
     """
     from agentic_eval.core_evals.run_prompt.litellm_models import LiteLLMModelManager
+    from model_hub.services.model_route import OP_CUSTOM_PROMPT_EVAL
 
     model_manager = LiteLLMModelManager(model, exclude_providers="custom")
     api_key = model_manager.get_api_key(
-        organization_id=organization_id, workspace_id=workspace_id
+        organization_id=organization_id,
+        workspace_id=workspace_id,
+        allow_managed=allow_managed,
+        operation=OP_CUSTOM_PROMPT_EVAL,
     )
 
     if not api_key:
         raise ValueError(f"No API key found for organization {organization_id}")
 
     return api_key
+
+
+def _require_single_meter_judge(config, managed_judge_billing):
+    """One key: a managed judge runs only for a caller that bills its
+    evaluation once. Refused before the evaluator exists, so nothing is held,
+    admitted or sent; a stored provider key (BYOK) is never refused here."""
+    from model_hub.services.model_route import is_managed_route_binding
+
+    if not isinstance(config, dict) or not is_managed_route_binding(
+        config.get("model_route")
+    ):
+        return
+    if managed_judge_billing == MANAGED_JUDGE_SINGLE_METER:
+        return
+    from model_hub.services.credit_ledger_port import (
+        MANAGED_JUDGE_CUT_MESSAGE,
+        ManagedDispatchUnavailableError,
+    )
+
+    logger.info(
+        "managed_judge_cut",
+        model=config.get("model"),
+        reason="caller_bills_the_evaluation_again",
+    )
+    raise ManagedDispatchUnavailableError(MANAGED_JUDGE_CUT_MESSAGE)
+
+
+def _rebind_judge_route(config):
+    """One key: the managed judge binding for ``config["model"]``, the
+    model the evaluator will run. ``prepare_eval_config`` bound it for the
+    template's model; when a version override changed the model, the
+    credential is resolved again for the final model exactly as at
+    runtime (a stored key for it wins, else a binding for it, else the
+    usual refusal). Only a binding made here reaches the evaluator, and a
+    binding is not an admission, so nothing is spent here.
+    """
+    from model_hub.services.model_route import is_managed_route_binding
+
+    binding = config.get("model_route")
+    if not is_managed_route_binding(binding):
+        config.pop("model_route", None)
+        return config
+    model = config.get("model")
+    if binding.model_name == model:
+        return config
+    credential = _get_api_key(
+        model, binding.organization_id, binding.workspace_id, allow_managed=True
+    )
+    if is_managed_route_binding(credential):
+        config["api_key"] = None
+        config["model_route"] = credential
+    else:
+        config["api_key"] = credential
+        config.pop("model_route", None)
+    return config
+
+
+def builds_llm_judge(eval_class):
+    """True when ``eval_class`` is the LLM-as-a-judge evaluator class."""
+    from agentic_eval.core_evals.fi_evals.llm.custom_prompt_evaluator.evaluator import (
+        CustomPromptEvaluator,
+    )
+
+    return isinstance(eval_class, type) and issubclass(
+        eval_class, CustomPromptEvaluator
+    )
+
+
+def _judge_settings(config):
+    """The model an LLM-as-a-judge config runs and the settings found for it."""
+    return (config.get("model"), config.get("api_key"), config.get("model_route"))
+
+
+def _settle_judge_model(
+    config, eval_template, prepared_settings, organization_id, workspace_id
+):
+    """The LLM-as-a-judge evaluator runs ``config["model"]`` with the settings
+    found for that model, whatever the template's current type.
+
+    ``prepared_settings`` are the model and settings prepare_eval_config found
+    when the template's current type is LLM-as-a-judge (else None); a config
+    that still carries them is unchanged. Any other model is prepared here
+    exactly as prepare_eval_config prepares one: a Turing model runs on the
+    Turing client with no key; any other model gets the stored key for it,
+    else a managed route, else the usual refusal; its provider is that
+    model's own. A config with no model is refused.
+    """
+    model = config.get("model")
+    if not model:
+        raise ValueError(JUDGE_MODEL_REQUIRED_MESSAGE)
+    if _judge_settings(config) == prepared_settings:
+        return config
+    from model_hub.models.choices import ModelChoices
+
+    if model in {
+        ModelChoices.TURING_LARGE.value,
+        ModelChoices.TURING_SMALL.value,
+        ModelChoices.TURING_FLASH.value,
+    }:
+        config["api_key"] = None
+        config["provider"] = "turing"
+        config.pop("model_route", None)
+        return config
+    from model_hub.services.model_route import is_managed_route_binding
+    from model_hub.utils.llm_providers import get_provider_for_model
+
+    org_id, ws_id = _judge_scope(eval_template, organization_id, workspace_id)
+    credential = _get_api_key(model, org_id, ws_id, allow_managed=True)
+    if is_managed_route_binding(credential):
+        config["api_key"] = None
+        config["model_route"] = credential
+    else:
+        config["api_key"] = credential
+        config.pop("model_route", None)
+    config["provider"] = get_provider_for_model(model, org_id, ws_id)
+    return config
 
 
 def _get_futureagi_model_config(model="turing_large"):
@@ -238,6 +730,7 @@ def _get_futureagi_model_config(model="turing_large"):
     """
     from agentic_eval.core.utils.model_config import ModelConfigs
     from model_hub.models.choices import ModelChoices
+    from tfc.utils.model_names import base_model_name
 
     futureagi_model_configs = {
         ModelChoices.TURING_LARGE.value: ModelConfigs.TURING_LARGE,
@@ -247,7 +740,8 @@ def _get_futureagi_model_config(model="turing_large"):
         ModelChoices.PROTECT_FLASH.value: ModelConfigs.PROTECT_FLASH,
     }
 
-    cfg = futureagi_model_configs.get(model, ModelConfigs.TURING_LARGE)
+    # A provider-prefixed model id runs as its base model, as it is metered.
+    cfg = futureagi_model_configs.get(base_model_name(model), ModelConfigs.TURING_LARGE)
     return cfg.model_name, cfg.provider
 
 
@@ -302,11 +796,17 @@ def prepare_eval_config(
     kb_id=None,
     is_futureagi=False,
     criteria_override=None,
+    model_override=None,
+    missing_key_message=None,
 ):
     """
     Prepare evaluation configuration based on eval type.
 
     Returns (config, criteria) where criteria may be extracted from config.
+
+    ``missing_key_message`` replaces the error when no key can be found for
+    ``model``; create_eval_instance sets it for a pinned version's model, so
+    that evaluator is refused before anything is sent.
 
     Extracted from EvaluationRunner._prepare_eval_config (eval_runner.py:1760).
     """
@@ -314,10 +814,16 @@ def prepare_eval_config(
 
     eval_type_id = eval_template.config.get("eval_type_id", "")
 
-    # CustomCodeEval — only needs the code string
+    # CustomCodeEval — the code string, and the language the template was
+    # saved with, which the run uses only for code that shows neither language
+    # (detect_code_language).
     if eval_type_id == "CustomCodeEval":
+        stored_language = eval_template.config.get("language")
         config = {
             "code": eval_template.config.get("code") or config.get("code", ""),
+            "stored_language": (
+                stored_language if isinstance(stored_language, str) else None
+            ),
         }
         return config, criteria_override
 
@@ -368,7 +874,10 @@ def prepare_eval_config(
 
     # CustomPromptEvaluator — LLM-as-judge
     elif eval_type_id == "CustomPromptEvaluator":
-        config["provider"] = eval_template.config.get("provider")
+        # A playground selection can cross providers; derive auth for that model.
+        config["provider"] = (
+            None if model_override else eval_template.config.get("provider")
+        )
         config["rule_prompt"] = (
             config["rule_prompt"]
             if "rule_prompt" in config
@@ -424,7 +933,26 @@ def prepare_eval_config(
                 if getattr(eval_template, "workspace", None)
                 else None
             )
-            config["api_key"] = _get_api_key(raw_model, org_id, ws_id)
+            from model_hub.services.model_route import is_managed_route_binding
+
+            try:
+                judge_credential = _get_api_key(
+                    raw_model, org_id, ws_id, allow_managed=True
+                )
+            except ValueError:
+                if missing_key_message is None:
+                    raise
+                raise ValueError(missing_key_message) from None
+            if is_managed_route_binding(judge_credential):
+                # One key: no provider key. The binding admits nothing;
+                # create_eval_instance binds it again for the final model
+                # (after version overrides), and the judge's LLM admits
+                # each call it makes.
+                config["api_key"] = None
+                config["model_route"] = judge_credential
+            else:
+                config["api_key"] = judge_credential
+                config.pop("model_route", None)
             if not config.get("provider"):
                 from model_hub.utils.llm_providers import get_provider_for_model
 
@@ -467,7 +995,6 @@ def _get_decision_api_key(model, organization_id, workspace_id):
         LiteLLMModelManager,
         MissingProviderKeyError,
     )
-
     from ee.decisions.errors import DecisionGatewayError
     from ee.jev.client import JevGatewayError
     from evaluations.decision_models import get_decision_model
@@ -606,6 +1133,12 @@ def create_eval_instance(
     workspace_id=None,
     version_number=None,
     is_futureagi=False,
+    saved_choices=False,
+    managed_judge_billing=None,
+    preview_current_definition=False,
+    model_override=None,
+    strict_summary=False,
+    keep_model=False,
 ):
     """
     Create an evaluator instance ready to call .run().
@@ -617,6 +1150,31 @@ def create_eval_instance(
     4. Handles function eval params normalization
     5. Instantiates the evaluator class
 
+    ``saved_choices`` runs the resolved version's saved choice definition; only
+    a binding that pins that version sets it (EvaluationRunner). Every other
+    run, including Observe evaluations, keeps the template's live choices.
+
+    ``preview_current_definition`` lets standalone Jev playground runs test the
+    live template saved by the editor, not the default version's definition.
+    Explicit version pins and saved-choice bindings still use their version.
+
+    ``version_number`` names a version the binding pins; only then does a
+    version apply. The pinned version's model runs unless ``keep_model`` is
+    set (a composite child or jury seat whose link already chose its model).
+    Provider and key are prepared for the model that runs; when the
+    organization has none for a pinned version's model, the evaluator is
+    refused with ``PINNED_VERSION_MODEL_KEY_MESSAGE`` before it is built.
+
+    ``strict_summary`` (the eval playground request only) runs an agent
+    evaluator's saved summary template and refuses one it cannot use; every
+    other caller falls back to the concise summary (resolve_summary_config).
+
+    ``managed_judge_billing``: ``MANAGED_JUDGE_SINGLE_METER`` from a caller
+    whose only debit for a managed judge is the settle (EvaluationRunner
+    without the legacy combined billing). For every other caller a judge that
+    would run on Future AGI credits is refused with a visible line before the
+    evaluator is built; BYOK judges are unchanged.
+
     Extracted from EvaluationRunner._create_eval_instance (eval_runner.py:1711).
 
     Returns: (eval_instance, criteria) where criteria may be set by version or config.
@@ -626,8 +1184,16 @@ def create_eval_instance(
         normalize_eval_runtime_config,
     )
 
-    if config is None:
-        config = {}
+    # The evaluator's settings are prepared on a copy: the settings the caller
+    # hands in (a binding's own settings among them) are left as given.
+    config = dict(config or {})
+
+    # Only an unpinned playground selection overrides the default-version model.
+    # Resolve it before provider/key preparation, never by mutating a saved version.
+    if version_number is not None:
+        model_override = None
+    if model_override:
+        model = model_override
 
     # Resolve version
     org = None
@@ -645,11 +1211,22 @@ def create_eval_instance(
     template_model = (eval_template.config or {}).get("model")
     version_model = getattr(resolved_version, "model", None)
     binding = runtime_config or {}
-    binding_model = (binding.get("run_config") or {}).get("model") or binding.get(
-        "model"
-    )
+    # A run_config that is not an object is read as none, so an evaluator
+    # that reads no run_config runs whatever its shape.
+    binding_run_config = binding.get("run_config")
+    binding_model = (
+        binding_run_config.get("model")
+        if isinstance(binding_run_config, dict)
+        else None
+    ) or binding.get("model")
     supplied_model = None if model is _DEFAULT_MODEL else model
-    effective_model = binding_model or supplied_model or version_model or template_model
+    effective_model = (
+        model_override
+        or binding_model
+        or supplied_model
+        or version_model
+        or template_model
+    )
     # An unsupported jev-* ID fails closed before any chat, Turing or BYOK logic:
     # the direct engine path (SDK and other callers) never reaches the view-level
     # validate_jev_binding guard, so the rejection has to live here (R-06).
@@ -687,6 +1264,11 @@ def create_eval_instance(
             if getattr(eval_template, "workspace", None)
             else None
         )
+        definition_version = resolved_version
+        if preview_current_definition and version_number is None and not saved_choices:
+            # Omit the snapshot entirely: removed mapping/rubric fields must
+            # not return, and prompt overrides and scores must stay live too.
+            definition_version = None
         # Validated first; the key is looked up only then and goes straight
         # to the evaluator.
         try:
@@ -694,7 +1276,7 @@ def create_eval_instance(
                 eval_template,
                 config,
                 effective_model,
-                resolved_version,
+                definition_version,
                 runtime_config,
             )
         except ValueError as exc:
@@ -718,12 +1300,26 @@ def create_eval_instance(
         has_decision_prefix(value)
         for value in (template_model, version_model, effective_model)
     )
+    # A pinned version's model is the model that runs, unless a playground
+    # selection or the caller (keep_model) chose one.
+    pinned_model, crosses_model = _pinned_model_choice(
+        eval_template,
+        version_model,
+        model=model,
+        model_override=model_override,
+        keep_model=keep_model,
+        binding_model=binding_model,
+    )
     if jev_selection:
         model = effective_model
+    elif pinned_model:
+        model = pinned_model
     elif model is _DEFAULT_MODEL:
         model = "turing_large"
 
-    # Prepare config based on eval type
+    # Prepare config based on eval type. When the pinned version's model
+    # replaces another one, its provider and key are found for that model
+    # (not taken from the live template), or the evaluator is refused.
     config, criteria = prepare_eval_config(
         eval_template=eval_template,
         config=config,
@@ -732,10 +1328,31 @@ def create_eval_instance(
         workspace_id=workspace_id,
         kb_id=kb_id,
         is_futureagi=is_futureagi,
+        model_override=pinned_model if crosses_model else model_override,
+        missing_key_message=(
+            PINNED_VERSION_MODEL_KEY_MESSAGE if crosses_model else None
+        ),
+    )
+    # The model and settings an LLM-as-a-judge config was prepared with.
+    prepared_judge_settings = (
+        _judge_settings(config)
+        if isinstance(config, dict)
+        and eval_template.config.get("eval_type_id", "") == "CustomPromptEvaluator"
+        else None
     )
 
-    # Apply version overrides
-    config, criteria = apply_version_overrides(config, resolved_version, criteria)
+    # Apply version overrides. The model was chosen above, before provider
+    # and key were prepared, so the version does not change it here.
+    config, criteria = apply_version_overrides(
+        config,
+        resolved_version,
+        criteria,
+        saved_choices=saved_choices,
+        preserve_model=True,
+    )
+    # A version saved from the editor names no prompt turn; the prompt it
+    # saved runs ahead of the binding's copy and the live template.
+    config = apply_pinned_version_prompt(config, resolved_version, eval_template)
     if jev_selection:
         config["model"] = effective_model
 
@@ -766,14 +1383,37 @@ def create_eval_instance(
     # a binding when the template default is True).
     eval_type_id_for_overrides = eval_template.config.get("eval_type_id", "")
     _allowed = _RUNTIME_ALLOWED_KEYS.get(eval_type_id_for_overrides)
-    if _allowed and runtime_config:
-        _overrides = (runtime_config or {}).get("run_config") or {}
-        for key, value in _overrides.items():
-            if key in _allowed and value is not None:
-                config[key] = value
+    if _allowed and isinstance(runtime_config, dict):
+        _overrides = runtime_config.get("run_config")
+        if isinstance(_overrides, dict):
+            for key, value in _overrides.items():
+                # A playground selection or an explicitly pinned version's
+                # model is the model that runs; the binding's does not
+                # replace it.
+                if key == "model" and (
+                    model_override or (pinned_model and version_number is not None)
+                ):
+                    continue
+                # The shared resolver overlays scores on the selected base below;
+                # replacing the base here would lose its unspecified labels.
+                if key in _allowed and key != "choice_scores" and value is not None:
+                    config[key] = value
+    # Version selection happened first. Pass/fail and stored scores now apply
+    # the same partial overlay, including an explicitly empty/None saved map.
+    if _allowed and "choice_scores" in _allowed and "choice_scores" in config:
+        config["choice_scores"] = resolve_choice_scores(
+            eval_template, runtime_config, base_scores=config["choice_scores"]
+        )
+
+    # After the binding's own summary override, before anything is billed.
+    if eval_type_id_for_overrides == "AgentEvaluator" and "summary" in config:
+        config["summary"] = resolve_summary_config(
+            config["summary"], organization_id, strict=strict_summary
+        )
 
     # Handle function eval params normalization — but NOT CustomCodeEval
-    # which already got its config ({"code": ...}) from prepare_eval_config.
+    # which already got its config ({"code": ..., "stored_language": ...})
+    # from prepare_eval_config.
     # Overwriting it with function_params_schema defaults would lose the code
     # and pass unexpected kwargs to the constructor.
     eval_type_id_check = eval_template.config.get("eval_type_id", "")
@@ -788,7 +1428,13 @@ def create_eval_instance(
         and not has_function_params_schema(eval_template.config)
         and eval_type_id_check != "CustomCodeEval"
     ):
-        config = eval_template.config.get("config")
+        # A copy, so the template's own settings are left as they are.
+        template_settings = eval_template.config.get("config")
+        config = (
+            dict(template_settings)
+            if isinstance(template_settings, dict)
+            else template_settings
+        )
 
     # Add knowledge base if provided
     if kb_id and config:
@@ -809,6 +1455,60 @@ def create_eval_instance(
             )
     elif config:
         config.pop("template_format", None)
+
+    # Their params arrive as run kwargs and their constructors take none, so
+    # nothing a binding stores here (the legacy configure form keeps
+    # similarity_threshold and match_all in its "config") may reach them.
+    # A binding pinned to a system version seeded before SYSTEM_EVALS_VERSION
+    # 29 resolves CustomCodeEval from that version's snapshot: its code scored
+    # the same but cannot reach serving, so the backend function runs instead.
+    if eval_type_id in SERVING_EMBEDDING_EVAL_TYPES:
+        if getattr(eval_template, "owner", None) == "system":
+            from evaluations.engine.registry import get_eval_class
+
+            eval_class = get_eval_class(eval_type_id)
+        return eval_class(), criteria
+
+    # Code that calls model serving (a user's copy of a built-in embedding
+    # eval) can never reach it from the code sandbox. Every surface builds its
+    # evaluator here before it preprocesses the inputs, so the refusal comes
+    # before the name-keyed serving preflight: a copy that kept the built-in's
+    # name would otherwise report serving as down. custom_code_eval refuses
+    # the same code too, for callers that build CustomCodeEval elsewhere.
+    if eval_type_id == "CustomCodeEval" and isinstance(config, dict):
+        from agentic_eval.core_evals.fi_evals.function.internal_service_code import (
+            refuse_internal_service_code,
+        )
+
+        refuse_internal_service_code(config.get("code"))
+
+        from agentic_eval.core_evals.fi_utils.custom_code_pause import (
+            refuse_paused_template_code,
+        )
+
+        # A paused deployment refuses code that is not this built-in template's
+        # own here, before the run is charged or any input is prepared.
+        refuse_paused_template_code(eval_template, config.get("code"))
+
+    # The LLM-as-a-judge evaluator is built only with the settings found for
+    # its own model, whatever the template's current type (a binding's
+    # pinned version can name this evaluator for a template that now runs as
+    # an agent evaluator), and only with a model set.
+    if isinstance(config, dict) and config and builds_llm_judge(eval_class):
+        config = _settle_judge_model(
+            config,
+            eval_template,
+            prepared_judge_settings,
+            organization_id,
+            workspace_id,
+        )
+
+    # One key: a managed judge is bound to the model it will run (the
+    # version overrides above may have changed config["model"]). Nothing
+    # is admitted here.
+    if isinstance(config, dict) and config.get("model_route") is not None:
+        config = _rebind_judge_route(config)
+        _require_single_meter_judge(config, managed_judge_billing)
 
     # Instantiate
     if not config and not is_futureagi:

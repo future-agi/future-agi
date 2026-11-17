@@ -243,7 +243,7 @@ test('DASH-E2E-002: a saved trace-metric widget preserves its project, cohort an
               filter_type: 'text', filter_op: 'in', filter_value: ['alpha'], col_type: 'SPAN_ATTRIBUTE', attribute_value_types: ['string'],
             } });
         } else if (stage === 'model') {
-          await page.locator('.breakdown-section-title').click();
+          await page.getByRole('button', { name: 'Add breakdown', exact: true }).click();
           await page.getByPlaceholder('Search breakdown attributes...').fill('Model');
           await page.getByRole('button', { name: 'Model (string, Traces)', exact: true }).click();
           expectedConfig.breakdowns = breakdowns;

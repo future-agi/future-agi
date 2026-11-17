@@ -73,6 +73,7 @@ import DateRangePill, {
 } from "src/sections/projects/LLMTracing/DateRangePill";
 import { JsonValueTree } from "./DatasetTestMode";
 import EvalResultDisplay from "./EvalResultDisplay";
+import DecisionCallPanel from "src/sections/common/DecisionJudges/DecisionCallPanel";
 import SpanRowList from "./SpanRowList";
 import useErrorLocalizerPoll from "../hooks/useErrorLocalizerPoll";
 import {
@@ -86,6 +87,7 @@ import {
   sortSpansForMapping,
 } from "../utils/rowPathWalker";
 import { buildCompositeRuntimeConfig } from "../Helpers/compositeRuntimeConfig";
+import { unsavedDefinitionConfig } from "../utils/unsavedDefinition";
 import { useExecuteCompositeEvalAdhoc } from "../hooks/useCompositeEval";
 import {
   getAttributeLookupMessage,
@@ -505,6 +507,9 @@ const TracingTestMode = React.forwardRef(
     {
       templateId,
       model = "turing_large",
+      // W1: a decision judge's question and the eval's prompt as edited
+      // ({decision, rule_prompt, threshold}); sent with the Test.
+      decisionTest = null,
       variables = [],
       codeParams = {},
       runConfig,
@@ -528,6 +533,8 @@ const TracingTestMode = React.forwardRef(
       errorLocalizerEnabled = false,
       isComposite = false,
       compositeAdhocConfig = null,
+      // The eval editor's unsaved definition: Test runs it and saves nothing.
+      unsavedDefinition = null,
       // Optional ad-hoc filters merged into the row-list `filters` param.
       localFilters = [],
       // When true, TracingTestMode owns the filter state internally and
@@ -741,6 +748,8 @@ const TracingTestMode = React.forwardRef(
     // Eval result
     const [isRunning, setIsRunning] = useState(false);
     const [result, setResult] = useState(null);
+    // W1: the decision call behind the last Test (or the refusal).
+    const [decisionCall, setDecisionCall] = useState(null);
     const [error, setError] = useState(null);
     // Async error localization poll — see DatasetTestMode for rationale.
     const { state: errorLocalizerState, start: startErrorLocalizerPoll } =
@@ -1748,6 +1757,7 @@ const TracingTestMode = React.forwardRef(
       }
       setIsRunning(true);
       setResult(null);
+      setDecisionCall(null);
       setError(null);
 
       if (!variables.length) {
@@ -1768,15 +1778,32 @@ const TracingTestMode = React.forwardRef(
       }
 
       try {
-        // Resolve each mapped variable against the previewed row via the
-        // shared per-path walker — the same resolution the dropdown offers,
-        // with rowFields as the fallback for annotation columns.
-        const scopedMapping = {};
+        // Session conversations and trace/span paths must use the server, not
+        // partial previews. Non-task hosts also expose preview-only session
+        // aggregates (e.g. total_cost) outside _resolve_session_path's grammar.
+        const resolveSessionOnServer = rowType === "Session" && !isComposite;
+        const serverMapping = {};
+        const previewMapping = {};
         for (const variable of variables) {
-          if (mapping[variable]) scopedMapping[variable] = mapping[variable];
+          const path = mapping[variable];
+          if (!path) continue;
+          if (
+            resolveSessionOnServer &&
+            (taskMapping ||
+              ["name", "bookmarked", "traces"].includes(path.split(".")[0]) ||
+              [
+                "transcript",
+                "transcript_full",
+                "conversation_complete",
+              ].includes(path))
+          ) {
+            serverMapping[variable] = path;
+          } else {
+            previewMapping[variable] = path;
+          }
         }
         const evalMapping = resolveMappingFromRow(
-          scopedMapping,
+          previewMapping,
           spanDetail,
           rowFields,
         );
@@ -1819,14 +1846,22 @@ const TracingTestMode = React.forwardRef(
               )
           : await axios.post(endpoints.develop.eval.evalPlayground, {
               template_id: tid,
+              ...(Object.keys(serverMapping).length
+                ? { mapping_paths: serverMapping }
+                : {}),
               ...(model ? { model } : {}),
               error_localizer: errorLocalizerEnabled,
               config: {
                 ...(runConfig ? { run_config: runConfig } : {}),
-                mapping: evalMapping,
+                ...(!resolveSessionOnServer ||
+                Object.keys(previewMapping).length
+                  ? { mapping: evalMapping }
+                  : {}),
                 ...(Object.keys(codeParams || {}).length > 0
                   ? { params: codeParams }
                   : {}),
+                ...(decisionTest && !isComposite ? decisionTest : {}),
+                ...unsavedDefinitionConfig(unsavedDefinition),
               },
               ...autoCtx,
             });
@@ -1843,6 +1878,7 @@ const TracingTestMode = React.forwardRef(
                 compositeResult: data.result,
               }
             : data.result;
+          setDecisionCall(data.result?.metadata?.decision ?? null);
           setResult(nextResult);
           onTestResult?.(true, nextResult);
           if (!isComposite && errorLocalizerEnabled && data.result?.log_id) {
@@ -1861,6 +1897,8 @@ const TracingTestMode = React.forwardRef(
           err,
           "Failed to run evaluation. Please retry.",
         );
+        // W1: the gateway's refusal of a decision call (status, code).
+        setDecisionCall(err?.response?.data?.decision ?? null);
         setError(errMsg);
         onTestResult?.(false, errMsg);
       } finally {
@@ -1874,14 +1912,17 @@ const TracingTestMode = React.forwardRef(
       rowFields,
       currentRow,
       rowType,
+      taskMapping,
       onTestResult,
       errorLocalizerEnabled,
       isComposite,
       compositeAdhocConfig,
+      unsavedDefinition,
       startErrorLocalizerPoll,
       codeParams,
       runConfig,
       model,
+      decisionTest,
     ]);
 
     useImperativeHandle(
@@ -2128,6 +2169,7 @@ const TracingTestMode = React.forwardRef(
                   onClick={() => {
                     setCurrentRowIndex((i) => Math.max(0, i - 1));
                     setResult(null);
+                    setDecisionCall(null);
                     setError(null);
                     onClearResult?.();
                   }}
@@ -2143,6 +2185,7 @@ const TracingTestMode = React.forwardRef(
                       Math.min((rows?.length ?? 0) - 1, i + 1),
                     );
                     setResult(null);
+                    setDecisionCall(null);
                     setError(null);
                     onClearResult?.();
                   }}
@@ -2648,6 +2691,13 @@ const TracingTestMode = React.forwardRef(
           />
         )}
 
+        {/* W1: a decision judge's own call (or the gateway's refusal) */}
+        {decisionCall && !isRunning && (
+          <Box sx={{ mt: 1 }}>
+            <DecisionCallPanel decision={decisionCall} />
+          </Box>
+        )}
+
         {error && (
           <Box
             sx={{
@@ -2672,6 +2722,7 @@ TracingTestMode.displayName = "TracingTestMode";
 
 TracingTestMode.propTypes = {
   templateId: PropTypes.string,
+  decisionTest: PropTypes.object,
   variables: PropTypes.array,
   codeParams: PropTypes.object,
   runConfig: PropTypes.object,
@@ -2686,6 +2737,7 @@ TracingTestMode.propTypes = {
   initialMapping: PropTypes.object,
   isComposite: PropTypes.bool,
   compositeAdhocConfig: PropTypes.object,
+  unsavedDefinition: PropTypes.object,
   localFilters: PropTypes.array,
   allowCustomFieldPath: PropTypes.bool,
   taskMapping: PropTypes.bool,

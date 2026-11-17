@@ -414,6 +414,29 @@ def distinct_sessions(project_id: str, trace_ids: Iterable[str]) -> list[str]:
     return [r[0] for r in rows if r[0]]
 
 
+def span_ids_in_traces(project_id: str, trace_ids: Iterable[str]) -> list[str]:
+    """Distinct ids of the spans ``project_id`` holds on ``trace_ids``, in one read.
+
+    Two projects can hold one trace id; only the given project's spans are
+    read, and without a project or trace ids nothing is. Unlike the reads
+    above, a ClickHouse error is raised rather than read as no rows, so the
+    caller can tell an outage from traces with no span in the project.
+    """
+    ids = _ids_list(trace_ids)
+    if not project_id or not ids:
+        return []
+    query = """
+        SELECT DISTINCT toString(id) AS span_id
+        FROM spans
+        WHERE project_id = %(pid)s AND is_deleted = 0
+          AND toString(trace_id) IN %(tids)s
+    """
+    result = _analytics.execute_ch_query(
+        query, {"pid": str(project_id), "tids": ids}, timeout_ms=_READ_TIMEOUT_MS
+    )
+    return [str(row["span_id"]) for row in result.data if row["span_id"]]
+
+
 def traces_in_session(project_id: str, session_id: str) -> dict[str, dict[str, Any]]:
     """Per-trace root info for all traces in one session (chronological via
     first_start). Powers read(session). Returns {trace_id: root-info}."""

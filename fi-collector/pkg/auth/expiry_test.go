@@ -169,11 +169,22 @@ func TestAuthenticateLookupStillRejectsUnknownKey(t *testing.T) {
 	}
 }
 
+// fakeRevalidatingKeys also answers the cached PRIMARY recheck, which replaced
+// the background warm refresh: a cached entry is never served stale.
+type fakeRevalidatingKeys struct{ fakeKeyValidator }
+
+func (f *fakeRevalidatingKeys) RevalidateCached(context.Context, string, string, *ResolveResult) (bool, error) {
+	f.calls++
+	return f.result != nil, f.err
+}
+
 func TestRefreshKeyEvictsKeyThatExpired(t *testing.T) {
 	a := newExpiryTestAuthenticator("k", "s", nil)
-	a.keys = &fakeKeyValidator{err: ErrKeyExpired}
+	a.keys = &fakeRevalidatingKeys{fakeKeyValidator{err: ErrKeyExpired}}
 
-	a.refreshKey(context.Background(), "k", "s")
+	if _, err := a.Authenticate(context.Background(), "k", "s"); !errors.Is(err, ErrKeyExpired) {
+		t.Fatalf("err = %v, want ErrKeyExpired", err)
+	}
 
 	if _, ok := a.cache.m.Load(CacheKey("k", "s")); ok {
 		t.Error("a key that expired since it was cached must be evicted on refresh")

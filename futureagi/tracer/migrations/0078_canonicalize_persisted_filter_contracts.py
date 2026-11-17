@@ -4,6 +4,41 @@ from django.db import migrations
 
 logger = logging.getLogger(__name__)
 
+UPDATE_SAFETY = {
+    "schema_version": 1,
+    "risk_classes": ["data_migration"],
+    "tables": [
+        "postgres:tracer_custom_eval_config",
+        "postgres:tracer_dashboardwidget",
+        "postgres:tracer_eval_task",
+        "postgres:tracer_saved_view",
+        "postgres:tracer_useralertmonitor",
+    ],
+    "mitigation": (
+        "Canonicalizes persisted filter JSON to snake_case keys and canonical "
+        "filter_op names in tracer_saved_view.config (including a legacy filters "
+        "object), tracer_eval_task.filters, tracer_useralertmonitor.filters, "
+        "tracer_custom_eval_config.filters and tracer_dashboardwidget.query_config "
+        "(its filters and each metric's filters). Reads every row of each table with "
+        "iterator(chunk_size=500) and saves only a row it changed, with "
+        "save(update_fields=[that field]); a row that raises is logged and left "
+        "unchanged. The migration is atomic: every saved row stays locked until the "
+        "step commits, and a failed run rolls back as a whole. Row scale: one row per "
+        "saved view, eval task, alert monitor, custom eval config and dashboard "
+        "widget, soft-deleted rows included; tracer_eval_task is a registered "
+        "high-volume table, the other four are not. Second run: not a pure no-op. A "
+        "filter item that had both colType and col_type at its root keeps the root "
+        "col_type key after the first run; a second run removes that leftover key and "
+        "saves the row again, leaving filter_config and column_id as they are, and a "
+        "third run changes nothing. Every other rewrite is already canonical after "
+        "the first run. A re-run would also canonicalize filters written since. No "
+        "schema change; the reverse is a no-op."
+    ),
+    "reviewer": "<actual-github-login>",
+    "review": "<actual-PR-review-discussion-permalink>",
+    "large_volume_rehearsal": True,
+}
+
 
 FILTER_ITEM_KEY_ALIASES = {
     "columnId": "column_id",
@@ -264,16 +299,16 @@ def _canonicalize_dashboard_query_config(query_config):
     return next_config, changed
 
 
-def _migrate_json_field(apps, model_name, field_name, canonicalizer, stats):
+def _migrate_json_field(apps, model_name, field_name, canonicalizer, stats, alias):
     Model = apps.get_model("tracer", model_name)
-    for obj in Model.objects.iterator(chunk_size=500):
+    for obj in Model.objects.using(alias).iterator(chunk_size=500):
         try:
             current_value = getattr(obj, field_name)
             next_value, changed = canonicalizer(current_value)
             if not changed:
                 continue
             setattr(obj, field_name, next_value)
-            obj.save(update_fields=[field_name])
+            obj.save(using=alias, update_fields=[field_name])
             stats["updated"] += 1
         except Exception as exc:  # pragma: no cover - defensive migration logging
             stats["failed"] += 1
@@ -286,19 +321,20 @@ def _migrate_json_field(apps, model_name, field_name, canonicalizer, stats):
 
 
 def forwards(apps, schema_editor):
+    alias = schema_editor.connection.alias
     stats = {"updated": 0, "failed": 0}
 
     _migrate_json_field(
-        apps, "SavedView", "config", _canonicalize_saved_view_config, stats
+        apps, "SavedView", "config", _canonicalize_saved_view_config, stats, alias
     )
     _migrate_json_field(
-        apps, "EvalTask", "filters", _canonicalize_filter_wrapper, stats
+        apps, "EvalTask", "filters", _canonicalize_filter_wrapper, stats, alias
     )
     _migrate_json_field(
-        apps, "UserAlertMonitor", "filters", _canonicalize_filter_wrapper, stats
+        apps, "UserAlertMonitor", "filters", _canonicalize_filter_wrapper, stats, alias
     )
     _migrate_json_field(
-        apps, "CustomEvalConfig", "filters", _canonicalize_filter_wrapper, stats
+        apps, "CustomEvalConfig", "filters", _canonicalize_filter_wrapper, stats, alias
     )
     _migrate_json_field(
         apps,
@@ -306,6 +342,7 @@ def forwards(apps, schema_editor):
         "query_config",
         _canonicalize_dashboard_query_config,
         stats,
+        alias,
     )
 
     print(

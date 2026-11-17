@@ -1,0 +1,38 @@
+# CN30a's static-key provider, restricted to the one E2E mock (no host variable).
+schema: "connector-manifest/v1#provider"
+app: e2e-echo
+id: key
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.e2e-public.test:8443/mcp
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: API key
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://mcp.e2e-public.test:8443/mcp
+    fetchedAt: 2026-10-24
+  - fact: auth.kind
+    url: https://mcp.e2e-public.test:8443/mcp
+    fetchedAt: 2026-10-24
+  - fact: auth.credentialParts
+    url: https://mcp.e2e-public.test:8443/mcp
+    fetchedAt: 2026-10-24
+x-omega: { oss: exclude }

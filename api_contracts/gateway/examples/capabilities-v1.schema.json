@@ -1,0 +1,175 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://futureagi.com/contracts/gateway/examples/capabilities-v1.schema.json",
+  "title": "capabilities-v1",
+  "description": "GET /-/capabilities and GET /v1/capabilities. endpoint is a dotted capability id, status is supported|provider_dependent|unsupported and source is interface|config|catalog|qualified. qualified comes only from an imported live qualification run; mock runs never set it, and no evidence is qualified false with qualified_at null. managed_resale_terms is optional and admin-only: /-/capabilities shows it (unconfirmed until the provider's resale_terms_ref is set; native for a FutureAGI-owned service with no vendor gate; byok_only when the vendor's terms allow no managed resale; it never blocks traffic) and /v1/capabilities omits it. price is optional and shown on both: it is the published managed price, markup included. launch_tier is computed per response: unsupported when no provider in the caller's view serves the endpoint.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["generated_at", "endpoints"],
+  "properties": {
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "endpoints": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["endpoint", "launch_tier", "providers"],
+        "properties": {
+          "endpoint": {
+            "type": "string",
+            "enum": [
+              "chat.completions",
+              "responses",
+              "messages",
+              "embeddings",
+              "models",
+              "completions",
+              "images",
+              "audio.speech",
+              "audio.transcriptions",
+              "rerank",
+              "ocr",
+              "search",
+              "genai-native",
+              "batch",
+              "assistants",
+              "threads",
+              "vector_stores",
+              "files",
+              "videos",
+              "realtime",
+              "scheduled",
+              "async",
+              "fetch",
+              "documents.parse",
+              "guardrails",
+              "evals",
+              "browser.sessions"
+            ]
+          },
+          "launch_tier": {
+            "type": "string",
+            "enum": ["launch", "provider_dependent", "beta", "unsupported"]
+          },
+          "providers": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/$defs/ProviderCapability"
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "ProviderCapability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "credential_type",
+        "features",
+        "managed_allowed",
+        "source",
+        "qualified",
+        "qualified_at"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["supported", "provider_dependent", "unsupported"]
+        },
+        "credential_type": {
+          "type": "string"
+        },
+        "features": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "stream",
+            "tools",
+            "json_schema",
+            "vision",
+            "audio_input",
+            "reasoning",
+            "prompt_caching"
+          ],
+          "properties": {
+            "stream": {
+              "type": "boolean"
+            },
+            "tools": {
+              "type": "boolean"
+            },
+            "json_schema": {
+              "type": "boolean"
+            },
+            "vision": {
+              "type": "boolean"
+            },
+            "audio_input": {
+              "type": "boolean"
+            },
+            "reasoning": {
+              "type": "boolean"
+            },
+            "prompt_caching": {
+              "type": "boolean"
+            }
+          }
+        },
+        "managed_allowed": {
+          "type": "boolean"
+        },
+        "managed_resale_terms": {
+          "type": "string",
+          "enum": ["cleared", "unconfirmed", "native", "byok_only"]
+        },
+        "price": {
+          "$ref": "#/$defs/CapabilityPrice"
+        },
+        "source": {
+          "type": "string",
+          "enum": ["interface", "config", "catalog", "qualified"]
+        },
+        "qualified": {
+          "type": "boolean"
+        },
+        "qualified_at": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "CapabilityPrice": {
+      "type": "object",
+      "description": "The published managed price of one billed unit of this capability on this provider: usd_per_unit_billed includes the markup, markup_percent is the markup it includes, and sku names the unit. Shown on /-/capabilities and /v1/capabilities alike.",
+      "additionalProperties": false,
+      "required": ["sku", "usd_per_unit_billed", "markup_percent"],
+      "properties": {
+        "sku": {
+          "type": "string",
+          "minLength": 1
+        },
+        "usd_per_unit_billed": {
+          "type": "number",
+          "minimum": 0
+        },
+        "markup_percent": {
+          "type": "number",
+          "minimum": 0
+        }
+      }
+    }
+  }
+}

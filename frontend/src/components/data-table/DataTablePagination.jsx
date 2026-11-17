@@ -48,13 +48,14 @@ export default function DataTablePagination({
     <Box
       sx={{
         display: "flex",
+        flexWrap: "wrap",
         justifyContent: "flex-end",
         alignItems: "center",
         gap: 2,
         minHeight: 44,
         py: 1,
         px: 2,
-        fontSize: 12,
+        typography: "body_sm",
         color: "text.secondary",
         flexShrink: 0,
         borderTop: "1px solid",
@@ -80,18 +81,22 @@ export default function DataTablePagination({
         Rows per page:
         <Box
           component="select"
-          aria-label="Rows per page"
           value={pageSize}
           disabled={disabled}
+          aria-label="Rows per page"
           onChange={(e) => onPageSizeChange?.(parseInt(e.target.value, 10))}
           sx={{
             ml: 1,
             border: "none",
             background: "transparent",
             color: "text.primary",
-            fontSize: 12,
+            typography: "body_sm",
             cursor: "pointer",
-            outline: "none",
+            "&:focus-visible": {
+              outline: (theme) =>
+                `2px solid ${theme.palette.border?.focus || theme.palette.primary.main}`,
+              outlineOffset: 2,
+            },
           }}
         >
           {pageSizeOptions.map((n) => (
@@ -108,17 +113,17 @@ export default function DataTablePagination({
 
       <IconButton
         size="small"
-        aria-label="Previous page"
         disabled={disabled || isFirstPage}
         onClick={() => onPageChange?.(page - 1)}
+        aria-label="Previous page"
       >
         <Iconify icon="solar:alt-arrow-left-linear" width={20} />
       </IconButton>
       <IconButton
         size="small"
-        aria-label="Next page"
         disabled={disabled || isLastPage}
         onClick={() => onPageChange?.(page + 1)}
+        aria-label="Next page"
       >
         <Iconify icon="solar:alt-arrow-right-linear" width={20} />
       </IconButton>

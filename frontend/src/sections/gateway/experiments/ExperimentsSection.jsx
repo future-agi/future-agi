@@ -31,6 +31,8 @@ import {
 } from "./hooks/useExperiments";
 import CreateExperimentDialog from "./CreateExperimentDialog";
 import ExperimentDetailSection from "./ExperimentDetailSection";
+import GatewayAdminOnly from "../components/GatewayAdminOnly";
+import { useGatewayAdmin } from "../hooks/useGatewayAdmin";
 import EmptyState from "src/components/empty-state";
 
 const STATUS_FILTERS = [
@@ -78,6 +80,8 @@ const ExperimentsListView = ({ gatewayId }) => {
   const pauseMutation = usePauseExperiment();
   const resumeMutation = useResumeExperiment();
   const deleteMutation = useDeleteExperiment();
+  // Every shadow-experiment write is Owner or Admin only (useGatewayAdmin).
+  const { canEdit, disabledReason } = useGatewayAdmin();
 
   const filtered = useMemo(() => {
     if (!experiments) return [];
@@ -184,6 +188,8 @@ const ExperimentsListView = ({ gatewayId }) => {
                   size: "small",
                   icon: "solar:add-linear",
                   onClick: () => setCreateOpen(true),
+                  disabled: !canEdit,
+                  tooltip: disabledReason || undefined,
                 },
               ]),
         ]}
@@ -237,14 +243,17 @@ const ExperimentsListView = ({ gatewayId }) => {
           }
           action={
             experiments?.length === 0 ? (
-              <Button
-                variant="contained"
-                color="primary"
-                size="small"
-                onClick={() => setCreateOpen(true)}
-              >
-                Create experiment
-              </Button>
+              <GatewayAdminOnly allowed={canEdit}>
+                <Button
+                  variant="contained"
+                  color="primary"
+                  size="small"
+                  onClick={() => setCreateOpen(true)}
+                  disabled={!canEdit}
+                >
+                  Create experiment
+                </Button>
+              </GatewayAdminOnly>
             ) : undefined
           }
           sx={{ pt: 6, pb: 6 }}
@@ -261,6 +270,7 @@ const ExperimentsListView = ({ gatewayId }) => {
               onPause={handlePause}
               onResume={handleResume}
               onDelete={handleDelete}
+              canEdit={canEdit}
             />
           ))}
           <Typography variant="body2" color="text.secondary" mt={1}>
@@ -288,6 +298,7 @@ const ExperimentCard = ({
   onPause,
   onResume,
   onDelete,
+  canEdit,
 }) => {
   const exp = experiment;
   const latencyDelta = exp.latencyDeltaPct ?? exp.latency_delta_pct;
@@ -337,32 +348,41 @@ const ExperimentCard = ({
         onClick={(e) => e.stopPropagation()}
       >
         {exp.status === "active" && (
-          <Button
-            size="small"
-            variant="outlined"
-            onClick={(e) => onPause(e, exp.id)}
-          >
-            Pause
-          </Button>
+          <GatewayAdminOnly allowed={canEdit}>
+            <Button
+              size="small"
+              variant="outlined"
+              onClick={(e) => onPause(e, exp.id)}
+              disabled={!canEdit}
+            >
+              Pause
+            </Button>
+          </GatewayAdminOnly>
         )}
         {exp.status === "paused" && (
-          <Button
-            size="small"
-            variant="outlined"
-            onClick={(e) => onResume(e, exp.id)}
-          >
-            Resume
-          </Button>
+          <GatewayAdminOnly allowed={canEdit}>
+            <Button
+              size="small"
+              variant="outlined"
+              onClick={(e) => onResume(e, exp.id)}
+              disabled={!canEdit}
+            >
+              Resume
+            </Button>
+          </GatewayAdminOnly>
         )}
         {exp.status === "completed" && (
-          <Button
-            size="small"
-            variant="outlined"
-            color="error"
-            onClick={(e) => onDelete(e, exp.id)}
-          >
-            Delete
-          </Button>
+          <GatewayAdminOnly allowed={canEdit}>
+            <Button
+              size="small"
+              variant="outlined"
+              color="error"
+              onClick={(e) => onDelete(e, exp.id)}
+              disabled={!canEdit}
+            >
+              Delete
+            </Button>
+          </GatewayAdminOnly>
         )}
         <Button size="small" variant="text">
           View Details

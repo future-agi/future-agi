@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: circleci
+version: 1.0.0
+name: CircleCI
+description: "Inspect pipeline status, debug failed builds and flaky tests, and run or rerun workflows."
+vendor:
+  name: CircleCI
+  domains: [circleci.com]
+eeCategory: developer
+group: other
+categories: [developer]
+tags: [ci, deployments, logs]
+docsUrl: https://circleci.com/docs/guides/toolkit/connecting-to-the-circleci-mcp-server/
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://circleci.com/docs/guides/toolkit/connecting-to-the-circleci-mcp-server/
+    fetchedAt: 2026-11-09

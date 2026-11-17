@@ -389,6 +389,20 @@ def _check_table(
     source_owned=False,
 ):
     expected, expected_indexes, clauses = _table(ddl)
+    # A PeerDB-owned landing table may lack a PG column outside the app's own
+    # landing contract: PeerDB is expected to add a column the source gained
+    # after the table was created when it replicates the table's next change
+    # (existing rows are not backfilled). The app reads only contract columns;
+    # those and PeerDB's own columns stay required. A present column is
+    # compared as before.
+    outside_contract = set()
+    if source_owned and name in LANDING:
+        contract = _table(LANDING[name])[0]
+        outside_contract = {
+            column
+            for column in expected
+            if column not in contract and not column.startswith("_peerdb_")
+        }
     if name == "spans":
         expected.update(
             {key: _column(_tokens(value)) for key, value in _SPAN_COLUMNS.items()}
@@ -401,6 +415,17 @@ def _check_table(
                 if key in columns
             }
         )
+    if (
+        name == "simulate_agent_definition"
+        and not native
+        and "api_key" in columns
+        and "api_key" not in expected
+    ):
+        # simulate.0102 removes this PG column after 0101 clears its values.
+        # Older landing CREATEs may retain it: validate the exact old shape,
+        # but never add, drop or change it. A live source-owned field, when
+        # present in expected, keeps its independently inspected PG type.
+        expected["api_key"] = _column(_tokens("Nullable(String)"))
     actual = {key: (_tokens(t), k, _tokens(e)) for key, (t, k, e) in columns.items()}
     missing = set(expected) - set(actual)
     eligible = (
@@ -408,9 +433,10 @@ def _check_table(
         if allow_additions
         else set()
     )
-    if missing - eligible or set(actual) - set(expected):
+    required_missing = missing - eligible - outside_contract
+    if required_missing or set(actual) - set(expected):
         raise BootstrapError(
-            f"{name}: missing/unexpected columns {sorted(missing - eligible | (set(actual) - set(expected)))}"
+            f"{name}: missing/unexpected columns {sorted(required_missing | (set(actual) - set(expected)))}"
         )
     for key in expected.keys() & actual.keys():
         if expected[key] != actual[key]:

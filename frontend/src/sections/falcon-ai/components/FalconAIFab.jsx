@@ -1,55 +1,88 @@
-import React, { useCallback, useEffect } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import React, { useEffect, useId } from "react";
+import PropTypes from "prop-types";
 import Fab from "@mui/material/Fab";
 import CustomTooltip from "src/components/tooltip";
+import { MOD_KEY_LABEL } from "src/utils/keymap";
 import FalconIcon from "src/components/falcon-icon";
+import useFalconLauncher from "../hooks/useFalconLauncher";
+import { registerAssistantLauncher } from "src/sections/common/CommandPalette/shortcutOwner";
+import { useShortcutStore } from "src/sections/common/ux/useShortcuts";
+import { usePathname } from "src/routes/hooks";
 import useFalconStore from "../store/useFalconStore";
-import { useFeatureAllowed } from "src/hooks/useCapabilities";
+import useFabGutter, {
+  fabHiddenOnRoute,
+  useOverlayOpen,
+} from "src/sections/common/ux/useFabGutter";
 
-export default function FalconAIFab() {
-  const { pathname } = useLocation();
-  const navigate = useNavigate();
-  const { allowed: falconAllowed } = useFeatureAllowed("falcon_ai");
+// The Falcon AI button, drawn for everyone, and Cmd/Ctrl+K. Both open the
+// assistant where the deployment offers it, and the Falcon AI page with its
+// line where it does not (useFalconLauncher). While the capability is still
+// loading, or could not be read, the deployment is treated as not offering
+// it: the button still shows and opens the page. The launcher takes the key
+// on every page it is mounted on, before the command palette
+// (shortcutOwner.js); the palette opens from its own control there.
+// With the command palette open, the key closes the palette and brings the
+// assistant up in its place; a sidebar already open stays open.
+const SHORTCUT_HINT = `${MOD_KEY_LABEL}K`;
+
+export default function FalconAIFab({ docked = false }) {
+  const { openFalconAI, hidden } = useFalconLauncher();
+  const launcherId = useId();
   const isSidebarOpen = useFalconStore((s) => s.isSidebarOpen);
-  const toggleSidebar = useFalconStore((s) => s.toggleSidebar);
 
-  const openFalconAI = useCallback(() => {
-    if (!falconAllowed) {
-      // Full page shows the capability upsell for unlicensed deployments.
-      navigate("/dashboard/falcon-ai");
-      return;
-    }
-    toggleSidebar();
-  }, [falconAllowed, navigate, toggleSidebar]);
+  useEffect(() => registerAssistantLauncher(launcherId), [launcherId]);
 
-  // Global keyboard shortcut: Cmd+K (Mac) / Ctrl+K (Windows)
   useEffect(() => {
     const handleKeyDown = (e) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+      if (
+        (e.metaKey || e.ctrlKey) &&
+        !e.altKey &&
+        !e.shiftKey &&
+        String(e.key).toLowerCase() === "k"
+      ) {
         e.preventDefault();
         e.stopPropagation();
+        if (e.repeat) return;
+        const shortcuts = useShortcutStore.getState();
+        if (shortcuts.paletteOpen) {
+          shortcuts.setPaletteOpen(false);
+          if (!isSidebarOpen) openFalconAI();
+          return;
+        }
         openFalconAI();
       }
     };
 
     window.addEventListener("keydown", handleKeyDown, true);
     return () => window.removeEventListener("keydown", handleKeyDown, true);
-  }, [openFalconAI]);
+  }, [openFalconAI, isSidebarOpen]);
 
-  // Hide FAB on Falcon AI full-page view
-  if (pathname.startsWith("/dashboard/falcon-ai")) return null;
-
-  // Hide FAB when sidebar is open
-  if (isSidebarOpen) return null;
+  const pathname = usePathname();
+  const overlayOpen = useOverlayOpen();
+  const visible =
+    !hidden &&
+    !docked &&
+    !fabHiddenOnRoute(pathname) &&
+    !isSidebarOpen &&
+    !overlayOpen;
+  useFabGutter(visible);
+  if (!visible) return null;
 
   return (
-    <CustomTooltip title="Chat (⌘K)" show={true} placement="left" arrow>
+    <CustomTooltip
+      title={`Chat (${SHORTCUT_HINT})`}
+      show={true}
+      placement="left"
+      arrow
+    >
       <Fab
         onClick={openFalconAI}
+        aria-label="Open Falcon AI"
+        aria-keyshortcuts="Meta+K Control+K"
         size="medium"
         sx={{
           position: "fixed",
-          bottom: 72,
+          bottom: 16,
           right: 12,
           zIndex: 1200,
           bgcolor: "primary.main",
@@ -74,3 +107,7 @@ export default function FalconAIFab() {
     </CustomTooltip>
   );
 }
+
+FalconAIFab.propTypes = {
+  docked: PropTypes.bool,
+};

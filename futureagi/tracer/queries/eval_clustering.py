@@ -104,12 +104,16 @@ def _eval_result_score(entry: EvalLogger) -> float | None:
     if score is not None:
         return score
 
-    template = getattr(
-        getattr(entry, "custom_eval_config", None), "eval_template", None
-    )
+    custom_eval_config = getattr(entry, "custom_eval_config", None)
+    template = getattr(custom_eval_config, "eval_template", None)
     if template is None:
         return None
-    choice_scores = getattr(template, "choice_scores", None) or {}
+    from evaluations.engine.instance import resolve_choice_scores
+
+    choice_scores = (
+        resolve_choice_scores(template, getattr(custom_eval_config, "config", None))
+        or {}
+    )
 
     raw = entry.output_str
     if raw:
@@ -144,14 +148,17 @@ def _eval_result_score(entry: EvalLogger) -> float | None:
     return _mapped_choice_score(entry.output_str_list, choice_scores)
 
 
-def _eval_score_threshold(entry: EvalLogger) -> float:
-    template = getattr(
-        getattr(entry, "custom_eval_config", None), "eval_template", None
-    )
+def eval_pass_threshold(custom_eval_config) -> float:
+    """The score at or above which a result of this eval config passes."""
+    template = getattr(custom_eval_config, "eval_template", None)
     threshold = getattr(template, "pass_threshold", None)
     if isinstance(threshold, (int, float)) and not isinstance(threshold, bool):
         return threshold
     return 0.5
+
+
+def _eval_score_threshold(entry: EvalLogger) -> float:
+    return eval_pass_threshold(getattr(entry, "custom_eval_config", None))
 
 
 def is_clusterable_eval_failure(entry: EvalLogger) -> bool:
@@ -300,6 +307,7 @@ def get_unclustered_eval_results(
             "custom_eval_config_id",
             "custom_eval_config__name",
             "custom_eval_config__eval_template_id",
+            "custom_eval_config__config",
             "custom_eval_config__eval_template__choice_scores",
             "custom_eval_config__eval_template__pass_threshold",
         )

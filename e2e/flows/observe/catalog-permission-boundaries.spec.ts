@@ -141,13 +141,14 @@ test('OBS-E2E-009: catalog permissions follow explicit scope and membership remo
       await context.close(); context = undefined;
     }, { timeout: UI_READY });
 
-    // Public key mint is scoped by request context in the global post_save
-    // signal. Switching a JWT does NOT rebind the existing organization key.
+    // A personal key is workspace-scoped only when the mint names the workspace
+    // (omitted workspace_id stores an organization-wide key). Switching a JWT
+    // does NOT rebind the existing organization key.
     const originalKeys = await probe.pg('SELECT id, workspace_id, enabled, deleted FROM accounts_orgapikey WHERE organization_id = ANY($1) ORDER BY id::text',
       [[a1.organizationId, scopes.ownerB.organizationId]]);
     for (const owner of [a1, a2, scopes.ownerB]) {
       const minted = await scopes.send<{ result: { key_id: string; api_key: string; secret_key: string } }>(owner, 'POST', MINT,
-        { key_name: `${prefix}-${owner.workspaceId.slice(0, 8)}` });
+        { key_name: `${prefix}-${owner.workspaceId.slice(0, 8)}`, workspace_id: owner.workspaceId });
       expect(minted.status).toBe(200);
       const key = minted.body.result;
       keys.push({ actor: owner, id: key.key_id, enabled: true });
@@ -521,15 +522,35 @@ test('OBS-E2E-009: catalog permissions follow explicit scope and membership remo
           }
         }
       }
-      const deniedUser = page.waitForResponse(r => new URL(r.url()).pathname === '/accounts/user-info/', { timeout: UI_READY });
+      // The page-load bootstrap is deliberately unscoped: loadUser sends X-Workspace-Id null and
+      // keeps X-Organization-Id (useOrganizationUnavailableRecovery.js, 2619c057e1). user-info is
+      // @allows_no_organization (accounts/views/user.py:641), so its workspace selection is optional
+      // (authentication.py:304-307): a revoked selector is not refused there, it lands on the
+      // access-checked default (services/workspace_landing.py resolve_user_workspace), here A2.
+      // The refusal of the stale A1 selector is the scoped 403 loop above.
+      const bootstrapUser = page.waitForResponse(r => new URL(r.url()).pathname === '/accounts/user-info/', { timeout: UI_READY });
       await page.reload({ waitUntil: 'domcontentloaded' });
-      const response = await deniedUser;
-      await headers(response, scopes.member);
-      expect(response.status()).toBe(403);
-      // AuthProvider.initialize clears auth after explicit scoped user-info 403;
-      // no implicit-workspace fallback is being qualified or repaired here.
-      await expect(page).toHaveURL(/\/auth\/jwt\/login/, { timeout: UI_READY });
+      const response = await bootstrapUser;
+      const sent = await response.request().allHeaders();
+      expect(sent['x-organization-id']).toBe(scopes.member.organizationId);
+      expect(sent['x-workspace-id']).toBeUndefined();
+      expect(sent.authorization).toBe(`Bearer ${scopes.member.tokens.access}`);
+      expect(response.status()).toBe(200);
+      const landing = await response.json() as { default_workspace_id: string | null };
+      expect(landing.default_workspace_id).toBe(a2.workspaceId);
+      receipts.push({ ui: '/accounts/user-info/', status: response.status(), organizationId: sent['x-organization-id'],
+        workspaceHeader: null, landingWorkspaceId: landing.default_workspace_id });
+      // The same read carrying the revoked A1 selector also lands on A2 (selection optional), never A1.
+      const stale = await scopes.send<{ default_workspace_id: string | null }>(scopes.member, 'GET', '/accounts/user-info/');
+      receipts.push({ revoked: a1.workspaceId, path: '/accounts/user-info/', ...stale });
+      expect(stale.status).toBe(200);
+      expect(stale.body.default_workspace_id).toBe(a2.workspaceId);
+      // WorkspaceContext.jsx:195-243: the stored A1 selector differs from the landing, so it is
+      // re-verified and replaced (applyUserWorkspace) with A2; the tab stays signed in.
+      await expect.poll(() => page.evaluate(() => sessionStorage.getItem('workspaceId')), { timeout: UI_READY }).toBe(a2.workspaceId);
+      await expect(page).not.toHaveURL(/\/auth\/jwt\/login/);
       await expect(page.locator('[data-filter-property-option], [data-filter-value-option]')).toHaveCount(0, { timeout: UI_READY });
+      await expect(page.getByText(customKeys[0], { exact: false })).toHaveCount(0);
       for (const f of families(seeds[2])) {
         expect((await read<CatalogPage>(memberA2, METRICS, { ...f.metrics, page_size: 25 })).result.metrics.map(m => m.property_id).sort()).toEqual([...f.ids].sort());
         expect((await read<ValuePage>(memberA2, VALUES, { ...f.values, page_size: 25 })).result.values.map(v => v.value).sort()).toEqual(CHOICES);

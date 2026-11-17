@@ -58,6 +58,7 @@ export default function SplashScreen({ sx, ...other }) {
     <Box
       role="status"
       aria-live="polite"
+      aria-busy="true"
       aria-label="Loading"
       sx={{
         right: 0,
@@ -82,6 +83,9 @@ export default function SplashScreen({ sx, ...other }) {
       />
       <Typography variant="m1" fontWeight={600} color="text.primary">
         Future AGI
+      </Typography>
+      <Typography variant="body2" color="text.secondary">
+        Loading{"\u2026"}
       </Typography>
       <Box
         sx={{

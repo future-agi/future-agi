@@ -1,0 +1,19 @@
+# Fixture for the manifest validator tests, not catalog data. Facts are
+# illustrative; the catalog itself lives in agentcc-gateway/catalog/connectors.
+schema: "connector-manifest/v1#app"
+id: snowflake
+version: 1.0.0
+name: Snowflake
+description: Query governed data through a Snowflake MCP server object.
+vendor: { name: Snowflake, domains: [snowflake.com] }
+eeCategory: data
+group: other
+categories: [data-warehouse]
+docsUrl: https://docs.snowflake.com/en/user-guide/snowflake-cortex/cortex-agents-mcp
+defaultProvider: cortex-mcp
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://docs.snowflake.com/en/user-guide/snowflake-cortex/cortex-agents-mcp
+    fetchedAt: 2026-10-19
+x-omega: { ee: exclude, oss: exclude }

@@ -3,6 +3,7 @@ import re
 
 from rest_framework import serializers
 
+from evaluations.run_settings import run_settings
 from model_hub.models.choices import SourceChoices
 from model_hub.models.develop_dataset import Column, Dataset
 from model_hub.models.develop_optimisation import OptimizationDataset
@@ -30,6 +31,15 @@ def get_optimization_link_errors(dataset, column=None, user_eval_template_ids=No
         errors["user_eval_template_ids"] = [
             "Evaluation metrics must belong to the selected dataset."
         ]
+    elif user_eval_template_ids:
+        from model_hub.services.external_metrics import external_execution_refusal
+
+        # The metrics are already scoped to the request by the serializer.
+        refusal = external_execution_refusal(
+            [metric.id for metric in user_eval_template_ids]
+        )
+        if refusal:
+            errors["user_eval_template_ids"] = [refusal]
 
     return errors
 
@@ -244,6 +254,12 @@ class UserEvalMetricSerializer(serializers.ModelSerializer):
             "composite_weight_overrides",
             "error_localizer",
         ]
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        if "config" in data:
+            data["config"] = run_settings(data["config"])
+        return data
 
     def get_eval_group(self, obj):
         if obj.eval_group:

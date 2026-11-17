@@ -86,7 +86,7 @@ test('OBS-E2E-052: OpenRouter-shaped traces keep coherent usage through filters,
       { key: 'root-content', shape: 'independent-root', total: 36, cost: 1.17e-5 },
       { key: 'nested', shape: 'nested', total: 18, cost: 5.85e-6 },
       { key: 'parent-only', shape: 'parent-only', total: 18, cost: 5.85e-6 },
-      { key: 'tiny', shape: 'or', total: 18, cost: 3e-8, display: '< $0.0000001' },
+      { key: 'tiny', shape: 'or', total: 18, cost: 3e-8, display: '$0.00000003' },
       { key: 'small', shape: 'or', total: 18, cost: 2.37e-5, display: '$0.0000237' },
       { key: 'zero', shape: 'or', total: 18, cost: 0, display: '$0.00' },
       { key: 'explicit', shape: 'explicit', total: 0, cost: 0 },
@@ -400,7 +400,9 @@ test('OBS-E2E-052: OpenRouter-shaped traces keep coherent usage through filters,
         expect(spans.map(s => s.id).sort()).toEqual(c.seeded.spanIds.slice().sort());
         if (c.shape === 'or') near(spans.find(s => s.observation_type === 'llm').cost, c.cost);
         await testInfo.attach(`detail-${key}`, { body: JSON.stringify(body.result), contentType: 'application/json' });
-      }, { timeout: UI_READY });
+        // A navigation, the grid row, the cost cell and the drawer each wait up to
+        // UI_READY, so the step allows three; a failing expect then reports what it saw.
+      }, { timeout: 3 * UI_READY });
     }
     await test.step('C/D: session history uses the first generation messages and canonical precise usage', async () => {
       await page.goto(`/dashboard/observe/${projectId}/sessions`, { waitUntil: 'domcontentloaded' });

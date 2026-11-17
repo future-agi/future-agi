@@ -1,0 +1,22 @@
+schema: "connector-manifest/v1#app"
+id: pagerduty
+version: 1.0.0
+name: PagerDuty
+description: "Incidents, services, escalation policies and on-call schedules."
+vendor:
+  name: PagerDuty
+  domains: [pagerduty.com]
+eeCategory: developer
+group: other
+categories: [developer, incident-management]
+tags: [incidents, on-call, services]
+docsUrl: https://support.pagerduty.com/main/docs/pagerduty-mcp-server
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://support.pagerduty.com/main/docs/pagerduty-mcp-server
+    fetchedAt: 2026-11-11
+  - fact: vendor.domains
+    url: https://docs.pagerduty.com/developer/mcp-tooling-remote-server
+    fetchedAt: 2026-11-11

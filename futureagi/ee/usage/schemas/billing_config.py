@@ -15,6 +15,11 @@ from pydantic import BaseModel, Field, model_validator
 VALID_PLANS = frozenset({"free", "payg", "boost", "scale", "enterprise", "custom"})
 ALL_PLANS_SHORTHAND = "_all"
 
+# How a dimension's usage is paid. "metered" usage is charged on the invoice
+# and reported to Stripe. "prepaid" usage was already paid from prepaid
+# credits, so invoicing and Stripe reporting must not charge it again.
+DimensionSettlement = Literal["metered", "prepaid"]
+
 
 class PlanConfig(BaseModel):
     """Configuration for a single billing plan."""
@@ -36,6 +41,7 @@ class DimensionConfig(BaseModel):
     display_unit: str = Field(..., min_length=1)
     native_to_display_divisor: Annotated[int, Field(gt=0)]
     aggregation: Literal["sum", "count", "max"]
+    settlement: DimensionSettlement = "metered"
 
 
 class PricingTier(BaseModel):

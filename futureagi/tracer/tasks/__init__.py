@@ -9,6 +9,9 @@ Tasks are organized by domain:
 - dataset: Dataset creation from spans
 """
 
+from tracer.tasks.bulk_export import process_bulk_export
+from tracer.tasks.export_schedule import dispatch_export_schedules
+
 # Dataset Tasks
 from tracer.tasks.dataset import (
     CHUNK_SIZE,
@@ -36,6 +39,8 @@ from tracer.tasks.external_eval import (
 )
 
 __all__ = [
+    "process_bulk_export",
+    "dispatch_export_schedules",
     # Error Analysis
     "analyze_single_trace",
     "cluster_project_errors",

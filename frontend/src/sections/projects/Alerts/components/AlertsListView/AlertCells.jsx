@@ -96,6 +96,7 @@ const STATUS_CELL_ROLE = {
   warning: "warning",
   healthy: "success",
   resolved: "success",
+  open: "warning",
 };
 
 export const StatusCell = ({ value }) => {

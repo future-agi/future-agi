@@ -1,7 +1,8 @@
+import { useState } from "react";
 import PropTypes from "prop-types";
+import { LoadingButton } from "@mui/lab";
 import {
   Box,
-  Button,
   LinearProgress,
   Stack,
   Table,
@@ -21,6 +22,10 @@ import {
   useQueueAnalytics,
 } from "src/api/annotation-queues/annotation-queues";
 import { fDateTime } from "src/utils/format-time";
+import { importWithRecovery } from "src/utils/chunkRecovery";
+
+const EXPORT_TOO_LARGE_MESSAGE =
+  "This queue has too many items to export in one file. Use Export > Export to Dataset at the top of the page to export them all.";
 
 function StatusBar({ statusBreakdown, total }) {
   if (!total) return null;
@@ -204,6 +209,8 @@ LabelDistribution.propTypes = {
 
 export default function QueueAnalyticsTab({ queueId }) {
   const { data: analytics, isLoading } = useQueueAnalytics(queueId);
+  // Format of the export in flight ("json" / "csv"), or null when idle.
+  const [exporting, setExporting] = useState(null);
 
   if (isLoading) {
     return <LoadingScreen variant="orbit" sx={{ minHeight: "50vh" }} />;
@@ -230,8 +237,12 @@ export default function QueueAnalyticsTab({ queueId }) {
     : 0;
 
   const handleExport = async (format) => {
+    if (exporting) return;
+    setExporting(format);
     try {
-      const { default: axiosInstance } = await import("src/utils/axios");
+      const { default: axiosInstance } = await importWithRecovery(
+        () => import("src/utils/axios"),
+      );
       const response = await axiosInstance.get(
         annotationQueueEndpoints.export(queueId),
         { params: { export_format: format }, responseType: "blob" },
@@ -246,8 +257,10 @@ export default function QueueAnalyticsTab({ queueId }) {
       a.remove();
       URL.revokeObjectURL(url);
     } catch (err) {
-      const { enqueueSnackbar } = await import("notistack");
-      let message = "Export failed";
+      const { enqueueSnackbar } = await importWithRecovery(
+        () => import("notistack"),
+      );
+      let message = null;
       // The request uses responseType:"blob", so an error body arrives as a Blob —
       // read and parse it to surface the server's actionable message (e.g. the 413
       // export_too_large cap) instead of a generic failure.
@@ -255,11 +268,21 @@ export default function QueueAnalyticsTab({ queueId }) {
         const data = err?.response?.data;
         const parsed =
           data instanceof Blob ? JSON.parse(await data.text()) : data;
-        message = parsed?.result || parsed?.message || message;
+        message = parsed?.result || parsed?.message || null;
       } catch {
         // non-JSON / unreadable error body — keep the generic message
       }
+      // The app's axios interceptor rejects with a flattened error
+      // ({...body, statusCode}) and no `response`; a Blob body spreads to
+      // nothing, so the status code is the only signal left for the size cap.
+      const statusCode = err?.statusCode ?? err?.response?.status;
+      if (!message) {
+        message =
+          statusCode === 413 ? EXPORT_TOO_LARGE_MESSAGE : "Export failed";
+      }
       enqueueSnackbar(message, { variant: "error" });
+    } finally {
+      setExporting(null);
     }
   };
 
@@ -272,26 +295,32 @@ export default function QueueAnalyticsTab({ queueId }) {
         spacing={1}
         sx={{ mb: 3 }}
       >
-        <Button
+        <LoadingButton
           size="small"
           variant="outlined"
+          loading={exporting === "json"}
+          loadingPosition="start"
+          disabled={Boolean(exporting)}
           startIcon={
             <Iconify icon="solar:download-minimalistic-linear" width={16} />
           }
           onClick={() => handleExport("json")}
         >
-          Export JSON
-        </Button>
-        <Button
+          {exporting === "json" ? "Exporting..." : "Export JSON"}
+        </LoadingButton>
+        <LoadingButton
           size="small"
           variant="outlined"
+          loading={exporting === "csv"}
+          loadingPosition="start"
+          disabled={Boolean(exporting)}
           startIcon={
             <Iconify icon="solar:download-minimalistic-linear" width={16} />
           }
           onClick={() => handleExport("csv")}
         >
-          Export CSV
-        </Button>
+          {exporting === "csv" ? "Exporting..." : "Export CSV"}
+        </LoadingButton>
       </Stack>
 
       <MetricStrip

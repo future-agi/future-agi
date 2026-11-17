@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useId, useState } from "react";
 import {
   Box,
   Button,
@@ -33,6 +33,7 @@ const BaseColumnDrawer = ({
   commitSelections,
   setIsChooseWinnerButtonVisible,
 }) => {
+  const baseColumnsLabelId = useId();
   const [searchQuery, setSearchQuery] = useState("");
   const [baseColumnsData, setBaseColumnsData] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -120,6 +121,7 @@ const BaseColumnDrawer = ({
           }}
         >
           <Typography
+            id={baseColumnsLabelId}
             sx={{ fontWeight: 500, fontSize: "16px", color: "text.primary" }}
           >
             Select Base Columns
@@ -209,6 +211,7 @@ const BaseColumnDrawer = ({
         <>
           <Box sx={{ flexGrow: 1, overflowY: "auto", paddingX: 1.5 }}>
             <RadioGroup
+              aria-labelledby={baseColumnsLabelId}
               value={compareFromOutside ? selectedValueBase : selectedValue}
               onChange={(e) =>
                 compareFromOutside
@@ -236,11 +239,15 @@ const BaseColumnDrawer = ({
                   >
                     <Radio
                       value={val}
+                      inputProps={{
+                        "aria-labelledby": `${baseColumnsLabelId}-${index}`,
+                      }}
                       sx={{
                         "&:hover": { backgroundColor: "transparent" },
                       }}
                     />
                     <Typography
+                      id={`${baseColumnsLabelId}-${index}`}
                       sx={{
                         color: "text.primary",
                         fontWeight: 400,

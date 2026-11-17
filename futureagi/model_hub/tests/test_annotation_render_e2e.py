@@ -14,18 +14,18 @@ from django.utils import timezone
 from rest_framework import status
 
 from model_hub.models.annotation_queues import (
+    FULL_ACCESS_QUEUE_ROLES,
     AnnotationQueue,
     AnnotationQueueAnnotator,
     AnnotationQueueLabel,
     AutomationRule,
-    FULL_ACCESS_QUEUE_ROLES,
     QueueItem,
 )
 from model_hub.models.choices import (
     AnnotationQueueStatusChoices,
     AnnotatorRole,
-    DataTypeChoices,
     DatasetSourceChoices,
+    DataTypeChoices,
     QueueItemStatus,
     SourceChoices,
     StatusType,
@@ -43,6 +43,8 @@ from simulate.models.scenarios import Scenarios
 from simulate.models.test_execution import (
     CallExecution,
     CallTranscript,
+)
+from simulate.models.test_execution import (
     TestExecution as SimulateTestExecution,
 )
 from tracer.models.observability_provider import ProviderChoices
@@ -50,7 +52,6 @@ from tracer.models.observation_span import ObservationSpan
 from tracer.models.project import Project
 from tracer.models.trace import Trace
 from tracer.models.trace_session import TraceSession
-
 
 QUEUE_ITEMS_URL = "/model-hub/annotation-queues/{queue_id}/items/"
 
@@ -385,9 +386,8 @@ def annotation_render_seed(db, organization, workspace, user):
         auto_assign=True,
         organization=organization,
         workspace=workspace,
-        project=project,
-        dataset=dataset,
-        agent_definition=agent_definition,
+        # F3 + W1F-RENDER: _create_rule supplies exactly one source-family
+        # binding; the API cannot create the old multi-family fixture.
         created_by=user,
     )
     label = _create_label(organization=organization, workspace=workspace)
@@ -418,6 +418,19 @@ def annotation_render_seed(db, organization, workspace, user):
 
 
 def _create_rule(seed, *, source_type, name, conditions):
+    # F3 + W1F-RENDER ruling: normalize setup, never weaken the binding gate or
+    # the existing count/payload assertions. Each test gets its own queue.
+    binding = {
+        "dataset_row": "dataset",
+        "trace": "project",
+        "observation_span": "project",
+        "trace_session": "project",
+        "call_execution": "agent_definition",
+    }[source_type]
+    queue = seed["queue"]
+    for field in ("project", "dataset", "agent_definition"):
+        setattr(queue, field, seed[field] if field == binding else None)
+    queue.save(update_fields=["project", "dataset", "agent_definition"])
     return AutomationRule.objects.create(
         name=f"{name} {uuid.uuid4().hex[:8]}",
         queue=seed["queue"],
@@ -647,9 +660,9 @@ def test_call_execution_rule_creates_voice_and_chat_items_with_detail_payloads(
     listed_items = _list_results(response.data)
     listed_by_id = {item["id"]: item for item in listed_items}
     assert listed_by_id[str(voice_item.id)]["source_preview"] == voice_preview
-    assert listed_by_id[str(chat_item.id)]["source_preview"]["simulation_call_type"] == (
-        "text"
-    )
+    assert listed_by_id[str(chat_item.id)]["source_preview"][
+        "simulation_call_type"
+    ] == ("text")
 
     detail = _annotate_detail(auth_client, seed["queue"], voice_item)
     content = detail["item"]["source_content"]
@@ -668,7 +681,9 @@ def test_call_execution_rule_creates_voice_and_chat_items_with_detail_payloads(
         "Your order is being prepared now.",
     ]
 
-    chat_response = auth_client.get(f"/simulate/call-executions/{seed['chat_call'].id}/")
+    chat_response = auth_client.get(
+        f"/simulate/call-executions/{seed['chat_call'].id}/"
+    )
     assert chat_response.status_code == status.HTTP_200_OK, chat_response.data
     assert chat_response.data["simulation_call_type"] == "text"
     assert chat_response.data["transcript"][0]["messages"] == ["Do you have fries?"]

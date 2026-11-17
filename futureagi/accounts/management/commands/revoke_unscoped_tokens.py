@@ -1,3 +1,5 @@
+from accounts.services.auth_cache import revoke_cached_access_tokens
+
 from datetime import datetime
 
 from django.core.cache import cache
@@ -35,5 +37,5 @@ class Command(BaseCommand):
         tokens.update(is_active=False)
         # The cached-session path does not re-read is_active, so a session
         # in use stays live until its cache entry goes.
-        cache.delete_many([f"access_token_{token_id}" for token_id in token_ids])
+        revoke_cached_access_tokens(token_ids, cache_backend=cache)
         self.stdout.write(f"Revoked {count} unscoped access token(s).")

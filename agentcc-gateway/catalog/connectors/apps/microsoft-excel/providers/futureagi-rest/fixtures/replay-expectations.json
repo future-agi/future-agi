@@ -1,0 +1,78 @@
+{
+  "schema": "k2-replay-expectations/v1",
+  "app": "microsoft-excel",
+  "source": "V10 synthetic catalog fixtures; not live acceptance",
+  "test_account": "v10-synthetic-unverified-microsoft-excel",
+  "tools": 8,
+  "vendor_404": "Microsoft graph.microsoft.com 404",
+  "drive_checks": [
+    {
+      "name": "first_tool_read_only",
+      "jq": ".tools[] | select(.name == \"list_worksheets\") | .annotations.readOnlyHint",
+      "want": "true"
+    },
+    {
+      "name": "fixture_resource_returned",
+      "jq": ".calls[0].result.content[0].text | contains(\"fixture\")",
+      "want": "true"
+    },
+    {
+      "name": "typed_first_projection",
+      "jq": ".calls[0].result.content[0].text | fromjson | .value[0].name",
+      "want": "Sheet1"
+    },
+    {
+      "name": "list_worksheets_annotations",
+      "jq": ".tools[] | select(.name == \"list_worksheets\") | .annotations | [.readOnlyHint, .destructiveHint, .idempotentHint, .openWorldHint] | map(tostring) | join(\" \")",
+      "want": "true false true false"
+    },
+    {
+      "name": "get_worksheet_annotations",
+      "jq": ".tools[] | select(.name == \"get_worksheet\") | .annotations | [.readOnlyHint, .destructiveHint, .idempotentHint, .openWorldHint] | map(tostring) | join(\" \")",
+      "want": "true false true false"
+    },
+    {
+      "name": "list_tables_annotations",
+      "jq": ".tools[] | select(.name == \"list_tables\") | .annotations | [.readOnlyHint, .destructiveHint, .idempotentHint, .openWorldHint] | map(tostring) | join(\" \")",
+      "want": "true false true false"
+    },
+    {
+      "name": "get_table_annotations",
+      "jq": ".tools[] | select(.name == \"get_table\") | .annotations | [.readOnlyHint, .destructiveHint, .idempotentHint, .openWorldHint] | map(tostring) | join(\" \")",
+      "want": "true false true false"
+    },
+    {
+      "name": "list_table_rows_annotations",
+      "jq": ".tools[] | select(.name == \"list_table_rows\") | .annotations | [.readOnlyHint, .destructiveHint, .idempotentHint, .openWorldHint] | map(tostring) | join(\" \")",
+      "want": "true false true false"
+    },
+    {
+      "name": "list_table_columns_annotations",
+      "jq": ".tools[] | select(.name == \"list_table_columns\") | .annotations | [.readOnlyHint, .destructiveHint, .idempotentHint, .openWorldHint] | map(tostring) | join(\" \")",
+      "want": "true false true false"
+    },
+    {
+      "name": "list_names_annotations",
+      "jq": ".tools[] | select(.name == \"list_names\") | .annotations | [.readOnlyHint, .destructiveHint, .idempotentHint, .openWorldHint] | map(tostring) | join(\" \")",
+      "want": "true false true false"
+    },
+    {
+      "name": "get_used_range_annotations",
+      "jq": ".tools[] | select(.name == \"get_used_range\") | .annotations | [.readOnlyHint, .destructiveHint, .idempotentHint, .openWorldHint] | map(tostring) | join(\" \")",
+      "want": "true false true false"
+    }
+  ],
+  "vendor_request_checks": [
+    {
+      "name": "documented_first_request",
+      "index": 0,
+      "want": "GET /v1.0/drives/drive-fixture/items/item-fixture/workbook/worksheets?"
+    }
+  ],
+  "every_vendor_request": [
+    {
+      "name": "documented_api_prefix",
+      "jq": ".path | startswith(\"/v1.0/\")"
+    }
+  ]
+}

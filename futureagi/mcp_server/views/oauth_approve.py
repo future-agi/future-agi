@@ -8,9 +8,9 @@ import secrets
 import time
 
 import structlog
-from django.conf import settings
 from django.core.cache import cache
 from drf_yasg.utils import swagger_auto_schema
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -29,6 +29,7 @@ from mcp_server.serializers.contracts import (
     MCPOAuthApproveRequestSerializer,
     MCPOAuthRedirectResponseSerializer,
 )
+from mcp_server.usage_helpers import require_connection_scope
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_errors import build_error_envelope
 
@@ -119,12 +120,12 @@ class MCPOAuthApproveView(APIView):
     )
     def post(self, request):
         user = request.user
-        organization = getattr(request, "organization", None) or getattr(
-            settings, "ORGANIZATION", None
-        )
-        workspace = getattr(request, "workspace", None) or getattr(
-            settings, "CURRENT_WORKSPACE", None
-        )
+        organization = getattr(request, "organization", None)
+        workspace = getattr(request, "workspace", None)
+        if workspace is None:
+            raise PermissionDenied(
+                "Workspace context is required", code="workspace_required"
+            )
 
         request_id = request.validated_data["request_id"]
         approved = request.validated_data.get("approved", False)
@@ -135,6 +136,7 @@ class MCPOAuthApproveView(APIView):
                 build_error_envelope("No organization context", status_code=403),
                 status=403,
             )
+        require_connection_scope(user, organization, workspace)
 
         data = cache.get(f"{APPROVE_PREFIX}{request_id}")
         if data is None:

@@ -23,11 +23,19 @@ wait until the archive is fixed.
 ``--json`` prints the result as JSON on stdout, where application logs may also appear;
 ``--output FILE`` writes the same JSON to FILE alone, for a clean machine-readable copy.
 FILE must not exist yet, and is created before any work starts.
+
+``--auto`` is the separate post-bootstrap one-shot. It prints state and counts
+only, with a timer heartbeat during archive work. Exit 0 can mean complete,
+explicitly off (no writes), or already_running (another attempt owns the work).
+Only state=complete means this attempt finished its work. Partial failures exit
+nonzero; the installer warns without making application services depend on it.
+It uses the same operator startup authorization as a manual write command.
 """
 
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from collections import Counter
 from dataclasses import asdict
@@ -35,11 +43,9 @@ from typing import IO, Any
 
 from django.core.management.base import BaseCommand, CommandError
 
-from simulate.services.harness_versioning.backfill import (
-    FAILED_OUTCOMES,
-    run_backfill,
-)
+from simulate.services.harness_versioning.backfill import FAILED_OUTCOMES
 from simulate.services.harness_versioning.backfill_check import check_all
+from simulate.services.harness_versioning.upgrade_runner import run_managed
 
 
 class Command(BaseCommand):
@@ -49,6 +55,11 @@ class Command(BaseCommand):
     )
 
     def add_arguments(self, parser):
+        parser.add_argument(
+            "--auto",
+            action="store_true",
+            help="Independent upgrade one-shot: state/counts only; respect explicit off.",
+        )
         parser.add_argument(
             "--check",
             action="store_true",
@@ -68,6 +79,13 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
+        if options.get("auto"):
+            if any(options.get(name) for name in ("check", "job", "json", "output")):
+                raise CommandError(
+                    "--auto cannot be combined with --check, --job, --json or --output"
+                )
+            self._auto()
+            return
         job_ids = None
         if options["job"]:
             try:
@@ -128,8 +146,35 @@ class Command(BaseCommand):
                 "fail or record wrong data for these environments"
             )
 
+    def _auto(self) -> None:
+        def progress(counts):
+            self.stdout.write(
+                "Harness versions backfill: "
+                + " ".join(f"{name}={value}" for name, value in counts.items())
+            )
+            self.stdout.flush()
+
+        # This is a dedicated operator process, never a request/background task
+        # inside the app. Dependency logs can include object keys or diagnostics;
+        # only our explicit count lines are emitted during automatic work.
+        previous_disable = logging.root.manager.disable
+        logging.disable(logging.CRITICAL)
+        try:
+            try:
+                report = run_managed(automatic=True, on_progress=progress)
+            except Exception:
+                raise CommandError(
+                    "Automatic backfill could not finish; retry the operator command"
+                ) from None
+        finally:
+            logging.disable(previous_disable)
+        if report.failed:
+            raise CommandError(
+                f"{report.failed} environment(s) need attention; fix and run it again"
+            )
+
     def _run(self, job_ids, options, output) -> None:
-        results = run_backfill(job_ids)
+        results = run_managed(job_ids).results
         outcomes = Counter(result.outcome for result in results)
         failed = [result for result in results if result.outcome in FAILED_OUTCOMES]
         self._emit(

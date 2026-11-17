@@ -15,7 +15,7 @@ import {
 const CallChatSOPOption = ({ control }) => {
   const fieldName = "config.sopUrl";
   const { enqueueSnackbar } = useSnackbar();
-  const { field } = useController({
+  const { field, fieldState } = useController({
     name: fieldName,
     control,
   });
@@ -83,7 +83,7 @@ const CallChatSOPOption = ({ control }) => {
         <RHFUpload
           control={control}
           showDropRejection={false}
-          name="fieldName"
+          name={fieldName}
           hidePreview={true}
           uploadIcon={
             <SvgColor
@@ -94,7 +94,15 @@ const CallChatSOPOption = ({ control }) => {
           heading="Call/Chat SOP"
           description="Upload Call/Chat SOP (TEXT/PDF)"
           actionButton={
-            <Button size="small" variant="outlined" color="primary">
+            // field.ref lets a failed Create focus and scroll to this button
+            // when the SOP file is missing.
+            <Button
+              ref={field.ref}
+              aria-invalid={fieldState.invalid || undefined}
+              size="small"
+              variant="outlined"
+              color="primary"
+            >
               Browse Files
             </Button>
           }

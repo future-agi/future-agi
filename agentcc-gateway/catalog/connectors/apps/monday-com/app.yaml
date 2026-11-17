@@ -1,0 +1,20 @@
+schema: "connector-manifest/v1#app"
+id: monday-com
+version: 1.0.0
+name: monday.com
+description: "Boards, items, updates and docs in monday.com work management."
+vendor:
+  name: monday.com
+  domains: [monday.com]
+eeCategory: productivity
+group: other
+categories: [productivity, project-management]
+tags: [boards, tasks, projects]
+docsUrl: https://developer.monday.com/api-reference/docs/integrate-with-monday-mcp
+archetype: issue-tracker
+defaultProvider: api-token
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://developer.monday.com/api-reference/docs/integrate-with-monday-mcp
+    fetchedAt: 2026-10-21

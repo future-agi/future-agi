@@ -159,10 +159,20 @@ export function askSeed(saved = {}, unit, now = new Date()) {
   };
 }
 
-export const fixedScope = (label) => ({
-  label: String(label || "").slice(0, LABEL_MAX),
-  preset: FIXED_PRESET,
-});
+/**
+ * A handed-over set of rows. `window`, when the rows come from a report that
+ * read them in one, goes with them: the run reads each row within it (for
+ * users: only what they did in it), as the source report did.
+ */
+export function fixedScope(label, window) {
+  const scope = {
+    label: String(label || "").slice(0, LABEL_MAX),
+    preset: FIXED_PRESET,
+  };
+  const bounds = isoWindow(window);
+  if (bounds) scope.window = bounds;
+  return scope;
+}
 
 const OP_LABEL = {
   equals: "is",

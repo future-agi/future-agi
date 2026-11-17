@@ -1,0 +1,22 @@
+schema: "connector-manifest/v1#app"
+id: canva
+version: 1.0.0
+name: Canva
+description: "Create, find, edit and export Canva designs and manage assets."
+vendor:
+  name: Canva
+  domains: [canva.com, canva.dev]
+eeCategory: productivity
+group: other
+categories: [productivity, design]
+tags: [designs, assets, presentations]
+docsUrl: https://www.canva.dev/docs/apps/mcp/
+defaultProvider: mcp
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://www.canva.dev/docs/apps/quickstart/
+    fetchedAt: 2026-11-15
+  - fact: description
+    url: https://www.canva.dev/docs/apps/mcp/
+    fetchedAt: 2026-11-15

@@ -1,6 +1,6 @@
 {% extends "billing/base_billing.html" %}
 {% block title %}You're invited to {{ workspace_name }} on Future AGI{% endblock %}
-{% block preheader %}{{ invited_by }} invited you to {{ workspace_name }} ({{ org_name }}). Temporary password inside.{% endblock %}
+{% block preheader %}{{ invited_by }} invited you to {{ workspace_name }} ({{ org_name }}).{% if password %} Temporary password inside.{% endif %}{% endblock %}
 {% block txid %}◦ WORKSPACE / INVITE{% endblock %}
 {% block content %}
   <span class="eyebrow" style="display:inline-block; font-family:'JetBrains Mono','SF Mono',Menlo,Consolas,monospace; font-size:10px; font-weight:500; letter-spacing:0.14em; text-transform:uppercase; color:#c7c7cc; background:rgba(255,255,255,0.03); border:1px solid #3f3f46; padding:5px 10px; border-radius:999px; margin-bottom:20px;">
@@ -27,14 +27,14 @@
             <td style="padding:4px 0; font-family:'JetBrains Mono',monospace; font-size:11px; color:#71717a; letter-spacing:0.08em; text-transform:uppercase; width:80px;">Email</td>
             <td style="padding:4px 0; font-family:'JetBrains Mono',monospace; font-size:13px; color:#fafafa;">{{ email }}</td>
           </tr>
-          <tr>
+          {% if password %}<tr>
             <td style="padding:8px 0 4px 0; font-family:'JetBrains Mono',monospace; font-size:11px; color:#71717a; letter-spacing:0.08em; text-transform:uppercase;">Password</td>
             <td style="padding:8px 0 4px 0;"><span style="display:inline-block; font-family:'JetBrains Mono',monospace; font-size:13px; background:#000000; border:1px solid #3f3f46; color:#fafafa; padding:7px 12px; border-radius:6px; letter-spacing:0.03em;">{{ password }}</span></td>
-          </tr>
+          </tr>{% endif %}
         </table>
-        <p style="margin:14px 0 0 0; font-family:'Inter',sans-serif; font-size:13px; line-height:1.55; color:#a1a1aa;">
+        {% if password %}<p style="margin:14px 0 0 0; font-family:'Inter',sans-serif; font-size:13px; line-height:1.55; color:#a1a1aa;">
           Rotate this password from account settings after signing in.
-        </p>
+        </p>{% endif %}
       </td>
     </tr>
   </table>

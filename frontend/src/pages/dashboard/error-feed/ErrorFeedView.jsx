@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Box, Button, Typography } from "@mui/material";
 import { useNavigate } from "react-router-dom";
 import SvgColor from "src/components/svg-color";
@@ -30,8 +30,9 @@ export default function ErrorFeedView() {
   const catalog = useObserveProjectList(REVALIDATE_ON_ENTRY);
 
   const pageState = deriveFeedPageState({ catalog, feed });
-  const rows = useMemo(() => feed.data?.data ?? [], [feed.data]);
-  const totalCount = feed.data?.total ?? 0;
+  // No count until the list has loaded: a pending or failed request has no
+  // total, and a 0 drawn from it reads as "no errors".
+  const totalCount = feed.data?.total;
 
   const projectOptions = useMemo(
     () => [{ value: "", label: "All Projects" }, ...(catalog.data ?? [])],
@@ -44,6 +45,13 @@ export default function ErrorFeedView() {
     feed.refetch();
     catalog.refetch();
   }, [feed, catalog]);
+
+  // Selection covers only the rows on screen. A new page, page size, sort,
+  // search or filter shows other rows, so drop it; otherwise bulk actions
+  // would change issues the user can no longer see.
+  useEffect(() => {
+    setSelected((prev) => (prev.length ? [] : prev));
+  }, [apiParams]);
 
   const handleSelect = (clusterId, checked) => {
     setSelected((prev) =>
@@ -83,16 +91,18 @@ export default function ErrorFeedView() {
           sx={{ mb: 0 }}
           title="Error Feed"
           badge={
-            <Typography
-              sx={{
-                typography: "s1",
-                fontWeight: 400,
-                color: "text.tertiary",
-                fontVariantNumeric: "tabular-nums",
-              }}
-            >
-              {totalCount}
-            </Typography>
+            totalCount != null ? (
+              <Typography
+                sx={{
+                  typography: "s1",
+                  fontWeight: 400,
+                  color: "text.tertiary",
+                  fontVariantNumeric: "tabular-nums",
+                }}
+              >
+                {totalCount}
+              </Typography>
+            ) : null
           }
           description="Track, triage and resolve agent errors: hallucinations, eval failures and pipeline issues."
           actions={
@@ -156,9 +166,6 @@ export default function ErrorFeedView() {
 
         {/* Table */}
         <ErrorFeedTable
-          rows={rows}
-          totalCount={totalCount}
-          isLoading={feed.isLoading}
           pageState={pageState}
           onRetry={handleRetry}
           selected={selected}

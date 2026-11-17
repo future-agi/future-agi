@@ -100,7 +100,7 @@ func (g *ContentModerationGuardrail) Check(ctx context.Context, input *guardrail
 		return &guardrails.CheckResult{Pass: true}
 	}
 
-	text := g.extractAllText(input)
+	text := g.extractAllText(ctx, input)
 	if text == "" {
 		return &guardrails.CheckResult{Pass: true}
 	}
@@ -183,11 +183,13 @@ func (g *ContentModerationGuardrail) Check(ctx context.Context, input *guardrail
 	}
 }
 
-func (g *ContentModerationGuardrail) extractAllText(input *guardrails.CheckInput) string {
+func (g *ContentModerationGuardrail) extractAllText(ctx context.Context, input *guardrails.CheckInput) string {
 	var parts []string
 	if input.Request != nil {
-		for _, m := range input.Request.Messages {
-			if t, ok := extractContentText(m.Content); ok {
+		// Each message's text and its tool calls' arguments
+		// (guardrails.MessageText).
+		for i := range input.Request.Messages {
+			if t, ok := guardrails.MessageText(ctx, &input.Request.Messages[i]); ok {
 				parts = append(parts, t)
 			}
 		}

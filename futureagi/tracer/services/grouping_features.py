@@ -8,7 +8,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from tracer.constants.grouping_versions import (
-    GROUPING_POLICY_VERSION,
+    SAMPLED_GROUPING_POLICY_VERSION,
     SIMULATION_GROUPING_POLICY_VERSION,
 )
 from tracer.models.trace_grouping import (
@@ -85,7 +85,7 @@ def enqueue_grouping_features(
                 "policy_version": (
                     SIMULATION_GROUPING_POLICY_VERSION
                     if current.workload_type == "simulation_test_execution"
-                    else GROUPING_POLICY_VERSION
+                    else SAMPLED_GROUPING_POLICY_VERSION
                 ),
             },
         )

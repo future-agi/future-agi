@@ -149,6 +149,7 @@ def main():
   return {
     // Auto-generate name from eval template
     name: editMode ? evalConfig?.name : getEvalBaseName(evalConfig),
+    description: editMode ? evalConfig?.instance_description ?? "" : "",
     saveAsTemplate: false,
     config: {
       mapping,
@@ -261,13 +262,20 @@ const EvaluationConfigureFormChild = ({
   // uses camelCase for `saveAsTemplate` and nested `config.reasonColumn`; flip
   // them to snake_case before sending the body.
   const toEvalApiPayload = (data) => {
-    const { saveAsTemplate, config: formConfig, ...rest } = data || {};
+    const {
+      saveAsTemplate,
+      description,
+      config: formConfig,
+      ...rest
+    } = data || {};
     const { reasonColumn, ...configRest } = formConfig || {};
     return {
       ...rest,
       ...(saveAsTemplate !== undefined && { save_as_template: saveAsTemplate }),
       config: {
         ...configRest,
+        // Instance notes belong to the binding, not the shared eval template.
+        ...(description !== undefined && { description }),
         ...(reasonColumn !== undefined && { reason_column: reasonColumn }),
       },
     };
@@ -350,6 +358,7 @@ const EvaluationConfigureFormChild = ({
       mapping: data.config.mapping,
       id: selectedEval?.id,
       name: data.name,
+      description: data.description,
     };
     setEvalsConfigs([...evalsConfigs, config]);
     if (handleLabelsAdd) handleLabelsAdd(null);
@@ -422,6 +431,14 @@ const EvaluationConfigureFormChild = ({
             text={selectedEval?.description || evalConfig?.description}
           />
         }
+      />
+      <FormTextFieldV2
+        fieldName="description"
+        control={control}
+        label="Description"
+        placeholder="Describe this evaluation (optional)"
+        multiline
+        minRows={3}
       />
       <ShowComponent condition={requiredKeys?.length > 0}>
         <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
@@ -715,7 +732,17 @@ const EvaluationConfigureFormChild = ({
                 }
                 if (module === "observe" && onFormSave) {
                   handleSubmit((formData) =>
-                    onFormSave({ ...formData, selectedEval, run: false }),
+                    onFormSave({
+                      ...formData,
+                      config: {
+                        ...formData.config,
+                        ...(formData.description !== undefined && {
+                          description: formData.description,
+                        }),
+                      },
+                      selectedEval,
+                      run: false,
+                    }),
                   )();
                   return;
                 }
@@ -737,7 +764,17 @@ const EvaluationConfigureFormChild = ({
               onClick={() => {
                 if (module === "observe" && onFormSave) {
                   handleSubmit((formData) =>
-                    onFormSave({ ...formData, selectedEval, run: true }),
+                    onFormSave({
+                      ...formData,
+                      config: {
+                        ...formData.config,
+                        ...(formData.description !== undefined && {
+                          description: formData.description,
+                        }),
+                      },
+                      selectedEval,
+                      run: true,
+                    }),
                   )();
                   return;
                 }

@@ -581,8 +581,7 @@ func TestLogFlusherClose_CountsTheBatchAFlushIsDropping(t *testing.T) {
 // A backend that has already stopped (stop order often stops it before the
 // gateway) makes the undelivered logs a WARN, not an ERROR.
 func TestLogFlusherClose_WarnsWhenTheBackendIsGone(t *testing.T) {
-	gone := httptest.NewServer(http.NotFoundHandler())
-	gone.Close()
+	goneURL := "http://" + refusedAddr(t)
 	for _, tc := range []struct {
 		name string
 		dial func(ctx context.Context, network, addr string) (net.Conn, error)
@@ -596,7 +595,7 @@ func TestLogFlusherClose_WarnsWhenTheBackendIsGone(t *testing.T) {
 			shortRetryWait(t)
 			logs, restore := installCapturingLogger()
 			defer restore()
-			f := NewLogFlusher(gone.URL, "secret", time.Hour, 100)
+			f := NewLogFlusher(goneURL, "secret", time.Hour, 100)
 			if tc.dial != nil {
 				f.client = &http.Client{Transport: &http.Transport{DialContext: tc.dial}}
 			}

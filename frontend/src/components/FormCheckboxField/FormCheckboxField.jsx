@@ -21,10 +21,14 @@ export const FormCheckboxField = ({
   control,
   fieldName,
   label,
-  labelPlacement = "start",
+  labelPlacement = /** @type {import("@mui/material").FormControlLabelProps["labelPlacement"]} */ (
+    "start"
+  ),
   helperText,
-  defaultValue,
-  size = "medium",
+  defaultValue = undefined,
+  size = /** @type {import("@mui/material").CheckboxProps["size"]} */ (
+    "medium"
+  ),
   ...props
 }) => {
   const theme = useTheme();

@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: resend
+version: 1.0.0
+name: Resend
+description: "Send email, read received messages, and manage contacts, broadcasts, templates, and domains."
+vendor:
+  name: Resend
+  domains: [resend.com]
+eeCategory: communication
+group: other
+categories: [communication, email]
+tags: [email, mail]
+docsUrl: https://resend.com/docs/mcp-server
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://resend.com/docs/mcp-server
+    fetchedAt: 2026-11-09

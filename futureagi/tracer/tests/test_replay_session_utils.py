@@ -1,9 +1,11 @@
 import json
 import uuid
+from dataclasses import replace
 from datetime import datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
+from rest_framework.exceptions import ValidationError
 
 from model_hub.models.choices import StatusType
 from tracer.services.clickhouse.v2.span_reader import CHSpan
@@ -25,61 +27,107 @@ from tracer.utils.replay_session import (
 
 @pytest.mark.unit
 class TestBuildTraceQuery:
-    """Tests for _build_trace_query function."""
+    """Tests for project-scoped ClickHouse replay source resolution."""
 
-    @patch("tracer.utils.replay_session.Trace")
-    def test_session_type_with_ids(self, mock_trace):
-        """Should filter by session_id when replay_type is session."""
-        mock_queryset = MagicMock()
-        mock_trace.objects.filter.return_value = mock_queryset
+    @pytest.fixture
+    def source_reader(self, monkeypatch):
+        reader = MagicMock()
+        reader.__enter__.return_value = reader
+        reader.__exit__.return_value = False
+        reader.roots_by_session_ids.return_value = []
+        reader.roots_by_trace_ids.return_value = []
+        reader.root_ids_by_project.return_value = []
+        reader.list_by_ids.return_value = []
+        reader.distinct_session_ids_with_filters.return_value = []
+        reader.get_trace_row.return_value = None
+        monkeypatch.setattr(
+            "tracer.services.clickhouse.v2.get_reader", MagicMock(return_value=reader)
+        )
+        # Keep the old implementation database-free so it fails the CH assertions.
+        monkeypatch.setattr("tracer.models.trace.Trace.objects.filter", MagicMock())
+        return reader
 
+    def test_session_type_with_ids(self, source_reader):
+        """Should resolve selected sessions through the scoped root reader."""
         project_id = str(uuid.uuid4())
         session_ids = [str(uuid.uuid4()), str(uuid.uuid4())]
+        source_reader.roots_by_session_ids.return_value = [
+            replace(
+                _ch_conversation_span("{}"),
+                project_id=project_id,
+                trace_session_id=session_id,
+                input='"Hello"',
+                output='"Hi"',
+            )
+            for session_id in session_ids
+        ]
 
-        _build_trace_query(project_id, "session", session_ids, select_all=False)
+        result = _build_trace_query(
+            project_id, "session", session_ids, select_all=False
+        )
 
-        mock_trace.objects.filter.assert_called_once_with(project_id=project_id)
-        mock_queryset.filter.assert_called_once_with(session_id__in=session_ids)
+        source_reader.roots_by_session_ids.assert_called_once_with(
+            session_ids, project_id=project_id
+        )
+        assert [row["session_id"] for row in result] == session_ids
+        assert all(row["input"] == "Hello" and row["output"] == "Hi" for row in result)
 
-    @patch("tracer.utils.replay_session.Trace")
-    def test_session_type_select_all(self, mock_trace):
-        """Should filter for non-null session_id when select_all is True."""
-        mock_queryset = MagicMock()
-        mock_trace.objects.filter.return_value = mock_queryset
-
+    def test_session_type_select_all(self, source_reader):
+        """Should enumerate this project's sessions before loading their roots."""
         project_id = str(uuid.uuid4())
+        session_id = str(uuid.uuid4())
+        source_reader.distinct_session_ids_with_filters.return_value = [session_id]
+        source_reader.roots_by_session_ids.return_value = [
+            replace(
+                _ch_conversation_span("{}"),
+                project_id=project_id,
+                trace_session_id=session_id,
+            )
+        ]
 
-        _build_trace_query(project_id, "session", ids=None, select_all=True)
+        result = _build_trace_query(project_id, "session", ids=None, select_all=True)
 
-        mock_trace.objects.filter.assert_called_once_with(project_id=project_id)
-        mock_queryset.filter.assert_called_once_with(session_id__isnull=False)
+        source_reader.distinct_session_ids_with_filters.assert_called_once_with(
+            project_id=project_id
+        )
+        source_reader.roots_by_session_ids.assert_called_once_with(
+            [session_id], project_id=project_id
+        )
+        assert [row["session_id"] for row in result] == [session_id]
 
-    @patch("tracer.utils.replay_session.Trace")
-    def test_trace_type_with_ids(self, mock_trace):
-        """Should filter by trace IDs when replay_type is trace."""
-        mock_queryset = MagicMock()
-        mock_trace.objects.filter.return_value = mock_queryset
-
+    def test_trace_type_with_ids(self, source_reader):
+        """Should resolve selected traces without requiring PostgreSQL mirrors."""
         project_id = str(uuid.uuid4())
         trace_ids = [str(uuid.uuid4()), str(uuid.uuid4())]
+        source_reader.roots_by_trace_ids.return_value = [
+            replace(
+                _ch_conversation_span("{}"), project_id=project_id, trace_id=trace_id
+            )
+            for trace_id in trace_ids
+        ]
 
-        _build_trace_query(project_id, "trace", trace_ids, select_all=False)
+        result = _build_trace_query(project_id, "trace", trace_ids, select_all=False)
 
-        mock_trace.objects.filter.assert_called_once_with(project_id=project_id)
-        mock_queryset.filter.assert_called_once_with(id__in=trace_ids)
+        source_reader.roots_by_trace_ids.assert_called_once_with(
+            trace_ids, project_id=project_id
+        )
+        assert [row["id"] for row in result] == trace_ids
 
-    @patch("tracer.utils.replay_session.Trace")
-    def test_trace_type_select_all(self, mock_trace):
-        """Should return base query when select_all is True for trace type."""
-        mock_queryset = MagicMock()
-        mock_trace.objects.filter.return_value = mock_queryset
-
+    def test_trace_type_select_all(self, source_reader):
+        """Should load this project's roots, including sessionless traces."""
         project_id = str(uuid.uuid4())
+        span = replace(_ch_conversation_span("{}"), project_id=project_id)
+        source_reader.root_ids_by_project.return_value = [span.id]
+        source_reader.list_by_ids.return_value = [span]
 
         result = _build_trace_query(project_id, "trace", ids=None, select_all=True)
 
-        mock_trace.objects.filter.assert_called_once_with(project_id=project_id)
-        assert result == mock_queryset
+        source_reader.root_ids_by_project.assert_called_once_with(project_id)
+        source_reader.list_by_ids.assert_called_once_with(
+            [span.id], project_id=project_id, include_heavy=False
+        )
+        assert [row["id"] for row in result] == [span.trace_id]
+        assert result[0]["session_id"] is None
 
     def test_invalid_replay_type_raises_error(self):
         """Should raise ValueError for invalid replay_type."""
@@ -88,17 +136,15 @@ class TestBuildTraceQuery:
 
         assert "Invalid replay type" in str(exc_info.value)
 
-    @patch("tracer.utils.replay_session.Trace")
-    def test_empty_ids_list(self, mock_trace):
-        """Should handle empty ids list."""
-        mock_queryset = MagicMock()
-        mock_trace.objects.filter.return_value = mock_queryset
-
+    def test_empty_ids_list(self, source_reader):
+        """An empty selection must not become a project-wide source query."""
         project_id = str(uuid.uuid4())
 
-        _build_trace_query(project_id, "session", ids=[], select_all=False)
+        result = _build_trace_query(project_id, "session", ids=[], select_all=False)
 
-        mock_queryset.filter.assert_called_once_with(session_id__in=[])
+        assert result == []
+        source_reader.roots_by_session_ids.assert_not_called()
+        source_reader.distinct_session_ids_with_filters.assert_not_called()
 
 
 @pytest.mark.unit
@@ -211,11 +257,15 @@ class TestGetAgentSuggestions:
 
         mock_get_agent_def_from_sessions.return_value = None
 
-        with patch(
-            "tracer.utils.replay_session._get_next_replay_scenario_version",
-            return_value=1,
-        ), patch(
-            "tracer.utils.replay_session._is_voice_trace_query", return_value=False
+        with (
+            patch(
+                "tracer.utils.replay_session._get_next_replay_scenario_version",
+                return_value=1,
+            ),
+            patch("tracer.utils.replay_session._build_trace_query", return_value=[]),
+            patch(
+                "tracer.utils.replay_session._is_voice_trace_query", return_value=False
+            ),
         ):
             exists, suggestions, agent_def = get_agent_suggestions(
                 mock_project, "trace", [str(uuid.uuid4())], False
@@ -238,11 +288,14 @@ class TestGetAgentSuggestions:
 
         mock_get_agent_def_from_sessions.return_value = None
 
-        with patch(
-            "tracer.utils.replay_session._get_next_replay_scenario_version",
-            return_value=1,
-        ), patch(
-            "tracer.utils.replay_session._is_voice_trace_query", return_value=False
+        with (
+            patch(
+                "tracer.utils.replay_session._get_next_replay_scenario_version",
+                return_value=1,
+            ),
+            patch(
+                "tracer.utils.replay_session._is_voice_trace_query", return_value=False
+            ),
         ):
             exists, suggestions, agent_def = get_agent_suggestions(
                 mock_project, "trace", [], False
@@ -386,14 +439,16 @@ class TestGetOrCreateAgentDefinition:
 
         mock_new_agent_def = MagicMock()
         mock_new_agent_def.id = uuid.uuid4()
-        mock_agent_def_model.objects.create.return_value = mock_new_agent_def
+        mock_agent_def_model.return_value = mock_new_agent_def
 
         result = get_or_create_agent_definition(
             mock_project, "New Agent", "Description", "text"
         )
 
         assert result == mock_new_agent_def
-        mock_agent_def_model.objects.create.assert_called_once()
+        mock_agent_def_model.assert_called_once()
+        mock_new_agent_def.set_api_key.assert_called_once_with(None)
+        mock_new_agent_def.save.assert_called_once_with()
         mock_new_agent_def.create_version.assert_called_once()
 
     @patch("tracer.utils.replay_session._resolve_agent_definition_for_project")
@@ -410,13 +465,13 @@ class TestGetOrCreateAgentDefinition:
 
         mock_new_agent_def = MagicMock()
         mock_new_agent_def.id = uuid.uuid4()
-        mock_agent_def_model.objects.create.return_value = mock_new_agent_def
+        mock_agent_def_model.return_value = mock_new_agent_def
 
         get_or_create_agent_definition(
             mock_project, "Agent Name", "Agent Desc", "voice"
         )
 
-        mock_agent_def_model.objects.create.assert_called_once_with(
+        mock_agent_def_model.assert_called_once_with(
             agent_name="Agent Name",
             description="Agent Desc",
             agent_type="voice",
@@ -442,10 +497,18 @@ class TestGetOrCreateAgentDefinition:
 
         mock_new_agent_def = MagicMock()
         mock_new_agent_def.id = uuid.uuid4()
-        mock_agent_def_model.objects.create.return_value = mock_new_agent_def
+        mock_agent_def_model.return_value = mock_new_agent_def
 
         get_or_create_agent_definition(mock_project, "Agent", "Desc", "text")
 
+        # Persistence must complete before the initial snapshot is created.
+        assert [entry[0] for entry in mock_new_agent_def.mock_calls] == [
+            "set_api_key",
+            "save",
+            "create_version",
+        ]
+        mock_new_agent_def.set_api_key.assert_called_once_with(None)
+        mock_new_agent_def.save.assert_called_once_with()
         mock_new_agent_def.create_version.assert_called_once_with(
             description="Desc",
             commit_message="Initial version from replay session",
@@ -498,16 +561,18 @@ class TestGetTranscripts:
 
     @patch("tracer.utils.replay_session._get_transcripts_from_trace_query")
     @patch("tracer.utils.replay_session._build_trace_query")
-    def test_returns_none_when_no_transcripts(
-        self, mock_build_query, mock_get_transcripts
-    ):
-        """Should return None when no transcripts found."""
+    def test_raises_when_no_transcripts(self, mock_build_query, mock_get_transcripts):
+        """Missing conversations must not silently request generic generation."""
+        mock_build_query.return_value.values_list.return_value = []
         mock_get_transcripts.return_value = {}
 
         project_id = str(uuid.uuid4())
-        result = get_transcripts(project_id, "trace", [], False)
+        with pytest.raises(ValidationError, match="Replay source"):
+            get_transcripts(project_id, "trace", [], False)
 
-        assert result is None
+        mock_get_transcripts.assert_called_once_with(
+            mock_build_query.return_value, project_id=project_id
+        )
 
     def test_invalid_replay_type_raises_error(self):
         """Should raise ValueError for invalid replay_type."""
@@ -636,12 +701,15 @@ class TestGetTranscriptsFromSessionQuery:
         mock_reader.__enter__ = lambda s: s
         mock_reader.__exit__ = MagicMock(return_value=False)
 
-        with patch(
-            "tracer.services.clickhouse.v2.get_reader",
-            return_value=mock_reader,
-        ), patch(
-            "tracer.utils.replay_session.trace_ids_with_simulator_call_execution_id",
-            return_value=set(),
+        with (
+            patch(
+                "tracer.services.clickhouse.v2.get_reader",
+                return_value=mock_reader,
+            ),
+            patch(
+                "tracer.utils.replay_session.trace_ids_with_simulator_call_execution_id",
+                return_value=set(),
+            ),
         ):
             result = _get_transcripts_from_session_query(mock_queryset)
 
@@ -679,12 +747,15 @@ class TestGetTranscriptsFromSessionQuery:
         mock_reader.__enter__ = lambda s: s
         mock_reader.__exit__ = MagicMock(return_value=False)
 
-        with patch(
-            "tracer.services.clickhouse.v2.get_reader",
-            return_value=mock_reader,
-        ), patch(
-            "tracer.utils.replay_session.trace_ids_with_simulator_call_execution_id",
-            return_value=set(),
+        with (
+            patch(
+                "tracer.services.clickhouse.v2.get_reader",
+                return_value=mock_reader,
+            ),
+            patch(
+                "tracer.utils.replay_session.trace_ids_with_simulator_call_execution_id",
+                return_value=set(),
+            ),
         ):
             result = _get_transcripts_from_session_query(mock_queryset)
 
@@ -737,12 +808,15 @@ class TestGetTranscriptsFromSessionQuery:
         mock_reader.__enter__ = lambda s: s
         mock_reader.__exit__ = MagicMock(return_value=False)
 
-        with patch(
-            "tracer.services.clickhouse.v2.get_reader",
-            return_value=mock_reader,
-        ), patch(
-            "tracer.utils.replay_session.trace_ids_with_simulator_call_execution_id",
-            return_value=set(),
+        with (
+            patch(
+                "tracer.services.clickhouse.v2.get_reader",
+                return_value=mock_reader,
+            ),
+            patch(
+                "tracer.utils.replay_session.trace_ids_with_simulator_call_execution_id",
+                return_value=set(),
+            ),
         ):
             result = _get_transcripts_from_session_query(mock_queryset)
 
@@ -1026,6 +1100,7 @@ class TestResolveAgentDefinitionForProject:
 
     def test_empty_and_no_providers_returns_none(self, project):
         from tracer.utils.replay_session import _resolve_agent_definition_for_project
+
         result = _resolve_agent_definition_for_project(project)
         assert result is None
 

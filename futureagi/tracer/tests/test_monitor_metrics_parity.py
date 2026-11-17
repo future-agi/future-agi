@@ -1,6 +1,6 @@
-"""Monitor builder parity: calendar-bucketed historical stats for count/token
-metrics, stddevPop vs stddevSamp split, NULL-on-empty token windows, provider
-guard, and eval CHOICES containment. Pure SQL-string assertions."""
+"""Monitor builder parity: per-period previous-period baselines for count/token
+metrics, population stddev for per-row stats, NULL-on-empty token windows,
+provider guard, and eval CHOICES containment. Pure SQL-string assertions."""
 
 from __future__ import annotations
 
@@ -43,11 +43,71 @@ def _builder(eval_output_type: str | None = None) -> MonitorMetricsQueryBuilder:
     )
 
 
-# --- Calendar-bucketed historical stats for count/token metrics ---------------
+# --- Per-period baseline for count/token metrics ------------------------------
+
+
+@pytest.mark.parametrize("metric_type", TIME_AGGREGATED)
+def test_time_aggregated_baseline_is_total_per_period_not_calendar_buckets(
+    metric_type: str,
+) -> None:
+    sql, params = _builder().build_historical_stats_query(
+        metric_type, START, END, periods=168.0
+    )
+    # One total over the exact window, divided by the periods in it: a
+    # rolling window is never split into partial clock-hour buckets, and
+    # periods with no spans count as 0 instead of being skipped.
+    assert "/ %(baseline_periods)s" in sql
+    assert params["baseline_periods"] == 168.0
+    assert "GROUP BY" not in sql
+    assert "toStartOf" not in sql
+    assert "bucket_value" not in sql
+    assert "stddevSamp" not in sql
+
+
+def test_time_aggregated_baseline_per_metric_and_no_data_rule() -> None:
+    sql_err, _ = _builder().build_historical_stats_query(
+        MonitorMetricTypeChoices.COUNT_OF_ERRORS, START, END
+    )
+    # No spans is no history (NULL); spans without errors are a real zero.
+    assert (
+        "if(count() > 0, countIf(status = 'ERROR') / %(baseline_periods)s, NULL)"
+        " AS mean" in sql_err
+    )
+    sql_tok, _ = _builder().build_historical_stats_query(
+        MonitorMetricTypeChoices.TOKEN_USAGE, START, END
+    )
+    # No token-bearing spans is no history, as in the value query (v2
+    # total_tokens is non-Nullable, PG NULL -> 0).
+    assert (
+        "if(countIf(total_tokens != 0) > 0, sum(total_tokens) / "
+        "%(baseline_periods)s, NULL) AS mean" in sql_tok
+    )
+
+
+def test_time_aggregated_baseline_defaults_to_one_period() -> None:
+    _, params = _builder().build_historical_stats_query(
+        MonitorMetricTypeChoices.COUNT_OF_ERRORS, START, END
+    )
+    assert params["baseline_periods"] == 1.0
+
+
+# --- The earlier rule's band for count/token metrics --------------------------
+#
+# Monitors saved before the threshold update keep production's band: the mean
+# and sample stddev of calendar buckets, (0, 0) for an empty window.
 
 
 @pytest.mark.parametrize(
-    "interval_kind,bucket_fn",
+    ("metric_type", "bucket_value"),
+    [
+        (MonitorMetricTypeChoices.COUNT_OF_ERRORS, "countIf(status = 'ERROR')"),
+        (MonitorMetricTypeChoices.TOKEN_USAGE, "nullIf(sum(total_tokens), 0)"),
+        (MonitorMetricTypeChoices.DAILY_TOKENS_SPENT, "nullIf(sum(total_tokens), 0)"),
+        (MonitorMetricTypeChoices.MONTHLY_TOKENS_SPENT, "nullIf(sum(total_tokens), 0)"),
+    ],
+)
+@pytest.mark.parametrize(
+    ("interval_kind", "bucket"),
     [
         ("minute", "toStartOfMinute"),
         ("hour", "toStartOfHour"),
@@ -55,36 +115,36 @@ def _builder(eval_output_type: str | None = None) -> MonitorMetricsQueryBuilder:
         ("month", "toStartOfMonth"),
     ],
 )
-@pytest.mark.parametrize("metric_type", TIME_AGGREGATED)
-def test_time_aggregated_historical_buckets_calendar(
-    metric_type: str, interval_kind: str, bucket_fn: str
+def test_earlier_band_is_calendar_bucket_stats(
+    metric_type: str, bucket_value: str, interval_kind: str, bucket: str
 ) -> None:
-    sql, _ = _builder().build_historical_stats_query(
+    sql, params = _builder().build_earlier_band_query(
         metric_type, START, END, interval_kind=interval_kind
     )
-    # Event time: buckets share the window's axis, so no out-of-window bucket.
-    assert f"{bucket_fn}(start_time) AS bucket_ts" in sql
-    assert "GROUP BY bucket_ts" in sql
-    # Sample stddev here (old path used statistics.stdev), collapsed to 0.
-    assert "stddevSamp(bucket_value)" in sql
-    assert "coalesce(ifNotFinite(avg(bucket_value), 0), 0)" in sql
+    sql = " ".join(sql.split())
+
+    assert (
+        "SELECT coalesce(ifNotFinite(avg(bucket_value), 0), 0) AS mean, "
+        "coalesce(ifNotFinite(stddevSamp(bucket_value), 0), 0) AS stddev"
+    ) in sql
+    assert (
+        f"SELECT {bucket}(start_time) AS bucket_ts, {bucket_value} AS bucket_value "
+        "FROM spans"
+    ) in sql
+    assert sql.endswith("GROUP BY bucket_ts )")
+    assert "start_time >= %(start_time)s AND start_time < %(end_time)s" in sql
+    assert params["start_time"] == START.replace(tzinfo=None)
+    assert "baseline_periods" not in params
 
 
-def test_time_aggregated_historical_agg_per_metric() -> None:
-    sql_err, _ = _builder().build_historical_stats_query(
-        MonitorMetricTypeChoices.COUNT_OF_ERRORS, START, END, interval_kind="hour"
-    )
-    assert "countIf(status = 'ERROR') AS bucket_value" in sql_err
-    sql_tok, _ = _builder().build_historical_stats_query(
-        MonitorMetricTypeChoices.TOKEN_USAGE, START, END, interval_kind="hour"
-    )
-    # No-token buckets excluded (v2 total_tokens is non-Nullable, PG NULL -> 0).
-    assert "nullIf(sum(total_tokens), 0) AS bucket_value" in sql_tok
-
-
-def test_time_aggregated_historical_defaults_to_hour() -> None:
-    sql, _ = _builder().build_historical_stats_query(MonitorMetricTypeChoices.COUNT_OF_ERRORS, START, END)
-    assert "toStartOfHour(start_time) AS bucket_ts" in sql
+@pytest.mark.parametrize("metric_type", PER_ROW_HISTORICAL)
+def test_earlier_band_for_per_row_metrics_is_their_historical_stats(
+    metric_type: str,
+) -> None:
+    # Rate and latency metrics kept production's per-row mean and stddev.
+    assert _builder().build_earlier_band_query(
+        metric_type, START, END, interval_kind="hour"
+    ) == _builder().build_historical_stats_query(metric_type, START, END)
 
 
 # --- stddevPop for per-row + eval stats (PG StdDev is population) -------------
@@ -110,7 +170,11 @@ def test_eval_stats_use_population_stddev() -> None:
 
 @pytest.mark.parametrize(
     "metric_type",
-    [MonitorMetricTypeChoices.TOKEN_USAGE, MonitorMetricTypeChoices.DAILY_TOKENS_SPENT, MonitorMetricTypeChoices.MONTHLY_TOKENS_SPENT],
+    [
+        MonitorMetricTypeChoices.TOKEN_USAGE,
+        MonitorMetricTypeChoices.DAILY_TOKENS_SPENT,
+        MonitorMetricTypeChoices.MONTHLY_TOKENS_SPENT,
+    ],
 )
 def test_token_value_null_on_empty_window(metric_type: str) -> None:
     sql, _ = _builder().build_metric_value_query(metric_type, START, END)
@@ -152,21 +216,30 @@ def test_eval_choices_no_output_str_fallback() -> None:
 
 
 class TestHistoricalStatsRouting:
-    """Pin the _get_historical_stats routing hunk: the four time-aggregated
-    metrics are served by the CH builder with the monitor's interval_kind,
-    and ObservationSpan (the dropped span table) is never queried."""
+    """Pin the get_previous_period_baseline routing: the four time-aggregated
+    metrics are served by the CH builder with the periods in the monitor's
+    history window, and ObservationSpan (the dropped span table) is never
+    queried."""
 
     @pytest.mark.parametrize(
-        ("metric_type", "frequency", "bucket_fn"),
+        ("metric_type", "frequency", "periods"),
         [
-            (MonitorMetricTypeChoices.COUNT_OF_ERRORS, 60, "toStartOfHour"),
-            (MonitorMetricTypeChoices.TOKEN_USAGE, 5, "toStartOfMinute"),
-            (MonitorMetricTypeChoices.DAILY_TOKENS_SPENT, 60, "toStartOfDay"),
-            (MonitorMetricTypeChoices.MONTHLY_TOKENS_SPENT, 60, "toStartOfMonth"),
+            # START..END is 7 days.
+            (MonitorMetricTypeChoices.COUNT_OF_ERRORS, 60, 168.0),
+            (MonitorMetricTypeChoices.TOKEN_USAGE, 5, 2016.0),
+            (MonitorMetricTypeChoices.DAILY_TOKENS_SPENT, 60, 7.0),
+            # Shorter than one 30-day period: 7 of its 30 days, so the
+            # week's total is scaled up to the period.
+            pytest.param(
+                MonitorMetricTypeChoices.MONTHLY_TOKENS_SPENT,
+                60,
+                7 / 30,
+                id="monthly-tokens-week-of-a-period",
+            ),
         ],
     )
-    def test_ch_route_passes_interval_kind_and_skips_pg(
-        self, metric_type: str, frequency: int, bucket_fn: str
+    def test_ch_route_passes_periods_and_skips_pg(
+        self, metric_type: str, frequency: int, periods: float
     ) -> None:
         from types import SimpleNamespace
         from unittest import mock
@@ -180,19 +253,20 @@ class TestHistoricalStatsRouting:
             alert_frequency=frequency,
             filters={},
         )
-        captured: dict[str, str] = {}
+        captured: dict = {}
 
         class _Svc:
             def execute_ch_query(self, query, params, **kwargs):
-                captured["query"] = query
-                return SimpleNamespace(data=[{"mean": 4.2, "stddev": 1.1}])
+                captured["query"], captured["params"] = query, params
+                return SimpleNamespace(data=[{"mean": 4.2, "stddev": None}])
 
         with mock.patch.object(monitor_utils, "AnalyticsQueryService", _Svc):
-            mean, stddev = monitor_utils._get_historical_stats(monitor, START, END)
+            baseline = monitor_utils.get_previous_period_baseline(monitor, START, END)
 
-        assert (mean, stddev) == (4.2, 1.1)
-        # interval_kind derived from the monitor reaches the bucket function.
-        assert f"{bucket_fn}(start_time)" in captured["query"]
+        assert baseline == 4.2
+        # The periods derived from the monitor reach the per-period division.
+        assert "/ %(baseline_periods)s" in captured["query"]
+        assert captured["params"]["baseline_periods"] == periods
         # PG path is gone structurally: the module no longer imports the
         # dropped span table at all.
         assert not hasattr(monitor_utils, "ObservationSpan")

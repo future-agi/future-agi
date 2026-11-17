@@ -9,6 +9,7 @@ from __future__ import annotations
 from rest_framework.response import Response
 
 from tfc.utils.api_errors import build_error_envelope
+from tfc.utils.model_names import base_model_name
 
 JEV_MODEL_IDS = ("jev-1.13.0", "jev-1.14.0", "jev-latest")
 
@@ -153,9 +154,11 @@ _TURING_MODELS = frozenset(
 
 
 def is_turing_model(model_name: object) -> bool:
+    """Whether model_name names a Turing or Protect model. A provider-prefixed
+    model id is treated as its base model ("x/turing_small" is turing_small)."""
     if not model_name:
         return False
-    return str(model_name).lower() in _TURING_MODELS
+    return base_model_name(model_name) in _TURING_MODELS
 
 
 def insights_turing_models() -> list[str]:
@@ -168,11 +171,7 @@ def insights_turing_models() -> list[str]:
     except ImportError:
         return []
     models = [model_for(FAST), model_for(THINKING)]
-    return [
-        model
-        for model in models
-        if is_turing_model(model) or is_turing_model(str(model).rsplit("/", 1)[-1])
-    ]
+    return [model for model in models if is_turing_model(model)]
 
 
 INSIGHTS_DENIED_MESSAGE = "Insights isn't available to this organization."
@@ -453,6 +452,7 @@ def turing_oss_gate_for_template(
     model_name: object,
     template_id: object = None,
     eval_type: object = None,
+    organization: object = None,
 ) -> Response | None:
     """Variant of `turing_oss_gate_response` that skips the gate for code
     eval templates. Code evals execute Python/JS — the model field is
@@ -460,16 +460,29 @@ def turing_oss_gate_for_template(
     model defaulted to a Turing value.
 
     Pass `eval_type` directly when the caller already knows it (avoids a
-    DB lookup); otherwise we resolve it from `template_id`."""
+    DB lookup); otherwise we resolve it from `template_id`, among the system
+    templates and those of `organization` (by default the request's bound
+    organization), so another organization's template id is gated like an
+    unknown one."""
     if eval_type and str(eval_type).lower() == "code":
         return None
 
     if template_id:
         try:
-            from model_hub.models.evals_metric import EvalTemplate
+            from django.db.models import Q
 
+            from model_hub.models.evals_metric import EvalTemplate
+            from tfc.middleware.workspace_context import get_current_organization
+
+            if organization is None:
+                organization = get_current_organization()
+            visible = Q(organization__isnull=True)
+            if organization is not None:
+                visible |= Q(organization=organization)
             tpl = (
-                EvalTemplate.no_workspace_objects.filter(id=template_id, deleted=False)
+                EvalTemplate.no_workspace_objects.filter(
+                    visible, id=template_id, deleted=False
+                )
                 .only("eval_type")
                 .first()
             )
@@ -497,7 +510,7 @@ def turing_oss_gate_response(model_name: object) -> Response | None:
         return None
 
     message = (
-        "Turing and Protect models are not available on OSS. "
+        "Turing and Protect models can't run on this deployment. "
         "Select a different model (OpenAI, Anthropic, etc.) "
         "or upgrade your plan."
     )
@@ -514,3 +527,15 @@ def turing_oss_gate_response(model_name: object) -> Response | None:
         ),
         status=402,
     )
+
+
+def get_entitlement_service():
+    """Load the EE provider at the adapter boundary, without deciding policy.
+
+    ImportError propagates so callers retain their existing absence policy.
+    In particular, optional quota checks and paid-feature gates differ on OSS;
+    this loader neither caches a decision nor converts provider errors to grants.
+    """
+    from ee.usage.services.entitlements import Entitlements
+
+    return Entitlements

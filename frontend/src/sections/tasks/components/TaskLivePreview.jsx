@@ -3,6 +3,7 @@ import React, {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -158,6 +159,16 @@ const taskPreviewRowIdentity = (rowType, row) => {
   return getSpanReadIdentityKey(row);
 };
 
+// An empty preview only means "your filters matched nothing" when a filter
+// was sent. Without one, the project simply has no data in this window yet,
+// and only a task that runs on new incoming data will ever evaluate any.
+const emptyPreviewHint = ({ hasUserFilters, runType }) => {
+  if (hasUserFilters) return "Adjust filters to see matching data";
+  return runType === "continuous"
+    ? "This project has no data in this time window yet. New data will be evaluated as it arrives."
+    : "This project has no data in this time window yet. Choose New incoming data to evaluate it as it arrives.";
+};
+
 // Deep search: check if a value (including nested JSON) matches query
 function deepMatch(val, q) {
   if (val === null || val === undefined) return false;
@@ -246,6 +257,7 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
   //   { [idx]: { status: "running" | "success" | "error", result?, error? } }
   const [testResults, setTestResults] = useState({});
   const [isTesting, setIsTesting] = useState(false);
+  const testGenerationRef = useRef(0);
   const pendingNextRowIndexRef = useRef(null);
   const failedListContinuationRef = useRef(null);
   const queryClient = useQueryClient();
@@ -258,6 +270,7 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
   const samplingPolicy = useWatch({ control, name: "samplingPolicy" });
   const runType = useWatch({ control, name: "runType" });
   const isCursorPreview = isTaskPreviewCursorRowType(rowType);
+  const previewRowNoun = (ROW_TYPE_LABELS[rowType] || "rows").toLowerCase();
   // The create form starts with `spans`, then resolves simulator projects to
   // `voiceCalls`. Reuse TaskConfigPanel's cached project-detail query and do
   // not start a list request until that reconciliation is complete. This
@@ -280,6 +293,12 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
   const apiFilters = useMemo(
     () => buildApiFilterArray(formFilters, startDate, endDate),
     [formFilters, startDate, endDate],
+  );
+  // Unfinished filter rows never reach the request, so only rows that are
+  // actually sent count as filters here.
+  const hasUserFilters = useMemo(
+    () => buildApiFilterArray(formFilters).length > 0,
+    [formFilters],
   );
   const previewScopeKey = useMemo(
     () => JSON.stringify([rowType, projectId || null, apiFilters]),
@@ -319,6 +338,7 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
     data: listData,
     isLoading: listLoading,
     isFetching: listFetching,
+    isSuccess: listSuccess,
     isError: listError,
     error: listQueryError,
     refetch: refetchList,
@@ -659,6 +679,15 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
   const matchingTotal = listData?.total ?? rows.length;
   const matchingTotalIsLowerBound = listData?.totalIsLowerBound === true;
   const currentRow = rows[currentRowIndex] || null;
+  // Whether the project has no data in this window: null until the read
+  // gives a definite answer, and false whenever a filter was sent, because
+  // then the filter, not the project, may be what matched nothing.
+  const listAnswered =
+    Boolean(projectId) &&
+    previewProjectKindReady &&
+    listSuccess &&
+    (rows.length > 0 || !pendingListContinuation);
+  const noDataYet = listAnswered ? rows.length === 0 && !hasUserFilters : null;
 
   const handleNextRow = useCallback(() => {
     if (currentRowIndex < rows.length - 1) {
@@ -824,15 +853,22 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
     meta: { errorHandled: true },
   });
 
-  // Reset test results whenever the row or eval set changes
-  useEffect(() => {
+  // Invalidate pending attempts before the new inputs are painted, including
+  // same-length eval edits and project changes that reuse a row identity.
+  useLayoutEffect(() => {
     setTestResults({});
-  }, [currentRow, evalsDetails?.length]);
+    setIsTesting(false);
+    return () => {
+      // Also invalidate on unmount and A -> B -> A navigation.
+      testGenerationRef.current += 1;
+    };
+  }, [currentRow, evalsDetails, previewScopeKey, spanDetail]);
 
   // ── Test all configured evals on the current row ──
   const handleRunTest = useCallback(async () => {
     if (!currentRow || !evalsDetails?.length || !spanDetail) return;
 
+    const generation = ++testGenerationRef.current;
     setIsTesting(true);
     setTestResults(
       evalsDetails.reduce((acc, _ev, idx) => {
@@ -874,6 +910,7 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
           singleEvalConfigExtras: configExtras,
           compositeConfigExtras: configExtras,
         });
+        if (testGenerationRef.current !== generation) return;
         if (result.ok) {
           setTestResults((prev) => ({
             ...prev,
@@ -900,8 +937,11 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
           }));
         }
       }),
-    );
-    setIsTesting(false);
+    ).finally(() => {
+      if (testGenerationRef.current === generation) {
+        setIsTesting(false);
+      }
+    });
   }, [currentRow, evalsDetails, spanDetail, rowType]);
 
   // Expose runTest to parent via ref so the Test button in the page
@@ -921,12 +961,14 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
     onTestStateChange({
       canTest: !!currentRow && !!spanDetail && (evalsDetails?.length || 0) > 0,
       isTesting,
+      noDataYet,
     });
   }, [
     currentRow,
     spanDetail,
     evalsDetails?.length,
     isTesting,
+    noDataYet,
     onTestStateChange,
   ]);
 
@@ -1062,14 +1104,14 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
             }}
           >
             <Typography variant="body2" sx={{ fontSize: "12px" }}>
-              The exact preview was paused.
+              We couldn&apos;t finish the search.
             </Typography>
             <Typography
               variant="caption"
               color="text.secondary"
               sx={{ fontSize: "12px" }}
             >
-              Your saved position is retained. Retry to continue from it.
+              Retry the search to continue from where it stopped.
             </Typography>
             <Button
               size="small"
@@ -1120,14 +1162,15 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
             }}
           >
             <Typography variant="body2" sx={{ fontSize: "12px" }}>
-              Preparing the exact preview.
+              No matching {previewRowNoun} found so far.
             </Typography>
             <Typography
               variant="caption"
               color="text.secondary"
               sx={{ fontSize: "12px" }}
             >
-              Continue from the saved position to load the next bounded batch.
+              Only part of this project has been searched. Continue the search
+              to check more {previewRowNoun}, or adjust the filters.
             </Typography>
             <Button
               size="small"
@@ -1147,7 +1190,7 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
           <EmptyState
             icon="solar:magnifer-outline"
             text="No matching rows"
-            subtext="Adjust filters to see matching data"
+            subtext={emptyPreviewHint({ hasUserFilters, runType })}
           />
         ) : (
           <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>

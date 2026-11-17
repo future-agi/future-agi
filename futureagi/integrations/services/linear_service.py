@@ -5,7 +5,8 @@ Credentials dict shape:
     api_key (str): Personal API key from Linear Settings > Security & Access.
 
 Auth header: ``Authorization: <api_key>`` (no "Bearer" prefix for personal keys).
-Endpoint: https://api.linear.app/graphql
+Endpoint: https://api.linear.app/graphql, or <INTEGRATIONS_LINEAR_URL>/graphql
+when the deployment sets that override (integrations/services/endpoints.py).
 """
 
 import logging
@@ -14,11 +15,18 @@ from typing import Any
 import requests
 
 from integrations.services.base import BaseIntegrationService, register_service
+from integrations.services.endpoints import endpoint_override
+from integrations.services.export_failures import validation_failure
 
 logger = logging.getLogger(__name__)
 
-GRAPHQL_URL = "https://api.linear.app/graphql"
+API_HOST = "https://api.linear.app"
 TIMEOUT = 15
+
+
+def _graphql_url() -> str:
+    """Linear's GraphQL endpoint, at the override's base when one is set."""
+    return f"{endpoint_override('INTEGRATIONS_LINEAR_URL') or API_HOST}/graphql"
 
 
 def _headers(api_key: str) -> dict:
@@ -35,7 +43,7 @@ def _gql(api_key: str, query: str, variables: dict | None = None) -> dict:
         payload["variables"] = variables
 
     resp = requests.post(
-        GRAPHQL_URL,
+        _graphql_url(),
         json=payload,
         headers=_headers(api_key),
         timeout=TIMEOUT,
@@ -101,8 +109,7 @@ class LinearService(BaseIntegrationService):
         except requests.exceptions.Timeout:
             return {"valid": False, "error": "Linear API request timed out."}
         except Exception as exc:
-            logger.exception("Unexpected error validating Linear credentials")
-            return {"valid": False, "error": str(exc)}
+            return validation_failure("linear", exc, logger)
 
     def fetch_traces(self, host_url, credentials, **kwargs) -> dict:
         """Not used — Linear is an issue tracker, not a trace source."""

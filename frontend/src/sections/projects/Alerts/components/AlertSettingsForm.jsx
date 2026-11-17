@@ -1,14 +1,19 @@
-import { Box, Button, Divider, Stack, Typography } from "@mui/material";
+import { Box, Button, Divider, Link, Stack, Typography } from "@mui/material";
 import React, { useCallback, useEffect, useMemo, useRef } from "react";
 import { Controller, useForm } from "react-hook-form";
+import { Link as RouterLink } from "react-router-dom";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import {
   AlertConfigValidationSchema,
   getDefaultAlertConfigValues,
+  getThresholdOperatorAfterSwitch,
   getThresholdValueDefaults,
+  isShareScale,
+  previewThresholdValues,
 } from "./validation";
 import { zodResolver } from "@hookform/resolvers/zod";
 import CardWrapper from "./CardWrapper";
+import ThresholdPreview from "./ThresholdPreview";
 import {
   alertTypes,
   directionOfAnomaly,
@@ -18,6 +23,8 @@ import {
   timeOptions,
   alertDefinitionOptions,
   convertFiltersToPayload,
+  earlierRuleNote,
+  shareThresholdHelp,
   evalUsesChoiceThreshold,
   isSpanAttrFilterValid,
 } from "../common";
@@ -31,12 +38,29 @@ import ChipsInput from "../../../../components/ChipsInput/ChipsInput";
 import { enqueueSnackbar } from "notistack";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import { LoadingButton } from "@mui/lab";
-import { useCreateAlertMutation } from "../useCreateAlertMutation";
+import {
+  alertEventFields,
+  useCreateAlertMutation,
+} from "../useCreateAlertMutation";
 import PropTypes from "prop-types";
 import { useDebounce } from "src/hooks/use-debounce";
 import { useAlertStore } from "../store/useAlertStore";
 import { useAlertSheetView } from "../store/useAlertSheetView";
 import { useOrganization } from "src/contexts/OrganizationContext";
+
+// The fields whose new value moves a saved alert to the current rule, as the
+// server's monitor serializer lists them.
+const THRESHOLD_RULE_FIELDS = [
+  "metric_type",
+  "metric",
+  "threshold_metric_value",
+  "threshold_type",
+  "threshold_operator",
+  "critical_threshold_value",
+  "warning_threshold_value",
+  "alert_frequency",
+  "auto_threshold_time_window",
+];
 
 const isValidEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
 
@@ -68,16 +92,20 @@ export default function AlertSettingsForm({
 
   const buildFormValues = useCallback(
     () =>
-      getDefaultAlertConfigValues({
-        ...(openSheetView && alertRuleDetails),
-        name: openSheetView
-          ? duplicateAlertName || alertRuleDetails?.name || ""
-          : "",
-        ...(alertType &&
-          !openSheetView && {
-            metricType: alertType,
-          }),
-      }),
+      getDefaultAlertConfigValues(
+        {
+          ...(openSheetView && alertRuleDetails),
+          name: openSheetView
+            ? duplicateAlertName || alertRuleDetails?.name || ""
+            : "",
+          ...(alertType &&
+            !openSheetView && {
+              metricType: alertType,
+            }),
+        },
+        // A duplicate is saved as a new alert, so it starts from numbers.
+        { keepSavedWords: !duplicateAlertName },
+      ),
     [openSheetView, alertRuleDetails, duplicateAlertName, alertType],
   );
 
@@ -86,10 +114,12 @@ export default function AlertSettingsForm({
     watch,
     handleSubmit,
     setValue,
+    getValues,
+    getFieldState,
     reset,
     setError,
     trigger,
-    formState: { errors, isDirty },
+    formState: { errors, isDirty, dirtyFields },
   } = useForm({
     defaultValues: buildFormValues(),
     resolver: zodResolver(AlertConfigValidationSchema),
@@ -123,6 +153,11 @@ export default function AlertSettingsForm({
 
   const selectedNotificationMethod = watch("notification.method");
   const thresholdType = watch("threshold_type");
+  const thresholdOperator = watch("threshold_operator");
+  // A level saved as infinity or not-a-number: its words, shown in its empty
+  // field. It keeps what was saved, and is not sent, until a number is typed.
+  const criticalWords = watch("critical_threshold_label");
+  const warningWords = watch("warning_threshold_label");
 
   useEffect(() => {
     if (openSheetView) {
@@ -145,7 +180,11 @@ export default function AlertSettingsForm({
 
   const debounceWatchedFilters = useDebounce(watch("filters"), 300);
 
-  const { data: expandedEvaluations } = useQuery({
+  const {
+    data: expandedEvaluations,
+    isLoading: isEvaluationsLoading,
+    isError: isEvaluationsError,
+  } = useQuery({
     queryKey: ["observe-evaluations", observeId],
     queryFn: () =>
       axios.get(endpoints.project.getTraceEvals(), {
@@ -156,6 +195,49 @@ export default function AlertSettingsForm({
     select: (res) => res?.data?.result,
     enabled: Boolean(observeId && metricType === "evaluation_metrics"),
   });
+
+  // get_eval_names lists only evals that have already produced results, so a
+  // project with no eval task, or with one that has not run yet, gets [].
+  // Only a resolved empty list says that; loading and errors say their own.
+  const hasNoEvalsWithResults =
+    Array.isArray(expandedEvaluations) && expandedEvaluations.length === 0;
+  const evalPickerEmptyText = isEvaluationsLoading
+    ? "Loading evals..."
+    : isEvaluationsError
+      ? "Could not load evals"
+      : "No evals with results yet";
+
+  // An alert on an eval with no results yet is not in the eval list above,
+  // and the picker would show the eval's raw id. The saved alert carries the eval's
+  // name (the server appends " (<choice>)" for a choice eval, which has its
+  // own field), so offer it under that name. Display only: selectedEval still
+  // comes from the list.
+  const evalOptions = useMemo(() => {
+    const options =
+      expandedEvaluations?.map((evaluation) => ({
+        label: evaluation?.name,
+        value: evaluation?.id,
+      })) ?? [];
+    const savedEvalId = alertRuleDetails?.metric;
+    const savedEvalName = alertRuleDetails?.metricName;
+    if (
+      !openSheetView ||
+      alertRuleDetails?.metricType !== "evaluation_metrics" ||
+      !savedEvalId ||
+      !savedEvalName ||
+      options.some((option) => option.value === savedEvalId)
+    ) {
+      return options;
+    }
+    const choiceSuffix = alertRuleDetails?.thresholdMetricValue
+      ? ` (${alertRuleDetails.thresholdMetricValue})`
+      : "";
+    const label =
+      choiceSuffix && savedEvalName.endsWith(choiceSuffix)
+        ? savedEvalName.slice(0, -choiceSuffix.length)
+        : savedEvalName;
+    return [...options, { label, value: savedEvalId }];
+  }, [expandedEvaluations, openSheetView, alertRuleDetails]);
 
   const selectedEval = useMemo(
     () => expandedEvaluations?.find((evaluation) => evaluation?.id === metric),
@@ -183,6 +265,29 @@ export default function AlertSettingsForm({
     thresholdType === "static" &&
     ["choices", "Pass/Fail"].includes(selectedEvalOutputType);
   const isPercentScale = thresholdType === "percentage_change";
+  // A static share has a sentence for a value outside 0 to 1, so its two
+  // value fields keep a typed minus for that sentence to explain. Every other
+  // number field still drops it.
+  const keepTypedMinus = isShareScale(metricType, thresholdType);
+  // Which share a threshold is on, beside the number. A saved provider error
+  // rate row still on the earlier rule reads the share with no errors.
+  const shareHelp = shareThresholdHelp({
+    metricType,
+    thresholdType,
+    // Saving a new value in any of these moves the row to the current rule
+    // (the server's THRESHOLD_RULE_FIELDS), so the words follow the edit.
+    earlier:
+      Boolean(openSheetView) &&
+      !duplicateAlertName &&
+      alertRuleDetails?.thresholdRule === "earlier" &&
+      !THRESHOLD_RULE_FIELDS.some((name) => dirtyFields?.[name]),
+  });
+  // The saved alert's own rule. A duplicate is saved as a new alert, which
+  // the server judges by the current rule, so it gets no line.
+  const earlierNote =
+    openSheetView && !duplicateAlertName
+      ? earlierRuleNote(alertRuleDetails)
+      : "";
 
   const selectedMetricOptions = useMemo(() => {
     if (expandedEvaluations?.length > 0 && metric) {
@@ -207,7 +312,10 @@ export default function AlertSettingsForm({
       threshold_operator: debouncedOperator,
       threshold_type: debouncedType,
       critical_threshold_value: debouncedCritical,
-      warning_threshold_value: debouncedWarning,
+      // An alert saved without a warning keeps it empty: send none.
+      ...(debouncedWarning !== "" && {
+        warning_threshold_value: debouncedWarning,
+      }),
       alert_frequency: debouncedFrequency,
       filters: {
         ...(observation_type.length > 0 && { observation_type }),
@@ -264,6 +372,8 @@ export default function AlertSettingsForm({
       // Presence, not truthiness — 0 is a valid threshold and would
       // otherwise disable the preview graph for the whole form.
       debouncedCritical !== undefined &&
+      // A critical level kept as saved has words, not a number to preview.
+      debouncedCritical !== "" &&
       debouncedWarning !== undefined &&
       debouncedFrequency &&
       !hasErrors &&
@@ -282,6 +392,8 @@ export default function AlertSettingsForm({
         : true);
 
     const isThresholdValid = (() => {
+      // No warning to compare with (an alert saved without one).
+      if (debouncedWarning === "") return true;
       if (debouncedOperator === "less_than") {
         return debouncedCritical < debouncedWarning;
       }
@@ -362,11 +474,8 @@ export default function AlertSettingsForm({
         variant: "success",
       });
       trackEvent(Events.createAlertConfirmed, {
-        [PropertyName.formFields]: {
-          ...variables,
-          metricType,
-          thresholdType: variables?.threshold_type,
-        },
+        // Allowlisted fields only: never forward the PagerDuty routing key.
+        [PropertyName.formFields]: alertEventFields(variables, metricType),
       });
       handleCloseCreateAlert();
       refreshGrid();
@@ -378,32 +487,29 @@ export default function AlertSettingsForm({
     },
   });
 
-  const handleCreateAlert = (data) => {
+  // Save and on-demand preview share the same live form-to-API mapping.
+  // Unlike the automatic graph, preview must not use the 300ms-old payload.
+  const buildMonitorPayload = (data) => {
     const { observation_type, span_attributes_filters } =
       convertFiltersToPayload(data?.filters);
 
     const isSlack = data?.notification?.method === "slack";
     const isWebhook = data?.notification?.method === "webhook";
+    const isPagerDuty = data?.notification?.method === "pagerduty";
     const notificationPayload = {
       notification_emails:
-        !isSlack && !isWebhook ? data?.notification?.emails ?? [] : [],
+        data?.notification?.method === "email"
+          ? data?.notification?.emails ?? []
+          : [],
       slack_webhook_url: isSlack
         ? data?.notification?.slack?.webhookUrl ?? ""
         : "",
       slack_notes: isSlack ? data?.notification?.slack?.notes ?? "" : "",
       webhook_url: isWebhook ? data?.notification?.webhook?.url ?? "" : "",
+      pagerduty_routing_key: isPagerDuty
+        ? data?.notification?.pagerduty?.routingKey ?? ""
+        : "",
     };
-    if (
-      selectedMetricOptions?.length > 0 &&
-      data?.metric_type === "evaluation_metrics" &&
-      !data?.threshold_metric_value
-    ) {
-      setError("threshold_metric_value", {
-        message: "Choice is required",
-      });
-      return;
-    }
-
     const isUpdate = Boolean(openSheetView && !duplicateAlertName);
     // Send the choice only for an eval known to take one. While the eval list
     // is unresolved an update leaves it out: the server keeps the stored choice
@@ -437,12 +543,30 @@ export default function AlertSettingsForm({
             threshold_metric_value: data?.threshold_metric_value,
           }),
       }),
+      // PATCH must clear saved evaluation fields when switching to a system metric.
+      ...(data?.metric_type !== "evaluation_metrics" && {
+        metric: null,
+        threshold_metric_value: null,
+      }),
       ...notificationPayload,
       ...(data?.threshold_type === "percentage_change" && {
         auto_threshold_time_window: data?.auto_threshold_time_window,
       }),
     };
 
+    return payload;
+  };
+
+  const handleCreateAlert = (data) => {
+    if (
+      selectedMetricOptions?.length > 0 &&
+      data?.metric_type === "evaluation_metrics" &&
+      !data?.threshold_metric_value
+    ) {
+      setError("threshold_metric_value", { message: "Choice is required" });
+      return;
+    }
+    const payload = buildMonitorPayload(data);
     if (openSheetView && !duplicateAlertName) {
       updateAlert(payload);
     } else {
@@ -450,30 +574,39 @@ export default function AlertSettingsForm({
     }
   };
 
-  const handleThresholdSwapIfNeeded = useCallback(
-    (operatorInput) => {
-      const warningValue = parseFloat(watch("warning_threshold_value"));
-      const criticalValue = parseFloat(watch("critical_threshold_value"));
-
-      if (!isNaN(warningValue) && !isNaN(criticalValue)) {
-        let shouldSwap = false;
-
-        if (operatorInput === "less_than") {
-          shouldSwap = criticalValue >= warningValue;
-        } else if (operatorInput === "greater_than") {
-          shouldSwap = criticalValue <= warningValue;
-        }
-
-        if (shouldSwap) {
-          setValue("warning_threshold_value", criticalValue);
-          setValue("critical_threshold_value", warningValue);
-          setWarningValue(criticalValue);
-          setCriticalValue(warningValue);
-        }
-      }
-    },
-    [watch, setValue, setWarningValue, setCriticalValue],
-  );
+  // A new alert whose two values are still the defaults for the direction
+  // being left gets the defaults for the new one, so an untouched Count of
+  // errors alert switched to Below reads critical 300 and warning 400, not a
+  // reason under values nobody typed. Typed values and a saved alert's values
+  // never change. isDirty is the "typed" signal: typing and the spinner both
+  // go through the field's own onChange, which compares with the values the
+  // form opened with, while setValue (here and in the metric_type and
+  // threshold_type handlers) leaves it alone. isTouched would not do:
+  // tabbing through a field marks it without changing anything.
+  const applyDirectionDefaultsIfUntouched = (nextOperator) => {
+    if (openSheetView || !nextOperator) return;
+    const valueFields = ["critical_threshold_value", "warning_threshold_value"];
+    if (valueFields.some((name) => getFieldState(name).isDirty)) return;
+    const previous = getThresholdValueDefaults(
+      metricType,
+      thresholdType,
+      thresholdOperator,
+    );
+    if (
+      getValues("critical_threshold_value") !== previous.critical ||
+      getValues("warning_threshold_value") !== previous.warning
+    ) {
+      return;
+    }
+    const next = getThresholdValueDefaults(
+      metricType,
+      thresholdType,
+      nextOperator,
+    );
+    // Both before the caller's trigger(), as in the metric_type handler.
+    setValue("critical_threshold_value", next.critical);
+    setValue("warning_threshold_value", next.warning);
+  };
 
   return (
     <Box
@@ -542,19 +675,35 @@ export default function AlertSettingsForm({
                   // lookup) both see the metric the user just picked, not
                   // the one they're leaving.
                   setValue("metric_type", e?.target?.value);
+                  // A direction still at the start of the metric being left
+                  // moves to the new metric's start: Below for the
+                  // error-free session rate, Above for the rest. Any other
+                  // direction is kept.
+                  const nextOperator = getThresholdOperatorAfterSwitch(
+                    thresholdOperator,
+                    { metricType, thresholdType },
+                    { metricType: e?.target?.value, thresholdType },
+                  );
                   // Reset the thresholds only when the switch actually moves
                   // them onto a different scale. Overwriting unconditionally
                   // would destroy a saved value (e.g. a stored 250) on a
                   // switch between two metrics that read the field the same
-                  // way.
+                  // way. The new pair is ordered for the direction the alert
+                  // ends with, so a Below alert does not get Above values it
+                  // can't save.
                   const previous = getThresholdValueDefaults(
                     metricType,
                     thresholdType,
+                    thresholdOperator,
                   );
                   const next = getThresholdValueDefaults(
                     e?.target?.value,
                     thresholdType,
+                    nextOperator,
                   );
+                  if (nextOperator !== thresholdOperator) {
+                    setValue("threshold_operator", nextOperator);
+                  }
                   if (previous.critical !== next.critical) {
                     // Set both before validating — the cross-field
                     // (critical > warning) check in the zod schema needs both
@@ -597,10 +746,8 @@ export default function AlertSettingsForm({
                   label="Metric"
                   required
                   size="small"
-                  options={expandedEvaluations?.map((evaluation) => ({
-                    label: evaluation?.name,
-                    value: evaluation?.id,
-                  }))}
+                  options={evalOptions}
+                  noOptions={evalPickerEmptyText}
                   fullWidth
                   onChange={() => {
                     setValue("threshold_metric_value", "");
@@ -627,6 +774,27 @@ export default function AlertSettingsForm({
                 // }}
               />
             </Box>
+            <ShowComponent
+              condition={
+                metricType === "evaluation_metrics" && hasNoEvalsWithResults
+              }
+            >
+              <Typography
+                component="p"
+                variant="s1"
+                color="text.secondary"
+                sx={{ px: 3, pb: 3, mt: -1.5 }}
+              >
+                No evals have results in this project yet.{" "}
+                <Link
+                  component={RouterLink}
+                  to={`/dashboard/tasks/create?project=${observeId}`}
+                >
+                  Set up an eval task
+                </Link>
+                , and its evals will show up here after the first run.
+              </Typography>
+            </ShowComponent>
           </CardWrapper>
           <CardWrapper order={1} title="Filter Events">
             <Box
@@ -663,15 +831,27 @@ export default function AlertSettingsForm({
                     // switch above — static and percentage_change read this
                     // field on different scales (fraction vs percent) for
                     // eval metrics, but a switch that keeps the same scale
-                    // must leave a saved value alone.
+                    // must leave a saved value alone. The direction follows
+                    // the same rule as there: a static error-free session
+                    // rate starts Below, a percentage change on it Above.
+                    const nextOperator = getThresholdOperatorAfterSwitch(
+                      thresholdOperator,
+                      { metricType, thresholdType },
+                      { metricType, thresholdType: e?.target?.value },
+                    );
                     const previous = getThresholdValueDefaults(
                       metricType,
                       thresholdType,
+                      thresholdOperator,
                     );
                     const next = getThresholdValueDefaults(
                       metricType,
                       e?.target?.value,
+                      nextOperator,
                     );
+                    if (nextOperator !== thresholdOperator) {
+                      setValue("threshold_operator", nextOperator);
+                    }
                     if (previous.critical !== next.critical) {
                       // Set both before validating — see the same note on the
                       // metric_type handler above.
@@ -712,6 +892,17 @@ export default function AlertSettingsForm({
                     }}
                   />
                 </Stack>
+              </ShowComponent>
+              <ShowComponent condition={isPercentScale && Boolean(earlierNote)}>
+                <Typography
+                  component="p"
+                  variant="s1"
+                  color="text.secondary"
+                  data-alert-earlier-rule=""
+                  sx={{ px: 3 }}
+                >
+                  {earlierNote}
+                </Typography>
               </ShowComponent>
               <ShowComponent
                 condition={["static", "percentage_change"].includes(
@@ -777,7 +968,16 @@ export default function AlertSettingsForm({
                         control={control}
                         fieldName={"threshold_operator"}
                         onChange={(e) => {
-                          handleThresholdSwapIfNeeded(e?.target?.value);
+                          // Never touch the values the person typed: a pair
+                          // that does not fit the new direction shows why
+                          // under both fields, and the form will not save.
+                          // FormSearchSelectFieldControl calls this onChange
+                          // BEFORE react-hook-form's own field.onChange, so
+                          // set the direction first, or the check below
+                          // compares the values with the one being left.
+                          // Only a new alert's untouched defaults follow it.
+                          setValue("threshold_operator", e?.target?.value);
+                          applyDirectionDefaultsIfUntouched(e?.target?.value);
                           if (
                             debouncedWarning !== undefined ||
                             debouncedCritical !== undefined ||
@@ -827,11 +1027,13 @@ export default function AlertSettingsForm({
                         helperText={
                           isEvalFractionScale
                             ? "Fraction between 0 and 1, e.g. 0.095 for 9.5%"
-                            : undefined
+                            : shareHelp
                         }
                         size="small"
                         fullWidth
                         fieldType="number"
+                        allowNegative={keepTypedMinus}
+                        placeholder={criticalWords}
                         inputProps={{
                           "data-alert-field": "critical-threshold-value",
                         }}
@@ -893,7 +1095,10 @@ export default function AlertSettingsForm({
                         control={control}
                         fieldName={"threshold_operator"}
                         onChange={(e) => {
-                          handleThresholdSwapIfNeeded(e?.target?.value);
+                          // Same as the critical picker above: keep the typed
+                          // values and check them against the new direction.
+                          setValue("threshold_operator", e?.target?.value);
+                          applyDirectionDefaultsIfUntouched(e?.target?.value);
                           if (
                             debouncedWarning !== undefined ||
                             debouncedCritical !== undefined ||
@@ -944,11 +1149,13 @@ export default function AlertSettingsForm({
                         helperText={
                           isEvalFractionScale
                             ? "Fraction between 0 and 1, e.g. 0.095 for 9.5%"
-                            : undefined
+                            : shareHelp
                         }
                         size="small"
                         fullWidth
                         fieldType="number"
+                        allowNegative={keepTypedMinus}
+                        placeholder={warningWords}
                         inputProps={{
                           "data-alert-field": "warning-threshold-value",
                         }}
@@ -1159,7 +1366,31 @@ export default function AlertSettingsForm({
                   />
                 </Stack>
               </ShowComponent>
-              <ShowComponent condition={selectedNotificationMethod === "webhook"}>
+              <ShowComponent
+                condition={selectedNotificationMethod === "pagerduty"}
+              >
+                <Stack
+                  sx={{
+                    padding: 3,
+                    gap: 3,
+                  }}
+                >
+                  <FormTextFieldV2
+                    control={control}
+                    required
+                    placeholder="Enter PagerDuty routing key"
+                    fieldName="notification.pagerduty.routingKey"
+                    label="PagerDuty routing key"
+                    fieldType="password"
+                    autoComplete="new-password"
+                    size="small"
+                    fullWidth
+                  />
+                </Stack>
+              </ShowComponent>
+              <ShowComponent
+                condition={selectedNotificationMethod === "webhook"}
+              >
                 <Stack
                   sx={{
                     padding: 3,
@@ -1179,6 +1410,10 @@ export default function AlertSettingsForm({
               </ShowComponent>
             </Box>
           </CardWrapper>
+          <ThresholdPreview
+            definition={buildMonitorPayload(previewThresholdValues(watch()))}
+            monitorId={openSheetView && !duplicateAlertName ? openSheetView : undefined}
+          />
           <Stack direction={"row"} gap={1} justifyContent={"flex-end"}>
             <Button
               disabled={isCreating || isUpdating}

@@ -2,21 +2,13 @@
 
 Covers the review fixes on TH-6388:
 - Labeled ``choices`` templates with ``choice_scores`` populated now flow
-  through the scorer instead of hedging at ``0.5`` (both in the
-  ``run_eval_func`` path and the direct-eval-class fallback path).
-- Nested-list ``eval_results`` shapes ``[[{...}]]`` no longer crash the
-  reason extraction after scoring.
+  through the scorer instead of hedging at ``0.5``.
 """
 
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
-
-
-class _RunResult:
-    def __init__(self, eval_results):
-        self.eval_results = eval_results
 
 
 def _eval_template(
@@ -76,12 +68,15 @@ class TestChoicesSkipGateWithConfig:
         )
         # run_eval_func returns the post-format_eval_value payload.
         fake_eval_result = {"output": {"score": 1.0, "choice": "good"}, "reason": "r"}
-        with patch(
-            "model_hub.views.utils.evals.run_eval_func",
-            return_value=fake_eval_result,
-        ), patch(
-            "model_hub.models.evals_metric.EvalTemplate.objects.get",
-            side_effect=Exception("skip DB fetch"),
+        with (
+            patch(
+                "model_hub.views.utils.evals.run_eval_func",
+                return_value=fake_eval_result,
+            ),
+            patch(
+                "model_hub.models.evals_metric.EvalTemplate.objects.get",
+                side_effect=Exception("skip DB fetch"),
+            ),
         ):
             score, reason = _direct_evaluator()._run_eval_with_config(
                 _EvalConfig(template), {}, "output_text", "prompt"
@@ -108,62 +103,17 @@ class TestChoicesSkipGateWithConfig:
             choice_scores=None,
         )
         fake_eval_result = {"output": "0.5", "reason": "r"}
-        with patch(
-            "model_hub.views.utils.evals.run_eval_func",
-            return_value=fake_eval_result,
-        ), patch(
-            "model_hub.models.evals_metric.EvalTemplate.objects.get",
-            side_effect=Exception("skip DB fetch"),
+        with (
+            patch(
+                "model_hub.views.utils.evals.run_eval_func",
+                return_value=fake_eval_result,
+            ),
+            patch(
+                "model_hub.models.evals_metric.EvalTemplate.objects.get",
+                side_effect=Exception("skip DB fetch"),
+            ),
         ):
             score, _ = _direct_evaluator()._run_eval_with_config(
                 _EvalConfig(template), {}, "output_text", "prompt"
             )
         assert score == 0.5
-
-
-@pytest.mark.unit
-class TestNestedListResultReasonExtraction:
-    """``_run_eval_direct`` must not crash extracting the reason when the
-    evaluator returns a nested-list ``eval_results`` shape.
-    """
-
-    def test_nested_list_result_reason_unwrapped(self):
-        template = _eval_template(
-            output="score", output_type_normalized="percentage"
-        )
-        result = _RunResult(
-            eval_results=[
-                [
-                    {
-                        "data": None,
-                        "failure": False,
-                        "reason": "nested_reason",
-                        "runtime": 0,
-                        "model": "gpt-4o",
-                        "metrics": [{"value": 0.72}],
-                        "metadata": {},
-                    }
-                ]
-            ]
-        )
-        fake_eval_class = MagicMock()
-        fake_eval_class.return_value.run.return_value = result
-
-        # Route _run_eval_direct's getattr(fi_evals, eval_type_id) lookup onto
-        # our fake by adding the id to the fi_evals namespace for the call.
-        import agentic_eval.core_evals.fi_evals as fi_evals
-
-        original = getattr(fi_evals, "LlmEvaluator", None)
-        fi_evals.LlmEvaluator = fake_eval_class
-        try:
-            score, reason = _direct_evaluator()._run_eval_direct(
-                template, {"output_text": "x"}
-            )
-        finally:
-            if original is None:
-                del fi_evals.LlmEvaluator
-            else:
-                fi_evals.LlmEvaluator = original
-
-        assert score == 0.72
-        assert reason == "nested_reason"

@@ -1,16 +1,26 @@
 from django.db.models import Q
 
+from tfc.utils.tenant_scope import caller_organization
 from tracer.models.project import Project
 
 
 def get_request_organization(request):
-    return getattr(request, "organization", None) or getattr(
-        getattr(request, "user", None), "organization", None
-    )
+    """The caller's organization (``tfc.utils.tenant_scope.caller_organization``)."""
+    return caller_organization(request)
+
+
+# Matches no row: Django compiles an empty ``pk__in`` to an always-false
+# condition, inside an AND or an OR.
+_NO_ROWS = Q(pk__in=[])
 
 
 def project_workspace_scope_q(request, project_prefix="project__"):
     organization = get_request_organization(request)
+    if organization is None:
+        # No organization: no project is the caller's. Said explicitly rather
+        # than left to a ``project__organization=None`` lookup that matches
+        # nothing only because the column is not nullable.
+        return _NO_ROWS
     scope = Q(**{f"{project_prefix}organization": organization})
 
     workspace = getattr(request, "workspace", None) or getattr(

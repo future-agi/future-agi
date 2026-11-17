@@ -12,10 +12,10 @@ import importlib
 
 import pytest
 from django.apps import apps as global_apps
+from django.db import connection
 
 from model_hub.models.choices import OwnerChoices
 from model_hub.models.evals_metric import EvalTemplate, EvalTemplateVersion
-
 
 backfill_module = importlib.import_module(
     "model_hub.migrations.0114_backfill_eval_version_is_default"
@@ -66,7 +66,7 @@ class TestBackfillIsDefault:
         v2 = _make_version(template, user, organization, workspace, 2, is_default=False)
         v3 = _make_version(template, user, organization, workspace, 3, is_default=False)
 
-        backfill_is_default(global_apps, None)
+        backfill_is_default(global_apps, connection.schema_editor())
 
         v1.refresh_from_db()
         v2.refresh_from_db()
@@ -85,7 +85,7 @@ class TestBackfillIsDefault:
         v1 = _make_version(template, user, organization, workspace, 1, is_default=True)
         v2 = _make_version(template, user, organization, workspace, 2, is_default=False)
 
-        backfill_is_default(global_apps, None)
+        backfill_is_default(global_apps, connection.schema_editor())
 
         v1.refresh_from_db()
         v2.refresh_from_db()
@@ -100,7 +100,7 @@ class TestBackfillIsDefault:
         v1.deleted = True
         v1.save(update_fields=["deleted"])
 
-        backfill_is_default(global_apps, None)
+        backfill_is_default(global_apps, connection.schema_editor())
 
         v1.refresh_from_db()
         assert v1.is_default is False
@@ -110,8 +110,8 @@ class TestBackfillIsDefault:
         _make_version(template, user, organization, workspace, 1, is_default=False)
         v2 = _make_version(template, user, organization, workspace, 2, is_default=False)
 
-        backfill_is_default(global_apps, None)
-        backfill_is_default(global_apps, None)
+        backfill_is_default(global_apps, connection.schema_editor())
+        backfill_is_default(global_apps, connection.schema_editor())
 
         defaults = EvalTemplateVersion.objects.filter(
             eval_template=template, is_default=True, deleted=False

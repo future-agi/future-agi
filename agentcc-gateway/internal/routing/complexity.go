@@ -124,24 +124,7 @@ func (a *ComplexityAnalyzer) Analyze(req *models.ChatCompletionRequest) Complexi
 		return ComplexityResult{Score: 0, Tier: a.defaultTier, Model: a.defaultModel, Provider: a.defaultProv}
 	}
 
-	// Compute weighted score.
-	var totalScore float64
-	totalScore += a.weights["token_count"] * float64(scoreTokenCount(req.Messages))
-	totalScore += a.weights["message_count"] * float64(scoreMessageCount(len(req.Messages)))
-	totalScore += a.weights["system_prompt_length"] * float64(scoreSystemPrompt(req.Messages))
-	totalScore += a.weights["tool_count"] * float64(scoreToolCount(len(req.Tools)))
-	totalScore += a.weights["multimodal"] * float64(scoreMultimodal(req.Messages))
-	totalScore += a.weights["keyword_heuristics"] * float64(scoreKeywords(req.Messages))
-	totalScore += a.weights["structured_output"] * float64(scoreStructuredOutput(req))
-	totalScore += a.weights["max_tokens"] * float64(scoreMaxTokens(req.MaxTokens))
-
-	score := int(totalScore)
-	if score < 0 {
-		score = 0
-	}
-	if score > 100 {
-		score = 100
-	}
+	score := complexityScore(req, a.weights)
 
 	// Map score to tier.
 	for _, t := range a.tiers {
@@ -153,6 +136,49 @@ func (a *ComplexityAnalyzer) Analyze(req *models.ChatCompletionRequest) Complexi
 	// Score exceeds all tiers — use the last (highest) tier.
 	last := a.tiers[len(a.tiers)-1]
 	return ComplexityResult{Score: score, Tier: last.Name, Model: last.Model, Provider: last.Provider}
+}
+
+// Tier returns the named tier as a result, for a request that names its
+// tier explicitly (x-agentcc-complexity-override) instead of being scored.
+func (a *ComplexityAnalyzer) Tier(name string) (ComplexityResult, bool) {
+	if !a.IsEnabled() {
+		return ComplexityResult{}, false
+	}
+	for _, t := range a.tiers {
+		if t.Name == name {
+			return ComplexityResult{Score: t.MaxScore, Tier: t.Name, Model: t.Model, Provider: t.Provider}, true
+		}
+	}
+	return ComplexityResult{}, false
+}
+
+// ScoreComplexity scores a request 0–100 with the default signal weights.
+func ScoreComplexity(req *models.ChatCompletionRequest) int {
+	if req == nil || len(req.Messages) == 0 {
+		return 0
+	}
+	return complexityScore(req, defaultComplexityWeights)
+}
+
+func complexityScore(req *models.ChatCompletionRequest, weights map[string]float64) int {
+	var totalScore float64
+	totalScore += weights["token_count"] * float64(scoreTokenCount(req.Messages))
+	totalScore += weights["message_count"] * float64(scoreMessageCount(len(req.Messages)))
+	totalScore += weights["system_prompt_length"] * float64(scoreSystemPrompt(req.Messages))
+	totalScore += weights["tool_count"] * float64(scoreToolCount(len(req.Tools)))
+	totalScore += weights["multimodal"] * float64(scoreMultimodal(req.Messages))
+	totalScore += weights["keyword_heuristics"] * float64(scoreKeywords(req.Messages))
+	totalScore += weights["structured_output"] * float64(scoreStructuredOutput(req))
+	totalScore += weights["max_tokens"] * float64(scoreMaxTokens(req.MaxTokens))
+
+	score := int(totalScore)
+	if score < 0 {
+		score = 0
+	}
+	if score > 100 {
+		score = 100
+	}
+	return score
 }
 
 // --- Signal scoring functions (all return 0–100) ---
@@ -299,9 +325,19 @@ func scoreMaxTokens(maxTokens *int) int {
 	}
 }
 
+// Route reasons: the metadata keys that say why a request went where it
+// did: the strategy that ranked its targets, the conditional rule
+// that matched it and the complexity tier it was mapped to.
+const (
+	RouteReasonStrategy       = "route_reason.strategy"
+	RouteReasonConditional    = "route_reason.conditional_rule"
+	RouteReasonComplexityTier = "route_reason.complexity_tier"
+)
+
 // SetComplexityMetadata stores complexity analysis results on the request context.
 func SetComplexityMetadata(rc *models.RequestContext, result ComplexityResult, originalModel string) {
 	rc.SetMetadata("complexity_score", strconv.Itoa(result.Score))
 	rc.SetMetadata("complexity_tier", result.Tier)
 	rc.SetMetadata("complexity_original_model", originalModel)
+	rc.SetMetadata(RouteReasonComplexityTier, result.Tier)
 }

@@ -77,6 +77,20 @@ from tracer.models.observability_provider import ProviderChoices
 with workflow.unsafe.imports_passed_through():
     from simulate.models.test_execution import CallExecution as CallExecutionModel
 
+# The reason a call shows when this workflow fails on an error. Word for word
+# simulate.services.test_executor's CALL_COULD_NOT_START and CALL_STOPPED (a
+# test pins them equal); written out here because that module loads Django
+# models and the voice providers on import. The error itself goes to the
+# workflow log.
+CALL_COULD_NOT_START = "The call could not start because of an error. Re-run it."
+CALL_STOPPED = "The call stopped because of an error. Re-run it."
+# A call that failed on an error has this, then its reason, as its processing
+# skip reason.
+FAILED_BEFORE_EVALUATIONS = "Call failed before evaluations. "
+# The reason a call refused for its balance shows; its skip reason keeps the
+# colon form "Call failed before evaluations: <reason>".
+INSUFFICIENT_BALANCE = "Insufficient balance to make calls."
+
 
 @workflow.defn
 class CallExecutionWorkflow:
@@ -167,10 +181,7 @@ class CallExecutionWorkflow:
             )
 
             if not balance_result.sufficient:
-                return await self._fail(
-                    input,
-                    "Insufficient balance to make calls.",
-                )
+                return await self._fail(input, INSUFFICIENT_BALANCE)
 
             # ========================================
             # PHASE 2: PREPARATION
@@ -191,8 +202,12 @@ class CallExecutionWorkflow:
             )
 
             if prepare_result.error:
+                self._log_failure(input, "preparation", prepare_result.error)
+                # A provider setup that cannot be simulated shows prepare_call's
+                # sentence saying why; any other error, the fixed sentence. A
+                # result written before the field existed has no reason.
                 return await self._fail(
-                    input, f"Preparation failed: {prepare_result.error}"
+                    input, prepare_result.reason or CALL_COULD_NOT_START
                 )
 
             self._is_outbound = prepare_result.is_outbound
@@ -308,10 +323,8 @@ class CallExecutionWorkflow:
                     )
 
                     if not phone_result.success:
-                        return await self._fail(
-                            input,
-                            f"Failed to acquire phone number: {phone_result.error}",
-                        )
+                        self._log_failure(input, "phone number", phone_result.error)
+                        return await self._fail(input, CALL_COULD_NOT_START)
 
                     self._phone_number_id = phone_result.phone_id
                     self._system_phone_number = phone_result.phone_number
@@ -372,9 +385,8 @@ class CallExecutionWorkflow:
             )
 
             if not initiate_result.get("success"):
-                return await self._fail(
-                    input, f"Call initiation failed: {initiate_result.get('error')}"
-                )
+                self._log_failure(input, "initiation", initiate_result.get("error"))
+                return await self._fail(input, CALL_COULD_NOT_START)
 
             self._provider_call_id = initiate_result.get("provider_call_id")
             self._initiate_provider_data = initiate_result.get("provider_data", {})
@@ -517,9 +529,10 @@ class CallExecutionWorkflow:
                 bridge_task.cancel()
 
             if not monitor_result.success:
-                return await self._fail(
-                    input, f"Call monitoring failed: {monitor_result.error}"
-                )
+                # Covers the provider's error, both timeouts and an
+                # agent-reported failure; the detail goes to the log.
+                self._log_failure(input, "monitoring", monitor_result.error)
+                return await self._fail(input, CALL_STOPPED)
 
             # ========================================
             # RELEASE SLOT AND PHONE EARLY (After call completion)
@@ -975,7 +988,7 @@ class CallExecutionWorkflow:
             return await self._handle_cancellation(input)
 
         except Exception as e:
-            workflow.logger.warning(f"CallExecutionWorkflow failed: {str(e)}")
+            self._log_failure(input, "workflow error", str(e))
             # Report to Sentry via activity (fire-and-forget, don't wait for completion)
             workflow.start_activity(
                 "report_workflow_error",
@@ -989,7 +1002,11 @@ class CallExecutionWorkflow:
                 start_to_close_timeout=timedelta(seconds=10),
                 task_queue=QUEUE_S,
             )
-            return await self._fail(input, str(e))
+            # A call that reached the provider (it has a provider call id)
+            # stopped; any other could not start. Only workflow state decides,
+            # so a replay decides the same.
+            reason = CALL_STOPPED if self._provider_call_id else CALL_COULD_NOT_START
+            return await self._fail(input, reason)
 
     # ========================================
     # SIGNAL HANDLERS
@@ -1268,8 +1285,31 @@ class CallExecutionWorkflow:
                 error=str(e),
             )
 
+    def _log_failure(
+        self, input: CallExecutionInput, kind: str, detail: str | None
+    ) -> None:
+        """Write what made the call fail to the workflow log.
+
+        The call shows a fixed sentence as its reason, so the provider's error,
+        a timeout's seconds, the agent's close reason or the exception text is
+        kept here only.
+        """
+        workflow.logger.warning(
+            "CallExecutionWorkflow failed (%s) for call %s: %s",
+            kind,
+            input.call_id,
+            detail,
+        )
+
     async def _fail(self, input: CallExecutionInput, error: str) -> CallExecutionOutput:
-        """Mark workflow as failed and update database."""
+        """Mark the call failed and update the database.
+
+        ``error`` is the sentence the call shows as its reason: CALL_COULD_NOT_START,
+        CALL_STOPPED or the insufficient-balance sentence. It is the call's ended
+        reason when the provider gave none, the end of its processing skip reason
+        (unless the transcript check has its own) and this workflow's returned
+        error.
+        """
         self._status = CallExecutionModel.CallStatus.FAILED
 
         # Persist FAILED status to CallExecution in DB
@@ -1406,7 +1446,11 @@ class CallExecutionWorkflow:
         # Persist explicit skipped outcomes for failed calls so UI can render
         # non-empty cells with reason (instead of blank/error ambiguity).
         if workflow.patched("conversation-validity-gating-v2"):
-            skip_reason = f"Call failed before evaluations: {error}"
+            if error == INSUFFICIENT_BALANCE:
+                # The insufficient-balance sentence keeps its colon form.
+                skip_reason = f"Call failed before evaluations: {error}"
+            else:
+                skip_reason = f"{FAILED_BEFORE_EVALUATIONS}{error}"
 
             if fetch_persist_result:
                 decision = decide_processing_skip(

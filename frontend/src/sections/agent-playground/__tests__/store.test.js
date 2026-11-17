@@ -9,6 +9,8 @@ import {
 } from "../store";
 import { WORKFLOW_STATE } from "../utils/workflowExecution";
 import { NODE_TYPES } from "../utils/constants";
+import { mapVersionToFormConfig } from "../utils/promptVersionUtils";
+import { buildVersionPayload } from "../utils/versionPayloadUtils";
 
 // Mock notistack
 vi.mock("notistack", () => ({
@@ -84,6 +86,87 @@ describe("useAgentPlaygroundStore", () => {
         .addOptimisticNode(NODE_TYPES.LLM_PROMPT);
       expect(result).toBeNull();
       expect(useAgentPlaygroundStore.getState().nodes).toEqual([]);
+    });
+
+    describe("response port of an imported prompt (#2075)", () => {
+      const customSchema = {
+        id: "6f1c2a9e-0b7d-4c55-9a3e-2f8d1b4c7e10",
+        name: "Answer",
+        schema: {
+          type: "object",
+          properties: { answer: { type: "string" } },
+          required: ["answer"],
+        },
+      };
+
+      function addImportedPrompt(responseFormat) {
+        const config = {
+          prompt_template_id: "pt-1",
+          prompt_version_id: "pv-1",
+          ...mapVersionToFormConfig({
+            id: "pv-1",
+            prompt_config_snapshot: {
+              messages: [
+                { role: "user", content: [{ type: "text", text: "hi" }] },
+              ],
+              configuration: {
+                model: "gpt-4o",
+                output_format: "string",
+                response_format: responseFormat,
+              },
+            },
+          }),
+        };
+        useAgentPlaygroundStore
+          .getState()
+          .addOptimisticNode(
+            NODE_TYPES.LLM_PROMPT,
+            null,
+            null,
+            "tpl-1",
+            "imported_prompt",
+            config,
+          );
+        return useAgentPlaygroundStore.getState().nodes[0];
+      }
+
+      it("keeps a string response port for a text prompt", () => {
+        const [port] = addImportedPrompt("text").data.ports;
+        expect(port.data_schema).toEqual({ type: "string" });
+      });
+
+      it("advertises an object response port for a JSON prompt", () => {
+        const [port] = addImportedPrompt("json").data.ports;
+        expect(port).toMatchObject({
+          key: "response",
+          display_name: "response_1",
+          direction: "output",
+          data_schema: { type: "object" },
+        });
+      });
+
+      it("advertises the selected schema for a custom response schema", () => {
+        const [port] = addImportedPrompt(customSchema).data.ports;
+        expect(port).toMatchObject({
+          key: "response",
+          display_name: "response_1",
+          direction: "output",
+        });
+        expect(port.data_schema).toEqual(customSchema.schema);
+      });
+
+      it("sends the derived port schema in the version payload", () => {
+        const node = addImportedPrompt("json");
+        const [apiNode] = buildVersionPayload([node], []).nodes;
+
+        expect(apiNode.prompt_template.response_format).toBe("json");
+        expect(apiNode.ports).toHaveLength(1);
+        expect(apiNode.ports[0]).toMatchObject({
+          key: "response",
+          display_name: "response_1",
+          data_schema: { type: "object" },
+        });
+      });
     });
   });
 

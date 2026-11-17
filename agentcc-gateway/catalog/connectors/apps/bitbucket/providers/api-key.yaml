@@ -1,0 +1,48 @@
+# Personal Atlassian API tokens use Basic, not Bearer, authentication.
+# Supply the base64-encoded email:token pair; the gateway adds the Basic prefix.
+# This is Atlassian's shared MCP endpoint, not a Bitbucket-only tool boundary.
+schema: "connector-manifest/v1#provider"
+app: bitbucket
+id: api-key
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.atlassian.com/v2/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Basic "
+      secret: true
+      label: Encoded email and API token
+      help: "Base64-encode email:scoped API token created in your Atlassian account security settings. Select Bitbucket permissions. An org admin must enable API token auth, and the Bitbucket workspace must be linked to the org. Supply the encoded pair without the Basic prefix."
+      helpUrl: https://support.atlassian.com/atlassian-rovo-mcp-server/docs/configuring-authentication-via-api-token/
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_metered
+  source: https://support.atlassian.com/atlassian-rovo-mcp-server/docs/getting-started-with-the-atlassian-remote-mcp-server/
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://support.atlassian.com/atlassian-rovo-mcp-server/docs/configuring-authentication-via-api-token/
+    fetchedAt: 2026-11-09
+  - fact: transport.variant
+    url: https://support.atlassian.com/atlassian-rovo-mcp-server/docs/getting-started-with-the-atlassian-remote-mcp-server/
+    fetchedAt: 2026-11-09
+  - fact: auth.kind
+    url: https://support.atlassian.com/atlassian-rovo-mcp-server/docs/configuring-authentication-via-api-token/
+    fetchedAt: 2026-11-09
+  - fact: auth.credentialParts
+    url: https://support.atlassian.com/atlassian-rovo-mcp-server/docs/configuring-authentication-via-api-token/
+    fetchedAt: 2026-11-09
+x-omega: { oss: exclude }

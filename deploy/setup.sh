@@ -16,7 +16,7 @@ if [[ "${1:-}" == --host-status-help || "${1:-}" == --prepare-host-status ]]; th
   exec bash "${REPO_ROOT}/bin/install" "$@"
 fi
 ENV_FILE="${SCRIPT_DIR}/.env.production"
-SECRET_NAMES=(SECRET_KEY AGENTCC_INTERNAL_API_KEY AGENTCC_ADMIN_TOKEN PG_PASSWORD
+SECRET_NAMES=(SECRET_KEY FI_API_SECRET_PEPPER AGENTCC_INTERNAL_API_KEY AGENTCC_ADMIN_TOKEN AGENTCC_WEBHOOK_SECRET OMEGA_HUB_CHECKER_TOKEN PG_PASSWORD
   MINIO_ROOT_PASSWORD PROPERTY_CATALOG_API_PASSWORD
   PROPERTY_CATALOG_CONSUMER_PASSWORD OPENAI_API_KEY ANTHROPIC_API_KEY GOOGLE_API_KEY
   INTEGRATION_ENCRYPTION_KEY EE_LICENSE_KEY RECAPTCHA_SECRET_KEY MAILGUN_API_KEY
@@ -109,9 +109,158 @@ dotenv_literal() {
   printf '"'
 }
 
+# The text after the "=" of NAME's last assignment, trailing spaces trimmed, or
+# nothing. Callers only compare or decode it; it is never printed.
+setting_text() { # NAME
+  local raw
+  raw=$(sed -nE "s/^[[:space:]]*(export[[:space:]]+)?$1[[:space:]]*=[[:space:]]*//p" "$ENV_FILE" | tail -n 1)
+  printf '%s' "${raw%"${raw##*[![:space:]]}"}"
+}
+
+# True when Compose would read no NAME from the file: no assignment, or a last
+# one that is empty. The value is never printed.
+setting_missing() { # NAME
+  local raw
+  raw=$(setting_text "$1")
+  [[ -z "$raw" || "$raw" == '""' || "$raw" == "''" ]]
+}
+
+# NAME's value as Compose reads it, when that takes no guessing: unquoted
+# without "$", in single quotes without a backslash, or in double quotes
+# without a backslash or "$" (a comment after the closing quote is dropped).
+# Fails for anything else. The value is never printed.
+setting_literal() { # NAME
+  local raw value
+  local single="^'([^'\\\\]*)'[[:space:]]*(#.*)?$" double='^"([^"\\$]*)"[[:space:]]*(#.*)?$'
+  raw=$(setting_text "$1")
+  if [[ "$raw" =~ $single || "$raw" =~ $double ]]; then
+    value=${BASH_REMATCH[1]}
+  elif [[ "$raw" != [\"\']* && "$raw" != *'$'* ]]; then
+    value=${raw%%[[:space:]]#*}
+    value="${value%"${value##*[![:space:]]}"}"
+  else
+    return 1
+  fi
+  printf '%s' "$value"
+}
+
+PUBLISHED_PEPPER=local-dev-only-api-secret-pepper-replace-me
+
+# True when the API secret pepper rule replaces VALUE: empty, the published
+# default or a CHANGEME- placeholder (bin/lib/secrets.sh).
+pepper_replaced() { # VALUE
+  [[ -z "$1" || "$1" == "$PUBLISHED_PEPPER" || "$1" == CHANGEME-* ]]
+}
+
+# RETIRED with VALUE added, as bin/lib/secrets.sh builds it: each entry
+# trimmed and kept once, in first-occurrence order. Fails on an entry that
+# cannot be kept as written: a single quote, two backslashes or a trailing
+# backslash. Nothing is printed but the list itself.
+retired_with() { # RETIRED VALUE
+  local part list=""
+  local -a entries=()
+  IFS=, read -r -a entries <<< "$1,$2"
+  for part in "${entries[@]}"; do
+    part="${part#"${part%%[![:space:]]*}"}"
+    part="${part%"${part##*[![:space:]]}"}"
+    [[ -n "$part" && ",$list," != *,"$part",* ]] || continue
+    if [[ "$part" == *\'* || "$part" == *\\\\* || "$part" == *\\ ]]; then return 1; fi
+    list+="${list:+,}$part"
+  done
+  printf '%s' "$list"
+}
+
+# NAME=VALUE on a line of its own at the end of the file; Compose reads a
+# name's last line.
+append_setting() { # NAME VALUE
+  if [[ -s "$ENV_FILE" && -n "$(tail -c 1 "$ENV_FILE")" ]]; then printf '\n' >> "$ENV_FILE"; fi
+  { printf '%s=' "$1"; dotenv_literal "$2"; printf '\n'; } >> "$ENV_FILE"
+}
+
+# The COMPOSE_PROFILES Compose reads for the commands below: an exported value
+# wins over the env file, where the name's last line counts.
+compose_profiles() {
+  local raw pattern='^[[:space:]]*(export[[:space:]]+)?COMPOSE_PROFILES[[:space:]]*=[[:space:]]*'
+  if [[ -n "${COMPOSE_PROFILES+set}" ]]; then
+    printf '%s' "$COMPOSE_PROFILES"
+    return
+  fi
+  raw=$(sed -nE "s/${pattern}//p" "$ENV_FILE" | tail -n 1)
+  raw="${raw%"${raw##*[![:space:]]}"}"
+  case "$raw" in
+    \"*) raw="${raw#\"}"; raw="${raw%%\"*}" ;;
+    \'*) raw="${raw#\'}"; raw="${raw%%\'*}" ;;
+    *) raw="${raw%%[[:space:]]#*}" ;;
+  esac
+  printf '%s' "$raw"
+}
+
+# True when COMPOSE_PROFILES lists `hub` or `*` (each entry stripped of spaces):
+# the Omega Hub then runs, and its production settings and services come from
+# deploy/docker-compose.production.hub.yml.
+hub_profile_enabled() {
+  local profile rest
+  rest="$(compose_profiles),"
+  while [[ -n "$rest" ]]; do
+    profile="${rest%%,*}"
+    rest="${rest#*,}"
+    profile="${profile#"${profile%%[![:space:]]*}"}"
+    profile="${profile%"${profile##*[![:space:]]}"}"
+    if [[ "$profile" == hub || "$profile" == '*' ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
 if [[ -f "$ENV_FILE" ]]; then
-  say "Keeping existing $ENV_FILE unchanged; reuse its installed credentials."
-  say "Missing settings must be added explicitly; setup never rotates retained credentials."
+  # Stored credentials are never encrypted under a key made up for one process,
+  # and the gateway's request logs are refused without the secret it shares
+  # with the backend, so either one that is missing is added once, as for a
+  # new file: the exported value, else a new one. Filling rotates nothing; a
+  # value the file sets is never changed, except an API secret pepper anyone
+  # can read (below).
+  added=0
+  # FI_API_SECRET_PEPPER follows bin/install's rule (bin/lib/secrets.sh
+  # rotate_published_api_secret_pepper), which bin/update applies too: a
+  # missing, empty, published-default or CHANGEME- pepper is replaced, and the
+  # value Compose used until now (the published default when there was none)
+  # goes to FI_API_SECRET_PEPPERS_RETIRED first, so API keys sealed under it
+  # still verify. A missing one takes the exported value, as above, unless
+  # that is a default too. Any other pepper is the operator's and is kept.
+  # Lines are added at the end, as above: Compose reads a name's last line.
+  if pepper=$(setting_literal FI_API_SECRET_PEPPER) && pepper_replaced "$pepper"; then
+    if ! retired=$(setting_literal FI_API_SECRET_PEPPERS_RETIRED) \
+      || ! retired=$(retired_with "$retired" "${pepper:-$PUBLISHED_PEPPER}"); then
+      err "Cannot safely read FI_API_SECRET_PEPPERS_RETIRED in $ENV_FILE to add the previous FI_API_SECRET_PEPPER to it: write it as one literal value (entries without \$, quotes or escapes), then run setup again. Nothing was changed."
+      exit 1
+    fi
+    new_pepper=""
+    if [[ -z "$pepper" ]] && ! pepper_replaced "${FI_API_SECRET_PEPPER:-}"; then
+      new_pepper=$FI_API_SECRET_PEPPER
+    fi
+    new_pepper=${new_pepper:-$(openssl rand -hex 32)}
+    append_setting FI_API_SECRET_PEPPERS_RETIRED "$retired"
+    append_setting FI_API_SECRET_PEPPER "$new_pepper"
+    ok "Set a new FI_API_SECRET_PEPPER in $ENV_FILE and kept the previous value in FI_API_SECRET_PEPPERS_RETIRED; every other setting is unchanged."
+    added=1
+  fi
+  if setting_missing INTEGRATION_ENCRYPTION_KEY; then
+    INTEGRATION_ENCRYPTION_KEY=${INTEGRATION_ENCRYPTION_KEY:-$(openssl rand -base64 32 | tr '+/' '-_')}
+    append_setting INTEGRATION_ENCRYPTION_KEY "$INTEGRATION_ENCRYPTION_KEY"
+    ok "Added the missing INTEGRATION_ENCRYPTION_KEY to $ENV_FILE; every other setting is unchanged."
+    added=1
+  fi
+  if setting_missing AGENTCC_WEBHOOK_SECRET; then
+    AGENTCC_WEBHOOK_SECRET=${AGENTCC_WEBHOOK_SECRET:-$(openssl rand -hex 32)}
+    append_setting AGENTCC_WEBHOOK_SECRET "$AGENTCC_WEBHOOK_SECRET"
+    ok "Added the missing AGENTCC_WEBHOOK_SECRET to $ENV_FILE; every other setting is unchanged."
+    added=1
+  fi
+  if (( ! added )); then
+    say "Keeping existing $ENV_FILE unchanged; reuse its installed credentials."
+  fi
+  say "Other missing settings must be added explicitly; apart from a published API secret pepper, setup never rotates retained credentials."
 else
   warn "New configuration only: for retained data, restore the original environment file instead."
   say ""
@@ -133,6 +282,22 @@ else
   SIMULATION_RUNNER_VERSION=$(prompt_required SIMULATION_RUNNER_VERSION "Simulation SDK runner release (futureagi/future-agi-simulation-runner)")
 
   say ""
+  say "${BOLD}== Omega Hub checker (deploy/hub-runner/README.md) ==${RESET}"
+  say "Uploads are checked on a dedicated runner host whose Docker runs containers on gVisor."
+  OMEGA_HUB_CHECKER_VERSION=$(prompt_required OMEGA_HUB_CHECKER_VERSION "Checker release (futureagi/omega-hub-checker)")
+  OMEGA_HUB_RUNNER_IMAGE=$(prompt_required OMEGA_HUB_RUNNER_IMAGE "Runner image, pinned by digest (<repository>@sha256:...)")
+  case "$OMEGA_HUB_RUNNER_IMAGE" in
+    *@sha256:*) ;;
+    *) err "OMEGA_HUB_RUNNER_IMAGE must be pinned by digest (<repository>@sha256:<digest>)"; exit 1 ;;
+  esac
+  OMEGA_HUB_RUNNER_DOCKER_HOST=$(prompt_required OMEGA_HUB_RUNNER_DOCKER_HOST "Runner host's Docker (tcp://<host>:2376)")
+  case "$OMEGA_HUB_RUNNER_DOCKER_HOST" in
+    tcp://?*) ;;
+    *) err "OMEGA_HUB_RUNNER_DOCKER_HOST must be the runner host, tcp://<host>:2376, never this host's Docker socket"; exit 1 ;;
+  esac
+  OMEGA_HUB_RUNNER_TLS_DIR=$(prompt_required OMEGA_HUB_RUNNER_TLS_DIR "Directory with the runner host's client certificate (ca.pem, cert.pem, key.pem)")
+
+  say ""
   say "${BOLD}== Catalog credentials ==${RESET}"
   say "Supply the separately provisioned reader/writer credentials; never substitute new passwords for retained indexes."
   PROPERTY_CATALOG_API_PASSWORD=$(prompt_required PROPERTY_CATALOG_API_PASSWORD "Existing/provisioned catalog reader password" 1)
@@ -141,8 +306,16 @@ else
   say ""
   say "${BOLD}== Preparing new application secrets ==${RESET}"
   SECRET_KEY=${SECRET_KEY:-$(openssl rand -hex 32)}
+  FI_API_SECRET_PEPPER=${FI_API_SECRET_PEPPER:-$(openssl rand -hex 32)}
+  # Fernet key (32 random bytes, URL-safe base64): every organization's system
+  # API key and stored integration credentials are encrypted under it.
+  INTEGRATION_ENCRYPTION_KEY=${INTEGRATION_ENCRYPTION_KEY:-$(openssl rand -base64 32 | tr '+/' '-_')}
   AGENTCC_INTERNAL_API_KEY=${AGENTCC_INTERNAL_API_KEY:-$(openssl rand -hex 32)}
   AGENTCC_ADMIN_TOKEN=${AGENTCC_ADMIN_TOKEN:-$(openssl rand -hex 32)}
+  # The gateway sends its request logs to the backend with it; both read it on start.
+  AGENTCC_WEBHOOK_SECRET=${AGENTCC_WEBHOOK_SECRET:-$(openssl rand -hex 32)}
+  # Shared by the backend and the Hub checker; both read it on start.
+  OMEGA_HUB_CHECKER_TOKEN=${OMEGA_HUB_CHECKER_TOKEN:-$(openssl rand -hex 32)}
   PG_PASSWORD=${PG_PASSWORD:-$(openssl rand -hex 24)}
   MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD:-$(openssl rand -hex 24)}
   ok "Prepared application secrets (explicit values preserved; missing values generated)"
@@ -169,9 +342,23 @@ AGENTCC_GATEWAY_VERSION=${AGENTCC_GATEWAY_VERSION}
 SERVING_VERSION=${SERVING_VERSION}
 CODE_EXECUTOR_VERSION=${CODE_EXECUTOR_VERSION}
 SIMULATION_RUNNER_VERSION=${SIMULATION_RUNNER_VERSION}
+OMEGA_HUB_CHECKER_VERSION=${OMEGA_HUB_CHECKER_VERSION}
 
 FRONTEND_URL=${FRONTEND_URL}
 VITE_HOST_API=${VITE_HOST_API}
+OMEGA_HUB_APP_URL=${FRONTEND_URL%/}/dashboard/hub
+OMEGA_HUB_PUBLIC_API_URL=${VITE_HOST_API%/}/omega-hub/v1
+# The Omega Hub runs while this lists hub: Compose then also needs
+# -f deploy/docker-compose.production.hub.yml (setup and bin/update add it).
+COMPOSE_PROFILES=hub
+
+EOF
+  for name in OMEGA_HUB_RUNNER_IMAGE OMEGA_HUB_RUNNER_DOCKER_HOST OMEGA_HUB_RUNNER_TLS_DIR; do
+    printf '%s=' "$name"
+    dotenv_literal "${!name}"
+    printf '\n'
+  done
+  cat <<EOF
 
 EOF
   for name in "${SECRET_NAMES[@]}"; do
@@ -189,8 +376,20 @@ cd "$REPO_ROOT"
 # must not shadow retained passwords or hide missing entries during validation.
 unset "${SECRET_NAMES[@]}"
 COMPOSE=(docker compose --env-file "$ENV_FILE" -f docker-compose.distributed.yml -f deploy/docker-compose.production.yml)
+# Hub operators (COMPOSE_PROFILES lists hub) add the Hub's production file right after it.
+if hub_profile_enabled; then
+  COMPOSE+=(-f deploy/docker-compose.production.hub.yml)
+fi
 # Do not print rendered environment/secrets, or execute/shell-source the env file.
-if ! "${COMPOSE[@]}" config --quiet >/dev/null 2>&1; then
+# Compose's message for an unset required variable names only the variable; it is
+# the one part of its output repeated here (any other line may quote a value).
+if ! config_errors=$("${COMPOSE[@]}" config --quiet 2>&1 >/dev/null); then
+  missing=$(printf '%s\n' "$config_errors" \
+    | sed -nE 's/.*required variable ([A-Za-z_][A-Za-z0-9_]*) is missing a value.*/\1/p' \
+    | sort -u | paste -sd ' ' -)
+  if [[ -n "$missing" ]]; then
+    err "Required setting missing from $ENV_FILE: $missing (deploy/README.md, 1. Generate secrets)."
+  fi
   err "Invalid production configuration: check required credentials and every production image version. Existing credentials must be reused; see deploy/README.md."
   exit 1
 fi
@@ -229,7 +428,7 @@ fi
 
 say ""
 ok "Stack is up. Check status with:"
-say "  docker compose --env-file $ENV_FILE -f docker-compose.distributed.yml -f deploy/docker-compose.production.yml ps"
+say "  ${COMPOSE[*]} ps"
 say ""
 say "Create your first user (interactive):"
-say "  docker compose --env-file $ENV_FILE -f docker-compose.distributed.yml -f deploy/docker-compose.production.yml exec backend python manage.py create_user"
+say "  ${COMPOSE[*]} exec backend python manage.py create_user"

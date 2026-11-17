@@ -1,0 +1,35 @@
+schema: "connector-manifest/v1#app"
+# The default provider runs AWS's local proxy to its hosted MCP server.
+id: aws
+version: 1.0.0
+name: Amazon Web Services
+description: "Access AWS services through AWS's hosted MCP server using a local SigV4-signing proxy."
+vendor:
+  name: Amazon Web Services
+  domains: [aws.amazon.com, api.aws]
+  githubOrgs: [aws]
+eeCategory: developer
+group: other
+categories: [cloud-infrastructure, developer-tools]
+docsUrl: https://docs.aws.amazon.com/agent-toolkit/latest/userguide/getting-started-aws-mcp-server.html
+defaultProvider: local
+lifecycle: { status: active }
+sources:
+  - fact: name
+    url: https://github.com/aws
+    fetchedAt: 2026-11-16
+  - fact: description
+    url: https://docs.aws.amazon.com/agent-toolkit/latest/userguide/getting-started-aws-mcp-server.html
+    fetchedAt: 2026-11-16
+  - fact: vendor.name
+    url: https://github.com/aws
+    fetchedAt: 2026-11-16
+  - fact: vendor.domains
+    url: https://raw.githubusercontent.com/aws/mcp-proxy-for-aws/main/README.md
+    fetchedAt: 2026-11-16
+  - fact: vendor.domains
+    url: https://docs.aws.amazon.com/agent-toolkit/latest/userguide/getting-started-aws-mcp-server.html
+    fetchedAt: 2026-11-16
+  - fact: vendor.githubOrgs
+    url: https://raw.githubusercontent.com/aws/mcp-proxy-for-aws/main/README.md
+    fetchedAt: 2026-11-16

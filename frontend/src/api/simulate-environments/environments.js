@@ -22,6 +22,7 @@ import {
 import { harnessEnvironmentKey } from "src/api/simulate-environments/environment";
 import { harnessEnvToRow } from "src/sections/simulate/environments/helpers/harnessJobToRow";
 import { LIVE_ENV_STATUSES } from "src/sections/simulate/environments/myEnvironments.constants";
+import { seedFromTemplate } from "src/sections/simulate/environments/workspace/helpers/seedEnvState";
 
 export const SIMULATE_ENVIRONMENTS_KEY = ["simulate-environments"];
 // The prefix every page of the list shares — invalidating it refetches whatever
@@ -305,14 +306,16 @@ export function useUploadSecretFile(options = {}) {
   });
 }
 
-// TODO: swap to axios.post(endpoints.simulateEnvironments.adopt, { templateId })
-// Adopting a prebuilt template mints a fresh environment instance from the
-// library entry. Return only the server-minted id — never echo the template
-// back into the mutation cache.
+// Legacy hook name: this only seeds an ephemeral local template draft. There
+// is no template-adoption endpoint. Never mint an environment/job id, register
+// a workspace, or navigate to the server-backed workspace from this result.
 export function useAdoptTemplate() {
   return useMutation({
-    mutationFn: async () => ({
-      envId: `env-${Math.random().toString(36).slice(2, 10)}`,
+    gcTime: 0,
+    mutationFn: async (template) => ({
+      kind: "local-template-draft",
+      templateId: template.id,
+      state: seedFromTemplate(template, new Date().toISOString()),
     }),
   });
 }

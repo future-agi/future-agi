@@ -14,6 +14,7 @@ from model_hub.utils.async_improve_prompt_runner import improve_prompt_async
 from model_hub.utils.async_prompt_runner import run_template_async
 from model_hub.utils.websocket_direct_manager import WebSocketDirectManager
 from model_hub.views.prompt_template import replace_ids_with_column_name_async
+from sockets.org_scope import resolve_socket_organization
 from sockets.saml_guard import SamlSocketGuard
 from sockets.workspace_access import NOT_FOUND, WorkspaceAccessGate
 
@@ -57,6 +58,12 @@ class PromptStreamConsumer(AsyncJsonWebsocketConsumer):
             await self.close(code=WS_CLOSE_CODE_UNAUTHENTICATED)
             return
         if not await self._guard.ensure_live(inbound=True):
+            return
+        # A prompt-stream connection opens for a person who has an organization;
+        # 4002 is the close the app's other live connections give otherwise.
+        if await resolve_socket_organization(self.scope, self.user) is None:
+            logger.warning("PromptStream connection rejected: no organization.")
+            await self.close(code=4002)
             return
 
         self.session_uuid = str(uuid4())
@@ -147,15 +154,19 @@ class PromptStreamConsumer(AsyncJsonWebsocketConsumer):
 
         return result.workspace, result.org_id
 
-    async def _resolve_org_for_stop(self):
-        """Best-effort org resolution for stop handlers.
+    async def _resolve_org_for_stop(self, *, correlation):
+        """Org resolution for stop handlers, by the check a run takes.
 
-        Stop is idempotent and best-effort — a failed resolve means we can't
-        write the Redis stop flag, so return ``None`` and let the caller emit
-        a soft error instead of tearing down the socket the way execute paths
-        do on the same failure.
+        A stop takes the same workspace check that starting a run takes
+        (:meth:`_resolve_workspace_and_org`). When the person cannot use the
+        workspace, they get the run path's answer for that case (the error
+        frame and its close code) and ``None`` comes back, so the caller
+        records nothing.
         """
-        return await self._access_gate().resolve_org_for_stop()
+        _workspace, org_id = await self._resolve_workspace_and_org(
+            correlation=correlation
+        )
+        return org_id
 
     async def _send_ws_error(self, message, *, correlation=None):
         payload = {
@@ -190,12 +201,16 @@ class PromptStreamConsumer(AsyncJsonWebsocketConsumer):
         specific set_stop_* method. Everything else — org resolution, manager
         construction, ack / soft-error emission — lives here.
         """
-        org_id = await self._resolve_org_for_stop()
-        if org_id is None:
+        if not self.workspace_id:
+            # A connection that names no workspace gets the soft answer.
             await self._send_ws_error(
                 f"Cannot {action_name}: workspace not resolved.",
                 correlation=correlation,
             )
+            return
+        org_id = await self._resolve_org_for_stop(correlation=correlation)
+        if org_id is None:
+            # The run path's answer has been sent; nothing is recorded.
             return
         ws_manager = self._make_ws_manager(org_id, with_send=False)
         await apply_stop(ws_manager)
@@ -241,30 +256,28 @@ class PromptStreamConsumer(AsyncJsonWebsocketConsumer):
         Sends the appropriate error frame and closes the socket on failure,
         returning ``None``. Returns the template on success.
         """
+        # An id that does not exist and another organization's template get
+        # the same answer, so the reply does not tell them apart.
+        not_in_organization = (
+            "Template not found in the selected workspace's organization."
+        )
         try:
             template = await database_sync_to_async(PromptTemplate.objects.get)(
                 id=template_id
             )
         except PromptTemplate.DoesNotExist:
-            await self._send_ws_error("Template not found.", correlation=correlation)
-            await self.close(code=WS_CLOSE_CODE_NOT_FOUND)
+            template = None
+        if template is None or template.organization_id != org_id:
+            await self._send_ws_error(not_in_organization, correlation=correlation)
+            await self.close(code=WS_CLOSE_CODE_PERMISSION_DENIED)
             return None
 
-        if template.workspace_id:
+        if template.workspace_id and template.workspace_id != workspace.id:
             # Template scoped to a specific workspace — connected workspace
             # must match. Same-org-different-workspace is a leak too
             # (TH-5944 only closed the cross-org hole).
-            if template.workspace_id != workspace.id:
-                await self._send_ws_error(
-                    "Template does not belong to the selected workspace.",
-                    correlation=correlation,
-                )
-                await self.close(code=WS_CLOSE_CODE_PERMISSION_DENIED)
-                return None
-        elif template.organization_id != org_id:
-            # Legacy/org-wide template — fall back to the looser org check.
             await self._send_ws_error(
-                "Template does not belong to the selected workspace's organization.",
+                "Template does not belong to the selected workspace.",
                 correlation=correlation,
             )
             await self.close(code=WS_CLOSE_CODE_PERMISSION_DENIED)
@@ -348,7 +361,6 @@ class PromptStreamConsumer(AsyncJsonWebsocketConsumer):
 
     async def handle_improve_prompt(self, content):
         existing_prompt = content.get("existing_prompt")
-        existing_prompt = await replace_ids_with_column_name_async(existing_prompt)
         improvement_requirements = content.get("improvement_requirements", "")
 
         if not existing_prompt:
@@ -381,8 +393,13 @@ class PromptStreamConsumer(AsyncJsonWebsocketConsumer):
         correlation = {"improve_id": improve_id}
 
         async def run(workspace, org_id):
+            original_prompt = await replace_ids_with_column_name_async(
+                content.get("original_prompt", ""),
+                organization=org_id,
+                workspace=workspace,
+            )
             await improve_prompt_async(
-                original_prompt=content.get("original_prompt", ""),
+                original_prompt=original_prompt,
                 improvement_suggestions=content.get("improvement_suggestions", ""),
                 examples=content.get("examples", ""),
                 improve_id=improve_id,

@@ -1,0 +1,18 @@
+# Fixture for the manifest validator tests, not catalog data. Facts are
+# illustrative; the catalog itself lives in agentcc-gateway/catalog/connectors.
+schema: "connector-manifest/v1#app"
+id: slack
+version: 1.0.0
+name: Slack
+description: "Search, read channels and post messages."
+vendor: { name: Slack, domains: [slack.com] }
+eeCategory: communication
+group: other
+categories: [messaging]
+docsUrl: https://docs.slack.dev/ai/slack-mcp-server/
+defaultProvider: slack-mcp
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://docs.slack.dev/ai/slack-mcp-server/
+    fetchedAt: 2026-10-19

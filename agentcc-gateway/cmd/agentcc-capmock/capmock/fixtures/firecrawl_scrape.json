@@ -1,0 +1,15 @@
+{
+  "success": true,
+  "data": {
+    "markdown": "# Capmock page\n\nExample page text.",
+    "metadata": {
+      "title": "Capmock page",
+      "sourceURL": "https://example.com/capmock",
+      "url": "https://example.com/capmock",
+      "statusCode": 200,
+      "contentType": "text/html",
+      "creditsUsed": 1,
+      "scrapeId": "{{id}}"
+    }
+  }
+}

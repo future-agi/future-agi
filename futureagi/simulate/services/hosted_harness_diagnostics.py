@@ -14,6 +14,7 @@ from typing import Any
 from django.utils import timezone
 
 from simulate.models import HostedHarnessAttempt
+from tfc.logging import credential_scrub
 from tfc.settings.settings import UPLOAD_BUCKET_NAME
 from tfc.utils.storage_client import get_storage_client
 
@@ -21,10 +22,17 @@ logger = logging.getLogger("simulate.hosted_harness_diagnostics")
 
 _ENTRYPOINT_LOG_LIMIT_BYTES = 2 * 1024 * 1024
 _PROCESS_LOG_LIMIT_BYTES = 4 * 1024 * 1024
+# Held values shorter than this are masked only as a named secret slot's whole value.
 _MIN_SECRET_FRAGMENT_LENGTH = 8
+# The known-value scrubber's own cap on the items one call takes in. Above it a
+# text is hidden whole without scrubbing, which keeps the work of one poll bounded.
+_HELD_VALUE_TOTAL_LIMIT = 4096
 _REDACTION_CACHE_LIMIT = 128
-_redaction_cache: dict[str, tuple[str, ...]] = {}
+# Per attempt: every held value, then those of them masked as whole values.
+_redaction_cache: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {}
 _redaction_cache_lock = Lock()
+_GRANT_ID = re.compile(r"fit_[0-9a-f]{32}")
+_SERVICE_GRANT = re.compile(r"fe1\.[A-Za-z0-9_-]{40,}\.[A-Za-z0-9_-]{43}")
 _BEARER_TOKEN = re.compile(r"(?i)(bearer\s+)[A-Za-z0-9._~+/=-]+")
 _QUERY_TOKEN = re.compile(r"(?i)([?&](?:access_)?token=)[^&\s]+")
 _ANSI_ESCAPE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
@@ -82,21 +90,30 @@ def redaction_values(
 
 
 def cache_attempt_redaction_values(
-    attempt_id: Any, values: Iterable[str]
+    attempt_id: Any, values: Iterable[str], *, whole: Iterable[str] = ()
 ) -> tuple[str, ...]:
     key = str(attempt_id)
     cached = tuple(values)
+    whole_values = tuple(whole)
     with _redaction_cache_lock:
         _redaction_cache.pop(key, None)
         if len(_redaction_cache) >= _REDACTION_CACHE_LIMIT:
             _redaction_cache.pop(next(iter(_redaction_cache)))
-        _redaction_cache[key] = cached
+        _redaction_cache[key] = (cached, whole_values)
     return cached
 
 
-def cached_attempt_redaction_values(attempt_id: Any) -> tuple[str, ...] | None:
+def cached_attempt_held_values(
+    attempt_id: Any,
+) -> tuple[tuple[str, ...], tuple[str, ...]] | None:
+    """The attempt's held values and those of them masked whole, read in one step."""
     with _redaction_cache_lock:
         return _redaction_cache.get(str(attempt_id))
+
+
+def cached_attempt_redaction_values(attempt_id: Any) -> tuple[str, ...] | None:
+    held = cached_attempt_held_values(attempt_id)
+    return None if held is None else held[0]
 
 
 def forget_attempt_redaction_values(attempt_id: Any) -> None:
@@ -142,10 +159,114 @@ def _redact(text: str, secret_fragments: Iterable[str]) -> str:
     redacted = _normalize_log_text(text)
     for secret in secret_fragments:
         redacted = redacted.replace(secret, "[REDACTED]")
+    redacted = _GRANT_ID.sub("[REDACTED]", redacted)
+    redacted = _SERVICE_GRANT.sub("[REDACTED]", redacted)
     redacted = _PRIVATE_KEY.sub("[REDACTED PRIVATE KEY]", redacted)
     redacted = _BEARER_TOKEN.sub(r"\1[REDACTED]", redacted)
     redacted = _QUERY_TOKEN.sub(r"\1[REDACTED]", redacted)
     return _SENSITIVE_ASSIGNMENT.sub(r"\1[REDACTED]", redacted)
+
+
+def _known_value_groups(fragments: Iterable[str]) -> list[tuple[str, ...]]:
+    """The held values, in order, in groups the known-value scrubber takes in one call.
+
+    The scrubber refuses a call holding more values, or more characters in all, than
+    its own limits, and then hides the whole text. Each group keeps within both limits,
+    so a run holding more values than one call takes still has every one masked. A
+    value longer than one call takes gets a group of its own, which the scrubber
+    refuses, so that text is hidden whole rather than masked in part. There is always
+    at least one group, which may be empty.
+    """
+    groups: list[tuple[str, ...]] = []
+    group: list[str] = []
+    characters = 0
+    for fragment in fragments:
+        if group and (
+            len(group) >= credential_scrub._KNOWN_VALUE_LIMIT
+            or characters + len(fragment) > credential_scrub._KNOWN_CHARACTER_LIMIT
+        ):
+            groups.append(tuple(group))
+            group, characters = [], 0
+        group.append(fragment)
+        characters += len(fragment)
+    groups.append(tuple(group))
+    return groups
+
+
+def _mask_held_values(text: str, held: tuple[str, ...]) -> str:
+    """text with every held value masked in every spelling, as one scrubber call masks.
+
+    With one group this is one known-value scrubber call. With more, each group's
+    spans are found in the same text and their union is masked once, so a value
+    whose occurrence overlaps one from another group is still masked whole. Any
+    refusal raises or returns the failure marker; nothing is masked in part.
+    """
+    groups = _known_value_groups(held)
+    if len(groups) == 1:
+        return credential_scrub.redact_known_values(
+            text, groups[0], marker="[REDACTED]"
+        )
+    if len(text) > credential_scrub.DECODED_BODY_LIMIT:
+        raise ValueError("text budget")
+    spans: list[list[int]] = []
+    for group in groups:
+        spans.extend(credential_scrub._known_spans(text, group))
+    merged: list[list[int]] = []
+    for start, end in sorted(spans):
+        if merged and start < merged[-1][1]:
+            merged[-1][1] = max(end, merged[-1][1])
+        else:
+            merged.append([start, end])
+    pieces, cursor = [], 0
+    for start, end in merged:
+        pieces.append(text[cursor:start])
+        pieces.append("[REDACTED]")
+        cursor = end
+    pieces.append(text[cursor:])
+    return "".join(pieces)
+
+
+def _mask_whole_values(text: str, whole: tuple[str, ...]) -> str:
+    """text with each whole value masked wherever it stands as a token of its own.
+
+    A value is a token where no letter, digit or underscore touches it on either
+    side, so a short value is masked alone or beside punctuation and is left as it
+    is inside a longer word or number.
+    """
+    if not whole:
+        return text
+    alternatives = "|".join(
+        re.escape(value) for value in sorted(set(whole), key=len, reverse=True)
+    )
+    return re.sub(rf"(?<!\w)(?:{alternatives})(?!\w)", "[REDACTED]", text)
+
+
+def _scrub_collected(
+    text: str, fragments: Iterable[str], whole: tuple[str, ...] = ()
+) -> str:
+    """Mask held values in every spelling, then whole values, then known patterns.
+
+    Held values are masked first, over the collected text, so values whose
+    occurrences overlap are masked as one span. The values of named secret slots
+    are then masked as tokens whatever their length; the legacy pass then runs with
+    every value, as before. Above a fixed number of held values the text is hidden
+    whole without scrubbing.
+    """
+    try:
+        failed = credential_scrub.MARKER_FORMAT.format("scrub-failed")
+        held = tuple(fragments)
+        if len(held) > _HELD_VALUE_TOTAL_LIMIT:
+            return failed
+        result = _mask_held_values(_normalize_log_text(text), held)
+        if type(result) is not str or result == failed:
+            return failed
+        result = _mask_whole_values(result, whole)
+        result = credential_scrub.scrub_text(_redact(result, held))
+        if type(result) is not str or result == failed:
+            return failed
+        return result
+    except Exception:  # noqa: BLE001 - unsafe diagnostics must never escape
+        return "[hidden: scrub-failed]"
 
 
 def _tail_utf8(text: str, limit: int) -> str:
@@ -182,12 +303,14 @@ def poll_sandbox_diagnostics(
     command: Any | None = None,
     final: bool = False,
     secret_values: Iterable[str] = (),
+    whole_values: Iterable[str] = (),
 ) -> SandboxDiagnostics:
     """Poll one sandbox and persist its latest secret-safe diagnostics snapshot.
 
     Collection and storage are deliberately best-effort: diagnostics must never change the
     harness verdict or prevent cleanup. A stable object key is overwritten on every poll, so one
-    long run cannot create an unbounded number of S3 objects.
+    long run cannot create an unbounded number of S3 objects. ``whole_values`` are held
+    values also masked as whole tokens whatever their length.
     """
 
     errors: list[str] = []
@@ -213,27 +336,30 @@ def poll_sandbox_diagnostics(
 
     command_status = getattr(command, "status", None)
     exit_code = getattr(command, "exit_code", None)
-    entrypoint_log = ""
+    raw_entrypoint_log = ""
     if command_id:
         try:
-            entrypoint_log = _command_logs(sandbox, session_id, command_id)
+            raw_entrypoint_log = _command_logs(sandbox, session_id, command_id)
         except Exception as exc:  # noqa: BLE001 - a child log can still be captured
             errors.append(f"entrypoint:{type(exc).__name__}")
 
-    process_logs = ""
+    raw_process_logs = ""
     try:
         result = sandbox.process.exec(_process_log_command(), timeout=30)
-        process_logs = getattr(result, "result", "") or ""
+        raw_process_logs = getattr(result, "result", "") or ""
     except Exception as exc:  # noqa: BLE001 - entrypoint output can still be captured
         errors.append(f"processes:{type(exc).__name__}")
 
-    fragments = _secret_fragments(secret_values)
-    entrypoint_log = _tail_utf8(
-        _redact(entrypoint_log, fragments), _ENTRYPOINT_LOG_LIMIT_BYTES
-    )
-    process_logs = _tail_utf8(
-        _redact(process_logs, fragments), _PROCESS_LOG_LIMIT_BYTES
-    )
+    try:
+        fragments = _secret_fragments(secret_values)
+        whole = tuple(str(value) for value in whole_values if value)
+    except Exception:  # noqa: BLE001 - diagnostics cannot change the harness verdict
+        entrypoint_log = process_logs = "[hidden: scrub-failed]"
+    else:
+        entrypoint_log = _scrub_collected(raw_entrypoint_log, fragments, whole)
+        process_logs = _scrub_collected(raw_process_logs, fragments, whole)
+    entrypoint_log = _tail_utf8(entrypoint_log, _ENTRYPOINT_LOG_LIMIT_BYTES)
+    process_logs = _tail_utf8(process_logs, _PROCESS_LOG_LIMIT_BYTES)
     capture = SandboxDiagnostics(
         entrypoint_log=entrypoint_log,
         process_logs=process_logs,

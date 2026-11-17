@@ -1,0 +1,17 @@
+{
+  "http": {
+    "status": 201,
+    "headers": {
+      "content-type": "application/json"
+    }
+  },
+  "body": {
+    "status": true,
+    "result": {
+      "agent_key_id": "key_3c9f1a7e5b2d8c4f6a0e1b9d",
+      "key": "{{ORG_VIRTUAL_KEY}}",
+      "workspace": "3f6c1e2a-8b4d-4c6e-9a1f-2b7d5e8c0a14",
+      "expires_at": "2027-01-19T23:00:00Z"
+    }
+  }
+}

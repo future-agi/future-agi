@@ -132,19 +132,20 @@ def list_attribute_keys_for_project(project_id: str) -> list[AttributeKey]:
     ]
 
 
-def list_attributes_for_trace(trace_id: str) -> list[TraceAttribute]:
+def list_attributes_for_trace(trace_id: str, project_id: str) -> list[TraceAttribute]:
     """Return distinct (key, type, values[]) per attribute on a single trace.
 
     Walks the three shredded Map columns (``attrs_string`` /
-    ``attrs_number`` / ``attrs_bool``) for every span in the trace,
-    groups by key, and emits one row per key with the distinct value set
-    seen across that trace's spans. A trace with consistent attribute
-    values renders cleanly; cross-span drift (e.g. a flag toggled mid-trace)
-    surfaces as ``values=["a", "b"]``.
+    ``attrs_number`` / ``attrs_bool``) for every span of the trace in
+    ``project_id``, groups by key, and emits one row per key with the
+    distinct value set seen across those spans. A trace with consistent
+    attribute values renders cleanly; cross-span drift (e.g. a flag toggled
+    mid-trace) surfaces as ``values=["a", "b"]``.
 
-    Returns an empty list (with a log) if ClickHouse is unavailable.
+    Every branch reads the given project's spans only. Returns an empty list
+    when no project is given, and (with a log) if ClickHouse is unavailable.
     """
-    if not trace_id:
+    if not trace_id or not project_id:
         return []
     if not is_clickhouse_enabled():
         logger.info(
@@ -163,7 +164,8 @@ def list_attributes_for_trace(trace_id: str) -> list[TraceAttribute]:
             ARRAY JOIN arrayZip(
                 mapKeys(attrs_string), mapValues(attrs_string)
             ) AS pair
-            WHERE toString(trace_id) = %(trace_id)s
+            WHERE project_id = %(project_id)s
+              AND toString(trace_id) = %(trace_id)s
 
             UNION ALL
 
@@ -172,7 +174,8 @@ def list_attributes_for_trace(trace_id: str) -> list[TraceAttribute]:
             ARRAY JOIN arrayZip(
                 mapKeys(attrs_number), mapValues(attrs_number)
             ) AS pair
-            WHERE toString(trace_id) = %(trace_id)s
+            WHERE project_id = %(project_id)s
+              AND toString(trace_id) = %(trace_id)s
 
             UNION ALL
 
@@ -181,14 +184,15 @@ def list_attributes_for_trace(trace_id: str) -> list[TraceAttribute]:
             ARRAY JOIN arrayZip(
                 mapKeys(attrs_bool), mapValues(attrs_bool)
             ) AS pair
-            WHERE toString(trace_id) = %(trace_id)s
+            WHERE project_id = %(project_id)s
+              AND toString(trace_id) = %(trace_id)s
         )
         SELECT key, any(type) AS type, groupUniqArray(value) AS values
         FROM attrs
         GROUP BY key
         ORDER BY key
     """
-    params = {"trace_id": str(trace_id)}
+    params = {"trace_id": str(trace_id), "project_id": str(project_id)}
 
     try:
         client = ClickHouseClient()

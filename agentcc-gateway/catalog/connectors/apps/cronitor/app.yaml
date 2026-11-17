@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: cronitor
+version: 1.0.0
+name: Cronitor
+description: "Manage monitors, status pages, issues, notification lists, groups and environments."
+vendor:
+  name: Cronitor
+  domains: [cronitor.io]
+eeCategory: developer
+group: other
+categories: [developer, observability]
+tags: [monitors, alerts, issues]
+docsUrl: https://cronitor.io/docs/mcp-server
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://cronitor.io/docs/mcp-server
+    fetchedAt: 2026-11-09

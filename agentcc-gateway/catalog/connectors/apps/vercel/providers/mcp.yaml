@@ -1,0 +1,85 @@
+# Vercel's MCP server with OAuth from Vercel's authorization server. Vercel
+# admits only AI clients it has reviewed and approved, and FutureAGI is not
+# on its list of supported clients, so this provider cannot connect until
+# Vercel approves FutureAGI's client (OA-VC): clientApproval has no
+# approvedAt. The authorization server also registers clients dynamically,
+# but registration does not lift the approval gate. EE and OSS get none:
+# neither is an approved client.
+schema: "connector-manifest/v1#provider"
+app: vercel
+id: mcp
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.vercel.com
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent, user]
+auth:
+  kind: oauth2
+  oauth2:
+    authorizeUrl: https://vercel.com/oauth/authorize
+    tokenUrl: https://api.vercel.com/login/oauth/token
+    scopes: [openid]
+    pkce: true
+    tokenBody: form
+    clientAuth: body
+    revocation:
+      url: https://api.vercel.com/login/oauth/token/revoke
+      method: POST
+      tokenBody: form
+      tokenField: token
+      clientAuth: body
+    registration: [dcr]
+  clientApproval:
+    required: true
+    program: "Vercel's review of MCP clients (client review form)"
+    url: https://vercel.com/docs/agent-resources/vercel-mcp
+    source: https://vercel.com/docs/agent-resources/vercel-mcp
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://vercel.com/docs/agent-resources/vercel-mcp
+    fetchedAt: 2026-10-21
+  - fact: transport.url
+    url: https://mcp.vercel.com/.well-known/oauth-protected-resource
+    fetchedAt: 2026-10-21
+  - fact: transport.variant
+    url: https://vercel.com/docs/agent-resources/vercel-mcp
+    fetchedAt: 2026-10-21
+  - fact: auth.kind
+    url: https://vercel.com/docs/agent-resources/vercel-mcp
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.authorizeUrl
+    url: https://vercel.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.tokenUrl
+    url: https://vercel.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.scopes
+    url: https://mcp.vercel.com/.well-known/oauth-protected-resource
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.pkce
+    url: https://vercel.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.clientAuth
+    url: https://vercel.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.revocation.url
+    url: https://vercel.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.registration
+    url: https://vercel.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-21
+  - fact: auth.clientApproval
+    url: https://vercel.com/docs/agent-resources/vercel-mcp
+    fetchedAt: 2026-10-21
+x-omega: { ee: exclude, oss: exclude }

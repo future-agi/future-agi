@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: paddle
+version: 1.0.0
+name: Paddle
+description: "Manage subscriptions, customers, products, invoices and billing reports."
+vendor:
+  name: Paddle
+  domains: [paddle.com]
+eeCategory: data
+group: other
+categories: [data, payments]
+tags: [payments, billing]
+docsUrl: https://developer.paddle.com/sdks/ai/paddle-mcp/
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://developer.paddle.com/sdks/ai/paddle-mcp/
+    fetchedAt: 2026-11-09

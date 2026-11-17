@@ -1,0 +1,20 @@
+schema: "connector-manifest/v1#app"
+id: intercom
+version: 1.0.0
+name: Intercom
+description: "Support conversations, contacts, companies and Help Center articles."
+vendor:
+  name: Intercom
+  domains: [intercom.com]
+eeCategory: communication
+group: other
+categories: [communication, customer-support]
+tags: [support, conversations, help-center]
+docsUrl: https://developers.intercom.com/docs/guides/mcp
+archetype: support-desk
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://developers.intercom.com/docs/guides/mcp
+    fetchedAt: 2026-11-11

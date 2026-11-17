@@ -1,12 +1,13 @@
 import os
 
 from dotenv import load_dotenv
-from fi_instrumentation import FITracer, Transport, register
+from fi_instrumentation import BatchSpanProcessor, FITracer, Transport, register
 from fi_instrumentation.fi_types import ProjectType
 from opentelemetry.sdk.trace import TracerProvider
 from traceai_litellm import LiteLLMInstrumentor
 
 from accounts.models.user import User
+from tfc.telemetry.credentials import CredentialMaskingSpanProcessor
 import structlog
 
 logger = structlog.get_logger(__name__)
@@ -38,6 +39,12 @@ def register_project(project_name: str, session_name: str | None = None):
             project_name=project_name,
             transport=Transport.HTTP,
             verbose=True,
+        )
+        # The exporting processor register() sets up (batch, this transport),
+        # behind the credential boundary: the provider replaces its default
+        # processor with the one added here.
+        trace_provider.add_span_processor(
+            CredentialMaskingSpanProcessor(BatchSpanProcessor(transport=Transport.HTTP))
         )
         logger.info(f"Successfully registered project '{project_name}' with Future AGI Observe.")
         return trace_provider

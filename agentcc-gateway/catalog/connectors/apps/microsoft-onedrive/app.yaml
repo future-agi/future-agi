@@ -1,0 +1,22 @@
+schema: connector-manifest/v1#app
+id: microsoft-onedrive
+version: 1.0.0
+name: Microsoft OneDrive
+description: File metadata, versions and template copies; no text extraction, binary uploads or document edits.
+vendor:
+  name: Microsoft
+  domains:
+    - microsoft.com
+eeCategory: productivity
+group: microsoft
+categories:
+  - productivity
+docsUrl: https://learn.microsoft.com/en-us/graph/api/overview?view=graph-rest-1.0
+archetype: cloud-drive
+defaultProvider: futureagi-rest
+lifecycle:
+  status: active
+sources:
+  - fact: vendor.domains
+    url: https://raw.githubusercontent.com/microsoftgraph/msgraph-metadata/8c562525694550601a232cb54014e48c6c7f6da0/openapi/v1.0/openapi.yaml
+    fetchedAt: "2026-10-28"

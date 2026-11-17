@@ -594,6 +594,7 @@ const EvaluationMappingFormChild = ({
           };
           handleRun(groupEvalPayload, () => {}, {
             isGrouped: true,
+            memberRemovable,
           });
         } else {
           const taskPayload = {
@@ -658,7 +659,7 @@ const EvaluationMappingFormChild = ({
               message: "Evaluation added to dataset",
             });
           },
-          { isGrouped: selectedEval?.isGroupEvals },
+          { isGrouped: selectedEval?.isGroupEvals, memberRemovable },
           setVisibleSection,
         );
       } else if (_module === "experiment") {
@@ -678,7 +679,7 @@ const EvaluationMappingFormChild = ({
         }
         handleRun(
           payload,
-          () => {
+          (res) => {
             queryClient.invalidateQueries({
               queryKey: ["develop", "user-eval-list", _id],
             });
@@ -686,11 +687,15 @@ const EvaluationMappingFormChild = ({
               queryKey: ["optimize-develop-column-info", _id],
             });
             setVisibleSection("list");
+            // W1-2: the server says what adding it scored (the new runs
+            // that carry it, e.g. "Scored #2A … in #2A·2").
+            const said = res?.data?.result?.message;
             enqueueSnackbar({
-              message: "Evaluation added",
+              message:
+                typeof said === "string" && said ? said : "Evaluation added",
             });
           },
-          { isGrouped: selectedEval?.isGroupEvals },
+          { isGrouped: selectedEval?.isGroupEvals, memberRemovable },
         );
       } else if (_module === "workbench") {
         if (selectedEval?.isGroupEvals) {
@@ -942,6 +947,14 @@ const EvaluationMappingFormChild = ({
 
     // updateEvalList(payload);
   };
+
+  // Whether a member's chip shows its remove (x), on the terms
+  // EvaluationMappingFormContent shows it by. A group apply that refuses every
+  // member adds the drawer's action to a built-in evaluation only then.
+  const memberRemovable =
+    typeof handleEvalDelete === "function" &&
+    filteredVisibleItems?.length !== 1 &&
+    !isSampleFutureAgiBuilt;
 
   useEffect(() => {
     if (selectedEval?.isGroupEvals) {

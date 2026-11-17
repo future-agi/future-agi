@@ -577,11 +577,6 @@ _GROUPING_STORE = filed(
     why="grouping reads and verifies its own feature rows",
     table="f6_grouping_features and f6_grouping_buckets",
 )
-_HOURLY_EVAL_STATEMENT = filed(
-    NO_SPAN_TABLE,
-    why="eval chart statement over the hourly eval aggregate",
-    table="eval_metrics_hourly",
-)
 _LEGACY_PAGE_STATEMENT = filed(
     PROJECT_SET,
     why="legacy page statement for the project ids of the list view",
@@ -757,6 +752,16 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
             ),
         ),
     },
+    "agentcc.migrations._webhook_credentials_v1": {
+        "census": filed(
+            NO_SPAN_TABLE,
+            why=(
+                "data migration helper: counts the webhook rows it converts and "
+                "refuses when a raw count of their table disagrees"
+            ),
+            table="AgentccWebhook",
+        ),
+    },
     "agentic_eval.core.database.ch_vector": {
         "ClickHouseVectorDB.fetch_all_vectors": _EMBEDDING_STORE,
         "ClickHouseVectorDB.fetch_vector_by_id": _EMBEDDING_STORE,
@@ -764,6 +769,16 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
         "ClickHouseVectorDB.get_random_examples": _EMBEDDING_STORE,
         "ClickHouseVectorDB.vector_similarity_search": _EMBEDDING_STORE,
         "ClickHouseVectorDB.vector_similarity_search_with_threshold": _EMBEDDING_STORE,
+    },
+    "agentic_eval.core.embeddings.embedding_manager": {
+        "EmbeddingManager._feedback_similarity_search": filed(
+            NO_SPAN_TABLE,
+            why=(
+                "nearest saved feedback vectors, read inside the run's organization "
+                "and workspace"
+            ),
+            table="feedbacks",
+        ),
     },
     "ee.agenthub.insights.evidence": {
         **{
@@ -1055,6 +1070,7 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
         "list_spans_in_traces": _ROOT_CAUSE_AGENT_READ,
         "search_spans_in_traces": _ROOT_CAUSE_AGENT_READ,
         "search_trace_ids": _ROOT_CAUSE_AGENT_READ,
+        "span_ids_in_traces": _ROOT_CAUSE_AGENT_READ,
         "timeline_trace_counts": _ROOT_CAUSE_AGENT_READ,
         "trace_roots": _ROOT_CAUSE_AGENT_READ,
         "traces_in_session": _ROOT_CAUSE_AGENT_READ,
@@ -1112,6 +1128,14 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
         ),
     },
     "tracer.services.clickhouse.graph_dispatch": {
+        "_fetch_direct_raw_system_metric_graph": filed(
+            PROJECT_SET,
+            why=(
+                "trace Traffic statement of the raw chart lane, over root spans "
+                "only, for the chart's one project id, which the chart views and "
+                "the background refresh take from a project manager"
+            ),
+        ),
         "_finite_eval_rows": filed(
             NO_SPAN_TABLE,
             why="dead code: reached only from _finite_eval_graph, which nothing calls",
@@ -1239,11 +1263,7 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
         "ErrorAnalysisQueryBuilder._build_time_series": _NO_LIVE_CALLER_ERROR_ANALYSIS,
     },
     "tracer.services.clickhouse.query_builders.eval_metrics": {
-        "EvalMetricsQueryBuilder._build_choices_query": _EVAL_CHART_ROWS,
-        "EvalMetricsQueryBuilder._build_pass_fail_agg": _HOURLY_EVAL_STATEMENT,
-        "EvalMetricsQueryBuilder._build_pass_fail_raw": _EVAL_CHART_ROWS,
-        "EvalMetricsQueryBuilder._build_score_agg": _HOURLY_EVAL_STATEMENT,
-        "EvalMetricsQueryBuilder._build_score_raw": _EVAL_CHART_ROWS,
+        "EvalMetricsQueryBuilder._build_raw_query": _EVAL_CHART_ROWS,
         "EvalMetricsQueryBuilder._filter_fragment": filed(
             PROJECT_SET,
             why=(
@@ -1314,6 +1334,18 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
         "MonitorMetricsQueryBuilder._build_eval_stats_query": _EVAL_MONITOR,
         "MonitorMetricsQueryBuilder._build_eval_time_series_query": _EVAL_MONITOR,
         "MonitorMetricsQueryBuilder._eval_rows_source": _EVAL_MONITOR,
+        "MonitorMetricsQueryBuilder.build_earlier_band_query": filed(
+            ROW_DRIVEN,
+            CHILDREN_MONITOR_RESPONSE_TIME,
+            CHILDREN_MONITOR_FUNCTION_ERRORS,
+            why=(
+                "band of a monitor kept on the earlier threshold rule, over "
+                "_spans_base_where for the project of the monitor row; metrics "
+                "other than counts and tokens take build_historical_stats_query's "
+                "statement, and each adds up every span, children included"
+            ),
+            row="tracer.UserAlertMonitor",
+        ),
         "MonitorMetricsQueryBuilder.build_historical_stats_query": _MONITOR_STATEMENT,
         "MonitorMetricsQueryBuilder.build_metric_value_query": _MONITOR_STATEMENT,
         "MonitorMetricsQueryBuilder.build_time_series_query": _MONITOR_STATEMENT,
@@ -1680,6 +1712,14 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
                 "same-ID traces across an authorized project set"
             ),
         ),
+        "ObserveTraceListQueryBuilderV2._trace_root_condition": filed(
+            PROJECT_SET,
+            why=(
+                "root predicate of the Observe trace list: its parent lookup reads "
+                "spans only inside project_filter_sql(), the list's project ids, "
+                "which the list view takes from a project manager"
+            ),
+        ),
         "ObserveTraceListQueryBuilderV2.build_usage_sorted_query": filed(
             PROJECT_SET,
             why=(
@@ -1879,6 +1919,22 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
         "TraceDetailReadBuilder.build_identity_query": _TRACE_DETAIL_BY_ID,
         "TraceDetailReadBuilder.build_span_anchor_query": _TRACE_DETAIL_BY_ID,
     },
+    "tracer.services.clickhouse.v2.trace_root_reads": {
+        "build_summary_query": filed(
+            BY_ID_ALONE,
+            why=(
+                "bounded experiment-run page summary for the trace ids it is given; "
+                "the supplied project ids only narrow those reads"
+            ),
+        ),
+        "build_root_content_query": filed(
+            BY_ID_ALONE,
+            why=(
+                "root content for exact PhysicalSpanIdentity values chosen from "
+                "the scoped summary, including project, trace, span and start time"
+            ),
+        ),
+    },
     "tracer.services.clickhouse.v2.trace_session_dict_reader": {
         "session_exists": filed(
             NO_SPAN_TABLE,
@@ -1894,6 +1950,15 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
         "_DEFAULT_QUERIES": _MIGRATION_PARITY_CHECK,
         "layer_a_counts": _MIGRATION_PARITY_CHECK,
         "layer_b_deep_equal": _MIGRATION_PARITY_CHECK,
+    },
+    "tracer.services.dataset_sources": {
+        "preview_sources": filed(
+            PROJECT_SET,
+            why=(
+                "Observe-to-dataset preview of the one project the dataset view "
+                "took from Project.no_workspace_objects"
+            ),
+        ),
     },
     "tracer.services.eval_tasks.backfill": {
         "_backfill_hashes": _EVAL_LOG_BACKFILL,
@@ -1958,6 +2023,16 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
             ),
         ),
     },
+    "tracer.services.omega_agents.curves.runs": {
+        "AGENT_RUNS_SQL": filed(
+            PROJECT_SET,
+            why=(
+                "a Console agent's runs (learning-service P1-09), for the one Observe "
+                "project the curves view took from Project.no_workspace_objects, "
+                "filtered to the caller's own workspace and organization"
+            ),
+        ),
+    },
     "tracer.services.users_list_manager": {
         "_users_attr_enrichment_query": _SESSION_OR_USER,
     },
@@ -2005,6 +2080,17 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
                 "not spans"
             ),
             table="derived_metrics",
+        ),
+    },
+    "tracer.utils.langfuse_upsert": {
+        "_HELD_IN_CLICKHOUSE": filed(
+            BY_ID_ALONE,
+            why=(
+                "the Langfuse upsert's existence check across projects: it reads "
+                "only the span ids a batch sent and returns which of them another "
+                "project holds, no span data; LANGFUSE_SPAN_ID_CLICKHOUSE_CHECK=off "
+                "turns it off"
+            ),
         ),
     },
     "tracer.views.dashboard": {
@@ -2064,6 +2150,13 @@ TOKEN_FILES = {
     "tracer/models/project.py": "declares the column and the manager",
     "tracer/migrations/0115_project_simulation_agent.py": "adds the column",
     "tracer/services/simulation_project.py": "creates the project, opens it for a run",
+    "tracer/services/falcon_analysis_scope.py": (
+        "excludes simulation projects from delegated analysis, as the project "
+        "managers do; a simulation project id answers like one outside the workspace"
+    ),
+    "simulate/temporal/utils/rehost_admission.py": (
+        "reads the organization of either project kind for billing admission"
+    ),
 }
 
 _DETAIL = "tracer.services.clickhouse.v2.trace_detail_reads"
@@ -2121,6 +2214,9 @@ ENTRY_POINTS = {
             {
                 _DETAIL_FILE,
                 "model_hub/services/eval_log_source_navigation.py",
+                # The eval playground's trace context; its only caller passes the
+                # projects of Project.no_workspace_objects.
+                "model_hub/services/eval_trace_context.py",
                 "tracer/services/clickhouse/v2/query_builders/trace_detail.py",
                 "tracer/views/trace.py",
             }
@@ -2154,6 +2250,11 @@ SCOPE_IDS = {
     "project_version_id",
 }
 BY_ID_WITHOUT_AN_ID = {
+    "tracer.services.clickhouse.v2.trace_root_reads:build_root_content_query": (
+        "takes structured PhysicalSpanIdentity values, each containing the project, "
+        "trace and span ids plus start time; the exact tuple is bound in SQL "
+        "(test_trace_root_reads.py pins the query and its parameters)"
+    ),
     "tracer.services.clickhouse.v2.span_reader:_dedup_sql": (
         "wraps reads that name their ids in the where clause the caller passes"
     ),
@@ -2310,6 +2411,70 @@ def names_a_project(key):
     return any(re.search("project", text, re.IGNORECASE) for text in texts)
 
 
+def distinct_reader_import(source, name, module):
+    """Recognize a different reader's explicit binding, never an ambiguous one."""
+    tree = ast.parse(source)
+    origins = [
+        node.module
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom)
+        for alias in node.names
+        if alias.name == name
+    ]
+    ambiguous = any(
+        (isinstance(node, ast.Attribute) and node.attr == name)
+        or (
+            isinstance(node, ast.ImportFrom)
+            and any(alias.name == "*" for alias in node.names)
+        )
+        or (
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == name
+        )
+        or (
+            isinstance(node, ast.Name)
+            and node.id == name
+            and isinstance(node.ctx, ast.Store)
+        )
+        for node in ast.walk(tree)
+    )
+    return origins == [module] and not ambiguous
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("source", "distinct"),
+    [
+        ("from model_hub.services.experiment_run_traces import list_run_traces", True),
+        ("from simulate.services.run_traces_v3 import list_run_traces", False),
+        (
+            "from model_hub.services.experiment_run_traces import list_run_traces\n"
+            "from simulate.services.run_traces_v3 import list_run_traces as hidden",
+            False,
+        ),
+        (
+            "from model_hub.services.experiment_run_traces import list_run_traces\n"
+            "hidden.list_run_traces()",
+            False,
+        ),
+        (
+            "from model_hub.services.experiment_run_traces import list_run_traces\n"
+            "from simulate.services.run_traces_v3 import *",
+            False,
+        ),
+    ],
+)
+def test_same_named_experiment_reader_does_not_exempt_a_simulation_reader(
+    source, distinct
+):
+    assert (
+        distinct_reader_import(
+            source, "list_run_traces", "model_hub.services.experiment_run_traces"
+        )
+        is distinct
+    )
+
+
 def caller_problems():
     """Readers of the hidden project that a module outside the map uses."""
 
@@ -2323,6 +2488,15 @@ def caller_problems():
     ]
     for label, name, also, allowed in checks:
         for path in sorted(files_naming(name, also=also) - allowed):
+            # The SDK's experiment reader shares this spelling but does not read
+            # the simulation hidden project. Keep refusing any actual or
+            # ambiguous use of the simulation reader from outside its map.
+            if name == "list_run_traces" and distinct_reader_import(
+                module_code(module_name(Path(path))),
+                name,
+                "model_hub.services.experiment_run_traces",
+            ):
+                continue
             problems.append(
                 f"{label} is used by {path}, which the callers map does not list; "
                 f"it may be used only from {sorted(allowed)}"
@@ -3209,6 +3383,9 @@ ROW_TYPES = {
     "model_hub.AnnotationQueue.project": USER_MADE,
     "model_hub.AnnotationsLabels.project": USER_MADE,
     "prism.AgentccProject.tracer_project": USER_MADE,
+    # Begun only by trace-error analysis, whose scheduled job takes its projects
+    # from Project.objects.
+    "tracer.BackgroundTraceAnalysisState.project": JOB_THROUGH_MANAGERS,
     "tracer.CustomEvalConfig.project": USER_MADE,
     "tracer.EndUser.project": TRACE_STORE_ROW,
     "tracer.ErrorFeedAlertRule.project": USER_MADE,
@@ -3226,6 +3403,13 @@ ROW_TYPES = {
     "tracer.InsightRun.project": USER_MADE,
     "tracer.InstantEvalRun.project": USER_MADE,
     "tracer.ObservabilityProvider.project": OTHER_PROJECTS_ROW,
+    # The fork's Omega Observe link (round 7 merge; agent kind in P1-08): made
+    # only by the Deployments tab's ensure (POST /tracer/omega/deployments/<id>/
+    # observe/, which EE calls for a deployed agent) on its deploy/<name>
+    # project, or by the Console agent ensure (POST /tracer/omega/agents/<id>/
+    # observe/) on its agent/<slug>-<shortid> project; a simulated run never
+    # creates one.
+    "tracer.OmegaDeploymentObserveLink.project": USER_MADE,
     "tracer.ObservationSpan.project": TRACE_STORE_ROW,
     "tracer.ProjectCapability.project": JOB_THROUGH_MANAGERS,
     "tracer.ProjectVersion.project": USER_MADE,
@@ -3272,6 +3456,14 @@ SOFT_PROJECT_COLUMNS = {
         "the project of a session a user bookmarks or renames; written by the "
         "session view"
     ),
+    "model_hub.RowSource.project_id": (
+        "the project of the trace, span or session a dataset row was imported "
+        "from; written by the Observe import worker for the project it read"
+    ),
+    "prism.AgentccMCPVendorBinding.project_id": (
+        "the vendor's own project id that a Pipedream MCP binding sends to "
+        "Pipedream, not a tracer project; written by the vendor bindings view"
+    ),
 }
 
 
@@ -3300,8 +3492,8 @@ def _install_recorder(monkeypatch):
     recorder = _Recorder()
 
     class Exporter:
-        def __init__(self, *args, **kwargs):
-            pass
+        def __init__(self, protocol, **kwargs):
+            assert protocol == "grpc"
 
         def export(self, spans):
             for span in spans:
@@ -3317,9 +3509,7 @@ def _install_recorder(monkeypatch):
         recorder.project_names.extend([project_name] * len(spans))
         return len(spans)
 
-    monkeypatch.setattr(
-        "simulate.services.sim_collector_emit.OTLPSpanExporter", Exporter
-    )
+    monkeypatch.setattr("simulate.services.sim_collector_emit.span_exporter", Exporter)
     monkeypatch.setattr(
         "tracer.services.collector_ingest.emit_spans_to_collector", emit
     )

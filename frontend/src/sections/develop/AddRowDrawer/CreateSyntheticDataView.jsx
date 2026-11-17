@@ -329,6 +329,9 @@ const CreateSyntheticDataView = ({
                 : {}),
           },
           ...(option === "replace_dataset" && { regenerate: true }),
+          ...(option === "add_to_existing_dataset" && {
+            generation_mode: "append_synthetic",
+          }),
         };
 
         if (

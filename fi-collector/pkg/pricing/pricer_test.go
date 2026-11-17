@@ -47,7 +47,7 @@ func TestTokenCost_LitellmFirstThenCustom(t *testing.T) {
 
 	// Unknown model falls through to custom.
 	c, ok = p.TokenCost(context.Background(), "org", "acme-v1", 1000, 0)
-	if !ok || c != 1000*(100.0/1000) {
+	if !ok || c != 1000*(100.0/1_000_000) {
 		t.Fatalf("custom price expected: %v ok=%v", c, ok)
 	}
 }
@@ -94,7 +94,7 @@ func TestTokenCost_ProviderPrefixedFallback(t *testing.T) {
 	db := &fakeDB{row: fakeRow{in: 100, out: 100}}
 	p = newTestPricer(t, db)
 	c, ok = p.TokenCost(context.Background(), "org", "openai/gpt-4o", 1000, 0)
-	if !ok || c != 1000*(100.0/1000) {
+	if !ok || c != 1000*(100.0/1_000_000) {
 		t.Fatalf("custom price expected: %v ok=%v", c, ok)
 	}
 

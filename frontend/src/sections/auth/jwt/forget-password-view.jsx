@@ -17,6 +17,12 @@ import { useSnackbar } from "src/components/snackbar";
 import { Alert, Box, Divider } from "@mui/material";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import RightSectionAuth from "./RightSectionAuth";
+import {
+  authSplitSx,
+  authFormPanelSx,
+  authAsideSx,
+  authFormGutterSx,
+} from "src/layouts/auth/responsive-styles";
 
 // ----------------------------------------------------------------------
 
@@ -58,9 +64,10 @@ export default function ForgotPasswordView() {
           return;
         }
 
+        // A deployment that cannot send email says so; that is not a success.
         enqueueSnackbar(
           result?.message || "Password reset link is sent to your email",
-          { variant: "success" },
+          { variant: result?.email_unavailable ? "warning" : "success" },
         );
       },
       meta: { errorHandled: true },
@@ -116,12 +123,7 @@ export default function ForgotPasswordView() {
   );
 
   const renderForm = (
-    <Stack
-      spacing={2}
-      display={"flex"}
-      alignItems="center"
-      maxWidth={"440px"}
-    >
+    <Stack spacing={2} display={"flex"} alignItems="center" maxWidth={"440px"}>
       <Typography
         variant="m3"
         fontWeight={"fontWeightMedium"}
@@ -180,12 +182,11 @@ export default function ForgotPasswordView() {
   );
 
   return (
-    <Box sx={{ width: "100%", height: "100vh", display: "flex" }}>
+    <Box sx={authSplitSx}>
       {/* Left Side - Form */}
       <Box
         sx={{
-          width: "50%",
-          height: "100vh",
+          ...authFormPanelSx,
           display: "flex",
           justifyContent: "center",
           bgcolor: "background.paper",
@@ -194,8 +195,8 @@ export default function ForgotPasswordView() {
       >
         <Box
           sx={{
-            width: "640px",
-            px: 10,
+            width: { xs: "100%", lg: "640px" },
+            ...authFormGutterSx,
             paddingY: "100px",
             height: "fit-content",
           }}
@@ -208,13 +209,7 @@ export default function ForgotPasswordView() {
       </Box>
 
       {/* Right Side - Image with Text Overlay */}
-      <Box
-        sx={{
-          width: "50%",
-          height: "100%",
-          backgroundColor: "background.neutral",
-        }}
-      >
+      <Box sx={authAsideSx}>
         <RightSectionAuth />
       </Box>
     </Box>

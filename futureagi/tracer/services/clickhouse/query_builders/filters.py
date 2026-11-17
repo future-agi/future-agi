@@ -13,6 +13,7 @@ import uuid
 from collections.abc import Callable
 from typing import Any, NamedTuple
 
+from tracer.services.clickhouse.query_builders.ttft import TTFT_FILTER_EXPRESSION
 from tracer.services.clickhouse.query_builders.voice_filter_expressions import (
     VOICE_NORMALIZED_ROOT_SYSTEM_METRIC_EXPRS,
     voice_conversation_root_expression,
@@ -24,6 +25,7 @@ from tracer.utils.constants import (
     SPAN_ATTR_ALLOWED_OPS,
     FilterType,
 )
+from tracer.utils.input_output_search import validate_input_output_search
 
 _SAFE_ATTR_KEY_RE = re.compile(r"^[a-zA-Z0-9._\-]+$")
 
@@ -778,6 +780,12 @@ class ClickHouseFilterBuilder:
     # Keep this legacy extension point for subclasses without routing any
     # canonical voice field through a less-specific expression.
     VOICE_SYSTEM_METRIC_STR_EXPRS: dict[str, str] = {}
+
+    # Numeric span system metrics read through an expression: the filter
+    # panel offers them by name, and spans store them under another key.
+    SPAN_SYSTEM_METRIC_EXPRS: dict[str, str] = {
+        "time_to_first_token": TTFT_FILTER_EXPRESSION,
+    }
 
     # Explicit public voice aliases always resolve to the same normalized
     # values returned by the voice-call list. Keeping this separate from the
@@ -1789,6 +1797,7 @@ class ClickHouseFilterBuilder:
             col_id in self.VOICE_SYSTEM_METRIC_EXPRS
             or col_id in self.VOICE_SYSTEM_METRIC_STR_MAP
             or col_id in self.VOICE_SYSTEM_METRIC_STR_EXPRS
+            or col_id in self.SPAN_SYSTEM_METRIC_EXPRS
         ) and col_type == self.NORMAL:
             return self.SYSTEM_METRIC
 
@@ -1985,7 +1994,21 @@ class ClickHouseFilterBuilder:
                 filter_type, filter_op, filter_value
             )
 
-        if col_id in self.VOICE_NORMALIZED_SYSTEM_METRIC_EXPRS:
+        if col_id == "input_output":
+            needle = validate_input_output_search(filter_type, filter_op, filter_value)
+            param = self._next_param("input_output")
+            self._params[param] = needle
+            inner = (
+                "("
+                + " OR ".join(
+                    build_literal_text_predicate(
+                        column, param, "contains", case_insensitive=True
+                    )
+                    for column in ("input", "output")
+                )
+                + ")"
+            )
+        elif col_id in self.VOICE_NORMALIZED_SYSTEM_METRIC_EXPRS:
             expr = self.VOICE_NORMALIZED_SYSTEM_METRIC_EXPRS[col_id]
             inner = self._build_expr_condition(
                 expr,
@@ -2018,6 +2041,9 @@ class ClickHouseFilterBuilder:
                 filter_value,
                 case_insensitive=True,
             )
+        elif col_id in self.SPAN_SYSTEM_METRIC_EXPRS:
+            expr = self.SPAN_SYSTEM_METRIC_EXPRS[col_id]
+            inner = self._build_expr_condition(expr, filter_op, filter_value)
         elif col_id in self.SYSTEM_METRIC_MAP:
             ch_col = self.SYSTEM_METRIC_MAP[col_id]
             inner = self._build_column_condition(

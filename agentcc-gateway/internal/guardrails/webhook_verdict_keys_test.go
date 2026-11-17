@@ -34,7 +34,7 @@ func TestOrgWebhookCaseVariantRejectionIsContentBlock(t *testing.T) {
 		t.Run(fmt.Sprintf("org_fail_open=%v", org), func(t *testing.T) {
 			srv := caseVariantWebhook(t)
 			raw := fmt.Sprintf(`{"fail_open":%v,"checks":{"hook":{"enabled":true,"action":"block","confidence_threshold":0.5}}}`, org)
-			p := acceptancePlugin(t, !org, raw, map[string]g.Guardrail{"hook": webhook.New("hook", map[string]interface{}{"url": srv.URL})})
+			p := acceptancePlugin(t, !org, raw, map[string]g.Guardrail{"hook": webhook.NewConfigFileRule("hook", map[string]interface{}{"url": srv.URL})})
 			assertDecision(t, p, true, 403)
 		})
 	}
@@ -48,7 +48,7 @@ func TestEngineWebhookCaseVariantRejectionIsContentBlock(t *testing.T) {
 				FailOpen:       failOpen,
 				DefaultTimeout: 5 * time.Second,
 				Rules:          []config.GuardrailRuleConfig{{Name: "hook", Stage: "pre", Mode: "sync", Action: "block", Threshold: 0.5}},
-			}, map[string]g.Guardrail{"hook": webhook.New("hook", map[string]interface{}{"url": srv.URL})})
+			}, map[string]g.Guardrail{"hook": webhook.NewConfigFileRule("hook", map[string]interface{}{"url": srv.URL})})
 			input := &g.CheckInput{Request: &models.ChatCompletionRequest{Model: "synthetic-model", Messages: []models.Message{{Role: "user", Content: json.RawMessage(`"synthetic text"`)}}}}
 			res := engine.RunPre(context.Background(), input, nil, policy.RequestPolicyNone)
 			if !res.Blocked || res.Unavailable {

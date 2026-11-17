@@ -1,0 +1,94 @@
+{
+  "data": [
+    {
+      "id": "anthropic/claude-sonnet-5.5",
+      "name": "Claude Sonnet 5.5",
+      "created": 1790000000,
+      "context_length": 200000,
+      "architecture": {
+        "input_modalities": ["text"],
+        "output_modalities": ["text"]
+      },
+      "pricing": {
+        "prompt": "0.000003",
+        "completion": "0.000015"
+      },
+      "top_provider": {
+        "max_completion_tokens": 32000
+      },
+      "supported_parameters": ["tools", "structured_outputs", "reasoning"]
+    },
+    {
+      "id": "x-ai/grok-5",
+      "name": "Grok 5",
+      "created": 1790000000,
+      "context_length": 200000,
+      "architecture": {
+        "input_modalities": ["text"],
+        "output_modalities": ["text"]
+      },
+      "pricing": {
+        "prompt": "0.000001",
+        "completion": "0.000005"
+      },
+      "top_provider": {
+        "max_completion_tokens": 32000
+      },
+      "supported_parameters": ["tools"]
+    },
+    {
+      "id": "google/gemini-3-pro",
+      "name": "Gemini 3 Pro",
+      "created": 1790000000,
+      "context_length": 200000,
+      "architecture": {
+        "input_modalities": ["text"],
+        "output_modalities": ["text"]
+      },
+      "pricing": {
+        "prompt": "0.00000005",
+        "completion": "0.0000002"
+      },
+      "top_provider": {
+        "max_completion_tokens": 32000
+      },
+      "supported_parameters": ["tools"]
+    },
+    {
+      "id": "openai/gpt-4o-mini",
+      "name": "GPT-4o mini",
+      "created": 1790000000,
+      "context_length": 200000,
+      "architecture": {
+        "input_modalities": ["text"],
+        "output_modalities": ["text"]
+      },
+      "pricing": {
+        "prompt": "0.00000015",
+        "completion": "0.0000006"
+      },
+      "top_provider": {
+        "max_completion_tokens": 32000
+      },
+      "supported_parameters": ["tools"]
+    },
+    {
+      "id": "qwen/qwen3.7-flash",
+      "name": "Qwen 3.7 Flash",
+      "created": 1790000000,
+      "context_length": 200000,
+      "architecture": {
+        "input_modalities": ["text"],
+        "output_modalities": ["text"]
+      },
+      "pricing": {
+        "prompt": "0.0000001",
+        "completion": "0.0000004"
+      },
+      "top_provider": {
+        "max_completion_tokens": 32000
+      },
+      "supported_parameters": ["tools"]
+    }
+  ]
+}

@@ -1,7 +1,6 @@
-import { Box, Typography } from "@mui/material";
+import { Box, Button, Typography } from "@mui/material";
 import React, { useEffect, useMemo, useState } from "react";
 import Iconify from "src/components/iconify";
-import CreateNewProperties from "./CreateNewProperties";
 import PropTypes from "prop-types";
 import CategoricalFields from "./CategoricalFields";
 import { useFieldArray, useFormContext } from "react-hook-form";
@@ -20,7 +19,12 @@ const menus = [
   { label: "Value", value: "value" },
 ];
 
-const PropertyFields = ({ control, nestIndex, newProps = [], addNProps }) => {
+// Row 20: the generator that reads a column's properties is not in this
+// build's open-source code, so a property the user names cannot be shown to
+// change the rows. The control stays visible and disabled.
+const NOT_IN_RELEASE = "Not available in this release";
+
+const PropertyFields = ({ control, nestIndex, newProps = [] }) => {
   const [options, setOptions] = useState([...menus]);
 
   useEffect(() => {
@@ -31,7 +35,8 @@ const PropertyFields = ({ control, nestIndex, newProps = [], addNProps }) => {
 
   const [isDistributionUniform, setIsDistributionUniform] = useState(false);
 
-  const [createNew, setCreateNew] = useState(undefined);
+  // "Add New Property" is shown disabled (NOT_IN_RELEASE): Min / Max length
+  // and Value (Dynamic / Categorical) are the properties the rows follow.
   const { fields, append, remove, update, move } = useFieldArray({
     name: `columns.${nestIndex}.property`,
     control,
@@ -168,8 +173,6 @@ const PropertyFields = ({ control, nestIndex, newProps = [], addNProps }) => {
                   size="small"
                   label="Property"
                   options={selectedOption}
-                  createLabel="Add New Property"
-                  handleCreateLabel={() => setCreateNew(index)}
                   sx={typeValue ? {} : { width: "200px" }}
                 />
               )}
@@ -264,13 +267,29 @@ const PropertyFields = ({ control, nestIndex, newProps = [], addNProps }) => {
       >
         Add more properties
       </LoadingButton>
-      <CreateNewProperties
-        open={Boolean(createNew === 0 ? true : createNew)}
-        onClose={() => setCreateNew(undefined)}
-        data={createNew}
-        setOptions={addNProps}
-        update={update}
-      />
+      <Box
+        sx={{ display: "flex", alignItems: "center", gap: 1 }}
+        data-testid={`add-new-property-${nestIndex}`}
+      >
+        <Button
+          size="small"
+          variant="outlined"
+          type="button"
+          disabled
+          aria-describedby={`add-new-property-note-${nestIndex}`}
+          startIcon={<Iconify icon="solar:add-linear" />}
+          sx={{ width: "209px" }}
+        >
+          Add New Property
+        </Button>
+        <Typography
+          id={`add-new-property-note-${nestIndex}`}
+          typography="s3"
+          color="text.disabled"
+        >
+          {NOT_IN_RELEASE}
+        </Typography>
+      </Box>
     </React.Fragment>
   );
 };
@@ -281,5 +300,4 @@ PropertyFields.propTypes = {
   control: PropTypes.any,
   nestIndex: PropTypes.number,
   newProps: PropTypes.array,
-  addNProps: PropTypes.func,
 };

@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: semrush
+version: 1.0.0
+name: Semrush
+description: "Research keyword rankings, competitor domains, backlinks, and website traffic."
+vendor:
+  name: Semrush
+  domains: [semrush.com]
+eeCategory: research
+group: other
+categories: [research, web-search]
+tags: [search, trends]
+docsUrl: https://developer.semrush.com/api/v4/introduction/semrush-mcp/
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://developer.semrush.com/api/v4/introduction/semrush-mcp/
+    fetchedAt: 2026-11-09

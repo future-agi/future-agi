@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import PropTypes from "prop-types";
 import {
+  Button,
   Dialog,
   DialogContent,
   Box,
@@ -29,6 +30,7 @@ const RadioOption = ({
         value={value}
         checked={selectedValue === value}
         onChange={() => onChange(value)}
+        inputProps={{ "aria-label": title }}
         sx={{
           "&:hover": { backgroundColor: "transparent" },
         }}
@@ -76,12 +78,14 @@ export default function TaskConfirmDialog({
   isLoading,
   ...other
 }) {
-  const [editType, setEditType] = useState("fresh_run");
+  // Keeping past results is the default. "Delete Past Data & Start Fresh"
+  // removes the task's previous evaluations, so it is only ever an explicit
+  // pick. The dialog stays mounted between opens, so reset on every open: a
+  // delete picked last time must not be preselected next time.
+  const [editType, setEditType] = useState("edit_rerun");
 
-  // The dialog stays mounted between opens, so a previous "edit_rerun" pick
-  // would still be selected next time — and the other option deletes data.
   useEffect(() => {
-    if (open) setEditType("fresh_run");
+    if (open) setEditType("edit_rerun");
   }, [open]);
 
   const handleConfirm = () => {
@@ -158,10 +162,14 @@ export default function TaskConfirmDialog({
         <Box
           sx={{
             display: "flex",
-            justifyContent: "center",
+            justifyContent: "flex-end",
+            gap: 1,
             mt: 2.2,
           }}
         >
+          <Button variant="outlined" color="secondary" onClick={onClose}>
+            Cancel
+          </Button>
           <LoadingButton
             variant="contained"
             onClick={handleConfirm}

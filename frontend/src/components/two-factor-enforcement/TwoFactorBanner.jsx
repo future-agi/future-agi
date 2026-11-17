@@ -3,6 +3,7 @@ import { Alert, Box, Button, Typography } from "@mui/material";
 import { useNavigate } from "react-router-dom";
 import { paths } from "src/routes/paths";
 import { useAuthContext } from "src/auth/hooks";
+import { signOutToSignIn } from "src/auth/sign-out";
 import Iconify from "src/components/iconify";
 
 // ----------------------------------------------------------------------
@@ -66,9 +67,10 @@ export default function TwoFactorBanner() {
     navigate(paths.dashboard.settings.root);
   }, [navigate]);
 
-  const handleLogout = useCallback(() => {
-    logout();
-  }, [logout]);
+  const handleLogout = useCallback(
+    () => signOutToSignIn(logout, navigate),
+    [logout, navigate],
+  );
 
   // ------------------------------------------------------------------
   // Derived values

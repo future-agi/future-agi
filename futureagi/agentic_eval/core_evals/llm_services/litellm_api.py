@@ -1,11 +1,15 @@
 
-import litellm
 from retrying import retry
 
 import structlog
 
 logger = structlog.get_logger(__name__)
 from agentic_eval.core_evals.llm_services.abstract_llm import AbstractLlmService
+from model_hub.utils.model_endpoints import (
+    ModelConfigurationRefused,
+    guarded_completion,
+    is_endpoint_error,
+)
 
 
 class LitellmService(AbstractLlmService):
@@ -26,13 +30,19 @@ class LitellmService(AbstractLlmService):
         """
         raise Exception("")
 
-    @retry(stop_max_attempt_number=3, wait_fixed=2000)
+    @retry(
+        stop_max_attempt_number=3,
+        wait_fixed=2000,
+        retry_on_exception=lambda error: not (
+            is_endpoint_error(error) or isinstance(error, ModelConfigurationRefused)
+        ),
+    )
     def chat_completion(self, messages, model, **kwargs) -> str:
         """
         Fetches response from Litellm's Completion API.
         """
         try:
-            response = litellm.completion(api_key=self._api_key, model=model, messages=messages, **kwargs)
+            response = guarded_completion(api_key=self._api_key, model=model, messages=messages, **kwargs)
             return response.choices[0].message.content
         except Exception as e:
             logger.error(f"Error in ChatCompletion: {e}")
@@ -44,4 +54,3 @@ class LitellmService(AbstractLlmService):
 
     def json_completion(self, messages, model, **kwargs):
         raise Exception("")
-

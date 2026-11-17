@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: meta-ads
+version: 1.0.0
+name: Meta Ads
+description: "Create and manage Meta ads for Facebook and Instagram, and read how they perform."
+vendor:
+  name: Meta
+  domains: [facebook.com]
+eeCategory: data
+group: other
+categories: [data, advertising]
+tags: [ads, marketing]
+docsUrl: https://developers.facebook.com/documentation/ads-commerce/ads-ai-connectors/ads-mcp-server/ads-mcp-server-get-started
+defaultProvider: access-token
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://developers.facebook.com/documentation/ads-commerce/ads-ai-connectors/ads-mcp-server/ads-mcp-server-get-started
+    fetchedAt: 2026-11-12

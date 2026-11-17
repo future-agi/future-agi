@@ -1,3 +1,4 @@
+import { format } from "date-fns";
 import {
   buildApiFilterFromPanelRow,
   isNativeColumnType,
@@ -88,6 +89,28 @@ export const USER_FILTER_FIELDS = [
   },
 ];
 
+// The Traces list's and the Spans view's own start time, their grids'
+// Timestamp column. The catalog lists it (traces and spans start_time), but the
+// panel drops datetime catalog fields, so those views supply it, as Users
+// supplies its native dates. The list API reads it as a bound on start_time:
+// "on"/"not on" would match one microsecond and the column is never null, so
+// only ranges are offered, "after" first.
+export const TIMESTAMP_FILTER_FIELD = {
+  id: "start_time",
+  name: "Timestamp",
+  category: "system",
+  type: "datetime",
+  searchAliases: ["date"],
+  operators: [
+    "greater_than",
+    "less_than",
+    "between",
+    "greater_than_or_equal",
+    "less_than_or_equal",
+    "not_between",
+  ],
+};
+
 /**
  * The filter panel's catalog settings for an ObserveToolbar mode.
  * Simulator projects render CallLogsGrid in the trace slot: the URL/tab stays
@@ -127,7 +150,12 @@ const unitPanel = (mode, tab, extra) => {
   };
 };
 
-// TraceFilterPanel props per unit, as each view's toolbar sets them.
+// TraceFilterPanel props per unit for the Instant eval and Insights scope bars
+// (ScopeFilterBar). They match what each view's toolbar sets, with one
+// exception: on the Traces list and the Spans view, ObserveToolbar also adds
+// the Timestamp field (TIMESTAMP_FILTER_FIELD). The scope bars leave it out,
+// because a scope's date is its window. A Timestamp filter handed over from
+// a view stays among the scope's filters and narrows that window.
 export const OBSERVE_FILTER_CONFIG = {
   traces: unitPanel("traces", "trace"),
   spans: unitPanel("traces", "spans", { isSpansView: true }),
@@ -141,6 +169,61 @@ export const filterConfigFor = (unit) =>
   OBSERVE_FILTER_CONFIG[unit] || OBSERVE_FILTER_CONFIG.traces;
 
 const RANGE_OPS = new Set(["between", "not_between"]);
+
+// A row's start time (the Timestamp field) bounds the Traces and Spans lists
+// on start_time, which the API compares in UTC and reads a bare
+// "yyyy-MM-ddTHH:mm" as UTC. The panel's date + time inputs hold the viewer's
+// local wall time, so the filter carries that instant with the viewer's UTC
+// offset, and a stored instant reopens as local wall time. Values already
+// carrying a zone, or finer than milliseconds, pass through unchanged.
+const ROW_TIME_COLUMN = "start_time";
+const LOCAL_DATE_TIME =
+  /^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?)?$/;
+const ZONED_DATE_TIME =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})$/;
+
+const isRowTimeFilter = (columnId, colType, isDateType) =>
+  columnId === ROW_TIME_COLUMN && isDateType && isNativeColumnType(colType);
+
+// Local wall time → the same instant with the viewer's offset. A bare day is
+// that whole day: from 00:00, or through 23:59:59.999 as a range's upper
+// bound, because the API reads a range as [start, end) and a 23:59 bound
+// would leave out the day's last minute.
+const toZonedTime = (value, { endOfDay = false } = {}) => {
+  const match = typeof value === "string" && LOCAL_DATE_TIME.exec(value.trim());
+  if (!match) return value;
+  const [, year, month, day, hour, minute, second, fraction] = match;
+  const dayEnd = hour === undefined && endOfDay;
+  const date = new Date(
+    Number(year),
+    Number(month) - 1,
+    Number(day),
+    dayEnd ? 23 : Number(hour || 0),
+    dayEnd ? 59 : Number(minute || 0),
+    dayEnd ? 59 : Number(second || 0),
+    dayEnd ? 999 : Number((fraction || "0").padEnd(3, "0")),
+  );
+  if (format(date, "yyyy-MM-dd") !== `${year}-${month}-${day}`) return value;
+  return format(
+    date,
+    date.getMilliseconds()
+      ? "yyyy-MM-dd'T'HH:mm:ss.SSSxxx"
+      : "yyyy-MM-dd'T'HH:mm:ssxxx",
+  );
+};
+
+// A stored instant → local wall time for the date + time input.
+const toLocalTime = (value) => {
+  if (typeof value !== "string" || !ZONED_DATE_TIME.test(value.trim())) {
+    return value;
+  }
+  const date = new Date(value.trim());
+  if (Number.isNaN(date.getTime())) return value;
+  if (date.getMilliseconds()) return format(date, "yyyy-MM-dd'T'HH:mm:ss.SSS");
+  if (date.getSeconds()) return format(date, "yyyy-MM-dd'T'HH:mm:ss");
+  return format(date, "yyyy-MM-dd'T'HH:mm");
+};
+
 const COL_TYPE_REVERSE_MAP = {
   SPAN_ATTRIBUTE: "attribute",
   SYSTEM_METRIC: "system",
@@ -155,6 +238,8 @@ export function apiFilterToPanelRow(gf) {
   const rawVal = gf.filter_config?.filter_value;
   // Trust explicit `filter_type` only; ops are shared across types.
   const isNumberType = rawType === "number";
+  const isDateType =
+    rawType === "datetime" || rawType === "date" || rawType === "timestamp";
   const isBooleanType = rawType === "boolean";
   const isArrayType = rawType === "array" || rawType === "list";
   const isMapType =
@@ -180,7 +265,7 @@ export function apiFilterToPanelRow(gf) {
   } else if (isBooleanType) {
     // MUI Select needs "true"/"false" strings; backend uses native bool.
     value = rawVal === true || rawVal === "true" ? "true" : "false";
-  } else if (isNumberType) {
+  } else if (isNumberType || isDateType) {
     value = rawVal != null ? String(rawVal) : "";
   } else if (isMapType) {
     value = rawVal && typeof rawVal === "object" ? rawVal : "";
@@ -197,6 +282,9 @@ export function apiFilterToPanelRow(gf) {
   const explicitColType = normalizeColumnType(
     gf.filter_config?.col_type || gf.col_type,
   );
+  if (isRowTimeFilter(gf.column_id, explicitColType, isDateType)) {
+    value = Array.isArray(value) ? value.map(toLocalTime) : toLocalTime(value);
+  }
   const isDirectIdFilter = ID_ONLY_FIELDS.has(gf.column_id) && !explicitColType;
   const rawColType =
     explicitColType || (isDirectIdFilter ? undefined : "SYSTEM_METRIC");
@@ -237,8 +325,8 @@ export function apiFilterToPanelRow(gf) {
             ? "map"
             : isArrayType || rawFilterType === "json"
               ? "array"
-              : rawFilterType === "number"
-                ? "number"
+              : isDateType
+                ? rawType
                 : rawFilterType === "thumbs" || looksLikeThumbsValues
                   ? "thumbs"
                   : rawFilterType === "categorical"
@@ -263,9 +351,32 @@ export function apiFilterToPanelRow(gf) {
 export const apiFiltersToPanelRows = (filters) =>
   filters?.length ? filters.map(apiFilterToPanelRow) : null;
 
+/** One panel row as a backend filter; a Timestamp carries the viewer's zone. */
+const panelRowToApiFilter = (row) => {
+  const filter = buildApiFilterFromPanelRow(row);
+  const config = filter.filter_config;
+  if (
+    !isRowTimeFilter(
+      filter.column_id,
+      config.col_type,
+      config.filter_type === "datetime",
+    )
+  ) {
+    return filter;
+  }
+  const value = Array.isArray(config.filter_value)
+    ? config.filter_value.map((item, index) =>
+        toZonedTime(item, {
+          endOfDay: RANGE_OPS.has(config.filter_op) && index === 1,
+        }),
+      )
+    : toZonedTime(config.filter_value);
+  return { ...filter, filter_config: { ...config, filter_value: value } };
+};
+
 /** The panel's rows as backend filters. */
 export const panelRowsToApiFilters = (rows) =>
-  (rows || []).map(buildApiFilterFromPanelRow);
+  (rows || []).map(panelRowToApiFilter);
 
 /** The human name of a unit's own field, when the filter has none. */
 export function fieldName(unit, columnId) {

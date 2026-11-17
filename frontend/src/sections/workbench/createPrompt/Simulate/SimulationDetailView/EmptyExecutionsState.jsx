@@ -11,6 +11,10 @@ import { useParams } from "react-router";
 import Iconify from "src/components/iconify";
 import { enqueueSnackbar } from "src/components/snackbar";
 import axios, { endpoints } from "src/utils/axios";
+import {
+  skippedSavedRowCount,
+  skippedSavedRowsMessage,
+} from "src/sections/test/skippedSavedRows";
 import { useSimulationDetailContext } from "./context/SimulationDetailContext";
 
 const EmptyExecutionsState = () => {
@@ -25,10 +29,14 @@ const EmptyExecutionsState = () => {
         {},
       );
     },
-    onSuccess: () => {
+    onSuccess: (response) => {
       enqueueSnackbar("Simulation started successfully", {
         variant: "success",
       });
+      const skippedRows = skippedSavedRowsMessage(
+        skippedSavedRowCount(response?.data),
+      );
+      if (skippedRows) enqueueSnackbar(skippedRows, { variant: "info" });
       refetchExecutions();
     },
     onError: (error) => {

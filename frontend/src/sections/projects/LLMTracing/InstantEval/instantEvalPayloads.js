@@ -135,6 +135,28 @@ export const cleanDefinitions = (definitions = {}, labels = []) =>
       .filter(([, definition]) => definition),
   );
 
+// Drafts in one run share their unit and read mode. Match their remaining
+// evaluator inputs just as saved-question reuse does, keeping the first draft.
+export function uniqueQuestionDrafts(questions) {
+  const seen = new Set();
+  return questions.filter((question) => {
+    const text = question.question.trim();
+    // Empty editors still need their usual validation.
+    if (!text) return true;
+    const labels = answerLabels(question);
+    const definitions = cleanDefinitions(question.definitions, labels);
+    const key = JSON.stringify([
+      text.toLowerCase(),
+      question.answerType,
+      labels,
+      labels.map((label) => definitions[label] || ""),
+    ]);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 export function validateInstantEval(
   { question, answerType, categories },
   noun = "trace",

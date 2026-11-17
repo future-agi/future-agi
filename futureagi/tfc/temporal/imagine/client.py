@@ -15,13 +15,20 @@ def start_imagine_analysis(
     org_id: str,
     prompt: str,
     task_queue: str = "tasks_xl",
+    *,
+    project_id: str | None = None,
 ) -> str:
     """Start an analysis workflow. Returns workflow ID.
 
     Uses the common client's start_workflow_sync which handles
     ASGI event loop detection and thread pool execution.
     """
-    workflow_id = f"imagine-analysis-{analysis_id}"
+    if not project_id or not org_id:
+        raise ValueError("Imagine project binding missing.")
+
+    # Only new, bound executions receive this provenance version. Existing
+    # workflow histories keep their original IDs and activity commands.
+    workflow_id = f"imagine-pb1-{analysis_id}"
 
     start_workflow_sync(
         ImagineAnalysisWorkflow,
@@ -30,6 +37,7 @@ def start_imagine_analysis(
             trace_id=trace_id,
             org_id=org_id,
             prompt=prompt,
+            project_id=project_id,
         ),
         workflow_id=workflow_id,
         task_queue=task_queue,

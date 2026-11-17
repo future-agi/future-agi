@@ -1,3 +1,7 @@
+// Run waits for the column's pending saves. The run then saves the editor
+// once more and gets its stream address before it opens the socket. A save
+// that fails holds the run back: the run does not start, Run shows the save
+// error, and the next Run saves again.
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Route, Routes, useNavigate } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -20,7 +24,11 @@ vi.mock("src/utils/logger", () => ({
   default: { error: vi.fn(), warn: vi.fn(), info: vi.fn() },
 }));
 vi.mock("src/sections/workbench/createPrompt/hooks/usePromptStreamUrl", () => ({
-  usePromptStreamUrl: () => mocks.streamUrl,
+  // Each run asks for its stream address just before it opens the socket.
+  usePromptStreamUrl: () => async () => {
+    if (!mocks.streamUrl) throw new Error("No prompt stream address");
+    return mocks.streamUrl;
+  },
 }));
 vi.mock("src/utils/axios", () => ({
   default: { get: vi.fn(), post: vi.fn() },
@@ -114,17 +122,30 @@ async function startRun(index) {
   });
   return { run };
 }
-function sentVersions() {
+// Lets a dispatched run save the editor and open its socket.
+async function settle() {
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(0);
+  });
+}
+async function sentVersions() {
+  await settle();
   sockets.forEach((socket) => socket.onopen());
   return sockets.map(
     (socket) => JSON.parse(socket.send.mock.calls[0][0]).version,
   );
 }
+const savedModels = () =>
+  axios.post.mock.calls.map(
+    ([, payload]) => payload.prompt_config[0].configuration.model,
+  );
 
 describe("Unit: Workbench save-before-run", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.clearAllMocks();
+    axios.post.mockReset();
+    axios.post.mockResolvedValue({});
     mocks.streamUrl = "ws://test/ws/prompt-stream/";
     sockets = [];
     vi.stubGlobal(
@@ -167,12 +188,19 @@ describe("Unit: Workbench save-before-run", () => {
         save.resolve({});
         await run;
       });
-      expect(sentVersions()).toEqual(["v1"]);
+      expect(await sentVersions()).toEqual(["v1"]);
       expect(context.selectedVersions[0].isDraft).toBe(false);
+      // The run saves the same editor once more before it opens its stream.
+      expect(axios.post).toHaveBeenCalledTimes(2);
+      expect(axios.post.mock.calls[1][1]).toMatchObject({
+        version: "v1",
+        is_run: false,
+        prompt_config: [{ configuration: { model: "selected" } }],
+      });
       await act(async () => {
         await vi.advanceTimersByTimeAsync(500);
       });
-      expect(axios.post).toHaveBeenCalledTimes(1);
+      expect(axios.post).toHaveBeenCalledTimes(2);
     },
   );
 
@@ -191,7 +219,7 @@ describe("Unit: Workbench save-before-run", () => {
       save.resolve({});
       await run;
     });
-    expect(sentVersions()).toEqual(["v1"]);
+    expect(await sentVersions()).toEqual(["v1"]);
   });
 
   it("serializes an older in-flight save before the final model save", async () => {
@@ -222,7 +250,7 @@ describe("Unit: Workbench save-before-run", () => {
       last.resolve({});
       await run;
     });
-    expect(sentVersions()).toEqual(["v1"]);
+    expect(await sentVersions()).toEqual(["v1"]);
   });
 
   it.each([true, false])(
@@ -238,6 +266,7 @@ describe("Unit: Workbench save-before-run", () => {
         save.reject(new Error("Save unavailable"));
         await run;
       });
+      await settle();
       expect(sockets).toHaveLength(0);
       expect(axios.post).toHaveBeenCalledTimes(1);
       expect(axios.post.mock.calls[0][1].is_run).toBe(false);
@@ -257,6 +286,7 @@ describe("Unit: Workbench save-before-run", () => {
     await act(async () => {
       await context.saveAndRun(0);
     });
+    await settle();
     expect(sockets).toHaveLength(0);
     expect(mocks.notify).toHaveBeenCalledWith("Save unavailable", {
       variant: "error",
@@ -265,12 +295,16 @@ describe("Unit: Workbench save-before-run", () => {
     await act(async () => {
       await context.saveAndRun(0);
     });
-    expect(axios.post).toHaveBeenCalledTimes(2);
-    expect(axios.post.mock.calls[1][1]).toMatchObject({
-      is_run: false,
-      prompt_config: [{ configuration: { model: "selected" } }],
-    });
-    expect(sentVersions()).toEqual(["v1"]);
+    expect(await sentVersions()).toEqual(["v1"]);
+    // The retried save, then the run's own save of the editor: a Run of a
+    // draft saves twice on this line, so three posts in all.
+    expect(axios.post).toHaveBeenCalledTimes(3);
+    axios.post.mock.calls.slice(1).forEach(([, payload]) =>
+      expect(payload).toMatchObject({
+        is_run: false,
+        prompt_config: [{ configuration: { model: "selected" } }],
+      }),
+    );
   });
 
   it("drops a failed autosave once its column holds a committed version", async () => {
@@ -280,6 +314,7 @@ describe("Unit: Workbench save-before-run", () => {
     await act(async () => {
       await context.saveAndRun(0);
     });
+    await settle();
     // Restoring a committed version from history replaces the draft column.
     act(() =>
       context.setSelectedVersionByIndex(0, (previous) => ({
@@ -291,7 +326,7 @@ describe("Unit: Workbench save-before-run", () => {
       await context.saveAndRun(0);
     });
     expect(axios.post).toHaveBeenCalledTimes(1);
-    expect(sentVersions()).toEqual(["v1"]);
+    expect(await sentVersions()).toEqual(["v1"]);
   });
 
   it("Stop during the save wait cancels the pending run", async () => {
@@ -309,6 +344,7 @@ describe("Unit: Workbench save-before-run", () => {
       save.resolve({});
       await run;
     });
+    await settle();
     expect(sockets).toHaveLength(0);
   });
 
@@ -323,19 +359,21 @@ describe("Unit: Workbench save-before-run", () => {
       first.resolve({});
       await run;
     });
-    expect(
-      axios.post.mock.calls.map(
-        ([, payload]) => payload.prompt_config[0].configuration.model,
-      ),
-    ).toEqual(["selected", "edited-during-wait"]);
-    expect(sentVersions()).toEqual(["v1"]);
+    expect(await sentVersions()).toEqual(["v1"]);
+    // Then the run's own save of the same editor.
+    expect(savedModels()).toEqual([
+      "selected",
+      "edited-during-wait",
+      "edited-during-wait",
+    ]);
   });
 
   it("keeps flushing edits typed during each save until none is left", async () => {
     await mount();
     const saves = Array.from({ length: 7 }, deferred);
     axios.post.mockImplementation(
-      () => saves[axios.post.mock.calls.length - 1].promise,
+      () =>
+        saves[axios.post.mock.calls.length - 1]?.promise ?? Promise.resolve({}),
     );
     editModel("edit-0");
     const { run } = await startRun(0);
@@ -350,12 +388,12 @@ describe("Unit: Workbench save-before-run", () => {
       saves[saves.length - 1].resolve({});
       await run;
     });
-    expect(
-      axios.post.mock.calls.map(
-        ([, payload]) => payload.prompt_config[0].configuration.model,
-      ),
-    ).toEqual(saves.map((_, edit) => `edit-${edit}`));
-    expect(sentVersions()).toEqual(["v1"]);
+    expect(await sentVersions()).toEqual(["v1"]);
+    // Every edit was saved in turn; the last save is the run's own.
+    expect(savedModels()).toEqual([
+      ...saves.map((_, edit) => `edit-${edit}`),
+      `edit-${saves.length - 1}`,
+    ]);
   });
 
   it("Stop on one column during Run all clears every column's spinner", async () => {
@@ -371,6 +409,7 @@ describe("Unit: Workbench save-before-run", () => {
       save.resolve({});
       await run;
     });
+    await settle();
     expect(sockets).toHaveLength(0);
     expect(context.promptGeneratingStatus).toEqual([false, false]);
   });
@@ -390,7 +429,7 @@ describe("Unit: Workbench save-before-run", () => {
       save.resolve({});
       await Promise.all([stopped, rerun]);
     });
-    expect(sentVersions()).toEqual(["v1"]);
+    expect(await sentVersions()).toEqual(["v1"]);
     expect(context.promptGeneratingStatus).toEqual([true]);
   });
 
@@ -412,7 +451,7 @@ describe("Unit: Workbench save-before-run", () => {
       save.resolve({});
       await Promise.all([all, single]);
     });
-    expect(sentVersions()).toEqual(["v1"]);
+    expect(await sentVersions()).toEqual(["v1"]);
     expect(context.promptGeneratingStatus).toEqual([true, false]);
   });
 
@@ -428,6 +467,7 @@ describe("Unit: Workbench save-before-run", () => {
       save.resolve({});
       await run;
     });
+    await settle();
     expect(sockets).toHaveLength(0);
     expect(context.selectedVersions.map(({ version }) => version)).toEqual([
       "v2",
@@ -479,6 +519,7 @@ describe("Unit: Workbench save-before-run", () => {
     await act(async () => {
       await context.saveAndRun(0);
     });
+    await settle();
     expect(sockets).toHaveLength(0);
     expect(mocks.notify).toHaveBeenCalledWith("Rate limit reached", {
       variant: "error",
@@ -495,6 +536,7 @@ describe("Unit: Workbench save-before-run", () => {
     await act(async () => {
       await context.saveAndRun(0);
     });
+    await settle();
     expect(sockets).toHaveLength(0);
     expect(context.promptGeneratingStatus).toEqual([false]);
     expect(mocks.notify).not.toHaveBeenCalled();
@@ -508,7 +550,7 @@ describe("Unit: Workbench save-before-run", () => {
         await context.saveAndRun(index);
       });
       expect(axios.post).not.toHaveBeenCalled();
-      expect(sentVersions()).toEqual(["v1"]);
+      expect(await sentVersions()).toEqual(["v1"]);
     },
   );
 
@@ -608,8 +650,9 @@ describe("Unit: Workbench save-before-run", () => {
         await run;
       });
       if (succeeds) {
-        expect(sentVersions()).toEqual(["v1", "v2"]);
+        expect(await sentVersions()).toEqual(["v1", "v2"]);
       } else {
+        await settle();
         expect(sockets).toHaveLength(0);
         expect(context.promptGeneratingStatus).toEqual([false, false]);
         expect(mocks.notify).toHaveBeenCalledWith("Second save failed", {
@@ -619,6 +662,22 @@ describe("Unit: Workbench save-before-run", () => {
     },
   );
 
+  it("a run replacing its own socket does not cancel a Run waiting for its save", async () => {
+    await mount();
+    const save = deferred();
+    axios.post.mockReturnValueOnce(save.promise);
+    editModel("selected");
+    const { run } = await startRun(0);
+    // A run opening its stream closes the column's earlier socket this way.
+    act(() => context.closeSocketByIndex("run-0", { stopWaitingRun: false }));
+    await act(async () => {
+      save.resolve({});
+      await run;
+    });
+    expect(await sentVersions()).toEqual(["v1"]);
+    expect(context.promptGeneratingStatus).toEqual([true]);
+  });
+
   it("flushes only the requested compare column", async () => {
     await mount(false);
     act(() => context.applyCompare([savedVersion("v2", true)]));
@@ -627,6 +686,6 @@ describe("Unit: Workbench save-before-run", () => {
       await context.saveAndRun(0);
     });
     expect(axios.post).not.toHaveBeenCalled();
-    expect(sentVersions()).toEqual(["v1"]);
+    expect(await sentVersions()).toEqual(["v1"]);
   });
 });

@@ -1,8 +1,10 @@
 """Host facts refuse unknowns; no real daemon, SSH or filesystem qualification mock."""
 from __future__ import annotations
 
+from dataclasses import replace
 import hashlib
 import json
+import os
 from pathlib import Path
 import struct
 import sys
@@ -18,7 +20,10 @@ from deploy.tests.test_update_compatibility import synthetic_context  # noqa: E4
 from deploy.update import host_facts as facts  # noqa: E402
 from deploy.update.compatibility import topology_profile  # noqa: E402
 from deploy.update.contracts import ReasonCode  # noqa: E402
-from deploy.update.orchestrator import GuardRefused  # noqa: E402
+from deploy.update.orchestrator import GuardRefused, check_binding  # noqa: E402
+
+# The Hub's production file: a production install's third file while the Hub is on.
+HUB_FILE = 'deploy/docker-compose.production.hub.yml'
 
 
 class FactsTests(pub.PublisherCase):
@@ -261,6 +266,62 @@ class OverlayAdapterTests(pub.PublisherCase):
         from deploy.update import __main__ as cli
         with self.assertRaises(GuardRefused):
             cli._enroll(self.store, 'test-context', None, status_overlay=True)
+
+    def production_binding(self, *names, profiles=()):
+        """A production binding of these checkout files, in this order, with its fingerprint."""
+        files = tuple(self.root / name for name in names)
+        binding = replace(self.binding, production=True, topology='distributed', profiles=profiles,
+                          compose_files=files, host_uid=os.geteuid())
+        return replace(binding, installation_fingerprint=facts._binding_fingerprint(binding))
+
+    def test_production_identities_with_the_hub_file_in_order_only(self):
+        overlay = self.root / facts.STATUS_OVERLAY
+        overlay.parent.mkdir(parents=True, exist_ok=True)
+        overlay.write_text('services: {}\n')
+        inventory = self.root / 'deploy/update/deployment-files.txt'
+        inventory.parent.mkdir(parents=True, exist_ok=True)
+        inventory.write_text(facts.STATUS_OVERLAY + '\n')
+        base = (facts.DISTRIBUTED_FILE, facts.PRODUCTION_OVERLAY)
+        status = facts.STATUS_OVERLAY
+        # This test is about which file orders are accepted. The overlay's own path checks
+        # (production_status_overlay, safe_path) have their test above; they refuse any
+        # world-writable ancestor, which some temp directories have.
+        for names, expected in ((base, None), ((*base, HUB_FILE), None),
+                                ((*base, status), overlay), ((*base, HUB_FILE, status), overlay)):
+            with self.subTest(names=names), mock.patch.object(
+                    facts, 'production_status_overlay', return_value=overlay) as checked:
+                binding = self.production_binding(*names)
+                self.assertEqual(facts.binding_status_overlay(binding), expected)
+                self.assertEqual(checked.called, expected is not None)
+        distributed, production = base
+        for names in ((distributed, HUB_FILE, production), (HUB_FILE, distributed, production),
+                      (*base, status, HUB_FILE), (distributed, HUB_FILE),
+                      (*base, HUB_FILE, HUB_FILE), (*base, HUB_FILE, status, status)):
+            with self.subTest(names=names):
+                with self.assertRaises(GuardRefused) as caught:
+                    facts.binding_status_overlay(self.production_binding(*names))
+                self.assertEqual(caught.exception.reason_code, ReasonCode.CONFIGURATION_CHANGED)
+
+    def test_registered_binding_checks_accept_the_hub_identity_and_refuse_any_other_order(self):
+        names = (facts.DISTRIBUTED_FILE, facts.PRODUCTION_OVERLAY, HUB_FILE)
+        binding = self.production_binding(*names, profiles=('hub',))
+
+        def installation(*selected):
+            inst = mock.Mock(root=self.root, env_file=self.env, env_alias=self.env, production=True,
+                             env={'COMPOSE_PROFILES': 'hub'}, project=binding.compose_project,
+                             environ={'DOCKER_CONTEXT': binding.docker_context})
+            inst._ownership_files.return_value = [self.root / name for name in selected]
+            inst.docker_run.return_value.stdout = binding.daemon_identity
+            return inst
+
+        check_binding(installation(*names), binding)
+        distributed, production, hub = names
+        for selected in ((distributed, production), (distributed, hub, production),
+                         (distributed, production, hub, facts.STATUS_OVERLAY)):
+            with self.subTest(selected=selected):
+                with self.assertRaises(GuardRefused) as caught:
+                    check_binding(installation(*selected), binding)
+                self.assertEqual(caught.exception.reason_code, ReasonCode.CONFIGURATION_CHANGED)
 
     def test_checked_discovery_refresh_and_no_candidate_or_unverified_result(self):
         from deploy.update.discovery import DiscoveryResult

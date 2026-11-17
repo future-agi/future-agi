@@ -1,0 +1,121 @@
+[
+  {
+    "tool": "get_page",
+    "arguments": {
+      "presentationId": "deck-fixture",
+      "pageObjectId": "slide-fixture"
+    }
+  },
+  {
+    "tool": "get_thumbnail",
+    "arguments": {
+      "presentationId": "deck-fixture",
+      "pageObjectId": "slide-fixture"
+    }
+  },
+  {
+    "tool": "create_presentation",
+    "arguments": {
+      "body": {
+        "title": "Quarterly review"
+      }
+    }
+  },
+  {
+    "tool": "create_slide",
+    "arguments": {
+      "presentationId": "deck-fixture",
+      "body": {
+        "requests": [
+          {
+            "createSlide": {
+              "objectId": "new_slide",
+              "slideLayoutReference": {
+                "predefinedLayout": "BLANK"
+              }
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "tool": "insert_text",
+    "arguments": {
+      "presentationId": "deck-fixture",
+      "body": {
+        "requests": [
+          {
+            "insertText": {
+              "objectId": "shape-fixture",
+              "insertionIndex": 0,
+              "text": "Quarterly review"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "tool": "replace_text",
+    "arguments": {
+      "presentationId": "deck-fixture",
+      "body": {
+        "requests": [
+          {
+            "replaceAllText": {
+              "containsText": {
+                "text": "PLACEHOLDER",
+                "matchCase": true
+              },
+              "replaceText": "Quarterly"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "tool": "delete_object",
+    "arguments": {
+      "presentationId": "deck-fixture",
+      "body": {
+        "requests": [
+          {
+            "deleteObject": {
+              "objectId": "slide-fixture"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "tool": "duplicate_object",
+    "arguments": {
+      "presentationId": "deck-fixture",
+      "body": {
+        "requests": [
+          {
+            "duplicateObject": {
+              "objectId": "slide-fixture"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "tool": "get_presentation",
+    "arguments": {
+      "presentationId": "deck-fixture"
+    }
+  },
+  {
+    "tool": "get_page",
+    "arguments": {
+      "presentationId": "deck-fixture",
+      "pageObjectId": "missing-fixture"
+    }
+  }
+]

@@ -13,15 +13,20 @@ agent tests stub the selectors away — so this is the module's own boundary tes
     WHERE clause (cluster isolation), NOT tenant-safety; the tenant gate is
     ``resolve_cluster_context`` above.
   - the agg selectors return the typed ``CountBucket`` shape.
-  - ``trace_eval_results`` is UNSCOPED by contract; its guard is
-    ``_read_trace``'s project-scoped spans-gate, pinned in ``TestReadTraceGate``.
+  - ``trace_eval_results`` keeps only the rows of the span ids it is given: the
+    spans ``_read_trace``'s project-scoped read returned. ``TestReadTraceGate``
+    pins that a trace with no spans in the project is refused before it, and
+    ``TestSharedTraceIdReadsOnlyItsProject`` a trace id both tenants' spans carry.
 
 The fixture clears the workspace context so the selectors run exactly as they do
 in production — a Temporal worker with no ambient workspace — making the explicit
 ``project_id`` filter the ONLY thing in scope.
 """
 
+import re
+import threading
 import uuid
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -33,6 +38,7 @@ from accounts.models.workspace import Workspace
 from ee.agenthub.cluster_rca import selectors
 from model_hub.models.ai_model import AIModel
 from tfc.middleware.workspace_context import clear_workspace_context
+from tracer.models.observation_span import EvalLogger, EvalTargetType
 from tracer.models.project import Project
 from tracer.models.project_version import ProjectVersion
 from tracer.models.trace_error_analysis import (
@@ -459,9 +465,9 @@ class TestF6CurrentMembership:
 
 @pytest.mark.django_db
 class TestReadTraceGate:
-    """trace_eval_results is unscoped; its tenant guard is _read_trace's
-    project-scoped spans-gate. A foreign trace (no spans in self.project_id) must
-    be rejected BEFORE the unscoped eval read — never surfacing its eval rows."""
+    """_read_trace's project-scoped spans-gate. A foreign trace (no spans in
+    self.project_id) must be rejected BEFORE the eval read, which keeps only the
+    rows of the spans this gate returned."""
 
     def test_foreign_trace_rejected_before_eval_read(self):
         from ee.agenthub.cluster_rca.agent import ClusterAnalysisAgent
@@ -481,5 +487,209 @@ class TestReadTraceGate:
             out = agent._read_trace(foreign_trace, "summary")
 
         spans.assert_called_once_with(foreign_trace)
-        eval_read.assert_not_called()  # gate fired before the unscoped eval read
+        eval_read.assert_not_called()  # gate fired before the eval read
         assert out.get("is_error") is True
+
+
+def _span(span_id):
+    """One span as the agent's span read hands it over."""
+    return {
+        "span_id": span_id,
+        "parent_span_id": None,
+        "name": span_id,
+        "observation_type": "chain",
+        "status": "OK",
+        "status_message": None,
+        "latency_ms": 5,
+        "input": "",
+        "output": "",
+        "trace_name": "checkout",
+        "trace_session_id": None,
+        "tags": None,
+    }
+
+
+class _SpansTable:
+    """ClickHouse stand-in holding the ``spans`` rows of the cases below.
+
+    ``spans_for_trace`` reads as the real reader does: one trace's spans in one
+    project. ``execute_read`` answers the per-trace attribute lookup. Each
+    branch of its query reads one attribute map of the trace's rows, and keeps
+    a row only when that branch's project predicate, if it has one, matches.
+    """
+
+    TYPES = {
+        "attrs_string": "string",
+        "attrs_number": "number",
+        "attrs_bool": "boolean",
+    }
+
+    def __init__(self):
+        self.rows = []
+        self.reads = 0
+
+    def add(self, project, trace_id, span_id, **maps):
+        row = {"project_id": str(project.id), "trace_id": trace_id, "span_id": span_id}
+        self.rows.append({**row, **maps})
+
+    def spans_for_trace(self, project_id, trace_id):
+        wanted = (str(project_id), str(trace_id))
+        return [
+            _span(row["span_id"])
+            for row in self.rows
+            if (row["project_id"], row["trace_id"]) == wanted
+        ]
+
+    def execute_read(self, query, params, **_limits):
+        self.reads += 1
+        found = {}
+        for branch in query.split("UNION ALL"):
+            column = re.search(r"mapKeys\((attrs_\w+)\)", branch).group(1)
+            scope = re.search(r"project_id = %\((\w+)\)s", branch)
+            for row in self.rows:
+                if row["trace_id"] != params["trace_id"]:
+                    continue
+                if scope and row["project_id"] != params[scope.group(1)]:
+                    continue
+                for key, value in row.get(column, {}).items():
+                    _, values = found.setdefault(key, (self.TYPES[column], []))
+                    if str(value) not in values:
+                        values.append(str(value))
+        return [(key, *found[key]) for key in sorted(found)], [], 1
+
+
+def _eval_row(trace_id, span_id, explanation):
+    return EvalLogger.objects.create(
+        trace_id=trace_id,
+        observation_span_id=span_id,
+        target_type=EvalTargetType.SPAN,
+        output_float=0.5,
+        eval_explanation=explanation,
+    )
+
+
+@pytest.fixture
+def shared_trace(tenants):
+    """One trace id carried by a span of each tenant, and a trace only home holds.
+
+    Both spans on the shared trace set ``service.name`` and a key of their own in
+    each attribute map, and each has one evaluation row.
+    """
+    home, foreign = tenants
+    shared, home_only = str(uuid.uuid4()), str(uuid.uuid4())
+    table = _SpansTable()
+    table.add(
+        foreign,
+        shared,
+        "foreign-span",
+        attrs_string={"service.name": "foreign-service", "foreign.region": "eu"},
+        attrs_number={"foreign.retries": 7},
+        attrs_bool={"foreign.cached": True},
+    )
+    table.add(
+        home,
+        shared,
+        "home-span",
+        attrs_string={"service.name": "home-service", "home.region": "us"},
+        attrs_number={"home.retries": 2},
+        attrs_bool={"home.cached": False},
+    )
+    table.add(home, home_only, "home-only-span", attrs_string={"home.tier": "gold"})
+    return SimpleNamespace(
+        home=home,
+        table=table,
+        shared=shared,
+        home_only=home_only,
+        foreign_eval=_eval_row(shared, "foreign-span", "foreign explanation"),
+        home_eval=_eval_row(shared, "home-span", "home explanation"),
+        home_only_eval=_eval_row(home_only, "home-only-span", "home-only explanation"),
+    )
+
+
+def _read(seeded, trace_id):
+    """Home's RCA agent reads one trace, with ``seeded.table`` as ClickHouse.
+
+    Returns the read's attributes and the ids of its evaluation rows.
+    """
+    from ee.agenthub.cluster_rca.agent import ClusterAnalysisAgent
+
+    agent = ClusterAnalysisAgent.__new__(ClusterAnalysisAgent)
+    agent.project_id = str(seeded.home.id)
+    agent.cluster_id = "E-SHARED"
+    agent._alias_to_uuid = {}
+    agent._uuid_to_alias = {}
+    agent._alias_counters = {}
+    agent._counter_lock = threading.Lock()
+    agent._trace_summary_cache = {}
+    agent._trace_spans_cache = {}
+    agent._span_index = {}
+    table = seeded.table
+    table.reads = 0
+    with (
+        patch(
+            "ee.agenthub.cluster_rca.agent.spans_for_trace",
+            side_effect=table.spans_for_trace,
+        ),
+        patch(
+            "tracer.services.clickhouse.span_attribute_lookups.is_clickhouse_enabled",
+            return_value=True,
+        ),
+        patch(
+            "tracer.services.clickhouse.span_attribute_lookups.ClickHouseClient",
+            return_value=table,
+        ),
+    ):
+        payload = agent._read_trace(trace_id, "summary")
+
+    # The attribute lookup swallows its errors; an empty answer must be a read.
+    assert table.reads == 1
+    evals = [agent._alias_to_uuid[score["id"]] for score in payload["eval_scores"]]
+    return payload["notable_attributes"], evals
+
+
+@pytest.mark.django_db
+class TestSharedTraceIdReadsOnlyItsProject:
+    """``_read_trace`` by home's agent on a trace id that spans of both tenants
+    carry: the attributes and evaluation rows it reads are those of home's spans,
+    on the shared trace and on a trace only home holds."""
+
+    def test_shared_trace_reads_only_this_projects_attributes(self, shared_trace):
+        attributes, _ = _read(shared_trace, shared_trace.shared)
+
+        assert set(attributes) == {
+            "service.name",
+            "home.region",
+            "home.retries",
+            "home.cached",
+        }
+        assert attributes["service.name"] == "home-service"
+
+    def test_shared_trace_reads_only_this_projects_evaluations(self, shared_trace):
+        _, evals = _read(shared_trace, shared_trace.shared)
+
+        assert evals == [str(shared_trace.home_eval.id)]
+
+    def test_own_spans_on_the_shared_trace_still_read(self, shared_trace):
+        attributes, evals = _read(shared_trace, shared_trace.shared)
+
+        assert attributes["home.region"] == "us"
+        assert {"home.retries", "home.cached"} <= set(attributes)
+        assert str(shared_trace.home_eval.id) in evals
+
+    def test_a_trace_only_this_project_holds_reads_in_full(self, shared_trace):
+        attributes, evals = _read(shared_trace, shared_trace.home_only)
+
+        assert attributes == {"home.tier": "gold"}
+        assert evals == [str(shared_trace.home_only_eval.id)]
+
+
+@pytest.mark.django_db
+class TestTraceEvalResultsKeepsTheGivenSpans:
+    def test_keeps_the_rows_of_the_given_span_ids(self, shared_trace):
+        rows = selectors.trace_eval_results(shared_trace.shared, ["home-span"])
+
+        assert [row.id for row in rows] == [shared_trace.home_eval.id]
+
+    def test_reads_nothing_without_span_ids(self, shared_trace):
+        for span_ids in (None, []):
+            assert selectors.trace_eval_results(shared_trace.shared, span_ids) == []

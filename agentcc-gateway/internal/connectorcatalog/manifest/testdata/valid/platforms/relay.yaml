@@ -1,0 +1,20 @@
+# Fixture for the manifest validator tests, not catalog data. Facts are
+# illustrative; the catalog itself lives in agentcc-gateway/catalog/connectors.
+schema: "connector-manifest/v1#platform"
+id: relay
+version: 1.0.0
+name: Relay
+description: A fictional partner platform for the validator tests.
+connect:
+  modes: [oauth, headers]
+  urlPattern: "https://mcp.relay.example/servers/{serverId}"
+account: byo
+toolMode: fixed
+metaTools: [search_tools]
+selfHostable: false
+termsUrl: https://relay.example/terms
+termsCheckedAt: 2026-10-19
+sources:
+  - fact: connect.urlPattern
+    url: https://relay.example/docs/mcp
+    fetchedAt: 2026-10-19

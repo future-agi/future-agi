@@ -1,0 +1,120 @@
+eval_id: 109
+name: semantic_list_contains
+description: Checks if the generated response semantically contains one or more phrases from a reference list.
+criteria: Checks for the semantic presence of reference phrases in the generated response.
+eval_tags:
+- NLP Metrics
+- Output Validation
+visible_ui: true
+permissions:
+  allow_edit: false
+  allow_copy: true
+output_type_normalized: percentage
+pass_threshold: 0.5
+config:
+  required_keys:
+  - output
+  - expected
+  output: score
+  eval_type_id: CustomCodeEval
+  config:
+    similarity_threshold:
+      type: float
+      default: 0.5
+      minimum: 0.0
+      maximum: 1.0
+    match_all:
+      type: boolean
+      default: false
+  config_params_desc:
+    output: The generated text to evaluate
+    expected: The expected phrases (list or comma-separated string)
+    similarity_threshold: Minimum cosine similarity threshold for semantic matching (default 0.5)
+    match_all: If true, all expected phrases must match; if false, any match succeeds (default false)
+  code: |
+    def evaluate(input, output, expected, context, **kwargs):
+        import json
+        import math
+        import re
+        import urllib.request
+
+        # Set by the engine's preprocessing from MODEL_SERVING_URL.
+        EMBED_URL = (kwargs.get("_model_serving_url") or "http://serving:8080").rstrip("/") + "/model/v1/embed"
+        THRESHOLD = float(kwargs.get("similarity_threshold", 0.5))
+        MATCH_ALL = bool(kwargs.get("match_all", False))
+
+        generated = str(output) if output is not None else ""
+        expected_val = expected if expected is not None else ""
+
+        # Parse expected as a list
+        if isinstance(expected_val, str):
+            try:
+                expected_val = json.loads(expected_val)
+            except (json.JSONDecodeError, ValueError):
+                expected_val = [s.strip() for s in expected_val.split(",") if s.strip()]
+        if isinstance(expected_val, str):
+            expected_val = [expected_val]
+        # Coerce non-list scalars (int, float, bool) to a single-item list
+        if not isinstance(expected_val, (list, tuple)):
+            expected_val = [expected_val]
+        if not expected_val:
+            return {"score": 0.0, "reason": "No expected phrases provided"}
+        if not generated.strip():
+            return {"score": 0.0, "reason": "No output text to evaluate"}
+
+        # Split output into chunks for better sentence-to-phrase matching.
+        # Comparing a full paragraph embedding against a single word gives
+        # artificially low similarity. Instead, split into sentences and
+        # compare each sentence against each phrase, taking the max.
+        sentences = [s.strip() for s in re.split(r'[.!?\n]+', generated) if s.strip()]
+        if not sentences:
+            sentences = [generated]
+
+        def _embed(texts):
+            data = json.dumps({"text": texts, "input_type": "text"}).encode()
+            req = urllib.request.Request(EMBED_URL, data=data, headers={"Content-Type": "application/json"})
+            resp = urllib.request.urlopen(req, timeout=15)
+            return json.loads(resp.read())["embeddings"]
+
+        def _cosine(a, b):
+            dot = sum(x * y for x, y in zip(a, b))
+            na = math.sqrt(sum(x * x for x in a))
+            nb = math.sqrt(sum(x * x for x in b))
+            return dot / (na * nb) if na and nb else 0.0
+
+        phrases = [str(p).strip() for p in expected_val]
+        try:
+            all_texts = sentences + phrases
+            embeddings = _embed(all_texts)
+            sent_embs = embeddings[:len(sentences)]
+            phrase_embs = embeddings[len(sentences):]
+        except Exception as e:
+            return {"score": 0.0, "reason": f"Embedding service error: {e}"}
+
+        gen_lower = generated.lower()
+        matches = []
+        similarities = {}
+        for i, phrase in enumerate(phrases):
+            p_lower = phrase.lower()
+            # Layer 1: exact substring match (catches literal words)
+            if p_lower in gen_lower:
+                similarities[phrase] = 1.0
+                matches.append(True)
+                continue
+            # Layer 2: semantic embedding similarity (max across sentences)
+            best = max(_cosine(se, phrase_embs[i]) for se in sent_embs)
+            similarities[phrase] = round(best, 4)
+            matches.append(best >= THRESHOLD)
+
+        matched_count = sum(matches)
+        total = len(matches)
+        if MATCH_ALL:
+            passed = total > 0 and matched_count == total
+            score = 1.0 if passed else 0.0
+        else:
+            score = matched_count / total if total > 0 else 0.0
+
+        details = "; ".join(f"'{k}': {v}" for k, v in similarities.items())
+        mode = "all phrases required" if MATCH_ALL else "partial matches allowed"
+        reason = f"Matched {matched_count}/{total} phrases (threshold={THRESHOLD}; {mode}). {details}."
+        return {"score": float(round(score, 4)), "reason": reason}

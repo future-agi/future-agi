@@ -87,19 +87,34 @@ const BulkActionsBar = ({
         slotProps={{
           paper: { sx: { minWidth: 240, mt: 0.5 } },
         }}
+        // Arrow keys reach disabled items, so their reason can be read.
+        MenuListProps={{ disabledItemsFocusable: true }}
       >
         {visibleActions.map((action) => {
           const disabled = Boolean(action.disabled);
+          // A disabled item stays focusable (aria-disabled, not the MUI
+          // `disabled` prop, which also blocks pointer events) and does
+          // nothing on click or Enter.
           const item = (
             <MenuItem
               key={action.id}
-              disabled={disabled}
+              aria-disabled={disabled ? "true" : undefined}
+              disableRipple={disabled}
               onClick={() => {
                 if (disabled) return;
                 setMenuOpen(false);
                 onAction(action.id, { currentTarget: anchorRef.current });
               }}
               dense
+              sx={
+                disabled
+                  ? {
+                      opacity: (theme) => theme.palette.action.disabledOpacity,
+                      cursor: "default",
+                      "&:hover": { backgroundColor: "transparent" },
+                    }
+                  : undefined
+              }
             >
               <ListItemIcon>
                 <Iconify icon={action.icon} width={16} />
@@ -112,15 +127,30 @@ const BulkActionsBar = ({
             </MenuItem>
           );
 
+          // An optional one-line hint on an enabled action (`tooltip`).
+          if (!disabled && action.tooltip)
+            return (
+              <Tooltip
+                key={action.id}
+                title={action.tooltip}
+                placement="left"
+                describeChild
+              >
+                {item}
+              </Tooltip>
+            );
           if (!disabled || !action.disabledReason) return item;
 
+          // No wrapper element: the item stays a direct child of the menu
+          // list, so keyboard focus reaches it and shows the reason.
           return (
             <Tooltip
               key={action.id}
               title={action.disabledReason}
               placement="left"
+              describeChild
             >
-              <span>{item}</span>
+              {item}
             </Tooltip>
           );
         })}

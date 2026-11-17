@@ -95,10 +95,15 @@ func TestWQ2FailurePolicy(t *testing.T) {
 	}
 }
 
+// An org that set no fail_open follows the node's guardrails.fail_open, as
+// v1.58.0 ran every org check: a failed check is let through on a node that
+// fails open and refused 503 on one that fails closed. (Dev asserted the
+// omitted value always fails closed; that is not kept.)
 func TestWQ2OmittedPolicyStaysClosed(t *testing.T) {
 	check := acceptanceCheck{name: "check", fn: func(ctx context.Context, in *g.CheckInput) *g.CheckResult { panic("synthetic failure") }}
-	p := acceptancePlugin(t, true, `{"checks":{"check":{"enabled":true,"action":"block","confidence_threshold":0.5}}}`, map[string]g.Guardrail{"check": check})
-	assertDecision(t, p, true, 503)
+	raw := `{"checks":{"check":{"enabled":true,"action":"block","confidence_threshold":0.5}}}`
+	assertDecision(t, acceptancePlugin(t, true, raw, map[string]g.Guardrail{"check": check}), false, 0)
+	assertDecision(t, acceptancePlugin(t, false, raw, map[string]g.Guardrail{"check": check}), true, 503)
 }
 
 func TestWQ2WebhookPolicy(t *testing.T) {
@@ -125,7 +130,7 @@ func TestWQ2WebhookPolicy(t *testing.T) {
 					}))
 					defer srv.Close()
 					raw := fmt.Sprintf(`{"fail_open":%v,"checks":{"hook":{"enabled":true,"action":"block","confidence_threshold":%g}}}`, org, threshold)
-					p := acceptancePlugin(t, !org, raw, map[string]g.Guardrail{"hook": webhook.New("hook", map[string]interface{}{"url": srv.URL})})
+					p := acceptancePlugin(t, !org, raw, map[string]g.Guardrail{"hook": webhook.NewConfigFileRule("hook", map[string]interface{}{"url": srv.URL})})
 					want := kind == "operational" && !org || kind == "reject" && threshold < 1
 					status := 403
 					if kind == "operational" {
@@ -165,8 +170,10 @@ func TestWQ2Mode(t *testing.T) {
 			raw := fmt.Sprintf(`{"pipeline_mode":%q,"fail_open":false,"checks":{"a":{"enabled":true,"action":"block"},"b":{"enabled":true,"action":"block"}}}`, mode)
 			p := acceptancePlugin(t, false, raw, map[string]g.Guardrail{"a": check("a"), "b": check("b")})
 			assertDecision(t, p, false, 403)
+			// An org that set no pipeline_mode runs its checks one at a time,
+			// as v1.58.0 ran org checks.
 			want := int32(2)
-			if mode == "sequential" {
+			if mode == "sequential" || mode == "" {
 				want = 1
 			}
 			if n := peak.Load(); n != want {
@@ -230,7 +237,7 @@ func TestWQ2ParallelPIIRemediation(t *testing.T) {
 	}))
 	defer srv.Close()
 	redactor := pii.New(map[string]interface{}{"remediation": "redact"})
-	hook := webhook.New("hook", map[string]interface{}{"url": srv.URL})
+	hook := webhook.NewConfigFileRule("hook", map[string]interface{}{"url": srv.URL})
 	start := make(chan struct{})
 	var entered atomic.Int32
 	wrap := func(name string, inner g.Guardrail) g.Guardrail {
@@ -318,7 +325,7 @@ func TestStaticWebhookExecutionPolicy(t *testing.T) {
 						}
 					}))
 					defer srv.Close()
-					engine := g.NewEngine(config.GuardrailsConfig{FailOpen: open, Rules: []config.GuardrailRuleConfig{{Name: "hook", Stage: "pre", Mode: "sync", Action: "block", Threshold: threshold}}}, map[string]g.Guardrail{"hook": webhook.New("hook", map[string]interface{}{"url": srv.URL})})
+					engine := g.NewEngine(config.GuardrailsConfig{FailOpen: open, Rules: []config.GuardrailRuleConfig{{Name: "hook", Stage: "pre", Mode: "sync", Action: "block", Threshold: threshold}}}, map[string]g.Guardrail{"hook": webhook.NewConfigFileRule("hook", map[string]interface{}{"url": srv.URL})})
 					rc := acceptanceRC()
 					defer rc.Release()
 					result := engine.RunPre(context.Background(), &g.CheckInput{Request: rc.Request}, nil, policy.RequestPolicyNone)

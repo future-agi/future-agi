@@ -1,0 +1,53 @@
+# Saleor's fixed hosted MCP accepts an app token and a Saleor Cloud API URL.
+# Both inputs are protected connection settings; the API URL is routing context.
+# The hosted server only accepts Saleor Cloud instances, not self-hosted stores.
+schema: "connector-manifest/v1#provider"
+app: saleor
+id: api-key
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.saleor.app/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: X-Saleor-Auth-Token
+      secret: true
+      label: App token
+      help: "In the Saleor Dashboard, choose Extensions > Add extension > Provide details manually. Create an app with MANAGE_ORDERS and MANAGE_PRODUCTS permissions and supply its token. The documented MCP tools are read-only, but the underlying app token has those management permissions."
+      helpUrl: https://saleor.io/blog/saleor-mcp
+    - in: header
+      name: X-Saleor-API-URL
+      secret: true
+      label: Saleor Cloud GraphQL API URL
+      help: "Enter your Saleor Cloud instance's full HTTPS GraphQL API URL, including the GraphQL path. The hosted server accepts only saleor.cloud subdomains. This required header selects the store; it is stored as a protected connection setting."
+      helpUrl: https://saleor.io/blog/saleor-mcp
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_plan
+  source: https://saleor.io/pricing
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://saleor.io/blog/saleor-mcp
+    fetchedAt: 2026-11-09
+  - fact: transport.variant
+    url: https://saleor.io/blog/saleor-mcp
+    fetchedAt: 2026-11-09
+  - fact: auth.kind
+    url: https://saleor.io/blog/saleor-mcp
+    fetchedAt: 2026-11-09
+  - fact: auth.credentialParts
+    url: https://saleor.io/blog/saleor-mcp
+    fetchedAt: 2026-11-09
+x-omega: { oss: exclude }

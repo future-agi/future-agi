@@ -42,15 +42,15 @@ func (f *fakeDB) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row 
 	return f.row
 }
 
-func TestCustomPricing_Per1KMath(t *testing.T) {
-	// Django: prompt*(input/1000) + completion*(output/1000)
-	db := &fakeDB{row: fakeRow{in: 0.5, out: 1.5}} // $/1K tokens
+func TestCustomPricing_PerMillionMath(t *testing.T) {
+	// Stored prices are entered as dollars per million tokens.
+	db := &fakeDB{row: fakeRow{in: 0.5, out: 1.5}} // $/M tokens
 	cp := NewCustomPricing(db, time.Hour, slog.Default())
 	c, ok := cp.Cost(context.Background(), "org-1", "acme-model", 2000, 1000)
 	if !ok {
 		t.Fatal("want ok=true")
 	}
-	want := 2000*(0.5/1000) + 1000*(1.5/1000) // = 1.0 + 1.5 = 2.5
+	want := 2000*(0.5/1_000_000) + 1000*(1.5/1_000_000) // = 0.001 + 0.0015 = 0.0025
 	if c < want-1e-9 || c > want+1e-9 {
 		t.Fatalf("want %v, got %v", want, c)
 	}
@@ -128,7 +128,7 @@ func TestCustomPricing_DetachesFromCallerCtx(t *testing.T) {
 	if !ok {
 		t.Fatal("want ok=true: the detached query context must not inherit the caller's cancellation")
 	}
-	want := 10*(1.0/1000) + 10*(2.0/1000)
+	want := 10*(1.0/1_000_000) + 10*(2.0/1_000_000)
 	if c < want-1e-9 || c > want+1e-9 {
 		t.Fatalf("want %v, got %v", want, c)
 	}
@@ -151,7 +151,7 @@ func TestCustomPricing_SweepsExpiredEntriesOnGrowth(t *testing.T) {
 	for i := 0; i < cacheSweepThreshold+10; i++ {
 		key := "org-sweep" + "\x00" + "model-" + string(rune(i))
 		cp.cache[key] = customEntry{
-			inPer1K: 1, outPer1K: 1, found: true,
+			inPerM: 1, outPerM: 1, found: true,
 			expires: time.Now().Add(-time.Hour), // expired
 		}
 	}

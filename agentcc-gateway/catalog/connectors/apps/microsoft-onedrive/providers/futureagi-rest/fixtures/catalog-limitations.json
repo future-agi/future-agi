@@ -1,0 +1,7 @@
+{
+  "synthetic": true,
+  "liveValidated": false,
+  "deployment": "off",
+  "limitations": "File metadata, versions and template copies only; no text extraction, binary uploads or document edits.",
+  "scopeNotes": "Delegated scopes only; no /.default. No binary upload or document-edit API is claimed."
+}

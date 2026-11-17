@@ -848,16 +848,35 @@ def test_list_serializer_marks_available_model(output_column, ai_model):
     assert data["model_deprecated"] is False
 
 
-def test_list_pagination_caps_limit_param():
+@pytest.mark.parametrize("limit", ["200", "5000"])
+def test_list_pagination_caps_limit_param(limit):
     from rest_framework.request import Request
     from rest_framework.test import APIRequestFactory
 
     from model_hub.views.dataset_optimization import DatasetOptimizationPagination
 
     paginator = DatasetOptimizationPagination()
-    request = Request(APIRequestFactory().get("/", {"limit": "100000"}))
+    request = Request(APIRequestFactory().get("/", {"limit": limit}))
 
     assert paginator.get_page_size(request) == 100
+
+
+@pytest.mark.parametrize("limit", ["5001", "100000"])
+def test_list_pagination_rejects_oversized_limit_param(limit):
+    from rest_framework.request import Request
+    from rest_framework.test import APIRequestFactory
+
+    from model_hub.views.dataset_optimization import DatasetOptimizationPagination
+    from tfc.utils.pagination import PageSizeTooLarge
+
+    paginator = DatasetOptimizationPagination()
+    request = Request(APIRequestFactory().get("/", {"limit": limit}))
+
+    with pytest.raises(PageSizeTooLarge) as exc_info:
+        paginator.get_page_size(request)
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.get_codes() == "page_size_too_large"
 
 
 @pytest.mark.django_db

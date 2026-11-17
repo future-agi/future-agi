@@ -1041,8 +1041,17 @@ class EndpointTests(DatabaseTestCase):
     ):
         from accounts.models.organization_membership import OrganizationMembership
 
+        # A line test's setup changes: removing a membership revokes only the
+        # tokens scoped to that organization (organization-scoped offboarding,
+        # 1cf52e4a97); an unscoped session is kept on purpose for switching
+        # tenants and answers 403 by live membership (fi-security ruling
+        # MAIN-UNSCOPED-TOKEN-AFTER-ORG-REMOVAL-DESIGN-RULING-5C631B9C-r1,
+        # 1bc74fd1). This test checks revocation, so its session is scoped.
+        self.token.scoped_organization = self.org
+        self.token.save(update_fields=["scoped_organization"])
         OrganizationMembership.all_objects.filter(pk=self.membership.pk).delete()
-        # The existing post_delete signal invalidates all of this user's tokens.
+        # The post_delete signal revokes this user's tokens scoped to the
+        # organization, this session's included.
         self.assertEqual(self.client.get(self.url).status_code, 401)
         self.token.refresh_from_db()
         self.assertFalse(self.token.is_active)
@@ -1059,8 +1068,12 @@ class EndpointTests(DatabaseTestCase):
         self.assertEqual(self.client.get(self.url).status_code, 401)
 
     def test_removed_human_owner_is_denied_even_after_token_cache_warmup(self):
+        from accounts.services.hard_erase import authorized_scope
+
         self.assertEqual(self.client.get(self.url).status_code, 200)
-        self.user.delete()
+        # Erasing a user whose membership is in an organization names that scope.
+        with authorized_scope([self.org.pk], using="default"):
+            self.user.delete()
         self.assertEqual(self.client.get(self.url).status_code, 401)
 
     def test_removed_selected_organization_denies_still_active_human(self):
@@ -1071,6 +1084,10 @@ class EndpointTests(DatabaseTestCase):
         # first so this tests organization existence, not just user revocation.
         self.user.organization = None
         self.user.save(update_fields=["organization"])
+        # A line test's setup changes, as in the missing-membership test above:
+        # only a session scoped to the removed organization is revoked with it.
+        self.token.scoped_organization = self.org
+        self.token.save(update_fields=["scoped_organization"])
         self.assertEqual(self.client.get(self.url).status_code, 200)
         removed_org_id = str(self.org.pk)
         # Complete membership removal/auditing while its parent still exists.
@@ -1213,8 +1230,10 @@ class EndpointTests(DatabaseTestCase):
             self.assertEqual(self.client.get(self.url).status_code, 403)
 
     def test_saml_scope_conflicts_and_revocation_use_real_tokens(self):
+        from django.utils import timezone as django_timezone
+
         from accounts.authentication import generate_encrypted_message
-        from accounts.models.auth_token import AuthTokenOrigin
+        from accounts.models.auth_token import AuthToken, AuthTokenOrigin, AuthTokenType
         from accounts.models.organization import Organization
         from saml2_auth.models import SAMLMetadataModel
 
@@ -1263,6 +1282,24 @@ class EndpointTests(DatabaseTestCase):
         self.assertEqual(self.client.get(self.url).status_code, 401)
         self.membership.is_active = True
         self.membership.save(update_fields=["is_active"])
+        # A line test's expected value changes: deactivating the membership revoked
+        # this organization-scoped session (revoke_departing_member_keys, with
+        # organization-scoped offboarding 1cf52e4a97), and reactivation does not
+        # revive it. The member signs in again; a fresh SAML session is live.
+        self.assertEqual(self.client.get(self.url).status_code, 401)
+        self.token = AuthToken.objects.create(
+            user=self.user,
+            auth_type=AuthTokenType.ACCESS,
+            last_used_at=django_timezone.now(),
+            auth_origin=AuthTokenOrigin.SAML,
+            scoped_organization=self.org,
+            origin_idp=idp,
+            origin_idp_generation=1,
+        )
+        bearer = generate_encrypted_message(
+            {"user_id": str(self.user.pk), "id": str(self.token.pk)}
+        )
+        self.client.credentials(HTTP_AUTHORIZATION="Bearer " + bearer)
         self.assertEqual(self.client.get(self.url).status_code, 200)
         idp.security_generation = 2
         idp.save(update_fields=["security_generation"])

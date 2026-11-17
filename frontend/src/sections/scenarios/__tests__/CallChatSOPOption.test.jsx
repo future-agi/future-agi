@@ -22,9 +22,22 @@ vi.mock("src/components/snackbar", () => ({
 
 import React from "react";
 import PropTypes from "prop-types";
-import { render, screen, act, waitFor } from "@testing-library/react";
+import {
+  render,
+  screen,
+  act,
+  waitFor,
+  fireEvent,
+} from "@testing-library/react";
 import { useForm, FormProvider } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
 import CallChatSOPOption from "../CallChatSOPOption";
+import {
+  CreateScenarioDefaultValues,
+  CreateScenarioType,
+  CreateScenarioValidationSchema,
+  ScenarioTypeWiseDefaultValues,
+} from "../common";
 
 function TestWrapper({ children }) {
   const methods = useForm({
@@ -367,5 +380,142 @@ describe("CallChatSOPOption", () => {
 
     expect(() => triggerDrop([], [rejection])).not.toThrow();
     expect(mockEnqueue).toHaveBeenCalledTimes(1);
+  });
+});
+
+// The Create form the way CreateScenarioView builds it: the production schema
+// and resolver, `control` passed as a prop (no FormProvider), and a Create
+// button that calls handleSubmit with no invalid handler.
+function CreateScenarioForm({ onCreate, values }) {
+  const { control, handleSubmit } = useForm({
+    defaultValues: {
+      ...CreateScenarioDefaultValues,
+      ...values,
+      kind: CreateScenarioType.SOP,
+      config: { ...ScenarioTypeWiseDefaultValues[CreateScenarioType.SOP] },
+    },
+    resolver: zodResolver(CreateScenarioValidationSchema),
+  });
+  return React.createElement(
+    React.Fragment,
+    null,
+    React.createElement(CallChatSOPOption, { control }),
+    React.createElement(
+      "button",
+      { type: "button", onClick: handleSubmit(onCreate) },
+      "Create",
+    ),
+  );
+}
+
+CreateScenarioForm.propTypes = {
+  onCreate: PropTypes.func,
+  values: PropTypes.object,
+};
+
+// The rest of the form filled in, so only the file decides whether Create
+// goes through.
+const READY_TO_CREATE = {
+  agentType: "voice",
+  sourceId: "agent-1",
+  name: "Support SOP",
+  agentDefinitionId: "agent-1",
+  agentDefinitionVersionId: "version-1",
+};
+
+function clickCreate() {
+  fireEvent.click(screen.getByRole("button", { name: "Create" }));
+}
+
+describe("CallChatSOPOption: Create with no SOP file", () => {
+  beforeEach(() => {
+    capturedOnDrop = null;
+    mockEnqueue.mockClear();
+  });
+
+  it("says an SOP file is needed when Create is clicked before any upload", async () => {
+    const onCreate = vi.fn();
+    render(React.createElement(CreateScenarioForm, { onCreate }));
+
+    clickCreate();
+
+    const message = await screen.findByText("Upload an SOP file");
+    expect(message.className).toContain("Mui-error");
+    expect(onCreate).not.toHaveBeenCalled();
+  });
+
+  it("says an SOP file is needed when Create is clicked after the file is removed", async () => {
+    const onCreate = vi.fn();
+    render(React.createElement(CreateScenarioForm, { onCreate }));
+
+    triggerDrop([createFile("sop.pdf", "%PDF-1.4", "application/pdf")], []);
+    await screen.findByText("sop.pdf");
+
+    // While a file is shown, the trash icon is the only button besides Create.
+    const removeButtons = screen
+      .getAllByRole("button")
+      .filter((button) => button.textContent !== "Create");
+    expect(removeButtons).toHaveLength(1);
+    fireEvent.click(removeButtons[0]);
+    await screen.findByText("Call/Chat SOP");
+
+    clickCreate();
+
+    expect(await screen.findByText("Upload an SOP file")).toBeTruthy();
+    // The Browse Files button is a new one after the file is removed, and it
+    // still takes focus.
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen.getByRole("button", { name: "Browse Files" }),
+      ),
+    );
+    expect(onCreate).not.toHaveBeenCalled();
+  });
+
+  // When the file is the only thing missing, a failed Create must land on the
+  // upload box, so it is not left out of view with nothing happening. Focusing
+  // the button also scrolls it into view in a browser.
+  it("moves focus to Browse Files when only the SOP file is missing", async () => {
+    const onCreate = vi.fn();
+    render(
+      React.createElement(CreateScenarioForm, {
+        onCreate,
+        values: READY_TO_CREATE,
+      }),
+    );
+
+    const browseBefore = screen.getByRole("button", { name: "Browse Files" });
+    expect(document.activeElement).not.toBe(browseBefore);
+    expect(browseBefore.hasAttribute("aria-invalid")).toBe(false);
+
+    clickCreate();
+
+    await waitFor(() => {
+      const browse = screen.getByRole("button", { name: "Browse Files" });
+      expect(document.activeElement).toBe(browse);
+      expect(browse.getAttribute("aria-invalid")).toBe("true");
+    });
+    expect(onCreate).not.toHaveBeenCalled();
+  });
+
+  // Guard (holds at the base too): with a file attached, Create goes through
+  // and carries the file.
+  it("still creates the scenario with the uploaded file", async () => {
+    const onCreate = vi.fn();
+    render(
+      React.createElement(CreateScenarioForm, {
+        onCreate,
+        values: READY_TO_CREATE,
+      }),
+    );
+
+    triggerDrop([createFile("sop.pdf", "%PDF-1.4", "application/pdf")], []);
+    await screen.findByText("sop.pdf");
+
+    clickCreate();
+
+    await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
+    expect(onCreate.mock.calls[0][0].config.sopUrl.name).toBe("sop.pdf");
+    expect(screen.queryByText("Upload an SOP file")).toBeNull();
   });
 });

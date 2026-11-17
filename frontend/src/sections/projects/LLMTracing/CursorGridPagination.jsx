@@ -43,8 +43,30 @@ const NextLabel = () => (
   </Box>
 );
 
-// Cursor-paged grids know a page count but not an exact total: a windowed,
-// numbered pager ("Go to page N", with an ellipsis past the furthest page reached).
+const isCount = (value) => Number.isSafeInteger(value) && value >= 0;
+
+// Where the visible page sits in the list: "26–50", plus " of 57" only when
+// the caller passes an exact total the list API reported. Returns null — and
+// nothing is drawn — while the rows on this page are unknown (a page not yet
+// published, or a caller that does not pass them) or the page is empty, so the
+// footer never shows a guessed range.
+const visibleRangeLabel = ({ page, pageSize, rowCount, totalCount }) => {
+  if (!isCount(rowCount) || rowCount === 0) return null;
+  if (!Number.isSafeInteger(page) || page < 1) return null;
+  if (!Number.isSafeInteger(pageSize) || pageSize < 1) return null;
+  const first = (page - 1) * pageSize + 1;
+  const last = first + Math.min(rowCount, pageSize) - 1;
+  const range = `${first.toLocaleString()}–${last.toLocaleString()}`;
+  // A total below the last row on screen is stale; print the range alone
+  // rather than "26–50 of 40".
+  return isCount(totalCount) && totalCount >= last
+    ? `${range} of ${totalCount.toLocaleString()}`
+    : range;
+};
+
+// Cursor-paged grids know a page count but usually not an exact total: a
+// windowed, numbered pager ("Go to page N", with an ellipsis past the furthest
+// page reached), beside the range of rows on screen ("1–25", "1–25 of 57").
 export default function CursorGridPagination({
   disabled = false,
   // "Is the end of the list still unknown?" — distinct from `hasMore`, which
@@ -63,12 +85,24 @@ export default function CursorGridPagination({
   page,
   pageSize,
   provenNext = false,
+  // Rows on the page now on screen, once that page has been published. Omit
+  // (or pass null) while unknown; the range is then not drawn.
+  rowCount = null,
+  // The list's exact total, passed only when the list API reported one (not a
+  // lower bound). Omit (or pass null) otherwise; the range then has no "of N".
+  totalCount = null,
 }) {
   const showTrailingEllipsis = endUnknown === undefined ? hasMore : endUnknown;
   const { pages: pageNumbers, boundaryPage } = windowedPageNumbers({
     page,
     provenNext,
     furthestPage,
+  });
+  const rangeLabel = visibleRangeLabel({
+    page,
+    pageSize,
+    rowCount,
+    totalCount,
   });
   return (
     <Stack
@@ -124,6 +158,23 @@ export default function CursorGridPagination({
           </Stack>
         ) : null}
       </Box>
+
+      {rangeLabel ? (
+        <Typography
+          data-testid="pager-range"
+          typography="s2"
+          color="text.secondary"
+          fontWeight="fontWeightRegular"
+          sx={{
+            mr: 1.5,
+            flexShrink: 0,
+            whiteSpace: "nowrap",
+            fontVariantNumeric: "tabular-nums",
+          }}
+        >
+          {rangeLabel}
+        </Typography>
+      ) : null}
 
       {/* Rendered from PaginationItem rather than plain buttons so the control
           keeps the metrics it had when it was a MUI <Pagination>: 32px items,
@@ -232,4 +283,6 @@ CursorGridPagination.propTypes = {
   page: PropTypes.number.isRequired,
   pageSize: PropTypes.number.isRequired,
   provenNext: PropTypes.bool,
+  rowCount: PropTypes.number,
+  totalCount: PropTypes.number,
 };

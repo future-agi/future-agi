@@ -2698,6 +2698,20 @@ class TestAgentPin:
         assert environment.agent_version_id == first.agent_version_id
 
 
+def _local_names(code):
+    """Local and cell names of ``code`` and of every code object nested in it.
+
+    Python 3.11 compiles a list, set or dict comprehension to its own code
+    object, so its loop variable is not among the enclosing function's own
+    names; 3.12 inlines the comprehension into the function.
+    """
+    names = {*code.co_varnames, *code.co_cellvars}
+    for const in code.co_consts:
+        if inspect.iscode(const):
+            names |= _local_names(const)
+    return names
+
+
 class TestErrorTrackerScrubbing:
     def test_locals_holding_values_are_named_for_the_scrubber(self):
         from simulate.services.harness_credentials import mint_secret_refs
@@ -2768,12 +2782,11 @@ class TestErrorTrackerScrubbing:
             staged_files_view: ("secret_content", "secret_document"),
         }
         for function, names in holders.items():
-            code = function.__code__
-            assert set(names) <= {*code.co_varnames, *code.co_cellvars}, function
+            assert set(names) <= _local_names(function.__code__), function
             assert all(_is_sensitive_key(name) for name in names), names
         for function in (HostedHarnessProvider.rerun_saved, stored_values_view):
-            assert "value" not in function.__code__.co_varnames, function
-        assert not {"content", "document"} & set(staged_files_view.__code__.co_varnames)
+            assert "value" not in _local_names(function.__code__), function
+        assert not {"content", "document"} & _local_names(staged_files_view.__code__)
         # The frame that raises credential_unavailable holds no value.
         assert service.credential_set.__code__.co_varnames == ("runtime",)
         scrubbed = {"secret_set": "x", "pinned_secrets": {"LIVEKIT_URL": "u"}}

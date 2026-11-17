@@ -78,6 +78,12 @@ const VersionCard = ({
 
   const toolConfig = version?.prompt_config_snapshot?.configuration;
 
+  // A commit saved with a blank message stores the version name, which the
+  // version chip already shows, so only a real message gets the Commit box.
+  const commitMessage = version?.commit_message?.trim();
+  const showCommit =
+    Boolean(commitMessage) && commitMessage !== version?.template_version;
+
   const { onRestoreVersion, selectedVersions } = usePromptWorkbenchContext();
 
   const { enqueueSnackbar } = useSnackbar();
@@ -185,8 +191,16 @@ const VersionCard = ({
                     </Box>
                   </CustomTooltip>
                 </ShowComponent>
-                <Box sx={{ flexShrink: 0 }}>
-                  <Typography typography="s1.2" fontWeight="fontWeightMedium">
+                {/* On a narrow drawer a long prompt name
+                    ends in an ellipsis; the version name next to it keeps
+                    its full width. */}
+                <Box sx={{ minWidth: 0 }}>
+                  <Typography
+                    typography="s1.2"
+                    fontWeight="fontWeightMedium"
+                    noWrap
+                    title={version?.template_name}
+                  >
                     {version?.template_name}
                   </Typography>
                 </Box>
@@ -194,6 +208,8 @@ const VersionCard = ({
                   typography="s2"
                   fontWeight={"fontWeightMedium"}
                   sx={{
+                    flexShrink: 0,
+                    whiteSpace: "nowrap",
                     backgroundColor: "action.hover",
                     borderRadius: "4px",
                     color: "text.primary",
@@ -473,7 +489,7 @@ const VersionCard = ({
             </Box>
           </ShowComponent>
 
-          <ShowComponent condition={Boolean(version?.commitMessage?.length)}>
+          <ShowComponent condition={showCommit}>
             <CommitBox>
               <Box sx={{ display: "flex", flexDirection: "row", gap: "2px" }}>
                 <SvgColor
@@ -485,8 +501,12 @@ const VersionCard = ({
                 </Typography>
               </Box>
 
-              <Typography typography="s1" color="text.primary">
-                {version?.commitMessage}
+              <Typography
+                typography="s1"
+                color="text.primary"
+                sx={{ wordBreak: "break-word", whiteSpace: "pre-wrap" }}
+              >
+                {commitMessage}
               </Typography>
             </CommitBox>
           </ShowComponent>

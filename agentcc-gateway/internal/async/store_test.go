@@ -119,6 +119,33 @@ func TestStore_Count(t *testing.T) {
 	}
 }
 
+// An org id of "" is the no-org tenant (single-tenant or ops keys), not a
+// wildcard: it reaches only jobs that have no org, and an org never reaches
+// another org's jobs or the no-org ones.
+func TestStore_GetForOrgIsStrict(t *testing.T) {
+	s := NewStore()
+	expires := time.Now().Add(time.Hour)
+	s.Put(&Job{ID: "a1", OrgID: "org-a", ExpiresAt: expires})
+	s.Put(&Job{ID: "none1", ExpiresAt: expires})
+
+	cases := []struct {
+		id, caller string
+		ok         bool
+	}{
+		{"a1", "org-a", true},
+		{"none1", "", true},
+		{"a1", "org-b", false},
+		{"a1", "", false},
+		{"none1", "org-a", false},
+		{"missing", "", false},
+	}
+	for _, tc := range cases {
+		if got := s.GetForOrg(tc.id, tc.caller); (got != nil) != tc.ok {
+			t.Errorf("GetForOrg(%s, %q) found=%v, want %v", tc.id, tc.caller, got != nil, tc.ok)
+		}
+	}
+}
+
 func TestStore_GetDoesNotLeakCancelFn(t *testing.T) {
 	s := NewStore()
 	s.Put(&Job{
@@ -187,5 +214,37 @@ func TestStore_CancelQueuedWithoutCancelFn(t *testing.T) {
 	}
 	if s.Get("job-1") != nil {
 		t.Fatal("job should be deleted")
+	}
+}
+
+// An org's job belongs to the org, whatever principal it was stored with;
+// a job with no org belongs to its principal only.
+func TestStore_OwnerIsTheOrgOrTheKeyWithoutAnOrg(t *testing.T) {
+	s := NewStore()
+	expires := time.Now().Add(time.Hour)
+	s.Put(&Job{ID: "org-job", OrgID: "org-a", ExpiresAt: expires})
+	s.Put(&Job{ID: "key-job", Principal: "key:k1", ExpiresAt: expires})
+	cases := []struct {
+		id, org, principal string
+		ok                 bool
+	}{
+		{"org-job", "org-a", "org:org-a", true},
+		{"org-job", "org-b", "org:org-b", false},
+		{"org-job", "", "key:k1", false},
+		{"key-job", "", "key:k1", true},
+		{"key-job", "", "key:k2", false},
+		{"key-job", "", "", false},
+		{"key-job", "org-a", "org:org-a", false},
+	}
+	for _, tc := range cases {
+		if got := s.GetForOwner(tc.id, tc.org, tc.principal); (got != nil) != tc.ok {
+			t.Errorf("GetForOwner(%s, %q, %q) found=%v, want %v", tc.id, tc.org, tc.principal, got != nil, tc.ok)
+		}
+	}
+	if s.DeleteForOwner("key-job", "", "key:k2") || s.Get("key-job") == nil {
+		t.Error("another key without an org deleted the job")
+	}
+	if !s.DeleteForOwner("org-job", "org-a", "org:org-a") || s.Get("org-job") != nil {
+		t.Error("the org could not delete its own job")
 	}
 }

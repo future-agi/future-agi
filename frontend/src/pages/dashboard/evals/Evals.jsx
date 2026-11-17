@@ -2,7 +2,7 @@ import React from "react";
 import { Box } from "@mui/material";
 import { Helmet } from "react-helmet-async";
 import EvalsListView from "src/sections/evals/components/EvalsListView";
-import PageHeader from "src/components/page-header";
+import EvalsPageHeader from "src/sections/evals/EvalsPageHeader";
 
 const Evals = () => {
   return (
@@ -21,11 +21,7 @@ const Evals = () => {
           overflow: "hidden",
         }}
       >
-        <PageHeader
-          title="Evaluations"
-          description="Create, test and reuse evals that score responses for accuracy, safety, tone and more."
-          sx={{ mb: 0 }}
-        />
+        <EvalsPageHeader currentTab="evaluators" />
         <EvalsListView />
       </Box>
     </>

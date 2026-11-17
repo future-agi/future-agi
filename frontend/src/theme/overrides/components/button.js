@@ -240,7 +240,13 @@ export function button(theme) {
         },
       };
 
-    return [defaultStyle, ...colorStyle, disabledState, size, outlinedNeutral || {}];
+    return [
+      defaultStyle,
+      ...colorStyle,
+      disabledState,
+      size,
+      outlinedNeutral || {},
+    ];
   };
 
   return {

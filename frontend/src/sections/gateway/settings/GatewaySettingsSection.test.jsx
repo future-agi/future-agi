@@ -2,6 +2,7 @@ import React from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "src/utils/test-utils";
 import userEvent from "@testing-library/user-event";
+import { HelmetProvider } from "react-helmet-async";
 import GatewaySettingsSection from "./GatewaySettingsSection";
 
 const mockNavigate = vi.fn();
@@ -9,6 +10,7 @@ const mockReloadMutate = vi.fn();
 const mockHealthCheckMutate = vi.fn();
 const mockInvalidateQueries = vi.fn();
 const mockEnqueueSnackbar = vi.fn();
+const mockGateway = vi.hoisted(() => ({ baseUrl: "https://example.com" }));
 
 vi.mock("react-router-dom", async () => {
   const actual = await vi.importActual("react-router-dom");
@@ -19,8 +21,27 @@ vi.mock("react-router-dom", async () => {
   };
 });
 
-vi.mock("notistack", () => ({
+vi.mock("notistack", async (importOriginal) => ({
+  ...(await importOriginal()),
   enqueueSnackbar: (...args) => mockEnqueueSnackbar(...args),
+}));
+
+// Batch Jobs' Submit and Cancel are Owner or Admin only (useGatewayAdmin);
+// these cases act as an Admin.
+vi.mock("src/contexts/OrganizationContext", () => ({
+  useOrganization: () => ({ orgLevel: 8 }),
+}));
+
+// General links central Billing for billing roles (BillingCreditsPanel); this
+// test is about the page's actions, so the viewer is a member.
+vi.mock("src/auth/hooks", () => ({
+  useAuthContext: () => ({ user: { organization_role: "Member" } }),
+}));
+vi.mock("src/contexts/WorkspaceContext", () => ({
+  useWorkspace: () => ({ currentWorkspaceRole: null }),
+}));
+vi.mock("src/sections/settings/BillingV2/useCentralBilling", () => ({
+  useCentralBilling: () => ({ visible: false, credits: null }),
 }));
 
 vi.mock("@tanstack/react-query", async () => {
@@ -66,7 +87,7 @@ vi.mock("../context/useGatewayContext", () => ({
     gateway: {
       id: "gateway-1",
       name: "Gateway One",
-      baseUrl: "https://example.com",
+      baseUrl: mockGateway.baseUrl,
       status: "healthy",
       providerCount: 3,
       modelCount: 5,
@@ -95,12 +116,28 @@ describe("GatewaySettingsSection", () => {
     mockHealthCheckMutate.mockReset();
     mockInvalidateQueries.mockReset();
     mockEnqueueSnackbar.mockReset();
+    mockGateway.baseUrl = "https://example.com";
+  });
+
+  it("shows an explicit message when the gateway URL is not configured", () => {
+    mockGateway.baseUrl = "";
+    render(
+      <HelmetProvider>
+        <GatewaySettingsSection />
+      </HelmetProvider>,
+    );
+    expect(screen.getByText("Gateway URL not configured")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Copy endpoint" })).toBeNull();
   });
 
   it("shows a success toast after reload config completes", async () => {
     const user = userEvent.setup();
 
-    render(<GatewaySettingsSection />);
+    render(
+      <HelmetProvider>
+        <GatewaySettingsSection />
+      </HelmetProvider>,
+    );
 
     await user.click(screen.getByRole("button", { name: /reload config/i }));
 

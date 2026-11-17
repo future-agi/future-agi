@@ -1,10 +1,11 @@
 import asyncio
 import os
+import re
 import traceback
 from typing import Any
 
 import structlog
-from app.config.settings import SUPPORTED_MODELS
+from app.config.settings import APPROVED_HUGGINGFACE_MODELS, SUPPORTED_MODELS
 from app.servable_models import ModelServing
 from app.utils.load_model import ModelLoader
 from app.v1.models import InferModelRequest
@@ -22,6 +23,93 @@ router = APIRouter(prefix="/v1")
 # Cap concurrent audio inferences to bound per-pod memory.
 _AUDIO_INFER_CONCURRENCY = int(os.getenv("AUDIO_INFER_CONCURRENCY", "10"))
 _audio_infer_sem = asyncio.Semaphore(_AUDIO_INFER_CONCURRENCY)
+
+# model_params a request may pass to each servable's constructor. The built-in
+# models take none: their weights are fixed by server config, and a
+# `model_name` there would choose what SentenceTransformer loads.
+_ALLOWED_MODEL_PARAMS = {
+    "openai": frozenset({"model", "api_key"}),
+    "huggingface": frozenset({"model", "api_key"}),
+}
+
+
+# The OpenAI client sends its key as "Authorization: Bearer <key>". A key
+# with a space, line break, other control character or non-ASCII character
+# is not a legal header value, and the HTTP stack (httpcore/h11) quotes the
+# whole header, key included, in the error it raises. So such a key is
+# refused here, before any client is built, and the refusal never repeats it.
+# The Hugging Face loader never uses its api_key, so that key is not checked.
+_HEADER_SAFE_API_KEY = re.compile(r"[\x21-\x7e]+")
+_MALFORMED_API_KEY_DETAIL = (
+    "The OpenAI api_key is malformed: it may only contain visible ASCII "
+    "characters, with no spaces or line breaks. Re-enter the key and try again."
+)
+
+
+def _refuse_malformed_api_key(model_name: str, params: dict) -> None:
+    key = params.get("api_key")
+    if model_name != "openai" or key is None:
+        return
+    if not isinstance(key, str) or not _HEADER_SAFE_API_KEY.fullmatch(key):
+        raise HTTPException(status_code=400, detail=_MALFORMED_API_KEY_DETAIL)
+
+
+def _exception_chain(exc: BaseException) -> list[BaseException]:
+    """exc and the exceptions it chains, outermost first."""
+    chain: list[BaseException] = []
+    current: BaseException | None = exc
+    while current is not None and all(current is not seen for seen in chain):
+        chain.append(current)
+        if current.__cause__ is not None:
+            current = current.__cause__
+        elif current.__suppress_context__:
+            current = None
+        else:
+            current = current.__context__
+    return chain
+
+
+def _traceback_without_messages(exc: BaseException) -> str:
+    """The traceback of exc and its chain, with every exception message left out.
+
+    Exception text can quote request data: when the HTTP stack refuses a
+    header it repeats the header, a customer's api_key included. Types, files,
+    lines and source lines are enough to debug from and carry no request data.
+    """
+    parts = []
+    for link in _exception_chain(exc):
+        frames = traceback.format_list(traceback.extract_tb(link.__traceback__))
+        exc_type = type(link)
+        parts.append(
+            f"{exc_type.__module__}.{exc_type.__qualname__} (message withheld)\n"
+            + "".join(frames)
+        )
+    return "--- caused by ---\n".join(parts)
+
+
+def _validated_model_params(model_name: str, model_params: dict | None) -> dict:
+    """Refuse request-chosen loader arguments outside the server allowlist."""
+    params = model_params or {}
+    unexpected = sorted(
+        set(params) - _ALLOWED_MODEL_PARAMS.get(model_name, frozenset())
+    )
+    if unexpected:
+        raise HTTPException(
+            status_code=400,
+            detail=f"model_params {unexpected} are not accepted for '{model_name}'",
+        )
+    _refuse_malformed_api_key(model_name, params)
+    if model_name == "huggingface":
+        model = params.get("model")
+        if not isinstance(model, str) or model not in APPROVED_HUGGINGFACE_MODELS:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Hugging Face model is not on this server's allowlist. "
+                    f"Approved models: {sorted(APPROVED_HUGGINGFACE_MODELS)}"
+                ),
+            )
+    return params
 
 
 @router.get("/models")
@@ -102,10 +190,10 @@ async def infer(model_name: str, data: InferModelRequest) -> dict[str, Any]:
                 detail=f"Model '{model_name}' not supported. Supported models: {SUPPORTED_MODELS}",
             )
 
+        model_params = _validated_model_params(model_name, data.model_params)
+
         # Get the model with proper error handling
         try:
-            # ✅ IMPROVED: Pass model_params to the model loader
-            model_params = data.model_params or {}
             model: ModelServing = ModelLoader.get_model(model_name, **model_params)
             if model is None:
                 raise RuntimeError(f"Model {model_name} could not be loaded")
@@ -180,11 +268,18 @@ async def infer(model_name: str, data: InferModelRequest) -> dict[str, Any]:
         logger.error(f"ValueError during inference: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
-        logger.error(f"Unexpected error during inference: {str(e)}")
-        logger.error(traceback.format_exc())
+        # Neither the log nor the 500 carries exception text, and the 500 does
+        # not chain e. The detail is the response body as-is (main.py's 500
+        # handler does not run for an HTTPException), and Sentry's FastAPI
+        # integration captures a 5xx HTTPException with its whole chain, whose
+        # text can quote request data (see _traceback_without_messages).
+        logger.error(
+            f"Unexpected error during inference: {type(e).__name__}",
+            traceback=_traceback_without_messages(e),
+        )
         raise HTTPException(
-            status_code=500, detail=f"Internal server error: {str(e)}"
-        ) from e
+            status_code=500, detail=f"Internal server error ({type(e).__name__})"
+        ) from None
 
 
 @router.post("/embed")

@@ -195,7 +195,7 @@ describe("AgentDefinitionTab", () => {
     ).toBe(true);
   });
 
-  it("shows File structure as a plain Coming soon card", async () => {
+  it("shows File structure as a plain card that says Not available in this release", async () => {
     serve(HOSTED_AGENT_DETAIL, { "v2-id": HOSTED_VERSION_DETAIL });
     renderAt(HOSTED_AGENT_DETAIL);
     const region = await screen.findByRole("region", {
@@ -204,7 +204,11 @@ describe("AgentDefinitionTab", () => {
     expect(
       within(region).getByText(/Browse the files we read from your agent/),
     ).toBeInTheDocument();
-    expect(within(region).getByLabelText("Coming soon")).toBeInTheDocument();
+    expect(
+      within(region).getByText("Not available in this release"),
+    ).toBeInTheDocument();
+    expect(within(region).queryByText(/coming soon/i)).toBeNull();
+    expect(within(region).queryByRole("button")).toBeNull();
     // No sample files dressed up with the real version.
     expect(within(region).queryByText("agent.yaml")).toBeNull();
     expect(within(region).queryByText(/files · v/)).toBeNull();
@@ -227,7 +231,7 @@ describe("AgentDefinitionTab", () => {
     renderAt(HOSTED_AGENT_DETAIL);
     expect(
       await screen.findByText(
-        "Turn on to track calls, monitor logs and debug this agent.",
+        "Calls imported from connected voice providers and spans from agents run in hosted sandboxes aren't stored in Observe in this release.",
       ),
     ).toBeInTheDocument();
   });
@@ -240,7 +244,7 @@ describe("AgentDefinitionTab", () => {
     renderAt(HOSTED_AGENT_DETAIL);
     expect(
       await screen.findByText(
-        "Tracking this agent's calls and logs in Observe.",
+        "Calls imported from connected voice providers and spans from agents run in hosted sandboxes aren't stored in Observe in this release.",
       ),
     ).toBeInTheDocument();
   });

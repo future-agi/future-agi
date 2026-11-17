@@ -1,8 +1,10 @@
 import structlog
 
-logger = structlog.get_logger(__name__)
 from model_hub.models.choices import ModelChoices
 from tfc.constants.api_calls import APICallTypeChoices
+from tfc.utils.model_names import base_model_name
+
+logger = structlog.get_logger(__name__)
 
 model_to_api_call_type = {
     ModelChoices.TURING_LARGE: APICallTypeChoices.TURING_LARGE_EVALUATOR.value,
@@ -37,7 +39,8 @@ def _get_api_call_type(model: str, template=None, runtime_config=None):
         model_key: ModelChoices | str = model
         if isinstance(model, str):
             try:
-                model_key = ModelChoices(model)
+                # A provider-prefixed model id meters as its base model.
+                model_key = ModelChoices(base_model_name(model))
             except ValueError:
                 # Non-Turing/Protect models (e.g. "gpt-5", "gemini-...") are
                 # legitimate user input but not part of ModelChoices. This is
@@ -94,9 +97,9 @@ def _is_jev_evaluator(evaluator) -> bool:
 
 def _emit_jev_usage(evaluator, *, org_id: str, run_id: str) -> bool:
     """Bill a completed Jev run the one way every eval path bills Jev: the
-    ee.jev.metering events at the flat per-run eval fee, with ids stable per
-    run attempt. Emits nothing and returns False for any other evaluator, which
-    the caller bills as before."""
+    ee.jev.metering events at the flat per-run eval fee, the charge's id
+    stable per run (``run_id``). Emits nothing and returns False for any other
+    evaluator, which the caller bills itself."""
     if not _is_jev_evaluator(evaluator):
         return False
     try:

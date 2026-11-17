@@ -117,8 +117,13 @@ print_summary() { # frontend port, backend port
   say "     LLM gateway  http://localhost:${gateway_port}"
   if (( DISTRIBUTED == 1 )); then
     profiles=",$(env_value COMPOSE_PROFILES ""),"
-    [[ "$profiles" == *,all,* || "$profiles" == *,full,* || "$profiles" == *,peerdb,* ]] && \
-      say "     PeerDB UI    http://localhost:$(env_value PEERDB_UI_PORT 3001)  ${DIM}(peerdb / peerdb)${RESET}"
+    if [[ "$profiles" == *,all,* || "$profiles" == *,full,* || "$profiles" == *,peerdb,* ]]; then
+      if [[ -n "$(env_value PEERDB_UI_PASSWORD "")" ]]; then
+        say "     PeerDB UI    http://localhost:$(env_value PEERDB_UI_PORT 3001)  ${DIM}(password: PEERDB_UI_PASSWORD in .env)${RESET}"
+      else
+        say "     PeerDB UI    http://localhost:$(env_value PEERDB_UI_PORT 3001)"
+      fi
+    fi
   fi
 
   say ""
@@ -130,6 +135,9 @@ print_summary() { # frontend port, backend port
   say "     Uninstall    ./bin/uninstall  ${DIM}(keeps your data; --wipe-data deletes it)${RESET}"
   say "     Settings     .env  ${DIM}(every variable: https://docs.futureagi.com/docs/self-hosting/configuration/reference)${RESET}"
   say "     Install log  $LOG_FILE"
+  say ""
+  say "  ${DIM}The integration encryption key is kept in .env; back it up with the database,"
+  say "  because a database backup cannot be read without its key.${RESET}"
   if (( DISTRIBUTED == 1 )); then
     say ""
     say "  ${DIM}Existing-data catalog backfill: restarts do not scan historical data."

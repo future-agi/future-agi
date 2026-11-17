@@ -210,8 +210,13 @@ _ATTRIBUTE_REPLAY_COLUMNS = (
 
 
 def _replays_typed_attributes(plan: LatestFilterPredicate) -> bool:
-    """True when this plan reads a typed attribute Map or the JSON overflow."""
+    """Content-heavy plans need the same bounded coordinate-pruned replay."""
 
+    # Full input/output strings are at least as wide as the attribute maps.
+    # Keep them on the existing bounded acquisition/classification path rather
+    # than scanning payloads across whole partitions for each candidate batch.
+    if plan.source_metric == "input_output":
+        return True
     return bool(plan.aggregates) and any(
         column in " ".join(plan.aggregates) for column in _ATTRIBUTE_REPLAY_COLUMNS
     )
@@ -667,6 +672,9 @@ class _TraceRootReplayV2:
          AND latest_physical_roots.trace_id = trace_rollup.trace_rollup_trace_id
         """
 
+    def _root_replay_root_condition(self, prefix: str) -> str:
+        return "(latest_parent_span_id IS NULL OR latest_parent_span_id = '')"
+
     def _root_replay_query(
         self, identities: list[tuple], *, content: bool, trace_rollup: bool = False
     ) -> tuple[str, dict[str, Any]]:
@@ -692,6 +700,9 @@ class _TraceRootReplayV2:
                 dict.fromkeys(identity[1] for identity in identities)
             ),
             f"{prefix}_root_identities": tuple(identities),
+            f"{prefix}_trace_identities": tuple(
+                (str(identity[0]), str(identity[1])) for identity in identities
+            ),
             f"{prefix}_physical_keys": tuple(
                 (
                     project,
@@ -807,7 +818,7 @@ class _TraceRootReplayV2:
         {self._root_replay_content_join_sql() if content else ""}
         {self._trace_rollup_join_sql(prefix) if trace_rollup else ""}
         WHERE latest_is_deleted = 0
-          AND (latest_parent_span_id IS NULL OR latest_parent_span_id = '')
+          AND {self._root_replay_root_condition(prefix)}
           {project_version}
         ORDER BY start_time DESC, trace_id DESC, project_id DESC
         LIMIT {len(identities)}
@@ -1417,6 +1428,16 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
             return False
         return super().allow_filter_anchor_probe_for_initial_continuation()
 
+    def _trace_root_where_condition(self, start_param: str, end_param: str) -> str:
+        """Root membership where it is the whole of a WHERE clause.
+
+        Global roots are written bare, the text the raw root population has
+        always carried. A builder that widens root membership overrides this
+        with its own condition as one parenthesized term; nothing here wraps
+        or unwraps a condition.
+        """
+        return "parent_span_id IS NULL OR parent_span_id = ''"
+
     def _scalar_candidate_root_population_predicate(self) -> str:
         if not self._uses_scalar_coordinate_replay():
             return ""
@@ -1431,7 +1452,7 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
                   PREWHERE {self.project_filter_sql()}
                       AND start_time >= fromUnixTimestamp64Micro(%(filter_slice_start_us)s)
                       AND start_time < fromUnixTimestamp64Micro(%(filter_slice_end_us)s)
-                  WHERE parent_span_id IS NULL OR parent_span_id = ''
+                  WHERE {self._trace_root_where_condition("filter_slice_start_us", "filter_slice_end_us")}
               )
         """
 

@@ -1,0 +1,46 @@
+# DigitalOcean's hosted router fronts its service MCP servers, except Knowledge Bases.
+# Token scopes determine access; infrastructure operations can incur usage charges.
+schema: "connector-manifest/v1#provider"
+app: digitalocean
+id: api-key
+version: 1.1.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.digitalocean.com/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: Personal access token
+      help: "Create a DigitalOcean personal access token on the Applications & API page with scopes for the services you need. MCP calls use those permissions and can provision billable infrastructure. Supply the token without the Bearer prefix."
+      helpUrl: https://docs.digitalocean.com/reference/mcp/configure-mcp/
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_metered
+  source: https://www.digitalocean.com/pricing
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://docs.digitalocean.com/reference/mcp/configure-mcp/
+    fetchedAt: 2026-11-09
+  - fact: transport.variant
+    url: https://www.digitalocean.com/blog/remote-mcp-server
+    fetchedAt: 2026-11-09
+  - fact: auth.kind
+    url: https://docs.digitalocean.com/reference/mcp/configure-mcp/
+    fetchedAt: 2026-11-09
+  - fact: auth.credentialParts
+    url: https://docs.digitalocean.com/reference/mcp/configure-mcp/
+    fetchedAt: 2026-11-09

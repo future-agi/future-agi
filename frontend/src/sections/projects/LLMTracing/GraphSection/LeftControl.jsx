@@ -1,4 +1,4 @@
-import { Box, Stack, TextField, Typography, useTheme } from "@mui/material";
+import { Box, Stack, useTheme } from "@mui/material";
 import PropTypes from "prop-types";
 import React, {
   useCallback,
@@ -12,10 +12,7 @@ import { useParams } from "react-router";
 import { useGetTraceEvals } from "src/api/project/llm-tracing";
 import axios, { endpoints } from "src/utils/axios";
 import { useDebounce } from "src/hooks/use-debounce";
-import {
-  FormSearchSelectFieldControl,
-  FormSearchSelectFieldState,
-} from "src/components/FromSearchSelectField";
+import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectField";
 import { useForm } from "react-hook-form";
 import ThumbsRatingSelectField from "./ThumbsRatingSelectField";
 import CategoricalAnnotationSelectField from "./CategoricalAnnotationSelectField";
@@ -23,11 +20,6 @@ import { useQuery } from "@tanstack/react-query";
 import _ from "lodash";
 import { createCachePrimaryFilter, getCachePrimaryFilter } from "../common";
 import { useAuthContext } from "src/auth/hooks";
-import { AdvanceNumberFilterOperators } from "src/utils/constants";
-import { handleNumericInput } from "src/components/ComplexFilter/common";
-import { RANGE_FILTER_OPS } from "src/api/contracts/filter-contract.generated";
-
-const RangeOperators = new Set(RANGE_FILTER_OPS);
 
 const LeftControl = ({
   onGraphConfigChange,
@@ -73,9 +65,6 @@ const LeftControl = ({
       selectedProperty: selectedGraphProperty || "",
       selectedEvals: selectedGraphEvals?.map((evals) => evals.id) || [],
       annotationValue: null,
-      numberOperator: "greater_than",
-      numberValue: "",
-      numberValue2: "",
     },
   });
 
@@ -257,9 +246,6 @@ const LeftControl = ({
       isUserInteractionRef.current = true;
       setValue("selectedEvals", []);
       setValue("annotationValue", null);
-      setValue("numberOperator", "greater_than");
-      setValue("numberValue", "");
-      setValue("numberValue2", "");
       setSelectedGraphEvals([]);
 
       // Clear the stored attribute for the previous option if it exists
@@ -341,9 +327,6 @@ const LeftControl = ({
       // clear any old second-dropdown state
       setValue("selectedEvals", []);
       setValue("annotationValue", null);
-      setValue("numberOperator", "greater_than");
-      setValue("numberValue", "");
-      setValue("numberValue2", "");
       setSelectedGraphEvals([]);
       onGraphConfigChange(null);
 
@@ -499,59 +482,6 @@ const LeftControl = ({
     ],
   );
 
-  const handleNumberFilterChange = useCallback(
-    (operator, value, value2) => {
-      if (!selectedOption) return;
-
-      const isBetweenOp = RangeOperators.has(operator);
-
-      // Store values for UI persistence (operator and values separately for form restoration)
-      setSelectedGraphAttributes({
-        ...selectedGraphAttributes,
-        [selectedOption.id]: {
-          _numberFilter: true,
-          operator,
-          value,
-          value2,
-        },
-      });
-
-      isUserInteractionRef.current = true;
-      isInitializingRef.current = false;
-
-      // Only trigger API if values are properly defined
-      // For between operators: require both values
-      // For other operators: require single value
-      const hasValue = value || value === 0;
-      const hasValue2 = value2 || value2 === 0;
-      if (!hasValue) return;
-      if (isBetweenOp && !hasValue2) return;
-
-      const filterValue = isBetweenOp ? [value, value2] : value;
-
-      const config = {
-        id: selectedOption.id,
-        type: selectedOption.type,
-        output_type: selectedOption.output_type,
-        filter_op: operator,
-        filter_value: filterValue,
-      };
-
-      if (selectedOption.type === "EVAL") {
-        setSelectedGraphEvals([selectedOption.evalData]);
-      }
-
-      onGraphConfigChange(config);
-    },
-    [
-      selectedOption,
-      onGraphConfigChange,
-      selectedGraphAttributes,
-      setSelectedGraphAttributes,
-      setSelectedGraphEvals,
-    ],
-  );
-
   useEffect(() => {
     if (!propertyOptions.length) return;
 
@@ -596,86 +526,6 @@ const LeftControl = ({
 
   const renderSecondDropdown = useCallback(() => {
     if (!selectedProperty || !selectedOption) return null;
-
-    if (selectedOption.output_type === "float") {
-      const savedConfig = selectedGraphAttributes?.[selectedOption.id];
-
-      const currentOperator =
-        watch("numberOperator") || savedConfig?.operator || "greater_than";
-      const currentValue = watch("numberValue") ?? savedConfig?.value ?? "";
-      const currentValue2 = watch("numberValue2") ?? savedConfig?.value2 ?? "";
-
-      return (
-        <Box
-          sx={{
-            display: "flex",
-            alignItems: "center",
-            gap: 1,
-          }}
-        >
-          <FormSearchSelectFieldState
-            onChange={(e) => {
-              setValue("numberOperator", e.target.value);
-              handleNumberFilterChange(
-                e.target.value,
-                currentValue,
-                currentValue2,
-              );
-            }}
-            label="Operator"
-            value={currentOperator}
-            size="small"
-            showClear={false}
-            options={AdvanceNumberFilterOperators.map(({ label, value }) => ({
-              label,
-              value,
-            }))}
-            sx={{ minWidth: 150 }}
-          />
-          <TextField
-            sx={{ width: 100 }}
-            type="text"
-            label="Value"
-            placeholder="Value"
-            size="small"
-            value={currentValue}
-            onChange={(e) => {
-              const value = handleNumericInput(e.target.value);
-              setValue("numberValue", value);
-              handleNumberFilterChange(currentOperator, value, currentValue2);
-            }}
-          />
-          {RangeOperators.has(currentOperator) && (
-            <>
-              <Typography
-                typography="s2"
-                fontWeight={"fontWeightRegular"}
-                color="text.primary"
-              >
-                and
-              </Typography>
-              <TextField
-                sx={{ width: 100 }}
-                type="text"
-                label="Value"
-                placeholder="Value"
-                size="small"
-                value={currentValue2}
-                onChange={(e) => {
-                  const value = handleNumericInput(e.target.value);
-                  setValue("numberValue2", value);
-                  handleNumberFilterChange(
-                    currentOperator,
-                    currentValue,
-                    value,
-                  );
-                }}
-              />
-            </>
-          )}
-        </Box>
-      );
-    }
 
     if (selectedOption?.type === "ANNOTATION") {
       const annotation = selectedOption.annotationData;
@@ -796,8 +646,6 @@ const LeftControl = ({
     handleEvalsChange,
     selectedGraphAttributes,
     convertBooleanToDisplay,
-    handleNumberFilterChange,
-    setValue,
     watch,
   ]);
 
@@ -811,9 +659,8 @@ const LeftControl = ({
     )
       return true;
 
-    // Show number filter for float types
-    if (selectedOption.output_type === "float") return true;
-
+    // A score eval shows its average with no value box: the graph cannot
+    // compare scores with a typed number.
     if (selectedOption.type === "ANNOTATION") {
       const annotation = selectedOption.annotationData;
       return Boolean(annotation);

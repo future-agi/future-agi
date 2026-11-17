@@ -113,6 +113,9 @@ type Message struct {
 	Name       string          `json:"name,omitempty"`
 	ToolCalls  []ToolCall      `json:"tool_calls,omitempty"`
 	ToolCallID string          `json:"tool_call_id,omitempty"`
+	// Audio is also used on follow-up requests with only its reusable ID.
+	Audio   *MessageAudio `json:"audio,omitempty"`
+	Refusal *string       `json:"refusal,omitempty"`
 	// ThinkingBlocks carries Anthropic extended-thinking content blocks on the
 	// canonical OpenAI Message.  Non-standard field (LiteLLM convention); present
 	// only when the upstream provider returned thinking blocks.  JSON key is
@@ -123,17 +126,37 @@ type Message struct {
 	// thought summaries, DeepSeek/LiteLLM convention). Non-standard OpenAI
 	// field, omitempty so it's silent for providers that don't emit it.
 	ReasoningContent string `json:"reasoning_content,omitempty"`
+	// OpenRouter continuation state is opaque: retain provider extensions so
+	// the exact assistant reply can be replayed on the next tool turn.
+	Reasoning        string          `json:"reasoning,omitempty"`
+	ReasoningDetails json.RawMessage `json:"reasoning_details,omitempty"`
 	// Annotations carries source citations in OpenAI's own url_citation shape,
 	// which is what its web-search responses use.  Populated from Anthropic's
 	// web_search_result_location citations; omitempty so it is silent for
 	// providers and requests that produce none.
 	Annotations json.RawMessage `json:"annotations,omitempty"`
+	// Images preserves generated image payloads (including provider metadata)
+	// on OpenAI-compatible responses. Managed requests refuse this response-only
+	// field: priced input images must use the bounded content-part shape.
+	Images json.RawMessage `json:"images,omitempty"`
+}
+
+// MessageAudio is generated chat audio (or an ID-only reference to prior audio).
+// Keep text explicit so privacy handling can redact the transcript separately
+// from the opaque encoded audio, which cannot be screened as text.
+type MessageAudio struct {
+	ID         string `json:"id,omitempty"`
+	Data       string `json:"data,omitempty"`
+	ExpiresAt  int64  `json:"expires_at,omitempty"`
+	Transcript string `json:"transcript,omitempty"`
 }
 
 type ToolCall struct {
 	ID       string       `json:"id"`
 	Type     string       `json:"type"`
 	Function FunctionCall `json:"function"`
+	// Native Gemini uses the ID marker; OpenRouter keeps signatures here.
+	ExtraContent json.RawMessage `json:"extra_content,omitempty"`
 }
 
 // NewToolCallID returns a random tool call id in the format call_{hex16}, for

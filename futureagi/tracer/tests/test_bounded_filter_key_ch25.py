@@ -1203,7 +1203,7 @@ def test_json_array_picker_replays_tombstones_project_versions_and_older_key_ch2
     array_key = selector("arrays").discover_keys(
         [project_id],
         exact_key=key,
-        horizon_days=14,  # gitleaks:allow
+        horizon_days=14,
     )
     assert array_key.rows == (AttributeKeyRow(key, "array", 1),)
     assert array_key.metadata.query_complete is True

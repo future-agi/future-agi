@@ -1,7 +1,7 @@
 import { ROW_HEIGHT } from "src/theme/sizes";
 import SelectionBar from "src/components/selection-bar";
 /* eslint-disable react/prop-types */
-import { Box, Button, Stack, Typography } from "@mui/material";
+import { Box, Button, Typography } from "@mui/material";
 import React, { useCallback, useMemo, useState } from "react";
 import { Helmet } from "react-helmet-async";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -106,6 +106,7 @@ function AgentDefinitions() {
   const [pageSize, setPageSize] = useState(25);
   const [rowSelection, setRowSelection] = useState({});
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleteTargets, setDeleteTargets] = useState([]);
 
   const debouncedSearchQuery = useDebounce(searchQuery.trim(), 500);
 
@@ -131,13 +132,9 @@ function AgentDefinitions() {
   const showEmptyScreen =
     !isLoading && data && total === 0 && debouncedSearchQuery === "";
 
-  // Selected items — derived from rowSelection index map.
+  // Selected items — matched by stable record ID.
   const selectedItems = useMemo(
-    () =>
-      Object.keys(rowSelection)
-        .filter((k) => rowSelection[k])
-        .map((k) => items[parseInt(k, 10)])
-        .filter(Boolean),
+    () => items.filter((item) => rowSelection[item.id]),
     [rowSelection, items],
   );
 
@@ -327,7 +324,10 @@ function AgentDefinitions() {
                     {
                       label: "Delete",
                       icon: "solar:trash-bin-trash-linear",
-                      onClick: () => setDeleteDialogOpen(true),
+                      onClick: () => {
+                        setDeleteTargets(selectedItems.map((item) => ({ ...item })));
+                        setDeleteDialogOpen(true);
+                      },
                       disabled:
                         !RolePermission.SIMULATION_AGENT[PERMISSIONS.DELETE][
                           role
@@ -345,6 +345,7 @@ function AgentDefinitions() {
               isLoading={isLoading}
               rowCount={total}
               rowSelection={rowSelection}
+              selectionScope={[page, pageSize, searchQuery, debouncedSearchQuery]}
               onRowSelectionChange={setRowSelection}
               onRowClick={handleRowClick}
               getRowId={(row) => row.id}
@@ -371,7 +372,7 @@ function AgentDefinitions() {
       <DeleteAgentDefinitionDialog
         open={deleteDialogOpen}
         onClose={() => setDeleteDialogOpen(false)}
-        agents={selectedItems.map((a) => ({
+        agents={deleteTargets.map((a) => ({
           id: a.id,
           agentName: a.agent_name,
         }))}

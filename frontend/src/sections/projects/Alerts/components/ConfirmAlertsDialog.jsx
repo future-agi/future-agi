@@ -60,16 +60,13 @@ export default function ConfirmAlertsDialog() {
   const {
     actionModal,
     handleCloseActionModal,
-    selectedRows,
     handleRemoveRow,
     deleteAlerts,
     muteAlerts,
     isDeletingAlerts,
     isMutingAlerts,
-    selectedAll,
-    excludingIds,
-    totalRows,
   } = useAlertStore();
+  const selectedRows = actionModal.rows || [];
 
   const { cancel, action } = getActionButtonConfig(
     actionModal.type,
@@ -85,25 +82,7 @@ export default function ConfirmAlertsDialog() {
   };
 
   const handleAction = () => {
-    if (selectedAll) {
-      if (actionModal.type === "delete") {
-        deleteAlerts({ select_all: true, exclude_ids: excludingIds });
-      } else if (actionModal.type === "mute") {
-        muteAlerts({
-          select_all: true,
-          exclude_ids: excludingIds,
-          is_mute: true,
-        });
-        trackMuteEvent([], "Mute");
-      } else if (actionModal.type === "unmute") {
-        muteAlerts({
-          select_all: true,
-          exclude_ids: excludingIds,
-          is_mute: false,
-        });
-        trackMuteEvent([], "Unmute");
-      }
-    } else if (selectedRows?.length > 0) {
+    if (selectedRows?.length > 0) {
       const ids = selectedRows.map((row) => row.id);
 
       if (actionModal.type === "delete") {
@@ -119,19 +98,8 @@ export default function ConfirmAlertsDialog() {
   };
 
   const actionTitle = useMemo(
-    () =>
-      getActionTitle(
-        actionModal.type,
-        selectedRows.length,
-        selectedAll ? totalRows - excludingIds.length : undefined,
-      ),
-    [
-      actionModal.type,
-      excludingIds.length,
-      selectedAll,
-      selectedRows.length,
-      totalRows,
-    ],
+    () => getActionTitle(actionModal.type, selectedRows.length),
+    [actionModal.type, selectedRows.length],
   );
 
   return (

@@ -22,6 +22,7 @@ import {
 } from "src/sections/develop-detail/AccordianElements";
 import TaskFilterBar from "src/sections/tasks/components/TaskFilterBar";
 import ScheduledRuns from "../NewTaskDrawer/ScheduledRuns";
+import TaskWebhookFields, { webhookPayload } from "../TaskWebhookFields";
 import PropTypes from "prop-types";
 import { useGetProjectById } from "src/api/project/evals-task";
 import {
@@ -33,6 +34,11 @@ import {
 } from "react-hook-form";
 import Iconify from "src/components/iconify";
 import { enqueueSnackbar } from "notistack";
+import {
+  inDrawer,
+  notifyApplyError,
+  notifyRefused,
+} from "src/sections/common/EvalHandoffs/applyGroupModel";
 import {
   getNewTaskFilters,
   NewTaskValidationSchema,
@@ -287,6 +293,7 @@ const DetailsEdit = ({
       run_type: data.runType,
       // row_type intentionally omitted from update payload — immutable
       // after task creation; the BE serializer rejects it on PATCH.
+      ...webhookPayload(data),
       sampling_rate: data.samplingRate,
       spans_limit: String(data.spansLimit),
       edit_type: editType,
@@ -338,7 +345,13 @@ const DetailsEdit = ({
         });
       }
       resetEvalStore();
+      // The members the apply left out, each with why.
+      notifyRefused(data, enqueueSnackbar);
     },
+    // Each apply call shows the refusal in full (below, with the drawer's
+    // action while the member's chip shows its remove); the app's error
+    // handler adds none.
+    meta: { errorHandled: true },
   });
 
   const mappedConfiguredEvals = configuredEvals.map((item) => ({
@@ -381,9 +394,16 @@ const DetailsEdit = ({
       showTest={false}
       runLabel="Save"
       type="temporary"
-      handleSaveAndRun={(values, _, { isGrouped = false } = {}) => {
+      handleSaveAndRun={(
+        values,
+        _,
+        { isGrouped = false, memberRemovable = false } = {},
+      ) => {
         if (isGrouped) {
-          handleApplyGroup(values);
+          handleApplyGroup(values, {
+            onError: (e) =>
+              notifyApplyError(e, enqueueSnackbar, inDrawer(memberRemovable)),
+          });
         } else {
           createEvalTaskConfig({
             project: project,
@@ -619,6 +639,7 @@ const DetailsEdit = ({
                             dayLimit={"Custom"}
                             isEdit={true}
                           />
+                          <TaskWebhookFields control={control} />
                         </AccordionDetails>
                       </Accordion>
                       <Accordion defaultExpanded>
@@ -683,6 +704,7 @@ const DetailsEdit = ({
 
               <TaskConfirmDialog
                 content="Select one of the options"
+                confirmText="Update and run task"
                 onConfirm={handleConfirmWithEditType}
                 open={isAlert}
                 isLoading={isPending}

@@ -94,6 +94,7 @@ export default function ForkMenu({ onDelete }) {
 }
 
 ForkMenu.propTypes = {
-  onFork: PropTypes.func.isRequired,
+  // Unused while Fork is disabled; a failed build's header offers Delete alone.
+  onFork: PropTypes.func,
   onDelete: PropTypes.func,
 };

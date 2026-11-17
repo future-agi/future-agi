@@ -1,6 +1,7 @@
 import structlog
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.status import HTTP_501_NOT_IMPLEMENTED
 from rest_framework.viewsets import ModelViewSet
 
 from agentcc.models.blocklist import AgentccBlocklist
@@ -10,9 +11,25 @@ from tfc.utils.general_methods import GeneralMethods
 
 logger = structlog.get_logger(__name__)
 
+# docs-agentcc-711, item 1: a stored blocklist never reaches the gateway. The
+# org config push does not read blocklists, and the gateway's keyword-blocklist
+# check blocks only the words in its own config.words, so a list saved here
+# blocked nothing. Every write answers 501; stored lists stay readable.
+BLOCKLISTS_NOT_SUPPORTED = "blocklists_not_supported"
+BLOCKLISTS_NOT_SUPPORTED_MESSAGE = (
+    "Stored blocklists are not supported: the gateway never reads them. Put "
+    "the words in the keyword-blocklist check's config.words instead."
+)
+
 
 class AgentccBlocklistViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
-    """CRUD for named word blocklists. Org-scoped."""
+    """Stored word blocklists, read only. Org-scoped.
+
+    Not supported: a stored list never reaches the gateway, whose
+    keyword-blocklist check blocks only the words in its config.words. Every
+    write (create, update, delete, add-words, remove-words) answers 501
+    ``blocklists_not_supported``.
+    """
 
     permission_classes = [IsAuthenticated]
     serializer_class = AgentccBlocklistSerializer
@@ -37,90 +54,34 @@ class AgentccBlocklistViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             return self._gm.not_found("Blocklist not found")
 
     def create(self, request, *args, **kwargs):
-        try:
-            serializer = AgentccBlocklistSerializer(data=request.data)
-            if not serializer.is_valid():
-                return self._gm.bad_request(serializer.errors)
-            org = getattr(request, "organization", None)
-            if org is None:
-                return self._gm.bad_request("Organization context is required")
-            blocklist = serializer.save(organization=org)
-            return self._gm.success_response(AgentccBlocklistSerializer(blocklist).data)
-        except Exception as e:
-            logger.exception("blocklist_create_error", error=str(e))
-            return self._gm.bad_request(str(e))
+        """Not supported: answers 501 ``blocklists_not_supported``."""
+        return self._not_supported()
 
     def update(self, request, *args, **kwargs):
-        try:
-            instance = self.get_object()
-            serializer = AgentccBlocklistSerializer(
-                instance, data=request.data, partial=kwargs.get("partial", False)
-            )
-            if not serializer.is_valid():
-                return self._gm.bad_request(serializer.errors)
-            blocklist = serializer.save()
-            return self._gm.success_response(AgentccBlocklistSerializer(blocklist).data)
-        except Exception as e:
-            logger.exception("blocklist_update_error", error=str(e))
-            return self._gm.bad_request(str(e))
+        """Not supported: answers 501 ``blocklists_not_supported``."""
+        return self._not_supported()
 
     def partial_update(self, request, *args, **kwargs):
-        kwargs["partial"] = True
-        return self.update(request, *args, **kwargs)
+        """Not supported: answers 501 ``blocklists_not_supported``."""
+        return self._not_supported()
 
     def destroy(self, request, *args, **kwargs):
-        try:
-            instance = self.get_object()
-            instance.delete()
-            return self._gm.success_response({"deleted": True})
-        except Exception as e:
-            logger.exception("blocklist_delete_error", error=str(e))
-            return self._gm.bad_request(str(e))
+        """Not supported: answers 501 ``blocklists_not_supported``."""
+        return self._not_supported()
 
     @action(detail=True, methods=["post"], url_path="add-words")
     def add_words(self, request, pk=None):
-        """Add words to the blocklist (deduplicates)."""
-        try:
-            instance = self.get_object()
-            new_words = request.data.get("words", [])
-            if not isinstance(new_words, list):
-                return self._gm.bad_request("words must be a list")
-            for index, word in enumerate(new_words):
-                if not isinstance(word, str):
-                    return self._gm.bad_request(
-                        f"Word at index {index} must be a string"
-                    )
-
-            existing = set(instance.words)
-            for word in new_words:
-                existing.add(word)
-            instance.words = sorted(existing)
-            instance.save(update_fields=["words", "updated_at"])
-
-            return self._gm.success_response(AgentccBlocklistSerializer(instance).data)
-        except Exception as e:
-            logger.exception("blocklist_add_words_error", error=str(e))
-            return self._gm.bad_request(str(e))
+        """Not supported: answers 501 ``blocklists_not_supported``."""
+        return self._not_supported()
 
     @action(detail=True, methods=["post"], url_path="remove-words")
     def remove_words(self, request, pk=None):
-        """Remove words from the blocklist."""
-        try:
-            instance = self.get_object()
-            remove = request.data.get("words", [])
-            if not isinstance(remove, list):
-                return self._gm.bad_request("words must be a list")
-            for index, word in enumerate(remove):
-                if not isinstance(word, str):
-                    return self._gm.bad_request(
-                        f"Word at index {index} must be a string"
-                    )
+        """Not supported: answers 501 ``blocklists_not_supported``."""
+        return self._not_supported()
 
-            remove_set = set(remove)
-            instance.words = [w for w in instance.words if w not in remove_set]
-            instance.save(update_fields=["words", "updated_at"])
-
-            return self._gm.success_response(AgentccBlocklistSerializer(instance).data)
-        except Exception as e:
-            logger.exception("blocklist_remove_words_error", error=str(e))
-            return self._gm.bad_request(str(e))
+    def _not_supported(self):
+        return self._gm.custom_error_response(
+            HTTP_501_NOT_IMPLEMENTED,
+            BLOCKLISTS_NOT_SUPPORTED_MESSAGE,
+            code=BLOCKLISTS_NOT_SUPPORTED,
+        )

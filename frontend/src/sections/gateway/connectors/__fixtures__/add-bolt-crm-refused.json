@@ -1,0 +1,9 @@
+{
+  "code": "url_variable_invalid",
+  "detail": "url_variables.accountHost must be 1-253 printable ASCII characters with no space and match ^[a-z0-9-]+[.]bolt[.]example[.]com$",
+  "error": "url_variables.accountHost must be 1-253 printable ASCII characters with no space and match ^[a-z0-9-]+[.]bolt[.]example[.]com$",
+  "message": "url_variables.accountHost must be 1-253 printable ASCII characters with no space and match ^[a-z0-9-]+[.]bolt[.]example[.]com$",
+  "result": "url_variables.accountHost must be 1-253 printable ASCII characters with no space and match ^[a-z0-9-]+[.]bolt[.]example[.]com$",
+  "status": false,
+  "type": "validation_error"
+}

@@ -24,6 +24,7 @@ from accounts.models.organization_invite import InviteStatus, OrganizationInvite
 from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.user import User
 from accounts.models.workspace import Workspace, WorkspaceMembership
+from accounts.services.invitation_links import make_invitation_token, pending_invitation
 from tfc.constants.levels import Level
 from tfc.middleware.workspace_context import (
     clear_workspace_context,
@@ -211,7 +212,8 @@ def _accept_invite(api_client, user_email, password="SecurePass123!"):
     """Generate token for user, POST to accept-invitation, return response."""
     user = User.objects.get(email=user_email)
     uid = urlsafe_base64_encode(force_bytes(user.pk))
-    token = default_token_generator.make_token(user)
+    invite = pending_invitation(user, user.organization)
+    token = make_invitation_token(user, invite)
     resp = api_client.post(
         ACCEPT_INVITE_URL.format(uid=uid, token=token),
         {"new_password": password, "repeat_password": password},
@@ -453,7 +455,8 @@ class TestInviteLifecycle:
 
         new_user = User.objects.get(email="accepttest@futureagi.com")
         uid = urlsafe_base64_encode(force_bytes(new_user.pk))
-        token = default_token_generator.make_token(new_user)
+        invite = pending_invitation(new_user, organization)
+        token = make_invitation_token(new_user, invite)
 
         # GET to validate
         resp = api_client.get(ACCEPT_INVITE_URL.format(uid=uid, token=token))
@@ -1247,7 +1250,8 @@ class TestFullLifecycleScenarios:
         # 2. Accept
         target = User.objects.get(email="lifecycle@futureagi.com")
         uid = urlsafe_base64_encode(force_bytes(target.pk))
-        token = default_token_generator.make_token(target)
+        invite = pending_invitation(target, organization)
+        token = make_invitation_token(target, invite)
         accept_resp = api_client.post(
             ACCEPT_INVITE_URL.format(uid=uid, token=token),
             {"new_password": "LifePass123!", "repeat_password": "LifePass123!"},

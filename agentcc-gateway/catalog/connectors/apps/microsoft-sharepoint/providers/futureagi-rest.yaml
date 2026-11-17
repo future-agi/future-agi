@@ -1,0 +1,117 @@
+schema: connector-manifest/v1#provider
+app: microsoft-sharepoint
+id: futureagi-rest
+version: 1.0.0
+kind: rest
+publisher: futureagi
+vendorStatus:
+  label: ga
+  source: https://learn.microsoft.com/en-us/graph/api/overview?view=graph-rest-1.0
+transport:
+  kind: http
+  url: https://{connectorsHost}/microsoft-sharepoint/mcp
+  variant: streamable
+hosted: true
+trusted: false
+accountModes:
+  - agent
+  - user
+auth:
+  kind: oauth2
+  oauth2:
+    authorizeUrl: https://login.microsoftonline.com/{tenant}/oauth2/v2.0/authorize
+    tokenUrl: https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token
+    scopes:
+      - offline_access
+      - Sites.Read.All
+    pkce: true
+    tokenBody: form
+    clientAuth: body
+    urlVariables:
+      tenant:
+        description: "Entra tenant: organizations for a multitenant client, or the tenant id of a single-tenant client."
+        pattern: ^(organizations|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$
+        default: organizations
+        scope: org
+    refresh:
+      supported: true
+      rotates: true
+    registration:
+      - preregistered
+    clientGroup: microsoft
+    review:
+      program: microsoft_publisher_verification
+      leadTime: P1W
+      source: https://learn.microsoft.com/en-us/partner-center/enroll/understand-the-verification-process
+  verify:
+    tool: get_site
+tools:
+  source: operations
+  defaultPosture: ask
+  generated: tools.generated.json
+rateLimits:
+  - scope: user
+    requests: 10000
+    per: 10m
+    source: https://learn.microsoft.com/en-us/graph/throttling-limits
+retry:
+  "on":
+    - 429
+    - 503
+  honorRetryAfter: true
+pricing:
+  model: vendor_plan
+upstream:
+  spec:
+    url: https://raw.githubusercontent.com/microsoftgraph/msgraph-metadata/8c562525694550601a232cb54014e48c6c7f6da0/openapi/v1.0/openapi.yaml
+    format: openapi-3
+    sha256: 533f6d86985584327109ba2c52c0e51454ce1ba2153c11f4d841e898b88c5b1b
+    licence: MIT (microsoftgraph/msgraph-metadata)
+quality:
+  tier: listed
+  owner: connectors
+lifecycle:
+  status: active
+sources:
+  - fact: auth.oauth2.authorizeUrl
+    url: https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-auth-code-flow
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.tokenUrl
+    url: https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-auth-code-flow
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.scopes
+    url: https://learn.microsoft.com/en-us/graph/permissions-reference
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.scopes
+    url: https://learn.microsoft.com/en-us/entra/identity-platform/scopes-oidc
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.pkce
+    url: https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-auth-code-flow
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.clientAuth
+    url: https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-auth-code-flow
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.urlVariables.tenant
+    url: https://learn.microsoft.com/en-us/entra/identity-platform/v2-protocols
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.urlVariables.tenant
+    url: https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-auth-code-flow
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.refresh
+    url: https://learn.microsoft.com/en-us/entra/identity-platform/refresh-tokens
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.review
+    url: https://learn.microsoft.com/en-us/entra/identity-platform/publisher-verification-overview
+    fetchedAt: 2026-10-22
+  - fact: auth.oauth2.review
+    url: https://learn.microsoft.com/en-us/entra/identity/enterprise-apps/configure-user-consent
+    fetchedAt: 2026-10-22
+  - fact: retry
+    url: https://learn.microsoft.com/en-us/graph/throttling
+    fetchedAt: 2026-10-21
+  - fact: retry
+    url: https://learn.microsoft.com/en-us/graph/errors
+    fetchedAt: 2026-10-22
+x-omega:
+  ee: exclude
+  oss: exclude

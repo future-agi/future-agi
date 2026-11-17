@@ -21,7 +21,7 @@ func TestKeyAuthAcceptsSpeechVendorKeyForms(t *testing.T) {
 		Name: "test",
 		Key:  "valid-key",
 	}}})
-	handler := KeyAuth(keyStore, true)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	handler := KeyAuth(keyStore, true, nil, testGatedRoots()...)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 
@@ -86,7 +86,7 @@ func TestKeyAuthBearerSchemeIsCaseInsensitive(t *testing.T) {
 		Name: "test",
 		Key:  "valid-key",
 	}}})
-	handler := KeyAuth(keyStore, true)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	handler := KeyAuth(keyStore, true, nil, testGatedRoots()...)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 
@@ -95,8 +95,12 @@ func TestKeyAuthBearerSchemeIsCaseInsensitive(t *testing.T) {
 		want   int
 	}{
 		{header: "Bearer valid-key", want: http.StatusNoContent},
-		{header: "bearer valid-key", want: http.StatusNoContent},
-		{header: "BEARER valid-key", want: http.StatusNoContent},
+		// DEV CHANGE NOT KEPT: dev matches the scheme case-insensitively. The
+		// line reads a key from "Bearer " exactly, in the gate, the handlers
+		// and the auth plugin alike, so these answer 401: the gate alone
+		// admitting them would pass a key the pipeline then refuses.
+		{header: "bearer valid-key", want: http.StatusUnauthorized},
+		{header: "BEARER valid-key", want: http.StatusUnauthorized},
 		{header: "bearer wrong-key", want: http.StatusUnauthorized},
 		{header: "Basic valid-key", want: http.StatusUnauthorized},
 	} {
@@ -122,7 +126,7 @@ func TestKeyAuthAcceptsAnyValidCandidateKey(t *testing.T) {
 		Name: "test",
 		Key:  "valid-key",
 	}}})
-	handler := KeyAuth(keyStore, true)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	handler := KeyAuth(keyStore, true, nil, testGatedRoots()...)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 

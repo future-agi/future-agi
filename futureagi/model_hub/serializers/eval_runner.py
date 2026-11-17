@@ -2,7 +2,8 @@ import re
 
 from rest_framework import serializers
 
-from model_hub.models.choices import EvalTemplateType, OwnerChoices
+from model_hub.models.choices import DataTypeChoices, EvalTemplateType, OwnerChoices
+from model_hub.serializers.experiments import EvalMetricEntrySerializer
 from tfc.utils.serializer_fields import JsonValueField
 
 
@@ -163,7 +164,9 @@ class UserEvalSerializer(serializers.Serializer):
     config = serializers.JSONField()
     kb_id = serializers.UUIDField(required=False)
     error_localizer = serializers.BooleanField(default=False)
-    model = serializers.CharField(max_length=100, required=False)
+    # Blank is valid: code evals have no judge model, and the eval picker sends
+    # "" when no model applies (as UserEvalMutationRequestSerializer allows).
+    model = serializers.CharField(max_length=100, required=False, allow_blank=True)
     # Per-binding weight overrides for composite evals. Ignored for
     # single-template metrics. Shape: `{"<child_template_id>": <weight>}`.
     composite_weight_overrides = serializers.JSONField(
@@ -226,8 +229,39 @@ class UpdateColumnConfigSerializer(serializers.Serializer):
         return value
 
 
+class ExperimentPreviewSerializer(serializers.Serializer):
+    dataset_id = serializers.UUIDField()
+    dataset_version_id = serializers.UUIDField()
+    version_item_id = serializers.UUIDField()
+    evaluator = EvalMetricEntrySerializer()
+    output = serializers.JSONField(allow_null=True)
+    output_name = serializers.CharField(max_length=255, default="Output")
+    output_type = serializers.ChoiceField(
+        choices=DataTypeChoices.get_choices(), default=DataTypeChoices.TEXT.value
+    )
+    messages = serializers.ListField(
+        child=serializers.DictField(), required=False, allow_null=True, default=None
+    )
+
+    def validate_evaluator(self, value):
+        if not isinstance(value["config"], dict):
+            raise serializers.ValidationError("Evaluator config must be an object.")
+        return value
+
+    def to_internal_value(self, data):
+        if isinstance(data, dict):
+            unknown = set(data) - set(self.fields)
+            entry = data.get("evaluator")
+            if isinstance(entry, dict):
+                unknown |= set(entry) - set(self.fields["evaluator"].fields)
+            if unknown:
+                raise serializers.ValidationError("Unknown experiment preview fields.")
+        return super().to_internal_value(data)
+
+
 class EvalPlayGroundSerializer(serializers.Serializer):
-    template_id = serializers.UUIDField()  # need this
+    experiment_preview = ExperimentPreviewSerializer(required=False)
+    template_id = serializers.UUIDField(required=False)  # required for legacy Test
     model = serializers.CharField(
         max_length=100,
         allow_null=True,
@@ -261,6 +295,16 @@ class EvalPlayGroundSerializer(serializers.Serializer):
 
     def validate(self, attrs):
         attrs = super().validate(attrs)
+        if "experiment_preview" in attrs:
+            if set(self.initial_data) != {"experiment_preview"}:
+                raise serializers.ValidationError(
+                    "experiment_preview cannot be combined with playground inputs."
+                )
+            return {"experiment_preview": attrs["experiment_preview"]}
+        if "template_id" not in attrs:
+            raise serializers.ValidationError(
+                {"template_id": "This field is required."}
+            )
         if attrs.get("call_id") is not None and attrs.get("run_test_id") is None:
             raise serializers.ValidationError(
                 {"run_test_id": ("run_test_id is required when call_id is provided.")}
@@ -374,3 +418,20 @@ class TestEvalTemplateSerializer(serializers.Serializer):
     output = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     config_params_desc = serializers.JSONField(required=False, default=dict)
     config_params_option = serializers.JSONField(required=False, default=dict)
+
+    def validate(self, attrs):
+        config = attrs.get("config", {})
+        # Distinguish an explicit empty mapping from the omitted field's default.
+        if (
+            "mapping" in self.initial_data
+            and isinstance(config, dict)
+            and "mapping" in config
+            and attrs["mapping"] != config["mapping"]
+        ):
+            raise serializers.ValidationError(
+                {
+                    "mapping": "mapping conflicts with config.mapping. "
+                    "Provide matching values or only one."
+                }
+            )
+        return attrs

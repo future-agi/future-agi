@@ -11,6 +11,7 @@ import {
   Radio,
   RadioGroup,
   Stack,
+  Switch,
   TextField,
   Typography,
 } from "@mui/material";
@@ -201,8 +202,11 @@ export default function CreateLabelDrawer({
         },
       }}
     >
+      {/* The form's own rules check every field and show their sentence
+          under it, so the browser's check must not answer first. */}
       <Box
         component="form"
+        noValidate
         onSubmit={(e) => {
           e.stopPropagation();
           handleSubmit(onSubmit)(e);
@@ -379,6 +383,40 @@ export default function CreateLabelDrawer({
                 <Typography variant="body2" color="text.secondary">
                   No additional configuration needed.
                 </Typography>
+              )}
+
+              {/* Direction (§3.15): ordered labels say which way is better,
+                  so Summary cards and win rates read them like evals. */}
+              {["numeric", "star", "thumbs_up_down"].includes(selectedType) && (
+                <Controller
+                  name="settings.higher_is_better"
+                  control={control}
+                  render={({ field }) => (
+                    <FormControlLabel
+                      control={
+                        <Switch
+                          checked={field.value !== false}
+                          onChange={(e) => field.onChange(e.target.checked)}
+                        />
+                      }
+                      label={
+                        <Box>
+                          <Typography variant="body2">
+                            Higher is better
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            {selectedType === "thumbs_up_down"
+                              ? "👍 counts as better when comparing runs"
+                              : field.value === false
+                                ? "Lower values count as better when comparing runs"
+                                : "Higher values count as better when comparing runs"}
+                          </Typography>
+                        </Box>
+                      }
+                      sx={{ alignItems: "flex-start", ml: 0 }}
+                    />
+                  )}
+                />
               )}
 
               {/* Allow Notes */}

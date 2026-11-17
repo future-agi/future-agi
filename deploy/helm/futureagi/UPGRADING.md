@@ -26,6 +26,10 @@ Kubernetes transition: storage, controllers and recovery procedures differ.
 4. Authenticate the exact chart before allowing it into the deployment repository.
    Pin the chart digest and the target release's signing identity together. Retain
    the verification record beside the reviewed change, without credentials.
+5. If you are upgrading from 1.58, review your gateway budgets first. Budgets
+   you saved in 1.58 are enforced after the upgrade, even if you never turned on
+   the Org config budgets switch. Open Gateway > Budgets and raise or remove any
+   limit you don't want enforced before you approve the upgrade.
 
 ## Prepare a signed release without changing the cluster
 

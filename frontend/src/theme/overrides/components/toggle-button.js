@@ -28,11 +28,12 @@ export function toggleButton(theme) {
           margin: 0,
           border: 0,
           borderRadius: 4,
-          [`&.${toggleButtonGroupClasses.middleButton}, &.${toggleButtonGroupClasses.lastButton}`]: {
-            marginLeft: 0,
-            borderLeft: 0,
-            borderRadius: 4,
-          },
+          [`&.${toggleButtonGroupClasses.middleButton}, &.${toggleButtonGroupClasses.lastButton}`]:
+            {
+              marginLeft: 0,
+              borderLeft: 0,
+              borderRadius: 4,
+            },
           [`&.${toggleButtonGroupClasses.firstButton}`]: { borderRadius: 4 },
         }),
       },

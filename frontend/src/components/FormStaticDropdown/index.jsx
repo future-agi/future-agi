@@ -3,28 +3,7 @@ import PropTypes from "prop-types";
 import FormStaticDropdownControl from "./FormStaticDropdownControl";
 import FormStaticDropdownState from "./FormStaticDropdownState";
 
-const FormStaticDropdown = React.forwardRef(({ control, ...rest }, ref) => {
-  if (control) {
-    return (
-      <FormStaticDropdownControl
-        ref={ref}
-        fieldName={rest?.fieldName}
-        label={rest?.label}
-        helperText={rest?.helperText}
-        control={control}
-        {...rest}
-      />
-    );
-  } else {
-    return <FormStaticDropdownState ref={ref} {...rest} />;
-  }
-});
-
-FormStaticDropdown.displayName = "FormStaticDropdown";
-
-export default FormStaticDropdown;
-
-FormStaticDropdown.propTypes = {
+const dropdownPropTypes = {
   control: PropTypes.any,
   fieldName: PropTypes.string,
   options: PropTypes.arrayOf(
@@ -49,3 +28,26 @@ FormStaticDropdown.propTypes = {
   sx: PropTypes.object,
   variant: PropTypes.oneOf(["outlined", "filled", "standard"]),
 };
+
+const FormStaticDropdown = React.forwardRef(
+  /** @param {PropTypes.InferProps<typeof dropdownPropTypes>} props */
+  ({ control, ...rest }, ref) => {
+    if (control) {
+      return (
+        <FormStaticDropdownControl
+          ref={ref}
+          fieldName={rest?.fieldName}
+          label={rest?.label}
+          helperText={rest?.helperText}
+          control={control}
+          {...rest}
+        />
+      );
+    }
+    return <FormStaticDropdownState ref={ref} {...rest} />;
+  },
+);
+
+FormStaticDropdown.displayName = "FormStaticDropdown";
+FormStaticDropdown.propTypes = dropdownPropTypes;
+export default FormStaticDropdown;

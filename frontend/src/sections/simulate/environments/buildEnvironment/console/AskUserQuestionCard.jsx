@@ -1,7 +1,11 @@
 import PropTypes from "prop-types";
-import { useState } from "react";
+import { useId, useRef, useState } from "react";
 import { Box, Stack, Typography, Button, TextField, Checkbox } from "@mui/material";
 import Iconify from "src/components/iconify";
+import { activateOnKey } from "../../helpers/activateOnKey";
+
+// Arrow keys move the pick through a single-select group (radio pattern).
+const ARROW_STEP = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 };
 
 import ChatMarkdown from "./ChatMarkdown";
 
@@ -62,6 +66,9 @@ export default function AskUserQuestionCard({
 }) {
   const [answer, setAnswer] = useState({ pick: null, picks: [], other: "" });
   const [resolved, setResolved] = useState(null);
+  const idBase = useId();
+  const promptId = `${idBase}-prompt`;
+  const optionRefs = useRef([]);
 
   const otherIndex = question.options.length;
   const otherActive = answer.other.trim().length > 0;
@@ -86,6 +93,27 @@ export default function AskUserQuestionCard({
     } else {
       setAnswer((a) => ({ ...a, pick: i }));
     }
+  };
+
+  // Enter/Space picks the focused option; in a single-select group the arrow
+  // keys move focus and the pick to the next/previous option.
+  const optionKeyDown = (i) => (e) => {
+    const step = question.multiSelect ? undefined : ARROW_STEP[e.key];
+    if (step) {
+      e.preventDefault();
+      const n = question.options.length;
+      const next = (i + step + n) % n;
+      pick(next);
+      optionRefs.current[next]?.focus();
+      return;
+    }
+    activateOnKey(() => pick(i))(e);
+  };
+
+  // Single-select is one Tab stop: the picked option, else the first one.
+  const optionTabIndex = (i) => {
+    if (question.multiSelect) return 0;
+    return i === (answer.pick ?? 0) ? 0 : -1;
   };
 
   const chosenLabels = () => {
@@ -139,22 +167,35 @@ export default function AskUserQuestionCard({
         >
           {question.step}/{question.total}
         </Box>
-        <Prompt text={question.prompt} sx={{ flex: 1, minWidth: 0 }} />
+        <Box id={promptId} sx={{ flex: 1, minWidth: 0 }}>
+          <Prompt text={question.prompt} />
+        </Box>
       </Stack>
 
       {/* options */}
       <Stack spacing={0.5} sx={{ px: 1.5, pb: 1 }}>
-        {question.options.map((opt, i) => (
-          <AskOptionRow
-            key={opt.label}
-            label={opt.label}
-            description={opt.description}
-            selected={rowIsSelected(i)}
-            multi={question.multiSelect}
-            index={i + 1}
-            onSelect={() => pick(i)}
-          />
-        ))}
+        <Stack
+          spacing={0.5}
+          role={question.multiSelect ? "group" : "radiogroup"}
+          aria-labelledby={promptId}
+        >
+          {question.options.map((opt, i) => (
+            <AskOptionRow
+              key={opt.label}
+              id={`${idBase}-option-${i}`}
+              label={opt.label}
+              description={opt.description}
+              selected={rowIsSelected(i)}
+              multi={question.multiSelect}
+              index={i + 1}
+              onSelect={() => pick(i)}
+              role={question.multiSelect ? "checkbox" : "radio"}
+              tabIndex={optionTabIndex(i)}
+              onKeyDown={optionKeyDown(i)}
+              rowRef={(el) => { optionRefs.current[i] = el; }}
+            />
+          ))}
+        </Stack>
         <AskOptionRow
           label="Other"
           selected={otherActive}
@@ -206,23 +247,38 @@ AskUserQuestionCard.propTypes = {
   answerText: PropTypes.string,
 };
 
-function AskOptionRow({ label, description, selected, multi, index, onSelect, bottomChildren }) {
+function AskOptionRow({
+  id, label, description, selected, multi, index, onSelect, bottomChildren,
+  role, tabIndex, onKeyDown, rowRef,
+}) {
+  // Option rows are radios/checkboxes named by their label; the "Other" row
+  // has no role and leaves focus to its text field.
+  const labelId = role && id ? `${id}-label` : undefined;
+  const descriptionId = role && id && description ? `${id}-description` : undefined;
   return (
     <Box
+      ref={rowRef}
       onClick={onSelect}
+      role={role}
+      aria-checked={role ? Boolean(selected) : undefined}
+      aria-labelledby={labelId}
+      aria-describedby={descriptionId}
+      tabIndex={role ? tabIndex : undefined}
+      onKeyDown={role ? onKeyDown : undefined}
       sx={{
         p: 1.5, borderRadius: "8px", cursor: "pointer",
-        bgcolor: "background.neutral",
-        "&:hover": { bgcolor: "action.hover" },
+        bgcolor: selected ? "action.selected" : "background.neutral",
+        "&:hover": { bgcolor: selected ? "action.selected" : "action.hover" },
+        "&:focus-visible": { outline: "2px solid", outlineColor: "primary.main", outlineOffset: "2px" },
       }}
     >
       <Stack direction="row" alignItems="flex-start" spacing={1.5}>
         <Box flex={1} minWidth={0}>
-          <Typography sx={{ typography: "s1", fontWeight: 500, color: "text.primary" }}>
+          <Typography id={labelId} sx={{ typography: "s1", fontWeight: 500, color: "text.primary" }}>
             {label}
           </Typography>
           {description && (
-            <Typography sx={{ typography: "s3", color: "text.secondary", mt: 0.25 }}>
+            <Typography id={descriptionId} sx={{ typography: "s3", color: "text.secondary", mt: 0.25 }}>
               {description}
             </Typography>
           )}
@@ -256,9 +312,14 @@ function AskOptionRow({ label, description, selected, multi, index, onSelect, bo
   );
 }
 AskOptionRow.propTypes = {
+  id: PropTypes.string,
   label: PropTypes.string, description: PropTypes.string,
   selected: PropTypes.bool, multi: PropTypes.bool, index: PropTypes.number,
   onSelect: PropTypes.func, bottomChildren: PropTypes.node,
+  role: PropTypes.oneOf(["radio", "checkbox"]),
+  tabIndex: PropTypes.number,
+  onKeyDown: PropTypes.func,
+  rowRef: PropTypes.func,
 };
 
 /**

@@ -113,7 +113,15 @@ vi.mock("../components/TaskLivePreview", () => {
 });
 
 vi.mock("../components/TaskUsageTab", () => ({
-  default: () => <div>task usage</div>,
+  // eslint-disable-next-line react/prop-types
+  default: ({ onViewLogs }) => (
+    <div>
+      task usage
+      <button type="button" onClick={() => onViewLogs?.()}>
+        View logs
+      </button>
+    </div>
+  ),
 }));
 
 vi.mock("src/sections/common/EvalsTasks/EditTaskDrawer/TaskConfirmBox", () => ({
@@ -246,6 +254,27 @@ describe("TaskDetailPage", () => {
     expect(screen.getByRole("tab", { name: /usage/i })).toBeInTheDocument();
   });
 
+  it("opens the Logs tab from the Usage tab's View logs action", () => {
+    useGetTaskData.mockReturnValue({
+      data: loadedTask(),
+      isLoading: false,
+      isError: false,
+    });
+
+    renderTaskDetail("task-1");
+    fireEvent.click(screen.getByRole("tab", { name: /usage/i }));
+    expect(screen.getByText("task usage")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "View logs" }));
+
+    expect(screen.getByText("logs")).toBeInTheDocument();
+    expect(screen.queryByText("task usage")).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /logs/i })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+  });
+
   it("pauses a running task from the header", async () => {
     useGetTaskData.mockReturnValue({
       data: loadedTask({ status: "running" }),
@@ -344,7 +373,7 @@ describe("TaskDetailPage", () => {
 
     expect(await screen.findByText("Update Task")).toBeInTheDocument();
     expect(confirmDialogMock).toHaveBeenLastCalledWith(
-      expect.objectContaining({ confirmText: "Run task" }),
+      expect.objectContaining({ confirmText: "Update and run task" }),
     );
   });
 

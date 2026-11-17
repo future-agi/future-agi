@@ -30,15 +30,18 @@ from django.core.management.base import BaseCommand
 from django.db import transaction
 from tqdm import tqdm
 
-from model_hub.models.choices import StatusType
 from model_hub.models.develop_dataset import Cell, Column, Dataset
 from model_hub.models.experiments import (
     ExperimentDatasetTable,
     ExperimentPromptConfig,
     ExperimentsTable,
 )
-from model_hub.models.run_prompt import PromptTemplate, PromptVersion
 from model_hub.services.dataset_snapshot import create_dataset_snapshot
+from model_hub.services.inline_experiment_prompts import (
+    detect_experiment_type,
+    extract_model_info,
+    get_or_create_prompt_template,
+)
 from model_hub.views.experiments import (
     _build_and_save_v2_column_order,
     _translate_eval_mapping,
@@ -48,26 +51,11 @@ from model_hub.views.utils.utils import update_column_id
 logger = logging.getLogger(__name__)
 
 
-def _detect_experiment_type(prompt_config):
-    """Detect experiment type from model_type field in prompt_config entries."""
-    for entry in prompt_config:
-        model_type = entry.get("model_type", "llm")
-        if model_type in ("tts", "stt", "image"):
-            return model_type
-    return "llm"
-
-
-def _extract_model_info(model_spec):
-    """Extract model name, display name, and run_prompt_config from model spec."""
-    if isinstance(model_spec, str):
-        return model_spec, None, None
-    elif isinstance(model_spec, dict):
-        return (
-            model_spec.get("name", ""),
-            model_spec.get("display_name"),
-            model_spec.get("config"),
-        )
-    return str(model_spec), None, None
+# The shared readers (services/inline_experiment_prompts.py), also used when
+# such an experiment is shown or a copy of it is saved: the type from
+# model_type in prompt_config entries, and each model spec.
+_detect_experiment_type = detect_experiment_type
+_extract_model_info = extract_model_info
 
 
 def _build_column_name(experiment_name, config_name, model_name, voice=None):
@@ -248,9 +236,7 @@ class Command(BaseCommand):
             # copied each EDT column.
             snapshot_cols_by_source = {
                 c.source_id: c
-                for c in Column.objects.filter(
-                    dataset=snapshot_dataset, deleted=False
-                )
+                for c in Column.objects.filter(dataset=snapshot_dataset, deleted=False)
                 if c.source_id
             }
 
@@ -584,8 +570,7 @@ class Command(BaseCommand):
             )
 
             logger.info(
-                f"Migrated EDT column {orig_col.id} -> {new_col.id} "
-                f"for EDT {edt.id}"
+                f"Migrated EDT column {orig_col.id} -> {new_col.id} for EDT {edt.id}"
             )
 
     def _get_or_create_prompt_template(
@@ -599,69 +584,19 @@ class Command(BaseCommand):
         display_name=None,
         model_params=None,
     ):
-        """Create or find PromptTemplate + PromptVersion for an LLM experiment config."""
-        template_name = f"[Migrated] {exp.name} - {config_name} - {model_name}"
-
-        # Get org/workspace from the experiment's dataset
-        org = getattr(exp.dataset, "organization", None)
-        workspace = (
-            getattr(exp.dataset, "workspace", None)
-            if hasattr(exp.dataset, "workspace")
-            else None
+        """Create or find PromptTemplate + PromptVersion for an LLM experiment
+        config: the shared builder, which a copy of such an experiment uses
+        too (services/inline_experiment_prompts.py). A data migration of
+        existing experiments, not a user's commit: no webhook event
+        (webhooks DESIGN.md section 14.3)."""
+        return get_or_create_prompt_template(
+            exp,
+            config_name,
+            messages,
+            configuration,
+            output_format,
+            model_name,
+            display_name,
+            model_params,
+            suppress_events="migrate_experiment_prompts",
         )
-
-        # Try to find existing template first
-        existing = PromptTemplate.all_objects.filter(
-            name=template_name,
-            organization=org,
-            deleted=False,
-        ).first()
-
-        if existing:
-            version = PromptVersion.all_objects.filter(
-                original_template=existing,
-                deleted=False,
-            ).first()
-            if version:
-                return existing, version
-
-        # Create new template
-        template = PromptTemplate.all_objects.create(
-            id=uuid.uuid4(),
-            name=template_name,
-            organization=org,
-            workspace=workspace,
-        )
-
-        # Build prompt_config_snapshot as a dict with messages, placeholders,
-        # and configuration — matching the format used by the prompt template UI
-        config = configuration or {}
-        params = model_params or {}
-        snapshot = {
-            "messages": messages,
-            "placeholders": [],
-            "configuration": {
-                "model": model_name,
-                "tools": config.get("tools", []),
-                "modelType": "all",
-                "toolChoice": config.get("tool_choice", ""),
-                "modelDetail": {
-                    "logoUrl": params.get("logo_url", ""),
-                    "providers": params.get("providers", ""),
-                    "modelName": display_name or model_name,
-                    "isAvailable": True,
-                },
-                "outputFormat": output_format,
-            },
-        }
-
-        # Create version with full snapshot dict
-        version = PromptVersion.all_objects.create(
-            id=uuid.uuid4(),
-            original_template=template,
-            prompt_config_snapshot=snapshot,
-            template_version="v1",
-            is_default=True,
-        )
-
-        return template, version

@@ -1,0 +1,42 @@
+{
+  "http": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    }
+  },
+  "body": {
+    "jsonrpc": "2.0",
+    "id": 3,
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "Too many calls to github__create_issue. Try again in ~12s [tool_rate_limited]"
+        }
+      ],
+      "isError": true,
+      "_meta": {
+        "io.futureagi/error": {
+          "type": "rate_limit_error",
+          "code": "tool_rate_limited",
+          "message": "Too many calls to github__create_issue. Try again in ~12s",
+          "param": null,
+          "metadata": {
+            "scope": "key:key_3c9f1a7e5b2d8c4f6a0e1b9d",
+            "limit": 30,
+            "window_s": 60,
+            "retry_after_s": 12
+          }
+        },
+        "io.futureagi/tool_call": {
+          "tool_call_id": "tc_01K7CN5TC00000000000000005",
+          "executed": false,
+          "billing_mode": "byok",
+          "billed_usd": 0,
+          "latency_ms": 4
+        }
+      }
+    }
+  }
+}

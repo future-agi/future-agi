@@ -1,0 +1,17 @@
+{
+  "http": {
+    "status": 503,
+    "headers": {
+      "content-type": "application/json"
+    }
+  },
+  "body": {
+    "status": false,
+    "type": "service_unavailable",
+    "code": "gateway_sync_failed",
+    "detail": "The virtual server was saved but the gateway did not accept it yet. Call ensure again.",
+    "message": "The virtual server was saved but the gateway did not accept it yet. Call ensure again.",
+    "error": "The virtual server was saved but the gateway did not accept it yet. Call ensure again.",
+    "result": "The virtual server was saved but the gateway did not accept it yet. Call ensure again."
+  }
+}

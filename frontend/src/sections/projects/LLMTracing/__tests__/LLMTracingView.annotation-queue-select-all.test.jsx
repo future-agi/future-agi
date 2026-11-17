@@ -1,5 +1,11 @@
 import React from "react";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -69,7 +75,7 @@ const harness = vi.hoisted(() => {
       totalRowCountIsLowerBound: false,
     }),
     validatedFilters: {},
-    addDatasetProps: null,
+    addDataOpts: null,
     spanExcludedPhysicalId: JSON.stringify([
       "project-1",
       "trace-2",
@@ -378,10 +384,9 @@ vi.mock("src/components/tooltip", () => ({
 vi.mock("src/components/traceDetail/AddTagsPopover", () => ({
   default: () => null,
 }));
-vi.mock("src/components/traceDetailDrawer/addToDataset/add-dataset", () => ({
-  default: (props) => {
-    harness.addDatasetProps = props;
-    return null;
+vi.mock("src/sections/common/AddData/addDataStore", () => ({
+  openAddData: (opts) => {
+    harness.addDataOpts = opts;
   },
 }));
 vi.mock("src/components/traceDetailDrawer/AnnotateDrawer", () => ({
@@ -583,12 +588,15 @@ describe("LLMTracingView header select-all annotation queue contract", () => {
     const user = userEvent.setup();
     await renderView({ mode: "user", userIdForUserMode: "user-1" });
 
-    await waitFor(() =>
-      expect(harness.addDatasetProps?.selectedTraces).toEqual([
-        "trace-1",
-        "trace-2",
-      ]),
-    );
+    const [addToDataset] = await screen.findAllByRole("button", {
+      name: /add to dataset/i,
+      hidden: true,
+    });
+    fireEvent.click(addToDataset);
+    expect(harness.addDataOpts?.source?.trace_ids).toEqual([
+      "trace-1",
+      "trace-2",
+    ]);
     await user.click(
       await screen.findByRole("button", { name: /add selected rows/i }),
     );

@@ -25,8 +25,11 @@ import { facetLine } from "./askFormat";
 
 // The table never holds more rows than this; past it, export them.
 const TABLE_MAX_ROWS = 1500;
-// More questions than this share one column.
-const MAX_ANSWER_COLUMNS = 3;
+// Each question has its own answer column; past the page's width the
+// table scrolls sideways. The row column keeps the room it has with three.
+const ANSWER_COLUMN_WIDTH = 120;
+const tableMinWidth = (answerColumns) =>
+  Math.max(760, 400 + ANSWER_COLUMN_WIDTH * answerColumns);
 
 const pulse = keyframes`
   0%, 100% { opacity: 0.35; }
@@ -34,6 +37,14 @@ const pulse = keyframes`
 `;
 
 const percent = (value) => `${Math.round(value * 100)}%`;
+
+// An export button spins while its file is on its way.
+const exportIcon = (busy) =>
+  busy ? (
+    <CircularProgress size={14} color="inherit" />
+  ) : (
+    <Iconify icon="mdi:download-outline" width={16} />
+  );
 
 // A user's answer is the most common one across their sessions: "4 of 5
 // sessions" says how many gave it, of the sessions Jev read; the title
@@ -163,7 +174,9 @@ AnswerCell.propTypes = {
  * chip names what the charts selected; Export writes every selected row.
  * A user question lists users, each with the answer their sessions most
  * often got and how many did; it exports them, or their sessions
- * (`onExport({ sessions: true })`). A click opens the row in its view.
+ * (`onExport({ sessions: true })`). An export under way (`exporting`:
+ * "rows" or "sessions") shows on its button, and neither export takes a
+ * click until it ends. A click opens the row in its view.
  */
 export default function AskRowsTable({
   records,
@@ -181,15 +194,18 @@ export default function AskRowsTable({
   loadingMore,
   onLoadMore,
   onExport,
+  exporting,
 }) {
   const meta = unitMeta(unit);
   const isUser = unit === "users";
-  const answerColumns = questions.slice(0, MAX_ANSWER_COLUMNS);
+  const answerColumns = questions;
   const count = total ?? records.length;
   const heading =
     filterLabel && runTotal != null
       ? `${count.toLocaleString()} of ${runTotal.toLocaleString()} ${meta.plural}`
       : `${count.toLocaleString()} ${count === 1 ? meta.noun : meta.plural}`;
+  // Nothing is counted yet while the first rows load: no "0 traces".
+  const counting = loading && total == null && !records.length;
   const full = records.length >= TABLE_MAX_ROWS;
 
   return (
@@ -212,13 +228,15 @@ export default function AskRowsTable({
         <Typography variant="subtitle2" component="h2" sx={{ fontSize: 15 }}>
           {meta.title}
         </Typography>
-        <Typography
-          variant="caption"
-          color="text.secondary"
-          sx={{ fontVariantNumeric: "tabular-nums" }}
-        >
-          {heading}
-        </Typography>
+        {!counting && (
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            sx={{ fontVariantNumeric: "tabular-nums" }}
+          >
+            {heading}
+          </Typography>
+        )}
         {filterLabel && (
           <Chip
             size="small"
@@ -233,29 +251,37 @@ export default function AskRowsTable({
           <Button
             size="small"
             color="inherit"
-            startIcon={<Iconify icon="mdi:download-outline" width={16} />}
+            startIcon={exportIcon(exporting === "rows")}
             onClick={() => onExport()}
-            disabled={!count}
+            disabled={!count || Boolean(exporting)}
             title={isUser ? "A line per user" : undefined}
           >
-            Export CSV
+            {exporting === "rows" ? "Exporting CSV…" : "Export CSV"}
           </Button>
         )}
         {onExport && isUser && (
           <Button
             size="small"
             color="inherit"
-            startIcon={<Iconify icon="mdi:download-outline" width={16} />}
+            startIcon={exportIcon(exporting === "sessions")}
             onClick={() => onExport({ sessions: true })}
-            disabled={!count}
+            disabled={!count || Boolean(exporting)}
             title="A line per session read, for these users"
           >
-            Export sessions
+            {exporting === "sessions"
+              ? "Exporting sessions…"
+              : "Export sessions"}
           </Button>
         )}
       </Stack>
       <Box sx={{ overflowX: "auto" }}>
-        <Table size="small" sx={{ tableLayout: "fixed", minWidth: 760 }}>
+        <Table
+          size="small"
+          sx={{
+            tableLayout: "fixed",
+            minWidth: tableMinWidth(answerColumns.length),
+          }}
+        >
           <TableHead>
             <TableRow>
               <TableCell sx={{ width: 132 }}>When</TableCell>
@@ -268,10 +294,17 @@ export default function AskRowsTable({
               {answerColumns.map((question, index) => (
                 <TableCell
                   key={question.configId || index}
-                  sx={{ width: answerColumns.length > 1 ? 120 : 150 }}
-                  title={question.question}
+                  sx={{
+                    width: answerColumns.length > 1 ? ANSWER_COLUMN_WIDTH : 150,
+                    whiteSpace: "nowrap",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                  }}
+                  title={question.fullQuestion || question.question}
                 >
-                  {answerColumns.length > 1 ? `Answer ${index + 1}` : "Answer"}
+                  {answerColumns.length > 1
+                    ? `${index + 1} · ${question.question}`
+                    : "Answer"}
                 </TableCell>
               ))}
             </TableRow>
@@ -371,7 +404,23 @@ export default function AskRowsTable({
           )}
         </Box>
       )}
-      {!records.length && !loading && !error && (
+      {!records.length && !loading && !error && filterLabel && (
+        // The selection hides every row: say so, and offer the way back
+        // (the selection bar, with its Clear, shows only when rows match).
+        <Box
+          sx={{ px: 2, py: 2.5, display: "flex", alignItems: "center", gap: 1 }}
+        >
+          <Typography variant="body2" color="text.secondary">
+            No {meta.plural} match this selection.
+          </Typography>
+          {onClearFilter && (
+            <Button size="small" onClick={() => onClearFilter()}>
+              Clear
+            </Button>
+          )}
+        </Box>
+      )}
+      {!records.length && !loading && !error && !filterLabel && (
         <Typography
           variant="body2"
           color="text.secondary"
@@ -429,4 +478,5 @@ AskRowsTable.propTypes = {
   loadingMore: PropTypes.bool,
   onLoadMore: PropTypes.func,
   onExport: PropTypes.func,
+  exporting: PropTypes.oneOf(["rows", "sessions"]),
 };

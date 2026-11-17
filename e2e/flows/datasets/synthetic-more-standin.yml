@@ -1,0 +1,20 @@
+services:
+  backend:
+    environment:
+      MODEL_SERVING_URL: http://localhost:18083
+  worker:
+    environment:
+      MODEL_SERVING_URL: http://backend:18083
+  worker-exact-aggregation:
+    environment:
+      MODEL_SERVING_URL: http://backend:18083
+  synthetic-more-standin:
+    image: python:3.12-alpine
+    network_mode: service:backend
+    depends_on:
+      backend:
+        condition: service_healthy
+    volumes:
+      - ./e2e/flows/datasets/synthetic-more-standin.py:/standin/server.py:ro
+    command: ["python", "-I", "/standin/server.py"]
+    restart: "no"

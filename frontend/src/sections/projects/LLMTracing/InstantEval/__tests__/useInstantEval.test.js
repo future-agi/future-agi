@@ -275,6 +275,52 @@ describe("startAskRun", () => {
     expect(postBody("/start").config_ids).toEqual(["c1"]);
   });
 
+  it("sends a reused evaluator only once for matching manually typed drafts", async () => {
+    serve({
+      configs: [
+        {
+          id: "c-saved",
+          name: QUESTION.question,
+          eval_template: "t-saved",
+          config: {
+            instant_eval: {
+              question: QUESTION.question,
+              answer_type: "yes_no",
+              labels: ["Yes", "No"],
+              reads: "transcript",
+              unit: "sessions",
+            },
+          },
+        },
+      ],
+    });
+    const started = await ask({
+      unit: "sessions",
+      reads: "transcript",
+      questions: [
+        QUESTION,
+        { ...QUESTION, question: `  ${QUESTION.question.toUpperCase()}  ` },
+      ],
+      sampleSize: 1000,
+    });
+    expect(postBody("/template")).toBeUndefined();
+    expect(postBody("/config")).toBeUndefined();
+    expect(postBody("/start").config_ids).toEqual(["c-saved"]);
+    expect(started.questions.map((item) => item.configId)).toEqual(["c-saved"]);
+  });
+
+  it("creates just one evaluator for matching unsaved drafts", async () => {
+    serve();
+    await ask({ unit: "traces", questions: [QUESTION, { ...QUESTION }] });
+    expect(
+      http.post.mock.calls.filter(([url]) => url === "/template"),
+    ).toHaveLength(1);
+    expect(
+      http.post.mock.calls.filter(([url]) => url === "/config"),
+    ).toHaveLength(1);
+    expect(postBody("/start").config_ids).toEqual(["c1"]);
+  });
+
   it("reuses the newest evaluator of a question asked twice", async () => {
     const saved = (id) => ({
       id,
@@ -1014,5 +1060,23 @@ describe("refusals the page explains", () => {
     // Another 400 is left as it is.
     const other = envelope(400, "bad_request", { message: "No rows failed." });
     expect(askError(other)).toBe(other);
+  });
+
+  it("links an unreadable key to AI Providers under its own code", () => {
+    const unreadable = {
+      message:
+        "The TypeSafe key saved for this workspace can't be read. Enter that key again in Settings > AI Providers.",
+      error_code: "JEV_KEY_UNREADABLE",
+      settings_path: "/dashboard/settings/ai-providers",
+    };
+    const control = askError(envelope(400, "JEV_KEY_UNREADABLE", unreadable));
+    expect(control).toBeInstanceOf(AskKeyMissing);
+    expect(control.message).toBe(unreadable.message);
+    expect(control.code).toBe("JEV_KEY_UNREADABLE");
+    expect(control.settingsPath).toBe("/dashboard/settings/ai-providers");
+    // A missing key keeps its own code.
+    expect(askError(envelope(400, "JEV_KEY_MISSING", KEY_MISSING)).code).toBe(
+      "JEV_KEY_MISSING",
+    );
   });
 });

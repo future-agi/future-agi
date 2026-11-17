@@ -40,8 +40,8 @@ from model_hub.serializers.develop_annotations import (
 )
 from model_hub.serializers.develop_dataset import DatasetSerializer
 from model_hub.views.utils.utils import replace_column_ids
-
-logger = structlog.get_logger(__name__)
+from tfc.middleware.workspace_context import workspace_context
+from tfc.migration_database import migration_database
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.observation_span import EvalLogger, ObservationSpan
 from tracer.models.project import Project, ProjectSourceChoices
@@ -50,6 +50,8 @@ from tracer.models.trace import Trace
 from tracer.models.trace_session import TraceSession
 from tracer.utils.helper import get_default_project_version_config
 from tracer.utils.otel import AttributeDecoder
+
+logger = structlog.get_logger(__name__)
 
 
 def update_dict_values(d, func):
@@ -65,9 +67,47 @@ def update_id(existing_id, column_mapping):
     return column_mapping[existing_id]
 
 
-def create_image_dataset(organization_id, user_id):
+def get_or_create_default_workspace(organization, user_id):
+    """Return the organization's active default workspace, creating it if missing.
+
+    The demo seed runs in a background activity with no request and no
+    workspace bound, so nothing assigns a workspace to what it saves. Both
+    seeding paths resolve the workspace here and pass it to every object they
+    create that has a workspace field.
+    """
+    try:
+        return Workspace.objects.get(
+            organization=organization, is_default=True, is_active=True
+        )
+    except Workspace.DoesNotExist:
+        # Create default workspace if it doesn't exist
+        try:
+            default_workspace = Workspace.objects.create(
+                name="Default Workspace",
+                organization=organization,
+                is_default=True,
+                is_active=True,
+                created_by_id=user_id,
+            )
+            logger.info(f"Created default workspace for organization {organization.id}")
+            return default_workspace
+        except IntegrityError:
+            # Race condition - another process created it
+            default_workspace = Workspace.objects.filter(
+                organization=organization, is_default=True, is_active=True
+            ).first()
+            if default_workspace is None:
+                raise RuntimeError(
+                    f"Failed to get/create default workspace for org {organization.id}"
+                ) from None
+            return default_workspace
+
+
+@migration_database
+def create_image_dataset(organization_id, user_id, *, using=None):
     try:
         organization = Organization.objects.get(id=organization_id)
+        workspace = get_or_create_default_workspace(organization, user_id)
         dataset_id = str(uuid.uuid4())
         image_dataset_serializer = DatasetSerializer(
             data={
@@ -80,7 +120,7 @@ def create_image_dataset(organization_id, user_id):
         )
         image_dataset_serializer.is_valid(raise_exception=True)
         if image_dataset_serializer.is_valid():
-            image_dataset = image_dataset_serializer.save()
+            image_dataset = image_dataset_serializer.save(workspace=workspace)
             img_col_map = {}
             img_column_config = {}
             img_column_order = []
@@ -120,6 +160,7 @@ def create_image_dataset(organization_id, user_id):
                     user_eval_metric = UserEvalMetric.objects.create(
                         name=column.get("name"),
                         organization=organization,
+                        workspace=workspace,
                         model=ModelChoices.TURING_LARGE.value,
                         dataset_id=image_dataset.id,
                         template_id=eval_image_ins_template.id,
@@ -251,9 +292,11 @@ def create_image_dataset(organization_id, user_id):
         raise
 
 
-def upload_demo_dataset(organization_id, user_id):
+@migration_database
+def upload_demo_dataset(organization_id, user_id, *, using=None):
     try:
         organization = Organization.objects.get(id=organization_id)
+        workspace = get_or_create_default_workspace(organization, user_id)
 
         dataset_id = str(uuid.uuid4())
         dataset_serializer = DatasetSerializer(
@@ -268,7 +311,7 @@ def upload_demo_dataset(organization_id, user_id):
 
         dataset_serializer.is_valid(raise_exception=True)
         if dataset_serializer.is_valid():
-            dataset = dataset_serializer.save()
+            dataset = dataset_serializer.save(workspace=workspace)
             # image_dataset = image_dataset_serializer.save()
 
             col_map = {}
@@ -326,6 +369,7 @@ def upload_demo_dataset(organization_id, user_id):
                         name=rp_config.get("name", column["name"]),
                         model=rp_config.get("model", ""),
                         organization=organization,
+                        workspace=workspace,
                         messages=rp_config.get("messages", []),
                         temperature=rp_config.get("temperature", 0.7),
                         frequency_penalty=rp_config.get("frequency_penalty", 0.0),
@@ -509,6 +553,7 @@ def upload_demo_dataset(organization_id, user_id):
                         user_eval_metric = UserEvalMetric.objects.create(
                             name=column.get("name"),
                             organization=organization,
+                            workspace=workspace,
                             dataset_id=dataset.id,
                             model=ModelChoices.TURING_LARGE.value,
                             template_id=eval_template.id,
@@ -693,6 +738,7 @@ def upload_demo_dataset(organization_id, user_id):
             optimization_eval_metric = UserEvalMetric.objects.create(
                 name="Factual Accuracy",
                 organization=organization,
+                workspace=workspace,
                 dataset_id=dataset.id,
                 model=ModelChoices.TURING_LARGE.value,
                 template_id=EvalTemplate.no_workspace_objects.get(eval_id=66).id,
@@ -873,7 +919,9 @@ Include a brief note explaining how your answer connects to the context.
             ]
             label_serializer = AnnotationsLabelsSerializer(data=label_data)
             if label_serializer.is_valid():
-                label_obj = label_serializer.save(organization=organization)
+                label_obj = label_serializer.save(
+                    organization=organization, workspace=workspace
+                )
                 annotation_data = {
                     "name": "Context Relevancy",
                     "static_fields": [
@@ -902,9 +950,18 @@ Include a brief note explaining how your answer connects to the context.
                 }
                 assigned_users = [user_id]
                 annot_serializer = AnnotationsSerializer(data=annotation_data)
-                if annot_serializer.is_valid():
-                    annotation = annot_serializer.save(organization=organization)
-
+                # The serializer resolves the dataset and the labels within the
+                # caller's organization. A worker seeds with no request, so the
+                # new organization is bound as the caller for this step only.
+                with workspace_context(None, organization=organization):
+                    annotation = (
+                        annot_serializer.save(
+                            organization=organization, workspace=workspace
+                        )
+                        if annot_serializer.is_valid()
+                        else None
+                    )
+                if annotation is not None:
                     annotation.assigned_users.set(assigned_users)
                     annotation.labels.set(annotation_data["labels"])
 
@@ -1029,7 +1086,7 @@ Include a brief note explaining how your answer connects to the context.
                             logger.exception(
                                 f"Error creating experiment cell for row {i}, column {old_exp_col_id}: {exp_cell_exc}"
                             )
-            create_image_dataset(organization_id, user_id)
+            create_image_dataset(organization_id, user_id, using=using)
         else:
             logger.error(
                 f"Failed to create dataset. Errors: {dataset_serializer.errors}"
@@ -1052,7 +1109,10 @@ Include a brief note explaining how your answer connects to the context.
         raise
 
 
-def create_demo_traces_and_spans(organization_id, user_id=None, *, publish=True):
+@migration_database
+def create_demo_traces_and_spans(
+    organization_id, user_id=None, *, using=None, publish=True
+):
     try:
         organization = Organization.objects.get(id=organization_id)
 
@@ -1108,32 +1168,7 @@ def create_demo_traces_and_spans(organization_id, user_id=None, *, publish=True)
         # ]
 
         # Get the default workspace for the organization
-        try:
-            default_workspace = Workspace.objects.get(
-                organization=organization, is_default=True, is_active=True
-            )
-        except Workspace.DoesNotExist:
-            # Create default workspace if it doesn't exist
-            try:
-                default_workspace = Workspace.objects.create(
-                    name="Default Workspace",
-                    organization=organization,
-                    is_default=True,
-                    is_active=True,
-                    created_by=user,
-                )
-                logger.info(
-                    f"Created default workspace for organization {organization_id}"
-                )
-            except IntegrityError:
-                # Race condition - another process created it
-                default_workspace = Workspace.objects.filter(
-                    organization=organization, is_default=True, is_active=True
-                ).first()
-                if default_workspace is None:
-                    raise RuntimeError(
-                        f"Failed to get/create default workspace for org {organization_id}"
-                    )
+        default_workspace = get_or_create_default_workspace(organization, user.id)
 
         for trace_type in ["experiment", "observe"]:
             project = Project.objects.create(
@@ -1201,7 +1236,12 @@ def create_demo_traces_and_spans(organization_id, user_id=None, *, publish=True)
             trace = Trace.objects.create(**trace_kwargs)
 
             create_observation_spans(
-                project, trace, organization, project_version, publish=publish
+                project,
+                trace,
+                organization,
+                project_version,
+                using=using,
+                publish=publish,
             )
 
     except Exception as e:
@@ -1228,8 +1268,9 @@ def get_input_output_span(otel_span: dict, decoder):
     return input_val, output_val
 
 
+@migration_database
 def create_observation_spans(
-    project, trace, organization, project_version, *, publish=True
+    project, trace, organization, project_version, *, using=None, publish=True
 ):
     decoder = AttributeDecoder()
     main_span_id = str(os.urandom(8).hex())
@@ -4366,6 +4407,7 @@ def create_observation_spans(
         DemoTracePublication.objects.get_or_create(trace=trace)
         transaction.on_commit(
             lambda trace_id=str(trace.id): _enqueue_demo_trace_publication(trace_id),
+            using=using,
             robust=True,
         )
 

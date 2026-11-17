@@ -287,6 +287,15 @@ export const getDefaultTaskValues = (data, observeId) => {
       spansLimit: Number(data?.spans_limit),
       samplingRate: Number(data?.sampling_rate),
       samplingPolicy: data?.sampling_policy ?? null,
+      webhook_url: data?.webhook_url ?? "",
+      webhook_condition: data?.webhook_condition
+        ? {
+            ...data.webhook_condition,
+            value: data.webhook_condition.operator === "eq" && typeof data.webhook_condition.value === "string"
+              ? JSON.stringify(data.webhook_condition.value)
+              : data.webhook_condition.value,
+          }
+        : null,
       evalsDetails: data?.evals_applied,
       runType: data?.run_type,
       rowType: data?.row_type ?? "spans",

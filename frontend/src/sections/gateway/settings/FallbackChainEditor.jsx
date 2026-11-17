@@ -1,31 +1,53 @@
 /* eslint-disable react/prop-types */
-import React from "react";
-import { Stack, TextField, IconButton, Button, MenuItem } from "@mui/material";
 import Section from "src/components/section";
-import Iconify from "src/components/iconify";
+import React, { useState } from "react";
+import { Stack, MenuItem, Typography } from "@mui/material";
+import {
+  AdminButton as Button,
+  AdminIconButton as IconButton,
+  AdminTextField as TextField,
+} from "../components/GatewayWriteControls";
+import { useConfirmRemoval } from "../hooks/useConfirmRemoval";
 import { useAvailableModels } from "../hooks/useAvailableModels";
+import { Glyph } from "./ui";
+import FallbackChainWarning from "../fallbacks/FallbackChainWarning";
+import {
+  MAX_MODEL_FALLBACKS,
+  FALLBACK_LIMIT_MESSAGE,
+} from "../fallbacks/fallbackLimits";
 
 const FallbackChainEditor = ({
   primaryModel,
   fallbacks,
   onChange,
-  onRemoveChain,
-  models: modelsProp,
+  onRemoveChain = undefined,
+  models: modelsProp = undefined,
+  usedPrimaries = [],
 }) => {
+  const [requestRemoval, confirmation] = useConfirmRemoval();
+  const [newFallback, setNewFallback] = useState("");
   const dynamicModels = useAvailableModels();
   const models = modelsProp || dynamicModels;
+  const primaryChoices = Array.from(new Set([primaryModel, ...models]));
   const handlePrimaryChange = (e) => {
-    onChange(e.target.value, fallbacks);
+    const next = e.target.value;
+    if (!next.trim() || (next !== primaryModel && usedPrimaries.includes(next)))
+      return;
+    onChange(next, fallbacks);
   };
 
   const handleFallbackChange = (index, value) => {
+    if (!value.trim()) return;
     const updated = [...fallbacks];
     updated[index] = value;
     onChange(primaryModel, updated);
   };
 
+  const atLimit = fallbacks.length >= MAX_MODEL_FALLBACKS;
   const handleAddFallback = () => {
-    onChange(primaryModel, [...fallbacks, ""]);
+    if (atLimit || !newFallback.trim() || !models.includes(newFallback)) return;
+    onChange(primaryModel, [...fallbacks, newFallback]);
+    setNewFallback("");
   };
 
   const handleRemoveFallback = (index) => {
@@ -35,6 +57,8 @@ const FallbackChainEditor = ({
 
   return (
     <Section variant="panel" sx={{ mb: 1 }}>
+      {confirmation}
+
       <Stack direction="row" alignItems="center" spacing={1} flexWrap="wrap">
         <TextField
           select
@@ -44,20 +68,23 @@ const FallbackChainEditor = ({
           sx={{ minWidth: 160 }}
           label="Primary"
         >
-          {models.map((m) => (
-            <MenuItem key={m} value={m}>
+          {primaryChoices.map((m) => (
+            <MenuItem
+              key={m}
+              value={m}
+              disabled={m !== primaryModel && usedPrimaries.includes(m)}
+            >
               {m}
+              {m !== primaryModel && usedPrimaries.includes(m)
+                ? " (already has a chain)"
+                : ""}
             </MenuItem>
           ))}
         </TextField>
 
         {fallbacks.map((fb, i) => (
           <React.Fragment key={i}>
-            <Iconify
-              icon="solar:arrow-right-linear"
-              width={20}
-              sx={{ color: "text.secondary" }}
-            />
+            <Glyph name="arrow" sx={{ color: "text.secondary" }} />
             <TextField
               select
               size="small"
@@ -66,36 +93,90 @@ const FallbackChainEditor = ({
               sx={{ minWidth: 160 }}
               label={`Fallback ${i + 1}`}
             >
-              {models.map((m) => (
+              {Array.from(new Set([fb, ...models])).map((m) => (
                 <MenuItem key={m} value={m}>
                   {m}
                 </MenuItem>
               ))}
             </TextField>
-            <IconButton size="small" onClick={() => handleRemoveFallback(i)}>
-              <Iconify icon="solar:close-linear" width={16} />
+            <IconButton
+              size="small"
+              aria-label={`Remove fallback ${i + 1}`}
+              onClick={() =>
+                requestRemoval(`Fallback ${fb} from ${primaryModel}`, () =>
+                  handleRemoveFallback(i),
+                )
+              }
+            >
+              <Glyph name="close" />
             </IconButton>
           </React.Fragment>
         ))}
 
+        <TextField
+          select
+          size="small"
+          label="New fallback"
+          inputProps={{ "aria-label": `New fallback for ${primaryModel}` }}
+          // The visible label stays "New fallback"; the select is named for
+          // its primary, so each chain's add-select says which chain it adds
+          // to (a label id would name it "New fallback" only).
+          SelectProps={{ labelId: undefined }}
+          value={models.includes(newFallback) ? newFallback : ""}
+          onChange={(e) => setNewFallback(e.target.value)}
+          disabled={atLimit || models.length === 0}
+          sx={{ minWidth: 160 }}
+        >
+          <MenuItem value="" disabled>
+            Choose a model
+          </MenuItem>
+          {models.map((model) => (
+            <MenuItem key={model} value={model}>
+              {model}
+            </MenuItem>
+          ))}
+        </TextField>
         <Button
           size="small"
           onClick={handleAddFallback}
-          startIcon={<Iconify icon="solar:add-linear" width={16} />}
+          disabled={
+            atLimit || !newFallback.trim() || !models.includes(newFallback)
+          }
+          startIcon={<Glyph name="add" />}
         >
-          Add
+          Add fallback
         </Button>
 
         {onRemoveChain && (
-          <IconButton size="small" onClick={onRemoveChain} sx={{ ml: "auto" }}>
-            <Iconify
-              icon="solar:trash-bin-trash-linear"
-              width={20}
-              color="error.main"
-            />
+          <IconButton
+            size="small"
+            aria-label={`Remove fallback chain ${primaryModel}`}
+            onClick={() =>
+              requestRemoval(`Fallback chain ${primaryModel}`, onRemoveChain)
+            }
+            sx={{ ml: "auto" }}
+          >
+            <Glyph name="delete" sx={{ color: "error.main" }} />
           </IconButton>
         )}
       </Stack>
+      {!atLimit && (
+        <Typography variant="caption" color="text.secondary">
+          Choose a model, then select Add fallback to append it. Only added
+          models are saved.
+        </Typography>
+      )}
+      <FallbackChainWarning
+        fallbacks={fallbacks}
+        onTrim={() =>
+          onChange(primaryModel, fallbacks.slice(0, MAX_MODEL_FALLBACKS))
+        }
+      />
+      {atLimit && (
+        <Typography variant="caption" color="text.secondary" role="status">
+          {FALLBACK_LIMIT_MESSAGE}
+        </Typography>
+      )}
     </Section>
   );
 };

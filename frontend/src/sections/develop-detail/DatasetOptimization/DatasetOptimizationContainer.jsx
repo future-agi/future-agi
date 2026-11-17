@@ -7,6 +7,7 @@ import DatasetOptimizationDrawer from "./DatasetOptimizationDrawer";
 import { useRunOptimizationStore } from "../states";
 import { useUrlState } from "src/routes/hooks/use-url-state";
 import PropTypes from "prop-types";
+import { optimizationCreateOffered } from "./createDoor";
 
 /**
  * Main container component for Dataset Optimization.
@@ -83,6 +84,8 @@ const DatasetOptimizationContainer = ({
   const handleCreateClick = useCallback(() => {
     setOpenRunOptimization(true);
   }, [setOpenRunOptimization]);
+  // W6 C0: no create door where nothing answers it (createDoor.js).
+  const canCreate = optimizationCreateOffered();
 
   // Clean up URL params when the optimization container unmounts (e.g., tab switch)
   useEffect(() => {
@@ -100,7 +103,7 @@ const DatasetOptimizationContainer = ({
         <DatasetOptimizationRunList
           datasetId={datasetId}
           columnId={columnId}
-          onCreateClick={handleCreateClick}
+          onCreateClick={canCreate ? handleCreateClick : undefined}
           onSelectOptimization={handleSelectOptimization}
         />
       )}
@@ -125,11 +128,13 @@ const DatasetOptimizationContainer = ({
       )}
 
       {/* Create/Rerun Drawer */}
-      <DatasetOptimizationDrawer
-        datasetId={datasetId}
-        columnOptions={columnOptions}
-        allColumns={columns}
-      />
+      {canCreate ? (
+        <DatasetOptimizationDrawer
+          datasetId={datasetId}
+          columnOptions={columnOptions}
+          allColumns={columns}
+        />
+      ) : null}
     </Box>
   );
 };

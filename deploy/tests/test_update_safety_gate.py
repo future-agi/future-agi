@@ -1,11 +1,14 @@
 """Daemon-free developer-gate contract and bad/safe fixtures (stdlib only)."""
+import ast
 import copy
 import importlib.util
 import json
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -34,6 +37,9 @@ class LayoutTests(unittest.TestCase):
         self.model = {"services": {}, "volumes": copy.deepcopy(self.contract["volumes"])}
         for name, row in self.contract["services"].items():
             self.model["services"][name] = {"profiles": row["profiles"], "restart": row["restart"], "volumes": copy.deepcopy(row["mounts"])}
+            if row.get("tmpfs"):
+                # Compose renders each tmpfs entry as "target[:options]".
+                self.model["services"][name]["tmpfs"] = [target + ":rw,nosuid,nodev" for target in row["tmpfs"]]
 
     def fails(self):
         with self.assertRaisesRegex(gate.GateError, "update .*automatic-layout|update docker-compose"):
@@ -112,6 +118,73 @@ class LayoutTests(unittest.TestCase):
 
     def test_external_volume_fails(self):
         self.model["volumes"]["app-data"] = {"external": True}
+        self.fails()
+
+    def test_code_executor_runs_by_default_with_reviewed_tmpfs_scratch(self):
+        self.assertEqual(self.contract["services"]["code-executor"],
+                         {"profiles": [], "restart": "unless-stopped", "mounts": [], "tmpfs": ["/sandbox/scripts", "/tmp"]})
+        self.assertEqual(self.contract["service_storage"]["code-executor"]["ephemeral"], True)
+        gate.check_layout(self.model, self.contract)
+
+    def test_tmpfs_options_do_not_change_the_reviewed_target(self):
+        for entries in (["/tmp", "/sandbox/scripts"], ["/tmp:size=64m", "/sandbox/scripts:rw,noexec,uid=65534"]):
+            with self.subTest(entries=entries):
+                self.model["services"]["code-executor"]["tmpfs"] = entries
+                gate.check_layout(self.model, self.contract)
+
+    def test_every_tmpfs_target_must_be_named(self):
+        service = self.model["services"]["code-executor"]
+        for entries in (["/tmp"], ["/tmp", "/sandbox/scripts", "/scratch"], ["/tmp", "/sandbox/other"],
+                        ["/tmp", "/tmp:size=1m", "/sandbox/scripts"]):
+            with self.subTest(entries=entries):
+                service["tmpfs"] = entries
+                self.fails()
+        del service["tmpfs"]
+        self.fails()
+        self.model["services"]["app"]["tmpfs"] = ["/scratch"]
+        self.fails()
+
+    def test_tmpfs_target_cannot_shadow_a_mount(self):
+        self.model["services"]["app"]["tmpfs"] = ["/data"]
+        self.contract["services"]["app"]["tmpfs"] = ["/data"]
+        self.fails()
+
+    def test_hub_services_and_volumes_are_named_as_not_covered(self):
+        unsupported = self.contract["automatic_unsupported"]
+        self.assertTrue({"hub-checker", "hub-runner"} <= set(unsupported["services"]))
+        hub_volumes = {"hub-runner-ca", "hub-runner-client", "hub-runner-data", "hub-runner-server"}
+        self.assertEqual(set(unsupported["volumes"]), hub_volumes)
+        self.assertFalse(hub_volumes & set(self.contract["backup_coverage"]))
+        for name in ("hub-checker", "hub-runner"):
+            self.assertEqual(self.contract["services"][name]["profiles"], ["hub"])
+        gate.check_layout(self.model, self.contract)
+
+    def test_not_covered_entries_need_a_reason_and_a_known_name(self):
+        for kind, name in (("services", "hub-runner"), ("volumes", "hub-runner-data")):
+            with self.subTest(kind=kind):
+                original = self.contract["automatic_unsupported"][kind][name]
+                self.contract["automatic_unsupported"][kind][name] = "  "
+                self.fails()
+                self.contract["automatic_unsupported"][kind][name] = original
+        self.contract["automatic_unsupported"]["services"]["writer"] = "Not defined by Compose"
+        self.fails()
+        del self.contract["automatic_unsupported"]["services"]["writer"]
+        del self.contract["automatic_unsupported"]
+        self.fails()
+
+    def test_a_not_covered_volume_takes_no_backup_and_no_covered_service_mounts_it(self):
+        self.contract["backup_coverage"]["hub-runner-data"] = copy.deepcopy(self.contract["backup_coverage"]["app-data"])
+        self.fails()
+        del self.contract["backup_coverage"]["hub-runner-data"]
+        mount = {"type": "volume", "source": "hub-runner-data", "target": "/runner", "read_only": False}
+        self.model["services"]["app"]["volumes"].append(copy.deepcopy(mount))
+        self.contract["services"]["app"]["mounts"].append(copy.deepcopy(mount))
+        self.contract["services"]["app"]["mounts"].sort(key=lambda m: m["target"])
+        self.contract["service_storage"]["app"]["volumes"].append("hub-runner-data")
+        self.fails()
+
+    def test_an_unnamed_volume_still_needs_coverage(self):
+        del self.contract["automatic_unsupported"]["volumes"]["hub-runner-data"]
         self.fails()
 
 
@@ -542,12 +615,192 @@ class ClickHouseRegistryTests(unittest.TestCase):
             self.assertFalse(gate.excluded_source(path, sources['exclusions'], content))
             self.assertEqual(gate.schema_statements(content), [])
 
+    def test_experiment_create_view_docstring_needs_no_registration_or_review(self):
+        # Exact isolated excerpt from _create_eval_metrics_inline's docstring.
+        source = ('def _create_eval_metrics_inline(resolved=None):\n'
+                  '    """Create UserEvalMetric records inline during experiment creation/update.\n'
+                  '\n'
+                  '        resolved: Optional ``[(template, pin)]`` from ``resolve_eval_entries``\n'
+                  '            (the create view resolves before writing); resolved here if absent.\n'
+                  '            The template must be one the organization can use, and the pin is\n'
+                  '            stored on ``pinned_version`` (the runners read it).\n'
+                  '    """\n'
+                  '    return resolved\n')
+        self.path = 'futureagi/model_hub/views/experiments.py'
+        self.sources['sources'] = []
+        self.before = source.encode()
+        self.write(source + '# Unrelated routing edit.\n')
+        self.assertEqual(gate.check_source_coverage(self.root, self.sources, [self.path]), [])
+        self.assertEqual(self.check(), [])
+
+    def test_python_comments_and_docstrings_are_ignored_in_historical_blobs(self):
+        from unittest.mock import patch
+        before = b'"""CREATE VIEW documentation."""\nvalue = 1 # DROP TABLE prose\n'
+        after = b'async def build():\n    """ALTER TABLE documentation."""\n    pass\n'
+        with patch.object(gate, 'base_bytes', side_effect=[before, after]):
+            self.assertEqual(gate.clickhouse_review_candidates(
+                self.root, [('M', self.path)], 'fixture-base', self.sources, head='fixture-head'), [])
+
+    def test_python_sql_keeps_registration_review_hashes_and_original_lines(self):
+        from unittest.mock import patch
+        source = ('"""CREATE VIEW documentation."""\n'
+                  '# DROP TABLE documentation\n'
+                  'query = """\n'
+                  'CREATE VIEW spans_view AS SELECT * FROM spans\n'
+                  '"""\n'
+                  'client.command("CREATE VIEW other_view AS SELECT 1") # ALTER TABLE prose\n')
+        self.write(source)
+        with patch.object(gate, 'base_bytes', return_value=self.before):
+            candidates = gate.clickhouse_review_candidates(
+                self.root, [('M', self.path)], 'fixture-base', self.sources)
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0]['before_statements'], [])
+        self.assertEqual(candidates[0]['after_statements'], [
+            {'keyword': 'CREATE VIEW', 'line': 4}, {'keyword': 'CREATE VIEW', 'line': 6}])
+        self.assertEqual(candidates[0]['before_sha256'], gate.content_sha(self.before))
+        self.assertEqual(candidates[0]['after_sha256'], gate.content_sha(source.encode()))
+        with self.assertRaisesRegex(gate.GateError, 'unregistered schema/mutation'):
+            gate.check_source_coverage(self.root, {**self.sources, 'sources': []}, [self.path])
+        self.assertEqual(gate.check_source_coverage(self.root, self.sources, [self.path]), [self.path])
+        with self.assertRaisesRegex(gate.GateError, 'human-reviewed declarations'):
+            self.check()
+        self.review()
+        self.assertEqual(self.check()[0]['tables'], ['clickhouse:spans'])
+        self.write(source + '# Comment-only edits still invalidate reviewed hashes.\n')
+        with self.assertRaisesRegex(gate.GateError, 'exact base-to-head change'):
+            self.check()
+
+    def test_python_old_sql_still_needs_review_after_docstring_replacement_or_deletion(self):
+        self.before = b'"""CREATE VIEW documentation."""\nquery = "CREATE VIEW spans_view AS SELECT 1"\n'
+        target = self.write('"""CREATE VIEW is only documentation now."""\n')
+        for status in ('M', 'D'):
+            if status == 'D':
+                target.unlink()
+            self.reviews['changes'] = []
+            with self.subTest(status=status):
+                with self.assertRaisesRegex(gate.GateError, 'human-reviewed declarations') as failure:
+                    self.check(status)
+                self.assertIn('"before_statements": [{"keyword": "CREATE VIEW", "line": 2}]',
+                              str(failure.exception))
+                self.assertIn('"after_statements": []', str(failure.exception))
+                self.review()
+                self.assertEqual(len(self.check(status)), 1)
+
+
+class PythonSchemaStatementsTests(unittest.TestCase):
+    def scan(self, source):
+        return gate.schema_statements(source.encode('utf-8'), path='product/schema.py')
+
+    def test_module_class_function_and_async_docstrings_are_ignored(self):
+        for source in ('"""CREATE VIEW documentation.\nALTER TABLE prose."""\n',
+                       'class Schema:\n    """CREATE VIEW documentation."""\n    pass\n',
+                       'def build():\n    """CREATE VIEW documentation."""\n    pass\n',
+                       'async def build():\n    """CREATE VIEW documentation."""\n    pass\n',
+                       'class Schema:\n    def build(self):\n        r"""CREATE VIEW documentation."""\n',
+                       '@decorator\nasync def build():\n    u"CREATE VIEW documentation."\n'):
+            with self.subTest(source=source):
+                self.assertEqual(self.scan(source), [])
+
+    def test_parenthesized_and_implicitly_concatenated_docstrings_are_ignored(self):
+        source = ('("CREATE VIEW documentation. " # DROP TABLE prose\n'
+                  ' "ALTER TABLE documentation.")\n'
+                  'def build():\n'
+                  '    ("CREATE VIEW documentation. "\n'
+                  '     "DELETE FROM documentation.")\n')
+        self.assertEqual(self.scan(source), [])
+
+    def test_strings_outside_true_docstring_positions_remain_discoverable(self):
+        variants = (
+            ('query = """CREATE VIEW spans_view AS SELECT 1"""\n', 1),
+            ('client.command("""CREATE VIEW spans_view AS SELECT 1""")\n', 1),
+            ('def build():\n    return """CREATE VIEW spans_view AS SELECT 1"""\n', 2),
+            ('"""Module documentation."""\n"""CREATE VIEW spans_view AS SELECT 1"""\n', 2),
+            ('def build():\n    pass\n    """CREATE VIEW spans_view AS SELECT 1"""\n', 3),
+            ('class Schema:\n    pass\n    """CREATE VIEW spans_view AS SELECT 1"""\n', 3),
+            ('if True:\n    """CREATE VIEW spans_view AS SELECT 1"""\n', 2),
+            ('f"CREATE VIEW spans_view AS SELECT 1"\n', 1),
+            ('b"CREATE VIEW spans_view AS SELECT 1"\n', 1),
+        )
+        for source, line in variants:
+            with self.subTest(source=source):
+                self.assertEqual(self.scan(source), [{'keyword': 'CREATE VIEW', 'line': line}])
+
+    def test_hash_and_other_comment_markers_inside_strings_are_preserved(self):
+        source = ('# CREATE VIEW documentation\n'
+                  'query = """# CREATE VIEW first_view AS SELECT 1\n'
+                  '// CREATE VIEW second_view AS SELECT 1\n'
+                  '-- CREATE VIEW third_view AS SELECT 1\n'
+                  '"""\n'
+                  'client.command("# CREATE VIEW fourth_view AS SELECT 1") # DROP TABLE prose\n')
+        self.assertEqual(self.scan(source), [
+            {'keyword': 'CREATE VIEW', 'line': line} for line in (2, 3, 4, 6)])
+
+    def test_inline_and_whole_line_python_comments_are_ignored(self):
+        source = ('# CREATE VIEW documentation\n'
+                  'label = "café" # DROP TABLE documentation\n'
+                  'client.command("CREATE VIEW spans_view AS SELECT 1") # ALTER TABLE prose\n')
+        self.assertEqual(self.scan(source), [{'keyword': 'CREATE VIEW', 'line': 3}])
+
+    def test_non_ascii_before_docstrings_and_comments_preserves_adjacent_sql(self):
+        source = ('class Café: "CREATE VIEW documentation"; query = "CREATE VIEW café AS SELECT 1"\n'
+                  'def café(): "ALTER TABLE documentation"; return "CREATE VIEW v AS SELECT 1" # DROP TABLE prose\n'
+                  'async def café_async(): "DELETE FROM documentation"; return "CREATE VIEW v AS SELECT 1"\n')
+        self.assertEqual(self.scan(source), [
+            {'keyword': 'CREATE VIEW', 'line': line} for line in (1, 2, 3)])
+
+    def test_unicode_line_separator_inside_string_does_not_shift_source_lines(self):
+        source = ('label = "before after" # DROP TABLE documentation\n'
+                  'class Café: "CREATE VIEW documentation"; query = "CREATE VIEW v AS SELECT 1"\n')
+        self.assertEqual(self.scan(source), [{'keyword': 'CREATE VIEW', 'line': 2}])
+
+    def test_python_newline_variants_preserve_diagnostic_lines(self):
+        source = ('"""CREATE VIEW documentation.\nSecond documentation line."""\n'
+                  '# DROP TABLE documentation\n'
+                  'query = "CREATE VIEW spans_view AS SELECT 1"\n')
+        for newline in ('\n', '\r\n', '\r'):
+            with self.subTest(newline=repr(newline)):
+                self.assertEqual(self.scan(source.replace('\n', newline)),
+                                 [{'keyword': 'CREATE VIEW', 'line': 4}])
+
+    def test_invalid_python_retains_discovery_without_partial_masking(self):
+        variants = (
+            ('def broken(:\n    """CREATE VIEW documentation."""\n', 2),
+            ('query = """\n# CREATE VIEW spans_view AS SELECT 1\n', 2),
+            ('"""CREATE VIEW documentation."""\nquery = (\n', 1),
+            ('CREATE VIEW spans_view AS SELECT 1\n', 1),
+        )
+        for source, line in variants:
+            with self.subTest(source=source):
+                self.assertEqual(self.scan(source), [{'keyword': 'CREATE VIEW', 'line': line}])
+
+    def test_legacy_and_non_python_calls_keep_existing_keyword_behavior(self):
+        source = b'"""CREATE VIEW spans_view AS SELECT 1"""\n# ALTER TABLE ignored\nvalue = 1 # DROP TABLE kept\n'
+        expected = [{'keyword': 'CREATE VIEW', 'line': 1}, {'keyword': 'DROP TABLE', 'line': 3}]
+        self.assertEqual(gate.schema_statements(source), expected)
+        for path in (None, 'schema.sql', 'schema.go', 'schema.sh', 'schema.bash', 'schema', 'schema.command'):
+            with self.subTest(path=path):
+                self.assertEqual(gate.schema_statements(source, path=path), expected)
+        self.assertEqual(gate.schema_statements(None), [])
+        self.assertEqual(gate.schema_statements(None, path='schema.py'), [])
+
+    def test_shell_shebang_is_not_treated_as_a_python_docstring(self):
+        source = b'#!/bin/sh\n"CREATE VIEW spans_view AS SELECT 1"\n'
+        for path in ('schema.py', 'schema.sh', 'schema'):
+            with self.subTest(path=path):
+                self.assertEqual(gate.schema_statements(source, path=path),
+                                 [{'keyword': 'CREATE VIEW', 'line': 2}])
+
+    def test_inspected_python_is_not_executed(self):
+        source = ('raise AssertionError("inspected source must not execute")\n'
+                  'client.command("CREATE VIEW spans_view AS SELECT 1")\n')
+        self.assertEqual(self.scan(source), [{'keyword': 'CREATE VIEW', 'line': 2}])
+
 
 class InspectedNonClickHousePinsTests(unittest.TestCase):
     """Exact inspected blobs, not filename or SQL-dialect exemptions.
 
     These pins cover the benchmark fixtures and the dev blobs in its CI merge.
-    Their before blobs were also inspected: three additions, and error_codes.py
+    Their before blobs were also inspected: two additions, and error_codes.py
     previously contained the same display text. A matching after pin skips the
     whole change, so a pin must never be added without that before-blob review.
     """
@@ -558,9 +811,7 @@ class InspectedNonClickHousePinsTests(unittest.TestCase):
         'fi-collector/pkg/ingestbench/integration_test.go':
             ('3cbb292f8fdadcd6fa35039c97953ebe204a40d1035a642c95405f1438058ae9', 'CREATE TABLE', 159),
         'futureagi/tfc/utils/error_codes.py':
-            ('a2a7302cd7c94823b460af4faf16a103e78e9fe0bf290ef5681cc35e85559b40', 'CREATE USER', 353),
-        'futureagi/tracer/services/instant_eval_answers.py':
-            ('2bc88346e3d762a1f6fb9fdf3d8de38f81e820bb049300c5f4b242faa9caf80c', 'DELETE FROM', 173),
+            ('8cc24ba5517e415a6f5ae416ad31378277c1948fc77ec9bc91c7eb575f297e9b', 'CREATE USER', 356),
     }
 
     def setUp(self):
@@ -651,6 +902,33 @@ class InspectedNonClickHousePinsTests(unittest.TestCase):
                 with self.assertRaisesRegex(gate.GateError, 'human-reviewed declarations'):
                     self.check(path, None, blob)
 
+    def test_gateway_non_test_go_file_gaining_or_losing_drop_table_still_needs_review(self):
+        # The gateway's Go test files are cleared one exact blob at a time; its
+        # production Go files never are.
+        path = 'agentcc-gateway/internal/server/unreviewed_store.go'
+        plain = b'package server\n'
+        changed = plain + self.mutation(path)
+        self.assertFalse(gate.excluded_source(path, self.sources['exclusions'], changed))
+        for before, after in ((plain, changed), (changed, plain)):
+            with self.subTest(gains=after is changed):
+                with self.assertRaisesRegex(gate.GateError, 'human-reviewed declarations'):
+                    self.check(path, before, after)
+
+    def test_pinned_gateway_test_blob_clears_a_base_blob_that_held_the_text(self):
+        # v1.58.0's toolguard_test.go held a DROP TABLE sample; the line's blob
+        # holds none and is pinned. The pin clears that change, and only for
+        # this exact blob.
+        path = 'agentcc-gateway/internal/guardrails/mcpsec/toolguard_test.go'
+        pinned = (ROOT / path).read_bytes()
+        self.assertEqual(gate.schema_statements(pinned), [])
+        before = pinned + self.mutation(path)
+        self.assertTrue(gate.excluded_source(path, self.sources['exclusions'], pinned))
+        self.assertEqual(self.check(path, before, pinned), [])
+        edited = pinned + b'\n// changed fixture\n'
+        self.assertFalse(gate.excluded_source(path, self.sources['exclusions'], edited))
+        with self.assertRaisesRegex(gate.GateError, 'human-reviewed declarations'):
+            self.check(path, before, edited)
+
 
 class StaticEntryPointTests(unittest.TestCase):
     def setUp(self):
@@ -665,10 +943,12 @@ class StaticEntryPointTests(unittest.TestCase):
             target = self.root / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(ROOT / relative, target)
+        self.write_edit_reviews()
         contract = gate.document(self.root / 'deploy/update/automatic-layout.json')
         self.model = self.root / 'model.json'
         self.model.write_text(json.dumps({'volumes': contract['volumes'], 'services': {
-            name: {'profiles': row['profiles'], 'restart': row['restart'], 'volumes': row['mounts']}
+            name: dict({'profiles': row['profiles'], 'restart': row['restart'], 'volumes': row['mounts']},
+                       **({'tmpfs': row['tmpfs']} if row.get('tmpfs') else {}))
             for name, row in contract['services'].items()}}))
 
     def run_changed_source(self, path, source, status='M', before=None, flags=('--static',)):
@@ -760,6 +1040,108 @@ class StaticEntryPointTests(unittest.TestCase):
                 self.assertEqual(code, 1, err)
                 self.assertIn('histories are immutable', err)
 
+    def write_edit_reviews(self, *rows):
+        target = self.root / 'deploy/update/migration-edit-reviews.json'
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps({'schema_version': 1, 'reviews': list(rows)}))
+
+    def edit_review(self, before, after, path=None, reason='Uses the migration connection; no schema operation changed.'):
+        return {'path': path or self.migration, 'before_sha256': [gate.content_sha(before.encode())],
+                'after_sha256': gate.content_sha(after.encode()), 'reason': reason}
+
+    @property
+    def aliased(self):
+        return self.migration_source.replace(
+            '    pass', '    apps.get_model("tracer", "Trace").objects.using(schema_editor.connection.alias).count()')
+
+    def test_reviewed_edit_of_an_existing_migration_passes_on_an_exact_match(self):
+        self.write_edit_reviews(self.edit_review(self.migration_source, self.aliased))
+        code, stdout, err = self.run_changed_source(self.migration, self.aliased, before=self.migration_source.encode())
+        self.assertEqual(code, 0, err)
+        # An applied history reviewed byte for byte, not a new migration.
+        self.assertEqual(json.loads(stdout)['new_migrations'], 0)
+
+    def test_reviewed_edit_accepts_any_listed_base_version(self):
+        other_base = self.migration_source.replace('dependencies = []', 'dependencies = [("tracer", "0001_initial")]')
+        review = self.edit_review(self.migration_source, self.aliased)
+        review['before_sha256'].append(gate.content_sha(other_base.encode()))
+        self.write_edit_reviews(review)
+        code, _, err = self.run_changed_source(self.migration, self.aliased, before=other_base.encode())
+        self.assertEqual(code, 0, err)
+
+    def test_reviewed_edit_refuses_any_other_head_bytes(self):
+        self.write_edit_reviews(self.edit_review(self.migration_source, self.aliased))
+        for after in (self.aliased + '\n', self.aliased.replace('count()', 'exists()')):
+            with self.subTest(after=after):
+                code, _, err = self.run_changed_source(self.migration, after, before=self.migration_source.encode())
+                self.assertEqual(code, 1, err)
+                self.assertIn('histories are immutable', err)
+
+    def test_reviewed_edit_refuses_an_unlisted_base_version(self):
+        self.write_edit_reviews(self.edit_review(self.migration_source, self.aliased))
+        other_base = self.migration_source.replace('dependencies = []', 'dependencies = [("tracer", "0001_initial")]')
+        code, _, err = self.run_changed_source(self.migration, self.aliased, before=other_base.encode())
+        self.assertEqual(code, 1, err)
+        self.assertIn('histories are immutable', err)
+
+    def test_review_of_another_path_does_not_cover_this_one(self):
+        self.write_edit_reviews(self.edit_review(self.migration_source, self.aliased,
+                                                 path='futureagi/tracer/migrations/other.py'))
+        code, _, err = self.run_changed_source(self.migration, self.aliased, before=self.migration_source.encode())
+        self.assertEqual(code, 1, err)
+        self.assertIn('histories are immutable', err)
+
+    def test_review_never_covers_a_deleted_migration(self):
+        self.write_edit_reviews(self.edit_review(self.migration_source, self.aliased))
+        code, _, err = self.run_changed_source(self.migration, None, 'D', self.migration_source.encode())
+        self.assertEqual(code, 1, err)
+        self.assertIn('histories are immutable', err)
+
+    def test_review_file_is_closed_and_every_entry_names_a_reason(self):
+        review = self.edit_review(self.migration_source, self.aliased)
+        invalid = (({**review, 'reason': '  '}, 'needs a reason'),
+                   ({**review, 'before_sha256': []}, 'before_sha256'),
+                   ({**review, 'before_sha256': ['not-a-sha']}, 'before_sha256'),
+                   ({**review, 'after_sha256': 'not-a-sha'}, 'after_sha256'),
+                   ({**review, 'path': 'futureagi/tracer/models.py'}, 'migration path'),
+                   ({**review, 'reviewer': 'someone'}, 'expected exactly'))
+        for row, message in invalid:
+            with self.subTest(message=message, row=row):
+                self.write_edit_reviews(row)
+                code, _, err = self.run_changed_source(self.migration, self.aliased, before=self.migration_source.encode())
+                self.assertEqual(code, 1, err)
+                self.assertIn(message, err)
+        self.write_edit_reviews(review, review)
+        code, _, err = self.run_changed_source(self.migration, self.aliased, before=self.migration_source.encode())
+        self.assertEqual(code, 1, err)
+        self.assertIn('migration path', err)
+
+    helper_source = 'def seed(apps, using):\n    return None\n'
+
+    def test_new_migration_helper_module_is_not_a_migration(self):
+        from unittest.mock import patch
+        for helper in ('futureagi/agentcc/migrations/_frozen_helpers.py',
+                       'futureagi/agentcc/migrations/~scratch.py'):
+            seen = []
+            def gate_paths(root, paths, mapping, registry):
+                seen.extend(paths)
+                return []
+            with self.subTest(helper=helper), patch.object(gate, 'django_gate', side_effect=gate_paths):
+                code, stdout, err = self.run_changed_source(helper, self.helper_source, 'A', None, ('--static', '--django'))
+                self.assertEqual(code, 0, err)
+                self.assertEqual(json.loads(stdout)['new_migrations'], 0)
+                self.assertNotIn(helper, seen)
+
+    def test_existing_migration_helper_stays_immutable(self):
+        helper = 'futureagi/agentcc/migrations/_frozen_helpers.py'
+        # An added UPDATE_SAFETY assignment is no exemption for a helper: it is imported, never loaded as a migration.
+        for status, source in (('M', self.helper_source.replace('None', '0')), ('D', None),
+                               ('M', self.migration_declaration() + self.helper_source)):
+            with self.subTest(status=status, source=source):
+                code, _, err = self.run_changed_source(helper, source, status, self.helper_source.encode())
+                self.assertEqual(code, 1, err)
+                self.assertIn('histories are immutable', err)
+
     def test_renaming_an_existing_migration_is_immutable(self):
         renamed = self.migration.replace('existing.py', 'renamed.py')
         target = self.root / renamed
@@ -842,6 +1224,17 @@ class StaticEntryPointTests(unittest.TestCase):
         code, stdout, err = self.run_changed_source('deploy/tests/fixture.py', 'client.command("DROP TABLE spans")')
         self.assertEqual(code, 0, err)
         self.assertEqual(json.loads(stdout)['large_volume_rehearsal_required'], [])
+
+
+class MigrationEditReviewFileTests(unittest.TestCase):
+    def test_every_reviewed_edit_matches_the_tree_and_names_a_reason(self):
+        reviews = gate.migration_edit_reviews(gate.document(ROOT / 'deploy/update/migration-edit-reviews.json'))
+        self.assertTrue(reviews)
+        for path, row in reviews.items():
+            with self.subTest(path=path):
+                # A later edit of a reviewed migration needs its own review.
+                self.assertEqual(gate.content_sha((ROOT / path).read_bytes()), row['after_sha256'])
+                self.assertNotIn(row['after_sha256'], row['before_sha256'])
 
 
 class WorkflowWiringTests(unittest.TestCase):
@@ -1004,6 +1397,147 @@ class DeclarationTests(unittest.TestCase):
     def test_migration_filename_not_limited_to_numbers(self):
         self.assertTrue(gate.migration_path("futureagi/new/migrations/feature_name.py"))
         self.assertFalse(gate.migration_path("futureagi/new/migrations/__init__.py"))
+
+
+class DeclaredDataMigrationTests(unittest.TestCase):
+    """The pending-migration table-scope probe's own rule on real data migrations.
+
+    The probe in scripts/rehearse_update_compatibility.py takes the tables of a
+    RunPython or RunSQL step only from one module-level UPDATE_SAFETY literal and
+    refuses a migration that has none. Its declared() runs here unchanged.
+    """
+
+    migrations = ROOT / "futureagi/model_hub/migrations"
+    reference = (
+        ROOT
+        / "futureagi/tracer/migrations"
+        / "0132_seed_alert_issue_occurrences_high_water.py"
+    )
+    tables = {
+        "0125_backfill_score_value_updated_at.py": [
+            "clickhouse:model_hub_score",
+            "postgres:model_hub_score",
+        ],
+        "0127_experimentrun_ordinal_datasetbaseline.py": [
+            "postgres:model_hub_dataset_version",
+            "postgres:model_hub_experimentrun",
+        ],
+        "0143_row_activity.py": [
+            "postgres:model_hub_cell",
+            "postgres:model_hub_column",
+            "postgres:model_hub_row",
+            "postgres:model_hub_rowactivity",
+        ],
+    }
+
+    @classmethod
+    def setUpClass(cls):
+        script = ast.parse(
+            (ROOT / "scripts/rehearse_update_compatibility.py").read_text()
+        )
+        probe = next(
+            ast.literal_eval(node.value)
+            for node in script.body
+            if isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == "PENDING_TABLE_SCOPE"
+                for target in node.targets
+            )
+        )
+        wanted = {"IDENT", "resolved", "declared"}
+        body = [
+            node
+            for node in ast.parse(probe).body
+            if (isinstance(node, ast.FunctionDef) and node.name in wanted)
+            or (
+                isinstance(node, ast.Assign)
+                and any(
+                    isinstance(target, ast.Name) and target.id in wanted
+                    for target in node.targets
+                )
+            )
+        ]
+        cls.env = {
+            "ast": ast,
+            "re": re,
+            "Path": Path,
+            # declared() reads the source file of the migration's class.
+            "inspect": SimpleNamespace(getsourcefile=lambda klass: klass.path),
+            "schemas": {"postgres": "public", "clickhouse": "default"},
+        }
+        exec(
+            compile(ast.Module(body=body, type_ignores=[]), "<scope-probe>", "exec"),
+            cls.env,
+        )
+
+    def declared(self, path):
+        migration = type("Migration", (), {"path": str(path)})()
+        return self.env["declared"](migration)
+
+    def test_probe_refuses_a_data_migration_without_a_declaration(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "0001_backfill.py"
+            path.write_text(
+                "from django.db import migrations\n\n\n"
+                "class Migration(migrations.Migration):\n"
+                "    operations = [migrations.RunPython(migrations.RunPython.noop)]\n"
+            )
+            with self.assertRaisesRegex(
+                AssertionError, "opaque_operation_table_scope_unavailable"
+            ):
+                self.declared(path)
+
+    def test_probe_reads_each_data_step_table_scope(self):
+        for name, tables in self.tables.items():
+            with self.subTest(migration=name):
+                try:
+                    scope = self.declared(self.migrations / name)
+                except AssertionError as exc:
+                    self.fail(f"{name}: {exc}")
+                schemas = self.env["schemas"]
+                expected = set()
+                for table in tables:
+                    engine, table_name = table.split(":", 1)
+                    expected.add((engine, schemas[engine] + "." + table_name))
+                self.assertEqual(scope, expected)
+
+    def test_declarations_keep_the_reviewed_shape(self):
+        reference = gate.declaration(self.reference.read_text(), self.reference)
+        for name, tables in self.tables.items():
+            with self.subTest(migration=name):
+                path = self.migrations / name
+                value = gate.declaration(path.read_text(), path)
+                self.assertIsNotNone(value, f"{name}: no UPDATE_SAFETY declaration")
+                self.assertEqual(set(value), set(reference))
+                self.assertEqual(value["schema_version"], 1)
+                self.assertEqual(value["risk_classes"], ["data_migration"])
+                self.assertEqual(value["tables"], tables)
+                self.assertTrue(30 <= len(value["mitigation"].strip()) <= 2000)
+                self.assertIs(value["large_volume_rehearsal"], True)
+
+
+class DeclaredConnectorCredentialMigrationTests(DeclaredDataMigrationTests):
+    """The same rule on ee/falcon_ai 0010, which rewrites connector credentials."""
+
+    migrations = ROOT / "futureagi/ee/falcon_ai/migrations"
+    tables = {
+        "0010_encrypt_connector_credentials.py": [
+            "postgres:falcon_ai_mcpconnector",
+        ],
+    }
+
+
+class DeclaredLedgerMigrationTests(DeclaredDataMigrationTests):
+    """The same rule on ee/usage 0032 and 0033, which seed the ledger buckets and backfill top-up PaymentIntents."""
+
+    migrations = ROOT / "futureagi/ee/usage/migrations"
+    tables = {
+        "0032_ledger_opening_buckets.py": [
+            "postgres:usage_managedcreditaccount",
+            "postgres:usage_managedcreditentry",
+        ],
+        "0033_backfill_topup_payment_intent.py": ["postgres:usage_managedcreditentry"],
+    }
 
 
 if __name__ == "__main__":

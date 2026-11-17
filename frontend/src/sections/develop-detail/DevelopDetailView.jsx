@@ -4,12 +4,13 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "src/routes/hooks";
 import DatasetsSelectRow from "./DatasetsSelectRow";
 import DevelopBar from "./DevelopBar/DevelopBar";
+import DatasetHeaderBar from "./DevelopBar/DatasetHeaderBar";
 import RunPrompt from "./RunPrompt/RunPrompt";
 import RunOptimization from "./Optimization/RunOptimization";
 import { ShowComponent } from "src/components/show";
 import OptimizeTab from "./OptimizationTab/OptimizeTab";
 import EditEvaluation from "./Evaluation/EditEvaluation";
-import ExperimentTab from "./ExperimentTab/ExperimentTab";
+import ExperimentTab from "./ExperimentTabClassic/ExperimentTabSwitch";
 import DevelopDataRightSection from "./DevelopBarRightSection/DevelopDataRightSection";
 import DevelopExperimentRightSection from "./DevelopBarRightSection/DevelopExperimentRightSection";
 import DatasetSummaryTab from "./DatasetSummaryTab/DatasetSummaryTab";
@@ -33,6 +34,8 @@ import RunCompareEvaluation from "./Evaluation/RunCompareEvaluation";
 import { useDeleteCompare } from "src/api/develop/dataset-compare";
 import DevelopBarLeftSection from "./DevelopBarRightSection/DevelopBarLeftSection";
 import { Helmet } from "react-helmet-async";
+import { useDatasetKind } from "src/sections/common/Datasets/datasetKind";
+import { datasetTitle } from "./datasetTitle";
 import RunExperimentWithProvider from "./Experiment/RunExperiment";
 import DevelopDataV2 from "./DataTab/DevelopDataV2";
 import DevelopDetailProvider from "./DevelopDetailProvider";
@@ -40,17 +43,27 @@ import { useDevelopDetailContext } from "./Context/DevelopDetailContext";
 import DevelopEvaluationDrawer from "./DataTab/DevelopEvaluationDrawer";
 import { useUrlState } from "src/routes/hooks/use-url-state";
 import ConditionalNodeV2 from "./AddColumn/ConditionalNode/ConditionalNodeV2";
-import ExperimentTabHeader from "./ExperimentTab/ExperimentTabHeader";
+import ExperimentTabHeader from "./ExperimentTabClassic/ExperimentTabHeaderSwitch";
+import PendingChangesGate from "./DataTab/Versions/PendingChangesGate";
+import DatasetNotFound, {
+  DatasetReadError,
+  useDatasetAvailability,
+} from "./DataTab/DatasetNotFound";
+import { isDatasetTabShown, isSurfaceShown } from "src/launch/launchSwitch";
+import ExperimentRunTracesPanel from "./ExperimentTab/ExperimentRunTracesPanel";
 
+// D1 tab order: Data · Experiments · Summary · Optimization.
 const TabOptions = [
   { label: "Data", value: "data" },
   { label: "Experiments", value: "experiments" },
-  { label: "Optimization", value: "optimization" },
   { label: "Summary", value: "summary" },
+  { label: "Optimization", value: "optimization" },
 ];
 
 const DevelopDetailView = () => {
   const { dataset } = useParams();
+  // Tab title: `Support agent - golden set · Data · Future AGI`.
+  const { dataset: datasetMeta } = useDatasetKind(dataset);
   const location = useLocation();
   const { pathname } = location;
 
@@ -58,7 +71,12 @@ const DevelopDetailView = () => {
   const urlParams = new URLSearchParams(location.search);
   const hideScenarioFeatures = urlParams.get("fromScenario") === "true";
 
-  const { data } = useDevelopDatasetList();
+  const { data, isLoading: listLoading } = useDevelopDatasetList();
+  // An id no dataset has: a not-found page, not a grid of ERR cells.
+  const availability = useDatasetAvailability(dataset, {
+    list: data,
+    listLoading,
+  });
 
   const currentDataset = data?.find((d) => d.datasetId === dataset)?.name;
 
@@ -114,10 +132,16 @@ const DevelopDetailView = () => {
   const [params] = useSearchParams({
     tab: "data",
   });
-  const [currentTab, setCurrentTab] = useUrlState(
+  const [urlTab, setCurrentTab] = useUrlState(
     "tab",
     params.tab || TabOptions[0]?.value,
   );
+  // L6 launch switch: a tab the launch hides (Experiments, Summary) renders
+  // the Data tab. Compare datasets keeps its own Summary (dev's compare).
+  const currentTab =
+    isDatasetTabShown(urlTab) || (isCompareDataset && urlTab === "summary")
+      ? urlTab
+      : "data";
 
   const SkeletonHeader = () => {
     return <Skeleton width="60%" />;
@@ -303,22 +327,25 @@ const DevelopDetailView = () => {
       );
     } else if (currentTab === "data" && !shouldHideDevelopBar) {
       return (
-        <Box
-          sx={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            flexWrap: "wrap",
-            gap: theme.spacing(2),
-            px: theme.spacing(1.5),
-            mt: theme.spacing(1),
-          }}
-        >
-          <DevelopBarLeftSection resizerRef={resizerRef} />
-          <DevelopDataRightSection
-            hideScenarioFeatures={hideScenarioFeatures}
-          />
-        </Box>
+        <>
+          <Box
+            sx={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              flexWrap: "nowrap",
+              gap: theme.spacing(1.5),
+              px: theme.spacing(1.5),
+              mt: theme.spacing(1),
+              minHeight: 40,
+            }}
+          >
+            <DevelopBarLeftSection resizerRef={resizerRef} />
+            <DevelopDataRightSection
+              hideScenarioFeatures={hideScenarioFeatures}
+            />
+          </Box>
+        </>
       );
     } else if (currentTab === "experiments") {
       return (
@@ -346,6 +373,23 @@ const DevelopDetailView = () => {
     }
   };
 
+  if (!isCompareDataset) {
+    if (availability.pending)
+      return (
+        <Box role="status" aria-label="Loading dataset" sx={{ p: 3 }}>
+          <Skeleton height={160} />
+        </Box>
+      );
+    if (availability.missing) return <DatasetNotFound />;
+    if (availability.error)
+      return (
+        <DatasetReadError
+          error={availability.error}
+          onRetry={() => availability.refetch()}
+        />
+      );
+  }
+
   return (
     <DevelopDetailProvider>
       <Box
@@ -357,26 +401,44 @@ const DevelopDetailView = () => {
         }}
       >
         <Helmet>
-          <title>Dataset - {currentTab || "data"}</title>
+          <title>
+            {datasetTitle(datasetMeta?.name, currentTab, isCompareDataset)}
+          </title>
         </Helmet>
-        <DatasetsSelectRow
-          setCurrentTab={setCurrentTab}
-          currentTab={currentTab}
-          setIsCompareDataset={setIsCompareDataset}
-          setBaseColumnInParent={setBaseColumn}
-          baseColumn={baseColumn}
-          setSelectedDatasetsValuesInParent={setSelectedDatasets}
-          setSelectedDatasetData={setSelectedDatasetData}
-          setIsChooseWinnerSelected={setIsChooseWinnerSelected}
-          isCompareDataset={isCompareDataset}
-          selectedDatasetData={selectedDatasetData}
-          compareFromOutside={compareFromOutside}
-          setCompareFromOutSide={setCompareFromOutside}
-          setIsCommonColumn={setIsCommonColumn}
-          setIsChooseWinnerButtonVisible={setIsChooseWinnerButtonVisible}
-          shouldHideDevelopBar={shouldHideDevelopBar}
-          hideScenarioFeatures={hideScenarioFeatures}
-        />
+        {/* R3 P1 (DL#31): the dataset header in normal mode; compare and
+            scenario modes keep DatasetsSelectRow. */}
+        {!isCompareDataset && !hideScenarioFeatures && !shouldHideDevelopBar ? (
+          <DatasetHeaderBar
+            currentTab={currentTab}
+            setCurrentTab={setCurrentTab}
+            setIsCompareDataset={setIsCompareDataset}
+            baseColumn={baseColumn}
+            setBaseColumn={setBaseColumn}
+            setIsCommonColumn={setIsCommonColumn}
+            setSelectedDatasets={setSelectedDatasets}
+            setSelectedDatasetData={setSelectedDatasetData}
+            setCompareFromOutside={setCompareFromOutside}
+          />
+        ) : (
+          <DatasetsSelectRow
+            setCurrentTab={setCurrentTab}
+            currentTab={currentTab}
+            setIsCompareDataset={setIsCompareDataset}
+            setBaseColumnInParent={setBaseColumn}
+            baseColumn={baseColumn}
+            setSelectedDatasetsValuesInParent={setSelectedDatasets}
+            setSelectedDatasetData={setSelectedDatasetData}
+            setIsChooseWinnerSelected={setIsChooseWinnerSelected}
+            isCompareDataset={isCompareDataset}
+            selectedDatasetData={selectedDatasetData}
+            compareFromOutside={compareFromOutside}
+            setCompareFromOutSide={setCompareFromOutside}
+            setIsCommonColumn={setIsCommonColumn}
+            setIsChooseWinnerButtonVisible={setIsChooseWinnerButtonVisible}
+            shouldHideDevelopBar={shouldHideDevelopBar}
+            hideScenarioFeatures={hideScenarioFeatures}
+          />
+        )}
 
         {!shouldHideDevelopBar && (
           <DevelopBar
@@ -421,6 +483,11 @@ const DevelopDetailView = () => {
         <ShowComponent condition={currentTab === "optimization"}>
           <OptimizeTab />
         </ShowComponent>
+        {isSurfaceShown("dataset.sdkRunTraces") &&
+        typeof params.run === "string" &&
+        params.run ? (
+          <ExperimentRunTracesPanel key={params.run} runId={params.run} />
+        ) : null}
         <ShowComponent condition={currentTab === "experiments"}>
           <>
             <ExperimentTabHeader
@@ -436,6 +503,11 @@ const DevelopDetailView = () => {
               setRowSelected={setRowSelected}
               ref={tabRef}
               setCurrentTab={setCurrentTab}
+              sdkRunShown={
+                isSurfaceShown("dataset.sdkRunTraces") &&
+                typeof params.run === "string" &&
+                Boolean(params.run)
+              }
             />
           </>
         </ShowComponent>
@@ -477,7 +549,11 @@ const DevelopDetailView = () => {
               baseColumn={baseColumn}
               compareRefreshGrid={compareRefreshGrid}
             />
-            <RunExperimentWithProvider tabRef={tabRef} />
+            {/* J09: classic prompt creation stays; new wizard children retain their gates. */}
+            {isSurfaceShown("exp.classic") ? (
+              <RunExperimentWithProvider tabRef={tabRef} />
+            ) : null}
+            <PendingChangesGate />
             <RunOptimization />
             <EditEvaluation />
           </>

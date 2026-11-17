@@ -2,6 +2,7 @@ import React from "react";
 import PropTypes from "prop-types";
 import { Grid, Box } from "@mui/material";
 import Conversation from "../SessionsView/Conversation";
+import { resolveSessionTurnFields } from "../SessionsView/sessionTurnFields";
 import TraceCardRightSection from "../SessionsView/TraceCardRightSection";
 
 const ShowTrace = ({
@@ -12,6 +13,7 @@ const ShowTrace = ({
   evaluationMetrics,
   activeSessionId,
   onTraceClick,
+  turnFields,
 }) => {
   return (
     <Grid
@@ -56,7 +58,19 @@ const ShowTrace = ({
           borderColor: "divider",
         }}
       >
-        <Conversation activeSessionId={activeSessionId} human={human} ai={ai} />
+        <Conversation
+          activeSessionId={activeSessionId}
+          human={human}
+          ai={ai}
+          fields={
+            turnFields === undefined
+              ? undefined
+              : resolveSessionTurnFields(
+                  { input: human, output: ai },
+                  turnFields,
+                )
+          }
+        />
       </Grid>
 
       {/* Right Section */}
@@ -73,6 +87,7 @@ const ShowTrace = ({
           <TraceCardRightSection
             traceId={traceId}
             systemMetrics={systemMetrics}
+            turnFields={turnFields}
             evaluationMetrics={evaluationMetrics}
           />
         </Box>
@@ -83,8 +98,9 @@ const ShowTrace = ({
 
 ShowTrace.propTypes = {
   traceId: PropTypes.string.isRequired,
-  human: PropTypes.string.isRequired,
-  ai: PropTypes.string.isRequired,
+  human: PropTypes.any,
+  ai: PropTypes.any,
+  turnFields: PropTypes.array,
   systemMetrics: PropTypes.object,
   evaluationMetrics: PropTypes.object,
   activeSessionId: PropTypes.string,

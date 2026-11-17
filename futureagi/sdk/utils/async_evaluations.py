@@ -9,9 +9,11 @@ Celery approach).
 
 import structlog
 
-logger = structlog.get_logger(__name__)
-from model_hub.models.evaluation import Evaluation
+from model_hub.models.evaluation import Evaluation, StatusChoices
+from sdk.utils.api_errors import EVALUATION_COULD_NOT_START
 from tfc.middleware.workspace_context import get_current_organization
+
+logger = structlog.get_logger(__name__)
 
 
 def _handle_async_eval(
@@ -26,6 +28,7 @@ def _handle_async_eval(
     is_batched,
     eval_config=None,
     error_localizer_enabled: bool = False,
+    start_workflow=None,
 ):
     try:
         if is_batched:
@@ -40,6 +43,7 @@ def _handle_async_eval(
                 trace_eval,
                 eval_config,
                 error_localizer_enabled,
+                start_workflow,
             )
         else:
             result = _handle_single_async_eval(
@@ -53,6 +57,7 @@ def _handle_async_eval(
                 trace_eval,
                 eval_config,
                 error_localizer_enabled,
+                start_workflow,
             )
             result = [result]
 
@@ -73,6 +78,7 @@ def _handle_batched_async_eval(
     trace_eval,
     eval_config,
     error_localizer_enabled: bool = False,
+    start_workflow=None,
 ):
     results = []
     if not inputs or not isinstance(list(inputs.values())[0], list):
@@ -94,6 +100,7 @@ def _handle_batched_async_eval(
             trace_eval,
             eval_config,
             error_localizer_enabled,
+            start_workflow,
         )
         results.append(result)
 
@@ -111,6 +118,7 @@ def _handle_single_async_eval(
     trace_eval,
     eval_config,
     error_localizer_enabled: bool = False,
+    start_workflow=None,
 ):
     if trace_eval:
         trace_data = {"span_id": span_id, "custom_eval_name": custom_eval_name}
@@ -130,23 +138,41 @@ def _handle_single_async_eval(
         error_localizer_enabled=error_localizer_enabled,
     )
 
-    # Start workflow immediately instead of waiting for polling
-    try:
-        from tfc.temporal.evaluations import start_evaluation_workflow
-
-        start_evaluation_workflow(evaluation_id=str(evaluation.id))
-        logger.info(f"Started evaluation workflow for {evaluation.id}")
-    except Exception as e:
-        logger.exception(
-            f"Failed to start evaluation workflow for {evaluation.id}: {e}"
-        )
-        # Don't fail the API call - evaluation will be picked up by fallback if needed
+    # A caller that creates evaluations inside its own transaction passes
+    # start_workflow and starts each workflow once that transaction is committed:
+    # the worker reads the evaluation in its own database connection.
+    if start_workflow is not None:
+        start_workflow(str(evaluation.id))
+    else:
+        start_evaluation(evaluation.id)
 
     return {
         "name": eval_template.name,
         "output_type": eval_template.config.get("output", "score"),
         "eval_id": str(evaluation.id),
     }
+
+
+def start_evaluation(evaluation_id):
+    """Start the evaluation's Temporal workflow. When the start fails, the
+    evaluation ends failed with the sentence a person reads instead of waiting
+    with no reason; the API call that created it does not fail."""
+    try:
+        from tfc.temporal.evaluations import start_evaluation_workflow
+
+        start_evaluation_workflow(evaluation_id=str(evaluation_id))
+        logger.info(f"Started evaluation workflow for {evaluation_id}")
+    except Exception as e:
+        logger.exception(
+            f"Failed to start evaluation workflow for {evaluation_id}: {e}"
+        )
+        Evaluation.no_workspace_objects.filter(
+            pk=evaluation_id, status=StatusChoices.PENDING
+        ).update(
+            status=StatusChoices.FAILED,
+            reason=EVALUATION_COULD_NOT_START,
+            error_message=EVALUATION_COULD_NOT_START,
+        )
 
 
 # =============================================================================

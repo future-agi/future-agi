@@ -234,6 +234,42 @@ def _active_filters(filters: list[dict[str, Any]]) -> list[dict[str, Any]]:
     ]
 
 
+# The Traffic chart in the trace view counts roots, not their child spans.
+# Reuse the private root leaf so filtered graphs keep any-sibling membership,
+# root-only contributions, and the existing one-per-trace/bucket reduction.
+# NOT IN [] compiles to 1 = 1: only the private parent/root constraint narrows
+# this population. Text is_not_null would incorrectly reject empty kinds.
+_TRACE_TRAFFIC_ROOT_FILTER = {
+    "column_id": "observation_type",
+    "filter_config": {
+        "col_type": "INTERNAL_ROOT_METRIC",
+        "filter_type": "text",
+        "filter_op": "not_in",
+        "filter_value": [],
+    },
+    "_eval_task_trace_root": True,
+}
+
+
+def _trace_traffic_filters(
+    filters: list[dict[str, Any]], *, metric_id: str, observe_type: str,
+) -> list[dict[str, Any]]:
+    if (
+        str(observe_type or "").strip().lower() != "trace"
+        or str(metric_id or "").strip().lower() != "traffic"
+    ):
+        return filters
+    from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
+        is_internal_trace_root_filter,
+    )
+
+    # Voice already supplies its narrower conversation-root population. The
+    # saved identity also already carries this leaf when a worker replays it.
+    if any(is_internal_trace_root_filter(item) for item in filters):
+        return filters
+    return [*filters, _TRACE_TRAFFIC_ROOT_FILTER]
+
+
 def _raw_trace_seed_candidates(
     filters: list[dict[str, Any]],
 ) -> list[_GraphRawTraceCandidate]:
@@ -489,6 +525,8 @@ def degraded_graph_response(
         error_code = "read_budget_exceeded"
     elif explicit_code == "sample_limit":
         error_code = "sample_limit"
+    elif explicit_code == "eval_lifecycle_unavailable":
+        error_code = "eval_lifecycle_unavailable"
     elif is_read_budget_error(exc):
         error_code = "read_budget_exceeded"
     else:
@@ -1555,6 +1593,13 @@ def _fetch_direct_raw_system_metric_graph(
     """
 
     started = monotonic()
+    filters = _trace_traffic_filters(
+        filters, metric_id=metric_id, observe_type=observe_type,
+    )
+    root_traffic_only = (
+        str(metric_id or "").strip().lower() == "traffic"
+        and _active_filters(filters) == [_TRACE_TRAFFIC_ROOT_FILTER]
+    )
     start_date, end_date = BaseQueryBuilder.parse_time_range(filters, strict=True)
     if start_date is None or end_date is None:
         raise ValueError("filtered graph requires a bounded time range")
@@ -1614,7 +1659,37 @@ def _fetch_direct_raw_system_metric_graph(
         columns: list[str] = []
         query_count = 0
     else:
-        query, params = builder.build()
+        if root_traffic_only:
+            # Hourly states have no parent dimension. With no membership
+            # filters, read just the root projection's scalar columns in the
+            # output window; do not scan children or materialize money/Maps.
+            # Other metric columns are unused by this Traffic-only response.
+            query = f"""
+            SELECT
+                {BaseQueryBuilder.time_bucket_expr(interval)}(start_time) AS time_bucket,
+                0 AS avg_latency,
+                0 AS total_tokens,
+                0 AS avg_cost,
+                uniqExact(trace_id) AS traffic_count,
+                0 AS prompt_tokens,
+                0 AS completion_tokens,
+                0 AS error_rate
+            FROM spans
+            PREWHERE project_id = toUUID(%(project_id)s)
+              AND start_time >= %(start_date)s
+              AND start_time < %(end_date)s
+            WHERE is_deleted = 0
+              AND (parent_span_id IS NULL OR parent_span_id = '')
+            GROUP BY time_bucket
+            ORDER BY time_bucket
+            """
+            params = {
+                "project_id": project_id,
+                "start_date": start_date,
+                "end_date": end_date,
+            }
+        else:
+            query, params = builder.build()
         elapsed_ms = int((monotonic() - started) * 1000)
         # On the single-node path, where this surface issued no probe at all
         # before, probe spend never shrinks the main statement below the wall
@@ -1730,6 +1805,9 @@ def _affordable_raw_graph_seed(
     scan_window = raw_graph_scan_window(start_date, end_date)
     if scan_window is None:
         return None
+    root_traffic_only = _active_filters(filters) == [_TRACE_TRAFFIC_ROOT_FILTER]
+    if root_traffic_only:
+        scan_window = (start_date, end_date)
     # Refuse a series the graph contract cannot carry before routing it: a
     # scheduled request would otherwise wait for a worker that raises the
     # identical refusal.
@@ -1759,6 +1837,7 @@ def _affordable_raw_graph_seed(
                 scan_start=scan_window[0],
                 scan_end=scan_window[1],
                 timeout_ms=analytics.remaining_read_ms(interactive_deadline_ms),
+                **({"root_only": True} if root_traffic_only else {}),
             )
         if raw_graph_scan_fits_wall(
             estimated_rows,
@@ -1935,6 +2014,9 @@ def fetch_background_raw_system_metric_graph(
     metadata reads, stated rather than hidden.
     """
 
+    filters = _trace_traffic_filters(
+        filters, metric_id=metric_id, observe_type=observe_type,
+    )
     bounded_analytics = _BackgroundWallGraphAnalytics(
         analytics,
         ReadDeadline.start(GRAPH_WALL_DEADLINE_MS),
@@ -1996,8 +2078,9 @@ def fetch_system_metric_graph_ch(
     path a chart with no filter equals the same chart with a filter that
     matches every span, and its Traffic bars come from the same statement.
     Cost also takes the bounded path: hourly states do not carry monetary
-    coverage or latest winners. Other metrics keep the rollup (Traffic counts
-    every physical version, a known over-count of re-versioned rows).
+    coverage or latest winners. Trace Traffic also uses the bounded path:
+    hourly states count spans, not roots. Span Traffic and other metrics keep
+    the rollup, with its known over-count of re-versioned rows.
     """
 
     project_id = _validated_project_id(project_id)
@@ -2005,6 +2088,12 @@ def fetch_system_metric_graph_ch(
     normalized_observe_type = str(observe_type or "trace").strip().lower()
     if normalized_observe_type not in {"trace", "span"}:
         raise ValueError("observe_type must be trace or span")
+    # Scope before route selection and cache identity construction. Old
+    # span-grained snapshots must not satisfy a root-grained Traffic request;
+    # existing workers understand this private leaf during rolling deploys.
+    filters = _trace_traffic_filters(
+        filters, metric_id=metric_id, observe_type=normalized_observe_type,
+    )
     # Hourly states contain neither current-row cost flags nor a latest winner.
     # Monetary series use the existing bounded/cached path, just like latency.
     if (
@@ -2866,7 +2955,7 @@ def fetch_eval_graph_ch(
             refresh=refresh,
             organization_id=organization_id,
             workspace_id=workspace_id,
-            namespace="observe-eval-graph",
+            namespace="observe-eval-graph-nk20-v1",
             fits_wall=raw_log_membership_fits_wall,
         )
     try:
@@ -2911,7 +3000,11 @@ def fetch_eval_chart_series_ch(
     organization_id: str | None = None,
     workspace_id: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Return a cached complete exact eval-chart series bundle."""
+    """Return exact quality series in a new cache namespace.
+
+    Old workers cannot service this namespace, so a rolling deploy cannot
+    refill it with zero-coerced payloads from before the exact series.
+    """
 
     project_id = _validated_project_id(project_id)
     filters = list(filters or [])
@@ -2923,7 +3016,7 @@ def fetch_eval_chart_series_ch(
         "eval_name": eval_name,
     }
     return _read_or_refresh_exact_graph(
-        namespace="observe-eval-chart-series",
+        namespace="observe-eval-chart-series-nk20-v1",
         identity=identity,
         refresh=bool(refresh),
         pending_payload=[

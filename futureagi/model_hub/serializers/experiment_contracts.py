@@ -42,6 +42,7 @@ class ExperimentTableRowsColumnConfigSerializer(serializers.Serializer):
     source_id = serializers.CharField(required=False, allow_blank=True)
     is_agent = serializers.BooleanField(required=False)
     is_final = serializers.BooleanField(required=False)
+    scored_before_edit = serializers.BooleanField(required=False)
 
 
 class ExperimentTableRowsMetadataSerializer(serializers.Serializer):
@@ -71,17 +72,13 @@ class ExperimentRowCellMetadataSerializer(serializers.Serializer):
     token_count = serializers.IntegerField(required=False, allow_null=True)
     cost = serializers.JSONField(required=False, allow_null=True)
     cell_metadata = ExperimentRowCellInnerMetadataSerializer(required=False)
-    reason = serializers.CharField(
-        required=False, allow_blank=True, allow_null=True
-    )
+    reason = serializers.CharField(required=False, allow_blank=True, allow_null=True)
 
 
 class ExperimentRowCellSerializer(serializers.Serializer):
     cell_value = serializers.JSONField(required=False, allow_null=True)
     cell_diff_value = serializers.JSONField(required=False, allow_null=True)
-    status = serializers.CharField(
-        required=False, allow_blank=True, allow_null=True
-    )
+    status = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     metadata = ExperimentRowCellMetadataSerializer(required=False)
     value_infos = serializers.JSONField(required=False, allow_null=True)
 
@@ -293,13 +290,23 @@ class ExperimentWorkflowResponseSerializer(serializers.Serializer):
 
 class ExperimentStopWorkflowsCancelledSerializer(serializers.Serializer):
     main = serializers.BooleanField()
-    reruns = serializers.BooleanField()
+    reruns = serializers.IntegerField(
+        help_text="Number of rerun workflows this stop cancelled."
+    )
 
 
 class ExperimentStopResultSerializer(serializers.Serializer):
     message = serializers.CharField()
     experiment_id = serializers.UUIDField()
     workflows_cancelled = ExperimentStopWorkflowsCancelledSerializer()
+    rows_in_flight = serializers.IntegerField(
+        required=False,
+        min_value=0,
+        help_text=(
+            "Rows whose call was sent before the stop and whose result is not "
+            "in yet. They finish, and their results are saved and counted."
+        ),
+    )
 
 
 class ExperimentStopResponseSerializer(serializers.Serializer):

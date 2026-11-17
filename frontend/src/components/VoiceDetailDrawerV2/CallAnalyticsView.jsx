@@ -1,3 +1,8 @@
+import {
+  formatExactMoney,
+  sumMoneyValues,
+  roundMoneyPercent,
+} from "src/sections/common/format/money";
 import React, { useMemo, useState } from "react";
 import PropTypes from "prop-types";
 import {
@@ -27,10 +32,7 @@ const fmtDuration = (seconds) => {
   return `${m}:${String(s).padStart(2, "0")}`;
 };
 
-const fmtMoney = (n) => {
-  if (n == null || !Number.isFinite(n)) return "$0.00";
-  return `$${n.toFixed(n < 0.1 ? 3 : 2)}`;
-};
+const fmtMoney = formatExactMoney;
 
 const fmtNumber = (n) => {
   if (n == null || !Number.isFinite(n)) return "—";
@@ -120,13 +122,12 @@ KpiCell.propTypes = {
   tone: PropTypes.oneOf(["default", "success", "warn", "danger"]),
 };
 
-const KpiStrip = ({ metrics, apiMetrics }) => {
+const KpiStrip = ({ metrics, apiMetrics, callDurationSeconds }) => {
   if (!metrics && !apiMetrics) return null;
   const m = metrics || {};
   const api = apiMetrics || {};
 
   const {
-    duration,
     wordCount,
     userTalkPct,
     assistantTalkPct,
@@ -134,6 +135,9 @@ const KpiStrip = ({ metrics, apiMetrics }) => {
     timeToFirstWord,
   } = m;
 
+  // The call's recorded length, as the drawer header shows it. The transcript
+  // only says where the last timed turn ends, and has nothing without timing.
+  const duration = callDurationSeconds ?? m.duration;
   const turnCount = api.turnCount ?? m.turnCount;
   const userInterrupts = api.userInterruptionCount;
   const aiInterrupts = api.aiInterruptionCount;
@@ -268,6 +272,7 @@ const KpiStrip = ({ metrics, apiMetrics }) => {
 KpiStrip.propTypes = {
   metrics: PropTypes.object,
   apiMetrics: PropTypes.object,
+  callDurationSeconds: PropTypes.number,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -454,14 +459,14 @@ const CostBreakdown = ({ costBreakdown }) => {
       const entry = costBreakdown[s.key];
       return {
         ...s,
-        cost: entry?.cost ?? 0,
+        cost: entry?.cost,
         promptTokens: entry?.promptTokens,
         completionTokens: entry?.completionTokens,
       };
-    }).filter((r) => r.cost > 0 || r.promptTokens || r.completionTokens);
+    });
   }, [costBreakdown]);
 
-  const total = rows.reduce((sum, r) => sum + r.cost, 0);
+  const total = sumMoneyValues(rows.map((r) => r.cost));
 
   if (rows.length === 0) return null;
 
@@ -491,7 +496,7 @@ const CostBreakdown = ({ costBreakdown }) => {
         }}
       >
         {rows.map((row, i) => {
-          const pct = total > 0 ? (row.cost / total) * 100 : 0;
+          const pct = roundMoneyPercent(row.cost, total);
           return (
             <Box
               key={row.key}
@@ -533,7 +538,7 @@ const CostBreakdown = ({ costBreakdown }) => {
                   <Box
                     sx={{
                       height: "100%",
-                      width: `${pct}%`,
+                      width: pct == null ? 0 : `${pct}%`,
                       bgcolor:
                         theme.palette.blue?.[500] || theme.palette.primary.main,
                       transition: "width 200ms",
@@ -581,7 +586,7 @@ const CostBreakdown = ({ costBreakdown }) => {
                     fontFamily: "monospace",
                   }}
                 >
-                  {pct.toFixed(0)}%
+                  {pct == null ? "—" : `${pct}%`}
                 </Typography>
               </Stack>
             </Box>
@@ -668,16 +673,18 @@ AiSummaryCard.propTypes = { summary: PropTypes.string };
 
 const CallAnalyticsView = ({
   transcript,
+  callStartedAt,
   latencies,
   analysisSummary,
   costBreakdown,
   isLiveKit,
   apiMetrics,
+  callDurationSeconds,
 }) => {
   const metrics = useMemo(() => {
-    const turns = enrichTurns(transcript);
+    const turns = enrichTurns(transcript, { callStartedAt });
     return computeCallMetrics(turns);
-  }, [transcript]);
+  }, [transcript, callStartedAt]);
 
   const hasApiMetrics =
     apiMetrics && Object.values(apiMetrics).some((v) => v != null);
@@ -710,7 +717,11 @@ const CallAnalyticsView = ({
     <Stack gap={2}>
       {/* KPI strip — always render if we have transcript or API metrics */}
       {(transcript?.length > 0 || hasApiMetrics) && (
-        <KpiStrip metrics={metrics} apiMetrics={apiMetrics} />
+        <KpiStrip
+          metrics={metrics}
+          apiMetrics={apiMetrics}
+          callDurationSeconds={callDurationSeconds}
+        />
       )}
 
       {/* Latency pipeline */}
@@ -746,6 +757,7 @@ const CallAnalyticsView = ({
 
 CallAnalyticsView.propTypes = {
   transcript: PropTypes.array,
+  callStartedAt: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
   latencies: PropTypes.shape({
     model: PropTypes.number,
     voice: PropTypes.number,
@@ -766,6 +778,8 @@ CallAnalyticsView.propTypes = {
     aiInterruptionCount: PropTypes.number,
     avgStopTimeAfterInterruptionMs: PropTypes.number,
   }),
+  // The call's recorded length in seconds (what the drawer header shows).
+  callDurationSeconds: PropTypes.number,
 };
 
 export default CallAnalyticsView;

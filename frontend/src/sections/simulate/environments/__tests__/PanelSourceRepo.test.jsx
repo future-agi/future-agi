@@ -1,7 +1,25 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "src/utils/test-utils";
+import {
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+  within,
+} from "src/utils/test-utils";
 import { INSTALLATION_ID_LABEL } from "../repoProviders";
+
+// Word for word the backend's PRIVATE_GITHUB_UNAVAILABLE_MESSAGE in
+// simulate/services/github_app_tenancy.py; literal, so a wording drift fails.
+const PRIVATE_GITHUB_UNAVAILABLE_MESSAGE =
+  "Private GitHub repositories are not available on Future AGI cloud. Use a public repository or upload the code.";
+
+// The backend's answer (harness health `private_github_available`). Undefined
+// is the loading, error or older-server state, which keeps today's form.
+const privateGithub = vi.hoisted(() => ({ available: undefined }));
+vi.mock("../hooks/usePrivateGithubAvailable", () => ({
+  default: () => privateGithub.available,
+}));
 
 // usePanelBuild navigates on a passing Build; spy it and keep the rest real.
 const navigate = vi.fn();
@@ -26,7 +44,9 @@ vi.mock("src/api/harness/harness", () => ({
   listHarnessJobs: vi.fn(),
 }));
 
-const { preflightHarnessJob, createHarnessJob } = await import("src/api/harness/harness");
+const { preflightHarnessJob, createHarnessJob } = await import(
+  "src/api/harness/harness"
+);
 const { default: PanelSourceRepo } = await import("../panels/PanelSourceRepo");
 const { useEnvironmentsStore, resetEnvironmentsStore } = await import(
   "../store/useEnvironmentsStore"
@@ -48,7 +68,14 @@ const FAIL = {
   credentials: {
     scanned_files: 12,
     detected_connectors: ["vapi"],
-    requirements: [{ environment_name: "VAPI_API_KEY", purpose: "target_provider", required: true, status: "missing" }],
+    requirements: [
+      {
+        environment_name: "VAPI_API_KEY",
+        purpose: "target_provider",
+        required: true,
+        status: "missing",
+      },
+    ],
     credential_choices: [],
     probe: [],
   },
@@ -66,29 +93,45 @@ const renderPanel = () => {
 };
 
 const typeRepo = (value) =>
-  fireEvent.change(screen.getByPlaceholderText("owner/repo"), { target: { value } });
+  fireEvent.change(screen.getByPlaceholderText("owner/repo"), {
+    target: { value },
+  });
 
 const runPreflight = () =>
   fireEvent.click(screen.getByRole("button", { name: "Run preflight" }));
 
-const buildBtn = () => screen.getByRole("button", { name: /Build environment/ });
+const buildBtn = () =>
+  screen.getByRole("button", { name: /Build environment/ });
+
+const chip = (name) => screen.getByRole("button", { name });
+
+const reason = () => screen.queryByText(PRIVATE_GITHUB_UNAVAILABLE_MESSAGE);
 
 beforeEach(() => {
   resetEnvironmentsStore();
   navigate.mockReset();
   preflightHarnessJob.mockReset();
+  privateGithub.available = undefined;
 });
 
 describe("PanelSourceRepo", () => {
-  it("renders three provider chips, two coming soon", () => {
+  it("renders three provider chips, two disabled with the line", () => {
     renderPanel();
     expect(screen.getByText("GitHub")).toBeInTheDocument();
-    expect(screen.getByText("GitLab")).toBeInTheDocument();
-    expect(screen.getByText("Bitbucket")).toBeInTheDocument();
-    expect(screen.getAllByLabelText("Coming soon")).toHaveLength(2);
+    for (const name of ["GitLab", "Bitbucket"]) {
+      const chip = screen.getByText(name).closest('[role="button"]');
+      expect(chip).toHaveAttribute("aria-disabled", "true");
+      expect(
+        within(chip).getByText("Not available in this release"),
+      ).toBeInTheDocument();
+    }
+    expect(
+      screen.getAllByText("Not available in this release"),
+    ).toHaveLength(2);
+    expect(screen.queryByText(/coming soon/i)).toBeNull();
   });
 
-  it("keeps GitHub selected when a coming-soon provider is clicked", async () => {
+  it("keeps GitHub selected when an unreleased provider is clicked", async () => {
     preflightHarnessJob.mockResolvedValue(PASS);
     renderPanel();
     fireEvent.click(screen.getByText("GitLab"));
@@ -106,9 +149,13 @@ describe("PanelSourceRepo", () => {
   it("gates both actions until a valid repository is entered", () => {
     renderPanel();
     // Run preflight is disabled with nothing typed; Build is disabled with a hint.
-    expect(screen.getByRole("button", { name: "Run preflight" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Run preflight" }),
+    ).toBeDisabled();
     expect(buildBtn()).toBeDisabled();
-    expect(screen.getByText("Run preflight to check your setup before building")).toBeInTheDocument();
+    expect(
+      screen.getByText("Run preflight to check your setup before building"),
+    ).toBeInTheDocument();
   });
 
   it("enables Run preflight on a valid repo but keeps Build disabled until it passes", () => {
@@ -124,7 +171,9 @@ describe("PanelSourceRepo", () => {
     expect(
       screen.getByText(/Enter a repository as owner\/repo or a GitHub URL/),
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Run preflight" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Run preflight" }),
+    ).toBeDisabled();
   });
 
   it("renders hosted credential readiness and enables Build", async () => {
@@ -144,7 +193,9 @@ describe("PanelSourceRepo", () => {
     typeRepo("owner/repo");
     runPreflight();
 
-    expect(await screen.findByText("Credentials need attention")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Credentials need attention"),
+    ).toBeInTheDocument();
     expect(screen.getByText("VAPI_API_KEY")).toBeInTheDocument();
     expect(screen.getByText("missing")).toBeInTheDocument();
     expect(buildBtn()).toBeDisabled();
@@ -168,7 +219,10 @@ describe("PanelSourceRepo", () => {
     );
     expect(createHarnessJob).toHaveBeenCalledWith(
       expect.objectContaining({
-        source: expect.objectContaining({ kind: "github", repository: "owner/repo" }),
+        source: expect.objectContaining({
+          kind: "github",
+          repository: "owner/repo",
+        }),
       }),
       "idem-test",
     );
@@ -179,6 +233,54 @@ describe("PanelSourceRepo", () => {
       value: "owner/repo",
       visibility: "public",
     });
+  });
+
+  it("tags the kept draft with the environment it built, for Start a new build", async () => {
+    preflightHarnessJob.mockResolvedValue(PASS);
+    createHarnessJob.mockResolvedValue({ job: { job_id: "job-123" } });
+    renderPanel();
+    typeRepo("owner/repo");
+    runPreflight();
+    await waitFor(() => expect(buildBtn()).toBeEnabled());
+
+    fireEvent.click(buildBtn());
+
+    await waitFor(() => expect(navigate).toHaveBeenCalled());
+    expect(useEnvironmentsStore.getState().draft).toMatchObject({
+      kind: "repo",
+      value: "owner/repo",
+      envId: "job-123",
+    });
+  });
+
+  it("starts from the kept draft's non-secret fields", () => {
+    useEnvironmentsStore.getState().setDraft({
+      kind: "repo",
+      provider: "github",
+      value: "acme/support-bot",
+      ref: "release",
+      entry: "src/agent.py",
+      visibility: "private",
+      installationId: "4242",
+      egress: "api.acme.test",
+      scenarioCount: 12,
+      envId: "job-failed",
+    });
+    renderPanel();
+
+    expect(screen.getByPlaceholderText("owner/repo")).toHaveValue(
+      "acme/support-bot",
+    );
+    expect(screen.getByDisplayValue("release")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("src/agent/index.ts")).toHaveValue(
+      "src/agent.py",
+    );
+    // Private stays picked, so the installation id shows with its value.
+    expect(screen.getByText(INSTALLATION_ID_LABEL)).toBeInTheDocument();
+    expect(screen.getByDisplayValue("4242")).toBeInTheDocument();
+    // A filled-in form still has to pass preflight before it can build.
+    expect(screen.getByRole("button", { name: "Run preflight" })).toBeEnabled();
+    expect(buildBtn()).toBeDisabled();
   });
 
   it("shows why a private repository was refused at Build", async () => {
@@ -199,7 +301,9 @@ describe("PanelSourceRepo", () => {
     fireEvent.click(buildBtn());
 
     await waitFor(() =>
-      expect(enqueueSnackbar).toHaveBeenCalledWith(message, { variant: "error" }),
+      expect(enqueueSnackbar).toHaveBeenCalledWith(message, {
+        variant: "error",
+      }),
     );
     expect(navigate).not.toHaveBeenCalled();
     expect(buildBtn()).toBeEnabled();
@@ -216,7 +320,9 @@ describe("PanelSourceRepo", () => {
     // trigger returns.
     typeRepo("owner/other-repo");
     expect(buildBtn()).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Run preflight" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Run preflight" }),
+    ).toBeInTheDocument();
     expect(screen.queryByText("Ready to build")).not.toBeInTheDocument();
   });
 
@@ -237,7 +343,9 @@ describe("PanelSourceRepo", () => {
     renderPanel();
     typeRepo("owner/repo");
     fireEvent.click(screen.getByText("Private"));
-    fireEvent.change(screen.getByPlaceholderText("12345678"), { target: { value: "42" } });
+    fireEvent.change(screen.getByPlaceholderText("12345678"), {
+      target: { value: "42" },
+    });
     runPreflight();
     await waitFor(() => expect(buildBtn()).toBeEnabled());
     fireEvent.click(buildBtn());
@@ -246,6 +354,66 @@ describe("PanelSourceRepo", () => {
     expect(useEnvironmentsStore.getState().draft).toMatchObject({
       visibility: "private",
       installationId: "42",
+    });
+  });
+
+  describe("when the deployment refuses private GitHub sources", () => {
+    beforeEach(() => {
+      privateGithub.available = false;
+    });
+
+    it("withdraws Private with the backend's reason and no installation-id field", () => {
+      renderPanel();
+      expect(reason()).toBeInTheDocument();
+      const privateChip = chip("Private");
+      expect(privateChip.closest("[aria-disabled='true']")).not.toBeNull();
+
+      fireEvent.click(privateChip);
+
+      expect(screen.queryByText(INSTALLATION_ID_LABEL)).toBeNull();
+      expect(screen.queryByPlaceholderText("12345678")).toBeNull();
+      expect(chip("Public")).toHaveAttribute("aria-pressed", "true");
+    });
+
+    it("switches a kept Private draft to Public and keeps the reason visible", async () => {
+      useEnvironmentsStore.getState().setDraft({
+        kind: "repo",
+        provider: "github",
+        value: "acme/support-bot",
+        visibility: "private",
+        installationId: "4242",
+      });
+      preflightHarnessJob.mockResolvedValue(PASS);
+      renderPanel();
+
+      expect(screen.queryByText(INSTALLATION_ID_LABEL)).toBeNull();
+      expect(screen.queryByDisplayValue("4242")).toBeNull();
+      expect(chip("Public")).toHaveAttribute("aria-pressed", "true");
+      expect(reason()).toBeInTheDocument();
+
+      // The preflight request names a public source with no installation.
+      runPreflight();
+      await waitFor(() => expect(preflightHarnessJob).toHaveBeenCalled());
+      const { source } = preflightHarnessJob.mock.calls[0][0];
+      expect(source.visibility).toBe("public");
+      expect("installation_id" in source).toBe(false);
+    });
+  });
+
+  describe("when private GitHub is available or the answer is unknown", () => {
+    it.each([
+      ["available", true],
+      ["unknown", undefined],
+    ])("keeps Private and its installation-id field (%s)", (_label, value) => {
+      privateGithub.available = value;
+      renderPanel();
+      expect(reason()).toBeNull();
+      const privateChip = chip("Private");
+      expect(privateChip.closest("[aria-disabled='true']")).toBeNull();
+
+      fireEvent.click(privateChip);
+
+      expect(screen.getByText(INSTALLATION_ID_LABEL)).toBeInTheDocument();
     });
   });
 });

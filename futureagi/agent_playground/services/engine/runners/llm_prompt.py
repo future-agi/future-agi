@@ -117,6 +117,12 @@ class LLMPromptRunner(BaseNodeRunner):
                         )
                     )
 
+        # Optional private native recorder callback. Capture the exact list
+        # this execution passes to RunPrompt, never reconstruct it from Cells.
+        record_prompt = execution_context.get("_native_prompt_evidence")
+        if record_prompt is not None:
+            record_prompt(rendered_messages)
+
         rp = RunPrompt(
             model=model,
             messages=rendered_messages,

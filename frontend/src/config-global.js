@@ -30,13 +30,43 @@ function resolveHelpLink() {
   return link.trim();
 }
 
+function readRuntimeString(name, buildValue) {
+  const runtime =
+    (typeof window !== "undefined" && window.__FUTURE_AGI_CONFIG__) || {};
+  const value = runtime[name];
+  // Container bootstrap emits empty strings for unset variables. Whitespace
+  // also falls through, but preserve the bytes of a nonblank licence string.
+  return typeof value === "string" && value.trim() ? value : buildValue;
+}
+
+function resolveDeployControlPlane() {
+  const raw = readRuntimeString(
+    "VITE_OMEGA_DEPLOY_CONTROL_PLANE",
+    import.meta.env.VITE_OMEGA_DEPLOY_CONTROL_PLANE,
+  );
+  if (typeof raw !== "string") return "";
+  const value = raw.trim();
+  // This is a URL, not a rollout flag. Invalid runtime values suppress the
+  // optional direct-deploy command instead of using a compiled endpoint.
+  if (!/^https?:\/\//i.test(value)) return "";
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:" ? value : "";
+  } catch {
+    return "";
+  }
+}
+
 export const HOST_API = resolveApiHost();
 export const HELP_LINK = resolveHelpLink();
+export const AG_GRID_LICENSE_KEY = readRuntimeString(
+  "VITE_AG_GRID_LICENSE_KEY",
+  import.meta.env.VITE_AG_GRID_LICENSE_KEY,
+);
+export const OMEGA_DEPLOY_CONTROL_PLANE = resolveDeployControlPlane();
 export const GENERATE_LINK = import.meta.env.VITE_GENERATE_LINK;
 export const ASSETS_API = import.meta.env.VITE_ASSETS_API;
 export const CURRENT_ENVIRONMENT = import.meta.env.VITE_ENVIRONMENT;
-export const REACT_QUERY_DEVTOOLS_ENABLED =
-  import.meta.env.VITE_REACT_QUERY_DEVTOOLS_ENABLED !== "false";
 export const GOOGLE_SITE_KEY = import.meta.env.VITE_GOOGLE_SITE_KEY;
 export const SENTRY_DSN = import.meta.env.VITE_SENTRY_DSN;
 export const MIXPANEL_HOST = import.meta.env.VITE_MIXPANEL_HOST;

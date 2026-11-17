@@ -256,6 +256,8 @@ export const projectSchema = z.object({
     .trim(),
   samplingRate: z.number().min(0).max(100).optional(),
   samplingContactAttribute: z.string().max(200).optional(),
+  piiRedactionEnabled: z.boolean().optional(),
+  piiRedactionMode: z.enum(["mask_pii", "hide_io"]).optional(),
 });
 
 export const getFilterExtraProperties = (val) => {

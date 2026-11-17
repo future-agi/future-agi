@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -487,5 +488,85 @@ func TestRegistryListToolsJSON_StatsIncluded(t *testing.T) {
 	}
 	if dtos[0].Stats.AvgLatencyMs < 90 || dtos[0].Stats.AvgLatencyMs > 110 {
 		t.Fatalf("expected avg_latency_ms ~100, got %f", dtos[0].Stats.AvgLatencyMs)
+	}
+}
+
+// TestCollisionRejectedNotOverwritten is bug 13: with the "_" separator,
+// server git_hub's tool search and server git's tool hub_search both encode
+// to git_hub_search. The second registration used to overwrite the first,
+// and removing it then deleted the first server's tool too.
+func TestCollisionRejectedNotOverwritten(t *testing.T) {
+	r := NewRegistry("_")
+	r.RegisterServer("git_hub", []Tool{{Name: "search", InputSchema: json.RawMessage(`{}`)}})
+	r.RegisterServer("git", []Tool{{Name: "hub_search", InputSchema: json.RawMessage(`{}`)}})
+
+	rt, ok := r.ResolveTool("git_hub_search")
+	if !ok || rt.Server != "git_hub" || rt.OrigName != "search" {
+		t.Fatalf("git_hub_search resolves to %+v, want the incumbent git_hub/search", rt)
+	}
+	if got := len(r.ServerTools("git")); got != 0 {
+		t.Fatalf("the colliding newcomer holds %d legacy names, want 0", got)
+	}
+
+	// A case-folded twin collides too.
+	r.RegisterServer("Git", []Tool{{Name: "hub_Search", InputSchema: json.RawMessage(`{}`)}})
+	if rt, _ := r.ResolveTool("git_hub_search"); rt == nil || rt.Server != "git_hub" {
+		t.Fatalf("a case-folded twin replaced the incumbent: %+v", rt)
+	}
+	if _, ok := r.ResolveTool("Git_hub_Search"); ok {
+		t.Fatal("a case-folded twin was exposed beside the incumbent")
+	}
+	// Each refused name is a load error for status, and the newcomer's tool
+	// is still there for a virtual server, which names it apart.
+	for _, srv := range []string{"git", "Git"} {
+		errs := r.ServerErrors(srv)
+		if len(errs) != 1 || !strings.Contains(errs[0], ErrToolNameCollision) || !strings.Contains(errs[0], `server "git_hub"`) {
+			t.Fatalf("%s load errors = %v", srv, errs)
+		}
+	}
+	if got := r.MemberTools("git"); len(got) != 1 || got[0].OrigName != "hub_search" {
+		t.Fatalf("git's member tools = %v", got)
+	}
+	if r.ToolCount() != 1 || len(r.ListMCPTools()) != 1 {
+		t.Fatalf("legacy view holds %d tools", r.ToolCount())
+	}
+	// A refresh of the incumbent keeps its name.
+	r.RegisterServer("git_hub", []Tool{{Name: "search", InputSchema: json.RawMessage(`{}`)}, {Name: "x", InputSchema: json.RawMessage(`{}`)}})
+	if rt, _ := r.ResolveTool("git_hub_search"); rt == nil || rt.Server != "git_hub" {
+		t.Fatalf("after the incumbent's refresh: %+v", rt)
+	}
+	// Prompts share none of the tools' names.
+	r.RegisterPrompts("git", []Prompt{{Name: "hub_search"}})
+	if _, ok := r.ResolvePrompt("git_hub_search"); !ok {
+		t.Fatal("a prompt collided with a tool name")
+	}
+}
+
+func TestRemoveServerRemovesOnlyOwn(t *testing.T) {
+	r := NewRegistry("_")
+	r.RegisterServer("git_hub", []Tool{{Name: "search", InputSchema: json.RawMessage(`{}`)}})
+	r.RegisterServer("git", []Tool{{Name: "hub_search", InputSchema: json.RawMessage(`{}`)}, {Name: "log", InputSchema: json.RawMessage(`{}`)}})
+	r.RegisterResources("git_hub", []Resource{{URI: "file:///shared"}})
+	r.RegisterResources("git", []Resource{{URI: "file:///shared"}, {URI: "file:///git"}})
+	r.RegisterPrompts("git_hub", []Prompt{{Name: "p"}})
+	r.RegisterPrompts("git", []Prompt{{Name: "hub_p"}})
+
+	r.UnregisterServer("git")
+	if rt, ok := r.ResolveTool("git_hub_search"); !ok || rt.Server != "git_hub" {
+		t.Fatalf("removing git took git_hub's tool: %+v", rt)
+	}
+	if res, ok := r.ResolveResource("file:///shared"); !ok || res.Server != "git_hub" {
+		t.Fatalf("removing git took git_hub's resource: %+v", res)
+	}
+	if _, ok := r.ResolvePrompt("git_hub_p"); !ok {
+		t.Fatal("removing git took git_hub's prompt")
+	}
+	if r.ToolCount() != 1 || r.ResourceCount() != 1 || r.PromptCount() != 1 || len(r.ServerIDs()) != 1 {
+		t.Fatalf("after removing git: %d tools, %d resources, %d prompts, servers %v", r.ToolCount(), r.ResourceCount(), r.PromptCount(), r.ServerIDs())
+	}
+	// The name git held is free again for the next server.
+	r.RegisterServer("git", []Tool{{Name: "log", InputSchema: json.RawMessage(`{}`)}})
+	if _, ok := r.ResolveTool("git_log"); !ok {
+		t.Fatal("git_log not free after git was removed")
 	}
 }

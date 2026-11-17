@@ -1,4 +1,6 @@
+import { formatExactMoney } from "src/sections/common/format/money";
 import EmptyState from "src/components/empty-state";
+import ErrorState from "src/components/error-state";
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { SegmentedTabs } from "src/components/tabs/tabs";
 import ApexCharts from "apexcharts";
@@ -10,6 +12,7 @@ import {
   Skeleton,
   Stack,
   Typography,
+  Tooltip,
   alpha,
   useTheme,
   Tab,
@@ -29,10 +32,17 @@ import EvalIOPanel from "./EvalIOPanel";
 import VoiceEvalPanel from "./VoiceEvalPanel";
 import { buildGraphDiff, comparisonGraphForMode } from "./buildGraphDiff";
 import { useErrorFeedStore } from "../store";
-import { TOKEN_PRICE_USD, TRACE_STATUS } from "../constants";
+import { TRACE_STATUS } from "../constants";
 
-const estimateTraceCost = (inputTokens = 0, outputTokens = 0) =>
-  inputTokens * TOKEN_PRICE_USD.INPUT + outputTokens * TOKEN_PRICE_USD.OUTPUT;
+// The API sends null for what was not recorded (a trace whose spans aged out);
+// a formatted zero or the epoch would read as a real measurement.
+const DASH = "—";
+const formatTraceTime = (timestamp) =>
+  timestamp ? format(new Date(timestamp), "MMM d, HH:mm") : DASH;
+const formatTraceTokens = ({ input_tokens: input, output_tokens: output }) =>
+  input == null && output == null
+    ? DASH
+    : `${((input ?? 0) + (output ?? 0)).toLocaleString()} tok`;
 
 // ── Shared section card (collapsible) ────────────────────────────────────────
 function SectionCard({
@@ -320,15 +330,12 @@ function EventsUsersChart({
     x: new Date(d.date).getTime(),
     y: d.errors,
   }));
+  // Users are distinct per day; a missing day stays a gap, never a guess.
   const usersSeries = eventsData.map((d) => ({
     x: new Date(d.date).getTime(),
-    y: d.users ?? Math.round(d.errors * 0.37),
+    y: d.users ?? null,
   }));
   const totalEvents = eventsData.reduce((s, d) => s + d.errors, 0);
-  const totalUsers = eventsData.reduce(
-    (s, d) => s + (d.users ?? Math.round(d.errors * 0.37)),
-    0,
-  );
 
   const axisLabelColor = theme.palette.text.tertiary;
   const gridColor = theme.palette.divider;
@@ -474,7 +481,9 @@ function EventsUsersChart({
       >
         {[
           { label: "Events", total: totalEvents, color: evtColor },
-          { label: "Users", total: totalUsers, color: usrColor },
+          // Summing per-day distinct users double-counts returning users, so
+          // the Users series is a legend only; the sidebar has the issue total.
+          { label: "Users", total: null, color: usrColor },
         ].map((item) => (
           <Stack
             key={item.label}
@@ -500,18 +509,19 @@ function EventsUsersChart({
                 {item.label}
               </Typography>
             </Stack>
-            {loading ? (
-              <Skeleton width={28} height={14} sx={{ borderRadius: "4px" }} />
-            ) : (
-              <Typography
-                fontSize="12px"
-                fontWeight={600}
-                color="text.primary"
-                sx={{ fontFeatureSettings: "'tnum'", lineHeight: 1 }}
-              >
-                {item.total.toLocaleString()}
-              </Typography>
-            )}
+            {item.total != null &&
+              (loading ? (
+                <Skeleton width={28} height={14} sx={{ borderRadius: "4px" }} />
+              ) : (
+                <Typography
+                  fontSize="12px"
+                  fontWeight={600}
+                  color="text.primary"
+                  sx={{ fontFeatureSettings: "'tnum'", lineHeight: 1 }}
+                >
+                  {item.total.toLocaleString()}
+                </Typography>
+              ))}
           </Stack>
         ))}
       </Stack>
@@ -590,16 +600,13 @@ function TraceList({ traces, selectedIndex, onSelect, loading = false }) {
     <Stack gap={0}>
       {traces.map((t, i) => {
         const isSelected = i === selectedIndex;
-        const time = new Date(t.timestamp).toLocaleTimeString([], {
-          hour: "2-digit",
-          minute: "2-digit",
-        });
-        const tokens =
-          (t.summary.input_tokens ?? 0) + (t.summary.output_tokens ?? 0);
-        const cost = estimateTraceCost(
-          t.summary.input_tokens ?? 0,
-          t.summary.output_tokens ?? 0,
-        ).toFixed(4);
+        const time = formatTraceTime(t.timestamp);
+        const latency =
+          t.summary.latency_ms == null
+            ? DASH
+            : `${t.summary.latency_ms.toLocaleString()}ms`;
+        const tokens = formatTraceTokens(t.summary);
+        const cost = formatExactMoney(t.summary.cost);
 
         return (
           <Box
@@ -653,7 +660,7 @@ function TraceList({ traces, selectedIndex, onSelect, loading = false }) {
                   sx={{ color: "text.disabled" }}
                 />
                 <Typography fontSize="12px" color="text.disabled">
-                  {t.summary.latency_ms}ms
+                  {latency}
                 </Typography>
               </Stack>
               <Stack direction="row" alignItems="center" gap={0.3}>
@@ -663,7 +670,7 @@ function TraceList({ traces, selectedIndex, onSelect, loading = false }) {
                   sx={{ color: "text.disabled" }}
                 />
                 <Typography fontSize="12px" color="text.disabled">
-                  ${cost}
+                  {cost}
                 </Typography>
               </Stack>
               <Stack direction="row" alignItems="center" gap={0.3}>
@@ -673,7 +680,7 @@ function TraceList({ traces, selectedIndex, onSelect, loading = false }) {
                   sx={{ color: "text.disabled" }}
                 />
                 <Typography fontSize="12px" color="text.disabled">
-                  {tokens.toLocaleString()} tok
+                  {tokens}
                 </Typography>
               </Stack>
             </Stack>
@@ -791,9 +798,36 @@ PatternSummary.propTypes = {
   }),
 };
 
+// ── Span load error with a Retry action (ErrorState's retry button) ──────────
+function SpanLoadError({ message, onRetry, sx }) {
+  return (
+    <Stack alignItems="center" justifyContent="center" gap={1} sx={sx}>
+      <Typography fontSize="12px" color="error.main" textAlign="center">
+        {message}
+      </Typography>
+      {onRetry && (
+        <Button
+          variant="outlined"
+          color="inherit"
+          size="small"
+          startIcon={<Iconify icon="solar:refresh-linear" width={16} />}
+          onClick={() => onRetry()}
+        >
+          Retry
+        </Button>
+      )}
+    </Stack>
+  );
+}
+SpanLoadError.propTypes = {
+  message: PropTypes.string.isRequired,
+  onRetry: PropTypes.func,
+  sx: PropTypes.object,
+};
+
 // ── Agent flow from real span tree ────────────────────────────────────────────
 export function TraceGraphView({ traceId, mode, projectId }) {
-  const { data, isLoading, isError } = useIssueTraceDetail(traceId, {
+  const { data, isLoading, isError, refetch } = useIssueTraceDetail(traceId, {
     projectId,
   });
   const spanTree = data?.observation_spans || data?.observationSpans;
@@ -813,13 +847,11 @@ export function TraceGraphView({ traceId, mode, projectId }) {
 
   if (isError) {
     return (
-      <Typography
-        fontSize="12px"
-        color="error.main"
-        sx={{ py: 2, textAlign: "center" }}
-      >
-        Could not load trace spans. Please retry.
-      </Typography>
+      <SpanLoadError
+        message="Could not load trace spans. Please retry."
+        onRetry={refetch}
+        sx={{ py: 2 }}
+      />
     );
   }
 
@@ -1086,13 +1118,12 @@ function TraceGraphCompare({
       }}
     >
       <Typography fontSize="12px" color="text.disabled">
-        No matching working trace yet for this cluster — backend KNN matching
-        will populate it shortly.
+        No similar passing trace found for this issue yet.
       </Typography>
     </Box>
   );
 
-  const renderSide = (graph, loading, failed, label) => {
+  const renderSide = (graph, loading, failed, label, onRetry) => {
     if (loading) {
       return (
         <Box sx={{ height: 360 }}>
@@ -1102,15 +1133,11 @@ function TraceGraphCompare({
     }
     if (failed) {
       return (
-        <Stack
-          alignItems="center"
-          justifyContent="center"
+        <SpanLoadError
+          message={`Could not load ${label} spans. Please retry.`}
+          onRetry={onRetry}
           sx={{ height: 360, p: 2 }}
-        >
-          <Typography fontSize="12px" color="error.main" textAlign="center">
-            Could not load {label} spans. Please retry.
-          </Typography>
-        </Stack>
+        />
       );
     }
     if (!graph) {
@@ -1173,6 +1200,7 @@ function TraceGraphCompare({
             failLoading,
             failQ.isError,
             "failing trace",
+            failQ.refetch,
           )}
         </CompareColumn>
         <CompareColumn
@@ -1185,6 +1213,7 @@ function TraceGraphCompare({
             passLoading,
             passQ.isError,
             "working trace",
+            passQ.refetch,
           )}
         </CompareColumn>
       </Box>
@@ -1689,15 +1718,16 @@ function TraceEvidence({
   const [activeReel, setActiveReel] = useState("fail");
   const [splitView, setSplitView] = useState(false);
 
-  const supportsSplit =
-    viewMode === "breadcrumb" ||
-    viewMode === "agentgraph" ||
-    viewMode === "agentpath";
   const isGraphMode = viewMode === "agentgraph" || viewMode === "agentpath";
 
   const failReel = evidence.fail_reel || [];
   const passReel = evidence.pass_reel || [];
   const hasPassing = passReel.length > 0;
+
+  // The split needs a working side for the current view: the matched working
+  // trace for the graph views, the passing reel for breadcrumbs.
+  const canSplit = isGraphMode ? !!workingTraceId : hasPassing;
+  const showSplit = splitView && canSplit;
 
   const steps = activeReel === "fail" ? failReel : passReel;
   const isFailActive = activeReel === "fail";
@@ -1706,10 +1736,8 @@ function TraceEvidence({
   const summary = trace?.summary ?? {};
   const tokens =
     (summary.input_tokens ?? 0) + (summary.output_tokens ?? 0) || null;
-  const cost =
-    summary.cost ??
-    (estimateTraceCost(summary.input_tokens ?? 0, summary.output_tokens ?? 0) ||
-      null);
+  // Recorded cost only; an unknown cost is left out, never estimated.
+  const cost = summary.cost ?? null;
   const shortId = traceId ? traceId.slice(0, 8) : null;
   // Fail explicitly — an undefined/loading status must not read as "Failing".
   const isTraceFail = trace?.status === TRACE_STATUS.FAIL;
@@ -1723,7 +1751,7 @@ function TraceEvidence({
     tokens != null && { icon: "solar:notes-linear", text: `${tokens} tok` },
     cost != null && {
       icon: "solar:dollar-minimalistic-linear",
-      text: cost.toFixed(4),
+      text: formatExactMoney(cost),
     },
   ].filter(Boolean);
 
@@ -1773,25 +1801,30 @@ function TraceEvidence({
 
         <Box sx={{ flex: 1 }} />
 
-        {isBreadcrumb && !splitView && (
+        {isBreadcrumb && !showSplit && (
           <ReelTabs value={activeReel} onChange={setActiveReel} />
         )}
 
-        {supportsSplit && (
+        {/* Disabled-with-reason when there is no working side to compare. */}
+        <Tooltip
+          title={canSplit ? "" : "No passing trace found for this issue yet"}
+          describeChild
+        >
           <Button
             size="small"
             variant="outlined"
+            aria-disabled={!canSplit || undefined}
             startIcon={
               <Iconify
                 icon={
-                  splitView
+                  showSplit
                     ? "solar:list-linear"
                     : "solar:transfer-horizontal-linear"
                 }
                 width={14}
               />
             }
-            onClick={() => setSplitView((v) => !v)}
+            onClick={canSplit ? () => setSplitView((v) => !v) : undefined}
             sx={{
               // Dark theme: translucent lift avoids flat mismatch against header strip.
               color: "text.primary",
@@ -1801,11 +1834,12 @@ function TraceEvidence({
                 borderColor: "text.secondary",
                 bgcolor: "action.selected",
               },
+              ...(!canSplit && { cursor: "not-allowed", opacity: 0.5 }),
             }}
           >
-            {splitView ? "Single view" : "Split with working"}
+            {showSplit ? "Single view" : "Split with working"}
           </Button>
-        )}
+        </Tooltip>
       </Stack>
 
       {/* ── Dense trace meta strip (observability style) ── */}
@@ -1882,7 +1916,7 @@ function TraceEvidence({
         {/* Agent Graph / Agent Path — single trace, or split with a working trace. */}
         {isGraphMode &&
           (traceId ? (
-            splitView ? (
+            showSplit ? (
               <TraceGraphCompare
                 failingTraceId={traceId}
                 workingTraceId={workingTraceId}
@@ -1908,7 +1942,7 @@ function TraceEvidence({
 
         {/* Breadcrumb mode — single reel or side-by-side */}
         {isBreadcrumb &&
-          (!splitView ? (
+          (!showSplit ? (
             <BreadcrumbList steps={steps} isFailReel={isFailActive} />
           ) : (
             <Box
@@ -2427,10 +2461,15 @@ export default function OverviewTab({ _error: currentError }) {
   // the BE derives it from the project's voice agent definition.
   const isVoice = currentError?.modality === "voice";
   const shared = useSharedIssue();
-  const { data: fetchedOverview, isLoading: isFetchingOverview } =
-    useErrorFeedOverview(shared ? null : clusterId);
+  const {
+    data: fetchedOverview,
+    isLoading: isFetchingOverview,
+    isError: overviewError,
+    refetch: refetchOverview,
+  } = useErrorFeedOverview(shared ? null : clusterId);
   const overview = shared ? shared.overview : fetchedOverview;
   const isOverviewLoading = shared ? false : isFetchingOverview;
+  const overviewFailed = !shared && overviewError && !overview;
   const traces = useMemo(
     () => overview?.representative_traces ?? [],
     [overview],
@@ -2489,6 +2528,19 @@ export default function OverviewTab({ _error: currentError }) {
       document.removeEventListener("mouseup", onUp);
     };
   }, []);
+
+  // Every panel below reads the failed payload; zeros and "No trace
+  // evidence yet" would read as an issue with no data.
+  if (overviewFailed) {
+    return (
+      <ErrorState
+        role="alert"
+        title="Couldn't load trace evidence for this issue"
+        onRetry={() => refetchOverview()}
+        sx={{ height: "auto", flexGrow: 0, py: 6 }}
+      />
+    );
+  }
 
   return (
     <Stack gap={1.5} sx={{ minHeight: 0 }}>

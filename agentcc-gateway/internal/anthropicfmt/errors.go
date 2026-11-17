@@ -2,55 +2,46 @@ package anthropicfmt
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 
+	contract "github.com/futureagi/agentcc-gateway/internal/contracts/generated"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 )
+
+// CodeToolResultMediaUnsupported identifies nested media that canonical Messages
+// translation cannot preserve. Clients can use it to choose a supported route.
+const CodeToolResultMediaUnsupported = "messages_tool_result_media_unsupported"
+
+// CodeRunBudgetUnenforceable refuses, before dispatch, a Messages request in a
+// run that has a budget: Messages spend is not counted against a run, so the
+// request is refused rather than served uncounted. Clients can use it to send
+// the call to /v1/chat/completions, which counts it.
+const CodeRunBudgetUnenforceable = "run_budget_unenforceable"
 
 // timeoutErrorType is Anthropic's error type for a request that timed out,
 // the type its SDKs give a 504.
 const timeoutErrorType = "timeout_error"
 
-// errorBody is an Anthropic error, as a response body and as a stream event.
-// Code is the gateway's own error code, the one the OpenAI-format routes send;
-// it is left out when there is none.
-type errorBody struct {
-	Type  string `json:"type"`
-	Error struct {
-		Type    string `json:"type"`
-		Message string `json:"message"`
-		Code    string `json:"code,omitempty"`
-	} `json:"error"`
-}
-
-// newErrorBody redacts like the other dialect writers: an upstream message can
-// carry a credential in a URL, and this is a boundary a response leaves through.
-func newErrorBody(errorType, message, code string) errorBody {
-	body := errorBody{Type: "error"}
-	body.Error.Type = errorType
-	body.Error.Message = models.RedactCredentials(message)
-	body.Error.Code = code
-	return body
-}
-
 // WriteError writes an error response in Anthropic format.
+// Redacted like the other dialect writers: an upstream message can carry a
+// credential in a URL, and this is a boundary a response leaves through.
 func WriteError(w http.ResponseWriter, statusCode int, errorType string, message string) {
-	writeErrorBody(w, statusCode, newErrorBody(errorType, message, ""))
-}
+	message = models.RedactCredentials(message)
+	resp := struct {
+		Type  string `json:"type"`
+		Error struct {
+			Type    string `json:"type"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}{
+		Type: "error",
+	}
+	resp.Error.Type = errorType
+	resp.Error.Message = message
 
-func writeErrorBody(w http.ResponseWriter, statusCode int, body errorBody) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
-	json.NewEncoder(w).Encode(body)
-}
-
-// StreamErrorEvent is an error as an Anthropic stream event. Once a stream has
-// sent its 200 the status can no longer change, so this event is the only way
-// left to tell the client the stream failed; the SDKs raise on it.
-func StreamErrorEvent(apiErr *models.APIError) []byte {
-	data, _ := json.Marshal(newErrorBody(ErrorType(apiErr), apiErr.Message, apiErr.Code))
-	return fmt.Appendf(nil, "event: error\ndata: %s\n\n", data)
+	json.NewEncoder(w).Encode(resp)
 }
 
 // ErrorType is the Anthropic error type for a gateway error. The gateway's
@@ -71,6 +62,9 @@ func MapStatusToErrorType(statusCode int) string {
 		return "invalid_request_error"
 	case 401:
 		return "authentication_error"
+	case 402:
+		// Anthropic's documented type for a 402 (billing or payment).
+		return "billing_error"
 	case 403:
 		return "permission_error"
 	case 404:
@@ -84,7 +78,67 @@ func MapStatusToErrorType(statusCode int) string {
 	}
 }
 
-// WriteAPIError converts a gateway APIError to Anthropic error format.
+// WriteAPIError converts a gateway APIError to Anthropic error format. Its
+// Retry-After is sent as models.WriteError sends it.
 func WriteAPIError(w http.ResponseWriter, apiErr *models.APIError) {
-	writeErrorBody(w, apiErr.Status, newErrorBody(ErrorType(apiErr), apiErr.Message, apiErr.Code))
+	models.SetRetryAfter(w, apiErr)
+	errType := ErrorType(apiErr)
+	meta, _ := apiErr.Metadata.(map[string]any)
+	if _, attributed := meta["provider"]; attributed {
+		// Keep Anthropic's envelope and type while exposing the gateway's
+		// stable provider code and the original upstream evidence.
+		resp := struct {
+			Type  string `json:"type"`
+			Error struct {
+				Type     string `json:"type"`
+				Message  string `json:"message"`
+				Code     string `json:"code"`
+				Metadata any    `json:"metadata"`
+			} `json:"error"`
+		}{Type: "error"}
+		resp.Error.Type, resp.Error.Message = errType, models.RedactCredentials(apiErr.Message)
+		resp.Error.Code, resp.Error.Metadata = apiErr.Code, apiErr.Metadata
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(apiErr.Status)
+		json.NewEncoder(w).Encode(resp)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(apiErr.Status)
+	json.NewEncoder(w).Encode(apiErrorResponse(apiErr))
+}
+
+type errorResponse struct {
+	Type  string `json:"type"`
+	Error struct {
+		Type     string `json:"type"`
+		Message  string `json:"message"`
+		Code     string `json:"code,omitempty"`
+		Metadata any    `json:"metadata,omitempty"`
+	} `json:"error"`
+}
+
+func apiErrorResponse(apiErr *models.APIError) errorResponse {
+	resp := errorResponse{Type: "error"}
+	resp.Error.Type = ErrorType(apiErr)
+	resp.Error.Message = models.RedactCredentials(apiErr.Message)
+	// Only admission-cap, nested-media, run-budget and the gateway's own
+	// timeout refusals extend the established shape. Other legacy errors
+	// (including credits refusals) remain type/message.
+	if metadata, ok := apiErr.Metadata.(contract.AdmissionCapRefusalMetadata); ok {
+		resp.Error.Code, resp.Error.Metadata = apiErr.Code, metadata
+	} else if apiErr.Code == CodeToolResultMediaUnsupported || apiErr.Code == CodeRunBudgetUnenforceable || resp.Error.Type == timeoutErrorType {
+		resp.Error.Code = apiErr.Code
+	}
+	return resp
+}
+
+// StreamErrorEvent is apiErr as an Anthropic stream's error event, the frame
+// Anthropic sends when a stream fails:
+//
+//	event: error
+//	data: {"type":"error","error":{"type":...,"message":...}}
+func StreamErrorEvent(apiErr *models.APIError) []byte {
+	data, _ := json.Marshal(apiErrorResponse(apiErr))
+	return []byte("event: error\ndata: " + string(data) + "\n\n")
 }

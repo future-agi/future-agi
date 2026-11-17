@@ -14,6 +14,7 @@ import (
 
 	"github.com/futureagi/agentcc-gateway/internal/config"
 	"github.com/futureagi/agentcc-gateway/internal/models"
+	"github.com/futureagi/agentcc-gateway/internal/providers/admission"
 	"github.com/futureagi/agentcc-gateway/internal/providers/common"
 )
 
@@ -26,7 +27,7 @@ type Provider struct {
 	region      string
 	credentials *Credentials
 	httpClient  *http.Client
-	semaphore   chan struct{}
+	slots       *admission.Limiter
 	headers     map[string]string
 }
 
@@ -42,14 +43,12 @@ func New(id string, cfg config.ProviderConfig) (*Provider, error) {
 		timeout = 120 * time.Second
 	}
 
-	maxConcurrent := cfg.MaxConcurrent
-	if maxConcurrent == 0 {
-		maxConcurrent = 100
-	}
-
+	// max_concurrent, conn_pool_size and queue_timeout come resolved from the
+	// registry (local or remote defaults); admission and these defaults cover
+	// an instance built from a config that left them unset.
 	poolSize := cfg.ConnPoolSize
-	if poolSize == 0 {
-		poolSize = 100
+	if poolSize <= 0 {
+		poolSize = admission.DefaultConnPoolSize
 	}
 
 	transport := &http.Transport{
@@ -71,35 +70,40 @@ func New(id string, cfg config.ProviderConfig) (*Provider, error) {
 			Transport: transport,
 			Timeout:   timeout,
 		},
-		semaphore: make(chan struct{}, maxConcurrent),
-		headers:   cfg.Headers,
+		slots:   admission.New(id, cfg.MaxConcurrent, cfg.QueueTimeout),
+		headers: cfg.Headers,
 	}, nil
 }
 
 func (p *Provider) ID() string { return p.id }
+
+// UpstreamModelName is the id every call sends Bedrock for model
+// (providers.UpstreamModelNamer).
+func (p *Provider) UpstreamModelName(model string) string { return resolveModelName(model) }
 
 // ClientTimeout reports the timeout on this provider's HTTP client. It bounds
 // the whole exchange, a streamed body included, so it is a hard ceiling on any
 // request this provider serves.
 func (p *Provider) ClientTimeout() time.Duration { return p.httpClient.Timeout }
 
+// acquireSemaphore takes one of the entry's upstream slots. Its error, a
+// provider_busy 503 once the queue wait ends or a gateway timeout when ctx
+// ends first, is the call's answer: nothing was sent upstream.
 func (p *Provider) acquireSemaphore(ctx context.Context) error {
-	select {
-	case p.semaphore <- struct{}{}:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
+	return p.slots.Acquire(ctx)
 }
 
 func (p *Provider) releaseSemaphore() {
-	<-p.semaphore
+	p.slots.Release()
 }
+
+// Admission is the instance's upstream slots (providers.SlotHolder).
+func (p *Provider) Admission() *admission.Limiter { return p.slots }
 
 // ChatCompletion sends a non-streaming request to Bedrock.
 func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
 	if err := p.acquireSemaphore(ctx); err != nil {
-		return nil, models.ErrGatewayTimeout("bedrock: concurrency limit reached")
+		return nil, err
 	}
 	defer p.releaseSemaphore()
 
@@ -157,6 +161,10 @@ func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletio
 
 // StreamChatCompletion sends a streaming request to Bedrock.
 func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCompletionRequest) (<-chan models.StreamChunk, <-chan error) {
+	// Capture routing fields before returning, not after the goroutine waits
+	// for admission. Nested payloads remain read-only for the call's lifetime.
+	snapshot := *req
+	req = &snapshot
 	chunks := make(chan models.StreamChunk, 64)
 	errs := make(chan error, 1)
 
@@ -165,7 +173,7 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 		defer close(errs)
 
 		if err := p.acquireSemaphore(ctx); err != nil {
-			errs <- models.ErrGatewayTimeout("bedrock: concurrency limit reached")
+			errs <- err
 			return
 		}
 		defer p.releaseSemaphore()
@@ -299,6 +307,7 @@ func (p *Provider) ListModels(ctx context.Context) ([]models.ModelObject, error)
 
 // Close releases resources.
 func (p *Provider) Close() error {
+	p.slots.Close()
 	p.httpClient.CloseIdleConnections()
 	return nil
 }

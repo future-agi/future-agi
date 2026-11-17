@@ -38,7 +38,11 @@ class ImagineAnalysisWorkflow:
         # 1. Fetch trace data
         trace_ctx = await workflow.execute_activity(
             "fetch_trace_data",
-            FetchTraceInput(trace_id=input.trace_id, org_id=input.org_id),
+            FetchTraceInput(
+                trace_id=input.trace_id,
+                org_id=input.org_id,
+                project_id=input.project_id,
+            ),
             start_to_close_timeout=timedelta(seconds=30),
             retry_policy=RetryPolicy(maximum_attempts=2),
         )
@@ -51,6 +55,7 @@ class ImagineAnalysisWorkflow:
                     prompt=input.prompt,
                     trace_context=trace_ctx,
                     org_id=input.org_id,
+                    project_id=input.project_id,
                 ),
                 start_to_close_timeout=timedelta(seconds=90),
                 retry_policy=LLM_RETRY_POLICY,
@@ -64,6 +69,8 @@ class ImagineAnalysisWorkflow:
                     content="",
                     status="failed",
                     error="LLM analysis failed after retries",
+                    project_id=input.project_id,
+                    org_id=input.org_id,
                 ),
                 start_to_close_timeout=timedelta(seconds=10),
             )
@@ -72,7 +79,12 @@ class ImagineAnalysisWorkflow:
         # 3. Save result to DB
         await workflow.execute_activity(
             "save_analysis_result",
-            SaveResultInput(analysis_id=input.analysis_id, content=content),
+            SaveResultInput(
+                analysis_id=input.analysis_id,
+                content=content,
+                project_id=input.project_id,
+                org_id=input.org_id,
+            ),
             start_to_close_timeout=timedelta(seconds=10),
         )
 

@@ -19,6 +19,18 @@ PROTOCOL_COMPATIBILITY_ALLOWLIST = {
 
 RAW_ERROR_DEBT_BY_FILE = {
     Path("futureagi/accounts/admin.py"): 2,
+    # A signed machine-to-machine route (no browser bearer, no API key): its four refusals are closed
+    # code words. Its one caller, the EE daemon, reads only a refusal's status.
+    Path("futureagi/accounts/views/omega_trigger_admission.py"): 4,
+    # The cap ledger refusal's documented 409 has only code, message and
+    # ledger_status (CapActivationConflictSerializer); a cap refusal.
+    Path("futureagi/agentcc/services/cap_ledger_status.py"): 1,
+    # MCP approvals: the documented error body is message only
+    # (MCPApprovalMessageSerializer); moving it needs the contract regenerated.
+    Path("futureagi/agentcc/views/mcp_approvals.py"): 4,
+    # MCP partner connections: "error" is a machine code that callers and six
+    # test files read; the envelope's "error" is the message. Its own pair.
+    Path("futureagi/agentcc/views/mcp_vendor_connections.py"): 11,
     # ee/cloud files are only visible to the scan when the private ee
     # overlay is checked out (CI, dev machines); harmless entries otherwise.
     Path("futureagi/ee/cloud/control_plane/activation.py"): 8,

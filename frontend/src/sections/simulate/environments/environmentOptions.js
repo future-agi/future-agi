@@ -48,7 +48,7 @@ export const OPTIONS = [
     icon: "solar:cloud-linear",
     blurb:
       "Connect an agent living on a managed voice or chat platform by its ID. We handle the auth and route every simulated turn through the platform's own API.",
-    preview: ["Vapi", "Retell", "Bland", "ElevenLabs", "LiveKit"],
+    preview: ["Vapi", "Retell", "LiveKit"],
     setupSubtitle: "Point at an agent living on a managed platform.",
     status: OPTION_STATUS.LIVE,
   },
@@ -126,6 +126,16 @@ export const ENTRY_TAB = {
   PERSONAS: "personas",
 };
 export const DEFAULT_ENTRY_TAB = ENTRY_TAB.BUILD;
+
+// "Start a new build" on a failed or canceled environment opens the Build tab
+// with `?rebuild=<envId>`. When the kept draft built that environment, its
+// source option reopens on that draft (keyed by the draft's `kind`).
+export const REBUILD_PARAM = "rebuild";
+export const DRAFT_KIND_OPTION = {
+  repo: OPTION_ID.SOURCE,
+  platform: OPTION_ID.HOSTED,
+  upload: OPTION_ID.UPLOAD,
+};
 
 // Matches the product tab rail (see HarnessDetail): the theme gives every tab a
 // 40px right margin, which spreads short labels apart and breaks the row into

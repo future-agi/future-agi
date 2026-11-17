@@ -1,14 +1,21 @@
-"""Tests for tracer.utils.pii_settings."""
+"""Tests for identity-scoped, fail-closed privacy policy resolution."""
 
+from types import SimpleNamespace
 from unittest import mock
 
 import pytest
 from django.core.cache import cache
 
+from tracer.utils.pii_scrubber import PIIScrubError
+from tracer.utils.pii_settings import (
+    _cache_key,
+    get_pii_settings_for_projects,
+    invalidate_pii_cache,
+)
+
 
 @pytest.fixture(autouse=True)
 def _clear_cache():
-    """Ensure a clean cache for each test."""
     cache.clear()
     yield
     cache.clear()
@@ -16,89 +23,101 @@ def _clear_cache():
 
 class TestGetPiiSettingsForProjects:
     def test_cache_hit(self):
-        from tracer.utils.pii_settings import get_pii_settings_for_projects
-
-        cache.set("pii_redaction:org1:proj-a", True, 300)
-        result = get_pii_settings_for_projects({"proj-a"}, "org1")
-        assert result == {"proj-a": True}
+        project = SimpleNamespace(id="id-a", metadata={"pii_redaction_enabled": True})
+        cache.set(_cache_key("org1", "id-a"), True, 300)
+        with (
+            mock.patch("tracer.utils.otel.get_or_create_project", return_value=project),
+            mock.patch("tracer.utils.pii_settings.cache.set") as write,
+        ):
+            assert get_pii_settings_for_projects({"proj-a"}, "org1") == {"proj-a": True}
+        write.assert_not_called()
 
     def test_cache_miss_queries_db(self):
-        from tracer.utils.pii_settings import get_pii_settings_for_projects
-
-        # Mock the Project model query
-        fake_rows = [
-            {"name": "proj-a", "metadata": {"pii_redaction_enabled": True}},
-            {"name": "proj-b", "metadata": {"pii_redaction_enabled": False}},
-        ]
-        with mock.patch("tracer.models.project.Project.objects") as mock_objects:
-            mock_qs = mock.MagicMock()
-            mock_objects.filter.return_value = mock_qs
-            mock_qs.values.return_value = fake_rows
-
+        projects = {
+            "proj-a": SimpleNamespace(id="id-a", metadata={"pii_redaction_enabled": True}),
+            "proj-b": SimpleNamespace(id="id-b", metadata={"pii_redaction_enabled": False}),
+        }
+        with mock.patch(
+            "tracer.utils.otel.get_or_create_project",
+            side_effect=lambda name, *args: projects[name],
+        ) as resolve:
             result = get_pii_settings_for_projects({"proj-a", "proj-b"}, "org1")
-            assert result["proj-a"] is True
-            assert result["proj-b"] is False
+        assert result == {"proj-a": True, "proj-b": False}
+        resolve.assert_has_calls([
+            mock.call("proj-a", "org1", "experiment", None, None),
+            mock.call("proj-b", "org1", "experiment", None, None),
+        ], any_order=True)
 
-    def test_cache_miss_project_not_in_db(self):
-        from tracer.utils.pii_settings import get_pii_settings_for_projects
-
-        with mock.patch("tracer.models.project.Project.objects") as mock_objects:
-            mock_qs = mock.MagicMock()
-            mock_objects.filter.return_value = mock_qs
-            mock_qs.values.return_value = []  # no rows
-
-            result = get_pii_settings_for_projects({"proj-missing"}, "org1")
-            assert result["proj-missing"] is False
+    def test_unresolved_project_rejects_batch(self):
+        with (
+            mock.patch("tracer.utils.otel.get_or_create_project", return_value=None),
+            pytest.raises(PIIScrubError),
+        ):
+            get_pii_settings_for_projects({"proj-missing"}, "org1")
 
     def test_db_values_are_cached(self):
-        from tracer.utils.pii_settings import get_pii_settings_for_projects
+        project = SimpleNamespace(id="id-a", metadata={"pii_redaction_enabled": True})
+        with mock.patch("tracer.utils.otel.get_or_create_project", return_value=project):
+            get_pii_settings_for_projects({"proj-a"}, "org1")
+        assert cache.get(_cache_key("org1", "id-a")) is True
 
-        fake_rows = [
-            {"name": "proj-a", "metadata": {"pii_redaction_enabled": True}},
-        ]
-        with mock.patch("tracer.models.project.Project.objects") as mock_objects:
-            mock_qs = mock.MagicMock()
-            mock_objects.filter.return_value = mock_qs
-            mock_qs.values.return_value = fake_rows
-
+    def test_fail_closed_on_db_error(self):
+        with (
+            mock.patch("tracer.utils.otel.get_or_create_project", side_effect=RuntimeError("DB down")),
+            pytest.raises(PIIScrubError),
+        ):
             get_pii_settings_for_projects({"proj-a"}, "org1")
 
-        # Second call should hit cache, not DB
-        result = get_pii_settings_for_projects({"proj-a"}, "org1")
-        assert result["proj-a"] is True
-
-    def test_fail_open_on_db_error(self):
-        from tracer.utils.pii_settings import get_pii_settings_for_projects
-
-        with mock.patch("tracer.models.project.Project.objects") as mock_objects:
-            mock_objects.filter.side_effect = RuntimeError("DB down")
-
-            result = get_pii_settings_for_projects({"proj-a"}, "org1")
-            assert result["proj-a"] is False
-
     def test_null_metadata_defaults_false(self):
-        from tracer.utils.pii_settings import get_pii_settings_for_projects
+        # A successfully resolved, genuinely unconfigured project is disabled.
+        project = SimpleNamespace(id="id-a", metadata=None)
+        with mock.patch("tracer.utils.otel.get_or_create_project", return_value=project):
+            assert get_pii_settings_for_projects({"proj-a"}, "org1") == {"proj-a": False}
 
-        fake_rows = [{"name": "proj-a", "metadata": None}]
-        with mock.patch("tracer.models.project.Project.objects") as mock_objects:
-            mock_qs = mock.MagicMock()
-            mock_objects.filter.return_value = mock_qs
-            mock_qs.values.return_value = fake_rows
+    @pytest.mark.parametrize("metadata", [["imported"], "production"], ids=["list", "string"])
+    @pytest.mark.parametrize("include_modes", [False, True], ids=["boolean", "policy"])
+    def test_legacy_non_object_metadata_defaults_disabled(self, metadata, include_modes):
+        project = SimpleNamespace(id="id-a", metadata=metadata)
+        resolved = {}
+        with mock.patch("tracer.utils.otel.get_or_create_project", return_value=project):
+            result = get_pii_settings_for_projects(
+                {"proj-a"}, "org1", include_modes=include_modes, resolved_projects=resolved,
+            )
+        expected = {"enabled": False, "mode": "mask_pii"} if include_modes else False
+        assert result == {"proj-a": expected}
+        assert cache.get(_cache_key("org1", "id-a", include_modes)) == expected
+        assert resolved["proj-a"] is project
+        assert project.metadata == metadata
 
-            result = get_pii_settings_for_projects({"proj-a"}, "org1")
-            assert result["proj-a"] is False
+    @pytest.mark.parametrize("operation", ["get", "set"])
+    def test_cache_failure_keeps_successful_policy(self, operation):
+        project = SimpleNamespace(id="id-a", metadata={
+            "pii_redaction_enabled": True, "pii_redaction_mode": "hide_io",
+        })
+        with (
+            mock.patch("tracer.utils.otel.get_or_create_project", return_value=project),
+            mock.patch(f"tracer.utils.pii_settings.cache.{operation}", side_effect=RuntimeError("cache down")),
+        ):
+            result = get_pii_settings_for_projects({"proj-a"}, "org1", include_modes=True)
+        assert result == {"proj-a": {"enabled": True, "mode": "hide_io"}}
+
+    def test_stale_disabled_cache_cannot_override_resolved_policy(self):
+        project = SimpleNamespace(id="id-a", metadata={
+            "pii_redaction_enabled": True, "pii_redaction_mode": "hide_io",
+        })
+        cache.set(_cache_key("org1", "id-a", True), {"enabled": False, "mode": "mask_pii"})
+        with mock.patch("tracer.utils.otel.get_or_create_project", return_value=project):
+            result = get_pii_settings_for_projects({"proj-a"}, "org1", include_modes=True)
+        assert result["proj-a"] == {"enabled": True, "mode": "hide_io"}
 
 
 class TestInvalidatePiiCache:
     def test_invalidate(self):
-        from tracer.utils.pii_settings import invalidate_pii_cache
-
-        cache.set("pii_redaction:org1:proj-a", True, 300)
-        invalidate_pii_cache("org1", "proj-a")
-        assert cache.get("pii_redaction:org1:proj-a") is None
+        for modes in (False, True):
+            cache.set(_cache_key("org1", "id-a", modes), True, 300)
+        invalidate_pii_cache("org1", "id-a")
+        for modes in (False, True):
+            assert cache.get(_cache_key("org1", "id-a", modes)) is None
 
     def test_invalidate_nonexistent_key(self):
-        from tracer.utils.pii_settings import invalidate_pii_cache
-
-        # Should not raise
         invalidate_pii_cache("org1", "nonexistent")

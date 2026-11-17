@@ -10,10 +10,19 @@ import ts from "typescript";
 // As in state-probe.test.mjs, import the actual class (including TS parameter
 // properties); only the APIRequestContext and current test info are faked.
 const apiModule = new URL("../lib/api-client.ts", import.meta.url).href;
+// The client imports lib/value-free without an extension (tsconfig moduleResolution
+// Bundler); load the real module, as quarantine.test.mjs does for its sibling.
+const valueFreeModule = new URL("../lib/value-free.ts", import.meta.url).href;
 registerHooks({
+  resolve(specifier, context, nextResolve) {
+    if (specifier === "./value-free" && context.parentURL === apiModule) {
+      return nextResolve(valueFreeModule, context);
+    }
+    return nextResolve(specifier, context);
+  },
   load(url, context, nextLoad) {
     const loaded = nextLoad(url, context);
-    if (url !== apiModule) return loaded;
+    if (url !== apiModule && url !== valueFreeModule) return loaded;
     return {
       ...loaded,
       format: "module",

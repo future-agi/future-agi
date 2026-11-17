@@ -14,7 +14,9 @@ from tfc.utils.error_codes import get_error_message
 
 def _workspace_scope(workspace):
     if workspace is None:
-        return Q()
+        from tfc.utils.workspace_scope import empty_workspace_filter
+
+        return empty_workspace_filter()
     if getattr(workspace, "is_default", False):
         return (
             Q(workspace=workspace)

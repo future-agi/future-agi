@@ -1,12 +1,30 @@
 /* eslint-disable react/prop-types */
 import React from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "src/utils/test-utils";
+import { render, screen, userEvent } from "src/utils/test-utils";
 import SharedView from "../SharedView";
 
 const mocks = vi.hoisted(() => ({
   useResolveSharedLink: vi.fn(),
+  spanPaneProps: vi.fn(),
+  // Overrides laid over the real auth context (no provider: signed out).
+  auth: null,
 }));
+
+vi.mock("src/auth/hooks", async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    useAuthContext: () => {
+      const context = actual.useAuthContext();
+      return mocks.auth ? { ...context, ...mocks.auth } : context;
+    },
+  };
+});
+
+beforeEach(() => {
+  mocks.auth = null;
+});
 
 vi.mock("react-router", async () => {
   const actual = await vi.importActual("react-router");
@@ -41,11 +59,18 @@ vi.mock("src/pages/dashboard/error-feed/ErrorFeedDetailView", async () => {
 });
 
 vi.mock("src/components/traceDetail/TraceTreeV2", () => ({
-  default: () => <div>trace tree</div>,
+  default: ({ onSelectSpan }) => (
+    <button type="button" onClick={() => onSelectSpan("span-1")}>
+      trace tree
+    </button>
+  ),
 }));
 
 vi.mock("src/components/traceDetail/SpanDetailPane", () => ({
-  default: () => <div>span detail</div>,
+  default: (props) => {
+    mocks.spanPaneProps(props);
+    return <div>span detail</div>;
+  },
 }));
 
 vi.mock("src/components/VoiceDetailDrawerV2/CallDetailsBar", () => ({
@@ -310,6 +335,149 @@ describe("SharedView Error Feed issue", () => {
     expect(screen.getByText("E-LOCAL01")).toBeInTheDocument();
     expect(screen.queryByText("E-LOCAL01...")).not.toBeInTheDocument();
     expect(screen.getByText("View only")).toBeInTheDocument();
+  });
+});
+
+describe("SharedView trace rendering", () => {
+  beforeEach(() => {
+    mocks.useResolveSharedLink.mockReset();
+    mocks.spanPaneProps.mockReset();
+  });
+
+  it("opens a selected span read-only on the View only page", async () => {
+    const user = userEvent.setup();
+    mocks.useResolveSharedLink.mockReturnValue({
+      data: {
+        resource_type: "trace",
+        resource_id: "trace-1234567890",
+        data: {
+          observation_spans: [
+            {
+              observation_span: {
+                id: "span-1",
+                trace: "trace-1234567890",
+                project: "project-1",
+                name: "llm call",
+                observation_type: "llm",
+                tags: [{ name: "billing", color: "#2563EB" }],
+              },
+              children: [],
+            },
+          ],
+        },
+      },
+      isLoading: false,
+      isError: false,
+      error: null,
+    });
+
+    render(<SharedView />);
+
+    expect(screen.getByText("View only")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "trace tree" }));
+
+    expect(screen.getByText("span detail")).toBeInTheDocument();
+    const paneProps = mocks.spanPaneProps.mock.lastCall[0];
+    expect(paneProps.entry.observation_span.id).toBe("span-1");
+    expect(paneProps.readOnly).toBe(true);
+    // Signed out (no session): the pane asks for no annotations.
+    expect(paneProps.annotationsUnavailable).toBe(true);
+  });
+
+  const resolvedTrace = ({ accessType = "public", entry = {} } = {}) => ({
+    data: {
+      resource_type: "trace",
+      resource_id: "trace-1234567890",
+      access_type: accessType,
+      data: {
+        observation_spans: [
+          {
+            observation_span: {
+              id: "span-1",
+              trace: "trace-1234567890",
+              name: "ChatOpenAI",
+            },
+            children: [],
+            ...entry,
+          },
+        ],
+      },
+    },
+    isLoading: false,
+    isError: false,
+    error: null,
+  });
+
+  it("hands the pane the span's annotations a restricted link read", async () => {
+    const user = userEvent.setup();
+    // An invited teammate, signed in.
+    mocks.auth = { authenticated: true, loading: false };
+    const score = {
+      id: "score-1",
+      source_type: "observation_span",
+      source_id: "span-1",
+      label_id: "label-1",
+      label_name: "walk label",
+      label_type: "text",
+      value: { text: "walk note" },
+      score_source: "human",
+      notes: "checked the refund policy",
+      annotator_name: "Owner",
+      updated_at: "2026-11-10T10:00:00Z",
+    };
+    const note = {
+      id: "note-1",
+      notes: "checked",
+      annotator: "Owner",
+      created_at: "2026-11-10T10:00:00Z",
+    };
+    mocks.useResolveSharedLink.mockReturnValue(
+      resolvedTrace({
+        accessType: "restricted",
+        entry: {
+          shared_annotations: { scores: [score], span_notes: [note] },
+        },
+      }),
+    );
+
+    render(<SharedView />);
+    await user.click(screen.getByRole("button", { name: "trace tree" }));
+
+    const paneProps = mocks.spanPaneProps.mock.lastCall[0];
+    expect(paneProps.readOnly).toBe(true);
+    expect(paneProps.sharedAnnotations).toEqual({
+      scores: [score],
+      spanNotes: [note],
+    });
+    expect(paneProps.annotationsUnavailable).toBe(false);
+    expect(paneProps.annotationsPending).toBe(false);
+  });
+
+  it("hands the pane no link annotations on a public link", async () => {
+    const user = userEvent.setup();
+    mocks.useResolveSharedLink.mockReturnValue(resolvedTrace());
+
+    render(<SharedView />);
+    await user.click(screen.getByRole("button", { name: "trace tree" }));
+
+    // Nothing came through the link, so the pane keeps R23's signed-out
+    // line rather than an empty list from the link.
+    const paneProps = mocks.spanPaneProps.mock.lastCall[0];
+    expect(paneProps.sharedAnnotations).toBeUndefined();
+    expect(paneProps.annotationsUnavailable).toBe(true);
+  });
+
+  it("holds the annotations while sign-in is still being checked", async () => {
+    const user = userEvent.setup();
+    mocks.auth = { authenticated: false, loading: true };
+    mocks.useResolveSharedLink.mockReturnValue(resolvedTrace());
+
+    render(<SharedView />);
+    await user.click(screen.getByRole("button", { name: "trace tree" }));
+
+    const paneProps = mocks.spanPaneProps.mock.lastCall[0];
+    expect(paneProps.annotationsPending).toBe(true);
+    expect(paneProps.sharedAnnotations).toBeUndefined();
   });
 });
 

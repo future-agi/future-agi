@@ -5,17 +5,17 @@ Replaces ``get_eval_graph_data()`` and its helpers from
 ``tracer.utils.graphs_optimized`` with ClickHouse-native queries.
 
 Strategy:
-- Unfiltered eval dashboard queries read from the ``eval_metrics_hourly``
-  pre-aggregated table.
-- Filtered queries or per-eval-config breakdowns read from the configured
-  eval-logger table (with FINAL for correct deduplication).
+- All quality metrics read latest raw eval rows (FINAL), then filter tombstones.
+- Lifecycle classification precedes conditional sums/counts. Empty populations
+  are null, with execution errors and work-state counts separate from quality.
+- The lossy insert-time rollup is never a fallback.
 
 Supports three eval output types:
 - **float (SCORE):** ``avg(output_float) * 100`` per time bucket.
 - **bool (PASS_FAIL):** ``avg(CASE WHEN output_bool = 1 THEN 100 ELSE 0 END)``
   per time bucket (pass rate as a percentage).
 - **str_list (CHOICES):** For each choice, counts how often the choice
-  appears in ``output_str_list``, expressed as a percentage of total evals.
+  appears in ``output_str_list``, expressed as a percentage of valid completed choice results.
 """
 
 from datetime import datetime, timedelta
@@ -80,14 +80,14 @@ class EvalMetricsQueryBuilder(BaseQueryBuilder):
         interval: Time bucket interval.
         eval_output_type: One of ``"SCORE"``, ``"PASS_FAIL"``, ``"CHOICES"``.
         eval_name: Human-readable name of the eval config (for output).
-        choices: List of choice strings (required when ``eval_output_type``
+        choices: Displayed choice strings (required when ``eval_output_type``
             is ``"CHOICES"``).
-        use_preaggregated: Whether to attempt reading from the pre-aggregated
-            table.  Defaults to ``True``; set ``False`` when specific filters
-            prevent using the aggregate table.
+        valid_choices: Full configured vocabulary for scalar-result validity,
+            independent of the displayed subset. Defaults to ``choices``.
+        use_preaggregated: Retained for caller compatibility; ignored. Quality
+            metrics always use latest raw rows, never the insert-time rollup.
     """
 
-    AGG_TABLE = "eval_metrics_hourly"
     _EVAL_LOGGER_SOURCE = staticmethod(eval_logger_source)
     _EVAL_TRACE_ID_EXPR = "trace_id"
 
@@ -103,6 +103,7 @@ class EvalMetricsQueryBuilder(BaseQueryBuilder):
         choices: list[str] | None = None,
         use_preaggregated: bool = True,
         filters: list[dict] | None = None,
+        valid_choices: list[str] | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(project_id, **kwargs)
@@ -118,12 +119,12 @@ class EvalMetricsQueryBuilder(BaseQueryBuilder):
         self.interval = interval
         self.eval_output_type = normalize_eval_output_type(eval_output_type)
         self.eval_name = eval_name or "Unknown"
-        self.choices = choices or []
+        self.choices = list(choices or [])
+        self.valid_choices = list(
+            self.choices if valid_choices is None else valid_choices
+        )
         self.filters = filters or []
-        # Pre-aggregated eval rows do not carry arbitrary trace/span filter
-        # dimensions. If filters are present, force the raw logger path so the
-        # graph reflects the filtered result set.
-        self.use_preaggregated = use_preaggregated and not self.filters
+        self.use_preaggregated = False
 
         # Graph endpoints historically default to a compact 7-day window.
         # BaseQueryBuilder's list-view fallback is intentionally much wider,
@@ -209,245 +210,174 @@ class EvalMetricsQueryBuilder(BaseQueryBuilder):
         else:
             return self._format_single_series(rows, columns)
 
-    # ------------------------------------------------------------------
-    # Score (float) queries
-    # ------------------------------------------------------------------
-
-    def _build_score_query(self) -> tuple[str, dict[str, Any]]:
-        """Build query for SCORE eval type: ``avg(output_float) * 100``."""
-        if self.use_preaggregated:
-            return self._build_score_agg()
+    # The insert-time rollup cannot retract CDC versions or distinguish retained
+    # error outputs. All entry points, including legacy *_agg callers, use raw.
+    def _build_score_query(self):
         return self._build_score_raw()
 
-    def _build_score_agg(self) -> tuple[str, dict[str, Any]]:
-        """Score query against the pre-aggregated table."""
-        bucket_fn = self.time_bucket_expr(self.interval)
-        query = f"""
-        SELECT
-            {bucket_fn}(hour) AS time_bucket,
-            (sum(float_sum) / greatest(sum(float_count), 1)) * 100
-                AS value
-        FROM {self.AGG_TABLE}
-        WHERE project_id = %(project_id)s
-          AND custom_eval_config_id = toUUID(%(eval_config_id)s)
-          AND hour >= %(start_date)s
-          AND hour < %(end_date)s
-        GROUP BY time_bucket
-        ORDER BY time_bucket
-        """
-        return query, self.params
+    def _build_score_agg(self):
+        return self._build_score_raw()
 
-    def _build_score_raw(self) -> tuple[str, dict[str, Any]]:
-        """Score query against the configured raw eval-logger table."""
-        bucket_fn = self.time_bucket_expr(self.interval)
-        filter_frag = self._filter_fragment()
-        # Eval-logger rows have no project_id column. The caller authorizes the
-        # globally unique config against the request project before building
-        # this query; filtered reads additionally bind the logger rows to the
-        # project's matching trace set in ``_filter_fragment``. Keep the raw scan
-        # config/time scoped and let the topology resolver select the matching
-        # legacy ``deleted`` or direct-write ``is_deleted`` predicate.
-        raw_table, live_predicate = self._EVAL_LOGGER_SOURCE(
-            "raw_eval_logger", include_cdc_tombstone_guard=True
-        )
-        query = f"""
-        SELECT
-            {bucket_fn}(created_at) AS time_bucket,
-            ifNotFinite(avg(output_float) * 100, NULL) AS value,
-            count() AS primary_traffic
-        FROM {raw_table} AS raw_eval_logger FINAL
-        WHERE {live_predicate}
-          AND custom_eval_config_id = toUUID(%(eval_config_id)s)
-          AND created_at >= %(start_date)s
-          AND created_at < %(end_date)s
-          {filter_frag}
-        GROUP BY time_bucket
-        ORDER BY time_bucket
-        """
-        return query, self.params
-
-    # ------------------------------------------------------------------
-    # Pass/Fail (bool) queries
-    # ------------------------------------------------------------------
-
-    def _build_pass_fail_query(self) -> tuple[str, dict[str, Any]]:
-        """Build query for PASS_FAIL eval type: pass rate as percentage."""
-        if self.use_preaggregated:
-            return self._build_pass_fail_agg()
+    def _build_pass_fail_query(self):
         return self._build_pass_fail_raw()
 
-    def _build_pass_fail_agg(self) -> tuple[str, dict[str, Any]]:
-        """Pass/Fail query against the pre-aggregated table."""
-        bucket_fn = self.time_bucket_expr(self.interval)
-        query = f"""
-        SELECT
-            {bucket_fn}(hour) AS time_bucket,
-            (sum(bool_pass) * 100.0)
-                / greatest(sum(bool_pass) + sum(bool_fail), 1) AS value
-        FROM {self.AGG_TABLE}
-        WHERE project_id = %(project_id)s
-          AND custom_eval_config_id = toUUID(%(eval_config_id)s)
-          AND hour >= %(start_date)s
-          AND hour < %(end_date)s
-        GROUP BY time_bucket
-        ORDER BY time_bucket
-        """
-        return query, self.params
+    def _build_pass_fail_agg(self):
+        return self._build_pass_fail_raw()
 
-    def _build_pass_fail_raw(self) -> tuple[str, dict[str, Any]]:
-        """Pass/Fail query against the configured raw eval-logger table."""
-        bucket_fn = self.time_bucket_expr(self.interval)
-        filter_frag = self._filter_fragment()
-        raw_table, live_predicate = self._EVAL_LOGGER_SOURCE(
+    def _project_predicate(self):
+        # Preserve the MV's span/trace/session dimension resolution. A missing
+        # dimension fails closed (NULL), never the all-zero project default.
+        return """if(raw_eval_logger.target_type = 'session',
+            dictGetOrNull('trace_session_dict', 'project_id', raw_eval_logger.trace_session_id),
+            dictGetOrNull('trace_dict', 'project_id', raw_eval_logger.trace_id)
+        ) = toUUID(%(project_id)s)"""
+
+    def _build_raw_query(self, valid_output, value_select, failure="0"):
+        table, live = self._EVAL_LOGGER_SOURCE(
             "raw_eval_logger", include_cdc_tombstone_guard=True
         )
-        query = f"""
-        SELECT
-            {bucket_fn}(created_at) AS time_bucket,
-            ifNotFinite(avg(CASE WHEN output_bool = 1 THEN 100.0 ELSE 0.0 END), NULL)
-                AS value,
-            count() AS primary_traffic
-        FROM {raw_table} AS raw_eval_logger FINAL
-        WHERE {live_predicate}
-          AND custom_eval_config_id = toUUID(%(eval_config_id)s)
-          AND created_at >= %(start_date)s
-          AND created_at < %(end_date)s
-          {filter_frag}
-        GROUP BY time_bucket
-        ORDER BY time_bucket
-        """
-        return query, self.params
-
-    # ------------------------------------------------------------------
-    # Choices (str_list) queries
-    # ------------------------------------------------------------------
-
-    def _build_choices_query(self) -> tuple[str, dict[str, Any]]:
-        """Build query for CHOICES eval type.
-
-        Generates per-choice percentage columns using ClickHouse's
-        ``has()`` function for array containment checks.
-        """
-        bucket_fn = self.time_bucket_expr(self.interval)
-
-        if not self.choices:
-            # No choices defined -- return a simple count query
-            return self._build_score_raw()
-
-        # Build per-choice columns. ClickHouse stores output_str_list as a JSON
-        # string, so parse it before calling has(); output_str is kept as the
-        # single-choice fallback for older rows/imports.
-        choice_cols: list[str] = []
-        choice_array_expr = "JSONExtract(output_str_list, 'Array(String)')"
-        for i, choice in enumerate(self.choices):
-            param_name = f"choice_{i}"
-            self.params[param_name] = choice
-            choice_cols.append(
-                f"countIf(has({choice_array_expr}, %({param_name})s) "
-                f"OR output_str = %({param_name})s) * 100.0 "
-                f"/ greatest(count(), 1) AS `choice_{i}`"
+        if table.endswith("_v2"):
+            # 011_eval_logger_v2 has neither status nor skipped_reason. Treating
+            # those missing columns as completed would recreate the false-zero
+            # bug. No lossy rollup or legacy-table fallback is permitted.
+            # Import at read time: exact_graph_reads imports this builder.
+            from tracer.services.clickhouse.exact_graph_reads import (
+                EvalLifecycleUnavailable,
             )
 
-        choice_select = ",\n            ".join(choice_cols)
-
-        filter_frag = self._filter_fragment()
-        raw_table, live_predicate = self._EVAL_LOGGER_SOURCE(
-            "raw_eval_logger", include_cdc_tombstone_guard=True
-        )
+            raise EvalLifecycleUnavailable(
+                "Evaluation quality metrics are unavailable because the selected "
+                "eval logger does not preserve lifecycle columns."
+            )
+        bucket = self.time_bucket_expr(self.interval)
+        filters = self._filter_fragment()
         query = f"""
+        WITH
+            (ifNull(error, 0) != 0
+                OR lowerUTF8(trimBoth(ifNull(output_str, ''))) = 'error'
+                OR lowerUTF8(ifNull(status, 'completed')) IN
+                    ('errored', 'error', 'failed', 'rate_limited', 'insufficient_credits')) AS nk_error,
+            (NOT nk_error AND (ifNull(skipped_reason, '') != ''
+                OR status = 'skipped')) AS nk_skipped,
+            (NOT nk_error AND NOT nk_skipped AND status = 'completed') AS nk_completed,
+            (nk_completed AND ({valid_output})) AS nk_valid
         SELECT
-            {bucket_fn}(created_at) AS time_bucket,
-            count() AS total_count,
-            {choice_select}
-        FROM {raw_table} AS raw_eval_logger FINAL
-        WHERE {live_predicate}
+            {bucket}(created_at) AS time_bucket,
+            {value_select},
+            count() AS primary_traffic,
+            count() AS count,
+            countIf(nk_valid) AS scored_count,
+            count() - countIf(nk_valid) AS unscored_count,
+            countIf(nk_completed) AS completed_count,
+            countIf(nk_error) AS error_count,
+            countIf(NOT nk_error AND NOT nk_skipped AND status = 'pending') AS pending_count,
+            countIf(NOT nk_error AND NOT nk_skipped AND status = 'running') AS running_count,
+            countIf(nk_skipped) AS skipped_count,
+            countIf(nk_valid AND ({failure})) AS failed_count,
+            countIf(nk_error) * 100.0 / nullIf(countIf(nk_error OR nk_completed), 0) AS error_rate
+        FROM (SELECT * FROM {table} FINAL) AS raw_eval_logger
+        WHERE {live}
           AND custom_eval_config_id = toUUID(%(eval_config_id)s)
           AND created_at >= %(start_date)s
           AND created_at < %(end_date)s
-          {filter_frag}
+          AND {self._project_predicate()}
+          {filters}
         GROUP BY time_bucket
         ORDER BY time_bucket
         """
         return query, self.params
 
-    # ------------------------------------------------------------------
-    # Result formatting
-    # ------------------------------------------------------------------
-
-    def _format_single_series(
-        self,
-        rows: list[tuple],
-        columns: list[str],
-    ) -> dict[str, Any]:
-        """Format rows into a single-series eval result dict."""
-        data_points = self.format_time_series(
-            rows=rows,
-            columns=columns,
-            interval=self.interval,
-            start_date=self.start_date,
-            end_date=self.end_date,
-            value_keys=["value"],
+    def _build_score_raw(self):
+        return self._build_raw_query(
+            "output_float IS NOT NULL AND isFinite(output_float)",
+            "sumIf(ifNull(output_float, 0), nk_valid) * 100.0 / nullIf(countIf(nk_valid), 0) AS value",
+            "output_float < 0.3",
         )
 
+    def _build_pass_fail_raw(self):
+        return self._build_raw_query(
+            "output_bool IS NOT NULL AND output_bool IN (0, 1)",
+            "countIf(nk_valid AND output_bool = 1) * 100.0 / nullIf(countIf(nk_valid), 0) AS value",
+            "output_bool = 0",
+        )
+
+    def _build_choices_query(self):
+        choices = "JSONExtract(ifNull(output_str_list, '[]'), 'Array(String)')"
+        self.params["valid_choices"] = self.valid_choices
+        valid = f"notEmpty({choices}) OR has(%(valid_choices)s, ifNull(output_str, ''))"
+        columns = []
+        for i, choice in enumerate(self.choices):
+            self.params[f"choice_{i}"] = choice
+            columns.append(
+                f"countIf(nk_valid AND (has({choices}, %(choice_{i})s) OR output_str = %(choice_{i})s)) "
+                f"* 100.0 / nullIf(countIf(nk_valid), 0) AS choice_{i}"
+            )
+        return self._build_raw_query(valid, ", ".join(columns) or "NULL AS value")
+
+    _COUNT_KEYS = (
+        "count",
+        "primary_traffic",
+        "scored_count",
+        "unscored_count",
+        "completed_count",
+        "error_count",
+        "pending_count",
+        "running_count",
+        "skipped_count",
+        "failed_count",
+    )
+
+    def _format_points(self, rows, columns, value_column="value"):
+        """Keep null scores and zero counts, including empty time buckets.
+
+        BaseQueryBuilder.format_time_series intentionally zero-fills resource
+        metrics; quality series must not pass through that formatter.
+        """
+        points = {}
+        for row in rows:
+            data = (
+                row if isinstance(row, dict) else dict(zip(columns, row, strict=False))
+            )
+            timestamp = data.get("time_bucket")
+            if isinstance(timestamp, str):
+                timestamp = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+            if timestamp is None:
+                continue
+            timestamp = self._normalize_timestamp(timestamp, self.interval)
+            points[timestamp] = {
+                "timestamp": timestamp.isoformat(),
+                "value": data.get(value_column),
+                "error_rate": data.get("error_rate"),
+                **{key: data.get(key, 0) for key in self._COUNT_KEYS},
+            }
+        return [
+            points.get(
+                timestamp,
+                {
+                    "timestamp": timestamp.isoformat(),
+                    "value": None,
+                    "error_rate": None,
+                    **dict.fromkeys(self._COUNT_KEYS, 0),
+                },
+            )
+            for timestamp in self._generate_timestamp_range(
+                self.start_date, self.end_date, self.interval
+            )
+        ]
+
+    def _format_single_series(self, rows, columns):
         return {
             "name": self.eval_name,
-            "data": data_points,
             "id": str(self.custom_eval_config_id),
+            "data": self._format_points(rows, columns),
         }
 
-    def _format_choices_result(
-        self,
-        rows: list[tuple],
-        columns: list[str],
-    ) -> list[dict[str, Any]]:
-        """Format choices query rows into multi-series result.
-
-        Returns one series per choice option, each with the standard
-        ``{name, data, id}`` shape.
-        """
-        results: list[dict[str, Any]] = []
-
-        for i, choice in enumerate(self.choices):
-            col_name = f"choice_{i}"
-            # Find column index for this choice
-            col_idx = columns.index(col_name) if col_name in columns else None
-
-            if col_idx is None:
-                # Choice column not found; produce empty series
-                data_points = self.format_time_series(
-                    rows=[],
-                    columns=["time_bucket", "value"],
-                    interval=self.interval,
-                    start_date=self.start_date,
-                    end_date=self.end_date,
-                    value_keys=["value"],
-                )
-            else:
-                # Extract (time_bucket, choice_value) tuples
-                def _get_val(row, key, idx):
-                    if isinstance(row, dict):
-                        return row.get(key, 0)
-                    return row[idx] if len(row) > idx else 0
-
-                choice_rows = [
-                    (_get_val(row, "time_bucket", 0), _get_val(row, col_name, col_idx))
-                    for row in rows
-                ]
-                data_points = self.format_time_series(
-                    rows=choice_rows,
-                    columns=["time_bucket", "value"],
-                    interval=self.interval,
-                    start_date=self.start_date,
-                    end_date=self.end_date,
-                    value_keys=["value"],
-                )
-
-            results.append(
-                {
-                    "name": f"{self.eval_name} - {choice}",
-                    "data": data_points,
-                    "id": str(self.custom_eval_config_id),
-                }
-            )
-
-        return results
+    def _format_choices_result(self, rows, columns):
+        return [
+            {
+                "name": f"{self.eval_name} - {choice}",
+                "id": str(self.custom_eval_config_id),
+                "data": self._format_points(rows, columns, f"choice_{i}"),
+            }
+            for i, choice in enumerate(self.choices)
+        ]

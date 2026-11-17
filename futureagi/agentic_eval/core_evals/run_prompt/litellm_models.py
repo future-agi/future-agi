@@ -7,6 +7,15 @@ from accounts.models.workspace import Workspace
 from agentic_eval.core_evals.run_prompt.available_models import AVAILABLE_MODELS
 from model_hub.models.api_key import ApiKey
 from model_hub.models.custom_models import CustomAIModel
+from model_hub.utils.model_endpoints import (
+    assert_model_config_endpoints_allowed,
+    refuse_google_credential_other_than_a_service_account_key,
+    refuse_platform_values,
+    stored_row_as_a_call_takes_it,
+    whitelist_model_config,
+    without_platform_identity_fields_at_any_depth,
+)
+from model_hub.utils.model_key import refuse_model_without_its_own_key
 
 logger = structlog.get_logger(__name__)
 
@@ -27,6 +36,64 @@ def missing_provider_key_message(provider):
     known = {choice.value for choice in LiteLlmModelProvider}
     name = provider if provider in known else "this model's provider"
     return f"API key not configured for {name}. Please add your API key in settings."
+
+
+class ModelNotInCatalog(ValueError):
+    """The model is neither in the catalog nor one of the organization's
+    custom models. Its text is the catalog's own; callers that need to name
+    the model read ``model_name``."""
+
+    def __init__(self, model_name):
+        self.model_name = model_name
+        super().__init__(
+            f"Model '{model_name}' is not available in the current model catalog. "
+            "It may be deprecated or retired. Please select a supported model from the latest available models list."
+        )
+
+    def __reduce__(self):
+        return type(self), (self.model_name,)
+
+
+class StoredCredentialLookup:
+    """Where the stored-credential (BYOK) resolution ended: the credential
+    (``found``) or the provider and workspace it looked under. Its repr
+    never shows the credential."""
+
+    __slots__ = ("found", "value", "provider", "workspace_id")
+
+    def __init__(self, found, value, provider, workspace_id):
+        self.found = found
+        self.value = value
+        self.provider = provider
+        self.workspace_id = workspace_id
+
+    def __repr__(self):
+        return (
+            f"StoredCredentialLookup(found={self.found!r}, provider={self.provider!r})"
+        )
+
+
+class StoredCredentialIndex:
+    """For which models ``stored_credential_lookup`` would find a stored
+    credential, so that availability labels match what the runtime does:
+    the organization's custom model names, and the providers whose chosen
+    ApiKey row (the workspace's row, else the organization row without a
+    workspace) has a key or a config. Holds no credential."""
+
+    __slots__ = ("custom_model_names", "providers")
+
+    def __init__(self, custom_model_names, providers):
+        self.custom_model_names = frozenset(custom_model_names)
+        self.providers = frozenset(providers)
+
+    def covers(self, model_name, provider):
+        return model_name in self.custom_model_names or provider in self.providers
+
+    def __repr__(self):
+        return (
+            f"StoredCredentialIndex(custom_models={len(self.custom_model_names)}, "
+            f"providers={sorted(self.providers)!r})"
+        )
 
 
 class LiteLLMModelManager:
@@ -163,21 +230,105 @@ class LiteLLMModelManager:
 
         os.environ[api_key_name] = api_key
 
-    def get_api_key(self, organization_id, workspace_id=None, provider=None):
+    def get_api_key(
+        self,
+        organization_id,
+        workspace_id=None,
+        provider=None,
+        *,
+        allow_managed=False,
+        operation=None,
+    ):
+        """The stored credentials for a provider call. A stored openai,
+        azure, bedrock or sagemaker config is cut down to the keys that
+        provider needs (``whitelist_model_config``), and a stored base URL
+        (openai/azure ``api_base``, a custom model's endpoint) is checked
+        against the deployment's address policy, on every call, so rows saved
+        before the save-time checks are covered too; EndpointBlocked (a
+        ValueError with generic text) when it is refused. A stored key or
+        configuration that holds a reference (such as os.environ/... or
+        oidc/...) instead of a literal value is refused before anything else
+        (ModelConfigurationRefused, raised: never
+        treated as no credential), and so is a row that may not be a model's
+        Google credential: for any provider, another kind of Google
+        credential than a service-account key; for a row stored for Vertex AI
+        or asked for as Vertex AI, anything other than a service-account key
+        that signs in at Google's own address. Every stored row returned is
+        without the
+        reserved identity fields at any depth of its structure
+        (``without_platform_identity_fields_at_any_depth``), whatever
+        provider it was stored under. A row stored for Vertex AI or asked for
+        as Vertex AI is returned as an object without a key field, or refused
+        the same way when it gives no complete service-account key
+        (``stored_row_as_a_call_takes_it``).
 
+        One key: a caller that can carry a managed route passes
+        ``allow_managed=True``. When no stored credential exists it then gets
+        a ``ManagedRouteBinding`` from ``model_hub.services.model_route`` (or
+        that module's typed refusal), never a provider key and never None.
+        The binding admits nothing: each completion dispatched with it is
+        admitted on its own, at the send. A stored credential always wins
+        and is returned exactly as before; without ``allow_managed`` nothing
+        changes."""
+        lookup = self.stored_credential_lookup(organization_id, workspace_id, provider)
+        if lookup.found:
+            return lookup.value
+        if not allow_managed:
+            raise MissingProviderKeyError(lookup.provider)
+
+        from model_hub.services.model_route import OP_RUN_PROMPT, bind_managed_route
+
+        return bind_managed_route(
+            organization_id=organization_id,
+            workspace_id=lookup.workspace_id,
+            model_name=self.model_name,
+            provider=lookup.provider,
+            operation=operation or OP_RUN_PROMPT,
+            model_mode=self.model_mode(),
+        )
+
+    def stored_credential_lookup(
+        self, organization_id, workspace_id=None, provider=None
+    ):
+        """The stored-credential resolution of ``get_api_key``, unchanged:
+        the organization's custom model, else the provider's workspace key,
+        else its organization key. ``found`` is False where ``get_api_key``
+        used to raise "API key not configured"."""
         try:
             custom_models = CustomAIModel.objects.get(
                 organization=organization_id,
                 user_model_id=self.model_name,
                 deleted=False,
             )
-            return custom_models.actual_json
+            stored = custom_models.actual_json
+            refuse_platform_values(stored)
+            refuse_google_credential_other_than_a_service_account_key(
+                custom_models.provider, stored
+            )
+            refuse_google_credential_other_than_a_service_account_key(provider, stored)
+            # A Vertex model's row is handed on as an object without a key
+            # field that gives a service-account key, or is refused.
+            stored = stored_row_as_a_call_takes_it(
+                stored, custom_models.provider, provider
+            )
+            key_config = without_platform_identity_fields_at_any_depth(
+                whitelist_model_config(custom_models.provider, stored)
+            )
+            # An alias removed by the whitelist cannot authorize the call.
+            # Check before resolving any tenant URL.
+            refuse_model_without_its_own_key(custom_models.provider, key_config)
+            assert_model_config_endpoints_allowed(key_config)
+            return StoredCredentialLookup(
+                True, key_config, custom_models.provider, workspace_id
+            )
         except CustomAIModel.DoesNotExist:
             pass
         if not provider:
             provider = self.get_provider(self.model_name)
 
-        return self.get_provider_api_key(organization_id, provider, workspace_id)
+        return self._stored_provider_credential_lookup(
+            organization_id, provider, workspace_id
+        )
 
     def get_provider_api_key(self, organization_id, provider, workspace_id=None):
         """The key saved under Settings -> AI Providers for ``provider``.
@@ -186,6 +337,17 @@ class LiteLLMModelManager:
         its own transport (Jev's System One API) can't pick up a custom model's
         credentials by name.
         """
+        lookup = self._stored_provider_credential_lookup(
+            organization_id, provider, workspace_id
+        )
+        if not lookup.found:
+            raise MissingProviderKeyError(provider)
+        return lookup.value
+
+    def _stored_provider_credential_lookup(
+        self, organization_id, provider, workspace_id=None
+    ):
+        """Provider-only stored lookup shared by routing and the BYOK accessor."""
         if not workspace_id:
             workspace_id = self._resolve_default_workspace_id(organization_id)
 
@@ -193,15 +355,67 @@ class LiteLLMModelManager:
             organization_id, workspace_id, provider
         )
         if api_key_entry is None:
-            raise MissingProviderKeyError(provider)
+            return StoredCredentialLookup(False, None, provider, workspace_id)
 
         if api_key_entry.key:
-            return api_key_entry.actual_key
+            key = api_key_entry.actual_key
+            refuse_platform_values(key)
+            refuse_google_credential_other_than_a_service_account_key(provider, key)
+            refuse_model_without_its_own_key(provider, key)
+            key = stored_row_as_a_call_takes_it(key, provider)
+            return StoredCredentialLookup(
+                True,
+                without_platform_identity_fields_at_any_depth(key),
+                provider,
+                workspace_id,
+            )
 
-        if api_key_entry.actual_json:
-            return api_key_entry.actual_json
+        stored = api_key_entry.actual_json
+        if stored:
+            refuse_platform_values(stored)
+            refuse_google_credential_other_than_a_service_account_key(provider, stored)
+            stored = stored_row_as_a_call_takes_it(stored, provider)
+            config_json = without_platform_identity_fields_at_any_depth(
+                whitelist_model_config(provider, stored)
+            )
+            refuse_model_without_its_own_key(provider, config_json)
+            assert_model_config_endpoints_allowed(config_json)
+            return StoredCredentialLookup(True, config_json, provider, workspace_id)
 
-        raise MissingProviderKeyError(provider)
+        return StoredCredentialLookup(False, None, provider, workspace_id)
+
+    def stored_credential_index(self, organization_id, workspace_id=None):
+        """``stored_credential_lookup``'s answer for many models at once, for
+        model lists: the same custom-model match, the same ApiKey row choice
+        (``_find_api_key_entry``, after the same default-workspace
+        resolution) and the same non-empty test (``key``, else
+        ``actual_json``). Values are only tested, never returned."""
+        if not organization_id:
+            return StoredCredentialIndex((), ())
+        custom_model_names = CustomAIModel.objects.filter(
+            organization=organization_id, deleted=False
+        ).values_list("user_model_id", flat=True)
+        if not workspace_id:
+            workspace_id = self._resolve_default_workspace_id(organization_id)
+        candidates = set(
+            ApiKey.objects.filter(organization_id=organization_id).values_list(
+                "provider", flat=True
+            )
+        )
+        providers = set()
+        for provider in candidates:
+            entry = self._find_api_key_entry(organization_id, workspace_id, provider)
+            if entry is not None and (entry.key or entry.actual_json):
+                providers.add(provider)
+        return StoredCredentialIndex(custom_model_names, providers)
+
+    def model_mode(self, model_name=None):
+        """The catalog mode ("chat", "tts", ...) of a model, or None."""
+        name = self.model_name if model_name is None else model_name
+        for model in self.models:
+            if model.get("model_name") == name:
+                return model.get("mode")
+        return None
 
     def _resolve_default_workspace_id(self, organization_id):
         try:
@@ -259,10 +473,7 @@ class LiteLLMModelManager:
             ) from None
 
         except CustomAIModel.DoesNotExist:
-            raise ValueError(
-                f"Model '{model_name}' is not available in the current model catalog. "
-                "It may be deprecated or retired. Please select a supported model from the latest available models list."
-            ) from None
+            raise ModelNotInCatalog(model_name) from None
 
     def get_model_by_provider(self, provider):
         model_name = []

@@ -9,12 +9,13 @@ import { statusColors } from "src/utils/runStatus";
 
 // Design System error state: the empty-state layout with the icon square in
 // status.danger, a plain-language title, the detail in tertiary text and a
-// Retry action when a retry function exists.
+// Retry action when a retry function exists (disabled while `retrying`).
 
 export default function ErrorState({
   title = "Something went wrong",
   detail,
   onRetry,
+  retrying = false,
   sx,
   ...other
 }) {
@@ -32,8 +33,9 @@ export default function ErrorState({
             size="small"
             startIcon={<Iconify icon="solar:refresh-linear" width={16} />}
             onClick={onRetry}
+            disabled={retrying}
           >
-            Retry
+            {retrying ? "Retrying…" : "Retry"}
           </Button>
         ) : undefined
       }
@@ -47,5 +49,6 @@ ErrorState.propTypes = {
   title: PropTypes.node,
   detail: PropTypes.node,
   onRetry: PropTypes.func,
+  retrying: PropTypes.bool,
   sx: PropTypes.object,
 };

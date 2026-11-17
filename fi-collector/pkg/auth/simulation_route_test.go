@@ -84,7 +84,7 @@ func newRouter(t *testing.T, sim *routeSim) (*Authenticator, *bytes.Buffer) {
 
 func sandboxResult() *ResolveResult {
 	return &ResolveResult{
-		OrgID: routeOrg, WorkspaceID: routeWorkspace, KeyType: keyTypeIngest,
+		OrgID: routeOrg, WorkspaceID: routeWorkspace, Principal: PrincipalSandbox,
 		SimulationAgent: SimulationAgent{ID: routeAgent, OrgID: routeOrg},
 		Projects:        map[string]string{},
 	}
@@ -148,10 +148,7 @@ func TestSandboxKeyRoutesEverySpanToTheKeysAgent(t *testing.T) {
 		if got, _ := resourceStr(t, traces, i, "project_name"); got != routeHiddenKey {
 			t.Errorf("resource %d project_name = %q", i, got)
 		}
-		want := resourceMarkValue
-		if i == 1 {
-			want = "custom"
-		}
+		want := resourceMarkValue // sandbox routing always assigns the verified origin
 		if got, ok := resourceStr(t, traces, i, resourceMarkKey); !ok || got != want {
 			t.Errorf("resource %d %s = %q, %v; want %q", i, resourceMarkKey, got, ok, want)
 		}
@@ -748,21 +745,29 @@ func TestSandboxKeyNeverLooksUpAReservedNameInTheReplica(t *testing.T) {
 		}
 	})
 
-	t.Run("another key is unchanged", func(t *testing.T) {
-		resolver := &namesRecorder{countingProjectResolver: countingProjectResolver{found: found}}
-		a := &Authenticator{cache: newCache(time.Minute, time.Hour), projects: resolver, log: slog.Default()}
-		result := &ResolveResult{OrgID: routeOrg, WorkspaceID: routeWorkspace, KeyType: "system", Projects: map[string]string{}}
-		a.cache.putPositive("ck", result)
-		if err := a.ResolveProjectsForKey(context.Background(), "ck", result, []string{routeHiddenKey, "customer-prod"}); err != nil {
-			t.Fatal(err)
-		}
-		if len(resolver.asked) != 1 || len(resolver.asked[0]) != 2 {
-			t.Fatalf("lookups = %v, want both names", resolver.asked)
-		}
-		if id, ok := result.GetProject(routeHiddenKey); !ok || id != routeProdID {
-			t.Fatalf("reserved name = %q, %v", id, ok)
-		}
-	})
+	for _, principal := range []Principal{PrincipalPersonal, PrincipalPlatform} {
+		t.Run(string(principal), func(t *testing.T) {
+			resolver := &namesRecorder{countingProjectResolver: countingProjectResolver{found: found}}
+			a := &Authenticator{cache: newCache(time.Minute, time.Hour), projects: resolver, log: slog.Default()}
+			result := &ResolveResult{OrgID: routeOrg, WorkspaceID: routeWorkspace, Principal: principal, Projects: map[string]string{}}
+			a.cache.putPositive("ck", result)
+			if err := a.ResolveProjectsForKey(context.Background(), "ck", result, []string{routeHiddenKey, "customer-prod"}); err != nil {
+				t.Fatal(err)
+			}
+			if len(resolver.asked) != 1 || strings.Join(resolver.asked[0], ",") != "customer-prod" {
+				t.Fatalf("lookups = %v, want only ordinary name", resolver.asked)
+			}
+			if _, ok := result.GetProject(routeHiddenKey); ok {
+				t.Fatal("reserved name resolved for a non-sandbox principal")
+			}
+			if id, ok := result.GetProject("customer-prod"); !ok || id != routeProdID {
+				t.Fatal("ordinary name did not resolve")
+			}
+			if len(resolver.created) != 0 {
+				t.Fatal("reserved project was created")
+			}
+		})
+	}
 }
 
 func TestIsReservedProjectName(t *testing.T) {

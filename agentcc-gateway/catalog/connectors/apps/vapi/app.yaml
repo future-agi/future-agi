@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: vapi
+version: 1.0.0
+name: Vapi
+description: "Create voice assistants, place calls and inspect calls, phone numbers and tools."
+vendor:
+  name: Vapi
+  domains: [vapi.ai]
+eeCategory: communication
+group: other
+categories: [communication]
+tags: [automation]
+docsUrl: https://docs.vapi.ai/sdk/mcp-server
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://docs.vapi.ai/sdk/mcp-server
+    fetchedAt: 2026-11-09

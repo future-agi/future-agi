@@ -10,6 +10,13 @@ NUMERIC range/step, STAR range, CATEGORICAL options, THUMBS_UP_DOWN boolean).
 """
 
 
+def _limit(number):
+    """A label limit as a person reads it: 3 for 3.0, 2.5 as it is."""
+    if isinstance(number, float) and number.is_integer():
+        return str(int(number))
+    return str(number)
+
+
 def validate_annotation_value(
     label_type: str,
     label_settings: dict | None,
@@ -62,27 +69,39 @@ def validate_annotation_value(
         if label_type == AnnotationTypeChoices.NUMERIC.value:
             min_val = settings.get("min")
             max_val = settings.get("max")
-            if min_val is not None and numeric_value < min_val:
-                return f"value_float {numeric_value} is below minimum {min_val}."
-            if max_val is not None and numeric_value > max_val:
-                return f"value_float {numeric_value} exceeds maximum {max_val}."
+            below_min = min_val is not None and numeric_value < min_val
+            above_max = max_val is not None and numeric_value > max_val
+            has_both_limits = min_val is not None and max_val is not None
+            if has_both_limits and (below_min or above_max):
+                return f"Enter a number from {_limit(min_val)} to {_limit(max_val)}."
+            if below_min:
+                return f"Enter a number of {_limit(min_val)} or more."
+            if above_max:
+                return f"Enter a number of {_limit(max_val)} or less."
 
             step_size = settings.get("step_size")
             if step_size:
-                remainder = (numeric_value - (min_val or 0)) % step_size
+                # Steps are counted from the label's minimum, or from 0.
+                step_base = min_val or 0
+                remainder = (numeric_value - step_base) % step_size
                 if (
                     remainder not in (0, step_size)
                     and remainder > 1e-6
                     and (step_size - remainder) > 1e-6
                 ):
-                    return f"value_float must align with step_size {step_size}."
+                    if step_base == 0:
+                        return f"Enter a multiple of {_limit(step_size)}."
+                    return (
+                        f"Enter a number in steps of {_limit(step_size)} "
+                        f"from {_limit(step_base)}."
+                    )
 
         elif label_type == AnnotationTypeChoices.STAR.value:
             max_stars = settings.get("no_of_stars")
             if max_stars is not None and (
                 numeric_value < 1 or numeric_value > max_stars
             ):
-                return f"value_float must be between 1 and {max_stars}."
+                return f"Choose from 1 to {_limit(max_stars)} stars."
 
     elif label_type == AnnotationTypeChoices.THUMBS_UP_DOWN.value:
         if value_bool is None:
@@ -114,10 +133,7 @@ def validate_annotation_value(
 
         if not settings.get("multi_choice", True):
             if len(value_str_list) != 1:
-                return (
-                    "Multiple values provided but this label "
-                    "does not allow multi_selection."
-                )
+                return "Choose one option for this label."
     else:
         return f"Unsupported annotation type: {label_type}"
 

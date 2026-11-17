@@ -6,16 +6,34 @@ import { styled, Tabs } from "@mui/material";
 export const CustomTabs = styled(Tabs)({});
 
 /**
- * Segmented tabs — a bordered pill strip with a filled pill on the selected
- * item. Takes plain <Tab> children like CustomTabs does.
+ * Segmented tabs — the pill strip used on the eval detail page
+ * (Eval Details / Usage / Feedback / Ground Truth).
  *
- * Reads as a control on its own — bordered container, filled selected pill —
- * so it holds up in a card header where an underline indicator has no baseline
- * to sit on.
+ * Lifted here rather than re-styled per screen: the same inline block was
+ * pasted into a dozen call sites, so "our tab component" had no single
+ * definition to point at. Takes plain <Tab> children like CustomTabs does.
+ *
+ * Reads as a control on its own — bordered container, filled pill on the
+ * selected item — so it holds up in a card header where an underline
+ * indicator has no baseline to sit on.
+ *
+ * `wrap` (opt-in): a strip too wide for its column breaks onto a second
+ * line, every option whole, instead of scrolling behind an arrow with the
+ * last option cut. Without it a strip is unchanged.
  */
-export const SegmentedTabs = styled((props) => (
-  <Tabs {...props} TabIndicatorProps={{ style: { display: "none" } }} />
-))(({ theme }) => segmentedTrack(theme));
+export const SegmentedTabs = styled(
+  // eslint-disable-next-line react/prop-types
+  ({ wrap, ...props }) => (
+    <Tabs
+      {...props}
+      {...(wrap ? { variant: "standard" } : null)}
+      TabIndicatorProps={{ style: { display: "none" } }}
+    />
+  ),
+)(({ theme, wrap }) => ({
+  ...segmentedTrack(theme),
+  ...(wrap && { "& .MuiTabs-flexContainer": { gap: 2, flexWrap: "wrap" } }),
+}));
 
 // Design system segmented control (.ds-seg) — shared with the theme's
 // ToggleButtonGroup override so every two-to-four-way switch looks the same:
@@ -25,6 +43,7 @@ export const segmentedTrack = (theme) => ({
   minHeight: 28,
   boxShadow: "none",
   width: "fit-content",
+  maxWidth: "100%",
   padding: 2,
   borderRadius: 6,
   backgroundColor: theme.palette.background.muted,

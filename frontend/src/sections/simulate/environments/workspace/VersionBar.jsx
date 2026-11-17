@@ -2,11 +2,18 @@ import PropTypes from "prop-types";
 import { Box, Stack, Typography, Tooltip } from "@mui/material";
 import Iconify from "src/components/iconify";
 import {
-  isVersioningDisabled,
+  VERSIONING_STATE,
   useEnvironmentVersions,
   useRefreshWhenChecked,
+  versioningBackfillFailed,
+  versioningReadable,
+  versioningState,
 } from "src/api/simulate-environments/versions";
-import { VERSIONS_COPY, WORKSPACE_COPY } from "./workspace.constants";
+import {
+  VERSIONING_STATE_COPY,
+  VERSIONS_COPY,
+  WORKSPACE_COPY,
+} from "./workspace.constants";
 
 // What is being tested, against what. A run is a pairing — this environment
 // version against that agent version — and a result nobody can attribute to a
@@ -15,15 +22,18 @@ import { VERSIONS_COPY, WORKSPACE_COPY } from "./workspace.constants";
 // Stated, not selected: two dropdowns under the header would read as filters
 // that scope the page and do not. The labels are the environment's defaults;
 // with versioning off there is no pairing to state, so only the scenario count
-// shows, after the agent under test when one is connected. Until runs are pinned
+// shows, after the agent under test when one is connected, and one muted line
+// says versioning is off for this install (or, once it is on but no version is
+// pinned yet, that it is being enabled). Until runs are pinned
 // to versions, the agent shown is the environment's default agent version, not
 // a claim about which one a run used.
 export default function VersionBar({ env, envState }) {
   const subject = env?.testSubject;
-  const enabled = Boolean(env?.versioning?.enabled);
+  // No versioning read while versioning is off.
   const { data, error } = useEnvironmentVersions(env?.id, {
-    enabled,
+    enabled: versioningReadable(env),
   });
+  const state = versioningState(env, error);
   // Always mounted, so a check that lands with the drawer closed still
   // refreshes what follows the default.
   useRefreshWhenChecked(env?.id, data?.agent);
@@ -31,13 +41,22 @@ export default function VersionBar({ env, envState }) {
 
   // Only state a pairing once the server has answered. A failed refresh keeps
   // what it last answered; before any answer only the scenario count shows.
-  const showPairing = enabled && Boolean(data) && !isVersioningDisabled(error);
+  const showPairing = state !== VERSIONING_STATE.OFF && Boolean(data);
+  // Off or being enabled: one muted line says so; nothing claims a version.
+  const stateLine =
+    state === VERSIONING_STATE.OFF
+      ? VERSIONING_STATE_COPY.off
+      : state === VERSIONING_STATE.ENABLING
+        ? versioningBackfillFailed(env)
+          ? VERSIONING_STATE_COPY.enablingFailed
+          : VERSIONING_STATE_COPY.enabling
+        : null;
   const envV = data?.defaults?.environment;
   const agentV = data?.defaults?.agent;
   const suiteV = data?.defaults?.suite;
   const versioned = Boolean(envV || agentV || suiteV);
   const named = (version) => version.label || VERSIONS_COPY.unlabelled;
-  const envLabel = envV ? named(envV) : versionBar.beforeVersioning;
+  const envLabel = envV ? named(envV) : VERSIONING_STATE_COPY.noVersions;
   const agentLabel = agentV ? named(agentV) : versionBar.noAgent;
   const fromSuite = showPairing && suiteV?.scenarioCount != null;
   const scenarioCount = fromSuite
@@ -219,6 +238,21 @@ export default function VersionBar({ env, envState }) {
           {versionBar.scenariosShared(scenarioCount)}
         </Typography>
       </Tooltip>
+      {stateLine && (
+        <>
+          <Typography
+            sx={{ typography: "s3", color: "text.disabled", mx: 0.5 }}
+          >
+            ·
+          </Typography>
+          <Typography
+            data-testid="versioning-state-line"
+            sx={{ typography: "s3", color: "text.subtitle" }}
+          >
+            {stateLine}
+          </Typography>
+        </>
+      )}
     </Stack>
   );
 }
@@ -226,7 +260,10 @@ export default function VersionBar({ env, envState }) {
 VersionBar.propTypes = {
   env: PropTypes.shape({
     id: PropTypes.string,
-    versioning: PropTypes.shape({ enabled: PropTypes.bool }),
+    versioning: PropTypes.shape({
+      enabled: PropTypes.bool,
+      state: PropTypes.oneOf(["off", "enabling", "ready"]),
+    }),
     testSubject: PropTypes.shape({
       name: PropTypes.string,
       active_version: PropTypes.string,

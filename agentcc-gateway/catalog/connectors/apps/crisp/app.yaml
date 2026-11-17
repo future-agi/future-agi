@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: crisp
+version: 1.0.0
+name: Crisp
+description: "Read customer conversations, send messages and update conversation state in Crisp."
+vendor:
+  name: Crisp
+  domains: [crisp.chat]
+eeCategory: communication
+group: other
+categories: [communication, customer-support]
+tags: [support, automation]
+docsUrl: https://docs.crisp.chat/guides/mcp-server/quickstart/
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://docs.crisp.chat/guides/mcp-server/quickstart/
+    fetchedAt: 2026-11-09

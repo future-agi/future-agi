@@ -66,7 +66,7 @@ export const CustomModalOptions = [
   {
     label: "Open AI",
     value: "openai",
-    logo: "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/openai-icon.png",
+    logo: "/icons/settings/openai.png",
   },
   {
     label: "AWS Bedrock",
@@ -81,12 +81,12 @@ export const CustomModalOptions = [
   {
     label: "Vertex AI",
     value: "vertex_ai",
-    logo: "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/vertex+ai.png",
+    logo: "/icons/settings/google.png",
   },
   {
     label: "Azure",
     value: "azure",
-    logo: "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/azure-icon.png",
+    logo: "/icons/settings/azure.png",
   },
   // { label: "Custom", value: "custom" },
 ];

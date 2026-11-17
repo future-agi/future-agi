@@ -1,0 +1,259 @@
+{
+  "ref": "future-agi/first-agent",
+  "publisher": {
+    "handle": "future-agi",
+    "displayName": "Future AGI",
+    "tier": "official"
+  },
+  "name": "first-agent",
+  "kind": "agent",
+  "title": "Your first agent in one file",
+  "tagline": "One tool, one model, one runAgent call: a weather agent that asks for the tool and answers from its result.",
+  "cover": {
+    "to": "indigo",
+    "from": "blue",
+    "emoji": "👋"
+  },
+  "tags": [
+    "starter",
+    "tool",
+    "first-run"
+  ],
+  "latestVersion": "1.0.0",
+  "likes": 0,
+  "installs30d": 0,
+  "noKeyNeeded": false,
+  "pick": null,
+  "remixOf": null,
+  "ranked": true,
+  "likedByMe": false,
+  "unrankedReason": null,
+  "firstPublishedAt": "2026-10-14T13:40:35.843631+00:00",
+  "opens30d": 0,
+  "installsDaily30": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+  ],
+  "remixCount": 0,
+  "versionCount": 1,
+  "latest": {
+    "ref": "future-agi/first-agent@1.0.0",
+    "version": "1.0.0",
+    "manifest": {
+      "id": "first-agent",
+      "run": {
+        "keyless": [
+          "node",
+          "main.mjs"
+        ]
+      },
+      "demo": {
+        "cast": "demo.cast"
+      },
+      "keys": [
+        {
+          "for": "live",
+          "get": "https://platform.openai.com/api-keys",
+          "why": "The model behind the agent, on OpenAI.",
+          "name": "OPENAI_API_KEY",
+          "secret": true
+        },
+        {
+          "for": "live",
+          "get": "https://console.anthropic.com/settings/keys",
+          "why": "The model behind the agent, on Anthropic.",
+          "name": "ANTHROPIC_API_KEY",
+          "secret": true
+        },
+        {
+          "for": "live",
+          "get": "https://cloud.google.com/vertex-ai/docs/start/cloud-environment",
+          "why": "The model behind the agent, on Vertex AI.",
+          "name": "OMEGA_VERTEX_CREDS",
+          "secret": true
+        }
+      ],
+      "kind": "agent",
+      "tags": [
+        "starter",
+        "tool",
+        "first-run"
+      ],
+      "test": "main.test.mjs",
+      "added": "2026-10-08",
+      "cover": {
+        "to": "indigo",
+        "from": "blue",
+        "emoji": "👋"
+      },
+      "title": "Your first agent in one file",
+      "author": {
+        "kind": "maintainer",
+        "name": "Future AGI",
+        "github": "future-agi"
+      },
+      "models": {
+        "live": [
+          {
+            "keys": [
+              "OPENAI_API_KEY"
+            ],
+            "model": "openai:gpt-4o-mini"
+          },
+          {
+            "keys": [
+              "ANTHROPIC_API_KEY"
+            ],
+            "model": "anthropic:claude-sonnet-4-6"
+          },
+          {
+            "keys": [
+              "OMEGA_VERTEX_CREDS"
+            ],
+            "model": "vertex:gemini-3.5-flash"
+          }
+        ],
+        "keyless": "scripted",
+        "maxCalls": 2
+      },
+      "schema": "omega-hub/v1",
+      "license": "Apache-2.0",
+      "tagline": "One tool, one model, one runAgent call: a weather agent that asks for the tool and answers from its result.",
+      "version": "1.0.0",
+      "difficulty": "starter"
+    },
+    "readme": "# Your first agent in one file\n\n## What it does\n\nThe smallest useful Omega agent. A `get_weather` tool has a name, a description the model reads, an input schema and the code that runs. One `runAgent` call gives the model the tool; the model asks for it, Omega runs it and the model answers from the result.\n\n## Run it with no key\n\n```bash\nomega hub run first-agent\n```\n\nA scripted model plays the LLM: it asks for the tool, then answers from the tool's result. No key and no network.\n\nIt prints:\n\n```text\nanswer: In Lisbon today: sunny, 24 degrees.\ntool get_weather ok=true -> {\"city\":\"Lisbon\",\"forecast\":\"sunny, 24 degrees\"}\n```\n\n## Run it with your key\n\n```bash\nexport OPENAI_API_KEY=...\nomega hub run first-agent --live openai:gpt-4o-mini\n```\n\nThe same agent runs on your model, capped at two calls.\n\n## How it works\n\n- `getWeather` is the tool; `{ city: \"string\" }` is shorthand for a JSON Schema object with one required string property.\n- `createModel` returns the scripted model, or the live one when `omega hub run --live` names it.\n- `runFirstAgent` is the single `runAgent` call.\n- Teaching version with more detail: cookbook recipe 01 in the Omega repository.\n\n## Make it yours\n\n- Add a second tool and ask a request that needs both.\n- Change the instructions and see how the answer changes with a live model.\n\nAfter a change, run the test and record the demo again:\n\n```bash\nomega hub check first-agent --record\n```\n",
+    "files": [
+      {
+        "lang": "text",
+        "path": ".env.example",
+        "bytes": 55,
+        "sha256": "10585f9cc560024f781827e64907ef8af4d0d2dcbab68719accf02d0efbc156a"
+      },
+      {
+        "lang": "markdown",
+        "path": "README.md",
+        "bytes": 1430,
+        "sha256": "4ba709fb0a05e9904beafcc287f29758588c30ffb2e76f386e6767cb882307bb"
+      },
+      {
+        "lang": "cast",
+        "path": "demo.cast",
+        "bytes": 266,
+        "sha256": "a364928036e7635ab6301376abf76777dd333fb7c88830fad24e19fad0894f01"
+      },
+      {
+        "lang": "javascript",
+        "path": "lib.mjs",
+        "bytes": 1688,
+        "sha256": "fdc7caa205c4399a21c8a42bc82cfdbd5bdf0d07e66eb4ec7941f8a0bd49c63c"
+      },
+      {
+        "lang": "javascript",
+        "path": "main.mjs",
+        "bytes": 2664,
+        "sha256": "a5aaf18a14ee6f31ffa0b0c3d32d9e681d4b5e7ae722ce3aa424d885c8e0112c"
+      },
+      {
+        "lang": "javascript",
+        "path": "main.test.mjs",
+        "bytes": 2461,
+        "sha256": "a1a3849d68f13584efcdac122f3895f3a95c6ac2d8a1fb3f7f2cd5093157d0e8"
+      },
+      {
+        "lang": "json",
+        "path": "omega.hub.json",
+        "bytes": 2280,
+        "sha256": "060ab2f30ee3dc56efcb4151124bd0b26d80b71e92aba2f224480ce46be42c3a"
+      },
+      {
+        "lang": "json",
+        "path": "package.json",
+        "bytes": 77,
+        "sha256": "0331492e9969adbe814ac45632e2e14c7272958279874fa1e2b640286c1e7cb6"
+      }
+    ],
+    "digest": "sha256:7465d5950300a4bfee613048aa2b90c833dfffa5796e4febae7361aed4dc107e",
+    "bundleSha256": "c07716a29abf3c658e9dada9322a9cff93eb209c8e0ac814161f3d6ee7477c9f",
+    "bundleBytes": 4427,
+    "capabilities": {
+      "cli": true,
+      "deploy": false,
+      "openInStudio": false,
+      "consoleTemplate": false
+    },
+    "checkSummary": {
+      "flags": {
+        "writes-code": 1,
+        "child-process": 1,
+        "disclosure-gap": 1,
+        "env-enumeration": 1
+      },
+      "runMs": 6628,
+      "steps": {
+        "diff": "pass",
+        "unpack": "pass",
+        "licence": "pass",
+        "secrets": "pass",
+        "manifest": "pass",
+        "similarity": "pass",
+        "sandbox-run": "pass",
+        "static-scan": "flag",
+        "capabilities": "flag",
+        "dependencies": "pass"
+      },
+      "network": "none",
+      "omegaCommit": "881b05ba5",
+      "runnerImage": "sha256:b6c436da0d278e25e6985bbfddd5af62a471609661945f424070536cb375b15f",
+      "flagsReviewed": 4,
+      "checkerVersion": "0.1.0"
+    },
+    "disclosure": {
+      "files": "Writes a run log in a temporary folder and removes it when done.",
+      "shell": "None at run time. Its test runs node main.mjs as a child process to check the printed answer.",
+      "network": "Keyless: none. Live: your chosen model vendor only (OpenAI, Anthropic or Vertex AI).",
+      "summary": "Calls one model vendor to answer a weather request with one tool.",
+      "background": "None. It exits when the answer is printed.",
+      "credentials": "Reads the one model key named under Keys needed for a live run. Stores nothing."
+    },
+    "rulesVersion": 1,
+    "sourceCommit": null,
+    "status": "approved",
+    "yankedReason": null,
+    "remixOf": null,
+    "notes": "",
+    "approvedAt": "2026-10-14T13:40:35.843631+00:00",
+    "publishedAt": "2026-10-14T13:40:35.843631+00:00",
+    "hasCast": true
+  },
+  "discord": "https://discord.com/invite/n2tCUKBkAw",
+  "appUrl": "http://localhost:3031/dashboard/hub/future-agi/first-agent"
+}

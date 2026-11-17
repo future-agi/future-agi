@@ -1,0 +1,57 @@
+schema: "connector-manifest/v1#provider"
+# Superhuman Docs hosts this MCP server and accepts MCP-enabled personal access tokens.
+# Selecting specific docs for a token limits API access, not MCP access.
+app: superhuman-docs
+id: api-key
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://docs.superhuman.com/apis/mcp
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: MCP-enabled personal access token
+      help: "Use a personal access token with the MCP option explicitly selected, entered without the Bearer prefix. Selecting specific docs limits API access only; it does not restrict the MCP to those docs."
+      helpUrl: https://help.superhuman.com/hc/en-us/articles/46210310809613-Generate-API-tokens-for-Docs
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: kind
+    url: https://help.superhuman.com/hc/en-us/articles/46210118248205-Security-recommendations-for-the-Docs-MCP
+    fetchedAt: 2026-11-16
+  - fact: publisher
+    url: https://help.superhuman.com/hc/en-us/articles/46210118248205-Security-recommendations-for-the-Docs-MCP
+    fetchedAt: 2026-11-16
+  - fact: transport.kind
+    url: https://help.superhuman.com/hc/en-us/articles/46210076980365-Connect-to-the-Superhuman-Docs-MCP
+    fetchedAt: 2026-11-16
+  - fact: transport.url
+    url: https://help.superhuman.com/hc/en-us/articles/46210118248205-Security-recommendations-for-the-Docs-MCP
+    fetchedAt: 2026-11-16
+  - fact: auth.kind
+    url: https://help.superhuman.com/hc/en-us/articles/46210076980365-Connect-to-the-Superhuman-Docs-MCP
+    fetchedAt: 2026-11-16
+  - fact: auth.credentialParts
+    url: https://help.superhuman.com/hc/en-us/articles/46210076980365-Connect-to-the-Superhuman-Docs-MCP
+    fetchedAt: 2026-11-16
+  - fact: auth.credentialParts
+    url: https://help.superhuman.com/hc/en-us/articles/46210310809613-Generate-API-tokens-for-Docs
+    fetchedAt: 2026-11-16
+  - fact: tools.source
+    url: https://coda.io/resources/mcp/tools-and-endpoints
+    fetchedAt: 2026-11-16
+  - fact: pricing.model
+    url: https://help.superhuman.com/hc/en-us/articles/46210102879629-Using-the-Superhuman-Docs-MCP
+    fetchedAt: 2026-11-16

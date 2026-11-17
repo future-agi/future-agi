@@ -99,7 +99,9 @@ const ConfigureStepTTS = ({
               fontWeight={"fontWeightSemiBold"}
               component={"span"}
             >
-              Generate tts responses
+              {watchModelType === "image"
+                ? "Generate images"
+                : "Generate speech"}
             </Typography>{" "}
             for the experiment
           </Typography>
@@ -128,6 +130,9 @@ const ConfigureStepTTS = ({
             />
           ))}
         </Stack>
+        {/* Add Prompt is always shown, as in production: a TTS / Image
+            experiment can hold several prompts (each prompt's models and
+            voices become runs). */}
         <Button
           variant="outlined"
           onClick={() => {

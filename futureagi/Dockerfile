@@ -10,8 +10,12 @@ ENV NLTK_DATA=/usr/local/share/nltk_data
 # parsing set; pdfplumber and pypdfium2 move with pdfminer.six, which
 # pdfplumber pins exactly). nltk lands before the corpus install below, so
 # install_nltk_data.py verifies the data against the upgraded nltk.
+# Includes T6 #4 trust-store and async-runtime upgrades.
 # Installed before the source copy, so a source change reuses this layer.
 RUN pip install --no-cache-dir \
+    "certifi==2026.10.19" \
+    "anyio==4.15.1" \
+    "urllib3==2.8.0" \
     "granian[uvloop,reload]==2.8.3" \
     "channels-redis==4.3.0" \
     "asgiref==3.11.0" \
@@ -20,7 +24,7 @@ RUN pip install --no-cache-dir \
     "pyjwt==2.15.1" \
     "openai==2.54.0" \
     "mcp==1.30.0" \
-    "nltk==3.10.3" \
+    "nltk==3.10.4" \
     "pillow==12.3.0" \
     "pypdf==6.19.0" \
     "pdfplumber==0.11.10" \

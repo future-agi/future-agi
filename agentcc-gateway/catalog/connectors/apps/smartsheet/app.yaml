@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: smartsheet
+version: 1.0.0
+name: Smartsheet
+description: "Read and update sheets, rows, columns, folders and workspaces in Smartsheet."
+vendor:
+  name: Smartsheet
+  domains: [smartsheet.com]
+eeCategory: productivity
+group: other
+categories: [productivity, project-management]
+tags: [projects]
+docsUrl: https://developers.smartsheet.com/ai-mcp/smartsheet/install-the-smartsheet-mcp-server
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://developers.smartsheet.com/ai-mcp/smartsheet/install-the-smartsheet-mcp-server
+    fetchedAt: 2026-11-09

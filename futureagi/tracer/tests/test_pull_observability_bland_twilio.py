@@ -211,7 +211,7 @@ def test_normalize_twilio_failure_statuses(status):
 
 
 def _provider(provider_value, api_key="k", assistant_id="a"):
-    agent = SimpleNamespace(api_key=api_key, assistant_id=assistant_id)
+    agent = SimpleNamespace(get_api_key=lambda: api_key, assistant_id=assistant_id)
     return SimpleNamespace(
         id="00000000-0000-0000-0000-000000000001",
         provider=provider_value,

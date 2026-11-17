@@ -109,8 +109,9 @@ export default function usePanelBuild() {
       ...(parallelismEnabled ? prepared : { ...prepared, parallelism: 1 }),
       ...(agentName ? { agentName } : {}),
     };
-    // Keep the passing draft in the persisted slot so the panel form rehydrates
-    // on a back-navigation; the create call below is what actually builds it.
+    // Keep the passing draft in the persisted slot so the panel form can reopen
+    // filled in ("Start a new build" on a failed or canceled environment); the
+    // create call below is what actually builds it.
     setDraft(draft);
     setCommitting(true);
     build.mutate({
@@ -129,6 +130,10 @@ export default function usePanelBuild() {
           enqueueSnackbar("This source can't be built yet.", { variant: "error" });
           return;
         }
+        // Tag the kept draft with the environment it built, so "Start a new
+        // build" on that environment (if it fails or is canceled) reopens this
+        // form filled in rather than another build's.
+        setDraft({ ...draft, envId });
         navigate(paths.dashboard.simulate.environments.detail(envId));
       },
       // A create failure (e.g. the sandbox is unavailable) must surface, not

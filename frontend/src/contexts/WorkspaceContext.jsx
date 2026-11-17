@@ -22,6 +22,8 @@ import {
   SS_KEY_WS_LEVEL,
 } from "src/utils/sessionKeys";
 
+import { useWorkspaceUnavailableRecovery } from "./useWorkspaceUnavailableRecovery";
+
 // --- sessionStorage helpers ---------------------------------------------------
 
 const EMPTY_WORKSPACE = {
@@ -159,9 +161,25 @@ export function WorkspaceProvider({ children }) {
     return { ...EMPTY_WORKSPACE };
   });
 
-  const [isReady, setIsReady] = useState(
-    () => !!readSessionWorkspaceForOrg(readSessionOrgId()),
-  );
+  // Stored selectors are hints until an access-checked user-info arrives.
+  const [isReady, setIsReady] = useState(false);
+
+  const applyUserWorkspace = useCallback((userInfo, fallbackOrgId = null) => {
+    const next = userInfo?.default_workspace_id
+      ? {
+          id: userInfo.default_workspace_id,
+          name: userInfo.default_workspace_name ?? null,
+          displayName: userInfo.default_workspace_display_name ?? null,
+          role: userInfo.default_workspace_role ?? null,
+          wsLevel: userInfo.ws_level ?? null,
+          orgId: userInfo.organization?.id || fallbackOrgId,
+        }
+      : { ...EMPTY_WORKSPACE };
+    setWorkspace(next);
+    writeSessionWorkspace(next);
+    setWorkspaceHeader(next.id);
+    setIsReady(true);
+  }, []);
 
   // When user data arrives (login / refresh), seed workspace if not already set
   useEffect(() => {
@@ -173,55 +191,56 @@ export function WorkspaceProvider({ children }) {
     // old org's workspace row, and with it the old org's role and wsLevel.
     const activeOrgId = user.organization?.id || currentOrganizationId || null;
 
-    // Trust sessionStorage only while it belongs to the org we are in
     const stored = readSessionWorkspaceForOrg(activeOrgId);
-    if (stored) {
-      // Sync axios header (might have been lost after token refresh)
+    if (stored && stored.id !== user.default_workspace_id) {
+      // Initial user-info may reflect another tab's default. Ask again with
+      // this tab's explicit selector: a valid independent selection survives,
+      // while a rejected selector resolves to an accessible landing (or none).
       setWorkspaceHeader(stored.id);
-      const updated = { ...stored };
-      // Only update role/name/wsLevel from user-info when the workspace IDs match.
-      // If they differ (e.g., another tab switched), the user-info response reflects
-      // the OTHER workspace's data — we must not overwrite this tab's stored values.
-      const userDefaultWsId = user.default_workspace_id;
-      const userDefaultWsRole = user.default_workspace_role;
-      const userWsLevel = user.ws_level;
-      const userDefaultWsName = user.default_workspace_name;
-      const userDefaultWsDisplayName = user.default_workspace_display_name;
-      if (stored.id === userDefaultWsId) {
-        updated.role = userDefaultWsRole || stored.role;
-        updated.wsLevel = userWsLevel != null ? userWsLevel : stored.wsLevel;
-        updated.name = userDefaultWsName || stored.name;
-        updated.displayName = userDefaultWsDisplayName || stored.displayName;
-      }
-      setWorkspace(updated);
-      writeSessionWorkspace(updated);
-      setIsReady(true);
-      return;
+      setIsReady(false);
+      let active = true;
+      const canApply = () =>
+        active &&
+        readSessionOrgId() === activeOrgId &&
+        readSessionWorkspaceForOrg(activeOrgId)?.id === stored.id &&
+        axios.defaults.headers.common["X-Workspace-Id"] === stored.id;
+      axios
+        .get(endpoints.auth.me, {
+          headers: {
+            "X-Workspace-Id": stored.id,
+            "X-Organization-Id": activeOrgId,
+          },
+        })
+        .then(({ data }) => {
+          if (canApply()) {
+            applyUserWorkspace(
+              data?.organization?.id === activeOrgId ? data : null,
+              activeOrgId,
+            );
+          }
+        })
+        .catch(() => {
+          // Never label an unverified selector ready or replay a mutation.
+          // The workspace list remains available for manual recovery.
+          if (canApply()) {
+            applyUserWorkspace(null);
+            enqueueSnackbar(
+              "Could not verify the selected workspace. Select a workspace to continue.",
+              {
+                variant: "error",
+                preventDuplicate: true,
+              },
+            );
+          }
+        });
+      return () => {
+        active = false;
+      };
     }
 
     // Nothing usable stored → seed from user-info (new tab / org changed)
-    const seedDefaultWsId = user.default_workspace_id;
-    if (seedDefaultWsId) {
-      const seedWsLevel = user.ws_level;
-      const initial = {
-        id: seedDefaultWsId,
-        name: user.default_workspace_name ?? null,
-        displayName: user.default_workspace_display_name ?? null,
-        role: user.default_workspace_role ?? null,
-        wsLevel: seedWsLevel != null ? seedWsLevel : null,
-        orgId: activeOrgId,
-      };
-      setWorkspace(initial);
-      writeSessionWorkspace(initial);
-      setWorkspaceHeader(initial.id);
-      setIsReady(true);
-    } else {
-      clearSessionWorkspace();
-      setWorkspaceHeader(null);
-      setWorkspace({ ...EMPTY_WORKSPACE });
-      setIsReady(true);
-    }
-  }, [authenticated, user, currentOrganizationId]);
+    applyUserWorkspace(user, activeOrgId);
+  }, [authenticated, user, currentOrganizationId, applyUserWorkspace]);
 
   // Switch workspace — called from UI
   const switchWorkspace = useCallback(
@@ -285,6 +304,14 @@ export function WorkspaceProvider({ children }) {
     setWorkspace({ ...EMPTY_WORKSPACE });
     setIsReady(false);
   }, []);
+
+  useWorkspaceUnavailableRecovery({
+    authenticated,
+    userId: user?.id,
+    organizationId: user?.organization?.id || currentOrganizationId,
+    clearWorkspace,
+    applyUserWorkspace,
+  });
 
   // Clear on logout (but NOT during initial auth loading — sessionStorage
   // must survive page refreshes for workspace switching to work correctly)

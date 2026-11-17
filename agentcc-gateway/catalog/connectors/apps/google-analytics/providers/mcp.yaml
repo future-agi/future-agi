@@ -1,0 +1,107 @@
+# Google's remote Analytics Data API MCP server, not the local analytics-mcp
+# package. Its protected-resource metadata names this endpoint (the older
+# Analytics MCP reference page now returns 404); its supported-products entry was not
+# verified, and no remote-server release label was found, so status is unknown.
+# OAuth endpoints are recorded from Google's metadata, not pinned. Discovery
+# must recheck the resource, issuer, HTTPS endpoints and PKCE S256 before use;
+# this record is not evidence of an exercised sign-in or discovery flow.
+# Resource metadata names https://accounts.google.com/ while OIDC metadata
+# names https://accounts.google.com; issuer handling has not been smoke-tested.
+# Use a pre-registered Google web OAuth client with body authentication. Google
+# remote MCP does not support DCR or CIMD, so EE need not register a client.
+# Only analytics.readonly is requested, not the broader analytics scope.
+# Offline access issues a reusable refresh token; Google's documented refresh
+# flow retains it rather than requiring rotation on each refresh.
+# Google's revocation examples send only the token, without client credentials.
+# The schema requires body or basic client authentication for revocation, so
+# that optional block is omitted rather than asserting an unverified method.
+# Secretless loopback login is not proven here; publicClient is left unstated.
+# vendor_plan conservatively represents the existing Analytics property plan
+# and quotas; separate remote-MCP pricing was not verified. No tools snapshot,
+# authenticated smoke test or maintainer trust review is claimed.
+schema: "connector-manifest/v1#provider"
+app: google-analytics
+id: mcp
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://analyticsdata.googleapis.com/mcp/v1
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent, user]
+auth:
+  kind: oauth2
+  help: "Sign in with a Google account that can access the Analytics property. Revoking access in Google Account settings also invalidates that user's grants for other clients in the same Google Cloud project."
+  oauth2:
+    authorizeUrl: https://accounts.google.com/o/oauth2/v2/auth
+    tokenUrl: https://oauth2.googleapis.com/token
+    scopes: ["https://www.googleapis.com/auth/analytics.readonly"]
+    pkce: true
+    tokenBody: form
+    clientAuth: body
+    extraAuthorizeParams: { access_type: offline, prompt: consent }
+    refresh: { supported: true, rotates: false }
+    registration: [preregistered]
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_plan
+  notes: "Uses the connected Analytics property's quotas; separate remote-MCP pricing is unverified."
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: publisher
+    url: https://analyticsdata.googleapis.com/.well-known/oauth-protected-resource/mcp/v1
+    fetchedAt: 2026-11-15
+  - fact: transport.url
+    url: https://analyticsdata.googleapis.com/.well-known/oauth-protected-resource/mcp/v1
+    fetchedAt: 2026-11-15
+  - fact: transport.variant
+    url: https://docs.cloud.google.com/mcp/configure-mcp-ai-application
+    fetchedAt: 2026-11-15
+  - fact: auth.kind
+    url: https://docs.cloud.google.com/mcp/set-up-authentication-mcp-servers
+    fetchedAt: 2026-11-15
+  - fact: auth.help
+    url: https://docs.cloud.google.com/mcp/set-up-authentication-mcp-servers
+    fetchedAt: 2026-11-15
+  - fact: auth.help
+    url: https://developers.google.com/identity/protocols/oauth2/web-server
+    fetchedAt: 2026-11-15
+  - fact: auth.oauth2.authorizeUrl
+    url: https://accounts.google.com/.well-known/openid-configuration
+    fetchedAt: 2026-11-15
+  - fact: auth.oauth2.tokenUrl
+    url: https://accounts.google.com/.well-known/openid-configuration
+    fetchedAt: 2026-11-15
+  - fact: auth.oauth2.scopes
+    url: https://analyticsdata.googleapis.com/.well-known/oauth-protected-resource/mcp/v1
+    fetchedAt: 2026-11-15
+  - fact: auth.oauth2.pkce
+    url: https://accounts.google.com/.well-known/openid-configuration
+    fetchedAt: 2026-11-15
+  - fact: auth.oauth2.tokenBody
+    url: https://developers.google.com/identity/protocols/oauth2/web-server
+    fetchedAt: 2026-11-15
+  - fact: auth.oauth2.clientAuth
+    url: https://accounts.google.com/.well-known/openid-configuration
+    fetchedAt: 2026-11-15
+  - fact: auth.oauth2.extraAuthorizeParams
+    url: https://developers.google.com/identity/protocols/oauth2/web-server
+    fetchedAt: 2026-11-15
+  - fact: auth.oauth2.refresh
+    url: https://developers.google.com/identity/protocols/oauth2/web-server
+    fetchedAt: 2026-11-15
+  - fact: auth.oauth2.registration
+    url: https://docs.cloud.google.com/mcp/set-up-authentication-mcp-servers
+    fetchedAt: 2026-11-15
+  - fact: accountModes
+    url: https://docs.cloud.google.com/mcp/set-up-authentication-mcp-servers
+    fetchedAt: 2026-11-15
+  - fact: pricing.notes
+    url: https://developers.google.com/analytics/devguides/reporting/data/v1/quotas
+    fetchedAt: 2026-11-15

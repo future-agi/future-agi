@@ -1,0 +1,78 @@
+{
+  "schema": "k2-replay-expectations/v1",
+  "app": "google-docs",
+  "source": "V10 synthetic catalog fixtures; not live acceptance",
+  "test_account": "v10-synthetic-unverified-google-docs",
+  "tools": 8,
+  "vendor_404": "Google docs.googleapis.com 404",
+  "drive_checks": [
+    {
+      "name": "first_tool_read_only",
+      "jq": ".tools[] | select(.name == \"get_document\") | .annotations.readOnlyHint",
+      "want": "true"
+    },
+    {
+      "name": "fixture_resource_returned",
+      "jq": ".calls[0].result.content[0].text | contains(\"fixture\")",
+      "want": "true"
+    },
+    {
+      "name": "typed_first_projection",
+      "jq": ".calls[0].result.content[0].text | fromjson | .documentId",
+      "want": "doc-fixture"
+    },
+    {
+      "name": "get_document_annotations",
+      "jq": ".tools[] | select(.name == \"get_document\") | .annotations | [.readOnlyHint, .destructiveHint, .idempotentHint, .openWorldHint] | map(tostring) | join(\" \")",
+      "want": "true false true false"
+    },
+    {
+      "name": "create_document_annotations",
+      "jq": ".tools[] | select(.name == \"create_document\") | .annotations | [.readOnlyHint, .destructiveHint, .idempotentHint, .openWorldHint] | map(tostring) | join(\" \")",
+      "want": "false false false false"
+    },
+    {
+      "name": "insert_text_annotations",
+      "jq": ".tools[] | select(.name == \"insert_text\") | .annotations | [.readOnlyHint, .destructiveHint, .idempotentHint, .openWorldHint] | map(tostring) | join(\" \")",
+      "want": "false false false false"
+    },
+    {
+      "name": "replace_text_annotations",
+      "jq": ".tools[] | select(.name == \"replace_text\") | .annotations | [.readOnlyHint, .destructiveHint, .idempotentHint, .openWorldHint] | map(tostring) | join(\" \")",
+      "want": "false true false false"
+    },
+    {
+      "name": "delete_text_annotations",
+      "jq": ".tools[] | select(.name == \"delete_text\") | .annotations | [.readOnlyHint, .destructiveHint, .idempotentHint, .openWorldHint] | map(tostring) | join(\" \")",
+      "want": "false true false false"
+    },
+    {
+      "name": "insert_table_annotations",
+      "jq": ".tools[] | select(.name == \"insert_table\") | .annotations | [.readOnlyHint, .destructiveHint, .idempotentHint, .openWorldHint] | map(tostring) | join(\" \")",
+      "want": "false false false false"
+    },
+    {
+      "name": "format_text_annotations",
+      "jq": ".tools[] | select(.name == \"format_text\") | .annotations | [.readOnlyHint, .destructiveHint, .idempotentHint, .openWorldHint] | map(tostring) | join(\" \")",
+      "want": "false false false false"
+    },
+    {
+      "name": "format_paragraph_annotations",
+      "jq": ".tools[] | select(.name == \"format_paragraph\") | .annotations | [.readOnlyHint, .destructiveHint, .idempotentHint, .openWorldHint] | map(tostring) | join(\" \")",
+      "want": "false false false false"
+    }
+  ],
+  "vendor_request_checks": [
+    {
+      "name": "documented_first_request",
+      "index": 0,
+      "want": "GET /v1/documents/doc-fixture?"
+    }
+  ],
+  "every_vendor_request": [
+    {
+      "name": "documented_api_prefix",
+      "jq": ".path | startswith(\"/v1/documents\")"
+    }
+  ]
+}

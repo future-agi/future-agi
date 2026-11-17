@@ -1,0 +1,45 @@
+# UptimeRobot documents API-key bearer authentication for headless MCP clients.
+schema: "connector-manifest/v1#provider"
+app: uptimerobot
+id: api-key
+version: 1.1.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.uptimerobot.com/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: UptimeRobot API key
+      help: "Copy a Main or Read-only API Key from Integrations & API in your UptimeRobot dashboard. Prefer Read-only for inspection; a Main key is needed for monitor changes. Tool availability and rate limits follow your plan. Supply the key without the Bearer prefix."
+      helpUrl: https://help.uptimerobot.com/en/articles/12928342-uptimerobot-mcp-integration-guide
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_plan
+  source: https://help.uptimerobot.com/en/articles/12928342-uptimerobot-mcp-integration-guide
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://help.uptimerobot.com/en/articles/12928342-uptimerobot-mcp-integration-guide
+    fetchedAt: 2026-11-09
+  - fact: transport.variant
+    url: https://github.com/uptimerobot/ai
+    fetchedAt: 2026-11-09
+  - fact: auth.kind
+    url: https://help.uptimerobot.com/en/articles/12928342-uptimerobot-mcp-integration-guide
+    fetchedAt: 2026-11-09
+  - fact: auth.credentialParts
+    url: https://help.uptimerobot.com/en/articles/12928342-uptimerobot-mcp-integration-guide
+    fetchedAt: 2026-11-09

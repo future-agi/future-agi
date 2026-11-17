@@ -1,0 +1,46 @@
+# Statsig's documented V3 remote endpoint accepts Console API keys directly.
+# Its advertised beta has a public self-service setup, not an invitation gate.
+schema: "connector-manifest/v1#provider"
+app: statsig
+id: api-key
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://api.statsig.com/v3/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: statsig-api-key
+      secret: true
+      label: Console API key
+      help: "Create or select a Console API key on Statsig's API keys page. Read-only keys can inspect project data; write-capable keys can modify it, subject to project and token permissions. Personal key creation may require your organization owner's enablement."
+      helpUrl: https://docs.statsig.com/integrations/mcp/claude-code
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_metered
+  source: https://www.statsig.com/pricing
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://docs.statsig.com/integrations/mcp/claude-code
+    fetchedAt: 2026-11-09
+  - fact: transport.variant
+    url: https://docs.statsig.com/integrations/mcp/claude-code
+    fetchedAt: 2026-11-09
+  - fact: auth.kind
+    url: https://docs.statsig.com/integrations/mcp/claude-code
+    fetchedAt: 2026-11-09
+  - fact: auth.credentialParts
+    url: https://docs.statsig.com/integrations/mcp/claude-code
+    fetchedAt: 2026-11-09
+x-omega: { oss: exclude }

@@ -1,0 +1,36 @@
+# CW2c_ee_scoped_key_live.sh's gateway config (CN22c). Unlike CW2's, the control
+# plane is Django itself (its dev server on @@DJANGO_URL@@): the gateway pulls the
+# keys (with the scope and budget Django derives) and org configs from it every
+# 2 s, and posts its refusals of agent keys to it. scn_mcp_gateway_template adds
+# the test state key under mcp:; scn_up fills base.yaml's placeholders and
+# appends redis:. Every key and token is a fake value for the mocks.
+server:
+  port: 18910 # replaced by AGENTCC_PORT
+  host: "127.0.0.1"
+admin:
+  token: "@@ADMIN_TOKEN@@"
+auth:
+  enabled: true
+providers:
+  operator-openai:
+    base_url: "@@MOCK_URL@@/api"
+    api_key: "scn-test-operator-upstream"
+    api_format: "openai"
+    auto_discover: false
+    models: ["gpt-4o"]
+logging:
+  level: "info"
+  request_logging:
+    enabled: true
+control_plane:
+  url: "@@DJANGO_URL@@"
+  admin_token: "@@ADMIN_TOKEN@@"
+  sync_on_startup: true
+  sync_interval: 2s
+mcp:
+  enabled: true
+  static:
+    org_id: "org-cw2c-live-static"
+  egress:
+    private_allow:
+      - "127.0.0.1:@@CN22C_A_PORT@@"

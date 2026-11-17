@@ -4,9 +4,10 @@
 
 .DESCRIPTION
   PowerShell counterpart of bin/install. Sets up .env (a fresh install gets
-  generated secrets; an existing install's values are never changed), runs
-  docker compose pull + up, waits for health, and prints the URLs to open.
-  Re-running is idempotent.
+  generated secrets), runs docker compose pull + up, waits for health, and
+  prints the URLs to open. Re-running is idempotent. On upgrades, an empty or
+  published-default API pepper is rotated with the default retired so existing
+  API keys still verify; operator-set peppers are preserved (lib/secrets.ps1).
 
   The standalone install is docker-compose.yml: one app container plus
   Postgres and ClickHouse. -Distributed records COMPOSE_FILE=docker-compose.distributed.yml
@@ -78,6 +79,7 @@ Set-Location $Root
 . (Join-Path $PSScriptRoot 'lib/ports.ps1')
 . (Join-Path $PSScriptRoot 'lib/summary.ps1')
 . (Join-Path $PSScriptRoot 'lib/build-local.ps1')
+. (Join-Path $PSScriptRoot 'lib/startup.ps1')
 
 $timestamp = (Get-Date -Format 'yyyyMMdd-HHmmss')
 $LogFile = Join-Path $Root "install-$timestamp.log"
@@ -195,8 +197,8 @@ if (-not (Test-Path '.env')) {
 }
 
 # ---- telemetry and unsafe settings ----
-# Written before anything starts, so the first account's registration is
-# already the minimal opt-out one.
+# Written before anything starts, so deployment telemetry sends nothing,
+# including when the first account is created.
 if ($NoTelemetry) {
   Set-EnvValue 'FUTURE_AGI_TELEMETRY_DISABLED' 'true'
   Ok "FUTURE_AGI_TELEMETRY_DISABLED=true written to .env: telemetry is off"
@@ -211,6 +213,13 @@ function Test-TelemetryOff {
   return ("$value" -match '^(1|true|yes|on)$')
 }
 
+# Admin emails join the registration only on this opt-in (off by default).
+# Trimmed first, as the app reads it (config.telemetry_shares_admin_emails).
+function Test-TelemetrySharesAdminEmails {
+  $value = Get-ComposeEnvValue 'FUTURE_AGI_TELEMETRY_SHARE_ADMIN_EMAILS'
+  return ("$value".Trim() -match '^(1|true|yes|on)$')
+}
+
 # What deployment telemetry sends, before any account (and so any admin
 # email) exists. Worded as the telemetry page,
 # https://docs.futureagi.com/docs/self-hosting/configuration/telemetry.
@@ -222,14 +231,25 @@ function Show-TelemetryNotice {
   if (-not $hours) { $hours = 6 }
   Step "Telemetry"
   if (Test-TelemetryOff) {
-    Ok "Off (FUTURE_AGI_TELEMETRY_DISABLED=true). One minimal registration still goes to ${telemetryHost}: instance id, version, deployment type, timestamp."
+    Ok "Off (FUTURE_AGI_TELEMETRY_DISABLED=true). Deployment telemetry sends nothing to Future AGI."
   } else {
-    Say "  When the first account is created, this install registers with ${telemetryHost}:"
-    Say "  instance id, version, deployment type, and the emails and domains of owners,"
-    Say "  admins and staff/superuser accounts. Then it"
-    Say "  sends usage counts every $hours h; never traces, prompts or other content."
-    Say "  Opt out: -NoTelemetry, or FUTURE_AGI_TELEMETRY_DISABLED=true in .env. One minimal"
-    Say "  registration remains: instance id, version, deployment type, timestamp."
+    Say "  Deployment telemetry is on so Future AGI can count installs and plan release testing."
+    Say "  When the first owner/admin account exists, this install registers with ${telemetryHost}:"
+    if (Test-TelemetrySharesAdminEmails) {
+      Say "  instance id, version and deployment type, plus the emails and domains of owners,"
+      Say "  admins and staff/superuser accounts (FUTURE_AGI_TELEMETRY_SHARE_ADMIN_EMAILS=true)."
+      Say "  Fields: schema_version, instance_id, version, deployment_type, timestamp,"
+      Say "  telemetry_disabled=false, users[] (email, domain)."
+    } else {
+      Say "  instance id, version and deployment type. It sends no email addresses unless"
+      Say "  FUTURE_AGI_TELEMETRY_SHARE_ADMIN_EMAILS=true is set in .env."
+      Say "  Fields: schema_version, instance_id, version, deployment_type, timestamp,"
+      Say "  telemetry_disabled=false."
+    }
+    Say "  Then it sends usage counts every $hours h and content-free journey events;"
+    Say "  never traces, prompts or other content."
+    Say "  Opt out: -NoTelemetry, or FUTURE_AGI_TELEMETRY_DISABLED=true in .env."
+    Say "  Opting out sends no deployment telemetry to Future AGI, including registration."
   }
   Say "  Details: https://docs.futureagi.com/docs/self-hosting/configuration/telemetry"
 }
@@ -240,8 +260,9 @@ function Show-TelemetryNotice {
 # install, and of which stack. Deletion happens only behind the explicit
 # -WipeVolumes switch and targets exact Compose volume names; no wildcard or
 # broad Docker cleanup command is used.
-# The environment, then .env, then the compose files' `name:`.
-$projectName = Get-ComposeEnvValue 'COMPOSE_PROJECT_NAME' 'futureagi'
+# As Compose resolves it (bin/lib/env.ps1): the environment, then .env, then
+# the compose files' `name:`.
+$projectName = Get-ComposeProjectName
 $persistentVolumeSuffixes = @(
   'app-data',
   'postgres-data',
@@ -476,18 +497,6 @@ if ($WipeVolumes) {
 $freshInstall = ($existingVolumes.Count -eq 0) -or $wipe
 Write-Secrets $freshInstall $IsDistributed $projectName
 
-# ---- sandbox profile ----
-# With COMPOSE_PROFILES=sandbox the app sends code evals to the nsjail
-# executor. It reads the setting from .env inside the container, so a value
-# given only in the shell starts the executor but leaves evals in the app.
-if (-not $IsDistributed) {
-  $shellProfiles = @("$env:COMPOSE_PROFILES" -split ',' | ForEach-Object { $_.Trim() })
-  $envProfiles = @((Get-EnvValue 'COMPOSE_PROFILES') -split ',' | ForEach-Object { $_.Trim() })
-  if ($shellProfiles -contains 'sandbox' -and -not ($envProfiles -contains 'sandbox')) {
-    Warn "COMPOSE_PROFILES=sandbox is set in your shell but not in .env. Add it to .env: the app reads it there to send code evals to the nsjail executor."
-  }
-}
-
 # ---- port preflight ----
 Step "Checking host ports"
 Test-HostPorts $IsDistributed $projectName
@@ -587,8 +596,8 @@ if ($vmProbeRan) {
 Save-Mode
 
 # ---- collect first-user creds (up-front so the rest runs unattended) ----
-# The telemetry notice comes first: the first account's email is part of the
-# registration.
+# The telemetry notice comes first: it says whether the registration carries the
+# first account's email (only with FUTURE_AGI_TELEMETRY_SHARE_ADMIN_EMAILS=true).
 Show-TelemetryNotice
 
 # Terminal input carries raw bytes, so a stray escape sequence (Shift+Tab emits
@@ -675,6 +684,11 @@ if (-not $SkipUserCreation -and -not $NonInteractive) {
 if ($FromSource) {
   Step "Building images from this checkout"
   Build-LocalImages $IsDistributed
+  # Code evaluations run in this sandbox; Compose would otherwise pull the
+  # published code-executor:latest, which may not start under this checkout's
+  # non-root, read-only settings.
+  Build-LocalCodeExecutor
+  Set-EnvValue 'CODE_EXECUTOR_VERSION' 'local'
   Set-EnvValue 'FUTURE_AGI_VERSION' 'local'
   if ($IsDistributed) {
     # The distributed stack tags these images separately.
@@ -682,7 +696,7 @@ if ($FromSource) {
     Set-EnvValue 'AGENTCC_GATEWAY_VERSION' 'local'
     Set-EnvValue 'FI_COLLECTOR_VERSION' 'local'
   }
-  Ok "FUTURE_AGI_VERSION=local written to .env"
+  Ok "FUTURE_AGI_VERSION=local and CODE_EXECUTOR_VERSION=local written to .env"
 }
 
 # ---- pull ----
@@ -744,12 +758,13 @@ foreach ($entry in $serviceImages) {
     $pullServices += $entry.Service
     continue
   }
-  # fi-collector:local has a build: section in the distributed stack; anything
-  # else tagged `local` exists only after -FromSource.
-  if ($entry.Image -eq 'futureagi/fi-collector:local') { continue }
+  # fi-collector:local (distributed) and the Omega Hub checker and its runner
+  # daemon (both stacks) have a build: section; compose builds them from this
+  # checkout. Anything else tagged `local` exists only after -FromSource.
+  if (@('futureagi/fi-collector:local', 'futureagi/omega-hub-checker:local', 'futureagi/omega-hub-runner-host:local') -contains $entry.Image) { continue }
   Invoke-Probe { docker image inspect $entry.Image } | Out-Null
   if ($LASTEXITCODE -ne 0) {
-    Fail-Preflight "$($entry.Image) is not built yet. Re-run with -FromSource to build it from this checkout, or set its tag in .env (FUTURE_AGI_VERSION) back to a published release"
+    Fail-Preflight "$($entry.Image) is not built yet. Re-run with -FromSource to build it from this checkout, or set its tag in .env (FUTURE_AGI_VERSION, or CODE_EXECUTOR_VERSION for the code executor) back to a published release"
   }
 }
 if ((Get-EnvValue 'FUTURE_AGI_VERSION') -eq 'local' -and -not $FromSource) {
@@ -789,9 +804,30 @@ if ($appEntry -and $VmArch) {
   }
 }
 
+# An integer setting from .env (Default when unset) within [Min,Max]; anything
+# else stops the install, naming the setting.
+function Get-BoundedEnvInt {
+  param(
+    [string]$Var,
+    [int]$Default,
+    [int]$Min,
+    [int]$Max
+  )
+  $raw = Get-EnvValue $Var
+  if (-not $raw) { $raw = [string]$Default }
+  $value = 0
+  if (-not [int]::TryParse($raw, [ref]$value) -or $value -lt $Min -or $value -gt $Max) {
+    Die "$Var must be an integer in [$Min,$Max] (got '$raw')"
+  }
+  return $value
+}
+
 # ---- bring up ----
 Step "Starting the stack"
 if ($IsDistributed) {
+  # How long the schema migrations (postgres-schema-bootstrap) may run: an
+  # upgrade of a large database applies them for longer than any fixed wait.
+  $migrationTimeout = Get-BoundedEnvInt 'INSTALL_MIGRATION_TIMEOUT_SECONDS' 14400 600 86400
   # --build rebuilds fi-collector from this checkout, so a stale image tag
   # doesn't carry old source into a new install. A pinned fi-collector was
   # pulled above, so every other service with `build:` is built by name first
@@ -807,8 +843,11 @@ if ($IsDistributed) {
   # One attempt, as in bin/e2e: replaying compose up can rerun an exited schema
   # or mirror job after an uncertain write. Inspect retained state before resuming.
   # Preserve services omitted by an upgrade; legacy retirement is an explicit step.
-  Invoke-Compose up -d $buildFlag --wait --wait-timeout 1200
-  if ($LASTEXITCODE -ne 0) {
+  # That one `up` runs in the background while lib/startup.ps1 reports the
+  # schema migrations' progress: they may run INSTALL_MIGRATION_TIMEOUT_SECONDS,
+  # and the rest of the stack then has 1200 s to report running/healthy.
+  $started = Start-DistributedStack -BuildFlag $buildFlag -MigrationTimeout $migrationTimeout -ReadyTimeout 1200
+  if (-not ($started -is [bool] -and $started)) {
     Die "docker compose startup failed or timed out; partial state retained, no automatic retry. Inspect 'docker compose ps -a' and 'docker compose logs' before explicitly resuming."
   }
 } else {
@@ -830,27 +869,28 @@ if ($IsDistributed -and ($projectServices -contains 'rabbitmq')) {
   Warn "  Its data volume stays until you delete it: docker volume rm ${projectName}_rabbitmq-data"
 }
 
+# Profile removal does not retire containers from a previous default-on install.
+# Report only: never remove an operator's checker or privileged runner silently.
+function Warn-DisabledHubContainers {
+  if (-not $IsDistributed) { return }
+  # Distinguish an explicitly empty shell value from an absent variable.
+  $profiles = if (Test-Path Env:COMPOSE_PROFILES) { $env:COMPOSE_PROFILES } else { Get-EnvValue 'COMPOSE_PROFILES' }
+  $selected = @("$profiles" -split ',' | ForEach-Object { $_.Trim() })
+  if (($selected -ccontains 'hub') -or ($selected -contains '*')) { return }
+  if (($projectServices -contains 'hub-runner') -or ($projectServices -contains 'hub-checker')) {
+    Warn "The hub profile is off, but this project's Hub containers still exist. Turning the profile off does not stop them."
+    Warn "  Production intentionally keeps its external-runner checker; leave that checker running."
+    $quotedProject = "'" + $projectName.Replace("'", "''") + "'"
+    Warn "  If you intended to disable Hub, stop and remove its containers explicitly: $DcText -f docker-compose.distributed.yml -p $quotedProject --profile hub rm -sf hub-runner hub-checker"
+  }
+}
+Warn-DisabledHubContainers
+
 # ---- readiness wait ----
 if ($IsDistributed) {
   Step "Waiting for the application and property catalog to become ready"
 } else {
   Step "Waiting for the application to become ready"
-}
-
-function Get-BoundedEnvInt {
-  param(
-    [string]$Var,
-    [int]$Default,
-    [int]$Min,
-    [int]$Max
-  )
-  $raw = Get-EnvValue $Var
-  if (-not $raw) { $raw = [string]$Default }
-  $value = 0
-  if (-not [int]::TryParse($raw, [ref]$value) -or $value -lt $Min -or $value -gt $Max) {
-    Die "$Var must be an integer in [$Min,$Max] (got '$raw')"
-  }
-  return $value
 }
 
 function Get-ComposeServiceSnapshot {
@@ -1060,6 +1100,58 @@ while ($true) {
     Die "Stack did not become fully ready, still waiting on $gate. Relevant service logs were appended to $LogFile. The stack keeps starting: on a slow host, check 'docker compose logs -f $AppService', or raise INSTALL_READY_MAX_SECONDS (up to 7200) in .env and run the installer again."
   }
   Start-Sleep -Seconds 5
+}
+
+# ---- harness versions backfill ----
+# Once, now that the stack is up: give existing environments their harness
+# versions. It runs as the one-shot operator command, like the bootstrap
+# (SERVICE_TYPE=bootstrap, STARTUP_DB_MUTATION_MODE=operator). Only the state
+# and counts of its last result line are printed. A failure warns and the
+# install goes on: the stack stays up, and the command can be run again.
+Step "Backfilling harness versions"
+$backfillRerun = "$DcText exec -T -e SERVICE_TYPE=bootstrap -e STARTUP_DB_MUTATION_MODE=operator $AppService python manage.py harness_versions_backfill --auto"
+$backfillOut = @()
+$backfillRc = 0
+$backfillLine = ''
+$backfillState = ''
+$backfillCounts = ''
+$backfillProcessed = ''
+# As for create_user below: stderr is not an error here. It is not printed;
+# only stdout is read.
+$savedPreference = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+try {
+  $backfillOut = @(& $DcCmd @DcArgs exec -T -e SERVICE_TYPE=bootstrap -e STARTUP_DB_MUTATION_MODE=operator $AppService python manage.py harness_versions_backfill --auto 2>$null)
+  $backfillRc = $LASTEXITCODE
+} finally {
+  $ErrorActionPreference = $savedPreference
+}
+foreach ($backfillEntry in $backfillOut) {
+  if ([string]$backfillEntry -cmatch '^Harness versions backfill: state=') { $backfillLine = [string]$backfillEntry }
+}
+if ($backfillLine -cmatch 'state=([a-z_]+)') { $backfillState = $Matches[1] }
+foreach ($backfillKey in @('total', 'processed', 'succeeded', 'failed', 'skipped', 'busy_organizations')) {
+  if (" $backfillLine " -cmatch "\s$backfillKey=(\d+)\s") {
+    $backfillCounts += " $backfillKey=$($Matches[1])"
+    if ($backfillKey -ceq 'processed') { $backfillProcessed = $Matches[1] }
+  }
+}
+if ($backfillRc -eq 0 -and $backfillState -ceq 'complete') {
+  $backfillDone = if ($backfillProcessed) { $backfillProcessed } else { '0' }
+  Ok "Harness versions backfilled ($backfillDone environments)"
+} elseif ($backfillRc -eq 0 -and $backfillState -ceq 'off') {
+  Say "  Harness versioning is off (HARNESS_VERSIONING_ENABLED=false); no backfill"
+} elseif ($backfillRc -eq 0 -and $backfillState -ceq 'already_running') {
+  Say "  A backfill is already running; check versioning status for progress."
+} elseif ($backfillRc -eq 0 -and -not $backfillState) {
+  Warn "The harness versions backfill printed no result. Run it again with: $backfillRerun"
+} elseif ($backfillRc -eq 0) {
+  Warn "The harness versions backfill ended with state=$backfillState$backfillCounts. Run it again with: $backfillRerun"
+} else {
+  $backfillResult = if ($backfillState) { ", state=$backfillState$backfillCounts" } else { '' }
+  Warn "Harness versions backfill failed (exit $backfillRc$backfillResult). The stack is up; the install goes on."
+  Warn "  It is a one-shot command in the $AppService service, run once after startup. Service log: $DcText logs $AppService"
+  Warn "  Run it again with: $backfillRerun"
 }
 
 # ---- create user ----

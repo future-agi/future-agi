@@ -1,0 +1,26 @@
+{
+  "schema": "omega-hub/v1",
+  "id": "curl-probe",
+  "version": "1.0.0",
+  "title": "A network probe for the sandbox",
+  "tagline": "Tries fetch, sockets, a worker socket, DNS, curl and a child process, and prints which were stopped.",
+  "kind": "app",
+  "cover": { "emoji": "🧪", "from": "gray", "to": "blue" },
+  "author": { "github": "acme-dev", "name": "Acme", "kind": "community" },
+  "tags": ["probe", "network", "sandbox"],
+  "difficulty": "advanced",
+  "license": "MIT",
+  "added": "2026-10-14",
+  "models": { "keyless": "none", "live": [] },
+  "run": { "keyless": ["node", "main.mjs"] },
+  "test": "main.test.mjs",
+  "demo": { "cast": "demo.cast" },
+  "disclosure": {
+    "summary": "Prints whether each kind of network call was stopped.",
+    "network": "Tries to reach 192.0.2.1, an address that is never routed.",
+    "files": "None.",
+    "shell": "None.",
+    "background": "None. It exits when the probes finish.",
+    "credentials": "None."
+  }
+}

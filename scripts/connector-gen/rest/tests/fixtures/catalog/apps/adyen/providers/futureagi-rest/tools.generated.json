@@ -1,0 +1,381 @@
+{
+  "schema": "connector-manifest/v1#tools-generated",
+  "spec": {
+    "url": "https://raw.githubusercontent.com/Adyen/adyen-postman/b3db00765bdffef013eab5912cd6fe94968cfb8b/postman/TransferService-v4.json",
+    "sha256": "0ad32a74b560dafa332172bf0493a55b9950c458aa88ff00038ffb8cea4b31da"
+  },
+  "tools": [
+    {
+      "name": "list_transactions",
+      "title": "List transactions",
+      "description": "List the transactions of a balance account or account holder between createdSince and createdUntil (ISO 8601, for example 2026-10-01T00:00:00Z). Pass the cursor from the response's _links for the next page.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "auto",
+      "operation": {
+        "method": "GET",
+        "path": "/btl/v4/transactions"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "balancePlatform": {
+            "type": "string",
+            "description": "The unique identifier of the [balance platform](https://docs.adyen.com/api-explorer/#/balanceplatform/latest/get/balancePlatforms/{id}__queryParam_id).  Required if you don't provide a `balanceAccountId` or `accountHolderId`."
+          },
+          "paymentInstrumentId": {
+            "type": "string",
+            "description": "The unique identifier of the [payment instrument](https://docs.adyen.com/api-explorer/balanceplatform/latest/get/paymentInstruments/_id_).  To use this parameter, you must also provide a `balanceAccountId`, `accountHolderId`, or `balancePlatform`.  The `paymentInstrumentId` must be related to the `balanceAccountId` or `accountHolderId` that you provide."
+          },
+          "accountHolderId": {
+            "type": "string",
+            "description": "The unique identifier of the [account holder](https://docs.adyen.com/api-explorer/#/balanceplatform/latest/get/accountHolders/{id}__queryParam_id).  Required if you don't provide a `balanceAccountId` or `balancePlatform`.  If you provide a `balanceAccountId`, the `accountHolderId` must be related to the `balanceAccountId`."
+          },
+          "balanceAccountId": {
+            "type": "string",
+            "description": "The unique identifier of the [balance account](https://docs.adyen.com/api-explorer/#/balanceplatform/latest/get/balanceAccounts/{id}__queryParam_id).  Required if you don't provide an `accountHolderId` or `balancePlatform`.  If you provide an `accountHolderId`, the `balanceAccountId` must be related to the `accountHolderId`."
+          },
+          "cursor": {
+            "type": "string",
+            "description": "The `cursor` returned in the links of the previous response."
+          },
+          "createdSince": {
+            "type": "string",
+            "description": "Only include transactions that have been created on or after this point in time. The value must be in ISO 8601 format. For example, **2021-05-30T15:07:40Z**."
+          },
+          "createdUntil": {
+            "type": "string",
+            "description": "Only include transactions that have been created on or before this point in time. The value must be in ISO 8601 format. For example, **2021-05-30T15:07:40Z**."
+          },
+          "sortOrder": {
+            "type": "string",
+            "description": "Determines the sort order of the returned transactions. The sort order is based on the creation date of the transaction.  Possible values:   - **asc**: Ascending order, from oldest to most recent.  - **desc**: Descending order, from most recent to oldest.  Default value: **asc**."
+          },
+          "limit": {
+            "type": "string",
+            "description": "The number of items returned per page, maximum of 100 items. By default, the response returns 10 items per page."
+          }
+        },
+        "additionalProperties": false,
+        "x-origin": "https://balanceplatform-api-test.adyen.com"
+      },
+      "response": {
+        "maxBytes": 50000
+      }
+    },
+    {
+      "name": "get_transaction",
+      "title": "Read a transaction",
+      "description": "Read one transaction by its id, for example EVJN4227C224222B5JQ8QC7B24C6Q8.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "auto",
+      "operation": {
+        "method": "GET",
+        "path": "/btl/v4/transactions/{id}"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The transaction id."
+          }
+        },
+        "required": ["id"],
+        "additionalProperties": false,
+        "x-origin": "https://balanceplatform-api-test.adyen.com"
+      }
+    },
+    {
+      "name": "list_transfers",
+      "title": "List transfers",
+      "description": "List transfers between createdSince and createdUntil (ISO 8601), optionally for one balance account, account holder or payment instrument, or one category such as bank, internal or card.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "auto",
+      "operation": {
+        "method": "GET",
+        "path": "/btl/v4/transfers"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "balancePlatform": {
+            "type": "string",
+            "description": "The unique identifier of the [balance platform](https://docs.adyen.com/api-explorer/#/balanceplatform/latest/get/balancePlatforms/{id}__queryParam_id).  Required if you don't provide a `balanceAccountId` or `accountHolderId`."
+          },
+          "accountHolderId": {
+            "type": "string",
+            "description": "The unique identifier of the [account holder](https://docs.adyen.com/api-explorer/#/balanceplatform/latest/get/accountHolders/{id}__queryParam_id).  Required if you don't provide a `balanceAccountId` or `balancePlatform`.  If you provide a `balanceAccountId`, the `accountHolderId` must be related to the `balanceAccountId`."
+          },
+          "balanceAccountId": {
+            "type": "string",
+            "description": "The unique identifier of the [balance account](https://docs.adyen.com/api-explorer/#/balanceplatform/latest/get/balanceAccounts/{id}__queryParam_id).  Required if you don't provide an `accountHolderId` or `balancePlatform`.  If you provide an `accountHolderId`, the `balanceAccountId` must be related to the `accountHolderId`."
+          },
+          "paymentInstrumentId": {
+            "type": "string",
+            "description": "The unique identifier of the [payment instrument](https://docs.adyen.com/api-explorer/balanceplatform/latest/get/paymentInstruments/_id_).  To use this parameter, you must also provide a `balanceAccountId`, `accountHolderId`, or `balancePlatform`.  The `paymentInstrumentId` must be related to the `balanceAccountId` or `accountHolderId` that you provide."
+          },
+          "reference": {
+            "type": "string",
+            "description": "The reference you provided in the POST [/transfers](https://docs.adyen.com/api-explorer/transfers/latest/post/transfers) request"
+          },
+          "category": {
+            "type": "string",
+            "description": "The category of the transfer.  Possible values:   - **bank**: A transfer involving a [transfer instrument](https://docs.adyen.com/api-explorer/legalentity/latest/post/transferInstruments#responses-200-id) or a bank account.  - **card**: A transfer involving a third-party card.  - **internal**: A transfer between [balance accounts](https://docs.adyen.com/api-explorer/balanceplatform/latest/post/balanceAccounts#responses-200-id) within your platform.  - **issuedCard**: A transfer initiated by an Adyen-issued card.  - **platformPayment**: Funds movements related to payments that are acquired for your users.  - **topUp**: An incoming transfer initiated by your user to top up their balance account."
+          },
+          "createdSince": {
+            "type": "string",
+            "description": "Only include transfers that have been created on or after this point in time. The value must be in ISO 8601 format and not earlier than 6 months before the `createdUntil` date. For example, **2021-05-30T15:07:40Z**."
+          },
+          "createdUntil": {
+            "type": "string",
+            "description": "Only include transfers that have been created on or before this point in time. The value must be in ISO 8601 format and not later than 6 months after the `createdSince` date. For example, **2021-05-30T15:07:40Z**."
+          },
+          "sortOrder": {
+            "type": "string",
+            "description": "Determines the sort order of the returned transfers. The sort order is based on the creation date of the transfers.  Possible values:   - **asc**: Ascending order, from oldest to most recent.  - **desc**: Descending order, from most recent to oldest.  Default value: **asc**."
+          },
+          "cursor": {
+            "type": "string",
+            "description": "The `cursor` returned in the links of the previous response."
+          },
+          "limit": {
+            "type": "string",
+            "description": "The number of items returned per page, maximum of 100 items. By default, the response returns 10 items per page."
+          }
+        },
+        "additionalProperties": false,
+        "x-origin": "https://balanceplatform-api-test.adyen.com"
+      },
+      "response": {
+        "maxBytes": 50000
+      }
+    },
+    {
+      "name": "get_transfer",
+      "title": "Read a transfer",
+      "description": "Read one transfer by its id, with its status and amount.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "auto",
+      "operation": {
+        "method": "GET",
+        "path": "/btl/v4/transfers/{id}"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The transfer id."
+          }
+        },
+        "required": ["id"],
+        "additionalProperties": false,
+        "x-origin": "https://balanceplatform-api-test.adyen.com"
+      }
+    },
+    {
+      "name": "transfer_between_balance_accounts",
+      "title": "Move funds between balance accounts",
+      "description": "Move funds from one balance account to another on the same platform. amount is {\"currency\": \"EUR\", \"value\": 1000} in minor units; counterparty is {\"balanceAccountId\": \"BA...\"}; category is internal.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "posture": "deny",
+      "operation": {
+        "method": "POST",
+        "path": "/btl/v4/transfers"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "body": {
+            "type": "object",
+            "properties": {
+              "amount": {
+                "type": "object",
+                "properties": {
+                  "value": {
+                    "type": "integer"
+                  },
+                  "currency": {
+                    "type": "string"
+                  }
+                }
+              },
+              "balanceAccountId": {
+                "type": "string"
+              },
+              "category": {
+                "type": "string"
+              },
+              "counterparty": {
+                "type": "object",
+                "properties": {
+                  "balanceAccountId": {
+                    "type": "string"
+                  }
+                }
+              },
+              "referenceForBeneficiary": {
+                "type": "string"
+              },
+              "reference": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              }
+            },
+            "description": "The transfer to make."
+          }
+        },
+        "required": ["body"],
+        "additionalProperties": false,
+        "x-origin": "https://balanceplatform-api-test.adyen.com"
+      }
+    },
+    {
+      "name": "return_transfer",
+      "title": "Return an incoming transfer",
+      "description": "Return an incoming internal transfer, by its id, in full or in part (amount in minor units).",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "posture": "deny",
+      "operation": {
+        "method": "POST",
+        "path": "/btl/v4/transfers/{transferId}/returns"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "transferId": {
+            "type": "string",
+            "description": "The id of the incoming transfer to return."
+          },
+          "body": {
+            "type": "object",
+            "properties": {
+              "amount": {
+                "type": "object",
+                "properties": {
+                  "value": {
+                    "type": "integer"
+                  },
+                  "currency": {
+                    "type": "string"
+                  }
+                }
+              },
+              "reference": {
+                "type": "string"
+              }
+            },
+            "description": "The amount to return and your reference."
+          }
+        },
+        "required": ["transferId", "body"],
+        "additionalProperties": false,
+        "x-origin": "https://balanceplatform-api-test.adyen.com"
+      }
+    },
+    {
+      "name": "approve_transfers",
+      "title": "Approve transfers",
+      "description": "Approve transfers that wait for approval, by their ids, for example [\"3JNC3O5ZVFLLGV4B\"].",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "posture": "deny",
+      "operation": {
+        "method": "POST",
+        "path": "/btl/v4/transfers/approve"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "body": {
+            "type": "object",
+            "properties": {
+              "transferIds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "The transfers to approve."
+          }
+        },
+        "required": ["body"],
+        "additionalProperties": false,
+        "x-origin": "https://balanceplatform-api-test.adyen.com"
+      }
+    },
+    {
+      "name": "cancel_transfers",
+      "title": "Cancel transfers",
+      "description": "Cancel transfers that wait for approval, by their ids.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "posture": "deny",
+      "operation": {
+        "method": "POST",
+        "path": "/btl/v4/transfers/cancel"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "body": {
+            "type": "object",
+            "properties": {
+              "transferIds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "The transfers to cancel."
+          }
+        },
+        "required": ["body"],
+        "additionalProperties": false,
+        "x-origin": "https://balanceplatform-api-test.adyen.com"
+      }
+    }
+  ]
+}

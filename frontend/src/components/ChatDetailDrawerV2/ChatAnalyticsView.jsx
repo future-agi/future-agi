@@ -1,3 +1,4 @@
+import { formatExactMoney } from "src/sections/common/format/money";
 import React, { useMemo, useState } from "react";
 import PropTypes from "prop-types";
 import { Box, ButtonBase, Stack, Tooltip, Typography } from "@mui/material";
@@ -20,12 +21,7 @@ const fmtMs = (ms) => {
   return `${Math.round(n)}ms`;
 };
 
-const fmtMoney = (n) => {
-  if (n == null || !Number.isFinite(Number(n))) return "—";
-  const v = Number(n);
-  if (v === 0) return "$0.00";
-  return `$${v.toFixed(v < 0.1 ? 4 : 2)}`;
-};
+const fmtMoney = formatExactMoney;
 
 const fmtNumber = (n) => {
   if (n == null || !Number.isFinite(Number(n))) return "—";

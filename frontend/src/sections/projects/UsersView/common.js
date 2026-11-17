@@ -1,5 +1,9 @@
 import { TracerProjectGetUserGraphDataResponse } from "src/generated/api-contracts/api.zod";
-import { isIncompleteCost, monetaryCostLabel } from "../LLMTracing/GraphSection/common";
+import {
+  formatKnownSubtotal,
+  isIncompleteCost,
+  monetaryCostLabel,
+} from "../LLMTracing/GraphSection/common";
 import UserIdCellRenderer from "./UserCellRenderers/UserIdCellRenderer";
 import ProjectCellRenderer from "./UserCellRenderers/ProjectCellRenderer";
 import LastActiveCellRenderer from "./UserCellRenderers/LastActiveCellRenderer";
@@ -123,17 +127,25 @@ export const transformGraphDataToChartData = (response) => {
   if (!response?.result) return [];
 
   const charts = [];
-  const coverage = TracerProjectGetUserGraphDataResponse.shape.result.shape.cost_coverage.parse(
-    response.result.cost_coverage,
+  const coverage =
+    TracerProjectGetUserGraphDataResponse.shape.result.shape.cost_coverage.parse(
+      response.result.cost_coverage,
+    );
+  const byTimestamp = new Map(
+    (coverage || []).map((point) => [point.timestamp, point]),
   );
-  const byTimestamp = new Map((coverage || []).map((point) => [point.timestamp, point]));
 
   // canonicalEntries filters out the camelCase aliases the axios
   // response interceptor attaches alongside snake_case metric keys.
   // Without it each metric renders twice (once for `tokens_used` and
   // once for `tokensUsed`, both pointing at the same series).
   for (const [metricKey, metricData] of canonicalEntries(response.result)) {
-    if (metricKey === "cost_coverage" || !Array.isArray(metricData) || metricData.length === 0) continue;
+    if (
+      metricKey === "cost_coverage" ||
+      !Array.isArray(metricData) ||
+      metricData.length === 0
+    )
+      continue;
 
     const displayName = toDisplayName(metricKey);
 
@@ -144,24 +156,37 @@ export const transformGraphDataToChartData = (response) => {
     );
 
     const incomplete = metricKey === "cost" && coverage?.some(isIncompleteCost);
-    const known = coverage?.reduce((sum, point) => sum + point.known_fact_count, 0) || 0;
-    const subtotal = coverage?.reduce((sum, point) => sum + point.known_subtotal, 0) || 0;
+    const known =
+      coverage?.reduce((sum, point) => sum + point.known_fact_count, 0) || 0;
+    const subtotal =
+      coverage?.reduce((sum, point) => sum + point.known_subtotal, 0) || 0;
     charts.push({
       id: metricKey,
       label: displayName,
       unit: getUnitForMetric(metricKey),
       total,
-      ...(incomplete ? { totalLabel: monetaryCostLabel(null, {
-        status: known > 0 ? "partial" : "unknown", known_subtotal: subtotal,
-      }) } : {}),
+      ...(incomplete
+        ? {
+            totalLabel: monetaryCostLabel(null, {
+              status: known > 0 ? "partial" : "unknown",
+              known_subtotal: subtotal,
+            }),
+          }
+        : {}),
       series: [
         {
           name: displayName,
-          data: metricData.map((item) => metricKey === "cost" ? {
-            x: new Date(item.timestamp).getTime(),
-            y: isIncompleteCost(byTimestamp.get(item.timestamp)) ? null : item[metricKey],
-            cost_coverage: byTimestamp.get(item.timestamp),
-          } : [new Date(item.timestamp).getTime(), item[metricKey]]),
+          data: metricData.map((item) =>
+            metricKey === "cost"
+              ? {
+                  x: new Date(item.timestamp).getTime(),
+                  y: isIncompleteCost(byTimestamp.get(item.timestamp))
+                    ? null
+                    : item[metricKey],
+                  cost_coverage: byTimestamp.get(item.timestamp),
+                }
+              : [new Date(item.timestamp).getTime(), item[metricKey]],
+          ),
         },
       ],
     });
@@ -187,9 +212,10 @@ export const userDefaultFilter = {
 // Coverage changes presentation only, never the numeric grid row.
 export const formatUsersCost = ({ value, data }) => {
   const coverage = data?.cost_coverage;
-  if (coverage === undefined || coverage.status === "complete") return formatCost(value);
+  if (coverage === undefined || coverage.status === "complete")
+    return formatCost(value);
   if (coverage?.status === "partial") {
-    return `Partial — Known subtotal ${formatCost(coverage.known_subtotal)}`;
+    return `Partial — Known subtotal ${formatKnownSubtotal(coverage.known_subtotal)}`;
   }
   return "Unknown";
 };
@@ -311,6 +337,11 @@ export const getUsersColumnConfig = ({ includeProject = false } = {}) => {
     {
       headerName: "Evals Pass Rate (%)",
       field: "eval_score",
+      valueGetter: ({ data }) => {
+        // The API returns 0-100 percentages; the float renderer expects 0-1.
+        const passRate = data?.bool_eval_pass_rate;
+        return Number.isFinite(passRate) ? passRate / 100 : undefined;
+      },
       minWidth: 200,
       flex: 1,
       cellRenderer: EvaluateCellRenderer,

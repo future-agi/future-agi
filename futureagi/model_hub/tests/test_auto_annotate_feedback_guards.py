@@ -6,6 +6,8 @@ from unittest.mock import patch
 
 import pytest
 from django.core.exceptions import ObjectDoesNotExist
+from django.http import Http404
+from rest_framework.exceptions import NotFound
 
 from model_hub.models.develop_annotations import Annotations, AnnotationsLabels
 from model_hub.models.develop_dataset import Cell, Column
@@ -301,7 +303,9 @@ def test_column_allocation_rejects_wrong_row_or_unattached_label(tenants, mismat
         row = foreign.row
     else:
         annotation.labels.clear()
-    with pytest.raises(ObjectDoesNotExist):
+    # A team test's expected value changes: allocation refuses an out-of-scope
+    # row or label with Http404 or NotFound, which the views answer as 404.
+    with pytest.raises((ObjectDoesNotExist, Http404, NotFound)):
         _view(own).can_user_annotate(annotation.id, row.id, own.label.id, own.user.id)
 
 
@@ -400,7 +404,9 @@ def test_column_allocation_checks_request_scope_without_middleware(
     value = foreign.organization if field == "organization" else sibling.workspace
     type(target).no_workspace_objects.filter(pk=target.pk).update(**{field: value})
     clear_workspace_context()
-    with pytest.raises(ObjectDoesNotExist):
+    # A team test's expected value changes: an annotation or label outside the
+    # request's scope is refused with Http404 or NotFound, answered as 404.
+    with pytest.raises((ObjectDoesNotExist, Http404, NotFound)):
         _view(own).can_user_annotate(
             annotation.id, own.row.id, own.label.id, own.user.id
         )

@@ -1,0 +1,103 @@
+# Slack's MCP server takes user tokens, from the user-token authorize and
+# token endpoints (not the bot-token oauth.v2.access, which EE's built-in app
+# still uses). Slack has no dynamic client registration, and only apps
+# listed in the Slack Marketplace, or a workspace's own internal app, may use
+# MCP: until a FutureAGI app is listed, each workspace connects its own
+# internal app. The scopes are the user scopes EE's built-in app requests,
+# each one a scope Slack's MCP page names for a tool.
+schema: "connector-manifest/v1#provider"
+app: slack
+id: mcp
+version: 1.0.1
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.slack.com/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent, user]
+auth:
+  kind: oauth2
+  oauth2:
+    authorizeUrl: https://slack.com/oauth/v2_user/authorize
+    tokenUrl: https://slack.com/api/oauth.v2.user.access
+    scopes:
+      [
+        "search:read.public",
+        "channels:history",
+        "channels:read",
+        "chat:write",
+        "users:read",
+      ]
+    pkce: true
+    tokenBody: form
+    clientAuth: body
+    refresh: { supported: true, rotates: true }
+    registration: [preregistered]
+    review:
+      program: slack_marketplace_review
+      leadTime: P12W
+      source: https://docs.slack.dev/slack-marketplace/slack-marketplace-review-guide/
+  clientApproval:
+    required: true
+    program: "Slack Marketplace listing; a workspace's own internal app needs none"
+    url: https://docs.slack.dev/slack-marketplace/slack-marketplace-review-guide/
+    source: https://docs.slack.dev/ai/slack-mcp-server/
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://docs.slack.dev/ai/slack-mcp-server/
+    fetchedAt: 2026-10-20
+  - fact: transport.variant
+    url: https://docs.slack.dev/ai/slack-mcp-server/
+    fetchedAt: 2026-10-20
+  - fact: auth.kind
+    url: https://docs.slack.dev/ai/slack-mcp-server/
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.authorizeUrl
+    url: https://docs.slack.dev/ai/slack-mcp-server/
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.authorizeUrl
+    url: https://mcp.slack.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.tokenUrl
+    url: https://docs.slack.dev/ai/slack-mcp-server/
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.tokenUrl
+    url: https://docs.slack.dev/reference/methods/oauth.v2.user.access/
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.scopes
+    url: https://docs.slack.dev/ai/slack-mcp-server/
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.pkce
+    url: https://mcp.slack.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.clientAuth
+    url: https://mcp.slack.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.refresh
+    url: https://docs.slack.dev/authentication/using-token-rotation/
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.registration
+    url: https://docs.slack.dev/ai/slack-mcp-server/
+    fetchedAt: 2026-10-20
+x-omega:
+  publicClient:
+    supported: false
+    evidence:
+      - url: https://docs.slack.dev/ai/slack-mcp-server/
+        fetchedAt: 2026-10-20
+        sha256: 2e6daeb1dbe00dd14ffc6c27dd2352615c53b57f7f720684caccb86e38f96703
+        quote: "Slack supports confidential OAuth for MCP clients. You'll need to use your app's client_id and client_secret for Slack OAuth."
+      - url: https://mcp.slack.com/.well-known/oauth-authorization-server
+        fetchedAt: 2026-10-20
+        sha256: 0032884c8d36253d31313163faaa0a7126c6208505f27db762ad7ae5591839d9
+        quote: '"token_endpoint_auth_methods_supported": ["client_secret_post"]'
+    notes: "Unproven, not disproven: Slack's PKCE page (docs.slack.dev/authentication/using-pkce, saved 2026-10-22, sha256 fedd7c12...) makes a PKCE-enabled app a public client that calls oauth.v2.access without client_secret, and the MCP guide points desktop clients at it; whether oauth.v2.user.access, the MCP user-token endpoint, takes such an app is not stated. Set true only after a sign-in proves it."

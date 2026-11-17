@@ -564,9 +564,16 @@ describe("eval-owned source host", () => {
     },
   );
 
-  it.each(["unavailable", "ambiguous_reference", "ready"])(
-    "S05 revalidates a generic trace 400 and renders %s correctly",
-    async (status) => {
+  it.each(
+    [400, 404].flatMap((statusCode) =>
+      ["unavailable", "ambiguous_reference", "ready"].map((status) => [
+        statusCode,
+        status,
+      ]),
+    ),
+  )(
+    "S05 revalidates trace %s and renders %s correctly",
+    async (statusCode, status) => {
       axios.get.mockImplementation(async (url) => {
         if (url === endpoints.develop.eval.getEvalLogs)
           return enriched(
@@ -574,7 +581,7 @@ describe("eval-owned source host", () => {
               ? { status }
               : ready,
           );
-        throw { statusCode: 400 };
+        throw { statusCode };
       });
       mount();
       await activate();
@@ -586,6 +593,13 @@ describe("eval-owned source host", () => {
             : "Source details could not be loaded. Try again.";
       expect(await screen.findByText(expected)).toBeInTheDocument();
       expect(enrichmentCalls()).toHaveLength(3);
+      if (status === "ready") {
+        expect(screen.getByRole("button", { name: "Retry" })).toBeEnabled();
+      } else {
+        expect(
+          screen.queryByRole("button", { name: "Retry" }),
+        ).not.toBeInTheDocument();
+      }
       expect(mocks.trace).not.toHaveBeenCalled();
     },
   );
@@ -824,7 +838,15 @@ describe("eval-owned source host", () => {
       destination = { statusCode: 404, result: "Trace not found." };
       mount();
       await activate(kind);
-      expect(await screen.findByText(unavailable)).toBeInTheDocument();
+      const expected =
+        kind === "trace"
+          ? "Source details could not be loaded. Try again."
+          : unavailable;
+      expect(await screen.findByText(expected)).toBeInTheDocument();
+      if (kind === "trace") {
+        expect(screen.getByRole("button", { name: "Retry" })).toBeEnabled();
+        expect(enrichmentCalls()).toHaveLength(3);
+      }
       await act(async () => {
         await new Promise((resolve) => setTimeout(resolve, 50));
       });

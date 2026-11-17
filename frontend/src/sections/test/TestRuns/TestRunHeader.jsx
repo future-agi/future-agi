@@ -12,6 +12,8 @@ import {
   useTestRunsSearchStore,
 } from "./states";
 import axios, { endpoints } from "src/utils/axios";
+import { getTestExecutionErrorMessage } from "src/utils/errorUtils";
+import { handleError } from "src/utils/queryErrorHandler";
 import { enqueueSnackbar } from "src/components/snackbar";
 import { LoadingButton } from "@mui/lab";
 import { useTestDetailContext } from "../context/TestDetailContext";
@@ -24,6 +26,10 @@ import { useTestRunSdkStoreShallow } from "./state";
 import { AGENT_TYPES } from "src/sections/agents/constants";
 import { SIMULATION_TYPE } from "src/components/run-tests/common";
 import { SCENARIO_STATUS } from "src/pages/dashboard/scenarios/common";
+import {
+  skippedSavedRowCount,
+  skippedSavedRowsMessage,
+} from "../skippedSavedRows";
 
 const ScenarioPopover = lazy(() => import("./ScenarioPopover"));
 const TestRunsSelection = lazy(() => import("./TestRunsSelection"));
@@ -78,8 +84,28 @@ const TestRunHeader = () => {
               scenario_ids: selectedScenarios,
             },
       ),
-    onSuccess: () => {
+    // Only the run-test endpoint serves the approved execution error copy.
+    // Keep prompt execution on the existing global handler, without duplicates.
+    meta: { errorHandled: !isPromptSimulation },
+    onError: (error) => {
+      if (!isPromptSimulation) {
+        // Preserve flattened client refusals, including structured validation
+        // and the interceptor-owned rate-limit notification.
+        if (error?.statusCode < 500) {
+          handleError(error);
+          return;
+        }
+        enqueueSnackbar(getTestExecutionErrorMessage(error), {
+          variant: "error",
+        });
+      }
+    },
+    onSuccess: (response) => {
       enqueueSnackbar("Test run started", { variant: "success" });
+      const skippedRows = skippedSavedRowsMessage(
+        skippedSavedRowCount(response?.data),
+      );
+      if (skippedRows) enqueueSnackbar(skippedRows, { variant: "info" });
       refreshTestRunGrid();
     },
   });
@@ -104,6 +130,9 @@ const TestRunHeader = () => {
     : testData?.agent_definition_detail?.agent_type ??
       testData?.agent_version?.configuration_snapshot?.agent_type ??
       testData?.agentVersion?.configurationSnapshot?.agentType;
+  // A chat agent's run is started from the user's own code with the SDK; the
+  // button opens those steps instead of starting a run, so it says so.
+  const runsFromCode = agentType === AGENT_TYPES.CHAT && !isPromptSimulation;
 
   return (
     <Box
@@ -243,7 +272,7 @@ const TestRunHeader = () => {
               isAgentDefinitionDeleted
                 ? "Agent definition has been deleted. Please select a new agent definition to run simulation."
                 : selectedScenarios.length === 0
-                  ? "Select atleast one scenario to run test"
+                  ? "Select at least one scenario to run the simulation."
                   : hasEmptyScenario
                     ? "Some selected scenarios have no datapoints. Remove them from the selection to run."
                     : "Some selected scenarios are not completed. Wait for them to finish or remove them from the selection."
@@ -267,7 +296,7 @@ const TestRunHeader = () => {
                     });
                   }
                   // For CHAT agent type (non-prompt), show SDK code
-                  if (agentType === AGENT_TYPES.CHAT && !isPromptSimulation) {
+                  if (runsFromCode) {
                     setSdkCodeOpen(true);
                     return;
                   }
@@ -284,7 +313,7 @@ const TestRunHeader = () => {
                   hasIncompleteScenario
                 }
               >
-                Run New Simulation
+                {runsFromCode ? "Run from your code" : "Run New Simulation"}
               </LoadingButton>
             </Box>
           </CustomTooltip>

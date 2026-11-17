@@ -1,0 +1,23 @@
+schema: "connector-manifest/v1#app"
+id: dropbox
+version: 1.0.0
+name: Dropbox
+description: "Search, read, organize and share files and folders in Dropbox."
+vendor:
+  name: Dropbox
+  domains: [dropbox.com, dropboxapi.com]
+eeCategory: productivity
+group: other
+categories: [productivity, file-storage]
+tags: [files, folders, sharing]
+docsUrl: https://help.dropbox.com/integrations/connect-dropbox-mcp-server
+archetype: cloud-drive
+defaultProvider: mcp
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://help.dropbox.com/integrations/connect-dropbox-mcp-server
+    fetchedAt: 2026-11-15
+  - fact: vendor.domains
+    url: https://docs.dropboxapi.com/dropbox-api/docs/get-started/authorization
+    fetchedAt: 2026-11-15

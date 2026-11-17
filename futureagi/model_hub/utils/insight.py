@@ -2,8 +2,11 @@ from datetime import datetime, timedelta
 
 from model_hub.models.dataset_insight_meta import DatasetInsightMeta
 from model_hub.utils.constant import journey_operator_map
+from model_hub.utils.performance_ch import event_filters, number_value, value_list
 from tfc.utils.clickhouse import ClickHouseClientSingleton
-from tfc.utils.types import Environments
+
+# A count filter compares with one of these operators, kept as fixed text.
+COMPARISON_TEXT = {symbol: symbol for symbol in journey_operator_map.values()}
 
 
 def addDays(date_string, count=1):
@@ -20,24 +23,17 @@ def addDays(date_string, count=1):
 
 
 def get_insight_details(org_id, model_id, dataset, filters, metric):
-    version = dataset["version"]
-    environment = Environments.convert_to_type(dataset["environment"])
     start_date = dataset["start_date"]
     end_date = addDays(dataset["end_date"])
-    agg_by = dataset["agg_by"]
 
-    prep_filters = [
-        f" AIModel = '{model_id}' ",
-        f" OrgID = '{org_id}' ",
-        f" ModelVersion = '{version}' ",
-        f" Environment = {environment} ",
-        f" EventDateTime BETWEEN '{start_date}' AND '{end_date}' ",
-        " deleted = 0 ",
-    ]
+    prep_filters, params = event_filters(
+        org_id, model_id, dataset, start_date, end_date, end_date
+    )
+    params["agg_by"] = str(dataset["agg_by"])
 
     all_filters = filters + metric["filters"]
 
-    for _filter_index, filter in enumerate(all_filters):
+    for filter_index, filter in enumerate(all_filters):
         if (
             "type" not in filter
             or "data_type" not in filter
@@ -48,42 +44,43 @@ def get_insight_details(org_id, model_id, dataset, filters, metric):
             continue
         filter_type = filter["type"]
         filter_data_type = filter["data_type"]
-        filter_key = filter["key"]
         filter_value = filter["value"]
         filter_operator = journey_operator_map[filter["operator"]]
+        name = f"filter_{filter_index}"
 
         if filter_type == "property":
             if filter_data_type == "string":
-                query = f"arrayElement(Features.Value, indexOf(Features.Key, 'conversation_id')) \
+                params[f"{name}_key"] = str(filter["key"])
+                params[f"{name}_values"] = value_list(filter_value)
+                query = (
+                    f"arrayElement(Features.Value, indexOf(Features.Key, 'conversation_id')) \
                 IN (SELECT DISTINCT arrayElement(Features.Value, indexOf(Features.Key, 'conversation_id')) \
                 AS conv_id FROM events WHERE hasAll(splitByString(';',arrayElement(EvalResults.Value, \
-                indexOf(EvalResults.Key, '{filter_key}'))),{filter_value}) \
+                indexOf(EvalResults.Key, %({name}_key)s))),%({name}_values)s) \
                 AND NOT has(Features.Key, 'node_id') AND deleted = 0)"
+                )
 
         else:
             filter_value[0] = str(float(filter_value[0]) / 10)
-            metric_value = f"arrayElement(EvalResults.Value, indexOf(EvalResults.Key, 'metric_{metric['database_id']}_score'))"
-            query = f"if(isNotNull({metric_value}) AND {metric_value} != '', toFloat32({metric_value}), 0) {filter_operator} {filter_value[0]}"
+            params["metric_score_key"] = f"metric_{metric['database_id']}_score"
+            params[f"{name}_value"] = float(filter_value[0])
+            metric_value = "arrayElement(EvalResults.Value, indexOf(EvalResults.Key, %(metric_score_key)s))"
+            query = f"if(isNotNull({metric_value}) AND {metric_value} != '', toFloat32({metric_value}), 0) {filter_operator} %({name}_value)s"
 
         prep_filters.append(query)
 
     select_query = ""
+    metric_select = ""
 
     if metric["type"] == "property":
         # prep_filters.append(f"has(EvalResults.Key, '{metric['key']}')")
-        query = ""
-        if metric["data_type"] == "string":
-            query = f"arrayElement(Features.Value, indexOf(Features.Key, 'conversation_id')) \
-            IN (SELECT DISTINCT arrayElement(Features.Value, indexOf(Features.Key, 'conversation_id')) \
-            AS conv_id FROM events WHERE has(EvalResults.Key, '{metric['key']}') \
-            AND NOT has(Features.Key, 'node_id') AND deleted = 0"
-        else:
-            query = ""
-            # query = f"toFloat32(arrayElement(EvalResults.Value, indexOf(EvalResults.Key, '{filter_key}'))) {filter_operator} {filter_value[0]}"
-
         select_query = "COUNT() AS total_events"
     else:
         select_query = "round(AVG(if(isNotNull(metricValue) AND metricValue != '', toFloat32(metricValue), 0)) * 10, 2) AS total_events"
+
+    if metric["type"] == "performanceMetric":
+        params["metric_score_key"] = f"metric_{metric['database_id']}_score"
+        metric_select = ",arrayElement(EvalResults.Value, indexOf(EvalResults.Key, %(metric_score_key)s)) AS metricValue"
 
     if len(prep_filters):
         filter_query = " AND " + "(" + " ) AND ( ".join(prep_filters) + ")"
@@ -94,25 +91,25 @@ def get_insight_details(org_id, model_id, dataset, filters, metric):
 
     final_query = f"""
         WITH
-            toDateTime('{start_date}') AS start_date,
-            toDateTime('{end_date}') AS end_date,
+            toDateTime(%(start_date)s) AS start_date,
+            toDateTime(%(end_date)s) AS end_date,
             CASE
-                WHEN '{agg_by}' = 'hourly' THEN toStartOfHour(start_date)
-                WHEN '{agg_by}' = 'daily' THEN toDate(start_date)
-                WHEN '{agg_by}' = 'weekly' THEN toStartOfWeek(toDate(start_date))
-                WHEN '{agg_by}' = 'monthly' THEN toStartOfMonth(start_date)
+                WHEN %(agg_by)s = 'hourly' THEN toStartOfHour(start_date)
+                WHEN %(agg_by)s = 'daily' THEN toDate(start_date)
+                WHEN %(agg_by)s = 'weekly' THEN toStartOfWeek(toDate(start_date))
+                WHEN %(agg_by)s = 'monthly' THEN toStartOfMonth(start_date)
             END AS interval_start,
             CASE
-                WHEN '{agg_by}' = 'hourly' THEN toStartOfHour(end_date)
-                WHEN '{agg_by}' = 'daily' THEN toDate(end_date)
-                WHEN '{agg_by}' = 'weekly' THEN toLastDayOfWeek(toDate(end_date))
-                WHEN '{agg_by}' = 'monthly' THEN toStartOfMonth(end_date)
+                WHEN %(agg_by)s = 'hourly' THEN toStartOfHour(end_date)
+                WHEN %(agg_by)s = 'daily' THEN toDate(end_date)
+                WHEN %(agg_by)s = 'weekly' THEN toLastDayOfWeek(toDate(end_date))
+                WHEN %(agg_by)s = 'monthly' THEN toStartOfMonth(end_date)
             END AS interval_end,
             CASE
-                WHEN '{agg_by}' = 'hourly' THEN 'hour'
-                WHEN '{agg_by}' = 'daily' THEN 'day'
-                WHEN '{agg_by}' = 'weekly' THEN 'week'
-                WHEN '{agg_by}' = 'monthly' THEN 'month'
+                WHEN %(agg_by)s = 'hourly' THEN 'hour'
+                WHEN %(agg_by)s = 'daily' THEN 'day'
+                WHEN %(agg_by)s = 'weekly' THEN 'week'
+                WHEN %(agg_by)s = 'monthly' THEN 'month'
             END AS interval_type
         SELECT
             time_series.time_interval,
@@ -138,14 +135,14 @@ def get_insight_details(org_id, model_id, dataset, filters, metric):
                 SELECT
                     UUID,
                     CASE
-                        WHEN '{agg_by}' = 'hourly' THEN toStartOfHour(EventDateTime)
-                        WHEN '{agg_by}' = 'daily' THEN toDate(EventDate)
-                        WHEN '{agg_by}' = 'weekly' THEN toLastDayOfWeek(EventDate)
-                        WHEN '{agg_by}' = 'monthly' THEN toStartOfMonth(EventDate)
+                        WHEN %(agg_by)s = 'hourly' THEN toStartOfHour(EventDateTime)
+                        WHEN %(agg_by)s = 'daily' THEN toDate(EventDate)
+                        WHEN %(agg_by)s = 'weekly' THEN toLastDayOfWeek(EventDate)
+                        WHEN %(agg_by)s = 'monthly' THEN toStartOfMonth(EventDate)
                     END AS agg_time
-                    {f",arrayElement(EvalResults.Value, indexOf(EvalResults.Key, 'metric_{metric['database_id']}_score')) AS metricValue" if metric["type"] == "performanceMetric" else ""}
+                    {metric_select}
                 FROM events
-                WHERE EventDateTime BETWEEN '{start_date}' AND '{end_date}'
+                WHERE EventDateTime BETWEEN %(start_date)s AND %(end_date)s
                 AND has(Features.Key,'node_id')
                     {filter_query}
             )
@@ -156,7 +153,7 @@ def get_insight_details(org_id, model_id, dataset, filters, metric):
     """
 
     clickhouse_client = ClickHouseClientSingleton()  # Your ClickHouse client class
-    results = clickhouse_client.execute_read(final_query)
+    results = clickhouse_client.execute_read(final_query, params)
     return results
 
 
@@ -166,31 +163,30 @@ def get_insight_details_count(
     dataset,
     filters,
 ):
-    version = dataset["version"]
-    environment = Environments.convert_to_type(dataset["environment"])
     start_date = dataset["start_date"]
     end_date = dataset["end_date"]
     # agg_by = dataset["agg_by"]
 
-    prep_filters = [
-        f" AIModel = '{model_id}' ",
-        f" OrgID = '{org_id}' ",
-        f" ModelVersion = '{version}' ",
-        f" Environment = {environment} ",
-        f" EventDateTime BETWEEN '{start_date}' AND '{end_date}' ",
-        " deleted = 0 ",
-    ]
+    prep_filters, params = event_filters(
+        org_id, model_id, dataset, start_date, end_date, end_date
+    )
 
-    for _filter_index, filter in enumerate(filters):
+    for filter_index, filter in enumerate(filters):
         filter_data_type = filter["data_type"]
-        filter_key = filter["key"]
         filter_value = filter["value"]
-        filter_operator = filter["operator"]
+        operator = filter["operator"]
+        name = f"filter_{filter_index}"
+        params[f"{name}_key"] = str(filter["key"])
 
         if filter_data_type == "string":
-            query = f"hasAll(splitByString(';',arrayElement(EvalResults.Value, indexOf(EvalResults.Key, '{filter_key}'))),{filter_value})"
+            params[f"{name}_values"] = value_list(filter_value)
+            query = f"hasAll(splitByString(';',arrayElement(EvalResults.Value, indexOf(EvalResults.Key, %({name}_key)s))),%({name}_values)s)"
         else:
-            query = f"toFloat32(arrayElement(EvalResults.Value, indexOf(EvalResults.Key, '{filter_key}'))) {filter_operator} {filter_value[0]}"
+            if not isinstance(operator, str) or operator not in COMPARISON_TEXT:
+                raise ValueError("Unknown filter operator.")
+            filter_operator = COMPARISON_TEXT[operator]
+            params[f"{name}_value"] = number_value(filter_value[0])
+            query = f"toFloat32(arrayElement(EvalResults.Value, indexOf(EvalResults.Key, %({name}_key)s))) {filter_operator} %({name}_value)s"
 
         prep_filters.append(query)
 
@@ -205,14 +201,14 @@ def get_insight_details_count(
         SELECT
             COUNT() AS total_events
         FROM events
-        WHERE EventDateTime BETWEEN '{start_date}' AND '{end_date}'
+        WHERE EventDateTime BETWEEN %(start_date)s AND %(end_date)s
             {filter_query}
     """
 
     # print(final_query)
 
     clickhouse_client = ClickHouseClientSingleton()  # Your ClickHouse client class
-    results = clickhouse_client.execute_read(final_query)
+    results = clickhouse_client.execute_read(final_query, params)
     return results
 
 

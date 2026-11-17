@@ -5,7 +5,10 @@ from rest_framework import status
 
 from agentcc.models import AgentccAPIKey
 from agentcc.models.custom_property import AgentccCustomPropertySchema
-from agentcc.models.webhook import AgentccWebhook
+from agentcc.tests.test_webhook_encrypted_fixtures import make_webhook
+from agentcc.tests.test_webhook_encrypted_fixtures import (
+    webhook_encryption_key as webhook_encryption_key,
+)
 
 INVALID_NAME = '<script>alert("xss")</script>'
 NAME_ERROR = "Name can only contain letters, numbers, hyphens, and underscores"
@@ -21,9 +24,9 @@ def gateway_id():
 class TestAgentccSafeNameValidationAPI:
     @patch("agentcc.views.api_key.auth_bridge")
     def test_create_api_key_rejects_xss_name(
-        self, mock_bridge, auth_client, gateway_id
+        self, mock_bridge, session_auth_client, gateway_id
     ):
-        response = auth_client.post(
+        response = session_auth_client.post(
             "/agentcc/api-keys/",
             {"gateway_id": gateway_id, "name": INVALID_NAME},
             format="json",
@@ -54,7 +57,8 @@ class TestAgentccSafeNameValidationAPI:
         mock_bridge.update_key.assert_not_called()
 
     @pytest.mark.requires_ee
-    def test_create_webhook_rejects_xss_name(self, auth_client):
+    def test_create_webhook_rejects_xss_name(self, auth_client, provider_dns):
+        dns = provider_dns({"example.com": ["93.184.215.14"]})
         response = auth_client.post(
             "/agentcc/webhooks/",
             {
@@ -67,9 +71,11 @@ class TestAgentccSafeNameValidationAPI:
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert response.json()["details"]["name"][0] == NAME_ERROR
+        # The URL check resolved it, answered by the stub.
+        assert "example.com" in [c.args[0] for c in dns.call_args_list]
 
     def test_update_webhook_rejects_xss_name(self, auth_client, user):
-        webhook = AgentccWebhook.objects.create(
+        webhook = make_webhook(
             organization=user.organization,
             name="safe_name",
             url="https://example.com/webhook",
@@ -84,6 +90,10 @@ class TestAgentccSafeNameValidationAPI:
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert response.json()["details"]["name"][0] == NAME_ERROR
+        webhook.refresh_from_db()
+        assert webhook.name == "safe_name"
+        assert webhook.credential_storage_version == 1
+        assert webhook.encrypted_headers and webhook.encrypted_secret
 
     def test_create_custom_property_rejects_xss_name(self, auth_client):
         response = auth_client.post(

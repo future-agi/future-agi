@@ -1,0 +1,18 @@
+# Fixture for the L3 conformance harness tests, not catalog data: Acme is
+# fictional (acme.example is a reserved domain) and so are its facts.
+schema: "connector-manifest/v1#app"
+id: acme
+version: 1.0.0
+name: Acme Docs
+description: "Search and edit a workspace's documents."
+vendor: { name: Acme, domains: [acme.example] }
+eeCategory: productivity
+group: other
+categories: [productivity]
+docsUrl: https://acme.example/docs/mcp
+defaultProvider: remote
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://acme.example/docs/mcp
+    fetchedAt: 2026-10-19

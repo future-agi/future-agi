@@ -27,30 +27,45 @@ const coverage = (requestCount) => ({
 const snapshot = (requestCount = 0) => ({
   trace: { id: "trace-1", tags: [] },
   capture_coverage: coverage(requestCount),
-  observation_spans: [{
-    observation_span: {
-      id: "0000000000000001", name: "invoke_agent", observation_type: "agent",
-      start_time: "2026-10-20T12:00:00Z", total_tokens: 0, cost: 0,
-      span_attributes: {
-        "fi.usage.contribution": "none",
-        "fi.source.summary.gen_ai.usage.input_tokens": 42925,
-        "fi.source.summary.gen_ai.usage.output_tokens": 146,
-        "fi.source.summary.gen_ai.cost.total": 17,
+  observation_spans: [
+    {
+      observation_span: {
+        id: "0000000000000001",
+        name: "invoke_agent",
+        observation_type: "agent",
+        start_time: "2026-10-20T12:00:00Z",
+        total_tokens: 0,
+        cost: 0,
+        span_attributes: {
+          "fi.usage.contribution": "none",
+          "fi.source.summary.gen_ai.usage.input_tokens": 42925,
+          "fi.source.summary.gen_ai.usage.output_tokens": 146,
+          "fi.source.summary.gen_ai.cost.total": 17,
+        },
       },
+      children: [],
     },
-    children: [],
-  }],
+  ],
   summary: {
-    total_spans: requestCount ? 5 : 1, total_duration_ms: 1000,
-    total_tokens: requestCount ? 43071 : 0, total_cost: requestCount ? null : 0,
+    total_spans: requestCount ? 5 : 1,
+    total_duration_ms: 1000,
+    total_tokens: requestCount ? 43071 : 0,
+    total_cost: requestCount ? null : 0,
   },
 });
 
 function drawer(Component) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   return (
     <QueryClientProvider client={client}>
-      <Component open traceId="trace-1" projectId="project-1" onClose={vi.fn()} />
+      <Component
+        open
+        traceId="trace-1"
+        projectId="project-1"
+        onClose={vi.fn()}
+      />
     </QueryClientProvider>
   );
 }
@@ -66,18 +81,24 @@ describe("Native source-summary capture scope", () => {
     (Component) => {
       const view = render(drawer(Component));
       const note = () => screen.getByRole("note", { name: "Capture coverage" });
-      expect(note()).toHaveTextContent("Observed requests only · 0 observed requests");
-      expect(note()).toHaveTextContent("Capture coverage unknown");
-      expect(note()).toHaveTextContent("Source summaries are not added to request usage");
+      expect(note()).toHaveTextContent("We haven't received any model calls");
+      expect(note()).toHaveTextContent("Some calls may not have been sent");
+      expect(note()).toHaveTextContent(
+        "the agent's own run summary isn't added",
+      );
       expect(screen.queryByText("$17.00")).not.toBeInTheDocument();
       state.data = snapshot(3);
       view.rerender(drawer(Component));
-      expect(note()).toHaveTextContent("3 observed requests");
-      expect(note()).toHaveTextContent("matching totals do not prove complete capture");
+      expect(note()).toHaveTextContent(
+        "Usage counts only the 3 model calls we received",
+      );
+      expect(note()).toHaveTextContent("so the real total may be higher");
       state.data = snapshot(3);
       view.rerender(drawer(Component));
-      expect(note()).toHaveTextContent("Capture coverage unknown");
-      expect(note()).toHaveTextContent("3 observed requests");
+      expect(note()).toHaveTextContent("Some calls may not have been sent");
+      expect(note()).toHaveTextContent(
+        "Usage counts only the 3 model calls we received",
+      );
       view.unmount();
     },
   );
@@ -88,10 +109,17 @@ describe("Native source-summary capture scope", () => {
     expect(screen.getByText("Observed cost: $0.00")).toBeVisible();
   });
 
-  it.each([TraceDetailPanel, TraceDetailDrawerV2])("leaves legacy no-flag presentation unchanged", (Component) => {
-    delete state.data.capture_coverage;
-    render(drawer(Component));
-    expect(screen.queryByRole("note", { name: "Capture coverage" })).not.toBeInTheDocument();
-    expect(screen.queryByText(/observed tokens|Observed cost:/)).not.toBeInTheDocument();
-  });
+  it.each([TraceDetailPanel, TraceDetailDrawerV2])(
+    "leaves legacy no-flag presentation unchanged",
+    (Component) => {
+      delete state.data.capture_coverage;
+      render(drawer(Component));
+      expect(
+        screen.queryByRole("note", { name: "Capture coverage" }),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByText(/observed tokens|Observed cost:/),
+      ).not.toBeInTheDocument();
+    },
+  );
 });

@@ -1,0 +1,32 @@
+package server
+
+import (
+ "net/http"
+ "net/http/httptest"
+ "os"
+ "path/filepath"
+ "testing"
+)
+
+// VM-only fixture capture: exercise the actual admin serializer over the full
+// bundled catalogue, with operator CAT-2 off/on; never construct response rows.
+func TestCAT2UICapture(t *testing.T) {
+ out := os.Getenv("CAT2_FIXTURE_OUT")
+ if out == "" { t.Fatal("fixture output required") }
+ for _, name := range []string{"stock-catalog.json", "inclusive-catalog.json", "request-catalog.json"} {
+  g, _, _ := cat2OperatorGateway(t, name == "inclusive-catalog.json")
+  if name == "request-catalog.json" {
+   // Existing backend request-fee/failure-path fixtures, serialized by the
+   // real handler. No hand-authored frontend response shape.
+   installBillabilityModels(billabilityModels(t))(t, g)
+  }
+  req := httptest.NewRequest(http.MethodGet, "/-/catalog", nil)
+  req.Header.Set("Authorization", "Bearer "+adminToken)
+  w := httptest.NewRecorder()
+  g.srv.httpServer.Handler.ServeHTTP(w, req)
+  if w.Code != http.StatusOK { t.Fatalf("catalog status=%d", w.Code) }
+  if g.managed.calls() != 0 || g.operator.calls() != 0 { t.Fatal("catalogue read called upstream") }
+  if err := os.WriteFile(filepath.Join(out, name), w.Body.Bytes(), 0600); err != nil { t.Fatal(err) }
+  t.Logf("captured %s via GET /-/catalog; provider mocks untouched", name)
+ }
+}

@@ -1,0 +1,56 @@
+# Splunk's hosted Observability-only gateway, pinned to the documented US1 realm.
+# Scenario 3 requires neither a Splunk platform token nor a tenant header.
+schema: "connector-manifest/v1#provider"
+app: splunk
+id: api-key
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://region-pdx10.api.scs.splunk.com/system/mcp-gateway/v1/
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: X-SF-TOKEN
+      secret: true
+      label: Observability user API access token
+      help: "For a US1 Observability Cloud account, open Settings, your profile, then Show User API Access Token. Supply the raw token. A token copied there expires at logout or after 30 days, whichever comes first. This connection does not provide Splunk Cloud Platform tools."
+      helpUrl: https://help.splunk.com/en/splunk-observability-cloud/administer/authentication-and-security/authentication-tokens/api-access-tokens
+    - in: header
+      name: X-SF-REALM
+      secret: false
+      value: us1
+      label: Observability realm
+      help: "Fixed US1 realm for the documented Oregon gateway. Use an account in this realm."
+      helpUrl: https://help.splunk.com/en/splunk-enterprise/mcp-server-for-splunk-platform/2.1/connect-splunk-mcp-server-to-other-products-and-clients/configure-splunk-observability-tools-with-splunk-mcp-server
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_plan
+  source: https://help.splunk.com/en/splunk-observability-cloud/splunk-ai-assistant/interact-with-your-observability-data-using-the-splunk-mcp-server
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://help.splunk.com/en/splunk-enterprise/mcp-server-for-splunk-platform/2.1/connect-splunk-mcp-server-to-other-products-and-clients/configure-splunk-observability-tools-with-splunk-mcp-server
+    fetchedAt: 2026-11-09
+  - fact: transport.variant
+    url: https://help.splunk.com/en/splunk-observability-cloud/splunk-ai-assistant/interact-with-your-observability-data-using-the-splunk-mcp-server
+    fetchedAt: 2026-11-09
+  - fact: auth.kind
+    url: https://help.splunk.com/en/splunk-enterprise/mcp-server-for-splunk-platform/2.1/connect-splunk-mcp-server-to-other-products-and-clients/configure-splunk-observability-tools-with-splunk-mcp-server
+    fetchedAt: 2026-11-09
+  - fact: auth.credentialParts
+    url: https://help.splunk.com/en/splunk-enterprise/mcp-server-for-splunk-platform/2.1/connect-splunk-mcp-server-to-other-products-and-clients/configure-splunk-observability-tools-with-splunk-mcp-server
+    fetchedAt: 2026-11-09
+  - fact: auth.credentialParts
+    url: https://help.splunk.com/en/splunk-observability-cloud/administer/authentication-and-security/authentication-tokens/api-access-tokens
+    fetchedAt: 2026-11-09
+x-omega: { oss: exclude }

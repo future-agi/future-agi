@@ -46,6 +46,8 @@ from tracer.models.project import Project
 from tracer.serializers.filters import SessionFilterListField
 from tracer.services import instant_eval_rows as rows_service
 from tracer.services import instant_eval_users as users_service
+from tracer.services.analysis_retention import EXPIRED as SOURCE_EXPIRED
+from tracer.services.analysis_retention import EXPIRED_MESSAGE
 from tracer.services.insight_lost_runs import settle_lost_runs
 from tracer.services.insight_runs import ACTIVE_RUN_WINDOW as ACTIVE_RUN_WINDOW
 from tracer.services.insight_runs import active_report_run, reserve_report_run
@@ -67,6 +69,8 @@ ERROR_RESPONSES = {
 }
 
 RUNS_PER_HOUR = 30
+# The newest runs a report's detail lists for its trend chart.
+RUNS_LISTED = 50
 DRAFTS_PER_HOUR = 60
 MAX_POPULATION = 20000
 DEFAULT_SAMPLE = 300
@@ -246,6 +250,7 @@ class InsightDraftSerializer(serializers.Serializer):
 class InsightPreviewSerializer(serializers.Serializer):
     project_id = serializers.UUIDField()
     config = InsightConfigInputSerializer()
+    scope = InsightScopeSerializer(required=False)
     unit_ids = serializers.ListField(
         child=serializers.CharField(max_length=255), min_length=1, max_length=3
     )
@@ -340,6 +345,8 @@ class InsightConfigItemSerializer(serializers.Serializer):
     created_at = serializers.DateTimeField()
     latest_run = InsightRunSummarySerializer(allow_null=True)
     runs = InsightRunSummarySerializer(many=True, required=False)
+    # Every retained run, beyond the newest ones `runs` lists.
+    run_count = serializers.IntegerField(required=False)
 
 
 class InsightConfigListResultSerializer(serializers.Serializer):
@@ -585,21 +592,37 @@ def _run_summary(run) -> dict:
     }
 
 
+def _with_unit_counts(runs):
+    return runs.annotate(
+        skipped_count=Count("units", filter=Q(units__status="skipped")),
+        read_count=Count("units", filter=Q(units__status="done", units__included=True)),
+        # Read, but left out by the lens; read, but failed.
+        excluded_count=Count(
+            "units", filter=Q(units__status="done", units__included=False)
+        ),
+        failed_count=Count("units", filter=Q(units__status="failed")),
+    )
+
+
 def _config_item(config, *, with_runs=False) -> dict:
     runs = list(
-        config.runs.filter(deleted=False)
-        .annotate(
-            skipped_count=Count("units", filter=Q(units__status="skipped")),
-            read_count=Count(
-                "units", filter=Q(units__status="done", units__included=True)
-            ),
-            # Read, but left out by the lens; read, but failed.
-            excluded_count=Count(
-                "units", filter=Q(units__status="done", units__included=False)
-            ),
-            failed_count=Count("units", filter=Q(units__status="failed")),
+        _with_unit_counts(config.runs.filter(deleted=False)).order_by("-created_at")
+    )
+    # A report whose runs were all retired with the data they read (a trace
+    # or session deleted, or past retention) shows the latest of them, failed
+    # with that reason, instead of reading as never run.
+    latest = (
+        runs[0]
+        if runs
+        else _with_unit_counts(
+            InsightRun.all_objects.filter(
+                config_id=config.id,
+                deleted=True,
+                progress__error_code=SOURCE_EXPIRED,
+            )
         )
         .order_by("-created_at")
+        .first()
     )
     item = {
         "id": config.id,
@@ -615,10 +638,13 @@ def _config_item(config, *, with_runs=False) -> dict:
         "has_taxonomy": bool((config.taxonomy or {}).get("subs")),
         "taxonomy": config.taxonomy or {},
         "created_at": config.created_at,
-        "latest_run": _run_summary(runs[0]) if runs else None,
+        "latest_run": _run_summary(latest) if latest else None,
     }
     if with_runs:
-        item["runs"] = [_run_summary(r) for r in runs[:50]]
+        item["runs"] = [_run_summary(r) for r in runs[:RUNS_LISTED]]
+        # The pager's "of N" and the delete warning count every run; the
+        # older ones open through each run's previous_run_id.
+        item["run_count"] = len(runs)
     return item
 
 
@@ -984,14 +1010,29 @@ def _is_date_item(item) -> bool:
 
 
 def _scope_filters(scope: dict) -> list[dict]:
-    """The scope's filters, its window among them as their created_at item.
-    A scope without a window can't be read on the server."""
+    """The scope's filters, its window among them as their created_at item,
+    as the view's grid reads them: a Timestamp or other date filter narrows
+    the window and doesn't replace it. A created_at "between" item already
+    among the filters is the window. A scope without a window can't be read
+    on the server, unless its filters carry a date of their own."""
+
+    def is_window(item) -> bool:
+        # The item a view's grid carries its date window as
+        # (observeScope.js isWindowItem).
+        config = item.get("filter_config") or {}
+        return (
+            item.get("column_id") == "created_at"
+            and config.get("filter_op") == "between"
+            and isinstance(config.get("filter_value"), list | tuple)
+        )
+
     filters = [dict(item) for item in scope.get("filters") or [] if item]
     window = scope.get("window") or []
-    if not any(_is_date_item(item) for item in filters):
-        if len(window) != 2:
+    if not any(is_window(item) for item in filters):
+        if len(window) == 2:
+            filters.append(_window_item(window))
+        elif not any(_is_date_item(item) for item in filters):
             raise serializers.ValidationError("Choose a date range for the report.")
-        filters.append(_window_item(window))
     return SessionFilterListField().run_validation(filters)
 
 
@@ -1232,6 +1273,21 @@ class InsightPreviewView(InsightsLicenseRequired, APIView):
         denied = _gate(self._gm, org)
         if denied:
             return denied
+        since = until = None
+        scope = data.get("scope")
+        # Resolve the window as a run does, without recounting its population.
+        # Legacy requests and handed-over rows without a window remain
+        # unbounded; rows handed over from a report keep the window it read
+        # them in, which the run reads them within too.
+        if scope is not None and (
+            scope.get("preset") != FIXED_PRESET or len(scope.get("window") or []) == 2
+        ):
+            try:
+                _, since, until = rows_service._frozen_filters(
+                    _scope_filters(scope), rows_service.ROW_TYPE[data["config"]["unit"]]
+                )
+            except Exception as exc:
+                return _population_error(self._gm, exc)
         if not _spend("draft", org.id, DRAFTS_PER_HOUR):
             return self._gm.custom_error_response(
                 status.HTTP_429_TOO_MANY_REQUESTS,
@@ -1260,6 +1316,8 @@ class InsightPreviewView(InsightsLicenseRequired, APIView):
                 instructions=config.get("instructions") or "",
                 attributes=config.get("attributes") or [],
                 unit_ids=data["unit_ids"],
+                since=since,
+                until=until,
                 spend=spend,
             )
         except InsightModelError as exc:
@@ -1543,6 +1601,17 @@ class InsightRunDetailView(InsightsLicenseRequired, APIView):
             .first()
         )
         if run is None:
+            # A run retired with the data it read stays gone, with its reason.
+            if InsightRun.all_objects.filter(
+                id=run_id,
+                organization=_org(request),
+                deleted=True,
+                config__deleted=False,
+                progress__error_code=SOURCE_EXPIRED,
+            ).exists():
+                return self._gm.custom_error_response(
+                    status.HTTP_404_NOT_FOUND, EXPIRED_MESSAGE, code=SOURCE_EXPIRED
+                )
             return self._gm.not_found("Report run not found")
         siblings = InsightRun.objects.filter(config_id=run.config_id, deleted=False)
         previous = (

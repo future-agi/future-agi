@@ -97,7 +97,7 @@ export const createAgentDefinitionSchema = (options) => {
     .object({
       // Basic Information
       agentType: z.string().min(1, "Agent type is required"),
-      agentName: z.string().min(1, "Agent name is required"),
+      agentName: z.string().trim().min(1, "Agent name is required"),
       languages: z
         .array(z.string())
         .min(1, "At least one language is required"),
@@ -109,6 +109,10 @@ export const createAgentDefinitionSchema = (options) => {
       // apiEndpoint: z.string().optional(),
       authenticationMethod: z.string().optional(),
       apiKey: z.string().optional(),
+      // Write-only Vapi public key: blank keeps the saved key, removing sends null.
+      vapiPublicKey: z.string().optional(),
+      removeVapiPublicKey: z.boolean().optional(),
+      hasVapiPublicKey: z.boolean().optional(),
       observabilityEnabled: z.boolean().default(false),
       username: z.string().optional(),
       password: z.string().optional(),
@@ -125,8 +129,8 @@ export const createAgentDefinitionSchema = (options) => {
       // Behaviour
       // A code agent keeps its instructions in its stored Agent, so its description can be empty.
       description: isSourceAgent
-        ? z.string()
-        : z.string().min(1, "Description is required"),
+        ? z.string().trim()
+        : z.string().trim().min(1, "Description is required"),
       knowledgeBase: z.string().optional(),
       countryCode: z.string().optional(),
       contactNumber: z.string().optional(),
@@ -378,6 +382,9 @@ export const defaultAgentDefinitionValues = {
   agentName: "",
   provider: "",
   apiKey: "",
+  vapiPublicKey: "",
+  removeVapiPublicKey: false,
+  hasVapiPublicKey: false,
   assistantId: "",
   description: "",
   languages: ["en"],
@@ -399,6 +406,8 @@ export const defaultAgentDefinitionValues = {
   livekitConfigJson: "",
   livekitMaxConcurrency: 5,
   _livekitCredentialsValid: false,
+  // Future AGI Cloud skipped the check: not verified, but the step may go on.
+  _livekitCredentialsSkipped: false,
 };
 
 export const icon = (name) => (

@@ -15,7 +15,7 @@ const SIMULATE_MENU = ['Environment', 'Scenarios', 'Run Simulation'];
 // Scenarios.jsx, RunTests.jsx).
 const LEGACY_PAGES = [
   { item: 'Scenarios', path: `${SIMULATE}/scenarios`, title: 'Scenarios' },
-  { item: 'Run Simulation', path: `${SIMULATE}/test`, title: 'Run Tests | Dashboard' },
+  { item: 'Run Simulation', path: `${SIMULATE}/test`, title: 'Run Simulation | Future AGI' },
 ];
 
 

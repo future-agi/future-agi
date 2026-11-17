@@ -41,6 +41,7 @@ from model_hub.serializers.optimize_dataset import (
     OptimizeDatasetSerializer,
 )
 from model_hub.tasks.prompt_template_optimizer import get_topk_prompts
+from model_hub.throttles import CriteriaHelperThrottle, PlatformFeatureLimited
 from model_hub.utils.constant import optimize_table_columns
 from model_hub.utils.optimize import (
     get_prompt_template_columns,
@@ -60,15 +61,21 @@ from tfc.utils.clickhouse import ClickHouseClientSingleton
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
-from tfc.utils.types import Environments
 
 logger = structlog.get_logger(__name__)
 
 RAG_PROMPT_OPTIMIZATION_UNAVAILABLE = "RAG prompt optimization is not available."
 
 
-def _clickhouse_environment_value(environment):
-    return Environments.convert_to_type(environment) or environment
+def _events_filter_params(model_id, environment, version, **values):
+    """ClickHouse parameters for the stored model, version and environment."""
+
+    return {
+        "model_id": str(model_id),
+        "version": str(version),
+        "environment": environment,
+        **values,
+    }
 
 
 OPTIMIZE_DATASET_DYNAMIC_ROW_SCHEMA = openapi.Schema(
@@ -117,9 +124,9 @@ def _validate_request(serializer_class, data):
     return serializer.validated_data, None
 
 
-def _execute_clickhouse_read_or_empty(clickhouse_client, query, *, operation):
+def _execute_clickhouse_read_or_empty(clickhouse_client, query, params, *, operation):
     try:
-        return clickhouse_client.execute_read(query)
+        return clickhouse_client.execute_read(query, params)
     except Exception as exc:
         logger.warning(
             "legacy_optimize_dataset_clickhouse_read_failed",
@@ -129,9 +136,11 @@ def _execute_clickhouse_read_or_empty(clickhouse_client, query, *, operation):
         return []
 
 
-class OptimizedDatasetView(APIView):
+class OptimizedDatasetView(PlatformFeatureLimited, APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
+    # Starting a run (POST) is a request entry to the criteria helper; listing is not.
+    platform_throttle = CriteriaHelperThrottle
 
     @validated_request(
         query_serializer=OptimizeDatasetListQuerySerializer,
@@ -186,6 +195,9 @@ class OptimizedDatasetView(APIView):
         responses={
             200: OptimizeDatasetCreateResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
+            # Past the limit; while the limit store is down.
+            429: MODEL_HUB_ERROR_RESPONSES[500],
+            503: MODEL_HUB_ERROR_RESPONSES[500],
         },
         reject_unknown_fields=True,
     )
@@ -332,7 +344,7 @@ class RightAnswerResultsView(APIView):
 
         if filters is None:
             filters = []
-        query = f"""
+        query = """
             SELECT
                 UUID,
                 EventDateTime,
@@ -341,17 +353,26 @@ class RightAnswerResultsView(APIView):
                 arrayElement(Features.Value, indexOf(Features.Key, 'node_id')) AS input_node_id,
                 arrayElement(PredictionLabel.Value, indexOf(PredictionLabel.Key, 'node_id')) AS output_node_id
             FROM events
-                WHERE AIModel = '{model_id}'
-                AND ModelVersion = '{version}'
-                AND Environment = {environment}
+                WHERE AIModel = %(model_id)s
+                AND ModelVersion = %(version)s
+                AND Environment = %(environment)s
                 AND has(Features.Key,'node_id')
                 AND deleted = 0
-                AND EventDateTime > toDateTime('{start_date}')
-                AND  EventDateTime < toDateTime('{end_date}')
-            LIMIT {limit} OFFSET {offset}
+                AND EventDateTime > toDateTime(%(start_date)s)
+                AND  EventDateTime < toDateTime(%(end_date)s)
+            LIMIT %(limit)s OFFSET %(offset)s
         """
+        params = _events_filter_params(
+            model_id,
+            environment,
+            version,
+            start_date=start_date,
+            end_date=end_date,
+            limit=int(limit),
+            offset=int(offset),
+        )
 
-        return query
+        return query, params
 
     def get_order_query(
         self,
@@ -448,20 +469,27 @@ class RightAnswerResultsView(APIView):
 
         if filters is None:
             filters = []
-        query = f"""
+        query = """
             SELECT
                 COUNT(*)
             FROM events
-                WHERE AIModel = '{model_id}'
-                AND ModelVersion = '{version}'
-                AND Environment = {environment}
+                WHERE AIModel = %(model_id)s
+                AND ModelVersion = %(version)s
+                AND Environment = %(environment)s
                 AND has(Features.Key,'node_id')
-                AND EventDateTime > toDateTime('{start_date}')
-                AND  EventDateTime < toDateTime('{end_date}')
+                AND EventDateTime > toDateTime(%(start_date)s)
+                AND  EventDateTime < toDateTime(%(end_date)s)
                 AND deleted = 0
         """
+        params = _events_filter_params(
+            model_id,
+            environment,
+            version,
+            start_date=start_date,
+            end_date=end_date,
+        )
 
-        return query
+        return query, params
 
     def extract_content_from_msg(self, content):
         result = []
@@ -501,7 +529,7 @@ class RightAnswerResultsView(APIView):
         page = payload["page"]
         limit = payload["limit"]
         offset = (int(page) - 1) * limit
-        environment = _clickhouse_environment_value(optimization.environment)
+        environment = OptimizeDataset.EnvTypes.events_number(optimization.environment)
         version = optimization.version
         start_date = optimization.start_date.strftime("%Y-%m-%d %H:%M:%S")
         end_date = optimization.end_date.strftime("%Y-%m-%d %H:%M:%S")
@@ -513,7 +541,7 @@ class RightAnswerResultsView(APIView):
         clickhouse_client = ClickHouseClientSingleton()
         raw_data_points = _execute_clickhouse_read_or_empty(
             clickhouse_client,
-            self.construct_query(
+            *self.construct_query(
                 model_id,
                 environment,
                 version,
@@ -527,7 +555,7 @@ class RightAnswerResultsView(APIView):
 
         data_points_count = _execute_clickhouse_read_or_empty(
             clickhouse_client,
-            self.construct_count_query(
+            *self.construct_count_query(
                 model_id, environment, version, start_date, end_date
             ),
             operation="right_answers_count",
@@ -655,14 +683,14 @@ class TemplateResultsView(APIView):
         version,
         metric_id,
     ):
-        query = f"""
+        query = """
             WITH
-                arrayElement(EvalResults.Value, indexOf(EvalResults.Key, 'optimized_{optimization_id}_{metric_id}_0_score')) AS temp1_score,
-                arrayElement(EvalResults.Value, indexOf(EvalResults.Key, 'optimized_{optimization_id}_{metric_id}_1_score')) AS temp2_score,
-                arrayElement(EvalResults.Value, indexOf(EvalResults.Key, 'optimized_{optimization_id}_{metric_id}_2_score')) AS temp3_score,
-                arrayElement(EvalResults.Value, indexOf(EvalResults.Key, 'optimized_{optimization_id}_{metric_id}_3_score')) AS temp4_score,
-                arrayElement(EvalResults.Value, indexOf(EvalResults.Key, 'optimized_{optimization_id}_{metric_id}_4_score')) AS temp5_score,
-                arrayElement(EvalResults.Value, indexOf(EvalResults.Key, 'optimized_{optimization_id}_{metric_id}_original')) AS original_score,
+                arrayElement(EvalResults.Value, indexOf(EvalResults.Key, %(score_key_0)s)) AS temp1_score,
+                arrayElement(EvalResults.Value, indexOf(EvalResults.Key, %(score_key_1)s)) AS temp2_score,
+                arrayElement(EvalResults.Value, indexOf(EvalResults.Key, %(score_key_2)s)) AS temp3_score,
+                arrayElement(EvalResults.Value, indexOf(EvalResults.Key, %(score_key_3)s)) AS temp4_score,
+                arrayElement(EvalResults.Value, indexOf(EvalResults.Key, %(score_key_4)s)) AS temp5_score,
+                arrayElement(EvalResults.Value, indexOf(EvalResults.Key, %(original_key)s)) AS original_score,
                 if(isNotNull(temp1_score) AND temp1_score != '', toFloat32(temp1_score), -1) AS t1_score,
                 if(isNotNull(temp2_score) AND temp2_score != '', toFloat32(temp2_score), -1) AS t2_score,
                 if(isNotNull(temp3_score) AND temp3_score != '', toFloat32(temp3_score), -1) AS t3_score,
@@ -672,9 +700,9 @@ class TemplateResultsView(APIView):
             SELECT
                 AVG(t1_score),AVG(t2_score),AVG(t3_score),AVG(t4_score),AVG(t5_score),AVG(og_score)
             FROM events
-                WHERE AIModel = '{model_id}'
-                AND ModelVersion = '{version}'
-                AND Environment = {environment}
+                WHERE AIModel = %(model_id)s
+                AND ModelVersion = %(version)s
+                AND Environment = %(environment)s
                 AND has(Features.Key,'node_id')
                 AND deleted = 0
                 AND t1_score != -1
@@ -685,7 +713,17 @@ class TemplateResultsView(APIView):
                 AND og_score != -1
             GROUP BY AIModel
             """
-        return query
+        params = _events_filter_params(
+            model_id,
+            environment,
+            version,
+            original_key=f"optimized_{optimization_id}_{metric_id}_original",
+            **{
+                f"score_key_{index}": f"optimized_{optimization_id}_{metric_id}_{index}_score"
+                for index in range(5)
+            },
+        )
+        return query, params
 
     def construct_dynamic_query(
         self,
@@ -695,7 +733,7 @@ class TemplateResultsView(APIView):
         version: str,
         metric_id: str,
         num_templates: int,
-    ) -> str:
+    ) -> tuple[str, dict]:
         """
         Constructs a dynamic SQL query to handle a variable number of template_scores.
 
@@ -706,17 +744,26 @@ class TemplateResultsView(APIView):
         - num_scores (int): The number of k_scores to include in the query.
 
         Returns:
-        - str: The dynamically constructed SQL query.
+        - tuple[str, dict]: The query text and the ClickHouse parameters it uses.
         """
 
         # Create dynamic score columns, conditions, and AVG functions
         score_columns: list[str] = []
         score_conditions: list[str] = []
         avg_scores: list[str] = []
+        params = _events_filter_params(
+            model_id,
+            environment,
+            version,
+            original_key=f"optimized_{optimization_id}_{metric_id}_original",
+        )
 
         for i in range(num_templates):
+            params[f"score_key_{i}"] = (
+                f"optimized_{optimization_id}_{metric_id}_{i}_score"
+            )
             score_columns.append(
-                f"arrayElement(EvalResults.Value, indexOf(EvalResults.Key, 'optimized_{optimization_id}_{metric_id}_{i}_score')) AS temp{i + 1}_score"
+                f"arrayElement(EvalResults.Value, indexOf(EvalResults.Key, %(score_key_{i})s)) AS temp{i + 1}_score"
             )
             score_conditions.append(
                 f"if(isNotNull(temp{i + 1}_score) AND temp{i + 1}_score != '', toFloat32(temp{i + 1}_score), -1) AS t{i + 1}_score"
@@ -725,7 +772,7 @@ class TemplateResultsView(APIView):
 
         # Include the original score column and condition
         score_columns.append(
-            f"arrayElement(EvalResults.Value, indexOf(EvalResults.Key, 'optimized_{optimization_id}_{metric_id}_original')) AS original_score"
+            "arrayElement(EvalResults.Value, indexOf(EvalResults.Key, %(original_key)s)) AS original_score"
         )
         score_conditions.append(
             "if(isNotNull(original_score) AND original_score != '', toFloat32(original_score), -1) AS og_score"
@@ -740,9 +787,9 @@ class TemplateResultsView(APIView):
         SELECT
             {", ".join(avg_scores)}
         FROM events
-        WHERE AIModel = '{model_id}'
-        AND ModelVersion = '{version}'
-        AND Environment = {environment}
+        WHERE AIModel = %(model_id)s
+        AND ModelVersion = %(version)s
+        AND Environment = %(environment)s
         AND has(Features.Key, 'node_id')
         AND deleted = 0
         AND {" AND ".join([f"t{i + 1}_score != -1" for i in range(num_templates)])}
@@ -750,7 +797,7 @@ class TemplateResultsView(APIView):
         GROUP BY AIModel
         """
 
-        return query
+        return query, params
 
     @validated_request(
         request_serializer=ModelHubEmptyRequestSerializer,
@@ -774,10 +821,10 @@ class TemplateResultsView(APIView):
             clickhouse_client = ClickHouseClientSingleton()
 
             for metric in optimization.metrics.all():
-                dynamic_query = self.construct_dynamic_query(
+                dynamic_query, query_params = self.construct_dynamic_query(
                     model_id,
                     optimization_id,
-                    _clickhouse_environment_value(optimization.environment),
+                    OptimizeDataset.EnvTypes.events_number(optimization.environment),
                     optimization.version,
                     metric.id,
                     num_templates,
@@ -786,6 +833,7 @@ class TemplateResultsView(APIView):
                 query_results = _execute_clickhouse_read_or_empty(
                     clickhouse_client,
                     dynamic_query,
+                    query_params,
                     operation="prompt_template_result",
                 )
                 if not query_results:
@@ -838,7 +886,7 @@ class TemplateExploreView(APIView):
 
         if filters is None:
             filters = []
-        query = f"""
+        query = """
             SELECT
                 UUID,
                 EventDateTime,
@@ -847,17 +895,26 @@ class TemplateExploreView(APIView):
                 arrayElement(Features.Value, indexOf(Features.Key, 'node_id')) AS input_node_id,
                 arrayElement(PredictionLabel.Value, indexOf(PredictionLabel.Key, 'node_id')) AS output_node_id
             FROM events
-                WHERE AIModel = '{model_id}'
-                AND ModelVersion = '{version}'
-                AND Environment = {environment}
+                WHERE AIModel = %(model_id)s
+                AND ModelVersion = %(version)s
+                AND Environment = %(environment)s
                 AND has(Features.Key,'node_id')
                 AND deleted = 0
-                AND EventDateTime > toDateTime('{start_date}')
-                AND  EventDateTime < toDateTime('{end_date}')
-            LIMIT {limit} OFFSET {offset}
+                AND EventDateTime > toDateTime(%(start_date)s)
+                AND  EventDateTime < toDateTime(%(end_date)s)
+            LIMIT %(limit)s OFFSET %(offset)s
         """
+        params = _events_filter_params(
+            model_id,
+            environment,
+            version,
+            start_date=start_date,
+            end_date=end_date,
+            limit=int(limit),
+            offset=int(offset),
+        )
 
-        return query
+        return query, params
 
     def get_order_query(
         self,
@@ -954,20 +1011,27 @@ class TemplateExploreView(APIView):
 
         if filters is None:
             filters = []
-        query = f"""
+        query = """
             SELECT
                 COUNT(*)
             FROM events
-                WHERE AIModel = '{model_id}'
-                AND ModelVersion = '{version}'
-                AND Environment = {environment}
+                WHERE AIModel = %(model_id)s
+                AND ModelVersion = %(version)s
+                AND Environment = %(environment)s
                 AND has(Features.Key,'node_id')
-                AND EventDateTime > toDateTime('{start_date}')
-                AND  EventDateTime < toDateTime('{end_date}')
+                AND EventDateTime > toDateTime(%(start_date)s)
+                AND  EventDateTime < toDateTime(%(end_date)s)
                 AND deleted = 0
         """
+        params = _events_filter_params(
+            model_id,
+            environment,
+            version,
+            start_date=start_date,
+            end_date=end_date,
+        )
 
-        return query
+        return query, params
 
     def extract_content_from_msg(self, content):
         result = []
@@ -1007,7 +1071,7 @@ class TemplateExploreView(APIView):
         page = payload["page"]
         limit = payload["limit"]
         offset = (int(page) - 1) * limit
-        environment = _clickhouse_environment_value(optimization.environment)
+        environment = OptimizeDataset.EnvTypes.events_number(optimization.environment)
         version = optimization.version
         start_date = optimization.start_date.strftime("%Y-%m-%d %H:%M:%S")
         end_date = optimization.end_date.strftime("%Y-%m-%d %H:%M:%S")
@@ -1020,7 +1084,7 @@ class TemplateExploreView(APIView):
         clickhouse_client = ClickHouseClientSingleton()
         raw_data_points = _execute_clickhouse_read_or_empty(
             clickhouse_client,
-            self.construct_query(
+            *self.construct_query(
                 model_id,
                 environment,
                 version,
@@ -1034,7 +1098,7 @@ class TemplateExploreView(APIView):
 
         data_points_count = _execute_clickhouse_read_or_empty(
             clickhouse_client,
-            self.construct_count_query(
+            *self.construct_count_query(
                 model_id, environment, version, start_date, end_date
             ),
             operation="prompt_template_explore_count",
@@ -1473,15 +1537,20 @@ class OptimizeDatasetPromptExploreColumnConfig(APIView):
         return Response({"message": "Columns updated", "status": "Success"})
 
 
-class OptimizedDatasetKbView(CreateAPIView):
+class OptimizedDatasetKbView(PlatformFeatureLimited, CreateAPIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
+    # Starting a run is a request entry to the criteria helper.
+    platform_throttle = CriteriaHelperThrottle
 
     @validated_request(
         request_serializer=OptimizeDatasetKnowledgeBaseRequestSerializer,
         responses={
             200: OptimizeDatasetKnowledgeBaseCreateResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
+            # Past the limit; while the limit store is down.
+            429: MODEL_HUB_ERROR_RESPONSES[500],
+            503: MODEL_HUB_ERROR_RESPONSES[500],
         },
         reject_unknown_fields=True,
     )

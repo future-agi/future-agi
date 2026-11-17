@@ -1,0 +1,23 @@
+schema: "connector-manifest/v1#app"
+id: sentry
+version: 1.0.0
+name: Sentry
+description: "Errors, issues and performance data for triage."
+vendor:
+  name: Sentry
+  domains: [sentry.io, sentry.dev]
+eeCategory: developer
+group: other
+categories: [developer, error-tracking]
+tags: [errors, observability]
+docsUrl: https://mcp.sentry.dev/
+archetype: error-tracking
+defaultProvider: mcp
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://docs.sentry.io/product/sentry-mcp/
+    fetchedAt: 2026-10-20
+  - fact: vendor.domains
+    url: https://mcp.sentry.dev/
+    fetchedAt: 2026-10-20

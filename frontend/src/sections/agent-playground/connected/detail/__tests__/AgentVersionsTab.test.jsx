@@ -323,13 +323,17 @@ describe("AgentVersionsTab", () => {
     ).toBeNull();
   });
 
-  it("shows Compare as a plain Coming soon card", async () => {
+  it("shows Compare as a plain card that says Not available in this release", async () => {
     renderTab();
     const region = await screen.findByRole("region", { name: "Compare" });
     expect(
       within(region).getByText(/Compare any two versions/),
     ).toBeInTheDocument();
-    expect(within(region).getByLabelText("Coming soon")).toBeInTheDocument();
+    expect(
+      within(region).getByText("Not available in this release"),
+    ).toBeInTheDocument();
+    expect(within(region).queryByText(/coming soon/i)).toBeNull();
+    expect(within(region).queryByRole("button")).toBeNull();
     expect(within(region).queryByText(/prompts\/system\.md/)).toBeNull();
   });
 });

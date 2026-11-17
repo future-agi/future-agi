@@ -1,0 +1,20 @@
+{
+  "http": {
+    "status": 401,
+    "headers": {
+      "content-type": "application/json",
+      "www-authenticate": "Bearer realm=\"agentcc-gateway\", resource_metadata=\"https://gateway.example.com/.well-known/oauth-protected-resource/mcp/v/vs_01K7CN5EEPERS0NM0DE0000002\""
+    }
+  },
+  "body": {
+    "jsonrpc": "2.0",
+    "id": null,
+    "error": {
+      "code": -32001,
+      "message": "the access token has expired",
+      "data": {
+        "code": "invalid_token"
+      }
+    }
+  }
+}

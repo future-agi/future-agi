@@ -1,0 +1,21 @@
+{
+  "http": {
+    "status": 400,
+    "headers": {
+      "content-type": "application/json"
+    }
+  },
+  "body": {
+    "status": false,
+    "type": "validation_error",
+    "code": "server_not_found",
+    "detail": "Server jira is not configured in this organization.",
+    "message": "Server jira is not configured in this organization.",
+    "error": "Server jira is not configured in this organization.",
+    "result": "Server jira is not configured in this organization.",
+    "attr": "servers",
+    "details": {
+      "servers": ["Server jira is not configured in this organization."]
+    }
+  }
+}

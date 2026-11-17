@@ -2,6 +2,8 @@ import React from "react";
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "src/utils/test-utils";
 import ClosableDialog from "./closable-dialog";
+import DialogContent from "@mui/material/DialogContent";
+import DialogTitle from "@mui/material/DialogTitle";
 
 describe("ClosableDialog close action", () => {
   it.each([undefined, "Close image"])(
@@ -24,4 +26,21 @@ describe("ClosableDialog close action", () => {
       expect(screen.getByRole("dialog")).not.toHaveAttribute("closeLabel");
     },
   );
+});
+
+describe("ClosableDialog accessible name", () => {
+  it("is named by its title only, since the close button sits outside the title", () => {
+    render(
+      <ClosableDialog open onClose={() => {}}>
+        <DialogTitle>Card details</DialogTitle>
+        <DialogContent>Visa ending in 4242</DialogContent>
+      </ClosableDialog>,
+    );
+
+    const dialog = screen.getByRole("dialog");
+    expect(dialog).toHaveAccessibleName("Card details");
+    expect(
+      screen.getByRole("button", { name: "Close", exact: true }),
+    ).toBeInTheDocument();
+  });
 });

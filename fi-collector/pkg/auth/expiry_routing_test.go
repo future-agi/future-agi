@@ -7,17 +7,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
 	"google.golang.org/grpc/metadata"
 )
 
 // Both query shapes must return the same expiry verdict. Simulation routing
-// selects the wider query only after its schema check has completed.
+// selects the wider query only after its schema check has completed. The key is
+// a person's own key, the only kind the collector admits.
 func TestValidateKeyExpiryAcrossRoutingQueries(t *testing.T) {
 	pool := routingDatabase(t)
 	f := routingFixture{t, pool}
-	org := uuid.NewString()
-	ws := f.workspace(org, true, true, false)
 	future := time.Now().Add(time.Hour)
 	past := time.Now().Add(-time.Hour)
 	for _, state := range []columnState{columnsUnknown, columnsPresent, columnsMissing} {
@@ -34,9 +32,13 @@ func TestValidateKeyExpiryAcrossRoutingQueries(t *testing.T) {
 			{"revoked", &future, false, false},
 		} {
 			t.Run(fmt.Sprintf("%d/%s", state, tc.name), func(t *testing.T) {
-				api, secret := f.key("ingest", org, &ws, nil)
+				person := newEligibilityFixture()
+				seedEligibility(t, pool, person)
+				api, secret := person.api, person.secret
 				f.exec(`UPDATE accounts_orgapikey SET expires_at=$1, enabled=$2 WHERE api_key=$3`, tc.expiry, tc.enabled, api)
-				result, err := routingResolver(pool, state).ValidateKey(context.Background(), api, secret)
+				r := routingResolver(pool, state)
+				r.peppers = mustPeppers(t, goldenPepper)
+				result, err := r.ValidateKey(context.Background(), api, secret)
 				if tc.expired {
 					if result != nil || !errors.Is(err, ErrKeyExpired) {
 						t.Fatalf("expired key: result=%v err=%v", result, err)

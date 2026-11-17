@@ -1,0 +1,46 @@
+# CockroachDB Cloud accepts a self-service service-account API key as a bearer.
+# The connection can access clusters allowed by the service account's roles.
+schema: "connector-manifest/v1#provider"
+app: cockroachdb-cloud
+id: api-key
+version: 1.1.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://cockroachlabs.cloud/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: Service account API key
+      help: "Create a service account and API key in CockroachDB Cloud Console. Assign Cluster Admin, Cluster Operator or Cluster Data Accessor on the intended clusters. Calls use the service account's permissions. Supply the key without the Bearer prefix."
+      helpUrl: https://docs.cockroachlabs.com/docs/cockroachcloud/connect-to-the-cockroachdb-cloud-mcp-server
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_metered
+  source: https://www.cockroachlabs.com/pricing/
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://docs.cockroachlabs.com/docs/cockroachcloud/connect-to-the-cockroachdb-cloud-mcp-server
+    fetchedAt: 2026-11-09
+  - fact: transport.variant
+    url: https://docs.cockroachlabs.com/docs/cockroachcloud/connect-to-the-cockroachdb-cloud-mcp-server
+    fetchedAt: 2026-11-09
+  - fact: auth.kind
+    url: https://docs.cockroachlabs.com/docs/cockroachcloud/connect-to-the-cockroachdb-cloud-mcp-server
+    fetchedAt: 2026-11-09
+  - fact: auth.credentialParts
+    url: https://docs.cockroachlabs.com/docs/cockroachcloud/connect-to-the-cockroachdb-cloud-mcp-server
+    fetchedAt: 2026-11-09

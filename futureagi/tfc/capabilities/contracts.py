@@ -8,8 +8,16 @@ from tfc.licensing.types import (
     LicenseType,
 )
 
+#: The kind the capabilities view gives a features entry it reports as a
+#: service state (a switch an operator sets), not something a license grants.
+#: Only the entries the view marks carry `kind`, and the License page lists
+#: every entry without it. Not every switch is marked: dataset_stars carries no
+#: kind, so "Star datasets" stays on the License page.
+FEATURE_KIND_SERVICE = "service"
+
 
 class CapabilityFeatureSerializer(serializers.Serializer):
+    kind = serializers.ChoiceField(choices=[FEATURE_KIND_SERVICE], required=False)
     display_name = serializers.CharField()
     allowed = serializers.BooleanField()
     reason_code = serializers.ChoiceField(
@@ -18,6 +26,9 @@ class CapabilityFeatureSerializer(serializers.Serializer):
     )
     requires_network = serializers.BooleanField(allow_null=True)
     oss_baseline = serializers.BooleanField()
+    # The sentence a person reads when the feature is off, for an entry that
+    # has one; other entries omit it.
+    reason = serializers.CharField(required=False)
 
 
 class LicenseDetailsSerializer(serializers.Serializer):
@@ -35,6 +46,33 @@ class LicenseDetailsSerializer(serializers.Serializer):
     )
 
 
+class ExperimentRunSourceCapabilitySerializer(serializers.Serializer):
+    available = serializers.BooleanField()
+    reason = serializers.CharField(allow_null=True)
+
+    def validate(self, attrs):
+        if attrs["available"] != (attrs["reason"] is None):
+            raise serializers.ValidationError(
+                "Unavailable sources must include a reason; available sources must not."
+            )
+        return attrs
+
+
+class ExperimentRunSourceKindsSerializer(serializers.Serializer):
+    prompt = ExperimentRunSourceCapabilitySerializer()
+    agent = ExperimentRunSourceCapabilitySerializer(
+        help_text="Agent Playground graph versions, not Console-agent targets."
+    )
+    http = ExperimentRunSourceCapabilitySerializer()
+    a2a = ExperimentRunSourceCapabilitySerializer()
+    mcp_tool = ExperimentRunSourceCapabilitySerializer()
+
+
+class ExperimentRunSourcesSerializer(serializers.Serializer):
+    workspace_id = serializers.UUIDField(allow_null=True)
+    sources = ExperimentRunSourceKindsSerializer()
+
+
 class CapabilitiesResponseSerializer(serializers.Serializer):
     deployment_flavor = serializers.ChoiceField(
         choices=[flavor.value for flavor in DeploymentFlavor],
@@ -46,5 +84,6 @@ class CapabilitiesResponseSerializer(serializers.Serializer):
         choices=[state.value for state in LicenseState],
     )
     features = serializers.DictField(child=CapabilityFeatureSerializer())
+    experiment_run_sources = ExperimentRunSourcesSerializer()
     license = LicenseDetailsSerializer(required=False, allow_null=True)
     instance_id = serializers.UUIDField(required=False, allow_null=True)

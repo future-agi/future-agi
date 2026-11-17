@@ -57,7 +57,7 @@ func TestSpeechGuardrailsEvaluationIdentity(t *testing.T) {
 			for i, id := range tc.ids {
 				ids[i] = id
 			}
-			check := futureagi.New("speech-test", map[string]interface{}{"base_url": dependency.URL, "api_key": "synthetic", "secret_key": "synthetic", "eval_ids": ids})
+			check := futureagi.NewConfigFileRule("speech-test", map[string]interface{}{"base_url": dependency.URL, "api_key": "synthetic", "secret_key": "synthetic", "eval_ids": ids})
 			f := newSpeechFixture(t, "cartesia", "pre", "static", "block", nil, speechRule(check, 0))
 			client, _, err := f.dial(t, "/cartesia/tts/websocket", nil)
 			if err != nil {

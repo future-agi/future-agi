@@ -1,0 +1,44 @@
+schema: "connector-manifest/v1#provider"
+app: bright-data
+id: api-key
+version: 1.1.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.brightdata.com/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: API token
+      help: "Create an agent API key in Bright Data account settings, preferably with User permission. Web searches and page reads use your account's free allowance and usage-based billing."
+      helpUrl: https://brightdata.com/blog/ai/lightweight-serp-grounding-with-bright-data-mcp
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_metered
+  source: https://brightdata.com/blog/ai/lightweight-serp-grounding-with-bright-data-mcp
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://brightdata.com/blog/ai/microsoft-agent-framework-with-web-mcp
+    fetchedAt: 2026-11-09
+  - fact: transport.variant
+    url: https://docs.brightdata.com/products/mcp-server/remote/quickstart
+    fetchedAt: 2026-11-09
+  - fact: auth.kind
+    url: https://brightdata.com/blog/ai/microsoft-agent-framework-with-web-mcp
+    fetchedAt: 2026-11-09
+  - fact: auth.credentialParts
+    url: https://brightdata.com/blog/ai/microsoft-agent-framework-with-web-mcp
+    fetchedAt: 2026-11-09

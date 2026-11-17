@@ -1,0 +1,12 @@
+{
+  "id": "{{id}}",
+  "results": [
+    {
+      "title": "Capmock result for {{query}}",
+      "url": "https://example.com/capmock",
+      "snippet": "Example snippet.",
+      "date": "2026-10-01",
+      "last_updated": "2026-10-02"
+    }
+  ]
+}

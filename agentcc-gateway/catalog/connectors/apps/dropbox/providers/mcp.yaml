@@ -1,0 +1,126 @@
+# Dropbox's hosted MCP server with a pre-registered, scoped Full Dropbox app.
+# DCR is limited to Dropbox's trusted client list; other clients register an
+# app and redirect URI in the App Console. EE can use that pre-registered
+# client, so this provider is not excluded from EE.
+# OAuth endpoints are recorded, not pinned. Each sign-in must rediscover
+# and validate the protected resource, its authorization server, the issuer,
+# S256 support and HTTPS endpoints rather than trust a catalog snapshot.
+# The scope list follows the MCP setup guide; resource metadata additionally
+# advertises files.metadata.write, which that guide does not request.
+# Offline access returns a reusable refresh token; refresh does not rotate it.
+# Revocation is omitted because Dropbox revokes the authenticating bearer
+# token, including its associated refresh token and sibling access tokens.
+# This schema's body-token and client-auth fields cannot express that call.
+# HTTP is documented, but the transport variant is not explicitly named in
+# the vendor pages reviewed, so variant is omitted. No saved-page evidence
+# bundle was captured for an OSS public-client declaration, so it is omitted.
+# A separate manually supplied bearer-token MCP flow was not fully verified.
+schema: "connector-manifest/v1#provider"
+app: dropbox
+id: mcp
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus:
+  label: beta
+  source: https://help.dropbox.com/integrations/connect-dropbox-mcp-server
+transport:
+  kind: http
+  url: https://mcp.dropbox.com/mcp
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent, user]
+auth:
+  kind: oauth2
+  help: "Create a scoped Full Dropbox app with the listed permissions and this client's redirect URI. For revocation, unlink the app in Dropbox's Connected apps settings."
+  oauth2:
+    authorizeUrl: https://www.dropbox.com/oauth2/authorize
+    tokenUrl: https://api.dropboxapi.com/oauth2/token
+    scopes: [account_info.read, file_requests.read, file_requests.write, files.content.read, files.content.write, files.metadata.read, sharing.read, sharing.write]
+    pkce: true
+    tokenBody: form
+    clientAuth: body
+    extraAuthorizeParams: { token_access_type: offline }
+    refresh: { supported: true, rotates: false }
+    registration: [preregistered]
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: publisher
+    url: https://help.dropbox.com/integrations/connect-dropbox-mcp-server
+    fetchedAt: 2026-11-15
+  - fact: vendorStatus.label
+    url: https://help.dropbox.com/integrations/connect-dropbox-mcp-server
+    fetchedAt: 2026-11-15
+  - fact: transport.kind
+    url: https://help.dropbox.com/integrations/connect-dropbox-mcp-server
+    fetchedAt: 2026-11-15
+  - fact: transport.url
+    url: https://help.dropbox.com/integrations/connect-dropbox-mcp-server
+    fetchedAt: 2026-11-15
+  - fact: transport.url
+    url: https://mcp.dropbox.com/.well-known/oauth-protected-resource/mcp
+    fetchedAt: 2026-11-15
+  - fact: accountModes
+    url: https://help.dropbox.com/integrations/connect-dropbox-mcp-server
+    fetchedAt: 2026-11-15
+  - fact: auth.kind
+    url: https://help.dropbox.com/integrations/connect-dropbox-mcp-server
+    fetchedAt: 2026-11-15
+  - fact: auth.kind
+    url: https://mcp.dropbox.com/.well-known/oauth-protected-resource/mcp
+    fetchedAt: 2026-11-15
+  - fact: auth.help
+    url: https://help.dropbox.com/integrations/connect-dropbox-mcp-server
+    fetchedAt: 2026-11-15
+  - fact: auth.help
+    url: https://dropbox.tech/developers/using-oauth-2-0-with-offline-access
+    fetchedAt: 2026-11-15
+  - fact: auth.help
+    url: https://docs.dropboxapi.com/dropbox-api/api-reference/user-endpoints/auth/token-revoke
+    fetchedAt: 2026-11-15
+  - fact: auth.oauth2.authorizeUrl
+    url: https://www.dropbox.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-11-15
+  - fact: auth.oauth2.authorizeUrl
+    url: https://docs.dropboxapi.com/dropbox-api/docs/get-started/authorization
+    fetchedAt: 2026-11-15
+  - fact: auth.oauth2.tokenUrl
+    url: https://www.dropbox.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-11-15
+  - fact: auth.oauth2.tokenUrl
+    url: https://docs.dropboxapi.com/dropbox-api/docs/get-started/authorization
+    fetchedAt: 2026-11-15
+  - fact: auth.oauth2.scopes
+    url: https://help.dropbox.com/integrations/connect-dropbox-mcp-server
+    fetchedAt: 2026-11-15
+  - fact: auth.oauth2.scopes
+    url: https://mcp.dropbox.com/.well-known/oauth-protected-resource/mcp
+    fetchedAt: 2026-11-15
+  - fact: auth.oauth2.pkce
+    url: https://www.dropbox.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-11-15
+  - fact: auth.oauth2.pkce
+    url: https://docs.dropboxapi.com/dropbox-api/docs/get-started/authorization
+    fetchedAt: 2026-11-15
+  - fact: auth.oauth2.tokenBody
+    url: https://docs.dropboxapi.com/dropbox-api/docs/get-started/authorization
+    fetchedAt: 2026-11-15
+  - fact: auth.oauth2.clientAuth
+    url: https://docs.dropboxapi.com/dropbox-api/docs/get-started/authorization
+    fetchedAt: 2026-11-15
+  - fact: auth.oauth2.extraAuthorizeParams
+    url: https://docs.dropboxapi.com/dropbox-api/docs/get-started/authorization
+    fetchedAt: 2026-11-15
+  - fact: auth.oauth2.refresh
+    url: https://docs.dropboxapi.com/dropbox-api/docs/get-started/authorization
+    fetchedAt: 2026-11-15
+  - fact: auth.oauth2.registration
+    url: https://help.dropbox.com/integrations/connect-dropbox-mcp-server
+    fetchedAt: 2026-11-15
+  - fact: pricing.model
+    url: https://www.dropbox.com/resources/what-is-mcp
+    fetchedAt: 2026-11-15

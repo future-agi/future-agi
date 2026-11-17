@@ -366,7 +366,36 @@ def _summary_key(task, run, status: str, view) -> str:
         f"{task.id}:{status}:{run.answers_version}:{view.unit}:"
         f"{','.join(view.config_ids)}:{view.tz.key}"
     )
-    return "ie-summary:v10:" + hashlib.sha1(raw.encode()).hexdigest()
+    return "ie-summary:v12:" + hashlib.sha1(raw.encode()).hexdigest()
+
+
+def _action_credits(
+    run, unit: str, progress: dict, price: float | None, next_size: int, left: int
+) -> dict | None:
+    """What one click of each of the run's controls bills, as the control
+    and start views bill it: "Read N more" (``next_size`` more), "Read all"
+    (the ``left`` rows of the view), "Retry" (each failed answer once) and
+    "Run again" (the same sample, or every row). None where the run isn't
+    billed; an action that reads nothing costs None."""
+    if price is None:
+        return None
+    again = (
+        run.population
+        if run.sample_size is None
+        else min(run.sample_size, run.population)
+    )
+    # Only settled answers are recorded; those not billed are the failed ones.
+    failed = max(0, progress["settled_entries"] - progress["answers_given"])
+
+    def cost(rows: int, questions: int) -> float | None:
+        return _credits(rows, questions, price) if rows > 0 else None
+
+    return {
+        "read_more": cost(_rows_for(unit, next_size), run.questions),
+        "read_all": cost(_rows_for(unit, left), run.questions),
+        "retry_failed": cost(failed, 1),
+        "run_again": cost(_rows_for(unit, again), run.questions),
+    }
 
 
 def _summary_payload(task, run, view, questions, price: float | None) -> dict:
@@ -432,6 +461,9 @@ def _summary_payload(task, run, view, questions, price: float | None) -> dict:
     next_size = (
         min(remaining, run.sample_size or DEFAULT_SAMPLE, under_cap) if is_sample else 0
     )
+    can_extend = (
+        bool(next_size) and not running and not pending and status != "cancelled"
+    )
     return {
         "status": status,
         "unit": view.unit,
@@ -446,6 +478,10 @@ def _summary_payload(task, run, view, questions, price: float | None) -> dict:
         # What the answers Jev gave so far cost.
         "credits_used": (
             round(progress["answers_given"] * price, 2) if price is not None else None
+        ),
+        # What Read more, Read all, Retry and Run again would each bill.
+        "action_credits": _action_credits(
+            run, view.unit, progress, price, next_size, remaining
         ),
         "in_flight": in_flight,
         "waiting_s": waiting_s,
@@ -466,10 +502,9 @@ def _summary_payload(task, run, view, questions, price: float | None) -> dict:
             "is_sample": is_sample,
             # A run stopped with rows left (paused or stalled) is resumed
             # before it reads more: the control view answers 409 until then.
-            "can_extend": bool(next_size)
-            and not running
-            and not pending
-            and status != "cancelled",
+            "can_extend": can_extend,
+            # Reading a bounded increment need not mean the whole view fits.
+            "can_read_all": can_extend and remaining <= under_cap,
             "next_size": next_size,
         },
         "window": {

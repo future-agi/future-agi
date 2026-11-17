@@ -103,12 +103,37 @@ class EvalTaskRevisionChanged(RuntimeError):
     """A concurrent task/config edit invalidated a buffered CH proof."""
 
 
+def _session_cursor_ceiling(task: EvalTask, cursor_ceiling: datetime) -> datetime:
+    """Retain in-flight session arrivals in both row and group sampling paths."""
+    if (
+        isinstance(task, EvalTask)
+        and task.row_type == RowType.SESSIONS
+        and task.run_type == RunType.CONTINUOUS
+    ):
+        # A new turn seen while its entry is RUNNING cannot be requeued yet.
+        # Retain that arrival window until the run finishes, even if the call
+        # lasts longer than the normal overlap. Capture BEFORE walking entries
+        # so a completion during this pass cannot consume the window unseen.
+        oldest_run = (
+            EvalLogger.objects.filter(
+                eval_task_id=str(task.id), status=EvalEntryStatus.RUNNING
+            )
+            .order_by("updated_at")
+            .values_list("updated_at", flat=True)
+            .first()
+        )
+        if oldest_run is not None:
+            cursor_ceiling = min(cursor_ceiling, oldest_run)
+    return cursor_ceiling
+
+
 def _apply_resolved(
     task: EvalTask,
     *,
     resolved: ResolvedRowSet,
     now: datetime,
 ) -> ReconcileResult:
+    cursor_ceiling = _session_cursor_ceiling(task, resolved.covered_through or now)
     before = _live_count(task)
     if resolved.trace_filter_witnesses:
         materialize_pending(
@@ -129,7 +154,7 @@ def _apply_resolved(
     # Candidate overflow catch-up may prove only a strict prefix of the frozen
     # arrival window. Advance from that exact proof ceiling, in this same DB
     # transaction, never from the later wall-clock ceiling the pass requested.
-    _advance_continuous_cursor(task, resolved.covered_through or now)
+    _advance_continuous_cursor(task, cursor_ceiling)
     if resolved.full_state:
         _stamp_reclassified_revision(task)
     return result
@@ -188,12 +213,29 @@ def _requeue_and_drop(
     resolved: ResolvedRowSet,
     scope_to_candidates: bool = False,
 ) -> tuple[int, int]:
-    hashes = {cfg.id: resolved_config_hash(cfg) for cfg in task.evals.all()}
+    configs = list(task.evals.all())
+    hashes = {cfg.id: resolved_config_hash(cfg) for cfg in configs}
     current_eval_ids = set(hashes)
     desired = set(resolved.matched_ids)
     candidates = set(resolved.candidate_ids)
 
     requeue_by_cfg: dict[object, list] = defaultdict(list)
+    # Read each matching conversation once per pass for payload-only mappings.
+    # Other mappings retain row-change retries: this hash cannot prove that
+    # span attributes or session metadata are unchanged.
+    session_revisions: dict[str, str] = {}
+    continuous_sessions = (
+        task.row_type == RowType.SESSIONS and task.run_type == RunType.CONTINUOUS
+    )
+    conversation_eval_ids = set()
+    if continuous_sessions:
+        from tracer.utils.eval import session_mapping_uses_conversation_revision
+
+        conversation_eval_ids = {
+            cfg.id
+            for cfg in configs
+            if session_mapping_uses_conversation_revision(cfg.mapping)
+        }
     drop_ids: list = []
     full_state = resolved.full_state
     # Floor of the arrival/change window this delta proved — the resolver's
@@ -216,6 +258,42 @@ def _requeue_and_drop(
         identity = _entry_identity(entry, task.row_type)
         in_desired_read = identity in desired
         affected = full_state or identity in candidates
+        conversation_changed = False
+        previous = None
+        if (
+            cfg_id in conversation_eval_ids
+            and in_desired_read
+            and entry.status
+            in (
+                EvalEntryStatus.COMPLETED,
+                EvalEntryStatus.ERRORED,
+                EvalEntryStatus.SKIPPED,
+            )
+        ):
+            from tracer.models.trace_session import TraceSession
+            from tracer.services.clickhouse.v2.eval_loader import eval_read_source
+            from tracer.utils.eval import (
+                SESSION_CONVERSATION_REVISION_KEY,
+                session_conversation_revision,
+            )
+
+            if identity not in session_revisions:
+                with eval_read_source("clickhouse"):
+                    session_revisions[identity] = session_conversation_revision(
+                        TraceSession(id=identity, project_id=task.project_id)
+                    )
+            metadata = (
+                entry.output_metadata if isinstance(entry.output_metadata, dict) else {}
+            )
+            previous = metadata.get(SESSION_CONVERSATION_REVISION_KEY)
+            # Old completed entries without a revision get one complete rerun.
+            # Unmapped failures have no source proof; retain their legacy retry
+            # policy instead of re-running them on every unchanged overlap.
+            conversation_changed = (
+                previous != session_revisions[identity]
+                if previous or entry.status == EvalEntryStatus.COMPLETED
+                else False
+            )
 
         if (
             current_eval
@@ -227,7 +305,9 @@ def _requeue_and_drop(
             # all history. A cursor-less continuous reconcile is a full-state
             # pass; a normal delta must not requeue an old entity that may no
             # longer satisfy the current task filters.
-            if entry.config_hash and entry.config_hash != hashes[cfg_id]:
+            if conversation_changed or (
+                entry.config_hash and entry.config_hash != hashes[cfg_id]
+            ):
                 requeue_by_cfg[cfg_id].append(entry.id)
         elif (
             current_eval
@@ -266,6 +346,8 @@ def _requeue_and_drop(
                 and entry.updated_at is not None
                 and entry.updated_at < window_floor
             )
+            if cfg_id in conversation_eval_ids and previous:
+                row_changed = conversation_changed
             if stale or row_changed:
                 requeue_by_cfg[cfg_id].append(entry.id)
         elif (

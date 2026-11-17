@@ -3,11 +3,21 @@ import React from "react";
 import PropTypes from "prop-types";
 import Iconify from "src/components/iconify";
 import { ShowComponent } from "src/components/show";
+import { fmtCost } from "src/sections/common/format/fmt";
+
+// New runs send response_time in milliseconds with response_time_unit "ms"
+// (responseTimeUnit here). Runs saved before that marker have no unit and
+// keep showing their value as seconds, as before.
+const formatSeconds = (responseTime, unit) => {
+  const seconds =
+    unit === "ms" ? Number(responseTime) / 1000 : Number(responseTime);
+  return `${seconds.toFixed(2)}s`;
+};
 
 const OutputMetaItem = ({ icon, value }) => {
   return (
     <Box sx={{ display: "flex", alignItems: "center", gap: "2px" }}>
-      <Iconify icon={icon} width="12px" height="12px" color="text.disabled" />
+      <Iconify icon={icon} width="12px" height="12px" color="text.tertiary" />
       <Typography
         fontWeight={"fontWeightRegular"}
         color={"text.primary"}
@@ -39,7 +49,10 @@ const OutputMeta = ({ metadata }) => {
       >
         <OutputMetaItem
           icon="solar:clock-circle-linear"
-          value={`${metadata?.responseTime?.toFixed(2)}s`}
+          value={formatSeconds(
+            metadata?.responseTime,
+            metadata?.responseTimeUnit,
+          )}
         />
       </ShowComponent>
       <ShowComponent
@@ -50,7 +63,7 @@ const OutputMeta = ({ metadata }) => {
       >
         <OutputMetaItem
           icon="solar:dollar-minimalistic-linear"
-          value={metadata?.cost < 0.1 ? `<0.1` : `${metadata?.cost}`}
+          value={fmtCost(metadata?.cost)}
         />
       </ShowComponent>
       <ShowComponent

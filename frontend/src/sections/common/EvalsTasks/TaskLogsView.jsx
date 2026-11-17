@@ -508,6 +508,74 @@ WarningGroupCard.propTypes = {
   defaultExpanded: PropTypes.bool,
 };
 
+// ── Skipped Group Card ──
+// One reason the evaluator was not run, and how many runs it covers. Neutral
+// tone: a skipped run is not a failure.
+
+// Span rows record a bare "missing_required_attribute: <field>" reason; say it
+// as a sentence. Every other reason is already one.
+const MISSING_ATTRIBUTE_REASON = /^missing_required_attribute:\s*(.+)$/;
+
+function skippedReasonText(reason, rowType) {
+  const match = MISSING_ATTRIBUTE_REASON.exec((reason || "").trim());
+  if (!match) return reason || "Skipped without a recorded reason.";
+  const noun = rowType === "voiceCalls" ? "call" : "span";
+  return `This ${noun} has no ${match[1]}, which the evaluator needs.`;
+}
+
+const SkippedGroupCard = ({ text, count }) => (
+  <Box
+    sx={{
+      display: "flex",
+      alignItems: "flex-start",
+      gap: 1.25,
+      p: 1.5,
+      border: "1px solid",
+      borderColor: "divider",
+      borderRadius: 1,
+    }}
+  >
+    <Box
+      sx={{
+        width: 32,
+        height: 32,
+        borderRadius: "8px",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        bgcolor: "action.hover",
+        flexShrink: 0,
+      }}
+    >
+      <Iconify
+        icon="solar:skip-next-linear"
+        width={20}
+        sx={{ color: "text.secondary" }}
+      />
+    </Box>
+    <Box sx={{ flex: 1, minWidth: 0 }}>
+      <Typography
+        variant="body2"
+        sx={{ fontSize: "13px", lineHeight: 1.5, wordBreak: "break-word" }}
+      >
+        {text}
+      </Typography>
+      <Typography
+        variant="caption"
+        color="text.secondary"
+        sx={{ fontSize: "12px" }}
+      >
+        {count === 1 ? "1 run" : `${count} runs`}
+      </Typography>
+    </Box>
+  </Box>
+);
+
+SkippedGroupCard.propTypes = {
+  text: PropTypes.string.isRequired,
+  count: PropTypes.number.isRequired,
+};
+
 // Logs currently carry free-text samples, not provider error codes. Recognize
 // only this explicit SDK constructor failure; unrelated api_key mentions keep
 // the existing classifier's diagnosis. Preserve normalized/raw examples.
@@ -666,6 +734,10 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
     totalCount > 0 ? Math.round((errorsCount / totalCount) * 100) : 0;
   const hasErrors = errorGroups.length > 0;
   const hasWarnings = warningGroups.length > 0;
+  const hasSkipped = skippedCount > 0;
+  const skippedGroups = Array.isArray(data.skipped_groups)
+    ? data.skipped_groups
+    : [];
   // Groups sort by count, and a group with no key breakdown cannot expand, so
   // auto-expand the largest one that actually has something behind it.
   const firstExpandableWarningGroup = warningGroups.find(
@@ -764,6 +836,13 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
           color="error.main"
           bgColor={alpha(theme.palette.error.main, 0.1)}
         />
+        {hasSkipped && (
+          <StatCard
+            icon="solar:skip-next-linear"
+            label="Skipped"
+            value={skippedCount}
+          />
+        )}
         {warningsCount > 0 && (
           <StatCard
             icon="solar:danger-triangle-linear"
@@ -1014,6 +1093,42 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
         </Box>
       )}
 
+      {/* Skipped — runs the evaluator never saw, each with its reason */}
+      {hasSkipped && (
+        <Box>
+          <Box
+            sx={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              mb: 1.5,
+              flexWrap: "wrap",
+              gap: 1,
+            }}
+          >
+            <Typography variant="subtitle2" sx={{ fontSize: "13px" }}>
+              Skipped runs
+            </Typography>
+            <Typography
+              variant="caption"
+              color="text.disabled"
+              sx={{ fontSize: "12px" }}
+            >
+              Not sent to the evaluator and not charged
+            </Typography>
+          </Box>
+          <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
+            {skippedGroups.map((group) => (
+              <SkippedGroupCard
+                key={group.reason}
+                text={skippedReasonText(group.reason, rowType)}
+                count={group.count}
+              />
+            ))}
+          </Box>
+        </Box>
+      )}
+
       {String(effectiveStatus).toLowerCase() === "failed" &&
         !isFetching &&
         !isError &&
@@ -1037,7 +1152,7 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
         )}
 
       {/* Empty state for no errors */}
-      {!hasErrors && !hasWarnings && isDrained && (
+      {!hasErrors && !hasWarnings && !hasSkipped && isDrained && (
         <Box
           sx={{
             p: 3,

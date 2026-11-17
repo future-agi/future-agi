@@ -547,6 +547,11 @@ def retrieve_trace_detail_ch(
     # CH-only trace (no PG row): synthesize the trace metadata from the root
     # span so the response shape matches the PG serializer.
     if trace_data is None:
+        from tracer.services.trace_tags import read_collector_trace_tags
+
+        trace_tags = read_collector_trace_tags(
+            analytics, trace_id=trace_id, project_id=project_id
+        )
         root_obs = (root_spans[0].get("observation_span") if root_spans else {}) or {}
         session_id = None
         if span_rows:
@@ -563,7 +568,9 @@ def retrieve_trace_detail_ch(
             "error": summary["error_count"] > 0,
             "session": session_id,
             "external_id": None,
-            "tags": root_obs.get("tags") or [],
+            "tags": trace_tags
+            if trace_tags is not None
+            else root_obs.get("tags") or [],
         }
 
     result: TraceDetail = {

@@ -291,9 +291,7 @@ class TestCalcBestFromTrials:
     @patch("tfc.temporal.agent_prompt_optimiser.activities.PromptTrial")
     def test_returns_none_when_no_trials(self, mock_prompt_trial):
         """Should return None values when no trials exist."""
-        mock_prompt_trial.objects.filter.return_value.order_by.return_value.values.return_value = (
-            []
-        )
+        mock_prompt_trial.objects.filter.return_value.order_by.return_value.values.return_value = []
 
         mock_run = MagicMock()
         trial_num, score, prompt = _calc_best_from_trials(mock_run)
@@ -458,6 +456,7 @@ class TestResumeFlowIntegration:
 
         test_execution = TestExecution.objects.create(
             run_test=run_test,
+            agent_optimiser=agent_optimiser,
             status=TestExecution.ExecutionStatus.COMPLETED,
             simulator_agent=simulator_agent,
             agent_definition=agent_definition,
@@ -543,6 +542,7 @@ class TestResumeFlowIntegration:
 
         test_execution = TestExecution.objects.create(
             run_test=run_test,
+            agent_optimiser=agent_optimiser,
             status=TestExecution.ExecutionStatus.COMPLETED,
             simulator_agent=simulator_agent,
             agent_definition=agent_definition,
@@ -631,9 +631,7 @@ class TestRunOptimizationActivityResumeParams:
         mock_latest_trial = MagicMock()
         mock_latest_trial.trial_number = 3
         mock_latest_trial.metadata = {"optimizer_state": optimizer_state}
-        mock_trial_model.objects.filter.return_value.order_by.return_value.first.return_value = (
-            mock_latest_trial
-        )
+        mock_trial_model.objects.filter.return_value.order_by.return_value.first.return_value = mock_latest_trial
 
         mock_compute_trials.return_value = 10
         mock_calc_best.return_value = (3, 0.8, "Best prompt")

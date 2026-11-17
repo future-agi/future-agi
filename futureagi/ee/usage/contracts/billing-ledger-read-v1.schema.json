@@ -1,0 +1,1017 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://futureagi.com/contracts/billing/billing-ledger-read-v1.schema.json",
+  "title": "billing-ledger-read-v1",
+  "description": "The read API of the one billing ledger, used by FA Settings > Billing, the embedded Console and the hosted EE daemon. The golden pairs one response of each read. Every read is served from Postgres and the balance cache, and no read calls Stripe. Money is integer USD micros, except invoice amounts, which are integer cents as Stripe states them. $defs/RateCard is a relative $ref to price-catalog-public-v1.schema.json, so validators register both schemas. Writes (top-ups, caps, auto top-up, portal) are outside this contract; their role rule is fixed in billing-ledger-read-v1.md section 2.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "balance",
+    "entries_page",
+    "usage",
+    "invoices_page",
+    "caps",
+    "alerts",
+    "admission",
+    "rate_card",
+    "error"
+  ],
+  "properties": {
+    "balance": { "$ref": "#/$defs/Balance" },
+    "entries_page": { "$ref": "#/$defs/EntriesPage" },
+    "usage": { "$ref": "#/$defs/Usage" },
+    "invoices_page": { "$ref": "#/$defs/InvoicesPage" },
+    "caps": { "$ref": "#/$defs/Caps" },
+    "alerts": { "$ref": "#/$defs/Alerts" },
+    "admission": { "$ref": "#/$defs/Admission" },
+    "rate_card": { "$ref": "#/$defs/RateCard" },
+    "error": { "$ref": "#/$defs/Error" }
+  },
+  "$defs": {
+    "Uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "CatalogId": {
+      "type": "string",
+      "maxLength": 32,
+      "pattern": "^price-catalog\\.v(0|[1-9][0-9]{0,5})$"
+    },
+    "NullableUuid": {
+      "anyOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }]
+    },
+    "UtcInstant": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]([.][0-9]{1,6})?Z$"
+    },
+    "NullableInstant": {
+      "anyOf": [{ "$ref": "#/$defs/UtcInstant" }, { "type": "null" }]
+    },
+    "Date": {
+      "type": "string",
+      "format": "date",
+      "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$"
+    },
+    "Period": { "type": "string", "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$" },
+    "NullablePeriod": {
+      "anyOf": [{ "$ref": "#/$defs/Period" }, { "type": "null" }]
+    },
+    "Micros": { "type": "integer", "minimum": 0 },
+    "NullableMicros": {
+      "anyOf": [{ "type": "integer", "minimum": 0 }, { "type": "null" }]
+    },
+    "SignedMicros": { "type": "integer" },
+    "Decimal": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]{0,13})([.][0-9]{1,6})?$"
+    },
+    "NullableDecimal": {
+      "anyOf": [{ "$ref": "#/$defs/Decimal" }, { "type": "null" }]
+    },
+    "Str128": {
+      "anyOf": [
+        { "type": "string", "minLength": 1, "maxLength": 128 },
+        { "type": "null" }
+      ]
+    },
+    "Str255": {
+      "anyOf": [
+        { "type": "string", "minLength": 1, "maxLength": 255 },
+        { "type": "null" }
+      ]
+    },
+    "Cursor": {
+      "anyOf": [
+        { "type": "string", "pattern": "^[A-Za-z0-9_-]{1,1024}$" },
+        { "type": "null" }
+      ],
+      "description": "Opaque base64url (no padding). null on the last page. A cursor is bound to the filters that produced it; reusing it with other filters is 400 invalid_cursor."
+    },
+    "Product": {
+      "type": "string",
+      "enum": [
+        "gateway",
+        "agents",
+        "sandboxes",
+        "deployments",
+        "evals",
+        "platform"
+      ]
+    },
+    "Purpose": {
+      "anyOf": [{ "type": "string", "enum": ["learning"] }, { "type": "null" }]
+    },
+    "Kind": {
+      "type": "string",
+      "enum": [
+        "topup",
+        "grant",
+        "spend",
+        "refund",
+        "adjustment",
+        "expiry",
+        "usage_debit",
+        "topup_reversal",
+        "dispute_hold",
+        "dispute_release"
+      ]
+    },
+    "Funding": {
+      "type": "string",
+      "enum": [
+        "promo",
+        "commit",
+        "purchased",
+        "invoice",
+        "debt",
+        "marketplace",
+        "free"
+      ]
+    },
+    "FundingSplit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "promo",
+        "commit",
+        "purchased",
+        "debt",
+        "invoice",
+        "marketplace",
+        "free"
+      ],
+      "description": "Micros by funding bucket. promo, commit, purchased and debt are paid from the balance; invoice is to be invoiced; marketplace is billed by the marketplace; free is always 0 and is kept so every bucket is named.",
+      "properties": {
+        "promo": { "$ref": "#/$defs/SignedMicros" },
+        "commit": { "$ref": "#/$defs/SignedMicros" },
+        "purchased": { "$ref": "#/$defs/SignedMicros" },
+        "debt": { "$ref": "#/$defs/SignedMicros" },
+        "invoice": { "$ref": "#/$defs/SignedMicros" },
+        "marketplace": { "$ref": "#/$defs/SignedMicros" },
+        "free": { "const": 0 }
+      }
+    },
+    "Balance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "org_id",
+        "as_of",
+        "currency",
+        "billing_channel",
+        "funding",
+        "billing_path",
+        "cutover_at",
+        "balance_micros",
+        "debt_micros",
+        "remaining",
+        "promotional_expiring",
+        "refusing",
+        "gateway",
+        "low_balance_threshold_micros",
+        "auto_topup"
+      ],
+      "properties": {
+        "org_id": { "$ref": "#/$defs/Uuid" },
+        "as_of": { "$ref": "#/$defs/UtcInstant" },
+        "currency": { "const": "usd" },
+        "billing_channel": {
+          "type": "string",
+          "enum": [
+            "stripe_selfserve",
+            "stripe_invoiced",
+            "gcp_marketplace",
+            "aws_marketplace",
+            "none"
+          ]
+        },
+        "funding": {
+          "type": "string",
+          "enum": ["prepaid_only", "prepaid_then_postpaid"]
+        },
+        "billing_path": { "type": "string", "enum": ["legacy", "ledger"] },
+        "cutover_at": { "$ref": "#/$defs/NullableInstant" },
+        "balance_micros": {
+          "$ref": "#/$defs/SignedMicros",
+          "description": "credit_total - settled_spend_micros - platform_spend_micros, from Postgres. Negative is debt."
+        },
+        "debt_micros": {
+          "$ref": "#/$defs/Micros",
+          "description": "max(-balance_micros, 0)."
+        },
+        "remaining": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "promotional_micros",
+            "commit_micros",
+            "purchased_micros"
+          ],
+          "properties": {
+            "promotional_micros": { "$ref": "#/$defs/Micros" },
+            "commit_micros": { "$ref": "#/$defs/Micros" },
+            "purchased_micros": { "$ref": "#/$defs/Micros" }
+          }
+        },
+        "promotional_expiring": {
+          "type": "array",
+          "maxItems": 10,
+          "description": "Unspent promotional grants with an expiry, soonest first.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["amount_micros", "expires_at"],
+            "properties": {
+              "amount_micros": { "$ref": "#/$defs/Micros" },
+              "expires_at": { "$ref": "#/$defs/UtcInstant" }
+            }
+          }
+        },
+        "refusing": {
+          "type": "boolean",
+          "description": "True when funding is prepaid_only and balance_micros <= 0; prepaid usage cannot start until credits are available."
+        },
+        "gateway": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "state",
+            "granted_total_micros",
+            "granted_version",
+            "spent_micros",
+            "held_micros",
+            "available_micros",
+            "markup_percent"
+          ],
+          "description": "The gateway's current credit totals and request holds. Numeric values are null unless state is ok.",
+          "properties": {
+            "state": {
+              "type": "string",
+              "enum": ["ok", "na_managed_off", "unreachable"]
+            },
+            "granted_total_micros": { "$ref": "#/$defs/NullableMicros" },
+            "granted_version": { "$ref": "#/$defs/NullableMicros" },
+            "spent_micros": { "$ref": "#/$defs/NullableMicros" },
+            "held_micros": { "$ref": "#/$defs/NullableMicros" },
+            "available_micros": {
+              "anyOf": [{ "type": "integer" }, { "type": "null" }]
+            },
+            "markup_percent": {
+              "anyOf": [
+                { "type": "number", "minimum": 0, "maximum": 100 },
+                { "type": "null" }
+              ]
+            }
+          },
+          "allOf": [
+            {
+              "if": { "properties": { "state": { "const": "ok" } } },
+              "then": {
+                "properties": {
+                  "granted_total_micros": { "type": "integer" },
+                  "granted_version": { "type": "integer" },
+                  "spent_micros": { "type": "integer" },
+                  "held_micros": { "type": "integer" },
+                  "available_micros": { "type": "integer" }
+                }
+              },
+              "else": {
+                "properties": {
+                  "granted_total_micros": { "type": "null" },
+                  "granted_version": { "type": "null" },
+                  "spent_micros": { "type": "null" },
+                  "held_micros": { "type": "null" },
+                  "available_micros": { "type": "null" },
+                  "markup_percent": { "type": "null" }
+                }
+              }
+            }
+          ]
+        },
+        "low_balance_threshold_micros": { "$ref": "#/$defs/NullableMicros" },
+        "auto_topup": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "enabled",
+            "threshold_micros",
+            "amount_micros",
+            "daily_count_cap",
+            "daily_amount_cap_micros",
+            "disabled_reason"
+          ],
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "threshold_micros": { "$ref": "#/$defs/NullableMicros" },
+            "amount_micros": { "$ref": "#/$defs/NullableMicros" },
+            "daily_count_cap": {
+              "anyOf": [{ "type": "integer", "minimum": 1 }, { "type": "null" }]
+            },
+            "daily_amount_cap_micros": { "$ref": "#/$defs/NullableMicros" },
+            "disabled_reason": {
+              "anyOf": [
+                { "type": "string", "maxLength": 255 },
+                { "type": "null" }
+              ]
+            }
+          },
+          "allOf": [
+            {
+              "if": { "properties": { "enabled": { "const": true } } },
+              "then": {
+                "properties": {
+                  "threshold_micros": { "type": "integer" },
+                  "amount_micros": { "type": "integer", "minimum": 1 },
+                  "daily_count_cap": { "type": "integer" },
+                  "daily_amount_cap_micros": { "type": "integer", "minimum": 1 }
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "Entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "amount_micros",
+        "occurred_at",
+        "created_at",
+        "product",
+        "dimension",
+        "quantity",
+        "unit",
+        "funding",
+        "period",
+        "late_of_period",
+        "workspace_id",
+        "agent_id",
+        "agent_run_id",
+        "api_key_id",
+        "purpose",
+        "source_kind",
+        "source_ref",
+        "request_id",
+        "model",
+        "markup_bps",
+        "price_catalog_version",
+        "gateway_catalog_snapshot_id",
+        "stripe_ref",
+        "expires_at",
+        "category"
+      ],
+      "description": "One ManagedCreditEntry. Internal columns (landed_cost_micros, upstream_cost_micros, upstream_fee_bps, processing_fee_bps, upstream_key_id, served_upstream_provider, payment_fee_micros, note, created_by) are never returned.",
+      "properties": {
+        "id": { "$ref": "#/$defs/Uuid" },
+        "kind": { "$ref": "#/$defs/Kind" },
+        "amount_micros": { "$ref": "#/$defs/SignedMicros" },
+        "occurred_at": { "$ref": "#/$defs/UtcInstant" },
+        "created_at": { "$ref": "#/$defs/UtcInstant" },
+        "product": {
+          "anyOf": [{ "$ref": "#/$defs/Product" }, { "type": "null" }]
+        },
+        "dimension": {
+          "anyOf": [
+            { "type": "string", "pattern": "^[a-z][a-z0-9_]{1,29}$" },
+            { "type": "null" }
+          ]
+        },
+        "quantity": { "$ref": "#/$defs/NullableDecimal" },
+        "unit": {
+          "anyOf": [
+            { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,31}$" },
+            { "type": "null" }
+          ]
+        },
+        "funding": {
+          "anyOf": [{ "$ref": "#/$defs/Funding" }, { "type": "null" }]
+        },
+        "period": { "$ref": "#/$defs/NullablePeriod" },
+        "late_of_period": { "$ref": "#/$defs/NullablePeriod" },
+        "workspace_id": { "$ref": "#/$defs/NullableUuid" },
+        "agent_id": { "$ref": "#/$defs/Str128" },
+        "agent_run_id": { "$ref": "#/$defs/Str128" },
+        "api_key_id": { "$ref": "#/$defs/Str255" },
+        "purpose": { "$ref": "#/$defs/Purpose" },
+        "source_kind": {
+          "anyOf": [{ "type": "string", "maxLength": 32 }, { "type": "null" }]
+        },
+        "source_ref": { "$ref": "#/$defs/Str255" },
+        "request_id": { "$ref": "#/$defs/Str255" },
+        "model": { "$ref": "#/$defs/Str255" },
+        "markup_bps": {
+          "anyOf": [{ "type": "integer", "minimum": 0 }, { "type": "null" }]
+        },
+        "price_catalog_version": {
+          "anyOf": [{ "$ref": "#/$defs/CatalogId" }, { "type": "null" }]
+        },
+        "gateway_catalog_snapshot_id": {
+          "anyOf": [
+            { "type": "string", "minLength": 1, "maxLength": 32 },
+            { "type": "null" }
+          ]
+        },
+        "stripe_ref": { "$ref": "#/$defs/Str255" },
+        "expires_at": { "$ref": "#/$defs/NullableInstant" },
+        "category": {
+          "anyOf": [{ "type": "string", "maxLength": 32 }, { "type": "null" }]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "spend",
+                  "usage_debit",
+                  "topup_reversal",
+                  "dispute_hold"
+                ]
+              }
+            }
+          },
+          "then": { "properties": { "amount_micros": { "maximum": 0 } } }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "enum": ["topup", "grant", "refund", "dispute_release"]
+              }
+            }
+          },
+          "then": { "properties": { "amount_micros": { "minimum": 0 } } }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "usage_debit" } } },
+          "then": {
+            "properties": {
+              "product": { "$ref": "#/$defs/Product" },
+              "dimension": { "type": "string" },
+              "quantity": { "$ref": "#/$defs/Decimal" },
+              "unit": { "type": "string" },
+              "funding": { "$ref": "#/$defs/Funding" },
+              "period": { "$ref": "#/$defs/Period" },
+              "price_catalog_version": { "type": "string" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "spend" } } },
+          "then": {
+            "properties": {
+              "product": { "const": "gateway" },
+              "dimension": { "const": "managed_spend" },
+              "request_id": { "type": "string" }
+            }
+          }
+        }
+      ]
+    },
+    "EntriesPage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["order", "entries", "next_cursor"],
+      "properties": {
+        "order": { "const": "occurred_at_desc" },
+        "entries": {
+          "type": "array",
+          "maxItems": 200,
+          "items": { "$ref": "#/$defs/Entry" }
+        },
+        "next_cursor": { "$ref": "#/$defs/Cursor" }
+      }
+    },
+    "UsageRow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "product",
+        "dimension",
+        "unit",
+        "workspace_id",
+        "agent_id",
+        "api_key_id",
+        "purpose",
+        "late_of_period",
+        "quantity",
+        "amount_micros",
+        "funded",
+        "amount_source"
+      ],
+      "description": "One group. A key that is not in group_by is null. quantity and unit are null unless dimension is in group_by.",
+      "properties": {
+        "product": { "$ref": "#/$defs/Product" },
+        "dimension": {
+          "anyOf": [
+            { "type": "string", "pattern": "^[a-z][a-z0-9_]{1,29}$" },
+            { "type": "null" }
+          ]
+        },
+        "unit": {
+          "anyOf": [
+            { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,31}$" },
+            { "type": "null" }
+          ]
+        },
+        "workspace_id": { "$ref": "#/$defs/NullableUuid" },
+        "agent_id": { "$ref": "#/$defs/Str128" },
+        "api_key_id": { "$ref": "#/$defs/Str255" },
+        "purpose": { "$ref": "#/$defs/Purpose" },
+        "late_of_period": { "$ref": "#/$defs/NullablePeriod" },
+        "quantity": { "$ref": "#/$defs/NullableDecimal" },
+        "amount_micros": {
+          "$ref": "#/$defs/SignedMicros",
+          "description": "Minus the sum of amount_micros over the group's spend, usage_debit and refund entries booked in the period."
+        },
+        "funded": { "$ref": "#/$defs/FundingSplit" },
+        "amount_source": {
+          "type": "string",
+          "enum": ["ledger", "legacy_estimate", "shadow"]
+        }
+      }
+    },
+    "Usage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "org_id",
+        "workspace_id",
+        "period",
+        "group_by",
+        "as_of",
+        "rated_through",
+        "estimate",
+        "rows",
+        "totals"
+      ],
+      "properties": {
+        "org_id": { "$ref": "#/$defs/Uuid" },
+        "workspace_id": {
+          "$ref": "#/$defs/NullableUuid",
+          "description": "The workspace the read was scoped to; null for an org-wide read."
+        },
+        "period": { "$ref": "#/$defs/Period" },
+        "group_by": {
+          "type": "array",
+          "uniqueItems": true,
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "enum": [
+              "product",
+              "dimension",
+              "workspace",
+              "agent",
+              "api_key",
+              "purpose",
+              "late"
+            ]
+          },
+          "contains": { "const": "product" }
+        },
+        "as_of": { "$ref": "#/$defs/UtcInstant" },
+        "rated_through": {
+          "$ref": "#/$defs/NullableInstant",
+          "description": "Every event received at or before this instant is rated or has a not_billable reason."
+        },
+        "estimate": {
+          "type": "boolean",
+          "description": "True while the total is an estimate, until the period's usage invoice is finalized."
+        },
+        "rows": {
+          "type": "array",
+          "maxItems": 5000,
+          "items": { "$ref": "#/$defs/UsageRow" }
+        },
+        "totals": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["amount_micros", "funded"],
+          "properties": {
+            "amount_micros": { "$ref": "#/$defs/SignedMicros" },
+            "funded": { "$ref": "#/$defs/FundingSplit" }
+          }
+        }
+      }
+    },
+    "Invoice": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "stripe_invoice_id",
+        "mode",
+        "kind",
+        "status",
+        "period_start",
+        "period_end",
+        "currency",
+        "subtotal_cents",
+        "tax_cents",
+        "total_cents",
+        "amount_due_cents",
+        "hosted_invoice_url",
+        "invoice_pdf_url",
+        "statement_url",
+        "created_at"
+      ],
+      "properties": {
+        "stripe_invoice_id": {
+          "type": "string",
+          "pattern": "^in_[A-Za-z0-9]{1,250}$"
+        },
+        "mode": { "type": "string", "enum": ["test", "live"] },
+        "kind": {
+          "type": "string",
+          "enum": ["usage", "plan", "topup", "one_off", "legacy"]
+        },
+        "status": {
+          "type": "string",
+          "enum": ["draft", "open", "paid", "uncollectible", "void"]
+        },
+        "period_start": {
+          "anyOf": [{ "$ref": "#/$defs/Date" }, { "type": "null" }]
+        },
+        "period_end": {
+          "anyOf": [{ "$ref": "#/$defs/Date" }, { "type": "null" }]
+        },
+        "currency": { "const": "usd" },
+        "subtotal_cents": { "type": "integer" },
+        "tax_cents": { "type": "integer", "minimum": 0 },
+        "total_cents": { "type": "integer" },
+        "amount_due_cents": { "type": "integer", "minimum": 0 },
+        "hosted_invoice_url": {
+          "anyOf": [
+            { "type": "string", "format": "uri", "pattern": "^https://" },
+            { "type": "null" }
+          ]
+        },
+        "invoice_pdf_url": {
+          "anyOf": [
+            { "type": "string", "format": "uri", "pattern": "^https://" },
+            { "type": "null" }
+          ]
+        },
+        "statement_url": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^/usage/ledger/v1/statements/[0-9]{4}-(0[1-9]|1[0-2])/$"
+            },
+            { "type": "null" }
+          ]
+        },
+        "created_at": { "$ref": "#/$defs/UtcInstant" }
+      }
+    },
+    "InvoicesPage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["invoices", "next_cursor"],
+      "properties": {
+        "invoices": {
+          "type": "array",
+          "maxItems": 100,
+          "items": { "$ref": "#/$defs/Invoice" }
+        },
+        "next_cursor": { "$ref": "#/$defs/Cursor" }
+      }
+    },
+    "Cap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "scope",
+        "scope_ref",
+        "counts",
+        "enforced_by",
+        "source",
+        "window",
+        "limit_micros",
+        "spent_micros",
+        "remaining_micros",
+        "thresholds_pct",
+        "action",
+        "state",
+        "editable"
+      ],
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "scope": {
+          "type": "string",
+          "enum": [
+            "org",
+            "workspace",
+            "product",
+            "agent",
+            "key",
+            "team",
+            "user"
+          ]
+        },
+        "scope_ref": {
+          "anyOf": [
+            { "type": "string", "minLength": 1, "maxLength": 255 },
+            { "type": "null" }
+          ]
+        },
+        "counts": {
+          "type": "string",
+          "enum": ["future_agi_charges", "model_spend_including_byok"]
+        },
+        "enforced_by": {
+          "type": "string",
+          "enum": ["fa_admission", "ee_run_admission", "gateway_budget"]
+        },
+        "source": { "type": "string", "enum": ["spend_cap", "gateway_budget"] },
+        "window": {
+          "type": "string",
+          "enum": ["daily", "weekly", "monthly", "total"]
+        },
+        "limit_micros": { "$ref": "#/$defs/Micros" },
+        "spent_micros": { "$ref": "#/$defs/NullableMicros" },
+        "remaining_micros": { "$ref": "#/$defs/NullableMicros" },
+        "thresholds_pct": {
+          "type": "array",
+          "uniqueItems": true,
+          "maxItems": 5,
+          "items": { "type": "integer", "minimum": 1, "maximum": 100 }
+        },
+        "action": { "type": "string", "enum": ["alert_only", "hard_stop"] },
+        "state": {
+          "type": "string",
+          "enum": ["ok", "warned", "reached", "unknown"]
+        },
+        "editable": { "type": "boolean" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "source": { "const": "gateway_budget" } } },
+          "then": {
+            "properties": {
+              "counts": { "const": "model_spend_including_byok" },
+              "enforced_by": { "const": "gateway_budget" },
+              "scope": { "enum": ["org", "key", "team", "user"] }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "source": { "const": "spend_cap" } } },
+          "then": {
+            "properties": {
+              "counts": { "const": "future_agi_charges" },
+              "enforced_by": { "enum": ["fa_admission", "ee_run_admission"] },
+              "scope": { "enum": ["org", "workspace", "product", "agent"] }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "scope": { "const": "org" } } },
+          "then": { "properties": { "scope_ref": { "type": "null" } } },
+          "else": { "properties": { "scope_ref": { "type": "string" } } }
+        },
+        {
+          "if": { "properties": { "spent_micros": { "type": "null" } } },
+          "then": {
+            "properties": {
+              "remaining_micros": { "type": "null" },
+              "state": { "const": "unknown" }
+            }
+          }
+        }
+      ]
+    },
+    "Caps": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["workspace_id", "caps"],
+      "properties": {
+        "workspace_id": { "$ref": "#/$defs/NullableUuid" },
+        "caps": {
+          "type": "array",
+          "maxItems": 500,
+          "items": { "$ref": "#/$defs/Cap" }
+        }
+      }
+    },
+    "Alert": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "severity",
+        "scope",
+        "scope_ref",
+        "threshold_pct",
+        "period",
+        "message",
+        "action_url",
+        "created_at",
+        "cleared_at"
+      ],
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "cap_threshold",
+            "low_balance",
+            "debt",
+            "past_due",
+            "payment_action_required",
+            "invoice_finalization_failed",
+            "card_expiring",
+            "auto_topup_disabled",
+            "dispute_hold",
+            "late_usage"
+          ]
+        },
+        "severity": {
+          "type": "string",
+          "enum": ["info", "warning", "critical"]
+        },
+        "scope": {
+          "type": "string",
+          "enum": [
+            "org",
+            "workspace",
+            "product",
+            "agent",
+            "key",
+            "team",
+            "user"
+          ]
+        },
+        "scope_ref": {
+          "anyOf": [
+            { "type": "string", "minLength": 1, "maxLength": 255 },
+            { "type": "null" }
+          ]
+        },
+        "threshold_pct": {
+          "anyOf": [
+            { "type": "integer", "minimum": 1, "maximum": 100 },
+            { "type": "null" }
+          ]
+        },
+        "period": { "$ref": "#/$defs/NullablePeriod" },
+        "message": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "action_url": {
+          "anyOf": [
+            { "type": "string", "pattern": "^(/|https://)" },
+            { "type": "null" }
+          ]
+        },
+        "created_at": { "$ref": "#/$defs/UtcInstant" },
+        "cleared_at": { "$ref": "#/$defs/NullableInstant" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "kind": { "const": "cap_threshold" } } },
+          "then": {
+            "properties": {
+              "threshold_pct": { "type": "integer" },
+              "period": { "$ref": "#/$defs/Period" }
+            }
+          }
+        }
+      ]
+    },
+    "Alerts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["alerts", "channels"],
+      "properties": {
+        "alerts": {
+          "type": "array",
+          "maxItems": 200,
+          "items": { "$ref": "#/$defs/Alert" }
+        },
+        "channels": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["email", "in_app", "webhook"],
+          "properties": {
+            "email": { "type": "boolean" },
+            "in_app": { "type": "boolean" },
+            "webhook": { "type": "boolean" }
+          }
+        }
+      }
+    },
+    "Admission": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "org_id",
+        "as_of",
+        "funding",
+        "billing_path",
+        "status",
+        "refuse",
+        "reason",
+        "balance_micros",
+        "agent"
+      ],
+      "description": "Service read for EE run admission. The same balance-cache value FA check_usage reads.",
+      "properties": {
+        "org_id": { "$ref": "#/$defs/Uuid" },
+        "as_of": { "$ref": "#/$defs/UtcInstant" },
+        "funding": {
+          "type": "string",
+          "enum": ["prepaid_only", "prepaid_then_postpaid"]
+        },
+        "billing_path": { "type": "string", "enum": ["legacy", "ledger"] },
+        "status": {
+          "type": "string",
+          "enum": ["active", "past_due", "unpaid", "canceled", "inactive"]
+        },
+        "refuse": { "type": "boolean" },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": ["balance_exhausted", "cap_reached", "unpaid"]
+            },
+            { "type": "null" }
+          ]
+        },
+        "balance_micros": { "$ref": "#/$defs/SignedMicros" },
+        "agent": {
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "agent_id",
+                "period",
+                "spent_micros",
+                "cap_micros",
+                "learning_spent_micros",
+                "learning_cap_micros"
+              ],
+              "properties": {
+                "agent_id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "period": { "$ref": "#/$defs/Period" },
+                "spent_micros": { "$ref": "#/$defs/Micros" },
+                "cap_micros": { "$ref": "#/$defs/NullableMicros" },
+                "learning_spent_micros": { "$ref": "#/$defs/Micros" },
+                "learning_cap_micros": { "$ref": "#/$defs/NullableMicros" }
+              }
+            },
+            { "type": "null" }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "refuse": { "const": true } } },
+          "then": { "properties": { "reason": { "type": "string" } } },
+          "else": { "properties": { "reason": { "type": "null" } } }
+        }
+      ]
+    },
+    "RateCard": {
+      "description": "The price-catalog public projection of the catalog chosen by price-catalog-v1.md section 1.",
+      "$ref": "price-catalog-public-v1.schema.json"
+    },
+    "Error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["error"],
+      "properties": {
+        "error": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["code", "message"],
+          "properties": {
+            "code": {
+              "type": "string",
+              "enum": [
+                "unauthenticated",
+                "forbidden",
+                "not_found",
+                "invalid_query",
+                "invalid_period",
+                "invalid_cursor",
+                "unavailable"
+              ]
+            },
+            "message": { "type": "string", "minLength": 1, "maxLength": 500 }
+          }
+        }
+      }
+    }
+  }
+}

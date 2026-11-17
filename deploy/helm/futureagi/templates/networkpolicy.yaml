@@ -5,6 +5,10 @@
 {{- $public := list "backend" "frontend" "fi-collector" -}}
 {{- /* Reached only by this release's pods. */ -}}
 {{- $internal := list "serving" -}}
+{{- /* The Omega gateway is reached by browsers through the ingress. */ -}}
+{{- if include "futureagi.omega.enabled" . -}}
+{{- $public = append $public "omega-gateway" -}}
+{{- end -}}
 {{- if and (eq $v.agentccGateway.service.type "ClusterIP") (not (and $v.gatewayApi.enabled $v.gatewayApi.llmGateway.enabled)) -}}
 {{- $internal = append $internal "agentcc-gateway" -}}
 {{- else -}}
@@ -32,7 +36,7 @@ metadata:
 spec:
   podSelector:
     matchLabels:
-      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/instance: {{ .Release.Name | quote }}
     matchExpressions:
       - key: app.kubernetes.io/component
         operator: In
@@ -58,7 +62,7 @@ metadata:
 spec:
   podSelector:
     matchLabels:
-      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/instance: {{ .Release.Name | quote }}
     matchExpressions:
       - key: app.kubernetes.io/component
         operator: In

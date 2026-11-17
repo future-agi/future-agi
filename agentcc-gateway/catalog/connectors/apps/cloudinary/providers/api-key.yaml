@@ -1,0 +1,44 @@
+schema: "connector-manifest/v1#provider"
+app: cloudinary
+id: api-key
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://asset-management.mcp.cloudinary.com/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: cloudinary-url
+      secret: true
+      label: Cloudinary URL
+      help: "Use the full Cloudinary URL containing your cloud name, API key and API secret from Console Settings > API Keys. It authorizes asset management and transformations; usage consumes your Cloudinary credits."
+      helpUrl: https://cloudinary.com/documentation/cloudinary_llm_mcp
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_metered
+  source: https://cloudinary.com/pricing
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://cloudinary.com/documentation/cloudinary_llm_mcp
+    fetchedAt: 2026-11-09
+  - fact: transport.variant
+    url: https://cloudinary.com/documentation/cloudinary_llm_mcp
+    fetchedAt: 2026-11-09
+  - fact: auth.kind
+    url: https://cloudinary.com/documentation/cloudinary_llm_mcp
+    fetchedAt: 2026-11-09
+  - fact: auth.credentialParts
+    url: https://cloudinary.com/documentation/cloudinary_llm_mcp
+    fetchedAt: 2026-11-09
+x-omega: { oss: exclude }

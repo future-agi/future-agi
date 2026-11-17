@@ -1,0 +1,96 @@
+[
+  {
+    "tool": "list_calendars",
+    "arguments": {}
+  },
+  {
+    "tool": "list_events",
+    "arguments": {
+      "calendarId": "primary",
+      "timeMin": "2026-10-22T00:00:00Z",
+      "timeMax": "2026-10-29T00:00:00Z",
+      "singleEvents": true,
+      "orderBy": "startTime",
+      "maxResults": 10
+    }
+  },
+  {
+    "tool": "get_event",
+    "arguments": {
+      "calendarId": "primary",
+      "eventId": "e-1"
+    }
+  },
+  {
+    "tool": "query_free_busy",
+    "arguments": {
+      "body": {
+        "timeMin": "2026-10-22T16:00:00Z",
+        "timeMax": "2026-10-23T00:00:00Z",
+        "items": [
+          {
+            "id": "user-1@example.com"
+          },
+          {
+            "id": "user-2@example.com"
+          },
+          {
+            "id": "user-3@example.com"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "tool": "create_event",
+    "arguments": {
+      "calendarId": "primary",
+      "sendUpdates": "all",
+      "body": {
+        "summary": "Design review",
+        "start": {
+          "dateTime": "2026-10-23T15:00:00-07:00"
+        },
+        "end": {
+          "dateTime": "2026-10-23T16:00:00-07:00"
+        },
+        "attendees": [
+          {
+            "email": "user-2@example.com"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "tool": "quick_add_event",
+    "arguments": {
+      "calendarId": "primary",
+      "text": "Lunch with Bob tomorrow 12:30-13:30"
+    }
+  },
+  {
+    "tool": "update_event",
+    "arguments": {
+      "calendarId": "primary",
+      "eventId": "e-1",
+      "sendUpdates": "all",
+      "body": {
+        "summary": "Team sync (moved)",
+        "start": {
+          "dateTime": "2026-10-22T11:00:00-07:00"
+        },
+        "end": {
+          "dateTime": "2026-10-22T11:30:00-07:00"
+        }
+      }
+    }
+  },
+  {
+    "tool": "get_event",
+    "arguments": {
+      "calendarId": "primary",
+      "eventId": "missing"
+    }
+  }
+]

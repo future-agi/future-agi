@@ -19,8 +19,11 @@ Supports all metric types defined in ``MonitorMetricTypeChoices``:
 
 Three query modes:
 - ``build_metric_value_query`` -- returns a single scalar value
-- ``build_historical_stats_query`` -- returns mean/stddev for a window
+- ``build_historical_stats_query`` -- returns the previous-period baseline
 - ``build_time_series_query`` -- returns time-bucketed series
+
+``build_earlier_band_query`` returns the band that monitors saved before the
+threshold update are still judged against (``tracer.utils.monitor_earlier_rule``).
 """
 
 from datetime import datetime
@@ -57,8 +60,7 @@ _TIME_BUCKET_EXPR = (
     "toDateTime(intDiv(toUInt32(start_time), %(freq_seconds)s) * %(freq_seconds)s)"
 )
 _EVAL_SPAN_BUCKET_EXPR = (
-    "toDateTime(intDiv(toUInt32(span_start_time), %(freq_seconds)s) "
-    "* %(freq_seconds)s)"
+    "toDateTime(intDiv(toUInt32(span_start_time), %(freq_seconds)s) * %(freq_seconds)s)"
 )
 
 # Statuses whose rows carry no real value (NULL outputs). NOT IN keeps legacy
@@ -101,6 +103,10 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
             (only needed for ``EVALUATION_METRICS``).
         threshold_metric_value: The threshold metric value from the monitor
             (used for PASS_FAIL and CHOICES eval types).
+        provider_error_free: For SERVICE_PROVIDER_ERROR_RATES, measure the
+            share of providers with no errors, the meaning the numbers of a
+            monitor saved before the threshold update are in. By default the
+            share of providers with at least one error.
     """
 
     def __init__(
@@ -110,6 +116,7 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
         eval_config_id: str | None = None,
         eval_output_type: str | None = None,
         threshold_metric_value: str | None = None,
+        provider_error_free: bool = False,
         **kwargs: Any,
     ) -> None:
         super().__init__(project_id, **kwargs)
@@ -117,11 +124,16 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
         self.eval_config_id = eval_config_id
         self.eval_output_type = eval_output_type
         self.threshold_metric_value = threshold_metric_value
+        self.provider_error_free = provider_error_free
 
         # Translate monitor filters to CH WHERE fragments
         self._filter_clause = ""
         self._filter_params: dict[str, Any] = {}
         self._translate_filters()
+
+    def _counted_providers(self) -> str:
+        """Which providers the service-provider error rate counts."""
+        return "error_count = 0" if self.provider_error_free else "error_count > 0"
 
     @staticmethod
     def _eval_choice_match_expr(param_name: str = "choice_val") -> str:
@@ -267,7 +279,7 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
             query = f"""
                 SELECT
                     CASE WHEN uniq(provider) = 0 THEN NULL
-                         ELSE uniqIf(provider, error_count = 0) / uniq(provider)
+                         ELSE uniqIf(provider, {self._counted_providers()}) / uniq(provider)
                     END AS value
                 FROM (
                     SELECT
@@ -394,14 +406,16 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
         metric_type: str,
         start_time: datetime,
         end_time: datetime,
-        interval_kind: str | None = None,
+        periods: float = 1.0,
     ) -> tuple[str, dict[str, Any]]:
-        """Build a query that returns mean and stddev for historical analysis.
+        """Build a query that returns the previous-period baseline for the window.
 
-        Per-row stats for rate/latency metrics (population stddev, PG parity);
-        calendar-bucketed stats for count/token metrics (``interval_kind`` =
-        minute/hour/day/month, sample stddev — parity with the old
-        ``Trunc`` + ``statistics.stdev`` path).
+        Rate, latency and eval metrics: the metric pooled over every row in the
+        window, as the metric-value query computes it (population stddev, PG
+        parity). Count and token metrics: the window's total divided by
+        ``periods``, the number of evaluation periods in the window, so empty
+        periods count as 0 and a rolling window is never split into partial
+        calendar buckets. A window with no data gives a NULL ``mean``.
 
         Returns:
             A ``(query_string, params_dict)`` tuple with ``mean`` and ``stddev`` columns.
@@ -455,13 +469,17 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
             """
 
         elif metric_type == MonitorMetricTypeChoices.SERVICE_PROVIDER_ERROR_RATES:
+            if self.provider_error_free:
+                indicator, with_errors, without = "is_error_free", "0.0", "1.0"
+            else:
+                indicator, with_errors, without = "is_error", "1.0", "0.0"
             query = f"""
                 SELECT
-                    ifNotFinite(avg(is_error_free), NULL) AS mean,
-                    ifNotFinite(stddevPop(is_error_free), NULL) AS stddev
+                    ifNotFinite(avg({indicator}), NULL) AS mean,
+                    ifNotFinite(stddevPop({indicator}), NULL) AS stddev
                 FROM (
                     SELECT
-                        CASE WHEN countIf(status = 'ERROR') > 0 THEN 0.0 ELSE 1.0 END AS is_error_free
+                        CASE WHEN countIf(status = 'ERROR') > 0 THEN {with_errors} ELSE {without} END AS {indicator}
                     FROM {SPANS_TABLE}
                     {base_where}
                       {time_win}
@@ -515,34 +533,97 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
             MonitorMetricTypeChoices.DAILY_TOKENS_SPENT,
             MonitorMetricTypeChoices.MONTHLY_TOKENS_SPENT,
         ):
-            # Stats over calendar-aligned buckets. Empty result collapses to
-            # (0, 0), a single bucket to (value, 0), and no-token buckets are
-            # skipped via nullIf (v2 total_tokens is non-Nullable) — matching
-            # the old Python path. Buckets are on start_time (event time), the
-            # same axis as the window — no out-of-window trailing bucket.
-            bucket_fn = self.time_bucket_expr(interval_kind or "hour")
-            agg = (
-                "countIf(status = 'ERROR')"
-                if metric_type == MonitorMetricTypeChoices.COUNT_OF_ERRORS
-                else "nullIf(sum(total_tokens), 0)"
-            )
+            # Average per evaluation period: the window's total over the
+            # number of periods in it. No spans in the window (for tokens, no
+            # token-bearing spans, as in the value query: v2 total_tokens is
+            # non-Nullable) is no history, NULL; spans with no errors are a
+            # real zero baseline.
+            if metric_type == MonitorMetricTypeChoices.COUNT_OF_ERRORS:
+                has_data, total = "count() > 0", "countIf(status = 'ERROR')"
+            else:
+                has_data, total = "countIf(total_tokens != 0) > 0", "sum(total_tokens)"
+            params["baseline_periods"] = float(periods)
             query = f"""
                 SELECT
-                    coalesce(ifNotFinite(avg(bucket_value), 0), 0) AS mean,
-                    coalesce(ifNotFinite(stddevSamp(bucket_value), 0), 0) AS stddev
-                FROM (
-                    SELECT
-                        {bucket_fn}(start_time) AS bucket_ts,
-                        {agg} AS bucket_value
-                    FROM {SPANS_TABLE}
-                    {base_where}
-                      {time_win}
-                    GROUP BY bucket_ts
-                )
+                    if({has_data}, {total} / %(baseline_periods)s, NULL) AS mean,
+                    CAST(NULL AS Nullable(Float64)) AS stddev
+                FROM {SPANS_TABLE}
+                {base_where}
+                  {time_win}
             """
 
         else:
             query = "SELECT NULL AS mean, NULL AS stddev"
+
+        return query, params
+
+    def build_earlier_band_query(
+        self,
+        metric_type: str,
+        start_time: datetime,
+        end_time: datetime,
+        interval_kind: str | None = None,
+    ) -> tuple[str, dict[str, Any]]:
+        """Mean and stddev for monitors saved before the threshold update.
+
+        Count and token metrics: calendar-bucketed stats (``interval_kind`` =
+        minute/hour/day/month, sample stddev), the production build's query, so
+        those monitors are judged as they were. Every other metric: its per-row
+        stats from ``build_historical_stats_query``, which production computed
+        the same way.
+
+        Returns:
+            A ``(query_string, params_dict)`` tuple with ``mean`` and ``stddev`` columns.
+        """
+        if metric_type not in (
+            MonitorMetricTypeChoices.COUNT_OF_ERRORS,
+            MonitorMetricTypeChoices.TOKEN_USAGE,
+            MonitorMetricTypeChoices.DAILY_TOKENS_SPENT,
+            MonitorMetricTypeChoices.MONTHLY_TOKENS_SPENT,
+        ):
+            # The v1 method itself, not self's: on the v2 builder every build*
+            # method rewrites its SQL, and the rewrite must run once
+            # (v2/query_builders/_rewrite.py).
+            return MonitorMetricsQueryBuilder.build_historical_stats_query(
+                self, metric_type, start_time, end_time
+            )
+
+        params = dict(self.params)
+        params.update(self._filter_params)
+        params["start_time"] = _parse_dt(start_time)
+        params["end_time"] = _parse_dt(end_time)
+        # Bound for the filter builder's date-scoped subqueries (span/score
+        # membership) — see _translate_filters.
+        params["start_date"] = params["start_time"]
+
+        base_where = self._spans_base_where()
+        time_win = f"AND {_pruned_window('start_time', 'end_time')}"
+
+        # Stats over calendar-aligned buckets. Empty result collapses to
+        # (0, 0), a single bucket to (value, 0), and no-token buckets are
+        # skipped via nullIf (v2 total_tokens is non-Nullable) — matching
+        # the old Python path. Buckets are on start_time (event time), the
+        # same axis as the window — no out-of-window trailing bucket.
+        bucket_fn = self.time_bucket_expr(interval_kind or "hour")
+        agg = (
+            "countIf(status = 'ERROR')"
+            if metric_type == MonitorMetricTypeChoices.COUNT_OF_ERRORS
+            else "nullIf(sum(total_tokens), 0)"
+        )
+        query = f"""
+            SELECT
+                coalesce(ifNotFinite(avg(bucket_value), 0), 0) AS mean,
+                coalesce(ifNotFinite(stddevSamp(bucket_value), 0), 0) AS stddev
+            FROM (
+                SELECT
+                    {bucket_fn}(start_time) AS bucket_ts,
+                    {agg} AS bucket_value
+                FROM {SPANS_TABLE}
+                {base_where}
+                  {time_win}
+                GROUP BY bucket_ts
+            )
+        """
 
         return query, params
 
@@ -738,7 +819,7 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
                 SELECT
                     timestamp,
                     CASE WHEN uniq(provider) = 0 THEN 0
-                         ELSE uniqIf(provider, error_count = 0) / uniq(provider)
+                         ELSE uniqIf(provider, {self._counted_providers()}) / uniq(provider)
                     END AS value
                 FROM (
                     SELECT

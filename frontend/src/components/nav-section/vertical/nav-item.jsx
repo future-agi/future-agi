@@ -15,6 +15,16 @@ import Iconify from "../../iconify";
 
 // ----------------------------------------------------------------------
 
+// One visible focus ring per nav item: 2 px in the primary colour on the
+// link (keyboard focus only), drawn inside so the scroll area never clips it.
+const NAV_LINK_FOCUS = {
+  outline: "none",
+  "&:focus-visible": {
+    outline: (theme) => `2px solid ${theme.palette.primary.main}`,
+    outlineOffset: "-2px",
+  },
+};
+
 // eslint-disable-next-line react/display-name
 const NavItem = forwardRef(
   (
@@ -35,12 +45,18 @@ const NavItem = forwardRef(
       externalLink,
       currentRole = "admin",
       titleIcon,
+      titleTooltip,
       eventTrigger,
+      onClick,
+      "aria-current": ariaCurrent,
       ...other
     },
     ref,
   ) => {
     const subItem = depth !== 1;
+    // A leaf item is wrapped in a link: the link is its one tab stop, so the
+    // inner row is not focusable and has no role of its own (a11y #4).
+    const inLink = !hasChild && !disabled;
 
     const renderContent = (
       <StyledNavItem
@@ -52,7 +68,14 @@ const NavItem = forwardRef(
         disabled={disabled}
         disableRipple
         {...other}
-        onClick={() => {
+        {...(inLink
+          ? { tabIndex: -1, role: "presentation" }
+          : hasChild
+            ? { "aria-expanded": Boolean(open) }
+            : {})}
+        onClick={(event) => {
+          // NavList owns child expansion; preserve its handler for Enter too.
+          onClick?.(event);
           if (eventTrigger) {
             eventTrigger();
           }
@@ -139,13 +162,28 @@ const NavItem = forwardRef(
       </StyledNavItem>
     );
 
+    // A title cut off by the sidebar's width shows whole beside the row, on
+    // hover and on keyboard focus. The control keeps its own text as its
+    // name; the tooltip describes it.
+    const withTitleTooltip = (control) => (
+      <CustomTooltip
+        show={!!titleTooltip}
+        title={titleTooltip}
+        placement="right"
+        describeChild
+        arrow
+      >
+        {control}
+      </CustomTooltip>
+    );
+
     // Hidden item by role
     if (roles && !roles.includes(`${currentRole}`)) {
       return null;
     }
 
     if (hasChild) {
-      return renderContent;
+      return withTitleTooltip(renderContent);
     }
 
     if (disabled) {
@@ -162,7 +200,7 @@ const NavItem = forwardRef(
     }
 
     if (externalLink)
-      return (
+      return withTitleTooltip(
         <Link
           href={path}
           target="_blank"
@@ -172,36 +210,44 @@ const NavItem = forwardRef(
           sx={{
             height: "24px",
             minHeight: "24px",
+            display: "block",
+            borderRadius: "6px",
+            ...NAV_LINK_FOCUS,
             ...(disabled && {
               cursor: "default",
             }),
           }}
         >
           {renderContent}
-        </Link>
+        </Link>,
       );
 
-    return (
+    return withTitleTooltip(
       <Link
         component={RouterLink}
         href={path}
+        aria-current={ariaCurrent || (active ? "page" : undefined)}
         color="inherit"
         underline="none"
         sx={{
           minHeight: "24px",
           height: "24px",
+          display: "block",
+          borderRadius: "6px",
+          ...NAV_LINK_FOCUS,
           ...(disabled && {
             cursor: "default",
           }),
         }}
       >
         {renderContent}
-      </Link>
+      </Link>,
     );
   },
 );
 
 NavItem.propTypes = {
+  "aria-current": PropTypes.string,
   open: PropTypes.bool,
   active: PropTypes.bool,
   path: PropTypes.string,
@@ -217,7 +263,10 @@ NavItem.propTypes = {
   currentRole: PropTypes.string,
   roles: PropTypes.arrayOf(PropTypes.string),
   titleIcon: PropTypes.any,
+  // The whole title, given only while the row cuts it off.
+  titleTooltip: PropTypes.string,
   eventTrigger: PropTypes.func,
+  onClick: PropTypes.func,
 };
 
 export default NavItem;
@@ -283,6 +332,12 @@ const StyledNavItem = styled(ListItemButton, {
   };
 
   return {
+    // Keyboard focus on a toggle row (items with children) shows the same
+    // 2 px ring as a link item.
+    "&.Mui-focusVisible": {
+      outline: `2px solid ${theme.palette.primary.main}`,
+      outlineOffset: "-2px",
+    },
     // Root item
     ...(!subItem && {
       ...baseStyles.item,

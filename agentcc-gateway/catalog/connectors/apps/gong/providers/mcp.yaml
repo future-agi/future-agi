@@ -1,0 +1,76 @@
+# Gong's MCP server, read-only (ask_account, ask_deal and generate_brief over
+# calls and emails), with OAuth from Gong's own authorization server. A Gong
+# tech admin creates an MCP server integration (Admin center > Settings >
+# MCP > MCP servers) with the Manual registration type, which issues a
+# client ID and secret, and enters FutureAGI's redirect URI: that is the
+# organization's own OAuth app. Gong's Automatic registration type ("auto-
+# registers with Gong against an approved redirect URI") is not shown to be
+# dynamic registration, so it is not declared. The authorization context
+# should be Personal access, so each member sees only their own Gong data.
+# The authorize and token endpoints are those of Gong's "Set up OAuth
+# access" page, which the MCP setup page points custom clients to; the token
+# request authenticates the client by HTTP Basic. With no scope in the
+# request, Gong grants the scopes set on the integration (mcp:read,
+# mcp:write or both), so the request names none. No Gong page names a
+# revocation endpoint or PKCE, so neither is declared. Queries use Gong
+# credits. EE and OSS get none until a client of their own is proven.
+schema: "connector-manifest/v1#provider"
+app: gong
+id: mcp
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.gong.io/mcp
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent, user]
+auth:
+  kind: oauth2
+  help: "A Gong tech admin first creates an MCP server integration with Manual registration, Personal access and FutureAGI's redirect URI. Disconnect deletes FutureAGI's stored copy but cannot revoke the grant at Gong."
+  oauth2:
+    authorizeUrl: https://app.gong.io/oauth2/authorize
+    tokenUrl: https://app.gong.io/oauth2/generate-customer-token
+    scopes: []
+    pkce: false
+    tokenBody: form
+    clientAuth: basic
+    registration: [preregistered]
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_metered
+  source: https://help.gong.io/docs/create-an-integration-to-connect-to-the-mcp-server
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://help.gong.io/docs/create-an-integration-to-connect-to-the-mcp-server
+    fetchedAt: 2026-11-12
+  - fact: auth.kind
+    url: https://help.gong.io/docs/create-an-integration-to-connect-to-the-mcp-server
+    fetchedAt: 2026-11-12
+  - fact: auth.oauth2.authorizeUrl
+    url: https://help.gong.io/docs/create-an-app-for-gong
+    fetchedAt: 2026-11-12
+  - fact: auth.oauth2.tokenUrl
+    url: https://help.gong.io/docs/create-an-app-for-gong
+    fetchedAt: 2026-11-12
+  - fact: auth.oauth2.scopes
+    url: https://help.gong.io/docs/create-an-integration-to-connect-to-the-mcp-server
+    fetchedAt: 2026-11-12
+  - fact: auth.oauth2.scopes
+    url: https://help.gong.io/docs/create-an-app-for-gong
+    fetchedAt: 2026-11-12
+  - fact: auth.oauth2.clientAuth
+    url: https://help.gong.io/docs/create-an-app-for-gong
+    fetchedAt: 2026-11-12
+  - fact: auth.oauth2.registration
+    url: https://help.gong.io/docs/create-an-integration-to-connect-to-the-mcp-server
+    fetchedAt: 2026-11-12
+  - fact: auth.oauth2.registration
+    url: https://help.gong.io/docs/about-gong-mcp-server
+    fetchedAt: 2026-11-12
+x-omega: { ee: exclude, oss: exclude }

@@ -2448,22 +2448,33 @@ export const datasetEvalJourneys = [
         hardDeleteLegacyExperimentCreateUpdateFixture(fixture),
       );
 
-      const createName = `api journey legacy create ${runId}`;
+      // The older create no longer makes experiments (one it made never
+      // ran): a valid request is refused with the route to use, and nothing
+      // is stored. The update and reads below use an experiment seeded in the
+      // shape that create made.
+      const createName = fixture.legacy_experiment_name;
       const createPromptConfig = {
         model: "gpt-4o-mini",
         temperature: 0.1,
         journey: "EXP-API-004-create",
       };
-      const created = await client.post(apiPath("/model-hub/experiments/"), {
-        name: createName,
-        dataset_id: fixture.dataset_id,
-        column_id: fixture.output_column_id,
-        prompt_config: createPromptConfig,
-        user_eval_template_ids: [fixture.eval_metric_id],
-      });
+      const refused = await expectApiErrorStatus(
+        () =>
+          client.post(apiPath("/model-hub/experiments/"), {
+            name: fixture.refused_create_name,
+            dataset_id: fixture.dataset_id,
+            column_id: fixture.output_column_id,
+            prompt_config: createPromptConfig,
+            user_eval_template_ids: [fixture.eval_metric_id],
+          }),
+        400,
+        "Legacy experiment create was not refused.",
+      );
       assert(
-        String(created).includes("Experiment created successfully"),
-        "Legacy experiment create returned an unexpected response.",
+        JSON.stringify(refused?.body || {}).includes(
+          "/model-hub/experiments/v2/",
+        ),
+        "Legacy experiment create refusal did not name the v2 create.",
       );
 
       const createdAudit = await loadLegacyExperimentCreateUpdateAudit({
@@ -2640,6 +2651,10 @@ export const datasetEvalJourneys = [
       }
 
       const guardAudit = await loadLegacyExperimentGuardAudit(fixture);
+      assert(
+        Number(guardAudit.refused_create_count) === 0,
+        "Refused legacy create persisted an experiment.",
+      );
       assert(
         Number(guardAudit.blocked_column_count) === 0,
         "Blocked column legacy create persisted an experiment.",
@@ -22224,6 +22239,9 @@ async function seedLegacyExperimentCreateUpdateFixture({
   const otherDatasetId = randomUUID();
   const otherColumnId = randomUUID();
   const otherExperimentId = randomUUID();
+  const legacyExperimentId = randomUUID();
+  const legacyExperimentName = `api journey legacy create ${runId}`;
+  const refusedCreateName = `api journey legacy create refused ${runId}`;
   const datasetName = `api journey legacy exp dataset ${runId}`;
   const blockedDatasetName = `api journey legacy blocked dataset ${runId}`;
   const evalTemplateName = `api journey legacy exp eval ${runId}`;
@@ -22609,6 +22627,47 @@ inserted_eval_metrics AS (
     NULL::jsonb
   )
   RETURNING id
+),
+inserted_legacy_experiment AS (
+  INSERT INTO model_hub_experimentstable (
+    id,
+    created_at,
+    updated_at,
+    deleted,
+    deleted_at,
+    name,
+    prompt_config,
+    status,
+    dataset_id,
+    column_id,
+    user_id,
+    experiment_type,
+    snapshot_dataset_id
+  )
+  VALUES (
+    ${sqlUuid(legacyExperimentId)},
+    now(),
+    now(),
+    false,
+    NULL::timestamptz,
+    ${sqlTextLiteral(legacyExperimentName)},
+    ${sqlJsonLiteral({ model: "gpt-4o-mini", temperature: 0.1, journey: "EXP-API-004-create" })},
+    'Completed',
+    ${sqlUuid(datasetId)},
+    ${sqlUuid(outputColumnId)},
+    ${userSql},
+    'llm',
+    NULL::uuid
+  )
+  RETURNING id
+),
+inserted_legacy_experiment_metric AS (
+  INSERT INTO model_hub_experimentstable_user_eval_template_ids (
+    experimentstable_id,
+    userevalmetric_id
+  )
+  SELECT id, ${sqlUuid(evalMetricId)} FROM inserted_legacy_experiment
+  RETURNING 1
 )${otherExperimentSql}
 SELECT json_build_object(
   'fixture_created', (SELECT count(*) FROM inserted_datasets) = 3,
@@ -22630,7 +22689,10 @@ SELECT json_build_object(
   'other_column_id', ${sqlUuid(otherColumnId)}::text,
   'other_experiment_id', ${sqlUuid(otherExperimentId)}::text,
   'other_experiment_name', ${sqlTextLiteral(otherExperimentName)},
-  'other_workspace_create_name', ${sqlTextLiteral(otherWorkspaceCreateName)}
+  'other_workspace_create_name', ${sqlTextLiteral(otherWorkspaceCreateName)},
+  'legacy_experiment_id', ${sqlUuid(legacyExperimentId)}::text,
+  'legacy_experiment_name', ${sqlTextLiteral(legacyExperimentName)},
+  'refused_create_name', ${sqlTextLiteral(refusedCreateName)}
 );
 `;
   return runPostgresJson(sql);
@@ -22783,6 +22845,12 @@ SELECT json_build_object(
     WHERE e.name = ${sqlTextLiteral(fixture.other_workspace_create_name)}
       AND e.deleted = false
   ),
+  'refused_create_count', (
+    SELECT count(*)
+    FROM model_hub_experimentstable e
+    WHERE e.name = ${sqlTextLiteral(fixture.refused_create_name)}
+      AND e.deleted = false
+  ),
   'other_experiment_name', ${otherExperimentNameSelect}
 );
 `;
@@ -22797,6 +22865,7 @@ async function hardDeleteLegacyExperimentCreateUpdateFixture(fixture) {
   ].filter(isUuid);
   const experimentIds = [
     fixture.created_experiment_id,
+    fixture.legacy_experiment_id,
     fixture.other_experiment_id,
   ].filter(isUuid);
   const metricIds = [
@@ -22823,7 +22892,8 @@ target_experiments AS (
      OR name IN (
        ${sqlTextLiteral(fixture.blocked_column_experiment_name)},
        ${sqlTextLiteral(fixture.blocked_metric_experiment_name)},
-       ${sqlTextLiteral(fixture.other_workspace_create_name)}
+       ${sqlTextLiteral(fixture.other_workspace_create_name)},
+       ${sqlTextLiteral(fixture.refused_create_name)}
      )
 ),
 deleted_pending_tasks AS (

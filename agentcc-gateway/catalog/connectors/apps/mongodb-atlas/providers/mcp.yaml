@@ -1,0 +1,53 @@
+# The MongoDB Atlas Managed MCP Server, one fixed URL for every Atlas org
+# (the block's "per-org URL" premise does not hold: MongoDB returns
+# https://mcp.mongodb.com with every configuration). Two access models:
+#
+# - User-delegated (Atlas App Connections): OAuth on behalf of one Atlas
+#   user, which "works only with AI clients that MongoDB registers in
+#   advance". That is this provider, gated by clientApproval until MongoDB
+#   registers FutureAGI's client (OA-VC); an Organization Owner must also
+#   enable AI client access, which is off by default.
+# - Programmatic (MCP configurations): an admin-provisioned service account
+#   whose client id and secret the agent exchanges in an OAuth
+#   client-credentials flow. The gateway has no client-credentials
+#   credential kind, and MongoDB says a static API key cannot authenticate
+#   to the remote server, so that path is not declared here.
+schema: "connector-manifest/v1#provider"
+app: mongodb-atlas
+id: mcp
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.mongodb.com
+  era: auto
+hosted: true
+trusted: false
+accountModes: [user]
+auth:
+  kind: mcp_oauth
+  clientApproval:
+    required: true
+    program: "Atlas App Connections: AI clients that MongoDB registers in advance"
+    url: https://www.mongodb.com/docs/mcp-server/remote-mcp/access-models/
+    source: https://www.mongodb.com/docs/mcp-server/remote-mcp/access-models/
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://www.mongodb.com/docs/mcp-server/overview/
+    fetchedAt: 2026-10-21
+  - fact: auth.kind
+    url: https://www.mongodb.com/docs/mcp-server/remote-mcp/access-models/
+    fetchedAt: 2026-10-21
+  - fact: auth.clientApproval
+    url: https://www.mongodb.com/docs/mcp-server/remote-mcp/access-models/
+    fetchedAt: 2026-10-21
+  - fact: accountModes
+    url: https://www.mongodb.com/docs/mcp-server/remote-mcp/access-models/
+    fetchedAt: 2026-10-21
+x-omega: { oss: exclude }

@@ -39,8 +39,8 @@ const RenderMeta = ({ meta, originType, showToken = true, valuesInfo }) => {
             color="text.secondary"
           />
           <Typography typography="s3" color="text.secondary">
-            {meta?.responseTimeMs
-              ? `${Math.round(meta?.responseTimeMs)} ms`
+            {meta?.response_time_ms
+              ? `${Math.round(meta?.response_time_ms)} ms`
               : "-"}
           </Typography>
         </Box>
@@ -51,7 +51,7 @@ const RenderMeta = ({ meta, originType, showToken = true, valuesInfo }) => {
               sx={{ width: "15px", height: "15px", color: "text.secondary" }}
             />
             <Typography typography="s3" color="text.secondary">
-              {meta?.tokenCount ? `${meta?.tokenCount}` : "-"}
+              {meta?.token_count ? `${meta?.token_count}` : "-"}
             </Typography>
           </Box>
         </ShowComponent>

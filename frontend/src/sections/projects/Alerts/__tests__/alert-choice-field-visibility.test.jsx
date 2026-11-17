@@ -239,11 +239,11 @@ describe("Choice field visibility depends on the eval's output type", () => {
       });
     });
 
-    // The picker resolved to [] so there is no option to resolve the eval's
-    // name from — the metric field falls back to displaying the raw id.
-    // That is the signal that hydration has settled with an unresolved eval.
+    // The picker resolved to [] so the eval is not in it — the metric field
+    // shows the name the saved alert carries instead. That is the signal that
+    // hydration has settled with an unresolved eval.
     await waitFor(() =>
-      expect(screen.getByDisplayValue(detail.metric)).toBeInTheDocument(),
+      expect(screen.getByDisplayValue(detail.metric_name)).toBeInTheDocument(),
     );
 
     const patch = vi
@@ -345,12 +345,10 @@ describe("Choice-thresholded evals gate the preview graph on a chosen label", ()
       });
     });
 
-    // An eval the picker can't resolve shows its raw id instead of its name.
-    const listed = evaluations.some(({ id }) => id === evaluation.id);
+    // An eval the picker can't resolve still shows the saved alert's name for
+    // it, so both cases settle on the eval's name.
     await waitFor(() =>
-      expect(
-        screen.getByDisplayValue(listed ? evaluation.name : evaluation.id),
-      ).toBeInTheDocument(),
+      expect(screen.getByDisplayValue(evaluation.name)).toBeInTheDocument(),
     );
 
     // isQueryEnabled requires the edited form to be dirty; a name edit dirties
@@ -420,32 +418,35 @@ describe("Choice-thresholded evals gate the preview graph on a chosen label", ()
   it.each([
     ["no label chosen", ""],
     ["a label chosen", "frequently"],
-  ])("never previews the previous choices eval with no label while switching to a score eval (%s)", async (_case, label) => {
-    const calls = await renderDirtiedAlert(CHOICES_EVAL, label, [
-      CHOICES_EVAL,
-      SCORE_EVAL,
-    ]);
-    await new Promise((resolve) => setTimeout(resolve, 400));
+  ])(
+    "never previews the previous choices eval with no label while switching to a score eval (%s)",
+    async (_case, label) => {
+      const calls = await renderDirtiedAlert(CHOICES_EVAL, label, [
+        CHOICES_EVAL,
+        SCORE_EVAL,
+      ]);
+      await new Promise((resolve) => setTimeout(resolve, 400));
 
-    fireEvent.click(screen.getByDisplayValue(CHOICES_EVAL.name));
-    const option = await screen.findByRole("menuitem", {
-      name: SCORE_EVAL.name,
-    });
-    fireEvent.click(within(option).getByText(SCORE_EVAL.name));
+      fireEvent.click(screen.getByDisplayValue(CHOICES_EVAL.name));
+      const option = await screen.findByRole("menuitem", {
+        name: SCORE_EVAL.name,
+      });
+      fireEvent.click(within(option).getByText(SCORE_EVAL.name));
 
-    await waitFor(() => {
-      const last = calls[calls.length - 1];
-      expect(last.enabled).toBe(true);
-      expect(last.payload.metric).toBe(SCORE_EVAL.id);
-    });
-    const unlabelledChoicesPreview = calls.some(
-      ({ payload, enabled }) =>
-        enabled &&
-        payload.metric === CHOICES_EVAL.id &&
-        !payload.threshold_metric_value,
-    );
-    expect(unlabelledChoicesPreview).toBe(false);
-  });
+      await waitFor(() => {
+        const last = calls[calls.length - 1];
+        expect(last.enabled).toBe(true);
+        expect(last.payload.metric).toBe(SCORE_EVAL.id);
+      });
+      const unlabelledChoicesPreview = calls.some(
+        ({ payload, enabled }) =>
+          enabled &&
+          payload.metric === CHOICES_EVAL.id &&
+          !payload.threshold_metric_value,
+      );
+      expect(unlabelledChoicesPreview).toBe(false);
+    },
+  );
 
   // Picking the eval is what dirties the form here, so the preview switches on
   // during the same 300ms window in which the payload still names the old eval.
@@ -468,7 +469,9 @@ describe("Choice-thresholded evals gate the preview graph on a chosen label", ()
 
     const staleScorePreview = calls
       .slice(switchedAt)
-      .some(({ payload, enabled }) => enabled && payload.metric === SCORE_EVAL.id);
+      .some(
+        ({ payload, enabled }) => enabled && payload.metric === SCORE_EVAL.id,
+      );
     expect(staleScorePreview).toBe(false);
   });
 });

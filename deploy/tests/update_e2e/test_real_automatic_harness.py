@@ -50,7 +50,7 @@ class HelperTests(unittest.TestCase):
 
     def test_home_bind_rejects_external_volume(self):
         with self.assertRaises(ValueError):
-            real.home_path(Path("/Volumes/nik-ext-1/checkout"))
+            real.home_path(Path("/Volumes/ext-1/checkout"))
 
     def test_home_directory_itself_rejected(self):
         with self.assertRaises(ValueError):

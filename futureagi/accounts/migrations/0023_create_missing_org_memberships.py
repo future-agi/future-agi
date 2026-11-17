@@ -100,12 +100,12 @@ def create_missing_org_memberships(apps, schema_editor):
     created = 0
     for start in range(0, len(to_create), _BATCH_SIZE):
         batch = to_create[start : start + _BATCH_SIZE]
-        OrganizationMembership.objects.bulk_create(batch)
+        OrganizationMembership.objects.using(schema_editor.connection.alias).bulk_create(batch)
         created += len(batch)
 
     # Link freshly-created (and any other NULL-FK) active workspace memberships.
     null_ids = list(
-        WorkspaceMembership.objects.filter(
+        WorkspaceMembership.objects.using(schema_editor.connection.alias).filter(
             organization_membership__isnull=True
         ).values_list("id", flat=True)
     )

@@ -55,7 +55,7 @@ from pathlib import Path, PurePosixPath
 from typing import (Any, Callable, Collection, Dict, Iterable, Iterator, List, Mapping, Optional, Sequence, TextIO,
                     Tuple)
 
-from . import envfile
+from . import envfile, mcp_state_keys, pepper
 from .contracts import AutomationGuard, GuardBoundary, LockedContext, ReasonCode
 from .install import COMPONENT_VARIABLES, PRODUCTION_ENV, Installation, component_for
 from .manifest import (DEPLOYMENT_FILE_LIST, ManifestError, _skipped_in_directory_hash, component_tag, hash_path,
@@ -63,7 +63,7 @@ from .manifest import (DEPLOYMENT_FILE_LIST, ManifestError, _skipped_in_director
 from .plan import (BLOCKED, UP_TO_DATE, _manifest_of, cd_prefix, classify_strays, command_prefix, install_command,
                    jobs_text, on_release, plan_text, selected_keys, stray_states, unfinished)
 from .readiness import NotReady, Readiness, standalone_settings
-from .receipt import IDENTITY_FIELDS, StateDir, StateError, scrub
+from .receipt import IDENTITY_FIELDS, StateDir, StateError, scrub, secret_values
 from .settings import Settings
 
 STAGES_BEFORE_ROLLOUT = ("prepare", "env_written", "pulled")
@@ -87,7 +87,8 @@ _GIT_LOCATION_VARIABLES = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OB
 GIT_TIMEOUT_SECONDS = 120
 # A release's compose files, read at its tag: the paths they bind-mount or name as env files are its deployment
 # files too, whether or not its deployment-files.txt lists them (a release from before the list has none).
-RELEASE_COMPOSE_FILES = ("docker-compose.yml", "docker-compose.distributed.yml", "deploy/docker-compose.production.yml")
+RELEASE_COMPOSE_FILES = ("docker-compose.yml", "docker-compose.distributed.yml", "deploy/docker-compose.production.yml",
+                         "deploy/docker-compose.production.hub.yml")
 # ${VAR:-default} and ${VAR-default}: Compose reads the default with the variable unset.
 _COMPOSE_DEFAULT_RE = re.compile(r"\$\{[A-Za-z_][A-Za-z0-9_]*:?-([^}]*)\}")
 
@@ -551,6 +552,21 @@ def preview_recovery(installation: Installation, journal: Mapping[str, Any],
     return dict(journal, status=status), notes
 
 
+def production_pepper_refusal(installation: Installation) -> Optional[str]:
+    """Why bin/update --production refuses before planning (None: it does not).
+
+    The production overlay renders only with a pepper of the install's own,
+    and bin/update never writes a production env file: deploy/setup.sh sets
+    one, by the same rule (pepper.py).
+    """
+
+    if not installation.production or not pepper.replaced(installation.env.get(pepper.PEPPER)):
+        return None
+    env_name = installation.relative(installation.env_file)
+    command = f"{cd_prefix(installation)}./deploy/setup.sh --skip-up" if env_name == PRODUCTION_ENV else None
+    return pepper.production_text(env_name, command)
+
+
 class Updater:
     def __init__(self, installation: Installation, settings: Settings, state: StateDir, *,
                  out: TextIO = sys.stderr, readiness: Optional[Readiness] = None,
@@ -746,9 +762,110 @@ class Updater:
                 "journal without exact recovery data needs operator-assisted recovery from an independent backup; "
                 "found_values/previous_values cannot prove the original bytes") from exc
 
+    # ----------------------------------------------------- pepper step --
+    def _pepper_refusal(self) -> None:
+        """Refuse what the API secret pepper step must not do here (Blocked; GuardRefused when unattended).
+
+        Production installs were sent to deploy/setup.sh before planning. An
+        unattended run never writes the pepper: it refuses with
+        required_env_missing while the install has none of its own, and the
+        operator runs `bin/update apply` by hand (README, the reason table). A
+        manual run refuses a shell export of either name, which Compose would
+        prefer to the env file, and env file syntax the step cannot rewrite.
+        """
+
+        if self.installation.production:
+            return
+        if self.automation_guard is not None:
+            from .orchestrator import GuardRefused
+            try:
+                needed = pepper.replaced(pepper.read_values(self.installation.env_file)[0])
+            except (pepper.PepperRefused, envfile.EnvFileError):
+                needed = True
+            if needed:
+                raise GuardRefused(ReasonCode.REQUIRED_ENV_MISSING)
+            return
+        names = pepper.exported(self.installation.environ)
+        if names:
+            raise Blocked(pepper.exported_text(names, self._env_name()))
+        try:
+            current, retired = pepper.read_values(self.installation.env_file)
+            if pepper.replaced(current):
+                pepper.retired_list(current, retired)
+        except pepper.PepperRefused as exc:
+            raise Blocked(f"{exc}. Nothing was changed") from None
+
+    def _set_pepper(self) -> bool:
+        """Give an install still on a published API secret pepper its own, in an env commit of its own.
+
+        pepper.py's rule (bin/install's): an unset, empty, published or
+        CHANGEME- FI_API_SECRET_PEPPER gets a new value, and the previous one
+        joins FI_API_SECRET_PEPPERS_RETIRED, both in ONE commit through the
+        primitives the update's own commit uses. It runs after the refusals and
+        before the backup and the update's env snapshot (_execute), so a
+        restore of that snapshot keeps it. Returns whether it wrote anything.
+        Unattended and production runs never write it.
+        """
+
+        if self.installation.production or self.automation_guard is not None:
+            return False
+        try:
+            current, retired = pepper.read_values(self.installation.env_file)
+            changes = pepper.rotation(current, retired)
+        except pepper.PepperRefused as exc:
+            raise Blocked(f"{exc}. Nothing was changed") from None
+        if changes is None:
+            return False
+        path = self._env_path()
+        literal = {key: envfile.Literal(value) for key, value in changes.items()}
+        recovery = envfile.recovery_record(path, literal)
+        try:
+            with signals_as_interrupt():
+                envfile.write_changes(path, literal, recovery=recovery)
+        except envfile.EnvCommitError as exc:
+            raise UpdateError(f"{exc}. Setting {pepper.PEPPER} stopped before the backup") from exc
+        self.installation.reload_env()
+        # A later failure's text may quote the new values: receipts scrub them too.
+        self.state.secrets = secret_values(self.installation.env)
+        self.say(pepper.set_text(self._env_name()))
+        return True
 
 
 
+
+
+    def _mcp_state_keys_refusal(self) -> None:
+        """Validate manual fills only; unattended paths retain their existing policy."""
+        if self.automation_guard is not None:
+            return
+        try:
+            mcp_state_keys.read_value(self.installation.env_file, self.installation.environ)
+        except mcp_state_keys.StateKeysRefused as exc:
+            raise Blocked(f"{exc}. Nothing was changed") from None
+
+    def _set_mcp_state_keys(self) -> bool:
+        """One manual env commit before backup, including production; never rotate lists."""
+        if self.automation_guard is not None:
+            return False
+        try:
+            current = mcp_state_keys.read_value(self.installation.env_file, self.installation.environ)
+            if current:
+                return False
+            value = mcp_state_keys.new_key()
+        except mcp_state_keys.StateKeysRefused as exc:
+            raise Blocked(f"{exc}. Nothing was changed") from None
+        path = self._env_path()
+        literal = {mcp_state_keys.NAME: envfile.Literal(value)}
+        recovery = envfile.recovery_record(path, literal)
+        try:
+            with signals_as_interrupt():
+                envfile.write_changes(path, literal, recovery=recovery)
+        except envfile.EnvCommitError as exc:
+            raise UpdateError(f"{exc}. Setting {mcp_state_keys.NAME} stopped before the backup") from exc
+        self.installation.reload_env()
+        self.state.secrets = secret_values(self.installation.env)
+        self.say(f"Set {mcp_state_keys.NAME} in its own env commit before the backup")
+        return True
 
     def _check_journal_owner(self, journal: Mapping[str, Any], again: str = "") -> None:
         """Only the install a run was for may recover it (its env file holds the keys to put back).
@@ -1500,6 +1617,9 @@ class Updater:
                         raise GuardRefused(ReasonCode.BACKUP_REQUIRED) from None
                 else:
                     self._backup_preflight(backup_command, allow_no_backup)
+            self._pepper_refusal()
+            if not dry_run:
+                self._mcp_state_keys_refusal()
         except Blocked as exc:
             return exc
         return None
@@ -2125,6 +2245,11 @@ class Updater:
                 require(not stage and not dry_run and not allow_no_backup and backup_command is None,
                         ReasonCode.CONTROL_INVALID)
                 return self._apply_automatic_scope_locked(make_plan, manifest)
+            if self.installation.production and self.automation_guard is None:
+                # Its overlay renders only with a pepper of its own: nothing can be planned without one.
+                refused = production_pepper_refusal(self.installation)
+                if refused is not None:
+                    raise Blocked(refused)
             notes: List[str] = []
             if not dry_run:
                 self._guard('before_recovery')
@@ -2170,6 +2295,9 @@ class Updater:
             if dry_run:
                 self.say(self._dry_run_text(plan, resumed, stage))
                 return None
+            # Independent env commits, after refusals and before backup and the update snapshot.
+            self._set_mcp_state_keys()
+            self._set_pepper()
             self._guard('before_backup')
             target = plan["target_version"]
             items = plan["components"]
@@ -2250,7 +2378,65 @@ class Updater:
                 self.say(self._staged_text(target, expected, path))
             else:
                 self.say(f"Updated to {target}. Receipt: {path}")
+                self._harness_versions_backfill()
             return path
+
+    def _harness_versions_backfill(self) -> None:
+        """Run the harness versions backfill once, after a manual apply restarted the stack.
+
+        The one-shot operator command ./bin/install runs (SERVICE_TYPE=bootstrap,
+        STARTUP_DB_MUTATION_MODE=operator) in the app service: `app` on Standalone,
+        `backend` on Distributed and production (install.py's markers of each
+        stack). Only the state and counts of its last result line are printed. It
+        reports and never fails: the apply's result, receipt and journal stay as
+        they are, and the message names the command to run it again. A run under
+        an automation guard (scheduled) never starts it: an unattended database
+        change needs its own qualification.
+        """
+
+        if self.automation_guard is not None:
+            return
+        from .install import DISTRIBUTED_ONLY_SERVICES, STANDALONE_ONLY_SERVICES
+        service = (STANDALONE_ONLY_SERVICES[0] if self.installation.mode == "standalone"
+                   else DISTRIBUTED_ONLY_SERVICES[0])
+        words = ["exec", "-T", "-e", "SERVICE_TYPE=bootstrap", "-e", "STARTUP_DB_MUTATION_MODE=operator", service,
+                 "python", "manage.py", "harness_versions_backfill", "--auto"]
+        compose = self.installation.compose_hint()
+        again = f"Run it again with: {compose} {' '.join(words)}"
+        try:
+            result = self.installation.compose_run(*words, check=False)
+        except Exception as exc:  # cannot start it, or ownership changed: report, the update stands
+            # The error's type only: its text could carry a command line.
+            self.say(f"Warning: the harness versions backfill could not run ({type(exc).__name__}). "
+                     f"The update is done. {again}")
+            return
+        line = ""
+        for text in result.stdout.splitlines():
+            if text.startswith("Harness versions backfill: state="):
+                line = text
+        found = re.match(r"Harness versions backfill: state=([a-z_]+)", line)
+        state = found.group(1) if found else ""
+        numbers = {}
+        for key in ("total", "processed", "succeeded", "failed", "skipped", "busy_organizations"):
+            count = re.search(rf"(?:^|\s){key}=(\d+)(?=\s|$)", line)
+            if count:
+                numbers[key] = count.group(1)
+        counts = "".join(f" {key}={value}" for key, value in numbers.items())
+        if result.returncode == 0 and state == "complete":
+            self.say(f"Harness versions backfilled ({numbers.get('processed', '0')} environments)")
+        elif result.returncode == 0 and state == "off":
+            self.say("Harness versioning is off (HARNESS_VERSIONING_ENABLED=false); no backfill")
+        elif result.returncode == 0 and state == "already_running":
+            self.say("A backfill is already running; check versioning status for progress.")
+        elif result.returncode == 0 and not state:
+            self.say(f"Warning: the harness versions backfill printed no result. {again}")
+        elif result.returncode == 0:
+            self.say(f"Warning: the harness versions backfill ended with state={state}{counts}. {again}")
+        else:
+            shown = f", state={state}{counts}" if state else ""
+            self.say(f"Warning: harness versions backfill failed (exit {result.returncode}{shown}). The update is "
+                     f"done. It is a one-shot command in the {service} service; its service log: "
+                     f"{compose} logs {service}. {again}")
 
     @staticmethod
     def _component_record(item: Mapping[str, Any]) -> Dict[str, Any]:

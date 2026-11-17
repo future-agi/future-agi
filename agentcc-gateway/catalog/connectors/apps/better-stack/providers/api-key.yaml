@@ -1,0 +1,44 @@
+schema: "connector-manifest/v1#provider"
+app: better-stack
+id: api-key
+version: 1.1.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.betterstack.com
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: API token
+      help: "Create an API token in Better Stack's API tokens settings. Its scope controls accessible resources. Read & write access is required to create, modify or remove monitors, heartbeats, escalation policies and catalog data."
+      helpUrl: https://betterstack.com/docs/getting-started/integrations/mcp/
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_metered
+  source: https://betterstack.com/pricing
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://betterstack.com/docs/getting-started/integrations/mcp/
+    fetchedAt: 2026-11-09
+  - fact: transport.variant
+    url: https://betterstack.com/docs/getting-started/integrations/mcp/
+    fetchedAt: 2026-11-09
+  - fact: auth.kind
+    url: https://betterstack.com/docs/getting-started/integrations/mcp/
+    fetchedAt: 2026-11-09
+  - fact: auth.credentialParts
+    url: https://betterstack.com/docs/getting-started/integrations/mcp/
+    fetchedAt: 2026-11-09

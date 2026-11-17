@@ -7,6 +7,7 @@ from simulate.models.agent_optimiser import AgentOptimiser
 from simulate.models.agent_version import AgentVersion
 from simulate.models.run_test import RunTest
 from simulate.semantics import validate_provider_sent_objects
+from simulate.utils.ended_reason import ENDED_REASON_SOURCE_KEY
 from tfc.utils.base_model import BaseModel, Deprecated
 
 from .agent_definition import AgentDefinition, AgentTypeChoices
@@ -553,6 +554,19 @@ class CallExecution(BaseModel):
         "conversation_metrics_data",
     ]
 
+    # The call metadata a rerun clears with the fields above: the previous
+    # result's evaluation stamps and dispatch failure, its skip state, and
+    # where its reason came from. The rerun writes its own.
+    RESET_METADATA_KEYS = (
+        "eval_started",
+        "eval_completed",
+        "eval_queued",
+        "eval_dispatch_failed",
+        "processing_skipped",
+        "processing_skip_reason",
+        ENDED_REASON_SOURCE_KEY,
+    )
+
     def reset_to_default(self, save: bool = True):
         """
         Reset call execution fields to their default values for rerun.
@@ -606,14 +620,8 @@ class CallExecution(BaseModel):
 
         if not isinstance(self.call_metadata, dict):
             self.call_metadata = {}
-        self.call_metadata.pop("eval_started", None)
-        self.call_metadata.pop("eval_completed", None)
-        # The previous result's dispatch stamps and dispatch failure; the
-        # rerun's dispatch writes its own.
-        self.call_metadata.pop("eval_queued", None)
-        self.call_metadata.pop("eval_dispatch_failed", None)
-        self.call_metadata.pop("processing_skipped", None)
-        self.call_metadata.pop("processing_skip_reason", None)
+        for key in self.RESET_METADATA_KEYS:
+            self.call_metadata.pop(key, None)
 
         if save:
             self.save()

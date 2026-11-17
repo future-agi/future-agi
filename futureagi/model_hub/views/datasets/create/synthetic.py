@@ -2,8 +2,13 @@ import traceback
 import uuid
 
 import structlog
+from django.db import transaction
 from django.db.models import Q
+from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.views import APIView
+
 from model_hub.models.choices import CellStatus, SourceChoices, StatusType
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from model_hub.serializers.contracts import (
@@ -25,10 +30,9 @@ from model_hub.tasks.develop_dataset import (
     generate_new_rows,
 )
 from model_hub.utils.synthetic_task_manager import SyntheticTaskManager
+from model_hub.utils.workspace_scope import knowledge_base_in_scope
 from model_hub.views.utils.dataset_limit import dataset_add_refusal
 from model_hub.views.utils.synthetic_data import determine_data_type_syn_data
-from rest_framework.permissions import IsAuthenticated
-from rest_framework.views import APIView
 from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_serializers import DatasetLimitCheckFailedErrorSerializer
@@ -55,7 +59,9 @@ def _request_organization(request):
 def _request_workspace_filter(request, field_name="workspace"):
     workspace = getattr(request, "workspace", None)
     if not workspace:
-        return Q()
+        from tfc.utils.workspace_scope import empty_workspace_filter
+
+        return empty_workspace_filter()
 
     if getattr(workspace, "is_default", False):
         return (
@@ -117,6 +123,8 @@ class CreateSyntheticDataset(APIView):
             validated_data = request.validated_data
             dataset_name = validated_data["dataset"]["name"]
             organization = _request_organization(request)
+            if validated_data.get("kb_id") and not knowledge_base_in_scope(request, validated_data["kb_id"]):
+                return self._gm.not_found("Knowledge base not found")
 
             # SyntheticDataAgent requires the ee module.
             try:
@@ -131,7 +139,6 @@ class CreateSyntheticDataset(APIView):
             if _request_dataset_queryset(request).filter(name=dataset_name).exists():
                 return self._gm.bad_request(get_error_message("DATASET_EXIST_IN_ORG"))
 
-            # if len(set(validated_data['columns']) != len(validated_data['columns'])):
             if len({col["name"] for col in validated_data["columns"]}) != len(
                 validated_data["columns"]
             ):
@@ -280,16 +287,35 @@ class GetSyntheticDatasetConfigView(APIView):
     permission_classes = [IsAuthenticated]
 
     @swagger_auto_schema(
+        manual_parameters=[
+            openapi.Parameter(
+                "generation_mode",
+                openapi.IN_QUERY,
+                type=openapi.TYPE_STRING,
+                enum=["append"],
+                required=False,
+            )
+        ],
         responses={
             200: SyntheticDatasetConfigResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
-        }
+        },
     )
     def get(self, request, dataset_id, *args, **kwargs):
         try:
             dataset = _request_dataset_queryset(request).filter(id=dataset_id).first()
             if not dataset:
                 return self._gm.not_found(get_error_message("DATASET_NOT_FOUND"))
+
+            if request.query_params.get("generation_mode") == "append":
+                from model_hub.services.row_generation import saved_generation_config
+
+                return self._gm.success_response(
+                    {
+                        "message": "Row generation configuration",
+                        "data": saved_generation_config(dataset) or {},
+                    }
+                )
 
             # Check if this is a synthetic dataset (has synthetic_dataset_config)
             if not dataset.synthetic_dataset_config:
@@ -326,6 +352,15 @@ class UpdateSyntheticDatasetConfigView(APIView):
     def put(self, request, dataset_id, *args, **kwargs):
         try:
             validated_data = request.validated_data
+            if validated_data.get("generation_mode") == "append":
+                from model_hub.views.datasets.add_rows.append_generation import (
+                    append_generation_response,
+                )
+
+                return append_generation_response(request, dataset_id, regenerate=True)
+
+            if validated_data.get("kb_id") and not knowledge_base_in_scope(request, validated_data["kb_id"]):
+                return self._gm.not_found("Knowledge base not found")
 
             if len({col["name"] for col in validated_data["columns"]}) != len(
                 validated_data["columns"]
@@ -339,11 +374,19 @@ class UpdateSyntheticDatasetConfigView(APIView):
             if not dataset:
                 return self._gm.not_found(get_error_message("DATASET_NOT_FOUND"))
 
+            if validated_data.get("kb_id") and not knowledge_base_in_scope(
+                request, validated_data.get("kb_id")
+            ):
+                return self._gm.not_found("Knowledge base not found")
+
             # Check if this is a synthetic dataset (has synthetic_dataset_config)
             if not dataset.synthetic_dataset_config:
                 return self._gm.bad_request(
                     get_error_message("NOT_A_SYNTHETIC_DATASET")
                 )
+
+            if validated_data.get("generation_mode") == "append_synthetic":
+                return self._append_rows(request, dataset_id, validated_data)
 
             task_manager = SyntheticTaskManager()
 
@@ -547,7 +590,9 @@ class UpdateSyntheticDatasetConfigView(APIView):
                 call_log_row.save()
 
             if new_row_count > current_row_count:
-                last_row = existing_rows.order_by("-order").first()
+                last_row = (
+                    Row.all_objects.filter(dataset=dataset).order_by("-order").first()
+                )
                 max_order = last_row.order if last_row else -1
 
                 new_rows = [
@@ -649,3 +694,134 @@ class UpdateSyntheticDatasetConfigView(APIView):
             return self._gm.internal_server_error_response(
                 get_error_message("FAILED_TO_UPDATE_SYNTHETIC_DATASET_CONFIG")
             )
+
+
+    @transaction.atomic
+    def _append_rows(self, request, dataset_id, validated_data):
+        """Append an editor batch without reconciling or regenerating saved data."""
+        dataset = (
+            _request_dataset_queryset(request)
+            .select_for_update(of=("self",))
+            .filter(id=dataset_id)
+            .first()
+        )
+        if not dataset:
+            return self._gm.not_found(get_error_message("DATASET_NOT_FOUND"))
+        if not dataset.synthetic_dataset_config:
+            return self._gm.bad_request(get_error_message("NOT_A_SYNTHETIC_DATASET"))
+
+        new_name = validated_data["dataset"]["name"]
+        if (
+            new_name != dataset.name
+            and _request_dataset_queryset(request)
+            .filter(name=new_name)
+            .exclude(id=dataset.id)
+            .exists()
+        ):
+            return self._gm.bad_request(get_error_message("DATASET_EXIST_IN_ORG"))
+
+        count = validated_data["num_rows"]
+        if log_and_deduct_cost_for_resource_request is not None:
+            call_log_row = log_and_deduct_cost_for_resource_request(
+                _request_organization(request),
+                api_call_type=APICallTypeChoices.ROW_ADD.value,
+                config={"total_rows": count},
+                workspace=request.workspace,
+            )
+            if (
+                call_log_row is None
+                or call_log_row.status == APICallStatusChoices.RESOURCE_LIMIT.value
+            ):
+                return self._gm.too_many_requests(ROW_LIMIT_REACHED_MESSAGE)
+            call_log_row.status = APICallStatusChoices.SUCCESS.value
+            call_log_row.save()
+
+        columns = list(Column.objects.filter(dataset=dataset, deleted=False))
+        existing_names = {column.name for column in columns}
+        gen_columns = [c for c in validated_data["columns"] if not c.get("skip", False)]
+        generated_names = {column["name"] for column in gen_columns}
+        column_order = list(dataset.column_order or [])
+        column_config = dict(dataset.column_config or {})
+        new_columns = []
+        for spec in validated_data["columns"]:
+            if spec["name"] in existing_names:
+                continue
+            column = Column.objects.create(
+                id=uuid.uuid4(),
+                dataset=dataset,
+                name=spec["name"],
+                data_type=determine_data_type_syn_data(spec["data_type"]),
+                source=SourceChoices.OTHERS.value,
+                status=(
+                    StatusType.RUNNING.value
+                    if spec["name"] in generated_names
+                    else StatusType.COMPLETED.value
+                ),
+            )
+            columns.append(column)
+            new_columns.append(column)
+            column_order.append(str(column.id))
+            column_config[str(column.id)] = {"is_visible": True, "is_frozen": None}
+
+        # New schema fields get empty cells on old rows, never generation jobs.
+        if new_columns:
+            existing_rows = list(Row.objects.filter(dataset=dataset, deleted=False))
+            Cell.objects.bulk_create([
+                Cell(
+                    id=uuid.uuid4(), dataset=dataset, row=row, column=column,
+                    value=None, status=CellStatus.PASS.value,
+                )
+                for row in existing_rows
+                for column in new_columns
+            ])
+
+        last_row = Row.objects.filter(dataset=dataset).order_by("-order").first()
+        start_order = last_row.order + 1 if last_row else 0
+        new_rows = [
+            Row(id=uuid.uuid4(), dataset=dataset, order=start_order + i)
+            for i in range(count)
+        ]
+        Row.objects.bulk_create(new_rows)
+        Cell.objects.bulk_create([
+            Cell(
+                id=uuid.uuid4(), dataset=dataset, row=row, column=column,
+                value=None,
+                status=(
+                    CellStatus.RUNNING.value
+                    if column.name in generated_names
+                    else CellStatus.PASS.value
+                ),
+            )
+            for row in new_rows
+            for column in columns
+        ])
+
+        # Operation flags belong to this request, not the saved generation schema.
+        config = {
+            key: value for key, value in validated_data.items()
+            if key not in {"generation_mode", "regenerate"}
+        }
+        if config.get("kb_id"):
+            config["kb_id"] = str(config["kb_id"])
+        dataset.name = new_name
+        dataset.column_order = column_order
+        dataset.column_config = column_config
+        dataset.synthetic_dataset_config = config
+        dataset.save()
+
+        new_rows_id = [str(row.id) for row in new_rows]
+        transaction.on_commit(lambda: generate_new_rows.delay(
+            dataset_id=str(dataset.id),
+            validated_data={"dataset": dict(validated_data["dataset"]), "num_rows": count},
+            gen_columns=gen_columns,
+            new_rows_id=new_rows_id,
+        ))
+        return self._gm.success_response({
+            "message": "Synthetic dataset configuration updated successfully. Data generation started.",
+            "data": {
+                "dataset_id": str(dataset.id),
+                "dataset_name": dataset.name,
+                "num_rows": count,
+                "num_columns": len(columns),
+            },
+        })

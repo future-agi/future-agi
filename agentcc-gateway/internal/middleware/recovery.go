@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"bufio"
+	"errors"
 	"log/slog"
 	"net"
 	"net/http"
@@ -31,11 +32,19 @@ func (w *writerSentinel) Unwrap() http.ResponseWriter {
 	return w.ResponseWriter
 }
 
-// Flush delegates to the underlying ResponseWriter if it supports flushing.
+// Flush retains http.Flusher compatibility; controllers use FlushError so a
+// failed buffered flush is not mistaken for successful delivery.
 func (w *writerSentinel) Flush() {
-	if f, ok := w.ResponseWriter.(http.Flusher); ok {
-		f.Flush()
+	_ = w.FlushError()
+}
+
+func (w *writerSentinel) FlushError() error {
+	err := http.NewResponseController(w.ResponseWriter).Flush()
+	// A supported flush commits headers, even when delivering them fails.
+	if !errors.Is(err, http.ErrNotSupported) {
+		w.headersSent = true
 	}
+	return err
 }
 
 // Hijack delegates to the underlying ResponseWriter so WebSocket handlers can take over the

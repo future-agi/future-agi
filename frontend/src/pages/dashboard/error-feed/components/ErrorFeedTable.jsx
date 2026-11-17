@@ -3,6 +3,7 @@ import {
   Alert,
   Box,
   Button,
+  ButtonBase,
   Checkbox,
   IconButton,
   Stack,
@@ -16,17 +17,19 @@ import {
   Typography,
   useTheme,
 } from "@mui/material";
-import { useNavigate } from "react-router-dom";
+import { Link as RouterLink, useNavigate } from "react-router-dom";
 import { formatDistanceToNowStrict } from "date-fns";
 import Iconify from "src/components/iconify";
-import { RouterLink } from "src/routes/components";
-import { paths } from "src/routes/paths";
 import DataTablePagination from "src/components/data-table/DataTablePagination";
+import EmptyState from "src/components/empty-state";
+import ErrorState from "src/components/error-state";
+import { paths } from "src/routes/paths";
 import ErrorStatusChip from "./ErrorStatusChip";
 import ErrorSeverityBadge from "./ErrorSeverityBadge";
 import ErrorTrendSparkline from "./ErrorTrendSparkline";
+import { useErrorFeedList } from "src/api/errorFeed/error-feed";
 import { FEED_PAGE_STATE } from "../feedPageState";
-import { useErrorFeedStore } from "../store";
+import { useErrorFeedApiParams, useErrorFeedStore } from "../store";
 import PropTypes from "prop-types";
 import { ROW_HEIGHT } from "src/theme/sizes";
 
@@ -124,13 +127,23 @@ function FixLayerChip({ layer }) {
 }
 FixLayerChip.propTypes = { layer: PropTypes.string };
 
+// At a 1024 px window the list column is 792 px wide (sidebar 200, 16 px
+// gutters). The other headers need about 598 px unwrapped, so the Error
+// column's floor (and the table's) must leave the whole header in view: at
+// 340 / 900 px the header ran past the edge, cut at "Trend (1". The Error
+// column is `width: "auto"`, so on wider windows it still takes the spare
+// space; issue names ellipsize with a tooltip as before, and rows that need
+// more room scroll sideways in the container below.
+const ERROR_COLUMN_MIN_WIDTH = 180;
+const TABLE_MIN_WIDTH = 760;
+
 const COLUMNS = [
   {
     id: "error",
     label: "Error",
     sortable: false,
     width: "auto",
-    minWidth: 340,
+    minWidth: ERROR_COLUMN_MIN_WIDTH,
   },
   { id: "severity", label: "Severity", sortable: true, width: 100 },
   { id: "status", label: "Status", sortable: false, width: 118 },
@@ -159,6 +172,14 @@ function SortIcon({ active, dir }) {
   );
 }
 SortIcon.propTypes = { active: PropTypes.bool, dir: PropTypes.string };
+
+// Keyboard focus ring for the list's own controls (sort headers, issue
+// links), matching DataTablePagination's.
+const focusRing = {
+  outline: (t) =>
+    `2px solid ${t.palette.border?.focus || t.palette.primary.main}`,
+  outlineOffset: 2,
+};
 
 // ── skeleton rows ──────────────────────────────────────────────────────────
 function SkeletonRow() {
@@ -207,49 +228,29 @@ function SkeletonRow() {
   );
 }
 
-// ── empty state ────────────────────────────────────────────────────────────
-function EmptyState({ filtered }) {
+// ── empty and load-failed states ───────────────────────────────────────────
+// Checkbox column + data columns + actions column.
+const COLUMN_COUNT = COLUMNS.length + 2;
+
+const ERROR_FEED_DOCS_URL = "https://docs.futureagi.com/docs/error-feed";
+
+// An empty list only means "no errors in this window", never "all healthy":
+// name the window the list covers ("1" is the 24-hour option).
+const emptyTitle = (timeRange) => {
+  const days = Number(timeRange);
+  if (!days) return "No errors yet";
+  if (days === 1) return "No errors in the last 24 hours";
+  return `No errors in the last ${days} days`;
+};
+
+function StateRow({ children }) {
   return (
     <TableRow>
-      <TableCell colSpan={9} align="center" sx={{ py: 8 }}>
-        <Stack alignItems="center" gap={1.5}>
-          <Box
-            sx={{
-              width: 48,
-              height: 48,
-              borderRadius: "50%",
-              bgcolor: "action.hover",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            <Iconify
-              icon="solar:check-circle-linear"
-              width={24}
-              sx={{ color: "text.disabled" }}
-            />
-          </Box>
-          <Typography
-            typography="m3"
-            color="text.primary"
-            fontWeight="fontWeightMedium"
-          >
-            {filtered
-              ? "No errors match your filters"
-              : "No errors — everything looks good!"}
-          </Typography>
-          <Typography typography="s2" color="text.secondary">
-            {filtered
-              ? "Try adjusting your search or filter criteria."
-              : "Errors captured by Future AGI will appear here."}
-          </Typography>
-        </Stack>
-      </TableCell>
+      <TableCell colSpan={COLUMN_COUNT}>{children}</TableCell>
     </TableRow>
   );
 }
-EmptyState.propTypes = { filtered: PropTypes.bool };
+StateRow.propTypes = { children: PropTypes.node };
 
 // ── no Observe projects (TH-8209) ──────────────────────────────────────────
 // Shown only when the Observe catalog is empty AND the feed itself returned
@@ -261,93 +262,35 @@ const NO_PROJECTS_BODY =
 
 function NoProjectsState() {
   return (
-    <TableRow>
-      <TableCell colSpan={10} align="center" sx={{ py: 8 }}>
-        <Stack alignItems="center" gap={1.5} role="status">
-          <Box
-            sx={{
-              width: 48,
-              height: 48,
-              borderRadius: "50%",
-              bgcolor: "action.hover",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            <Iconify
-              icon="mdi:folder-plus-outline"
-              width={24}
-              sx={{ color: "text.disabled" }}
-            />
-          </Box>
-          <Typography
-            typography="m3"
-            color="text.primary"
-            fontWeight="fontWeightMedium"
-          >
-            {NO_PROJECTS_TITLE}
-          </Typography>
-          <Typography typography="s2" color="text.secondary">
-            {NO_PROJECTS_BODY}
-          </Typography>
-          <Stack direction="row" gap={1} sx={{ mt: 0.5 }}>
+    <StateRow>
+      <Box role="status">
+        <EmptyState
+          icon="mdi:folder-plus-outline"
+          title={NO_PROJECTS_TITLE}
+          description={NO_PROJECTS_BODY}
+          action={
             <Button
-              variant="contained"
-              size="small"
               component={RouterLink}
-              href={paths.dashboard.observe}
+              to={paths.dashboard.observe}
+              size="small"
+              variant="contained"
+              color="primary"
             >
               Open Observe
             </Button>
-            <Button
-              variant="outlined"
-              size="small"
-              component="a"
-              href="https://docs.futureagi.com/docs/error-feed"
-              target="_blank"
-              rel="noreferrer"
-            >
-              Error Feed docs
-            </Button>
-          </Stack>
-        </Stack>
-      </TableCell>
-    </TableRow>
-  );
-}
-
-// ── failed read (TH-8209) ──────────────────────────────────────────────────
-// A failed list or catalog read must never render success copy. Same Alert +
-// Retry pattern as the Observe page's tab error state.
-const FEED_FAILED_TITLE = "Couldn't load the Error Feed";
-
-function FeedErrorState({ onRetry }) {
-  return (
-    <TableRow>
-      <TableCell colSpan={10} sx={{ py: 4, px: 3 }}>
-        <Alert
-          severity="error"
-          role="alert"
-          action={
-            <Button color="inherit" size="small" onClick={onRetry}>
-              Retry
-            </Button>
           }
-        >
-          {FEED_FAILED_TITLE}
-        </Alert>
-      </TableCell>
-    </TableRow>
+          docsHref={ERROR_FEED_DOCS_URL}
+          docsLabel="Error Feed docs"
+        />
+      </Box>
+    </StateRow>
   );
 }
-FeedErrorState.propTypes = { onRetry: PropTypes.func };
+
+const FEED_FAILED_TITLE = "Couldn't load the Error Feed";
 
 // ── main component ─────────────────────────────────────────────────────────
 export default function ErrorFeedTable({
-  rows: rowsProp,
-  totalCount = 0,
-  isLoading = false,
   pageState = FEED_PAGE_STATE.FEED,
   onRetry,
   selected,
@@ -359,6 +302,16 @@ export default function ErrorFeedTable({
   const { sortBy, sortDir, setSortBy, page, pageSize, setPage } =
     useErrorFeedStore();
 
+  const apiParams = useErrorFeedApiParams();
+  const { data, isLoading, isError, isPaused, isPlaceholderData, refetch } =
+    useErrorFeedList(apiParams);
+  // Nothing to show because the request failed, or is waiting for a
+  // connection (React Query pauses offline instead of failing). Either way
+  // the list is unknown, so it must not read as "no errors".
+  const loadFailed = !data && (isError || isPaused);
+
+  const timeRange = useErrorFeedStore((s) => s.timeRange);
+  const clearFilters = useErrorFeedStore((s) => s.clearFilters);
   const isFiltered = useErrorFeedStore(
     (s) =>
       !!(
@@ -367,15 +320,40 @@ export default function ErrorFeedTable({
         s.selectedEnvironment ||
         s.selectedStatus ||
         s.selectedSeverity ||
-        s.selectedErrorType
+        s.selectedErrorType ||
+        s.selectedFixLayer ||
+        s.selectedSource
       ),
   );
 
-  const rows = useMemo(() => rowsProp ?? [], [rowsProp]);
-  const showError = pageState === FEED_PAGE_STATE.ERROR;
+  const rows = useMemo(() => data?.data ?? [], [data]);
+  const totalCount = data?.total ?? 0;
+  // A failed list or catalog read, or a list answer without its rows and
+  // total, shows the failure with Retry and never an empty list.
+  const showError = loadFailed || pageState === FEED_PAGE_STATE.ERROR;
   const showNoProjects = pageState === FEED_PAGE_STATE.NO_PROJECTS;
+  // The header checkbox reflects the rows on screen, not the size of the
+  // selection.
+  const visibleSelected = rows.filter((r) =>
+    selected.includes(r.cluster_id),
+  ).length;
+  // While a new search, filter, sort or page loads, the previous rows stay on
+  // screen. Skeletons only stand in when there are no rows to keep, so an
+  // earlier empty result never reads as the answer to the new query. They
+  // also stand in until both the list and the project list have answered.
   const showSkeleton =
-    !showError && (isLoading || pageState === FEED_PAGE_STATE.LOADING);
+    isLoading ||
+    pageState === FEED_PAGE_STATE.LOADING ||
+    (isPlaceholderData && rows.length === 0);
+  // Those kept rows belong to the previous query, and the view has already
+  // dropped the selection for it. A row ticked now would stay selected after
+  // the new rows replace it, so selection waits for them.
+  const selectionLocked = Boolean(isPlaceholderData);
+  // Offline, React Query holds the request for the new search, filter, sort
+  // or page until the connection is back, and the previous query's rows stay
+  // on screen meanwhile. Say so: otherwise they read as the answer to the new
+  // query, under a "Loading page…" that never ends.
+  const waitingForConnection = Boolean(isPlaceholderData && isPaused);
 
   const handleRowClick = useCallback(
     (clusterId) => {
@@ -390,6 +368,13 @@ export default function ErrorFeedTable({
 
   return (
     <>
+      {waitingForConnection && (
+        <Alert severity="warning" role="status" sx={{ flexShrink: 0 }}>
+          {rows.length > 0
+            ? "You're offline. These results are from before your last change and will update when you reconnect."
+            : "You're offline. Results will load when you reconnect."}
+        </Alert>
+      )}
       <TableContainer
         sx={{
           flex: 1,
@@ -397,7 +382,7 @@ export default function ErrorFeedTable({
           overflowY: "auto",
         }}
       >
-        <Table stickyHeader size="small" sx={{ minWidth: 900 }}>
+        <Table stickyHeader size="small" sx={{ minWidth: TABLE_MIN_WIDTH }}>
           {/* ── header ── */}
           <TableHead>
             <TableRow
@@ -420,10 +405,11 @@ export default function ErrorFeedTable({
               <TableCell padding="checkbox" sx={{ width: 40 }}>
                 <Checkbox
                   size="small"
+                  disabled={selectionLocked}
                   indeterminate={
-                    selected.length > 0 && selected.length < rows.length
+                    visibleSelected > 0 && visibleSelected < rows.length
                   }
-                  checked={rows.length > 0 && selected.length === rows.length}
+                  checked={rows.length > 0 && visibleSelected === rows.length}
                   onChange={(e) =>
                     onSelectAll(
                       e.target.checked,
@@ -435,21 +421,24 @@ export default function ErrorFeedTable({
               {COLUMNS.map((col) => (
                 <TableCell
                   key={col.id}
+                  // Sets aria-sort on the sorted column's header.
+                  sortDirection={
+                    col.sortable && sortBy === col.id ? sortDir : false
+                  }
                   sx={{ width: col.width, minWidth: col.minWidth }}
                 >
                   {col.sortable ? (
-                    <Stack
-                      direction="row"
-                      alignItems="center"
-                      gap={0.25}
-                      sx={{
-                        cursor: "pointer",
-                        userSelect: "none",
-                        width: "fit-content",
-                      }}
+                    <ButtonBase
+                      disableRipple
                       onClick={() => setSortBy(col.id)}
+                      sx={{
+                        gap: 0.25,
+                        borderRadius: "4px",
+                        "&.Mui-focusVisible": focusRing,
+                      }}
                     >
                       <Typography
+                        component="span"
                         typography="s3"
                         fontWeight="fontWeightMedium"
                         color="text.secondary"
@@ -457,7 +446,7 @@ export default function ErrorFeedTable({
                         {col.label}
                       </Typography>
                       <SortIcon active={sortBy === col.id} dir={sortDir} />
-                    </Stack>
+                    </ButtonBase>
                   ) : (
                     <Typography
                       typography="s3"
@@ -476,7 +465,14 @@ export default function ErrorFeedTable({
           {/* ── body ── */}
           <TableBody>
             {showError ? (
-              <FeedErrorState onRetry={onRetry} />
+              <StateRow>
+                <ErrorState
+                  role="alert"
+                  title={FEED_FAILED_TITLE}
+                  detail="Try again. If it keeps failing, check your connection."
+                  onRetry={onRetry ?? (() => refetch())}
+                />
+              </StateRow>
             ) : showSkeleton ? (
               Array.from({ length: pageSize }).map((_, i) => (
                 <SkeletonRow key={i} />
@@ -484,7 +480,33 @@ export default function ErrorFeedTable({
             ) : showNoProjects ? (
               <NoProjectsState />
             ) : rows.length === 0 ? (
-              <EmptyState filtered={isFiltered} />
+              <StateRow>
+                {isFiltered ? (
+                  <EmptyState
+                    variant="no-results"
+                    title="No errors match your filters"
+                    description="Try a different search or filter."
+                    onClearFilters={clearFilters}
+                  />
+                ) : (
+                  <EmptyState
+                    title={emptyTitle(timeRange)}
+                    description="Errors appear once a tracing project sends traces and the scanner or an eval task runs."
+                    action={
+                      <Button
+                        component={RouterLink}
+                        to={paths.dashboard.observe}
+                        size="small"
+                        variant="contained"
+                        color="primary"
+                      >
+                        Open Tracing
+                      </Button>
+                    }
+                    docsHref={ERROR_FEED_DOCS_URL}
+                  />
+                )}
+              </StateRow>
             ) : (
               rows.map((row) => {
                 const isSelected = selected.includes(row.cluster_id);
@@ -515,6 +537,7 @@ export default function ErrorFeedTable({
                     >
                       <Checkbox
                         size="small"
+                        disabled={selectionLocked}
                         checked={isSelected}
                         onChange={(e) =>
                           onSelect(row.cluster_id, e.target.checked)
@@ -529,12 +552,18 @@ export default function ErrorFeedTable({
                         gap={0.5}
                         justifyContent="center"
                       >
+                        {/* A real link, so the issue opens from the keyboard
+                            too. The row's click would open it a second time,
+                            so the link keeps its click to itself. */}
                         <Tooltip
                           title={row.error.name}
                           placement="top-start"
                           arrow
                         >
                           <Typography
+                            component={RouterLink}
+                            to={`/dashboard/error-feed/${row.cluster_id}`}
+                            onClick={(e) => e.stopPropagation()}
                             typography="s2_1"
                             fontWeight="fontWeightMedium"
                             color="text.primary"
@@ -544,6 +573,8 @@ export default function ErrorFeedTable({
                               whiteSpace: "nowrap",
                               maxWidth: 420,
                               display: "block",
+                              textDecoration: "none",
+                              "&:focus-visible": focusRing,
                             }}
                           >
                             {row.error.name}
@@ -625,9 +656,13 @@ export default function ErrorFeedTable({
 
                     {/* Actions */}
                     <TableCell onClick={(e) => e.stopPropagation()}>
+                      {/* Hover-only shortcut. Keyboard users open the issue
+                          from its name link, so focus never lands here while
+                          it is invisible. */}
                       <Tooltip title="View details" arrow>
                         <IconButton
                           size="small"
+                          tabIndex={-1}
                           sx={{
                             opacity: 0,
                             transition: "opacity 0.15s",
@@ -653,6 +688,7 @@ export default function ErrorFeedTable({
           page={page}
           pageSize={pageSize}
           total={totalCount}
+          loading={isPlaceholderData && !isPaused}
           onPageChange={setPage}
           onPageSizeChange={(size) =>
             useErrorFeedStore.setState({ pageSize: size, page: 0 })
@@ -664,9 +700,6 @@ export default function ErrorFeedTable({
 }
 
 ErrorFeedTable.propTypes = {
-  rows: PropTypes.arrayOf(PropTypes.object),
-  totalCount: PropTypes.number,
-  isLoading: PropTypes.bool,
   pageState: PropTypes.oneOf(Object.values(FEED_PAGE_STATE)),
   onRetry: PropTypes.func,
   selected: PropTypes.arrayOf(PropTypes.string),

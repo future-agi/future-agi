@@ -55,10 +55,19 @@ const missingPaths = missingFrom(
   new Set(Object.keys(previous.paths || {})),
   new Set(Object.keys(generated.paths || {})),
 );
+// The retired bootstrap deliberately removes its two pair-bearing schemas.
+// Keep every unrelated definition protected by the surface-shrink guard.
+const bootstrap = generated.paths?.["/accounts/keys/"]?.get?.responses || {};
+const personalKeysOnly =
+  bootstrap["410"]?.schema?.$ref === "#/definitions/SecretKeysRetiredResponse" &&
+  !Object.keys(bootstrap).some((code) => code.startsWith("2"));
+const retiredDefinitions = new Set(
+  personalKeysOnly ? ["SecretKeysResponse", "SecretKeyDataResponse"] : [],
+);
 const missingDefinitions = missingFrom(
   new Set(Object.keys(previous.definitions || {})),
   new Set(Object.keys(generated.definitions || {})),
-);
+).filter((name) => !retiredDefinitions.has(name));
 const missingOperations = missingFrom(
   operationSet(previous),
   operationSet(generated),

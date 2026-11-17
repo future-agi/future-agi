@@ -842,6 +842,26 @@ def _enroll(store, context, settings, *, status_overlay=False):
     _retry_busy(lambda: store.register(registration))
 
 
+def setup_refusal_lines(reason, not_covered=()):
+    """What setup prints when it refuses: fixed text, never exception text, paths or env values.
+
+    not_covered holds service names from the fixed layout file only."""
+    lines = ['Setup incomplete: ' + reason + '. Unattended work was not activated by this action.']
+    if not_covered:
+        lines.append('Automatic updates are not available for this install in this release: it runs '
+                     + ', '.join(not_covered)
+                     + ', which automatic updates do not cover (every default Standalone install runs code-executor; '
+                     'the hub profile runs hub-checker and hub-runner). Update it by hand instead: ./bin/update '
+                     '(check, then apply) for a signed release, or git pull and ./bin/install (add --from-source '
+                     'if you built from source). The install and its .env were not changed.')
+        return lines
+    lines.append('Check host Python 3.9+, Compose v2, host cosign v3+, signed current image/digest, fixed state probes, '
+                 'local Docker storage and private backup destination. Extra mounts/status overlays, source builds '
+                 'and unsupported profiles require manual updates. Keep all private evidence; retry the same setup '
+                 'after resolving the prerequisite. No packages or host permissions were changed.')
+    return lines
+
+
 def _setup(args, store):
     from .enrollment import setup_automation, setup_summary
     from .standalone_backup import BackupError
@@ -868,11 +888,8 @@ def _setup(args, store):
             VerificationError, DiscoveryError, BackupError, CommitError, OSError, ValueError) as exc:
         reason = getattr(exc, 'reason_code', 'setup_prerequisite_unavailable')
         reason = reason.value if isinstance(reason, ReasonCode) else str(reason)
-        print('Setup incomplete: ' + reason + '. Unattended work was not activated by this action.')
-        print('Check host Python 3.9+, Compose v2, host cosign v3+, signed current image/digest, fixed state probes, '
-              'local Docker storage and private backup destination. Extra mounts/status overlays, source builds '
-              'and unsupported profiles require manual updates. Keep all private evidence; retry the same setup '
-              'after resolving the prerequisite. No packages or host permissions were changed.')
+        for line in setup_refusal_lines(reason, getattr(exc, 'not_covered', ())):
+            print(line)
         return 3
     print('Setup ' + result.state + '; scheduler=' + result.scheduler + '; policy=' + result.policy_state + '.')
     if result.reason:

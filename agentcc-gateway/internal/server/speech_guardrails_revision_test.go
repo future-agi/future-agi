@@ -161,7 +161,7 @@ func TestSpeechGuardrailsWebhookAvailability(t *testing.T) {
 				}
 			}))
 			defer dependency.Close()
-			check := webhook.New("speech-test", map[string]interface{}{"url": dependency.URL})
+			check := webhook.NewConfigFileRule("speech-test", map[string]interface{}{"url": dependency.URL})
 			f := newSpeechFixture(t, "cartesia", "pre", "static", "block", nil, speechRule(check, 1))
 			client, _, err := f.dial(t, "/cartesia/tts/websocket", nil)
 			if err != nil {
@@ -200,10 +200,10 @@ func TestSpeechGuardrailsUnavailableConfigurationBeforeDial(t *testing.T) {
 		status int
 		code   string
 	}{
-		{"credentials", futureagi.New("speech-test", map[string]interface{}{"base_url": "http://127.0.0.1:9", "eval_id": "synthetic"}), 503, "guardrail_unavailable"},
-		{"eval_ids", futureagi.New("speech-test", map[string]interface{}{"base_url": "http://127.0.0.1:9", "api_key": "synthetic", "secret_key": "synthetic"}), 503, "guardrail_unavailable"},
-		{"webhook_url", webhook.New("speech-test", nil), 503, "guardrail_unavailable"},
-		{"external_unvalidated", external.New("speech-test", nil), 403, "realtime_guardrail_unsupported"},
+		{"credentials", futureagi.NewConfigFileRule("speech-test", map[string]interface{}{"base_url": "http://127.0.0.1:9", "eval_id": "synthetic"}), 503, "guardrail_unavailable"},
+		{"eval_ids", futureagi.NewConfigFileRule("speech-test", map[string]interface{}{"base_url": "http://127.0.0.1:9", "api_key": "synthetic", "secret_key": "synthetic"}), 503, "guardrail_unavailable"},
+		{"webhook_url", webhook.NewConfigFileRule("speech-test", nil), 503, "guardrail_unavailable"},
+		{"external_unvalidated", external.NewConfigFileRule("speech-test", nil), 403, "realtime_guardrail_unsupported"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newSpeechFixture(t, "cartesia", "pre", "static", "block", nil, speechRule(tc.check, 1))

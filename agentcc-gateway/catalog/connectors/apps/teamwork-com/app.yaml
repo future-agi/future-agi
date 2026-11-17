@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: teamwork-com
+version: 1.0.0
+name: Teamwork.com
+description: "Manage projects, tasks, time entries and team content in Teamwork.com."
+vendor:
+  name: Teamwork.com
+  domains: [teamwork.com]
+eeCategory: productivity
+group: other
+categories: [productivity, project-management]
+tags: [tasks, projects]
+docsUrl: https://github.com/teamwork/mcp/blob/main/docs/usage/claude-code.md
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://www.teamwork.com/ai/mcp/
+    fetchedAt: 2026-11-09

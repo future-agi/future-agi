@@ -1,0 +1,157 @@
+{
+  "trace": {
+    "id": "7e000000-0000-4000-8000-000000104402",
+    "name": "support-agent",
+    "project_id": "8e000000-0000-4000-8000-000000000001",
+    "session": "5e000000-0000-4000-8000-000000001044",
+    "tags": ["refund"],
+    "created_at": "2026-10-12T03:52:03.816Z"
+  },
+  "observation_spans": [
+    {
+      "observation_span": {
+        "id": "5f000000-0000-4000-8000-000000104402",
+        "trace_id": "7e000000-0000-4000-8000-000000104402",
+        "parent_span_id": null,
+        "name": "support-agent",
+        "observation_type": "agent",
+        "status": "OK",
+        "status_message": null,
+        "start_time": "2026-10-12T03:52:03.816Z",
+        "end_time": "2026-10-12T03:52:06.145Z",
+        "latency_ms": 2329,
+        "model": "gpt-4o-mini",
+        "provider": "openai",
+        "input": { "user_message": "Yes, that's it." },
+        "output": {
+          "reply": "I've refunded $39 for the kettle on A-3301 (refund RF-28814). It'll be back on your card in 5\u20137 business days."
+        },
+        "total_tokens": 1381,
+        "prompt_tokens": 949,
+        "completion_tokens": 432,
+        "cost": 0.0004016,
+        "span_attributes": {
+          "agent.graph": "Support Agent",
+          "agent.version": "v3",
+          "session.id": "chat-1044",
+          "turn": 2
+        },
+        "tags": ["refund"]
+      },
+      "children": [
+        {
+          "observation_span": {
+            "id": "5f000000-0001-4000-8000-000000104402",
+            "trace_id": "7e000000-0000-4000-8000-000000104402",
+            "parent_span_id": "5f000000-0000-4000-8000-000000104402",
+            "name": "classify_intent",
+            "observation_type": "llm",
+            "status": "OK",
+            "status_message": null,
+            "start_time": "2026-10-12T03:52:03.846Z",
+            "end_time": "2026-10-12T03:52:04.298Z",
+            "latency_ms": 452,
+            "model": "gpt-4o-mini",
+            "provider": "openai",
+            "input": "Yes, that's it.",
+            "output": { "intent": "refund_request", "order_ref": null },
+            "total_tokens": 746,
+            "prompt_tokens": 531,
+            "completion_tokens": 215,
+            "cost": 0.0002087,
+            "span_attributes": {},
+            "tags": []
+          },
+          "children": []
+        },
+        {
+          "observation_span": {
+            "id": "5f000000-0002-4000-8000-000000104402",
+            "trace_id": "7e000000-0000-4000-8000-000000104402",
+            "parent_span_id": "5f000000-0000-4000-8000-000000104402",
+            "name": "lookup_order",
+            "observation_type": "tool",
+            "status": "OK",
+            "status_message": null,
+            "start_time": "2026-10-12T03:52:04.313Z",
+            "end_time": "2026-10-12T03:52:05.097Z",
+            "latency_ms": 784,
+            "model": null,
+            "provider": null,
+            "input": { "order_id": "A-3301" },
+            "output": { "status": "delivered", "total": 39 },
+            "total_tokens": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "cost": 0,
+            "span_attributes": {},
+            "tags": []
+          },
+          "children": []
+        },
+        {
+          "observation_span": {
+            "id": "5f000000-0003-4000-8000-000000104402",
+            "trace_id": "7e000000-0000-4000-8000-000000104402",
+            "parent_span_id": "5f000000-0000-4000-8000-000000104402",
+            "name": "issue_refund",
+            "observation_type": "tool",
+            "status": "OK",
+            "status_message": null,
+            "start_time": "2026-10-12T03:52:05.112Z",
+            "end_time": "2026-10-12T03:52:05.331Z",
+            "latency_ms": 219,
+            "model": null,
+            "provider": null,
+            "input": {
+              "order_id": "A-3301",
+              "amount": 39,
+              "reason": "damaged"
+            },
+            "output": { "refund_id": "RF-28814", "status": "issued" },
+            "total_tokens": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "cost": 0,
+            "span_attributes": {},
+            "tags": []
+          },
+          "children": []
+        },
+        {
+          "observation_span": {
+            "id": "5f000000-0004-4000-8000-000000104402",
+            "trace_id": "7e000000-0000-4000-8000-000000104402",
+            "parent_span_id": "5f000000-0000-4000-8000-000000104402",
+            "name": "respond",
+            "observation_type": "llm",
+            "status": "OK",
+            "status_message": null,
+            "start_time": "2026-10-12T03:52:05.346Z",
+            "end_time": "2026-10-12T03:52:06.130Z",
+            "latency_ms": 784,
+            "model": "gpt-4o-mini",
+            "provider": "openai",
+            "input": "Write the reply.",
+            "output": "I've refunded $39 for the kettle on A-3301 (refund RF-28814). It'll be back on your card in 5\u20137 business days.",
+            "total_tokens": 635,
+            "prompt_tokens": 418,
+            "completion_tokens": 217,
+            "cost": 0.0001929,
+            "span_attributes": {},
+            "tags": []
+          },
+          "children": []
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "total_spans": 5,
+    "total_latency_ms": 2329,
+    "total_tokens": 1381,
+    "total_cost": 0.0004016,
+    "error_count": 0
+  },
+  "graph": {}
+}

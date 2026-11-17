@@ -247,23 +247,32 @@ test('CLI start exits while detached collector lives; CLI stop finalizes its sna
   assert.equal(await readFile(path.join(dir, 'redis-diagnostics.json'), 'utf8'), before);
 });
 
-test('workflow leaves suite and host proof adjacent; optional diagnostics cannot change their outcome', async () => {
+test('workflow keeps the held suite next to its publication; optional diagnostics cannot change its outcome or leave the runner', async () => {
   const workflow = YAML.parse(await readFile(new URL('../../.github/workflows/e2e-ci.yml', import.meta.url), 'utf8'));
   const steps = workflow.jobs.e2e.steps;
   const suite = steps.findIndex(step => step.name === 'Run E2E suite');
-  assert.equal(steps[suite].run, 'bin/e2e test');
+  assert.equal(steps[suite].run.trim(), 'bin/e2e test > "$E2E_VALUE_FREE_HELD" 2>&1');
   assert.equal(steps[suite].id, 'suite');
   assert.equal(steps[suite]['continue-on-error'], undefined);
   assert.equal(steps[suite - 1].name, 'Start Redis diagnostics');
-  assert.equal(steps[suite - 2].id, 'boot');
-  assert.equal(steps[suite + 1].name, 'Prove host update assertion fallibility');
-  assert.equal(steps[suite + 2].name, 'Upload host update fallibility evidence');
+  assert.equal(steps[suite - 2].name, 'Prepare the value-free registry');
+  assert.equal(steps[suite + 1].id, 'value_free_seal');
+  assert.equal(steps[suite + 2].name, 'Upload report');
   assert.equal(steps[suite + 3].name, 'Stop Redis diagnostics');
-  assert.equal(steps[suite + 4].name, 'Upload Redis diagnostics');
-  for (const index of [suite - 1, suite + 3, suite + 4]) assert.equal(steps[index]['continue-on-error'], true);
-  for (const index of [suite + 3, suite + 4]) assert.equal(steps[index].if, "${{ !cancelled() && steps.boot.outcome == 'success' }}");
-  assert.equal(steps[suite + 3].env.SUITE_OUTCOME, '${{ steps.suite.outcome }}');
-  assert.match(steps[suite - 1].run, / start --output-dir /);
-  assert.match(steps[suite + 3].run, / stop --output-dir .* --suite-outcome "\$SUITE_OUTCOME"$/);
-  assert.match(steps[suite + 4].with.path, /\/redis-diagnostics\/redis-diagnostics\.json$/);
+  for (const index of [suite - 1, suite + 3]) {
+    assert.equal(steps[index]['continue-on-error'], true);
+    assert.equal(steps[index].uses, undefined);
+    assert.equal(steps[index].with, undefined);
+  }
+  assert.equal(steps[suite - 1].if, undefined);
+  assert.equal(steps[suite + 3].if, "${{ !cancelled() && steps.boot.outcome == 'success' }}");
+  assert.deepEqual(steps[suite + 3].env, { SUITE_OUTCOME: '${{ steps.suite.outcome }}' });
+  assert.equal(steps[suite - 1].run, 'node e2e/scripts/redis-diagnostics.mjs start --output-dir "$RUNNER_TEMP/redis-diagnostics"');
+  assert.equal(steps[suite + 3].run,
+    'node e2e/scripts/redis-diagnostics.mjs stop --output-dir "$RUNNER_TEMP/redis-diagnostics" --suite-outcome "$SUITE_OUTCOME"');
+  // The diagnostics file stays on the runner: the only upload is the sealed report, and none takes $RUNNER_TEMP.
+  assert.deepEqual(steps.filter(step => step.uses?.startsWith('actions/upload-artifact@')).map(step => step.name), ['Upload report']);
+  for (const step of steps.filter(step => step.uses?.startsWith('actions/upload-artifact@')))
+    assert.doesNotMatch(String(step.with?.path ?? ''), /redis-diagnostics|RUNNER_TEMP/);
+  assert.equal(steps.filter(step => (step.run ?? '').includes('redis-diagnostics.mjs')).length, 2);
 });

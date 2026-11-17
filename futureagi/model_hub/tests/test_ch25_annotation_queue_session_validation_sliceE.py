@@ -67,6 +67,7 @@ import pytest
 # (test_ch25_trace_session_fields_reader): importing model_hub.tasks first avoids
 # an app-loading import cycle when the reader's lazy model import fires.
 import model_hub.tasks  # noqa: F401, E402
+from accounts.tests.hard_erase_fixture import migration_fixture_cursor
 
 REQUIRED_DB = "ch_rehearsal"
 
@@ -300,7 +301,7 @@ class TestAnnotationQueueSessionValidationSliceE:
             now = datetime.now(tz=UTC)
 
             # Guard: our synthetic ids must not pre-exist (true net manufacture).
-            with connection.cursor() as cur:
+            with migration_fixture_cursor(connection) as cur:
                 cur.execute(
                     "SELECT count(*) FROM tracer_project WHERE id = %s", [proj_e]
                 )
@@ -410,7 +411,7 @@ class TestAnnotationQueueSessionValidationSliceE:
                     _count(client, "SELECT count() FROM spans FINAL") == BASELINE_SPANS
                 )
                 # --- teardown → remove the synthetic PG chain (assert absent) -----
-                with connection.cursor() as cur:
+                with migration_fixture_cursor(connection) as cur:
                     cur.execute(
                         "DELETE FROM simulate_agent_definition WHERE id = %s",
                         [agent_def_id],

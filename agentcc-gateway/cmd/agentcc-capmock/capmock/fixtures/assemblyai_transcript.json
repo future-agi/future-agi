@@ -1,0 +1,10 @@
+{
+  "id": "{{id}}",
+  "status": "completed",
+  "audio_url": "{{audio_url}}",
+  "text": "hello from the capability mock",
+  "confidence": 0.97,
+  "audio_duration": 3,
+  "language_code": "en_us",
+  "words": [{ "text": "hello", "start": 100, "end": 400, "confidence": 0.99 }]
+}

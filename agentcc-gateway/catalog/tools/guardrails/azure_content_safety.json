@@ -1,0 +1,32 @@
+{
+  "vendor": "azure_content_safety",
+  "capability": "guardrails",
+  "skus": [
+    {
+      "sku": "azure_content_safety.text_record",
+      "unit": "request",
+      "usd_per_unit": 0.000375,
+      "free_on_failure": false
+    },
+    {
+      "sku": "azure_content_safety.image",
+      "unit": "image",
+      "usd_per_unit": 0.00075,
+      "free_on_failure": false
+    }
+  ],
+  "resale_status": "byok_only",
+  "resale_terms_ref": "",
+  "terms_url": "https://www.microsoft.com/licensing/terms/productoffering/MicrosoftAzure/MCA",
+  "terms_checked_at": "2026-10-15",
+  "zdr_capable": false,
+  "trains_on_input": "no",
+  "improvement_license": false,
+  "regions": [],
+  "results_retention": "full",
+  "cacheable": "none",
+  "eval_export": "allowed",
+  "no_divert": false,
+  "no_perf_disclosure": false,
+  "no_benchmark": false
+}

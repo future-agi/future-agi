@@ -1,0 +1,26 @@
+{
+  "vendor": "runloop",
+  "capability": "sandboxes",
+  "skus": [
+    {
+      "sku": "runloop.container_hour",
+      "unit": "container_hour",
+      "usd_per_unit": 0.317,
+      "free_on_failure": false
+    }
+  ],
+  "resale_status": "byok_only",
+  "resale_terms_ref": "",
+  "terms_url": "https://runloop.ai/legal/terms-of-service",
+  "terms_checked_at": "2026-10-15",
+  "zdr_capable": false,
+  "trains_on_input": "no",
+  "improvement_license": false,
+  "regions": [],
+  "results_retention": "full",
+  "cacheable": "none",
+  "eval_export": "allowed",
+  "no_divert": false,
+  "no_perf_disclosure": false,
+  "no_benchmark": false
+}

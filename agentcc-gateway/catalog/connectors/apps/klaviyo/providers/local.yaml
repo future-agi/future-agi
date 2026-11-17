@@ -1,0 +1,50 @@
+schema: "connector-manifest/v1#provider"
+# Klaviyo's MCP server runs locally through uvx.
+# The private API key is supplied through the runtime environment.
+app: klaviyo
+id: local
+version: 1.0.0
+kind: vendor_local
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: stdio
+  command: uvx
+  args: [klaviyo-mcp-server@latest]
+  env:
+    PRIVATE_API_KEY: Required Klaviyo private API key for the account the server accesses; supply it at runtime.
+    READ_ONLY: Optional true/false setting, default false. True disables tools that modify Klaviyo data; it does not change the API key's permissions.
+    ALLOW_USER_GENERATED_CONTENT: Optional true/false setting. The options table defaults to true; the sample sets false. False disables specific tools that read and interpret user-generated content.
+hosted: false
+trusted: false
+accountModes: [agent]
+auth: { kind: local_setup }
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: kind
+    url: https://developers.klaviyo.com/en/docs/connect_to_the_klaviyo_mcp_server
+    fetchedAt: 2026-11-16
+  - fact: publisher
+    url: https://developers.klaviyo.com/en/docs/connect_to_the_klaviyo_mcp_server
+    fetchedAt: 2026-11-16
+  - fact: transport.kind
+    url: https://developers.klaviyo.com/en/docs/connect_to_the_klaviyo_mcp_server
+    fetchedAt: 2026-11-16
+  - fact: transport.command
+    url: https://developers.klaviyo.com/en/docs/connect_to_the_klaviyo_mcp_server
+    fetchedAt: 2026-11-16
+  - fact: transport.args
+    url: https://developers.klaviyo.com/en/docs/connect_to_the_klaviyo_mcp_server
+    fetchedAt: 2026-11-16
+  - fact: transport.env
+    url: https://developers.klaviyo.com/en/docs/connect_to_the_klaviyo_mcp_server
+    fetchedAt: 2026-11-16
+  - fact: auth.kind
+    url: https://developers.klaviyo.com/en/docs/connect_to_the_klaviyo_mcp_server
+    fetchedAt: 2026-11-16
+  - fact: tools.source
+    url: https://developers.klaviyo.com/en/docs/klaviyo_mcp_server_available_tools
+    fetchedAt: 2026-11-16

@@ -120,9 +120,7 @@ def test_follows_redirects_within_guard_limit(url_network):
 def test_redirect_limit_returns_failure(url_network):
     url = "https://public.example/redirect/5"
 
-    assert fetch_url_content(url) == (
-        f"[Failed to fetch URL: {url} — Too many redirects.]"
-    )
+    assert fetch_url_content(url) == f"[This link could not be fetched: {url}]"
     assert len(url_network.requests) == 5
     assert all(path != "/page" for path, _ in url_network.requests)
 
@@ -132,8 +130,7 @@ def test_http_error_returns_failure(url_network):
 
     content = fetch_url_content(url)
 
-    assert content.startswith(f"[Failed to fetch URL: {url} — ")
-    assert "404" in content
+    assert content == f"[This link could not be fetched: {url}]"
     assert url_network.requests == [("/missing", "FalconAI/1.0")]
 
 
@@ -159,8 +156,7 @@ def test_message_rejects_internal_destinations_before_fetch(url_network, host):
 
     result = fetch_urls_from_message(f"Please read {url}")
 
-    assert result.startswith(f"[Failed to fetch URL: {url} — ")
-    assert "private/internal address" in result
+    assert result == f"[This link could not be fetched: {url}]"
     assert url_network.requests == []
 
 
@@ -170,7 +166,7 @@ def test_rejects_hostname_with_any_private_dns_record(url_network, addresses):
 
     result = fetch_url_content("https://public.example/page")
 
-    assert "private/internal address" in result
+    assert result == "[This link could not be fetched: https://public.example/page]"
     assert url_network.requests == []
 
 
@@ -193,7 +189,7 @@ def test_revalidates_later_redirect_hops(url_network, target, status):
 
     result = fetch_urls_from_message(f"Please read {url}")
 
-    assert "private/internal address" in result
+    assert result == f"[This link could not be fetched: {url}]"
     assert [path for path, _ in url_network.requests] == ["/start", "/next"]
 
 
@@ -201,8 +197,7 @@ def test_revalidates_later_redirect_hops(url_network, target, status):
 def test_rejects_non_http_scheme_before_fetch(url_network, url):
     result = fetch_url_content(url)
 
-    assert result.startswith(f"[Failed to fetch URL: {url} — ")
-    assert "Unsupported URL scheme" in result
+    assert result == f"[This link could not be fetched: {url}]"
     assert url_network.requests == []
 
 
@@ -211,7 +206,7 @@ def test_rejects_redirect_to_non_http_scheme(url_network):
 
     result = fetch_url_content("https://public.example/start")
 
-    assert "Redirect target is not a valid URL" in result
+    assert result == "[This link could not be fetched: https://public.example/start]"
     assert url_network.requests == [("/start", "FalconAI/1.0")]
 
 
@@ -239,7 +234,7 @@ def test_oversized_response_is_rejected_before_extraction(url_network):
 
     result = fetch_url_content("https://public.example/large")
 
-    assert "URL body exceeds 1048576 byte limit" in result
+    assert result == "[This link could not be fetched: https://public.example/large]"
 
 
 def test_multiple_message_urls_still_guard_each_fetch(url_network):
@@ -249,7 +244,7 @@ def test_multiple_message_urls_still_guard_each_fetch(url_network):
     result = fetch_urls_from_message(f"Compare {public_url} with {private_url}")
 
     assert f"[URL: {public_url}]\nPlain page text" in result
-    assert "private/internal address" in result
+    assert f"[This link could not be fetched: {private_url}]" in result
     assert url_network.requests == [("/plain", "FalconAI/1.0")]
 
 
@@ -290,4 +285,4 @@ def test_compressed_body_is_decoded_once_and_size_cap_applies(url_network, size)
     if size == 10:
         assert result == "[URL: https://public.example/gzip]\n" + "x" * 10
     else:
-        assert "URL body exceeds 1048576 byte limit" in result
+        assert result == "[This link could not be fetched: https://public.example/gzip]"

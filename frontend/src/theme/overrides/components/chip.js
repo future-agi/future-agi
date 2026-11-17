@@ -46,6 +46,14 @@ export function chip(theme) {
     const role = STATUS[ownerState.color];
     const status = role ? palette[role] : palette.neutral;
     const isNeutral = !role;
+    // A clickable neutral chip goes one step darker on hover (action.selected).
+    // Themes built without the design-system palette use action.selected as the
+    // resting fill (statusPalette above), so they use action.hover instead and
+    // the hover is never the same colour as the resting chip.
+    const neutralHover =
+      status.bg === theme.palette.action.selected
+        ? theme.palette.action.hover
+        : theme.palette.action.selected;
 
     const tone = {
       color: isNeutral ? theme.palette.text.secondary : status.fg,
@@ -56,9 +64,7 @@ export function chip(theme) {
           : "1px solid transparent",
       ...(ownerState.clickable && {
         "&:hover": {
-          backgroundColor: isNeutral
-            ? theme.palette.action.selected
-            : alpha(status.solid, 0.18),
+          backgroundColor: isNeutral ? neutralHover : alpha(status.solid, 0.18),
         },
       }),
       [`& .${chipClasses.icon}`]: {

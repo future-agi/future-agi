@@ -1,0 +1,75 @@
+# Figma's remote MCP server with OAuth from Figma's authorization server.
+# Only clients listed in Figma's MCP catalog can connect; a new client joins
+# a waitlist. FutureAGI is not in the catalog, so this provider cannot
+# connect until Figma lists FutureAGI's client (OA-VC): clientApproval has
+# no approvedAt. The authorization server registers clients dynamically, but
+# registration does not lift the listing gate. EE and OSS get none: neither
+# is a listed client.
+schema: "connector-manifest/v1#provider"
+app: figma
+id: mcp
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.figma.com/mcp
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent, user]
+auth:
+  kind: oauth2
+  oauth2:
+    authorizeUrl: https://www.figma.com/oauth/mcp
+    tokenUrl: https://api.figma.com/v1/oauth/token
+    scopes: ["mcp:connect"]
+    pkce: true
+    tokenBody: form
+    clientAuth: body
+    registration: [dcr]
+  clientApproval:
+    required: true
+    program: "Figma MCP catalog listing (new clients join a waitlist)"
+    url: https://www.figma.com/mcp-catalog
+    source: https://developers.figma.com/docs/figma-mcp-server/remote-server-installation/
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://developers.figma.com/docs/figma-mcp-server/remote-server-installation/
+    fetchedAt: 2026-10-21
+  - fact: transport.url
+    url: https://mcp.figma.com/.well-known/oauth-protected-resource/mcp
+    fetchedAt: 2026-10-21
+  - fact: auth.kind
+    url: https://developers.figma.com/docs/figma-mcp-server/remote-server-installation/
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.authorizeUrl
+    url: https://api.figma.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.tokenUrl
+    url: https://api.figma.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.scopes
+    url: https://mcp.figma.com/.well-known/oauth-protected-resource/mcp
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.pkce
+    url: https://api.figma.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.clientAuth
+    url: https://api.figma.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.registration
+    url: https://api.figma.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-21
+  - fact: auth.clientApproval
+    url: https://developers.figma.com/docs/figma-mcp-server/remote-server-installation/
+    fetchedAt: 2026-10-21
+  - fact: auth.clientApproval
+    url: https://www.figma.com/mcp-catalog
+    fetchedAt: 2026-10-21
+x-omega: { ee: exclude, oss: exclude }

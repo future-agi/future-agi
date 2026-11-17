@@ -1,3 +1,5 @@
+import { runStatusOf } from "./runStatus";
+
 export const STATUS_TYPES = {
   PASS: "pass",
   ERROR: "error",
@@ -6,29 +8,25 @@ export const STATUS_TYPES = {
   CANCELED: "canceled",
 };
 
-export const STATUS_CONFIG = {
-  [STATUS_TYPES.PASS]: {
-    icon: "/assets/icons/status/success.svg",
-    color: "status.success.fg",
-    bgColor: "status.success.bg",
-    borderColor: "status.success.border",
-    textColor: "status.success.fg",
-  },
-  [STATUS_TYPES.ERROR]: {
-    icon: "/assets/icons/status/error.svg",
-    color: "status.danger.fg",
-    bgColor: "status.danger.bg",
-    borderColor: "status.danger.border",
-    textColor: "status.danger.fg",
-  },
-  [STATUS_TYPES.UNSET]: {
-    icon: "/assets/icons/status/unset.svg",
-    color: "text.disabled",
-    bgColor: "action.hover",
-    borderColor: "text.disabled",
-    textColor: "text.disabled",
-  },
-};
+// Legacy shape only: colors/roles are derived, never a second status map.
+export const STATUS_CONFIG = Object.fromEntries(
+  Object.values(STATUS_TYPES).map((status) => {
+    const { role } = runStatusOf(status);
+    const icon =
+      role === "success" ? "success" : role === "danger" ? "error" : "unset";
+    return [
+      status,
+      {
+        icon: `/assets/icons/status/${icon}.svg`,
+        role,
+        color: `status.${role}.fg`,
+        bgColor: `status.${role}.bg`,
+        borderColor: `status.${role}.border`,
+        textColor: `status.${role}.fg`,
+      },
+    ];
+  }),
+);
 
 /**
  * Normalizes a value to lowercase string for comparison
@@ -91,7 +89,9 @@ export const getStatusDetails = ({ status, label }) => {
  * @returns {object} Status configuration object
  */
 export const getStatusConfig = (status) => {
-  return STATUS_CONFIG[status] || STATUS_CONFIG[STATUS_TYPES.UNSET];
+  return Object.hasOwn(STATUS_CONFIG, status)
+    ? STATUS_CONFIG[status]
+    : STATUS_CONFIG[STATUS_TYPES.UNSET];
 };
 
 /**

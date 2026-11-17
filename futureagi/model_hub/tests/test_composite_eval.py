@@ -3,6 +3,7 @@ Tests for Phase 7: Composite Evals.
 """
 
 import uuid
+from unittest.mock import patch
 
 import pytest
 
@@ -776,6 +777,207 @@ class TestCompositeEvalUpdateAPI:
             deleted=False,
         )
         assert link.pinned_version_id == version.id
+
+    def _create_pinned_composite(self, auth_client, user, *children):
+        versions = {
+            str(child.id): EvalTemplateVersion.objects.create_version(
+                eval_template=child,
+                config_snapshot={"output": "Pass/Fail"},
+                criteria="Pinned child criteria",
+                model="pinned-child-model",
+                user=user,
+                organization=child.organization,
+                workspace=child.workspace,
+            )
+            for child in children
+        }
+        cid = self._create_composite(
+            auth_client,
+            "preserve-child-pins",
+            list(versions),
+            child_pinned_versions={
+                child_id: str(version.id) for child_id, version in versions.items()
+            },
+        )
+        return cid, versions
+
+    @pytest.mark.parametrize("children_change", ["same", "reorder", "remove", "add"])
+    def test_update_child_list_without_pins_preserves_remaining_pins(
+        self, auth_client, user, child_eval_1, child_eval_2, children_change
+    ):
+        cid, versions = self._create_pinned_composite(
+            auth_client, user, child_eval_1, child_eval_2
+        )
+        child_ids = list(versions)
+        if children_change == "reorder":
+            child_ids.reverse()
+        elif children_change == "remove":
+            child_ids.pop()
+        elif children_change == "add":
+            new_child = EvalTemplate.no_workspace_objects.create(
+                name="new-unpinned-child",
+                organization=child_eval_1.organization,
+                workspace=child_eval_1.workspace,
+                owner=OwnerChoices.USER.value,
+                config={"output": "Pass/Fail"},
+            )
+            child_ids.append(str(new_child.id))
+        expected_pins = {
+            child_id: str(versions[child_id].id) if child_id in versions else None
+            for child_id in child_ids
+        }
+
+        resp = auth_client.patch(
+            f"/model-hub/eval-templates/{cid}/composite/",
+            {"description": "Saved details", "child_template_ids": child_ids},
+            format="json",
+        )
+
+        assert resp.status_code == 200, resp.data
+        children = resp.data["result"]["children"]
+        assert [child["child_id"] for child in children] == child_ids
+        assert {
+            child["child_id"]: child["pinned_version_id"] for child in children
+        } == expected_pins
+        links = CompositeEvalChild.objects.filter(parent_id=cid, deleted=False)
+        assert {
+            str(link.child_id): str(link.pinned_version_id)
+            if link.pinned_version_id
+            else None
+            for link in links
+        } == expected_pins
+        snapshot = EvalTemplateVersion.objects.get(
+            eval_template_id=cid,
+            version_number=resp.data["result"]["version_number"],
+        ).config_snapshot
+        assert {
+            child["child_id"]: child["pinned_version_id"]
+            for child in snapshot["children"]
+        } == expected_pins
+
+    @pytest.mark.parametrize("clear_form", ["child-null", "empty-map", "null"])
+    def test_update_child_list_with_explicit_pins_clears_pins(
+        self, auth_client, user, child_eval_1, child_eval_2, clear_form
+    ):
+        cid, versions = self._create_pinned_composite(
+            auth_client, user, child_eval_1, child_eval_2
+        )
+        pins = {
+            "child-null": dict.fromkeys(versions),
+            "empty-map": {},
+            "null": None,
+        }[clear_form]
+
+        resp = auth_client.patch(
+            f"/model-hub/eval-templates/{cid}/composite/",
+            {"child_template_ids": list(versions), "child_pinned_versions": pins},
+            format="json",
+        )
+
+        assert resp.status_code == 200, resp.data
+        children = resp.data["result"]["children"]
+        assert len(children) == len(versions)
+        assert all(child["pinned_version_id"] is None for child in children)
+        links = CompositeEvalChild.objects.filter(parent_id=cid, deleted=False)
+        assert links.count() == len(versions)
+        assert all(link.pinned_version_id is None for link in links)
+
+    def test_update_child_list_with_explicit_mapping_replaces_pins(
+        self, auth_client, user, child_eval_1, child_eval_2
+    ):
+        cid, versions = self._create_pinned_composite(
+            auth_client, user, child_eval_1, child_eval_2
+        )
+        replacement = EvalTemplateVersion.objects.create_version(
+            eval_template=child_eval_1,
+            config_snapshot={"output": "Pass/Fail"},
+            model="replacement-child-model",
+            user=user,
+            organization=child_eval_1.organization,
+            workspace=child_eval_1.workspace,
+        )
+        expected_pins = {
+            str(child_eval_1.id): str(replacement.id),
+            str(child_eval_2.id): None,
+        }
+
+        resp = auth_client.patch(
+            f"/model-hub/eval-templates/{cid}/composite/",
+            {
+                "child_template_ids": list(versions),
+                "child_pinned_versions": {str(child_eval_1.id): str(replacement.id)},
+            },
+            format="json",
+        )
+
+        assert resp.status_code == 200, resp.data
+        assert {
+            child["child_id"]: child["pinned_version_id"]
+            for child in resp.data["result"]["children"]
+        } == expected_pins
+        links = CompositeEvalChild.objects.filter(parent_id=cid, deleted=False)
+        assert {
+            str(link.child_id): str(link.pinned_version_id)
+            if link.pinned_version_id
+            else None
+            for link in links
+        } == expected_pins
+
+    def test_save_without_pins_executes_pinned_child_model(
+        self, auth_client, user, child_eval_1
+    ):
+        from model_hub.utils.composite_execution import execute_composite_children_sync
+
+        cid, versions = self._create_pinned_composite(auth_client, user, child_eval_1)
+        pinned = versions[str(child_eval_1.id)]
+        child_eval_1.model = "live-child-model"
+        child_eval_1.save(update_fields=["model"])
+        # The stored pin must beat both the live template and a newer default.
+        EvalTemplateVersion.objects.create_version(
+            eval_template=child_eval_1,
+            config_snapshot={"output": "Pass/Fail"},
+            model="new-default-child-model",
+            user=user,
+            organization=child_eval_1.organization,
+            workspace=child_eval_1.workspace,
+        )
+        resp = auth_client.patch(
+            f"/model-hub/eval-templates/{cid}/composite/",
+            {"description": "Saved details", "child_template_ids": list(versions)},
+            format="json",
+        )
+        assert resp.status_code == 200, resp.data
+        parent = EvalTemplate.objects.get(id=cid)
+        links = list(
+            CompositeEvalChild.objects.filter(parent=parent, deleted=False)
+            .select_related("child", "pinned_version")
+            .order_by("order")
+        )
+
+        # Exercise the engine's real resolver; mock only evaluation and logging.
+        with (
+            patch(
+                "model_hub.views.utils.evals.run_eval_func",
+                return_value={"output": "Pass", "output_type": "Pass/Fail"},
+            ) as run_eval,
+            patch("model_hub.utils.composite_execution._log_composite_usage"),
+        ):
+            outcome = execute_composite_children_sync(
+                parent=parent,
+                child_links=links,
+                mapping={"response": "Test response"},
+                config={},
+                model="composite-fallback-model",
+                org=child_eval_1.organization,
+                workspace=child_eval_1.workspace,
+            )
+
+        assert len(outcome.child_results) == 1
+        assert outcome.child_results[0].status == "completed"
+        run_eval.assert_called_once()
+        assert run_eval.call_args.kwargs["model"] == pinned.model
+        assert run_eval.call_args.kwargs["resolved_version"] == pinned
+        assert run_eval.call_args.args[0]["model"] == pinned.model
 
     def test_update_pinned_versions_only_can_clear_pin(
         self, auth_client, user, child_eval_1

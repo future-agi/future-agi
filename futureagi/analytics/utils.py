@@ -16,6 +16,12 @@ def mixpanel_slack_notfy(msg):
     No-op, with no network call, when the webhook is unset (the self-hosted
     default) or ENV_TYPE is local/test.
     """
+    from tracer.services.background_transport import current_guard
+
+    # Operational Slack alerts are not an analysis capability. In particular,
+    # embedding-service failure must not open an unrelated retrying transport.
+    if current_guard() is not None:
+        return
     if not str(getattr(settings, "ERROR_LOGS_WEBHOOK", "") or "").strip():
         logger.debug("Skipping Slack notification: ERROR_LOGS_WEBHOOK is not set")
         return

@@ -11,7 +11,9 @@ from django.db.models import Q
 from model_hub.models.develop_dataset import KnowledgeBaseFile
 from model_hub.models.evals_metric import EvalTemplate
 from model_hub.utils.function_eval_params import normalize_eval_runtime_config
+from model_hub.utils.scoring import validate_choice_score_override
 from simulate.models import SimulateEvalConfig
+from tfc.utils.tenant_scope import scope_to_accessible_workspace
 
 
 class EvalConfigEditRefused(Exception):
@@ -30,20 +32,32 @@ def has_own_mapping(eval_config) -> bool:
 
 
 def visible_eval_template_query(user_organization, workspace):
-    """Templates available from the active workspace plus global system templates."""
-    template_query = Q(organization__isnull=True)
-    if workspace is None:
-        return template_query | Q(organization=user_organization)
+    """Live accessible workspace templates plus organization-less system rows."""
+    workspace_templates = scope_to_accessible_workspace(
+        EvalTemplate.no_workspace_objects.all(), user_organization, workspace
+    )
+    return Q(organization__isnull=True) | Q(pk__in=workspace_templates.values("pk"))
 
-    workspace_query = Q(organization=user_organization, workspace=workspace)
-    if getattr(workspace, "is_default", False):
-        workspace_query |= Q(
-            organization=user_organization,
-            workspace__is_default=True,
-            workspace__organization_id=user_organization.id,
-        ) | Q(organization=user_organization, workspace__isnull=True)
 
-    return template_query | workspace_query
+def unknown_eval_group_ids(eval_group_ids, user_organization, workspace):
+    """The ids among ``eval_group_ids`` that name neither a sample eval group
+    nor one of ``user_organization``'s eval groups visible from ``workspace``.
+
+    Empty values are ignored. Another organization's group is reported like an
+    id that does not exist.
+    """
+    from model_hub.models.eval_groups import EvalGroup
+
+    wanted = {str(group_id) for group_id in eval_group_ids if group_id}
+    if not wanted:
+        return set()
+    workspace_groups = scope_to_accessible_workspace(
+        EvalGroup.no_workspace_objects.all(), user_organization, workspace
+    )
+    found = EvalGroup.no_workspace_objects.filter(id__in=wanted).filter(
+        Q(is_sample=True) | Q(pk__in=workspace_groups.values("pk"))
+    )
+    return wanted - {str(group_id) for group_id in found.values_list("id", flat=True)}
 
 
 def update_eval_config(
@@ -78,6 +92,9 @@ def update_eval_config(
             eval_config.config = normalize_eval_runtime_config(
                 template_config, new_config
             )
+            validate_choice_score_override(
+                new_template or eval_config.eval_template, eval_config.config
+            )
         except ValueError as e:
             raise EvalConfigEditRefused(str(e)) from e
     elif new_template:
@@ -87,6 +104,7 @@ def update_eval_config(
             eval_config.config = normalize_eval_runtime_config(
                 new_template.config, eval_config.config
             )
+            validate_choice_score_override(new_template, eval_config.config)
         except ValueError as e:
             raise EvalConfigEditRefused(
                 f"Cannot switch template: existing config is incompatible with new template. {str(e)}"

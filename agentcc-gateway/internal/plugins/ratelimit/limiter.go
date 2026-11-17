@@ -3,6 +3,8 @@ package ratelimit
 import (
 	"sync"
 	"time"
+
+	"github.com/futureagi/agentcc-gateway/internal/redisstate"
 )
 
 // Limiter defines the rate limiting interface.
@@ -160,4 +162,56 @@ func (r *RateLimiter) AddTokens(key string, tokens int) {
 
 	w, _ := r.window(key, now)
 	w.count += int64(tokens)
+}
+
+// AllowN admits a request only when every check fits under its limit, and
+// then adds each check's cost (redisstate.MultiLimiter). A refused request
+// adds nothing. Window is the decision's time, which Settle reads back to
+// leave a counter whose window has rolled since alone.
+func (r *RateLimiter) AllowN(checks []redisstate.LimitCheck) redisstate.LimitDecision {
+	now := time.Now()
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	for i := range checks {
+		w, reset := r.window(checks[i].Key, now)
+		checks[i].ResetSeconds = reset
+		if w.count >= checks[i].Limit {
+			checks[i].Remaining = 0
+			return redisstate.LimitDecision{Refused: i, Window: now.UnixNano()}
+		}
+	}
+	for i := range checks {
+		w := r.windows[checks[i].Key]
+		w.count += checks[i].Cost
+		checks[i].Remaining = checks[i].Limit - w.count
+		if checks[i].Remaining < 0 {
+			checks[i].Remaining = 0
+		}
+	}
+	return redisstate.LimitDecision{Allowed: true, Refused: -1, Window: now.UnixNano()}
+}
+
+// Settle adds delta to each key's counter, never below 0, when the key's
+// window is still the one AllowN added to at window (a time in UnixNano).
+func (r *RateLimiter) Settle(keys []string, window int64, delta int64, _ bool) {
+	if delta == 0 {
+		return
+	}
+	at := time.Unix(0, window)
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	for _, key := range keys {
+		w, ok := r.windows[key]
+		if !ok || w.windowStart.After(at) {
+			continue // the window rolled: the reservation went with it
+		}
+		w.count += delta
+		if w.count < 0 {
+			w.count = 0
+		}
+	}
 }

@@ -1,0 +1,46 @@
+# Smartsheet's US hosted server accepts a region-matching API token as a bearer.
+schema: "connector-manifest/v1#provider"
+app: smartsheet
+id: api-key
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.smartsheet.com
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: Smartsheet API token
+      help: "Generate a token in Account > Personal Settings > API Access. Requires a Business, Enterprise, or Advanced Work Management plan. Use a US-environment token for this endpoint; regional tokens are not interchangeable. Supply the token without the Bearer prefix."
+      helpUrl: https://developers.smartsheet.com/api/smartsheet/guides/getting-started
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_plan
+  source: https://developers.smartsheet.com/ai-mcp/smartsheet/install-the-smartsheet-mcp-server
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://developers.smartsheet.com/ai-mcp/smartsheet/install-the-smartsheet-mcp-server/connect-claude-code
+    fetchedAt: 2026-11-09
+  - fact: transport.variant
+    url: https://developers.smartsheet.com/ai-mcp/smartsheet/install-the-smartsheet-mcp-server/connect-codex
+    fetchedAt: 2026-11-09
+  - fact: auth.kind
+    url: https://developers.smartsheet.com/ai-mcp/smartsheet/install-the-smartsheet-mcp-server/connect-claude-code
+    fetchedAt: 2026-11-09
+  - fact: auth.credentialParts
+    url: https://developers.smartsheet.com/ai-mcp/smartsheet/install-the-smartsheet-mcp-server/connect-claude-code
+    fetchedAt: 2026-11-09
+x-omega: { oss: exclude }

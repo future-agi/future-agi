@@ -1,3 +1,4 @@
+import ExternalContentFrame from "src/components/external-content/ExternalContentFrame";
 import React from "react";
 import PropTypes from "prop-types";
 import {
@@ -66,7 +67,7 @@ const InfoWorkbenchModal = ({ open, onClose }) => {
                 width: "100%",
               }}
             >
-              <iframe
+              <ExternalContentFrame
                 src="https://demo.arcade.software/mKO2mi1golHycxjTbofy?embed&embed_mobile=inline&embed_desktop=inline&show_copy_link=true"
                 title="Prompt Workbench Demo"
                 frameBorder="0"
@@ -165,7 +166,7 @@ const InfoWorkbenchModal = ({ open, onClose }) => {
                 fontWeight={"fontWeightMedium"}
                 color="text.secondary"
               >
-                For more instructions, checkout our{" "}
+                For more instructions, check out our{" "}
                 <Link
                   // @ts-ignore
                   target="_blank"

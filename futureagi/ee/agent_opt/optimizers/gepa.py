@@ -27,6 +27,7 @@ from ..utils.template_variables import (
     repair_template_variables,
 )
 from simulate.utils.agent_prompt_optimiser import update_agent_optimiser_run_step
+from model_hub.utils.model_endpoints import vertex_call_arguments
 
 OnTrialCallback = Callable[[dict, int, Dict[str, Any], bool], None]
 
@@ -56,14 +57,19 @@ class GEPAOptimizer(BaseOptimizer):
     def _verify_reflection_auth(self) -> None:
         """Fail fast on a rejected key: gepa swallows reflection errors mid-run,
         which would burn the metric budget and return the seed prompt as success."""
+        # A Vertex model is given its saved key as its Vertex configuration.
+        arguments = vertex_call_arguments(
+            None,
+            {
+                "model": self.reflection_model,
+                "messages": [{"role": "user", "content": "ping"}],
+                "max_tokens": 1,
+                "api_key": self.api_key,
+            },
+            self.api_key,
+        )
         try:
-            litellm.completion(
-                model=self.reflection_model,
-                messages=[{"role": "user", "content": "ping"}],
-                max_tokens=1,
-                api_key=self.api_key,
-                drop_params=True,
-            )
+            litellm.completion(**arguments, drop_params=True)
         except (litellm.AuthenticationError, litellm.PermissionDeniedError) as e:
             raise RuntimeError(
                 f"Reflection model rejected the configured API key: {e}"
@@ -91,12 +97,18 @@ class GEPAOptimizer(BaseOptimizer):
                 if isinstance(prompt, list)
                 else [{"role": "user", "content": prompt}]
             )
-            response = litellm.completion(
-                model=self.reflection_model,
-                messages=messages,
-                api_key=self.api_key,
-                drop_params=True,
+            # A Vertex model is given its saved key as its Vertex
+            # configuration.
+            arguments = vertex_call_arguments(
+                None,
+                {
+                    "model": self.reflection_model,
+                    "messages": messages,
+                    "api_key": self.api_key,
+                },
+                self.api_key,
             )
+            response = litellm.completion(**arguments, drop_params=True)
             return response.choices[0].message.content or ""
 
         return _reflection_lm

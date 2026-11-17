@@ -1,0 +1,23 @@
+{
+  "http": {
+    "status": 400,
+    "headers": {
+      "content-type": "application/json"
+    }
+  },
+  "body": {
+    "status": false,
+    "type": "validation_error",
+    "code": "agent_key_invalid",
+    "detail": "The agent key must be an active key minted for this workspace through the provisioning API.",
+    "message": "The agent key must be an active key minted for this workspace through the provisioning API.",
+    "error": "The agent key must be an active key minted for this workspace through the provisioning API.",
+    "result": "The agent key must be an active key minted for this workspace through the provisioning API.",
+    "attr": "agent_key_id",
+    "details": {
+      "agent_key_id": [
+        "The agent key must be an active key minted for this workspace through the provisioning API."
+      ]
+    }
+  }
+}

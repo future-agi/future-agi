@@ -3,6 +3,7 @@ from django.db import transaction
 from django.utils import timezone
 from django.utils.decorators import method_decorator
 from drf_yasg.utils import swagger_auto_schema
+from rest_framework.exceptions import APIException
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import GenericViewSet
 
@@ -20,6 +21,7 @@ from agent_playground.services.dataset_bridge import (
     _get_exposed_input_display_names,
     execute_rows,
 )
+from common.utils.page_limits import enforce_page_size
 from common.utils.pagination import paginate_queryset
 from model_hub.models.develop_dataset import Cell, Column, Row
 from tfc.utils.error_codes import get_error_message
@@ -91,6 +93,7 @@ class GraphDatasetViewSet(GenericViewSet):
         omitted the latest version (by version_number) is used.
         """
         try:
+            enforce_page_size(request.query_params.get("page_size"))
             graph_dataset = self.get_object()
             dataset = graph_dataset.dataset
             graph = graph_dataset.graph
@@ -163,6 +166,8 @@ class GraphDatasetViewSet(GenericViewSet):
             return self._gm.not_found(get_error_message("GRAPH_DATASET_NOT_FOUND"))
         except GraphVersion.DoesNotExist:
             return self._gm.not_found(get_error_message("VERSION_NOT_FOUND"))
+        except APIException:
+            raise
         except Exception as e:
             logger.exception("Error getting dataset detail", error=str(e))
             return self._gm.internal_server_error_response(
@@ -182,7 +187,7 @@ class GraphDatasetViewSet(GenericViewSet):
                 return self._gm.bad_request(get_error_message("NO_COLUMNS_EXIST"))
 
             max_order = (
-                Row.no_workspace_objects.filter(dataset=dataset)
+                Row.all_objects.filter(dataset=dataset)
                 .order_by("-order")
                 .values_list("order", flat=True)
                 .first()

@@ -9,6 +9,7 @@ afterAll(() => configure({ asyncUtilTimeout: 1000 }));
 
 import ScenariosStep from "../ScenariosStep";
 import { PAGE_SIZE } from "../useScenarioPage";
+import { getScenarioSelection } from "../../../buildEnvironment/console/scenarioSelectionBus";
 import {
   TEST_ENV,
   makeServerRows,
@@ -98,6 +99,18 @@ describe("ScenariosStep — pagination", () => {
     expect(screen.queryByText(/no scenarios/i)).toBeNull();
   });
 
+  it("W10-SIMULATE-OTHER-U08 offers Try again on a failed first load and shows the list once it works", async () => {
+    listScenarios.mockRejectedValue(new Error("boom"));
+    renderStep();
+    expect(await screen.findByText(/Couldn't load scenarios/i)).toBeInTheDocument();
+
+    listScenarios.mockImplementation((jobId, params) => queryScenarioFixture(params, PAGING_ROWS));
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+
+    expect(await screen.findByText(/Showing 1–25 of 60/)).toBeInTheDocument();
+    expect(screen.queryByText(/Couldn't load scenarios/i)).toBeNull();
+  });
+
   it("debounces the search and resets to the first page in the handler", async () => {
     renderStep();
     fireEvent.click(await screen.findByLabelText("Go to page 2"));
@@ -143,6 +156,33 @@ describe("ScenariosStep — pagination", () => {
 });
 
 describe("ScenariosStep — select all matching", () => {
+  it("W10-SIMULATE-OTHER-L03 publishes the searched match and exclusions for builder chat", async () => {
+    const rows = PAGING_ROWS.map((row, index) => ({
+      ...row,
+      name: index < 40 ? `Scoped match ${index}` : `Other scenario ${index}`,
+    }));
+    listScenarios.mockImplementation((jobId, params) => queryScenarioFixture(params, rows));
+    renderStep(rows);
+    await screen.findByText(/Showing 1–25 of 60/);
+    fireEvent.change(screen.getByPlaceholderText(/Search scenarios/i), {
+      target: { value: "Scoped match" },
+    });
+    await screen.findByText(/Showing 1–25 of 40/);
+    fireEvent.click(headerCheckbox());
+    fireEvent.click(screen.getByRole("button", { name: /Select all 40 matching/ }));
+    fireEvent.click(screen.getAllByRole("checkbox")[1]);
+
+    expect(getScenarioSelection()).toMatchObject({
+      ids: [],
+      all: true,
+      count: 39,
+      jobId: TEST_ENV.id,
+      predicate: { search: "Scoped match", filters: {}, marked: [expect.any(String)] },
+    });
+    const excluded = getScenarioSelection().predicate.marked[0];
+    expect(rows.slice(0, 40).map((row) => row.id)).toContain(excluded);
+  });
+
   it("header selects only the page, then the banner escalates to the whole match", async () => {
     renderStep();
     await screen.findByText(/Showing 1–25 of 60/);

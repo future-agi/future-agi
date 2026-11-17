@@ -1,0 +1,74 @@
+# Databricks' Genie One MCP (system.ai.genie_one_mcp, generally available),
+# served by each workspace's Unity Gateway, with a Databricks personal
+# access token as the bearer. Databricks-provided MCPs accept a personal
+# access token in Authorization: Bearer; Databricks documents it for local
+# testing and recommends OAuth (a registered client, no dynamic
+# registration) or a service principal for unattended agents, which this
+# provider does not offer. The workspace host is the org's own, and
+# {workspaceHost} admits only Databricks' per-workspace hosts on AWS, GCP
+# and Azure, so the token never goes to another host.
+schema: "connector-manifest/v1#provider"
+app: databricks
+id: genie-one-pat
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus:
+  label: ga
+  source: https://docs.databricks.com/aws/en/agents/mcp-tools/built-in-mcp-services
+transport:
+  kind: http
+  url: https://{workspaceHost}/ai-gateway/mcp-services/system.ai.genie_one_mcp
+  urlVariables:
+    workspaceHost:
+      description: "Your Databricks workspace's host name: <deployment>.cloud.databricks.com (AWS), <workspace-id>.<n>.gcp.databricks.com (GCP) or adb-<workspace-id>.<n>.azuredatabricks.net (Azure)."
+      pattern: '^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.cloud\.databricks\.com|[0-9]{1,20}\.[0-9]{1,4}\.gcp\.databricks\.com|adb-[0-9]{1,20}\.[0-9]{1,4}\.azuredatabricks\.net)$'
+      scope: org
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: Personal access token
+      help: "A Databricks personal access token. Calls act as the token's user, within Unity Catalog permissions. Databricks documents tokens for testing; keep it scoped to a dedicated user."
+      helpUrl: https://docs.databricks.com/aws/en/agents/mcp-tools/authentication-networking
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://docs.databricks.com/aws/en/agents/mcp-tools/built-in-mcp-services
+    fetchedAt: 2026-10-21
+  - fact: transport.url
+    url: https://docs.databricks.com/gcp/en/agents/mcp-tools/built-in-mcp-services
+    fetchedAt: 2026-10-21
+  - fact: transport.url
+    url: https://learn.microsoft.com/en-us/azure/databricks/agents/mcp-tools/built-in-mcp-services
+    fetchedAt: 2026-10-21
+  - fact: transport.urlVariables.workspaceHost
+    url: https://docs.databricks.com/aws/en/workspace/workspace-details
+    fetchedAt: 2026-10-21
+  - fact: transport.urlVariables.workspaceHost
+    url: https://docs.databricks.com/gcp/en/workspace/workspace-details
+    fetchedAt: 2026-10-21
+  - fact: transport.urlVariables.workspaceHost
+    url: https://learn.microsoft.com/en-us/azure/databricks/workspace/workspace-details
+    fetchedAt: 2026-10-21
+  - fact: transport.variant
+    url: https://docs.databricks.com/aws/en/agents/mcp-tools/authentication-networking
+    fetchedAt: 2026-10-21
+  - fact: auth.kind
+    url: https://docs.databricks.com/aws/en/agents/mcp-tools/authentication-networking
+    fetchedAt: 2026-10-21
+  - fact: auth.credentialParts
+    url: https://docs.databricks.com/aws/en/agents/mcp-tools/authentication-networking
+    fetchedAt: 2026-10-21
+x-omega: { oss: exclude }

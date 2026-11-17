@@ -93,6 +93,7 @@ func newCeilingServer(t *testing.T, p *ceilingProvider, modelTimeout time.Durati
 	registry.RegisterProvider("ceiling", p, []string{"ceiling-model"})
 
 	srv := New(cfg, "", registry, pipeline.NewEngine(), nil, nil, nil, nil, testModelDBPtr(), nil, nil)
+	releaseTestServer(t, srv)
 	srv.ready.Store(true)
 	return srv
 }

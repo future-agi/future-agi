@@ -180,3 +180,95 @@ describe("old Agent Definition link", () => {
     ).toBeTruthy();
   });
 });
+
+// Settings registers only pages that work on this deployment; any other
+// settings URL is no route here, so the app's catch-all shows its 404.
+describe("settings routes", () => {
+  const settingsOf = (options) => {
+    const routes = dashboardRoutes(null, null, options);
+    return {
+      routes,
+      settings: findChildRoute(routes[0], "settings"),
+    };
+  };
+  const matchedPath = (routes, url) =>
+    matchRoutes(routes, url)
+      ?.map((match) => match.route.path)
+      .filter(Boolean)
+      .join("/") ?? null;
+
+  it.each([
+    ["cloud", true],
+    ["self-hosted", false],
+  ])("has no coming-soon page on %s", (_mode, isCloud) => {
+    const { routes, settings } = settingsOf({ isCloud });
+    expect(findChildRoute(settings, "coming-soon")).toBeUndefined();
+    expect(matchedPath(routes, "/dashboard/settings/coming-soon")).toBeNull();
+  });
+
+  it.each([
+    ["cloud", true],
+    ["self-hosted", false],
+  ])(
+    "has Falcon AI Connectors where the deployment allows Falcon AI (%s)",
+    (_mode, isCloud) => {
+      const { routes, settings } = settingsOf({ isCloud, falconAI: "allowed" });
+      expect(findChildRoute(settings, "falcon-ai-connectors")).toBeTruthy();
+      expect(
+        matchedPath(routes, "/dashboard/settings/falcon-ai-connectors"),
+      ).toBe("dashboard/settings/falcon-ai-connectors");
+    },
+  );
+
+  it.each([
+    ["cloud", true],
+    ["self-hosted", false],
+  ])(
+    "has no Falcon AI Connectors where the deployment does not allow Falcon AI (%s)",
+    (_mode, isCloud) => {
+      const { routes, settings } = settingsOf({ isCloud, falconAI: "denied" });
+      expect(findChildRoute(settings, "falcon-ai-connectors")).toBeUndefined();
+      expect(
+        matchedPath(routes, "/dashboard/settings/falcon-ai-connectors"),
+      ).toBeNull();
+    },
+  );
+
+  // While the deployment's capabilities are being read (or could not be
+  // read), a bookmarked link keeps its URL: the page's capability gate shows
+  // its loading or retry state, and the route goes once the answer is no.
+  it("keeps the Falcon AI Connectors URL until the capability answer arrives", () => {
+    const { settings } = settingsOf({ isCloud: true, falconAI: "pending" });
+    expect(findChildRoute(settings, "falcon-ai-connectors")).toBeTruthy();
+  });
+
+  it("has no Falcon AI Connectors when no capability answer is given", () => {
+    const { settings } = settingsOf({ isCloud: false });
+    expect(findChildRoute(settings, "falcon-ai-connectors")).toBeUndefined();
+  });
+
+  // Connectors' address is "connectors"; the old "falcon-ai-connectors"
+  // address sends saved links there. Both follow the same Falcon AI answer.
+  it("serves Connectors at its address and sends the old address there", () => {
+    const { routes, settings } = settingsOf({
+      isCloud: true,
+      falconAI: "allowed",
+    });
+    expect(findChildRoute(settings, "connectors")).toBeTruthy();
+    expect(matchedPath(routes, "/dashboard/settings/connectors")).toBe(
+      "dashboard/settings/connectors",
+    );
+    const oldAddress = findChildRoute(settings, "falcon-ai-connectors");
+    expect(oldAddress.element.type).toBe(Navigate);
+    expect(oldAddress.element.props.to).toBe("/dashboard/settings/connectors");
+  });
+
+  it("has no Connectors address where the deployment does not allow Falcon AI", () => {
+    const { routes, settings } = settingsOf({
+      isCloud: true,
+      falconAI: "denied",
+    });
+    expect(findChildRoute(settings, "connectors")).toBeUndefined();
+    expect(matchedPath(routes, "/dashboard/settings/connectors")).toBeNull();
+  });
+});

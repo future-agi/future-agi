@@ -106,7 +106,7 @@ func TestTranslateConverseResponse_Basic(t *testing.T) {
 			},
 		},
 		StopReason: "end_turn",
-		Usage:      converseUsage{InputTokens: 10, OutputTokens: 5, TotalTokens: 15},
+		Usage:      &converseUsage{InputTokens: usageCount(10), OutputTokens: usageCount(5), TotalTokens: 15},
 	}
 
 	out := translateConverseResponse(resp, modelID)

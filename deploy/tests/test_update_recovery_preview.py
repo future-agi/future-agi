@@ -177,8 +177,13 @@ def create_fixture(base):
         '  ' + name + ':\n    image: ' + image + '\n' for name, image in fixtures.FakeEngine.SERVICES.items())
     (root / fixtures.DISTRIBUTED_FILE).write_text(compose)
     (root / fixtures.PRODUCTION_OVERLAY).write_text('services: {}\n')
+    # A production env has an API secret pepper of its own (bin/update --production refuses one without it).
     original = (b'FUTURE_AGI_VERSION=v1.0.0\nFRONTEND_VERSION=v1.0.0\n'
-                b'PG_PASSWORD=synthetic-preview-test\nPRESERVE=no-final-newline')
+                b'PG_PASSWORD=synthetic-preview-test\n'
+                b'FI_API_SECRET_PEPPER=operator-test-pepper-0123456789abcdef0123456789\n'
+                # Crash the version transaction, not the independent initial MCP-key commit.
+                b'AGENTCC_MCP_STATE_KEYS=synthetic-configured-mcp-state-key\n'
+                b'PRESERVE=no-final-newline')
     (root / fixtures.PRODUCTION_ENV).write_bytes(original)
     components = {}
     for name, repo in fixtures.COMPONENT_REPOSITORIES.items():

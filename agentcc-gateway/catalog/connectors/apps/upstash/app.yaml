@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: upstash
+version: 1.0.0
+name: Upstash
+description: "Manage Upstash Redis, Vector, Search, QStash, workflows, boxes and blobs."
+vendor:
+  name: Upstash
+  domains: [upstash.com]
+eeCategory: developer
+group: other
+categories: [developer, database]
+tags: [database, search]
+docsUrl: https://upstash.com/docs/agent-resources/mcp
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://upstash.com/docs/agent-resources/mcp
+    fetchedAt: 2026-11-09

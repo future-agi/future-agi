@@ -6,22 +6,9 @@ from tfc.middleware.workspace_context import (
     get_current_organization,
     get_current_workspace,
 )
+from tfc.utils.base_model import _can_assign_workspace, _is_insert_save
 
 logger = structlog.get_logger(__name__)
-
-
-def _can_assign_workspace(instance, workspace):
-    if getattr(instance, "disable_auto_workspace_assignment", False):
-        return False
-    if getattr(instance._meta, "label_lower", "") == "usage.usageeventlog":
-        return False
-    if not workspace:
-        return False
-    if not hasattr(instance, "organization_id"):
-        return True
-    if not instance.organization_id:
-        return True
-    return workspace.organization_id == instance.organization_id
 
 
 @receiver(pre_save)
@@ -30,13 +17,18 @@ def auto_assign_workspace(sender, instance, **kwargs):
     Signal to automatically assign workspace and organization from thread-local context.
     Works for all models that have a workspace / organization field.
     """
+    insert_save = _is_insert_save(
+        instance,
+        force_update=kwargs.get("force_update", False),
+        update_fields=kwargs.get("update_fields"),
+    )
     current_workspace = get_current_workspace()
     current_organization = get_current_organization()
 
     # Check if the model has a workspace field (not just a property)
     if hasattr(instance, "workspace") and hasattr(instance, "workspace_id"):
         if (
-            not instance.pk
+            insert_save
             and not instance.workspace_id
             and _can_assign_workspace(instance, current_workspace)
         ):
@@ -46,7 +38,7 @@ def auto_assign_workspace(sender, instance, **kwargs):
             )
 
     if hasattr(instance, "organization") and hasattr(instance, "organization_id"):
-        if not instance.pk and not instance.organization_id and current_organization:
+        if insert_save and not instance.organization_id and current_organization:
             instance.organization = current_organization
             logger.debug(
                 f"Auto-assigned organization {getattr(current_organization, 'id', None)} to new {instance.__class__.__name__}"

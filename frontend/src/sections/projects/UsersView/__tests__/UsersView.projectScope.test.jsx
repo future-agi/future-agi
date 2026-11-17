@@ -85,6 +85,7 @@ vi.mock("src/api/project/saved-views", () => ({
   useUpdateSavedView: () => ({ mutate: vi.fn() }),
   useUpdateWorkspaceSavedView: () => ({ mutate: vi.fn() }),
   useGetWorkspaceSavedViews: () => ({ data: { custom_views: [] } }),
+  useSetProjectDefaultView: () => vi.fn(),
 }));
 vi.mock("../../LLMTracing/useLLMTracingFilters", async () => {
   const filters = [];

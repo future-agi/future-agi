@@ -14,6 +14,8 @@ import {
 
 import Iconify from "src/components/iconify";
 
+import { useCopyCode, visuallyHidden } from "./useCopyCode";
+
 // Design System empty state. One component for every "nothing here" screen.
 //
 //   variant="first-run"  – nothing exists yet. Rendered in the content area
@@ -82,14 +84,9 @@ Steps.propTypes = { steps: PropTypes.array.isRequired };
 function Quickstart({ quickstart }) {
   const { title = "Or send from code", snippets = [], waiting } = quickstart;
   const [active, setActive] = useState(0);
-  const [copied, setCopied] = useState(false);
+  const { codeRef, copy, copied, tooltip, status } = useCopyCode();
   const snippet = snippets[active];
   if (!snippet) return null;
-  const copy = () => {
-    navigator.clipboard?.writeText(snippet.code);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
-  };
   return (
     <Box
       sx={{
@@ -127,8 +124,12 @@ function Quickstart({ quickstart }) {
             ))}
           </ToggleButtonGroup>
         )}
-        <Tooltip title={copied ? "Copied" : "Copy"}>
-          <IconButton size="small" onClick={copy} aria-label="Copy code">
+        <Tooltip title={tooltip}>
+          <IconButton
+            size="small"
+            onClick={() => copy(snippet.code)}
+            aria-label="Copy code"
+          >
             <Iconify
               icon={copied ? "solar:check-read-linear" : "solar:copy-linear"}
               width={16}
@@ -137,7 +138,16 @@ function Quickstart({ quickstart }) {
         </Tooltip>
       </Stack>
       <Box
+        component="span"
+        role="status"
+        aria-live="polite"
+        sx={visuallyHidden}
+      >
+        {status}
+      </Box>
+      <Box
         component="pre"
+        ref={codeRef}
         sx={{
           m: 0,
           px: 1.75,
@@ -147,8 +157,12 @@ function Quickstart({ quickstart }) {
           fontSize: 12,
           lineHeight: "18px",
           color: "text.primary",
+          // Keep indentation but wrap long lines inside the box: a sideways
+          // scrollbar sits under the last line, out of view, so a long line
+          // just looked cut off. Copy uses the original text.
+          whiteSpace: "pre-wrap",
+          overflowWrap: "anywhere",
           overflowX: "auto",
-          whiteSpace: "pre",
         }}
       >
         {snippet.code}
@@ -191,8 +205,10 @@ export default function EmptyState({
   variant = "first-run",
   icon = "solar:inbox-linear",
   title,
+  titleProps,
   description,
   action,
+  actionDisabledReason,
   secondaryAction,
   docsHref,
   docsLabel = "Read the docs",
@@ -238,6 +254,7 @@ export default function EmptyState({
         </Box>
         <Stack spacing={0.5} alignItems="center">
           <Typography
+            {...titleProps}
             component="h2"
             sx={{
               fontSize: 12,
@@ -292,6 +309,13 @@ export default function EmptyState({
             )}
           </Stack>
         )}
+        {actionDisabledReason && (
+          <Typography
+            sx={{ fontSize: 12, lineHeight: "18px", color: "text.secondary" }}
+          >
+            {actionDisabledReason}
+          </Typography>
+        )}
       </Stack>
       {steps?.length > 0 && (
         <Box sx={{ width: 1, maxWidth: 400 }}>
@@ -308,9 +332,15 @@ EmptyState.propTypes = {
   /** Iconify name or a 20px node. */
   icon: PropTypes.oneOfType([PropTypes.string, PropTypes.node]),
   title: PropTypes.node.isRequired,
+  /** Extra props for the title's <h2>, e.g. `{ ref, tabIndex: -1 }` so a
+   *  screen that replaces the page can move focus to its heading. */
+  titleProps: PropTypes.object,
   description: PropTypes.node,
   /** The primary <Button> (verb + noun). */
   action: PropTypes.node,
+  /** Why the primary action is disabled; shown as text under it. A disabled
+   *  button takes no focus, so a hover tooltip never reaches keyboard users. */
+  actionDisabledReason: PropTypes.node,
   secondaryAction: PropTypes.node,
   docsHref: PropTypes.string,
   docsLabel: PropTypes.string,

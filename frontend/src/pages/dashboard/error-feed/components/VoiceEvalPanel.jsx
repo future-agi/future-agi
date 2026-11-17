@@ -599,6 +599,8 @@ export default function VoiceEvalPanel({
     markers: [],
     seed: traceSeed,
     dense: false,
+    // Hidden in split view: stop it so it never plays under the comparison.
+    active: !splitView,
   });
 
   if (failCall.isLoading) {

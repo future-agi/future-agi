@@ -28,6 +28,7 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from accounts.authentication import allows_no_workspace
 from accounts.serializers.contracts import (
     ACCOUNTS_ERROR_RESPONSES,
     TimezoneRequestSerializer,
@@ -62,6 +63,7 @@ class UserTimezoneView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    @allows_no_workspace("POST")
     @validated_request(
         request_serializer=TimezoneRequestSerializer,
         responses={200: TimezoneResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
@@ -184,6 +186,5 @@ class SnoozeAnnotationDigestView(APIView):
         state.save(update_fields=["realtime_snoozed_until", "updated_at"])
         return _unsub_template(
             "Snoozed",
-            f"Realtime emails paused for {days} days. "
-            "Daily digest will continue.",
+            f"Realtime emails paused for {days} days. Daily digest will continue.",
         )

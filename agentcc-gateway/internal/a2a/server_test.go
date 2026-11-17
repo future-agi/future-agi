@@ -316,9 +316,9 @@ func newPipelineTestA2AServer(t *testing.T, executor ChatCompletionExecutor) *Se
 	return s
 }
 
-// sendReturnImmediately starts a returnImmediately task and returns the task
+// sendReturnImmediatelyWithMetadata starts a returnImmediately task and returns the task
 // from the message/send response.
-func sendReturnImmediately(t *testing.T, s *Server, metadata string) Task {
+func sendReturnImmediatelyWithMetadata(t *testing.T, s *Server, metadata string) Task {
 	t.Helper()
 	params := MessageSendParams{
 		Message:       Message{Role: "user", Parts: []MessagePart{{Type: "text", Text: "Hello"}}},
@@ -384,12 +384,12 @@ func waitForTaskWorker(t *testing.T, s *Server, taskID string) {
 func TestReturnImmediatelyResponseDoesNotShareTaskWithWorker(t *testing.T) {
 	// Without metadata.model the worker fails the task at once, while the
 	// handler is still encoding the message/send response.
-	s := newPipelineTestA2AServer(t, func(context.Context, Caller, *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
+	s := newPipelineTestA2AServer(t, func(context.Context, string, *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
 		t.Error("executor should not be called without a model")
 		return nil, nil
 	})
 
-	sent := sendReturnImmediately(t, s, "")
+	sent := sendReturnImmediatelyWithMetadata(t, s, "")
 	if sent.Status.State != TaskStatusWorking {
 		t.Fatalf("message/send state = %q, want %q", sent.Status.State, TaskStatusWorking)
 	}
@@ -402,13 +402,13 @@ func TestReturnImmediatelyResponseDoesNotShareTaskWithWorker(t *testing.T) {
 
 func TestTasksCancelWhileReturnImmediatelyTaskRuns(t *testing.T) {
 	started := make(chan struct{})
-	s := newPipelineTestA2AServer(t, func(ctx context.Context, _ Caller, _ *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
+	s := newPipelineTestA2AServer(t, func(ctx context.Context, _ string, _ *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
 		close(started)
 		<-ctx.Done()
 		return nil, ctx.Err()
 	})
 
-	sent := sendReturnImmediately(t, s, `{"model":"test-model"}`)
+	sent := sendReturnImmediatelyWithMetadata(t, s, `{"model":"test-model"}`)
 	<-started
 
 	// The worker wakes as soon as the cancel func runs and records the
@@ -426,7 +426,7 @@ func TestTasksCancelWhileReturnImmediatelyTaskRuns(t *testing.T) {
 func TestTasksCancelIsNotOverwrittenByLateResult(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
-	s := newPipelineTestA2AServer(t, func(context.Context, Caller, *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
+	s := newPipelineTestA2AServer(t, func(context.Context, string, *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
 		close(started)
 		<-release
 		return &models.ChatCompletionResponse{Choices: []models.Choice{{
@@ -434,7 +434,7 @@ func TestTasksCancelIsNotOverwrittenByLateResult(t *testing.T) {
 		}}}, nil
 	})
 
-	sent := sendReturnImmediately(t, s, `{"model":"test-model"}`)
+	sent := sendReturnImmediatelyWithMetadata(t, s, `{"model":"test-model"}`)
 	<-started
 
 	if got := callTaskMethod(t, s, MethodTasksCancel, sent.ID); got.Status.State != TaskStatusCanceled {

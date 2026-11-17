@@ -78,7 +78,6 @@ vi.mock("../DevelopFilters/DevelopFilterBox", async () => {
   };
 });
 vi.mock("../TopBanner", () => ({ default: Null }));
-vi.mock("../DatapointDrawerV2/DatapointDrawerV2", () => ({ default: Null }));
 vi.mock("../AddRowData", () => ({ default: Null }));
 vi.mock("../EditColumnName", () => ({ default: Null }));
 vi.mock("../EditColumnType", () => ({ default: Null }));

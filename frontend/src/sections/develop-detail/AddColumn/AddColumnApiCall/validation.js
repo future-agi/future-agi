@@ -111,6 +111,14 @@ export const getAddColumnApiCallValidation = (
           return JSON.parse(value);
         }),
       output_type: z.string().min(1, "Output type is required"),
+      // L5 G4: where the cell value sits in the response (`$.message`).
+      response_path: z
+        .string()
+        .optional()
+        .default("$")
+        .refine((v) => !v || v.trim().startsWith("$"), {
+          message: "Start the path with $, e.g. $.message",
+        }),
     }),
     concurrency: z.number().positive("Concurrency must be a positive integer"),
   });

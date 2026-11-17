@@ -1,0 +1,73 @@
+# Sage Intacct's MCP server, read-only, with Sage Intacct's OAuth 2.0, the
+# flow its MCP guide points to. The client is the customer's own REST API
+# client ID and secret, tied to an AI-enabled Web Services Developer license
+# (sender ID); the company also needs the AI Gateway add-on. Sage Intacct
+# requires the client secret, which goes in the form of the token and
+# revocation requests. The request names only offline_access, for a refresh
+# token. Revoking one token also revokes the others for that Sage Intacct
+# user and company. EE and OSS get none until a client of their own is
+# proven.
+schema: "connector-manifest/v1#provider"
+app: sage-intacct
+id: mcp
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.intacct.com/mcp
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent, user]
+auth:
+  kind: oauth2
+  help: "Needs Sage Intacct's AI Gateway add-on and a REST API client tied to an AI-enabled Web Services Developer license, with FutureAGI's redirect URI."
+  oauth2:
+    authorizeUrl: https://api.intacct.com/ia/api/v1/oauth2/authorize
+    tokenUrl: https://api.intacct.com/ia/api/v1/oauth2/token
+    scopes: [offline_access]
+    pkce: true
+    tokenBody: form
+    clientAuth: body
+    revocation:
+      url: https://api.intacct.com/ia/api/v1/oauth2/revoke
+      method: POST
+      tokenBody: form
+      tokenField: token
+      clientAuth: body
+    registration: [preregistered]
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://developer.sage.com/intacct/docs/ai/1/mcp-setup-and-connection-guide
+    fetchedAt: 2026-11-12
+  - fact: auth.kind
+    url: https://developer.sage.com/intacct/docs/ai/1/mcp-setup-and-connection-guide
+    fetchedAt: 2026-11-12
+  - fact: auth.oauth2.authorizeUrl
+    url: https://developer.sage.com/intacct/docs/1/sage-intacct-rest-api/authorization-and-security/oauth2
+    fetchedAt: 2026-11-12
+  - fact: auth.oauth2.tokenUrl
+    url: https://developer.sage.com/intacct/docs/1/sage-intacct-rest-api/authorization-and-security/oauth2
+    fetchedAt: 2026-11-12
+  - fact: auth.oauth2.scopes
+    url: https://developer.sage.com/intacct/docs/1/sage-intacct-rest-api/authorization-and-security/oauth2
+    fetchedAt: 2026-11-12
+  - fact: auth.oauth2.pkce
+    url: https://developer.sage.com/intacct/docs/1/sage-intacct-rest-api/authorization-and-security/oauth2
+    fetchedAt: 2026-11-12
+  - fact: auth.oauth2.clientAuth
+    url: https://developer.sage.com/intacct/docs/1/sage-intacct-rest-api/authorization-and-security/oauth2
+    fetchedAt: 2026-11-12
+  - fact: auth.oauth2.revocation.url
+    url: https://developer.sage.com/intacct/docs/1/sage-intacct-rest-api/authorization-and-security/oauth2
+    fetchedAt: 2026-11-12
+  - fact: auth.oauth2.registration
+    url: https://developer.sage.com/intacct/docs/ai/1/mcp-setup-and-connection-guide
+    fetchedAt: 2026-11-12
+x-omega: { ee: exclude, oss: exclude }

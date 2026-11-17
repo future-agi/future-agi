@@ -1,0 +1,96 @@
+{
+  "data": [
+    {
+      "id": "anthropic/claude-sonnet-5.5",
+      "name": "Claude Sonnet 5.5",
+      "created": 1790000000,
+      "context_length": 1000000,
+      "architecture": {
+        "input_modalities": ["text", "image"],
+        "output_modalities": ["text"]
+      },
+      "pricing": {
+        "prompt": "0.000002",
+        "completion": "0.00001",
+        "input_cache_read": "0.0000002",
+        "input_cache_write": "0.0000025"
+      },
+      "top_provider": {
+        "max_completion_tokens": 64000
+      },
+      "supported_parameters": ["tools", "structured_outputs", "reasoning"]
+    },
+    {
+      "id": "openai/gpt-6-sol",
+      "name": "GPT-6 Sol",
+      "created": 1790000000,
+      "context_length": 1050000,
+      "architecture": {
+        "input_modalities": ["text", "image"],
+        "output_modalities": ["text"]
+      },
+      "pricing": {
+        "prompt": "0.000005",
+        "completion": "0.000025"
+      },
+      "top_provider": {
+        "max_completion_tokens": 64000
+      },
+      "supported_parameters": ["tools", "structured_outputs"]
+    },
+    {
+      "id": "qwen/qwen3.7-flash",
+      "name": "Qwen3.7 Flash",
+      "created": 1790000000,
+      "context_length": 1000000,
+      "architecture": {
+        "input_modalities": ["text"],
+        "output_modalities": ["text"]
+      },
+      "pricing": {
+        "prompt": "0.00000003",
+        "completion": "0.00000013"
+      },
+      "top_provider": {
+        "max_completion_tokens": 32000
+      },
+      "supported_parameters": ["tools"]
+    },
+    {
+      "id": "mock/ok-1",
+      "name": "Mock OK 1",
+      "created": 1790000000,
+      "context_length": 128000,
+      "architecture": {
+        "input_modalities": ["text"],
+        "output_modalities": ["text"]
+      },
+      "pricing": {
+        "prompt": "0.000001",
+        "completion": "0.000002"
+      },
+      "top_provider": {
+        "max_completion_tokens": 8000
+      },
+      "supported_parameters": ["tools"]
+    },
+    {
+      "id": "mock/fail-500",
+      "name": "Mock Fail 500",
+      "created": 1790000000,
+      "context_length": 128000,
+      "architecture": {
+        "input_modalities": ["text"],
+        "output_modalities": ["text"]
+      },
+      "pricing": {
+        "prompt": "0.000001",
+        "completion": "0.000002"
+      },
+      "top_provider": {
+        "max_completion_tokens": 8000
+      },
+      "supported_parameters": ["tools"]
+    }
+  ]
+}

@@ -1,0 +1,133 @@
+{
+  "status": true,
+  "result": {
+    "version": {
+      "id": "074bfebc-16ef-4185-a270-90d05a47627f",
+      "dataset": "2b4110cb-b165-4a42-bc61-9656ca3b510e",
+      "parent_version": null,
+      "created_by": null,
+      "organization": "88d70053-103b-462d-be42-9b3abfbb5dd2",
+      "workspace": "3f0e3f05-2c5f-49f1-bd7f-ebf7877c907b",
+      "content_hash": "",
+      "description": "",
+      "metadata": {},
+      "source_revision": "",
+      "created_at": "2026-10-13T09:20:52.985855Z",
+      "updated_at": "2026-10-13T09:20:52.985863Z",
+      "item_count": 5
+    },
+    "items": [
+      {
+        "id": "a7002bdd-24ed-4a34-ad15-dc0629f3fea6",
+        "example_id": "3d3a8fa1-0b09-40d7-b701-86b16b1d3759",
+        "external_id": "",
+        "input": "text",
+        "expected": null,
+        "metadata": {
+          "tags": [
+            "eval",
+            null
+          ],
+          "optional": null
+        },
+        "source_trace_id": "",
+        "source_span_id": "",
+        "content_hash": "c72266062a86060155431fb7ab07291c039c7ebdeb7aa81a514248a9537e79d2",
+        "legacy_row": null,
+        "created_at": "2026-10-13T09:20:52.991572Z",
+        "updated_at": "2026-10-13T09:20:52.991581Z"
+      },
+      {
+        "id": "cf6f8e79-c565-46b9-aefc-633dc15f39de",
+        "example_id": "fea2a8a1-28b9-4877-890f-b5e045ced48b",
+        "external_id": null,
+        "input": [
+          "text",
+          null
+        ],
+        "expected": [
+          "text",
+          null
+        ],
+        "metadata": {
+          "tags": [
+            "eval",
+            null
+          ],
+          "optional": null
+        },
+        "source_trace_id": "",
+        "source_span_id": "",
+        "content_hash": "0581865b2950e8d61afce30e6727ff38e344d86611af51b850853c467a4b3af4",
+        "legacy_row": null,
+        "created_at": "2026-10-13T09:20:52.993958Z",
+        "updated_at": "2026-10-13T09:20:52.993963Z"
+      },
+      {
+        "id": "060af52b-909d-43eb-80e9-c78d9d3b68bd",
+        "example_id": "317b5195-6fc1-4da2-847b-2c574fb8ac94",
+        "external_id": null,
+        "input": {
+          "nested": null
+        },
+        "expected": null,
+        "metadata": {
+          "tags": [
+            "eval",
+            null
+          ],
+          "optional": null
+        },
+        "source_trace_id": "",
+        "source_span_id": "",
+        "content_hash": "10a1bc3fb6f4584bfcb8e84f0610ab76f19f3f3bf37d8f6723609137858562de",
+        "legacy_row": null,
+        "created_at": "2026-10-13T09:20:52.997334Z",
+        "updated_at": "2026-10-13T09:20:52.997342Z"
+      },
+      {
+        "id": "628ee4b5-6620-4156-9431-4089d1c2a0a6",
+        "example_id": "c6b4e50e-195c-45e7-bdd1-ad78c391868c",
+        "external_id": null,
+        "input": false,
+        "expected": false,
+        "metadata": {
+          "tags": [
+            "eval",
+            null
+          ],
+          "optional": null
+        },
+        "source_trace_id": "",
+        "source_span_id": "",
+        "content_hash": "b1fa08b1fb66a60b9638151ac0249fe73e71f5b420fbf9b59088e9f0b4d4456a",
+        "legacy_row": null,
+        "created_at": "2026-10-13T09:20:53.000193Z",
+        "updated_at": "2026-10-13T09:20:53.000201Z"
+      },
+      {
+        "id": "57347144-c59b-4f6d-8ef7-5c160f6dfd08",
+        "example_id": "277f4a4a-57e1-4173-88c0-82916988253f",
+        "external_id": null,
+        "input": 42,
+        "expected": null,
+        "metadata": {
+          "tags": [
+            "eval",
+            null
+          ],
+          "optional": null
+        },
+        "source_trace_id": "",
+        "source_span_id": "",
+        "content_hash": "5af2a6297780d38d95cf603eb8e273ee1852077614ce3d9313093f6f2404c99f",
+        "legacy_row": null,
+        "created_at": "2026-10-13T09:20:53.002543Z",
+        "updated_at": "2026-10-13T09:20:53.002549Z"
+      }
+    ],
+    "limit": 100,
+    "offset": 0,
+    "has_more": false
+  }
+}

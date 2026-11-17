@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: anchor-browser
+version: 1.0.0
+name: Anchor Browser
+description: "Run browser tasks, execute site actions, and manage browser sessions and identities."
+vendor:
+  name: Anchor Browser
+  domains: [anchorbrowser.io]
+eeCategory: research
+group: other
+categories: [research, browser-automation]
+tags: [browser, automation, extraction]
+docsUrl: https://docs.anchorbrowser.io/advanced/mcp
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://docs.anchorbrowser.io/advanced/mcp
+    fetchedAt: 2026-11-09

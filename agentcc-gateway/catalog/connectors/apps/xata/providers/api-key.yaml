@@ -1,0 +1,45 @@
+# Xata's hosted MCP server accepts a dedicated Xata API key as a bearer.
+schema: "connector-manifest/v1#provider"
+app: xata
+id: api-key
+version: 1.1.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://api.xata.tech/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: Xata API key
+      help: "Create a dedicated Xata user or organization API key in the dashboard or CLI. Scope it to the projects, branches and operations the agent needs. User keys also inherit the creator's organization role. Supply the key without the Bearer prefix."
+      helpUrl: https://xata.io/docs/platform/api-key
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_metered
+  source: https://xata.io/pricing
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://xata.io/docs/platform/mcp
+    fetchedAt: 2026-11-09
+  - fact: transport.variant
+    url: https://xata.io/docs/platform/mcp
+    fetchedAt: 2026-11-09
+  - fact: auth.kind
+    url: https://xata.io/docs/platform/mcp
+    fetchedAt: 2026-11-09
+  - fact: auth.credentialParts
+    url: https://xata.io/docs/platform/mcp
+    fetchedAt: 2026-11-09

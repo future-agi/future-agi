@@ -1,0 +1,46 @@
+# Medusa's Docs MCP accepts a Cloud personal access key as a bearer token.
+# This is the documentation server, not the separate OAuth Commerce MCP.
+schema: "connector-manifest/v1#provider"
+app: medusa
+id: api-key
+version: 1.1.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://docs.medusajs.com/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: Cloud personal access key
+      help: "Requires a Medusa Cloud account. Create a personal key under Access keys > Personal in the Cloud dashboard and supply it without the Bearer prefix. This endpoint searches documentation and implementation guides; it does not access store data."
+      helpUrl: https://docs.medusajs.com/cloud/access-keys
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_plan
+  source: https://docs.medusajs.com/cloud/billing
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://docs.medusajs.com/learn/introduction/build-with-llms-ai/docs-mcp-server
+    fetchedAt: 2026-11-09
+  - fact: transport.variant
+    url: https://docs.medusajs.com/learn/introduction/build-with-llms-ai/docs-mcp-server
+    fetchedAt: 2026-11-09
+  - fact: auth.kind
+    url: https://docs.medusajs.com/learn/introduction/build-with-llms-ai/docs-mcp-server
+    fetchedAt: 2026-11-09
+  - fact: auth.credentialParts
+    url: https://docs.medusajs.com/learn/introduction/build-with-llms-ai/docs-mcp-server
+    fetchedAt: 2026-11-09

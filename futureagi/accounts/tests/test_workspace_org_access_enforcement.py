@@ -23,6 +23,7 @@ from tfc.middleware.workspace_context import (
     clear_workspace_context,
     set_workspace_context,
 )
+from tfc.utils.api_errors import first_error_code
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -206,8 +207,19 @@ class TestWorkspaceAccessEnforcement:
             HTTP_X_WORKSPACE_ID=str(ws_beta.id),
         )
         assert (
-            resp.status_code == status.HTTP_403_FORBIDDEN
-        ), f"Expected 403 for unauthorized workspace, got {resp.status_code}: {resp.data}"
+            resp.status_code == status.HTTP_200_OK
+        ), f"Expected 200 for unauthorized workspace, got {resp.status_code}: {resp.data}"
+        own_workspace_id = WorkspaceMembership.no_workspace_objects.get(
+            user=viewer_user, is_active=True
+        ).workspace_id
+        assert resp.data["default_workspace_id"] == str(own_workspace_id)
+        data_resp = client.get(
+            "/tracer/project/",
+            **_auth_header(token),
+            HTTP_X_WORKSPACE_ID=str(ws_beta.id),
+        )
+        assert data_resp.status_code == status.HTTP_403_FORBIDDEN
+        assert first_error_code(data_resp.data) == "workspace_unavailable"
 
     def test_member_cannot_access_unauthorized_workspace(self, member_user, ws_alpha):
         """Member with access to ws_beta CANNOT read ws_alpha."""
@@ -219,8 +231,19 @@ class TestWorkspaceAccessEnforcement:
             HTTP_X_WORKSPACE_ID=str(ws_alpha.id),
         )
         assert (
-            resp.status_code == status.HTTP_403_FORBIDDEN
-        ), f"Expected 403 for unauthorized workspace, got {resp.status_code}: {resp.data}"
+            resp.status_code == status.HTTP_200_OK
+        ), f"Expected 200 for unauthorized workspace, got {resp.status_code}: {resp.data}"
+        own_workspace_id = WorkspaceMembership.no_workspace_objects.get(
+            user=member_user, is_active=True
+        ).workspace_id
+        assert resp.data["default_workspace_id"] == str(own_workspace_id)
+        data_resp = client.get(
+            "/tracer/project/",
+            **_auth_header(token),
+            HTTP_X_WORKSPACE_ID=str(ws_alpha.id),
+        )
+        assert data_resp.status_code == status.HTTP_403_FORBIDDEN
+        assert first_error_code(data_resp.data) == "workspace_unavailable"
 
     def test_admin_can_access_any_workspace_in_org(self, admin_user, ws_beta):
         """Admin has global access — can access ws_beta even without explicit membership."""

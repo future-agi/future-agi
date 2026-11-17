@@ -39,6 +39,7 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from unittest import mock
 
 import pytest
@@ -153,6 +154,15 @@ class _ReaderCM:
         if str(self._span.project_id) not in project_ids:
             return {}
         return {str(self._span.id): str(self._span.project_id)}
+
+    def newest_trace_projects(self, trace_ids, project_ids):
+        if self._span is None or str(self._span.trace_id) not in {
+            str(t) for t in trace_ids
+        }:
+            return {}
+        if str(self._span.project_id) not in project_ids:
+            return {}
+        return {str(self._span.trace_id): str(self._span.project_id)}
 
     def list_by_ids(self, span_ids, *, project_id=None, **_):
         if self._span is None or str(self._span.id) not in {str(s) for s in span_ids}:
@@ -444,7 +454,12 @@ def test_collector_span_content_deleted_when_ch_missing(organization, workspace,
 
     with mock.patch(CH_READER_PATH, return_value=_ReaderCM(None)):
         content = helpers.resolve_source_content(item)
-    assert content == {"type": "observation_span", "deleted": True}
+    # F3 + AQ-XWS-W1E-RULE: missing and foreign sources share the withheld shape (no existence oracle)
+    assert content == {
+        "type": "observation_span",
+        "deleted": True,
+        "error": "queue_source_unavailable",
+    }
 
 
 @pytest.mark.django_db
@@ -762,9 +777,19 @@ def test_collector_span_round_trips_create_to_annotate(
     # Score persists the collector soft id — and NO PG ObservationSpan backs it.
     assert str(score.observation_span_id) == str(span.id)
     assert not ObservationSpan.objects.filter(id=span.id).exists()
-    # The whole-item note lands on the CH-resolved span.
-    note = SpanNotes.objects.get(created_by_user=user)
-    assert (str(note.span_id), note.notes) == (str(span.id), "looks good")
+    from model_hub.models.annotation_queues import QueueItemNote
+
+    # F3 + AQ-XWS-W1E-RULE + W1-CS-R2-01 (A): no live authorized PG anchor -> no legacy SpanNote mirror; QueueItemNote is authoritative
+    assert not SpanNotes.no_workspace_objects.filter(span_id=span.id).exists(), (
+        "AQ-XWS-W1I: CH-only collector span must not receive a legacy SpanNote mirror"
+    )
+    assert list(
+        QueueItemNote.no_workspace_objects.filter(
+            queue_item=item, annotator=user, deleted=False
+        ).values_list("notes", flat=True)
+    ) == ["looks good"], (
+        "AQ-XWS-W1I: CH-only collector note must persist on its queue item and user"
+    )
 
 
 # ─────────── for_source: collector trace span_notes (TH-6622) ────────────────
@@ -1111,7 +1136,12 @@ def test_collector_trace_content_deleted_when_ch_missing(organization, workspace
 
     with mock.patch(CH_READER_PATH, return_value=_ReaderCM(None)):
         content = helpers.resolve_source_content(item)
-    assert content == {"type": "trace", "deleted": True}
+    # F3 + AQ-XWS-W1E-RULE: missing and foreign sources share the withheld shape (no existence oracle)
+    assert content == {
+        "type": "trace",
+        "deleted": True,
+        "error": "queue_source_unavailable",
+    }
 
 
 # ───────── CollectorSourceCache.for_items: per-project scoping (TH-6864) ─────────
@@ -1160,20 +1190,44 @@ class _MultiSpanReaderCM:
         ]
 
 
-def _trace_item(trace_id, project_id):
-    """Unsaved QueueItem carrying only what for_items reads."""
+@pytest.fixture
+def cache_scope(db, organization, workspace, user):
+    queue = _queue(
+        organization=organization, workspace=workspace, user=user, project=None
+    )
+    return SimpleNamespace(
+        queue=queue,
+        request=SimpleNamespace(
+            organization=organization, workspace=workspace, user=user
+        ),
+    )
+
+
+def _cache_project(scope):
+    return str(
+        _make_project(
+            organization=scope.queue.organization, workspace=scope.queue.workspace
+        ).pk
+    )
+
+
+def _trace_item(trace_id, project_id, queue):
+    """Unsaved item linked to a real queue by persisted identity, not a relation."""
     return QueueItem(
+        queue_id=queue.pk,
+        organization_id=queue.organization_id,
+        workspace_id=queue.workspace_id,
         source_type=QueueItemSourceType.TRACE.value,
         trace_id=trace_id,
         project_id=project_id,
     )
 
 
-def test_for_items_mixed_project_resolves_every_root():
+def test_for_items_mixed_project_resolves_every_root(cache_scope):
     """A page whose items span two projects resolves ALL roots — each read is scoped
     to its own project. Fails if for_items scopes the whole page by one project (the
     off-project items would resolve to nothing → rendered deleted)."""
-    proj_a, proj_b = str(uuid.uuid4()), str(uuid.uuid4())
+    proj_a, proj_b = _cache_project(cache_scope), _cache_project(cache_scope)
     t_a1, t_a2, t_b1 = str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4())
     spans = [
         _make_chspan(project_id=proj_a, trace_id=t_a1, parent_span_id=""),
@@ -1181,13 +1235,15 @@ def test_for_items_mixed_project_resolves_every_root():
         _make_chspan(project_id=proj_b, trace_id=t_b1, parent_span_id=""),
     ]
     items = [
-        _trace_item(t_a1, proj_a),
-        _trace_item(t_a2, proj_a),
-        _trace_item(t_b1, proj_b),
+        _trace_item(t_a1, proj_a, cache_scope.queue),
+        _trace_item(t_a2, proj_a, cache_scope.queue),
+        _trace_item(t_b1, proj_b, cache_scope.queue),
     ]
     reader = _MultiSpanReaderCM(spans)
     with mock.patch(CH_READER_PATH, return_value=reader):
-        cache = helpers.CollectorSourceCache.for_items(items)
+        cache = helpers.CollectorSourceCache.for_items(
+            items, request=cache_scope.request
+        )
     assert cache.trace_root(t_a1) is not None
     assert cache.trace_root(t_a2) is not None
     assert cache.trace_root(t_b1) is not None
@@ -1195,62 +1251,84 @@ def test_for_items_mixed_project_resolves_every_root():
     assert {pid for _tids, pid in reader.roots_calls} == {proj_a, proj_b}
 
 
-def test_for_items_scopes_read_to_item_project():
+def test_for_items_scopes_read_to_item_project(cache_scope):
     """for_items forwards each item's project_id to the reader (PK-prefix prune),
     not None. Fails if the scoping is dropped (regressing to the wide scan)."""
-    proj, tid = str(uuid.uuid4()), str(uuid.uuid4())
+    proj, tid = _cache_project(cache_scope), str(uuid.uuid4())
     reader = _MultiSpanReaderCM(
         [_make_chspan(project_id=proj, trace_id=tid, parent_span_id="")]
     )
     with mock.patch(CH_READER_PATH, return_value=reader):
-        cache = helpers.CollectorSourceCache.for_items([_trace_item(tid, proj)])
+        cache = helpers.CollectorSourceCache.for_items(
+            [_trace_item(tid, proj, cache_scope.queue)], request=cache_scope.request
+        )
     assert cache.trace_root(tid) is not None
     assert reader.roots_calls == [((tid,), proj)]
 
 
 @pytest.mark.django_db
 def test_for_items_null_project_reads_the_copy_in_the_items_tenant(
-    organization, workspace
+    organization, workspace, user, cache_scope
 ):
     """A pre-denormalization item (project_id NULL) still resolves, from the copy
     in its own organization: the trace id is resolved to a project of the item's
     tenant, then read scoped to it. Another organization's copy of the same id is
     never read (an unscoped read rendered whichever copy it met first)."""
+    from accounts.models.organization import Organization
+    from accounts.models.workspace import Workspace
+
     project = _make_project(organization=organization, workspace=workspace)
+    foreign_org = Organization.objects.create(name="CH25 foreign cache organization")
+    foreign_workspace = Workspace.no_workspace_objects.create(
+        name="CH25 foreign cache workspace",
+        organization=foreign_org,
+        created_by=user,
+        is_active=True,
+        is_default=True,
+    )
+    foreign_project = _make_project(
+        organization=foreign_org, workspace=foreign_workspace
+    )
     tid = str(uuid.uuid4())
     reader = _MultiSpanReaderCM(
         [
-            _make_chspan(project_id=str(uuid.uuid4()), trace_id=tid, parent_span_id=""),
+            _make_chspan(
+                project_id=str(foreign_project.pk), trace_id=tid, parent_span_id=""
+            ),
             _make_chspan(project_id=str(project.id), trace_id=tid, parent_span_id=""),
         ]
     )
-    item = _trace_item(tid, None)
+    item = _trace_item(tid, None, cache_scope.queue)
     item.organization = organization
     item.workspace = workspace
     with mock.patch(CH_READER_PATH, return_value=reader):
-        cache = helpers.CollectorSourceCache.for_items([item])
+        cache = helpers.CollectorSourceCache.for_items(
+            [item], request=cache_scope.request
+        )
     assert cache.trace_root(tid).project_id == str(project.id)
     assert reader.roots_calls == [((tid,), str(project.id))]
 
 
-def test_for_items_read_count_is_bounded_by_projects_not_items():
+def test_for_items_read_count_is_bounded_by_projects_not_items(cache_scope):
     """PERF GUARD (TH-6864). A page of many items across a FEW projects issues one
     scoped CH read PER PROJECT — O(projects), not O(items), and never a single
     unscoped wide scan. Fails if for_items regresses to a per-item read or drops
     scoping — both are the full-table shapes that made the endpoint take 10s+. This
     mirrors the repo's query-shape perf tests (tracer test_session_list_performance),
     deterministic where a wall-clock assertion would flake."""
-    proj_a, proj_b = str(uuid.uuid4()), str(uuid.uuid4())
+    proj_a, proj_b = _cache_project(cache_scope), _cache_project(cache_scope)
     spans, items = [], []
     for _ in range(20):
         t_a, t_b = str(uuid.uuid4()), str(uuid.uuid4())
         spans.append(_make_chspan(project_id=proj_a, trace_id=t_a, parent_span_id=""))
         spans.append(_make_chspan(project_id=proj_b, trace_id=t_b, parent_span_id=""))
-        items.append(_trace_item(t_a, proj_a))
-        items.append(_trace_item(t_b, proj_b))
+        items.append(_trace_item(t_a, proj_a, cache_scope.queue))
+        items.append(_trace_item(t_b, proj_b, cache_scope.queue))
     reader = _MultiSpanReaderCM(spans)
     with mock.patch(CH_READER_PATH, return_value=reader):
-        cache = helpers.CollectorSourceCache.for_items(items)
+        cache = helpers.CollectorSourceCache.for_items(
+            items, request=cache_scope.request
+        )
     # 40 items across 2 projects → exactly 2 reads, one per project, each scoped
     assert len(reader.roots_calls) == 2
     assert {pid for _tids, pid in reader.roots_calls} == {proj_a, proj_b}

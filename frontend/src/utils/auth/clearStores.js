@@ -6,6 +6,7 @@ import { useAgentDetailsStore } from "src/sections/agents/store/agentDetailsStor
 import { resetPromptState } from "src/sections/workbench-v2/store/usePromptStore";
 import { resetUserStore } from "./userStoreResets";
 import { resetAllStates as resetDevelopDetailStates } from "src/sections/develop-detail/states";
+import { resetRunTray } from "src/sections/develop-detail/Experiment/runTrayStore";
 import logger from "src/utils/logger";
 import { resetAllStores } from "src/utils/zustand";
 
@@ -45,6 +46,7 @@ export const resetAllUserStores = () => {
     ["prompt", resetPromptState],
     ["graph-builder", () => resetUserStore("graph-builder")],
     ["develop-detail", resetDevelopDetailStates],
+    ["run-tray", () => resetRunTray()],
   ];
 
   for (const [name, reset] of resets) {

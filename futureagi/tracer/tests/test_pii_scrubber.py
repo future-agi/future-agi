@@ -311,3 +311,66 @@ class TestScrubPiiInSpanBatch:
         scrub_pii_in_span_batch(spans, {"proj": True})
         assert spans[0]["attributes"]["fi.span.kind"] == "LLM"
         assert "<EMAIL_ADDRESS>" in spans[0]["attributes"]["fi.input.value"]
+
+
+class TestOfflineEmailRecognizer:
+    @pytest.mark.parametrize(
+        "email",
+        [
+            "john@example.com",
+            "john@mail.example.com",
+            "john@mail.example.co.uk",
+            "john+alerts@dept.example.com.au",
+        ],
+    )
+    def test_scrubbing_reaches_snapshot_only_extractor(self, email):
+        import tldextract
+
+        from tracer.utils import pii_scrubber
+
+        extract = tldextract.TLDExtract
+        with (
+            mock.patch("tldextract.TLDExtract", wraps=extract) as constructor,
+            mock.patch.object(
+                extract, "__call__", autospec=True, side_effect=extract.__call__
+            ) as reached,
+        ):
+            assert pii_scrubber.scrub_pii_in_string(f"Contact {email} for info") == (
+                "Contact <EMAIL_ADDRESS> for info"
+            )
+
+        constructor.assert_called_once_with(suffix_list_urls=(), cache_dir=None)
+        assert reached.call_count > 0
+        for call in reached.call_args_list:
+            extractor, candidate = call.args
+            assert candidate == email
+            assert extractor.suffix_list_urls == ()
+            assert extractor.fallback_to_snapshot is True
+
+    def test_validation_and_other_recognizers_are_unchanged(self):
+        import tldextract
+        from presidio_analyzer.predefined_recognizers import EmailRecognizer
+
+        from tracer.utils import pii_scrubber
+
+        original_extract = tldextract.extract
+        original_validation = EmailRecognizer.validate_result
+        assert pii_scrubber._ensure_engines() is True
+        recognizers = pii_scrubber._analyzer.registry.get_recognizers(
+            language="en", entities=["EMAIL_ADDRESS"]
+        )
+        assert len(recognizers) == 1
+        offline = recognizers[0]
+        ordinary = EmailRecognizer()
+        assert isinstance(offline, EmailRecognizer)
+        assert offline.patterns == ordinary.patterns
+        assert offline.context == ordinary.context
+        assert offline.supported_entities == ordinary.supported_entities
+        assert offline.name == ordinary.name
+        assert offline.global_regex_flags == ordinary.global_regex_flags
+        assert offline.validate_result("john@mail.example.co.uk") is True
+        assert offline.validate_result("john@example.invalid") is False
+        assert offline.validate_result("john@localhost") is False
+        assert tldextract.extract is original_extract
+        assert EmailRecognizer.validate_result is original_validation
+        assert type(ordinary) is EmailRecognizer

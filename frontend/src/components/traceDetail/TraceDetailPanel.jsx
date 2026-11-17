@@ -19,11 +19,18 @@ const PANEL_WIDTH = "60vw";
 // availability: even a known zero says nothing about missing source requests.
 export function CaptureCoverageNotice({ coverage }) {
   if (!coverage?.coverage_unknown) return null;
+  const count = coverage.request_count;
   return (
     <Box
       role="note"
       aria-label="Capture coverage"
-      sx={{ px: 2, py: 1, borderBottom: 1, borderColor: "divider", flexShrink: 0 }}
+      sx={{
+        px: 2,
+        py: 1,
+        borderBottom: 1,
+        borderColor: "divider",
+        flexShrink: 0,
+      }}
     >
       <Typography
         variant="caption"
@@ -31,12 +38,13 @@ export function CaptureCoverageNotice({ coverage }) {
         color="text.primary"
         sx={{ fontWeight: 500 }}
       >
-        Observed requests only · {coverage.request_count}{" "}
-        {coverage.request_count === 1 ? "observed request" : "observed requests"}
+        {count
+          ? `Usage counts only the ${count.toLocaleString()} model call${count === 1 ? "" : "s"} we received`
+          : "We haven't received any model calls"}
       </Typography>
       <Typography variant="caption" component="div" color="text.secondary">
-        Capture coverage unknown. Source summaries are not added to request usage;
-        matching totals do not prove complete capture.
+        Some calls may not have been sent, and the agent&apos;s own run summary
+        isn&apos;t added, so the real total may be higher.
       </Typography>
     </Box>
   );

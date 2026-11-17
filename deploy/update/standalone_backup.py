@@ -460,9 +460,16 @@ def _automatic_layout():
     _need(value.get('schema_version') == 1 and value.get('runtime_activation_contract') == 'standalone-compose-direct-v1'
           and value.get('automatic_profiles') == [] and value.get('compose_file') == 'docker-compose.yml',
           'unsupported_installation')
-    active = {s: entry for s, entry in value['services'].items() if not entry.get('profiles')}
+    unsupported = value.get('automatic_unsupported')
+    _need(isinstance(unsupported, dict) and isinstance(unsupported.get('services'), dict)
+          and isinstance(unsupported.get('volumes'), dict), 'unsupported_installation')
+    # Services and volumes the layout names as not covered yet: the observer refuses an
+    # install that runs such a service, and their volumes take no backup coverage.
+    active = {s: entry for s, entry in value['services'].items()
+              if not entry.get('profiles') and s not in unsupported['services']}
     _need(set(active) == {owner for owner, _ in VOLUMES.values()}
-          and set(value['volumes']) == set(value['backup_coverage']) == set(VOLUMES), 'unsupported_installation')
+          and set(value['volumes']) - set(unsupported['volumes']) == set(value['backup_coverage']) == set(VOLUMES)
+          and not set(unsupported['volumes']) & set(VOLUMES), 'unsupported_installation')
     covered = []
     for key, (owner, target) in VOLUMES.items():
         coverage = value['backup_coverage'][key]

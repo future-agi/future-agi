@@ -274,29 +274,56 @@ def _assert_copy(payload, expected):
     assert "foreign" not in str(payload)
 
 
+@pytest.fixture
+def source_request(user, workspace):
+    """Direct helper reads carry the same authenticated scope as API reads."""
+    assert user.is_authenticated
+    assert user.can_access_workspace(workspace)
+    return SimpleNamespace(
+        user=user,
+        organization=user.organization,
+        workspace=workspace,
+    )
+
+
 @pytest.mark.django_db
-def test_single_item_reads_render_the_items_copy(items):
+def test_single_item_reads_render_the_items_copy(items, source_request):
     """``QueueItemSerializer(item)`` (next-item / skip / complete / review
     navigation) and the uncached content / preview read one item at a time."""
     for cases in items.values():
         for item, expected in cases:
             fresh = QueueItem.objects.get(pk=item.pk)
-            _assert_copy(QueueItemSerializer(fresh).data["source_preview"], expected)
-            _assert_copy(resolve_source_preview(fresh), expected)
-            _assert_copy(resolve_source_content(fresh), expected)
+            _assert_copy(
+                QueueItemSerializer(fresh, context={"request": source_request}).data[
+                    "source_preview"
+                ],
+                expected,
+            )
+            _assert_copy(
+                resolve_source_preview(fresh, request=source_request), expected
+            )
+            _assert_copy(
+                resolve_source_content(fresh, request=source_request), expected
+            )
 
 
 @pytest.mark.django_db
-def test_page_cache_renders_each_items_copy(items):
+def test_page_cache_renders_each_items_copy(items, source_request):
     """The batched page read (items list, exports, annotate-detail)."""
     for cases in items.values():
         expected_by_pk = {item.pk: expected for item, expected in cases}
         page = list(QueueItem.objects.filter(pk__in=expected_by_pk))
-        cache = CollectorSourceCache.for_items(page)
+        cache = CollectorSourceCache.for_items(page, request=source_request)
         for item in page:
             expected = expected_by_pk[item.pk]
-            _assert_copy(resolve_source_preview(item, ch_cache=cache), expected)
-            _assert_copy(resolve_source_content(item, ch_cache=cache), expected)
+            _assert_copy(
+                resolve_source_preview(item, ch_cache=cache, request=source_request),
+                expected,
+            )
+            _assert_copy(
+                resolve_source_content(item, ch_cache=cache, request=source_request),
+                expected,
+            )
 
 
 @pytest.mark.django_db
@@ -319,12 +346,13 @@ def test_endpoints_render_the_callers_copy(auth_client, items):
 
 
 @pytest.mark.django_db
-def test_item_notes_target_is_the_items_copy(items, copies):
+def test_item_notes_target_is_the_items_copy(items, copies, source_request):
     """Submitting whole-item notes writes them on the returned span."""
     for cases in items.values():
         for item, expected in cases:
             target = _span_notes_target_for_queue_item(
-                QueueItem.objects.get(pk=item.pk)
+                QueueItem.objects.get(pk=item.pk),
+                request=source_request,
             )
             assert target is not None
             assert target.project_id == str(getattr(copies, expected).id)
@@ -332,7 +360,7 @@ def test_item_notes_target_is_the_items_copy(items, copies):
 
 @pytest.mark.django_db
 def test_id_held_only_by_another_organization_renders_deleted(
-    auth_client, copies, user, workspace
+    auth_client, copies, user, workspace, source_request
 ):
     trace_id = str(uuid.uuid4())
     copies.rows.append(
@@ -347,11 +375,16 @@ def test_id_held_only_by_another_organization_renders_deleted(
         order=1,
     )
 
-    assert resolve_source_preview(item) == {"type": "trace", "deleted": True}
-    cache = CollectorSourceCache.for_items([item])
-    assert resolve_source_content(item, ch_cache=cache) == {
+    assert resolve_source_preview(item, request=source_request) == {
         "type": "trace",
         "deleted": True,
+        "error": "queue_source_unavailable",
+    }
+    cache = CollectorSourceCache.for_items([item], request=source_request)
+    assert resolve_source_content(item, ch_cache=cache, request=source_request) == {
+        "type": "trace",
+        "deleted": True,
+        "error": "queue_source_unavailable",
     }
 
 
@@ -364,7 +397,7 @@ def _clickhouse_down(monkeypatch, copies):
 
 @pytest.mark.django_db
 def test_item_notes_target_fails_closed_when_clickhouse_errors(
-    items, copies, monkeypatch
+    items, copies, monkeypatch, source_request
 ):
     """The notes target feeds the SpanNotes write in submit: a ClickHouse error
     must raise (the submit fails and the annotator retries), never read as "no
@@ -374,7 +407,10 @@ def test_item_notes_target_fails_closed_when_clickhouse_errors(
     for cases in items.values():
         for item, _expected in cases:
             with pytest.raises(_ClickHouseDown):
-                _span_notes_target_for_queue_item(QueueItem.objects.get(pk=item.pk))
+                _span_notes_target_for_queue_item(
+                    QueueItem.objects.get(pk=item.pk),
+                    request=source_request,
+                )
 
 
 @pytest.mark.django_db
@@ -400,19 +436,27 @@ def test_submit_fails_closed_when_the_notes_target_read_errors(
     assert not QueueItemNote.no_workspace_objects.filter(queue_item=item).exists()
     assert not SpanNotes.objects.filter(created_by_user=user).exists()
 
-    # The retry, with ClickHouse back, writes the note on the item's own copy.
+    # F3 + AQ-XWS-W1E-RULE + W1-CS-R2-01 (A): no live authorized PG anchor -> no legacy SpanNote mirror; QueueItemNote is authoritative
     monkeypatch.setattr(
         "tracer.services.clickhouse.v2.get_reader", lambda: _Copies(copies.rows)
     )
     response = auth_client.post(url, payload, format="json")
     assert response.status_code == status.HTTP_200_OK, response.content
-    note = SpanNotes.objects.get(created_by_user=user)
-    assert (note.span_id, note.notes) == (SPAN_X, "whole item note")
+    assert not SpanNotes.no_workspace_objects.filter(span_id=SPAN_X).exists(), (
+        "AQ-XWS-W1I: CH-only retry must not receive a legacy SpanNote mirror"
+    )
+    assert list(
+        QueueItemNote.no_workspace_objects.filter(
+            queue_item=item, annotator=user, deleted=False
+        ).values_list("notes", flat=True)
+    ) == [payload["item_notes"]], (
+        "AQ-XWS-W1I: successful retry must persist the note on its queue item and user"
+    )
 
 
 @pytest.mark.django_db
 def test_item_notes_target_is_none_when_the_id_is_not_live_in_scope(
-    auth_client, copies, user, workspace
+    auth_client, copies, user, workspace, source_request
 ):
     """A genuine miss (the id is held only by another organization) still
     resolves to no target, without raising."""
@@ -430,22 +474,30 @@ def test_item_notes_target_is_none_when_the_id_is_not_live_in_scope(
             trace_id=trace_id,
             order=1,
         )
-        assert _span_notes_target_for_queue_item(item) is None
+        assert _span_notes_target_for_queue_item(item, request=source_request) is None
 
 
 @pytest.mark.django_db
 def test_render_paths_fail_open_when_clickhouse_errors(
-    auth_client, items, copies, monkeypatch
+    auth_client, items, copies, monkeypatch, source_request
 ):
     """Previews, content and annotate-detail (a read; its notes list is display
     only) still render the ``deleted`` sentinel on a ClickHouse error."""
     _clickhouse_down(monkeypatch, copies)
     for queue_id, cases in items.items():
         page = list(QueueItem.objects.filter(pk__in=[item.pk for item, _ in cases]))
-        cache = CollectorSourceCache.for_items(page)
+        cache = CollectorSourceCache.for_items(page, request=source_request)
         for item in page:
-            assert resolve_source_preview(item).get("deleted") is True
-            assert resolve_source_content(item, ch_cache=cache).get("deleted") is True
+            assert (
+                resolve_source_preview(item, request=source_request).get("deleted")
+                is True
+            )
+            assert (
+                resolve_source_content(
+                    item, ch_cache=cache, request=source_request
+                ).get("deleted")
+                is True
+            )
             detail = auth_client.get(
                 f"{QUEUE_URL}{queue_id}/items/{item.pk}/annotate-detail/"
             )

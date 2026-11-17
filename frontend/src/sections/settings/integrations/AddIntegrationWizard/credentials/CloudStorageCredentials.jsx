@@ -15,7 +15,8 @@ import { LoadingButton } from "@mui/lab";
 import Iconify from "src/components/iconify";
 import { useValidateCredentials } from "src/api/integrations";
 import { backButtonSx } from "../../styles";
-import { getErrorMessage, unwrapResponse } from "../../utils";
+import { getErrorMessage, s3Destination, unwrapResponse } from "../../utils";
+import { isDestinationListed } from "../../constants";
 
 const AWS_REGIONS = [
   "us-east-1",
@@ -35,6 +36,10 @@ const SUB_PLATFORMS = [
   { id: "gcs", label: "Google Cloud Storage", icon: "mdi:google-cloud" },
 ];
 
+const LISTED_SUB_PLATFORMS = SUB_PLATFORMS.filter((sp) =>
+  isDestinationListed("cloud_storage", sp.id),
+);
+
 export default function CloudStorageCredentials({
   data,
   onUpdate,
@@ -42,7 +47,8 @@ export default function CloudStorageCredentials({
   onBack,
 }) {
   const [subPlatform, setSubPlatform] = useState(
-    data.credentials?.sub_platform || "",
+    data.credentials?.sub_platform ||
+      (LISTED_SUB_PLATFORMS.length === 1 ? LISTED_SUB_PLATFORMS[0].id : ""),
   );
 
   // S3 fields
@@ -151,7 +157,15 @@ export default function CloudStorageCredentials({
       {
         onSuccess: (response) => {
           unwrapResponse(response);
-          onUpdate({ credentials, hostUrl: "" });
+          // Where the request logs are written: the bucket in its region,
+          // under the key prefix.
+          onUpdate({
+            credentials,
+            hostUrl:
+              credentials.sub_platform === "s3"
+                ? s3Destination(credentials)
+                : "",
+          });
           onNext();
         },
       },
@@ -166,7 +180,7 @@ export default function CloudStorageCredentials({
 
       {/* Sub-platform selector */}
       <Stack direction="row" spacing={1.5}>
-        {SUB_PLATFORMS.map((sp) => (
+        {LISTED_SUB_PLATFORMS.map((sp) => (
           <Section
             key={sp.id}
             variant="panel"

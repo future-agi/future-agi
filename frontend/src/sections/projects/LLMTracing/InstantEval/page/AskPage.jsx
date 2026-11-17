@@ -191,6 +191,48 @@ function Welcome({ onNew }) {
 
 Welcome.propTypes = { onNew: PropTypes.func.isRequired };
 
+// A run the server names as in flight, by its link alone (the page learns
+// its unit from the server).
+const busyRunLink = (run) =>
+  `/dashboard/observe/${run.project_id}/ask?${new URLSearchParams({
+    [ASK_RUN_PARAM]: run.task_id,
+  })}`;
+
+// A start refused because the organization's runs are all in use: the
+// server's words, then a link to each run it names, which can be in another
+// project (History lists only this one's). They open in a new tab, so the
+// question typed here stays, to ask again once a run is paused or cancelled.
+function BusyRefusal({ error }) {
+  const runs = (error.runs || []).filter(
+    (run) => run?.task_id && run?.project_id,
+  );
+  return (
+    <>
+      {error.message}
+      {runs.length > 0 && (
+        <Box component="ul" sx={{ m: 0, mt: 0.5, pl: 2.5 }}>
+          {runs.map((run) => (
+            <li key={run.task_id}>
+              <Link
+                component={RouterLink}
+                to={busyRunLink(run)}
+                target="_blank"
+                rel="noopener"
+              >
+                {run.question
+                  ? `Open “${run.question}” in a new tab`
+                  : "Open the run in a new tab"}
+              </Link>
+            </li>
+          ))}
+        </Box>
+      )}
+    </>
+  );
+}
+
+BusyRefusal.propTypes = { error: PropTypes.object.isRequired };
+
 export default function AskPage() {
   const { observeId } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -458,8 +500,9 @@ export default function AskPage() {
               Open AI Providers
             </Link>
           </>
-        ) : error instanceof AskBusy ||
-          error instanceof AskSampleTooLarge ||
+        ) : error instanceof AskBusy ? (
+          <BusyRefusal error={error} />
+        ) : error instanceof AskSampleTooLarge ||
           error instanceof AskRefused ||
           error?.name === "AskNeedsConfirm" ? (
           error.message

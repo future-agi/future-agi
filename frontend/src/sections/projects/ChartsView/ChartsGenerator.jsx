@@ -1,3 +1,4 @@
+import { formatExactMoney } from "src/sections/common/format/money";
 import { Box, Typography, useTheme } from "@mui/material";
 import React from "react";
 import PropTypes from "prop-types";
@@ -5,6 +6,7 @@ import { format } from "date-fns";
 import { palette } from "src/theme/palette";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import { throttle } from "src/utils/utils";
+import { isValidEvalQualityPoint } from "src/utils/evalQualityMetrics";
 
 import ChartsTheme from "./ChartsTheme";
 import { isIncompleteCost, monetaryCostLabel } from "../LLMTracing/GraphSection/common";
@@ -97,7 +99,7 @@ const ChartsGenerator = ({
                 : value;
 
           return isCost
-            ? `$${formattedValue}`
+            ? formatExactMoney(value)
             : `${formattedValue}${unit ? ` ${unit}` : ""}`;
         },
       },
@@ -132,13 +134,34 @@ const ChartsGenerator = ({
           const isSeriesVisible =
             w.globals.collapsedSeriesIndices.indexOf(index) === -1;
 
+          // Preserve the exact-source tooltip contract.
+          // prettier-ignore
           if (isSeriesVisible) {
             const yValue = w.globals.series[index][dataPointIndex];
             const label = w.config.series[index]?.name || `Series ${index + 1}`;
+            const point = w.config.series[index]?.data?.[dataPointIndex];
+            const validEvalCounts =
+              !isEvaluationChart || isValidEvalQualityPoint(point);
+            const missingEvalValue =
+              !validEvalCounts
+                ? "-"
+                : point?.count === 0
+                  ? "No data"
+                  : point?.count > 0 && point?.scored_count === 0
+                    ? "Unscored"
+                    : "-";
             const formattedYValue =
-              unit === "$"
-                ? monetaryCostLabel(yValue, w.config.series[index]?.data[dataPointIndex]?.cost_coverage)
-                : `${yValue} ${unit}`;
+              !validEvalCounts
+                ? "-"
+                : unit === "$" && isIncompleteCost(point?.cost_coverage)
+                  ? monetaryCostLabel(yValue, point?.cost_coverage)
+                  : yValue == null
+                    ? isEvaluationChart
+                      ? missingEvalValue
+                      : "-"
+                    : unit === "$"
+                      ? `${unit}${yValue}`
+                      : `${yValue} ${unit}`;
 
             tooltipContent += `
           <div style="font-weight: normal; color: var(--text-secondary); font-size: 11px;">${label}: ${formattedYValue}</div>`;

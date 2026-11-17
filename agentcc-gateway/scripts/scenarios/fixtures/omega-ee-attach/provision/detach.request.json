@@ -1,0 +1,11 @@
+{
+  "http": {
+    "method": "DELETE",
+    "url": "https://api.example.com/agentcc/mcp/service/virtual-servers/vs_01K7CN5EEAGENTM0DE00000001/",
+    "headers": {
+      "x-api-key": "{{EE_SERVICE_API_KEY}}",
+      "x-secret-key": "{{EE_SERVICE_SECRET_KEY}}"
+    }
+  },
+  "body": null
+}

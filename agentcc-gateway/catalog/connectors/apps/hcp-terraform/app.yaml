@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: hcp-terraform
+version: 1.0.0
+name: HCP Terraform
+description: "Inspect Terraform workspaces and runs, search registries, and manage infrastructure workflows."
+vendor:
+  name: HashiCorp
+  domains: [hashicorp.com, terraform.io]
+eeCategory: developer
+group: other
+categories: [developer]
+tags: [projects, automation]
+docsUrl: https://developer.hashicorp.com/terraform/mcp-server/deploy/remote-mcp
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://developer.hashicorp.com/terraform/mcp-server/deploy/remote-mcp
+    fetchedAt: 2026-11-09

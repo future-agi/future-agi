@@ -1463,3 +1463,53 @@ def test_driver_failure_reports_only_class_never_dsn_or_password(
         assert leaked not in rendered
     assert exc.value.__suppress_context__ and exc.value.__cause__ is None
     assert harness.writes == []
+
+
+# Columns cut 10's PG migrations add to three mirrored tables. A pipeline built
+# on 1.58.0 keeps landing tables without them until PeerDB replicates each
+# table's next change. Types are as this harness models them.
+UPGRADE_ADDED = {
+    "model_hub_dataset": (
+        ("description", "Nullable(String)"),
+        ("folder_id", "Nullable(UUID)"),
+        ("tags", "String"),
+    ),
+    "model_hub_score": (("value_updated_at", "Nullable(String)"),),
+    "simulate_agent_definition": (("encrypted_api_key", "Nullable(String)"),),
+}
+
+
+def add_source_columns(harness, table, columns):
+    profile = harness.profile.tables[table]
+    harness.profile.tables[table] = replace(
+        profile, columns=(*profile.columns, *columns)
+    )
+
+
+@pytest.mark.parametrize("apply", [False, True])
+def test_retained_pipeline_passes_when_the_source_gains_columns_outside_the_contract(
+    harness, apply
+):
+    harness.retained()
+    for table, columns in UPGRADE_ADDED.items():
+        add_source_columns(harness, table, columns)
+    # Any later column outside the landing contract behaves the same way.
+    add_source_columns(
+        harness, "trace_annotation", (("later_note", "Nullable(String)"),)
+    )
+
+    result = harness.run(apply=apply)
+
+    assert result["ready"] is True
+    assert result["created_peers"] == result["created_mirrors"] == []
+    assert harness.writes == []
+
+
+def test_retained_landing_still_needs_every_contract_column(harness):
+    harness.retained()
+    del harness.source.columns["model_hub_dataset"]["name"]
+
+    with pytest.raises(setup.SetupError) as exc:
+        harness.run(apply=True)
+    assert "model_hub_dataset: missing/unexpected columns ['name']" in str(exc.value)
+    assert harness.writes == []

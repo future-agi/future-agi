@@ -1,6 +1,8 @@
+import hashlib
 import json
 import traceback
 import uuid
+from contextlib import contextmanager
 from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import asdict
@@ -18,7 +20,17 @@ from accounts.models.workspace import Workspace
 # back from this module — a cycle that surfaces under settings where the
 # ClickHouse client warms up at startup. Keep it lazy.
 from agentic_eval.core_evals.fi_evals import *  # noqa: F403
+from agentic_eval.core_evals.fi_utils.custom_code_pause import (
+    refuse_paused_custom_code_template,
+)
+from agentic_eval.core_evals.fi_utils.exceptions import CustomCodeEvalPausedError
 from common.utils.data_injection import normalize as _di_normalize
+from evaluations.usage_step import (
+    UsageStep,
+    activity_workflow_run,
+    log_unreadable_step,
+    step_event_id,
+)
 from model_hub.models.choices import StatusType
 from model_hub.models.evals_metric import EvalTemplate
 from model_hub.utils.eval_input_validation import is_empty_value
@@ -42,7 +54,10 @@ from tracer.models.observation_span import (
 )
 from tracer.models.trace import Trace
 from tracer.models.trace_session import TraceSession
-from tracer.services.eval_tasks.entries import soft_delete_eval_results
+from tracer.services.eval_tasks.entries import (
+    engine_entry_run,
+    soft_delete_eval_results,
+)
 from tracer.utils.attribute_accessor import span_raw_log
 from tracer.utils.helper import (
     FieldConfig,
@@ -226,6 +241,15 @@ def _attach_warnings_to_metadata(response, output_metadata, run_warnings):
         return
     response["warnings"] = list(run_warnings)
     output_metadata["warnings"] = list(run_warnings)
+
+
+def _attach_ran_on_model(output_metadata, result):
+    """Record the model an agent evaluator's client ran on in the EvalLogger
+    metadata. Its readers pick named keys only, so nothing shows it, and the
+    response the row keeps still names the configured model."""
+    ran_on_model = getattr(getattr(result, "evaluator", None), "ran_on_model", None)
+    if isinstance(ran_on_model, str) and ran_on_model:
+        output_metadata["ran_on_model"] = ran_on_model
 
 
 GROUND_TRUTH_NOT_APPLIED_WARNING_TYPE = "ground_truth_not_applied"
@@ -444,13 +468,12 @@ def build_trace_context(trace, *, anchor_span_id: str | None = None) -> dict:
 
         trace_id = getattr(trace, "id", None)
         project_id = getattr(trace, "project_id", None)
-        if trace_id is None:
+        if trace_id is None or not project_id:
             _agg, _spans = {}, []
         else:
             with get_reader() as reader:
                 _ch_spans = reader.list_by_trace(
-                    str(trace_id),
-                    project_id=(str(project_id) if project_id is not None else None),
+                    str(trace_id), project_id=str(project_id)
                 )
             _span_count = len(_ch_spans)
             _error_count = sum(1 for s in _ch_spans if s.status == "ERROR")
@@ -458,7 +481,8 @@ def build_trace_context(trace, *, anchor_span_id: str | None = None) -> dict:
             _total_tokens = sum(
                 s.total_tokens or 0
                 for s in _ch_spans
-                if s.attrs_string.get("fi.usage.contribution") != "none"
+                if (getattr(s, "attrs_string", None) or {}).get("fi.usage.contribution")
+                != "none"
                 and (s.observation_type == "llm" or s.id not in repeated_ids)
             )
             _total_latency = sum((s.latency_ms or 0) for s in _ch_spans)
@@ -813,6 +837,50 @@ class EvalSkippedMissingAttribute(ValueError):
         )
 
 
+def _and_list(items: list[str]) -> str:
+    """Join words the way a sentence does: "a", "a and b", "a, b and c"."""
+    if len(items) < 2:
+        return "".join(items)
+    return f"{', '.join(items[:-1])} and {items[-1]}"
+
+
+class EvalSkippedEmptyTraceInput(ValueError):
+    """The trace has no value for an input the evaluator needs, so it is skipped.
+
+    Raised before the cost log and the evaluator call, so nothing is charged.
+    The message stays the resolver's or validator's own text, so ``except
+    ValueError`` handlers read what they read before; ``skipped_reason`` is the
+    one sentence the task logs show, naming the trace field and the input.
+    """
+
+    def __init__(self, message: str, empty_inputs: list[tuple[str, str]]):
+        fields = list(dict.fromkeys(field for _, field in empty_inputs))
+        keys = [f"'{key}'" for key, _ in empty_inputs]
+        self.skipped_reason = (
+            f"This trace has {_and_list([f'no {field}' for field in fields])}, "
+            f"which the evaluator needs as {_and_list(keys)}."
+        )
+        super().__init__(message)
+
+
+def _empty_trace_inputs(eval_template, run_params, mapping) -> list[tuple[str, str]]:
+    """``(input, trace field)`` for each declared input the trace left empty.
+
+    Same scope as the shared validator: declared inputs that the mapping wires
+    to a trace field. Empty when the failure is not about the trace's data, as
+    when no declared input is wired at all.
+    """
+    from model_hub.utils.eval_input_validation import _declared_keys
+
+    declared = _declared_keys(getattr(eval_template, "config", None) or {})
+    mapping = mapping or {}
+    return [
+        (key, mapping[key])
+        for key in sorted(run_params or {})
+        if key in declared and mapping.get(key) and is_empty_value(run_params[key])
+    ]
+
+
 def _require_mapping_paths(mapping, target):
     """Guard the mapping before any walker touches it.
 
@@ -1081,6 +1149,89 @@ def _eval_config_output(custom_eval_config):
         return "score"
 
 
+def _paused_custom_code_refusal(eval_template):
+    """The CustomCodeEvalPausedError for a custom code template the deployment
+    pauses, or None when the template may run.
+
+    Callers check it before logging the run's cost and raise it where run_eval
+    is called, so a refused run is stored as a failed eval and is not charged.
+    """
+    try:
+        refuse_paused_custom_code_template(eval_template)
+    except CustomCodeEvalPausedError as refusal:
+        return refusal
+    return None
+
+
+# The span the legacy span evaluation activity is evaluating and the activity's
+# workflow run, while it runs. That span's usage events are keyed to them.
+_legacy_span_run: ContextVar[tuple[str, str] | None] = ContextVar(
+    "legacy_span_evaluation_run", default=None
+)
+
+
+@contextmanager
+def _keyed_to_activity_run(observation_span_id):
+    """Within this block, the usage events of the legacy span evaluation of
+    ``observation_span_id`` are keyed to the span and the activity's workflow
+    run: a retry of the activity is billed once, a new dispatch again. Outside
+    an activity nothing is keyed."""
+    run = activity_workflow_run()
+    token = _legacy_span_run.set((str(observation_span_id), run) if run else None)
+    try:
+        yield
+    finally:
+        _legacy_span_run.reset(token)
+
+
+def _legacy_span_step(
+    target_type: str, target_id: str | None, custom_eval_config: CustomEvalConfig
+) -> UsageStep | None:
+    """The step the legacy span evaluation activity is running, for the span
+    it evaluates: the span, the activity's workflow run, and the eval with its
+    config hash. None for any other target or outside that activity."""
+    legacy_run = _legacy_span_run.get()
+    if (
+        legacy_run is None
+        or target_type != EvalTargetType.SPAN.value
+        or target_id != legacy_run[0]
+    ):
+        return None
+    from tracer.services.eval_tasks.config_hash import resolved_config_hash
+
+    return {
+        "evaluated": (target_type, target_id),
+        "run": legacy_run[1],
+        "evaluator": (
+            getattr(custom_eval_config, "id", None),
+            resolved_config_hash(custom_eval_config),
+        ),
+    }
+
+
+def _engine_usage_step(
+    target_type: str, target_id: str | None, custom_eval_config: CustomEvalConfig
+) -> UsageStep | None:
+    """The evaluation step the eval task engine is running, as its usage
+    events are keyed: the span, trace or session, the task entry, and the eval
+    with the config the entry runs under. Outside the engine, the step of the
+    legacy span evaluation activity for the span it evaluates. None otherwise,
+    or when the step cannot be read."""
+    try:
+        entry_run = engine_entry_run()
+        if entry_run is None:
+            return _legacy_span_step(target_type, target_id, custom_eval_config)
+        entry_id, config_hash = entry_run
+        return {
+            "evaluated": (target_type, target_id),
+            "run": entry_id,
+            "evaluator": (getattr(custom_eval_config, "id", None), config_hash),
+        }
+    except Exception:
+        log_unreadable_step()
+        return None
+
+
 def _emit_eval_billing(
     org_id: str,
     api_call_type,
@@ -1091,11 +1242,19 @@ def _emit_eval_billing(
     ws_id: str | None,
     api_call_log_row,
     feedback_id=None,
+    target_id: str | None = None,
 ):
     """Emit a UsageEvent for the new billing pipeline after a successful eval.
 
     Centralizes the dual-write block used by span/trace/session eval paths.
     Silently no-ops when ee billing modules are unavailable or on any error.
+
+    An evaluation the eval task engine runs is keyed to the span, trace or
+    session (``target_id``), the task entry and the eval with the config the
+    entry runs under: an entry run again after a lost worker or a retry emits
+    the events it emitted before and is billed once. A Delete & rerun is a new
+    entry and an edited eval a new config, so both are billed. Outside the
+    engine every evaluation is its own event.
     """
     try:
         from ee.usage.schemas.events import UsageEvent
@@ -1116,11 +1275,16 @@ def _emit_eval_billing(
         def token_usage_properties(token_usage):
             return {}
 
+    step_id = step_event_id(
+        _engine_usage_step(target_type, target_id, custom_eval_config)
+    )
+
     try:
         if _emit_jev_usage(
             getattr(result, "evaluator", None),
             org_id=org_id,
-            run_id=(
+            run_id=step_id
+            or (
                 str(api_call_log_row.log_id) if api_call_log_row else str(uuid.uuid4())
             ),
         ):
@@ -1134,6 +1298,7 @@ def _emit_eval_billing(
 
         emit(
             UsageEvent(
+                **({"event_id": step_id} if step_id else {}),
                 org_id=org_id,
                 event_type=_get_billing_event_type(
                     api_call_type,
@@ -1229,6 +1394,11 @@ def _execute_composite_on_span(
             workspace=workspace,
             model=custom_eval_config.model,
             source="tracer_composite",
+            usage_step=_engine_usage_step(
+                EvalTargetType.SPAN.value,
+                str(observation_span.id),
+                custom_eval_config,
+            ),
         )
 
         value = (
@@ -1359,6 +1529,9 @@ def _execute_composite_on_trace(
                 "anchor_span_id": str(anchor_span.id),
             },
             source="tracer_composite",
+            usage_step=_engine_usage_step(
+                EvalTargetType.TRACE.value, str(trace.id), custom_eval_config
+            ),
         )
 
         value = (
@@ -1490,6 +1663,11 @@ def _execute_composite_on_session(
             model=custom_eval_config.model,
             session_context={"session_id": str(trace_session.id)},
             source="tracer_composite",
+            usage_step=_engine_usage_step(
+                EvalTargetType.SESSION.value,
+                str(trace_session.id),
+                custom_eval_config,
+            ),
         )
 
         value = (
@@ -1622,6 +1800,8 @@ def _execute_evaluation(
             project_id=project_id,
         )
 
+    paused_refusal = _paused_custom_code_refusal(eval_model)
+
     # Apply the shared empty-input rules so eval tasks behave the same as
     # the dataset / playground / SDK paths. The validator raises when all
     # mapped inputs are empty (for custom evals) and otherwise returns a
@@ -1690,7 +1870,7 @@ def _execute_evaluation(
     )
 
     api_call_log_row = None
-    if log_and_deduct_cost_for_api_request is not None:
+    if paused_refusal is None and log_and_deduct_cost_for_api_request is not None:
         api_call_log_row = log_and_deduct_cost_for_api_request(
             organization=observation_span.project.organization,
             api_call_type=api_call_type,
@@ -1732,6 +1912,8 @@ def _execute_evaluation(
 
     # --- Run eval via unified engine ---
     try:
+        if paused_refusal is not None:
+            raise paused_refusal
         result = run_eval(
             EvalRequest(
                 eval_template=eval_model,
@@ -1774,6 +1956,7 @@ def _execute_evaluation(
             ws_id=ws_id,
             api_call_log_row=api_call_log_row,
             feedback_id=feedback_id,
+            target_id=str(observation_span.id),
         )
 
         # Parse metadata
@@ -1803,6 +1986,7 @@ def _execute_evaluation(
 
         _output_metadata = {**metadata}
         _attach_warnings_to_metadata(response, _output_metadata, run_warnings)
+        _attach_ran_on_model(_output_metadata, result)
 
         logger_kwargs = {
             "trace": observation_span.trace,
@@ -2021,6 +2205,32 @@ def _create_error_eval_logger(
     )
 
 
+def _span_usage_refusal(custom_eval_config, observation_span):
+    """The sentence a span evaluation outside an evaluation task is refused
+    with, or None when it may run.
+
+    The check ``run_entry`` makes before a task entry's evaluation, for the
+    organization of the span's project, which ``_execute_evaluation`` logs
+    the cost to and charges, under the call type it charges. Callers make it
+    before they retire the span's earlier result, so a refused organization
+    keeps that result and gets no evaluator call, no cost log and no usage
+    event. Without the billing module nothing is checked.
+    """
+    # Runtime import: run_entry imports the ClickHouse eval loader when it
+    # loads, which this module imports only inside functions.
+    from tracer.services.eval_tasks.run_entry import _usage_refusal
+
+    refusal = _usage_refusal(custom_eval_config, observation_span.project)
+    if refusal is not None:
+        logger.warning(
+            "span_evaluation_refused_by_usage_check",
+            observation_span_id=str(observation_span.id),
+            custom_eval_config_id=str(custom_eval_config.id),
+            reason=refusal,
+        )
+    return refusal
+
+
 @temporal_activity(
     # Retry transient worker / LLM / network failures. The activity is
     # idempotent — an ``EvalLogger.filter(…).exists()`` check early in
@@ -2058,6 +2268,20 @@ def evaluate_observation_span(
             f"ObservationSpan with id {observation_span_id} does not exist."
         ) from None
 
+    # Check usage before the earlier results are retired. A refusal is
+    # recorded the way an evaluation error is recorded below, unless the span
+    # still shows a result for this evaluation: that result stays as it is
+    # and nothing is written beside it.
+    refusal = _span_usage_refusal(custom_eval_config, observation_span)
+    if refusal is not None:
+        if not EvalLogger.objects.filter(
+            observation_span=observation_span, custom_eval_config=custom_eval_config
+        ).exists():
+            _create_error_eval_logger(
+                observation_span, custom_eval_config, None, refusal
+            )
+        return False
+
     # mark all previous eval_logger as deleted
     soft_delete_eval_results(
         EvalLogger.objects.filter(
@@ -2072,15 +2296,16 @@ def evaluate_observation_span(
             custom_eval_config.eval_template.id,
         )
 
-        _execute_evaluation(
-            observation_span_id=observation_span_id,
-            custom_eval_config_id=custom_eval_config_id,
-            eval_task_id=None,
-            run_params=run_params,
-            type=EXPERIMENT,
-            feedback_id=feedback_id,
-            project_id=observation_span.project_id,
-        )
+        with _keyed_to_activity_run(observation_span.id):
+            _execute_evaluation(
+                observation_span_id=observation_span_id,
+                custom_eval_config_id=custom_eval_config_id,
+                eval_task_id=None,
+                run_params=run_params,
+                type=EXPERIMENT,
+                feedback_id=feedback_id,
+                project_id=observation_span.project_id,
+            )
         return True
     except ValueError as e:
         # Expected validation failure (e.g. missing required input for the eval).
@@ -2199,6 +2424,16 @@ def evaluate_observation_span_observe(
             f"EvalLogger with observation_span_id {observation_span_id} and custom_eval_config_id {custom_eval_config_id} already exists for eval task {eval_task_id}."
         )
         return
+
+    # Check usage before the earlier results are retired. A span that still
+    # shows a result has returned above, so a refusal is recorded the way an
+    # evaluation error is recorded below.
+    refusal = _span_usage_refusal(custom_eval_config, observation_span)
+    if refusal is not None:
+        _create_error_eval_logger(
+            observation_span, custom_eval_config, eval_task_id, refusal
+        )
+        return False
 
     # mark all previous eval_logger as deleted
     soft_delete_eval_results(
@@ -2336,157 +2571,143 @@ def eval_observation_span_runner(observation_span_id, eval_tags):
         observation_span.save()
 
 
+def eval_result_state(eval_log):
+    """Classify lifecycle before inspecting any retained quality output."""
+    status = str(getattr(eval_log, "status", "") or "").strip().lower()
+    if (
+        getattr(eval_log, "error", False)
+        or str(getattr(eval_log, "output_str", "") or "").strip().lower() == "error"
+        or status
+        in {"errored", "error", "failed", "rate_limited", "insufficient_credits"}
+    ):
+        return "error"
+    if getattr(eval_log, "skipped_reason", None) or status == "skipped":
+        return "skipped"
+    if status in {"pending", "running"}:
+        return status
+    return "completed" if status == "completed" else "unknown"
+
+
+def eval_quality_value(eval_log, output_type=None):
+    """Return a valid completed result, preserving zero/False; otherwise None.
+
+    Numeric scores use the existing 0..100 scale. Arbitrary text is not a
+    score; only the historic Passed/Failed spellings are numeric results.
+    An empty choices list is the model default, not evidence of a result.
+    """
+    from math import isfinite
+    from numbers import Real
+
+    if eval_result_state(eval_log) != "completed":
+        return None
+    boolean = getattr(eval_log, "output_bool", None)
+    number = getattr(eval_log, "output_float", None)
+    choices = getattr(eval_log, "output_str_list", None)
+    if output_type in (None, "bool") and isinstance(boolean, bool):
+        return 100 if boolean else 0
+    if (
+        output_type in (None, "float")
+        and isinstance(number, Real)
+        and not isinstance(number, bool)
+        and isfinite(number)
+    ):
+        return min(max(number * 100, 0), 100) if output_type is None else number * 100
+    if (
+        output_type in (None, "str_list")
+        and isinstance(choices, list)
+        and choices
+        and all(isinstance(choice, str) for choice in choices)
+    ):
+        return choices
+    if output_type is None:
+        text = str(getattr(eval_log, "output_str", "") or "").strip().lower()
+        if text in {"passed", "failed"}:
+            return 100 if text == "passed" else 0
+    return None
+
+
+def eval_quality_counts(evals, output_type=None):
+    """Execution errors / terminal attempts, independent of quality failures.
+
+    unscored_count includes every attempt without a valid quality result.
+    completed_count includes completed non-numeric results; pending, running,
+    skipped and unknown states are excluded from the execution error rate.
+    """
+    counts = {
+        "count": len(evals),
+        "scored_count": 0,
+        "unscored_count": 0,
+        "completed_count": 0,
+        "error_count": 0,
+        "pending_count": 0,
+        "running_count": 0,
+        "skipped_count": 0,
+        "failed_count": 0,
+    }
+    for log in evals:
+        state = eval_result_state(log)
+        if state != "unknown":
+            counts[state + "_count"] += 1
+        value = eval_quality_value(log, output_type)
+        if value is not None:
+            counts["scored_count"] += 1
+            if not isinstance(value, list) and value < 30:
+                counts["failed_count"] += 1
+        else:
+            counts["unscored_count"] += 1
+    terminal = counts["error_count"] + counts["completed_count"]
+    counts["error_rate"] = (
+        round(counts["error_count"] * 100 / terminal, 2) if terminal else None
+    )
+    return counts
+
+
 def score_evals(evals: list):
-    """
-    Calculate average score for a list of EvalLogger entries.
+    """Quality-only average (or choices); no valid results is unscored/null."""
+    evals = list(evals)
+    scores, choices, grouped = [], [], {}
+    for log in evals:
+        config = log.custom_eval_config
+        key = str(config.id) if config else None
+        grouped.setdefault(key, []).append(log)
+        value = eval_quality_value(log)
+        if isinstance(value, list):
+            choices.extend(choice for choice in value if choice not in choices)
+        elif value is not None:
+            scores.append(value)
 
-    Args:
-        evals: List of EvalLogger objects
-    Returns:
-        float: Average score (0-100) or 0 if no valid evaluations
-    """
-    if not evals:
-        return {
-            "avg_score": 0,
-            "eval_response_data": {},
+    response = {}
+    for key, logs in grouped.items():
+        config = logs[0].custom_eval_config
+        current = {
+            **eval_quality_counts(logs),
+            "passed_count": 0,
+            "failed_count": 0,
+            "failed_traces_count": 0,
+            "failed_traces_ids": [],
+            "name": "Low " + (config.name if config else "Unknown"),
         }
-
-    total_count = len(evals)
-    valid_scores = []
-    valid_scores_list = []
-    eval_response_data = {}
-
-    for eval_log in evals:
-        # if eval_log.eval_id is None:
-        #     continue
-
-        custom_eval_config = eval_log.custom_eval_config
-
-        if custom_eval_config and custom_eval_config.id not in eval_response_data:
-            eval_response_data[str(custom_eval_config.id)] = {
-                "passed_count": 0,
-                "failed_count": 0,
-                "count": 0,
-                "failed_traces_count": 0,
-                "failed_traces_ids": [],
-                "name": "Low " + custom_eval_config.name,
-            }
-
-        eval_response_data[str(custom_eval_config.id)]["count"] += 1
-        eval_response_data[str(custom_eval_config.id)]["name"] = (
-            "Low " + custom_eval_config.name
-        )
-
-        # Handle boolean outputs (Pass/Fail)
-        if eval_log.output_bool is not None:
-            if eval_log.output_bool:
-                valid_scores.append(100)
-                eval_response_data[str(custom_eval_config.id)]["passed_count"] += 1
+        for log in logs:
+            value = eval_quality_value(log)
+            if value is None or isinstance(value, list):
+                continue
+            if value >= 30:
+                current["passed_count"] += 1
             else:
-                valid_scores.append(0)
-                eval_response_data[str(custom_eval_config.id)]["failed_count"] += 1
+                current["failed_count"] += 1
+                trace_id = getattr(getattr(log, "trace", None), "id", None)
                 if (
-                    eval_log.trace.id
-                    not in eval_response_data[str(custom_eval_config.id)][
-                        "failed_traces_ids"
-                    ]
+                    trace_id is not None
+                    and trace_id not in current["failed_traces_ids"]
                 ):
-                    eval_response_data[str(custom_eval_config.id)][
-                        "failed_traces_count"
-                    ] += 1
-                    eval_response_data[str(custom_eval_config.id)][
-                        "failed_traces_ids"
-                    ].append(eval_log.trace.id)
-            continue
-
-        # Handle float outputs (direct scores)
-        if eval_log.output_float is not None:
-            # Ensure score is between 0-100
-            score = min(max(eval_log.output_float * 100, 0), 100)
-            valid_scores.append(score)
-            if score >= 30:
-                eval_response_data[str(custom_eval_config.id)]["passed_count"] += 1
-            else:
-                eval_response_data[str(custom_eval_config.id)]["failed_count"] += 1
-                if (
-                    eval_log.trace.id
-                    not in eval_response_data[str(custom_eval_config.id)][
-                        "failed_traces_ids"
-                    ]
-                ):
-                    eval_response_data[str(custom_eval_config.id)][
-                        "failed_traces_count"
-                    ] += 1
-                    eval_response_data[str(custom_eval_config.id)][
-                        "failed_traces_ids"
-                    ].append(eval_log.trace.id)
-            continue
-
-        # Handle string outputs ("Passed"/"Failed")
-        if eval_log.output_str:
-            if eval_log.output_str.lower() == "passed":
-                valid_scores.append(100)
-                eval_response_data[str(custom_eval_config.id)]["passed_count"] += 1
-            elif (
-                eval_log.output_str.lower() == "failed"
-                or eval_log.output_str.lower() == "error"
-            ):
-                valid_scores.append(0)
-                eval_response_data[str(custom_eval_config.id)]["failed_count"] += 1
-                if (
-                    eval_log.trace.id
-                    not in eval_response_data[str(custom_eval_config.id)][
-                        "failed_traces_ids"
-                    ]
-                ):
-                    eval_response_data[str(custom_eval_config.id)][
-                        "failed_traces_count"
-                    ] += 1
-                    eval_response_data[str(custom_eval_config.id)][
-                        "failed_traces_ids"
-                    ].append(eval_log.trace.id)
-            else:
-                valid_scores.append(100)
-                eval_response_data[str(custom_eval_config.id)]["passed_count"] += 1
-
-            continue
-
-        if eval_log.output_str_list:
-            unique_values = set()
-            if isinstance(eval_log.output_str_list, list):
-                unique_values.update(eval_log.output_str_list)
-                valid_scores_list.extend(list(unique_values))
-                valid_scores_list = list(set(valid_scores_list))
-                eval_response_data[str(custom_eval_config.id)]["passed_count"] += 1
-            else:
-                eval_response_data[str(custom_eval_config.id)]["failed_count"] += 1
-                if (
-                    eval_log.trace.id
-                    not in eval_response_data[str(custom_eval_config.id)][
-                        "failed_traces_ids"
-                    ]
-                ):
-                    eval_response_data[str(custom_eval_config.id)][
-                        "failed_traces_count"
-                    ] += 1
-                    eval_response_data[str(custom_eval_config.id)][
-                        "failed_traces_ids"
-                    ].append(eval_log.trace.id)
-
-    # Calculate average score
-    if len(valid_scores) > 0:
-        return {
-            "avg_score": round(sum(valid_scores) / total_count, 2),
-            "eval_response_data": eval_response_data,
-        }
-
-    if len(valid_scores_list) > 0:
-        return {
-            "avg_score": valid_scores_list,
-            "eval_response_data": eval_response_data,
-        }
-
-    return {"avg_score": 0, "eval_response_data": eval_response_data}
+                    current["failed_traces_ids"].append(trace_id)
+        current["failed_traces_count"] = len(current["failed_traces_ids"])
+        response[key] = current
+    return {
+        "avg_score": round(sum(scores) / len(scores), 2) if scores else choices or None,
+        "eval_response_data": response,
+        **eval_quality_counts(evals),
+    }
 
 
 def avg_latency(evals: list):
@@ -2545,20 +2766,14 @@ def avg_tokens(evals: list):
 
 
 def score_categorical(evals: list, value):
-    if not evals:
-        return {
-            "avg_score": 0,
-        }
-    passed_count = 0
-
-    total_count = len(evals)
-
-    for eval_log in evals:
-        if eval_log.output_str_list:
-            if value in eval_log.output_str_list:
-                passed_count += 1
-
-    return round(passed_count / total_count, 2) * 100 if total_count > 0 else 0
+    """Percentage within valid completed choice results, or None if unscored."""
+    choices = [eval_quality_value(log, "str_list") for log in evals]
+    choices = [choice for choice in choices if choice is not None]
+    return (
+        round(sum(value in choice for choice in choices) * 100 / len(choices), 2)
+        if choices
+        else None
+    )
 
 
 # ============================================================================
@@ -2686,11 +2901,14 @@ _SESSION_PUBLIC_FIELDS = frozenset({"name", "bookmarked"})
 # so one evaluator can read a session end to end. Clipped on turn boundaries
 # (first turns and the latest kept) to stay inside judge input limits.
 SESSION_TRANSCRIPT_FIELD = "transcript"
+SESSION_COMPLETE_CONVERSATION_FIELD = "conversation_complete"
+SESSION_CONVERSATION_REVISION_KEY = "_session_conversation_revision"
 _TRANSCRIPT_MAX_CHARS = 60000
 _TRANSCRIPT_TURN_CHARS = 4000
 
 
-def _transcript_text(value) -> str:
+def _transcript_text(value, *, role: str = "user") -> str:
+    """Extract the requested side of a conversation, not the opposite speaker."""
     if value is None:
         return ""
     if isinstance(value, (dict, list)):
@@ -2710,8 +2928,9 @@ def _transcript_text(value) -> str:
                 return candidate[key]
         candidate = candidate.get("messages", candidate)
     if isinstance(candidate, list):
+        roles = ("assistant", "ai") if role == "assistant" else ("user", "human")
         for message in reversed(candidate):
-            if isinstance(message, dict) and message.get("role") in ("user", "human"):
+            if isinstance(message, dict) and message.get("role") in roles:
                 content = message.get("content")
                 return content if isinstance(content, str) else json.dumps(content)
     return json.dumps(candidate) if not isinstance(candidate, str) else candidate
@@ -2729,8 +2948,8 @@ _TREE_FIELD_CHARS = 1500
 _TREE_KEEP_ENDS = 12
 
 
-def _span_text(value) -> str:
-    text = _transcript_text(value)
+def _span_text(value, *, role: str = "user") -> str:
+    text = _transcript_text(value, role=role)
     return " ".join(str(text or "").split())
 
 
@@ -2754,7 +2973,9 @@ def _span_block(span, depth: int, number: int, field_chars: int) -> str:
         head += f" · ERROR{': ' + message if message else ''}"
     lines = [head]
     for label, attr in (("in", "input"), ("out", "output")):
-        text = _span_text(getattr(span, attr, None))
+        text = _span_text(
+            getattr(span, attr, None), role="assistant" if attr == "output" else "user"
+        )
         if text:
             lines.append(f"{indent}  {label}: {_clip_text(text, field_chars)}")
     return "\n".join(lines)
@@ -2865,6 +3086,56 @@ def render_session_full_transcript(traces, spans_of) -> str:
     return _fit_turns(turns, _TREE_MAX_CHARS)
 
 
+def render_session_complete_conversation(traces) -> str:
+    """All ordered trace inputs/outputs, with no clipping or message extraction.
+
+    Preserve nested message roles, tool payloads and whitespace verbatim instead
+    of choosing only the last user/assistant message. A provider may refuse an
+    oversized input; never silently turn that into a score for fewer turns.
+    """
+    return json.dumps(
+        [
+            {
+                "trace_id": str(trace.id),
+                "input": getattr(trace, "input", None),
+                "output": getattr(trace, "output", None),
+            }
+            for trace in traces
+        ],
+        sort_keys=True,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        default=_public_fields,
+    )
+
+
+def session_mapping_uses_conversation_revision(mapping) -> bool:
+    """Only trace-input/output transcripts are covered by this source hash.
+
+    Span trees, indexed paths and session metadata can change without changing
+    the conversation payload. Mixed mappings must retain the legacy row-change
+    retry and usage identity rather than treating this hash as source proof.
+    """
+    return (
+        isinstance(mapping, dict)
+        and bool(mapping)
+        and all(
+            path in (SESSION_COMPLETE_CONVERSATION_FIELD, SESSION_TRANSCRIPT_FIELD)
+            for path in mapping.values()
+        )
+    )
+
+
+def session_conversation_revision(trace_session) -> str:
+    """Content identity of the CH snapshot, independent of evaluator results.
+
+    The session mapping memo, when active, pins this to exactly the trace list
+    used for mapping, even when another turn arrives during the model call.
+    """
+    payload = render_session_complete_conversation(_session_traces_ch(trace_session))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
 def render_session_transcript(traces) -> str:
     """Ordered turns of a session's traces as plain text for a judge."""
 
@@ -2878,7 +3149,7 @@ def render_session_transcript(traces) -> str:
 
     turns = [
         f"[Turn {i}] User: {clip(_transcript_text(getattr(t, 'input', None)))}\n"
-        f"Assistant: {clip(_transcript_text(getattr(t, 'output', None)))}"
+        f"Assistant: {clip(_transcript_text(getattr(t, 'output', None), role='assistant'))}"
         for i, t in enumerate(traces, start=1)
     ]
     return _fit_turns(turns, _TRANSCRIPT_MAX_CHARS)
@@ -3164,8 +3435,12 @@ def _session_traces_ch(trace_session) -> list:
                     traces.append(
                         get_trace(str(tid), reader=reader, project_id=_project_id)
                     )
-                except Trace.DoesNotExist:
-                    continue
+                except Trace.DoesNotExist as exc:
+                    # Membership arrived before the trace payload. Retry the
+                    # read rather than scoring an incomplete conversation.
+                    raise EvalTelemetryReadError(
+                        "A session turn has not finished arriving in ClickHouse."
+                    ) from exc
     except EvalTelemetryReadError:
         raise
     except Exception as e:
@@ -3185,6 +3460,8 @@ def _session_traces_ch(trace_session) -> list:
 
 
 def _render_session(field: str, traces) -> str:
+    if field == SESSION_COMPLETE_CONVERSATION_FIELD:
+        return render_session_complete_conversation(traces)
     if field == SESSION_FULL_TRANSCRIPT_FIELD:
         return render_session_full_transcript(traces, _ordered_trace_spans)
     return render_session_transcript(traces)
@@ -3209,7 +3486,15 @@ def _resolve_session_path(trace_session: TraceSession, path: str):
     # Transcripts read the session's ordered traces; outside ClickHouse mode
     # they reuse the ``traces`` branch below to get the same ordering.
     transcript_requested = None
-    if head in (SESSION_TRANSCRIPT_FIELD, SESSION_FULL_TRANSCRIPT_FIELD) and not rest:
+    if (
+        head
+        in (
+            SESSION_TRANSCRIPT_FIELD,
+            SESSION_FULL_TRANSCRIPT_FIELD,
+            SESSION_COMPLETE_CONVERSATION_FIELD,
+        )
+        and not rest
+    ):
         from tracer.services.clickhouse.v2.eval_loader import _read_source
 
         if _read_source() == "clickhouse":
@@ -3314,8 +3599,10 @@ def _process_trace_mapping(
 
     Mirrors ``_process_mapping`` (the span resolver) but walks the trace
     path grammar: trace fields, child-span aggregators, and dotted paths
-    into ``spans.<n>.<field>``. Raises ``ValueError`` on a required-key
-    miss so the caller writes an error EvalLogger row and continues.
+    into ``spans.<n>.<field>``. A required key whose field the trace lacks
+    raises ``EvalSkippedEmptyTraceInput`` (a ``ValueError``): the eval-task
+    runner records the trace as skipped, and ``evaluate_trace_observe`` still
+    writes its error EvalLogger row and continues.
     """
     if not mapping:
         return {}
@@ -3354,16 +3641,17 @@ def _process_trace_mapping(
                 parsed[key] = ""
                 continue
             # Expected: the user's eval references an attribute absent on this
-            # trace. Raw emitter before the ValueError that the outer
-            # evaluate_trace_observe handler catches and persists as failed. Warning.
-            logger.warning(
+            # trace. Warning, then the skip that the eval-task runner records as
+            # skipped. A key mapped to nothing is a configuration error and
+            # stays a plain ValueError.
+            message = (
                 f"Required attribute '{attribute}' for key '{key}' not found "
                 f"on trace {trace.id}"
             )
-            raise ValueError(
-                f"Required attribute '{attribute}' for key '{key}' not found "
-                f"on trace {trace.id}"
-            )
+            logger.warning(message)
+            if attribute:
+                raise EvalSkippedEmptyTraceInput(message, [(key, attribute)])
+            raise ValueError(message)
         parsed[key] = _mapped_json(value)
 
     return parsed
@@ -3602,7 +3890,11 @@ def _heavy_span_ids_for_session_mapping(
 
 
 def resolve_session_mapping_lean_first(
-    mapping: dict | None, trace_session, template_id
+    mapping: dict | None,
+    trace_session,
+    template_id,
+    *,
+    source_metadata: dict | None = None,
 ) -> dict:
     """Lean-first wrapper around ``_process_session_mapping`` for the CH eval path.
 
@@ -3635,7 +3927,20 @@ def resolve_session_mapping_lean_first(
         heavy_ids = _heavy_span_ids_for_session_mapping(mapping, trace_session)
         token = _heavy_span_ids.set(heavy_ids or None)
         try:
-            return _process_session_mapping(mapping, trace_session, template_id)
+            # Check the saved paths before optional-key resolution mutates them,
+            # so billing and the reconciler use the same coverage decision.
+            revision_covered = session_mapping_uses_conversation_revision(mapping)
+            params = _process_session_mapping(mapping, trace_session, template_id)
+            if source_metadata is not None:
+                if revision_covered:
+                    source_metadata[SESSION_CONVERSATION_REVISION_KEY] = (
+                        session_conversation_revision(trace_session)
+                    )
+                else:
+                    # Drop revisions written before this guard (or before a
+                    # mapping edit), including from the nested billing context.
+                    source_metadata.pop(SESSION_CONVERSATION_REVISION_KEY, None)
+            return params
         finally:
             _heavy_span_ids.reset(token)
     finally:
@@ -3732,6 +4037,7 @@ def _execute_evaluation_for_trace(
         )
         _persist_eval_logger(logger_kwargs)
         return
+    paused_refusal = _paused_custom_code_refusal(eval_template)
     eval_type_id = eval_template.config.get("eval_type_id")
     futureagi_eval = eval_type_id in FUTUREAGI_EVAL_TYPES
 
@@ -3740,9 +4046,19 @@ def _execute_evaluation_for_trace(
     # EvalLogger output_metadata so the trace-target row gets the badge.
     from model_hub.utils.eval_input_validation import validate_eval_inputs
 
-    partial_input_warning, run_params = validate_eval_inputs(
-        eval_template, run_params, mapped_keys=(run_params or {}).keys()
-    )
+    try:
+        partial_input_warning, run_params = validate_eval_inputs(
+            eval_template, run_params, mapped_keys=(run_params or {}).keys()
+        )
+    except ValueError as exc:
+        # The trace has no value for an input the evaluator needs: a skip,
+        # raised before the cost log and the evaluator call below.
+        empty_inputs = _empty_trace_inputs(
+            eval_template, run_params, custom_eval_config.mapping
+        )
+        if not empty_inputs:
+            raise
+        raise EvalSkippedEmptyTraceInput(str(exc), empty_inputs) from exc
 
     org_id = str(trace.project.organization.id)
     workspace = trace.project.workspace
@@ -3792,7 +4108,7 @@ def _execute_evaluation_for_trace(
         runtime_config=custom_eval_config.config,
     )
     api_call_log_row = None
-    if log_and_deduct_cost_for_api_request is not None:
+    if paused_refusal is None and log_and_deduct_cost_for_api_request is not None:
         api_call_log_row = log_and_deduct_cost_for_api_request(
             organization=trace.project.organization,
             api_call_type=api_call_type,
@@ -3845,6 +4161,8 @@ def _execute_evaluation_for_trace(
         _eval_inputs["span_context"] = build_span_context(anchor_span)
 
     try:
+        if paused_refusal is not None:
+            raise paused_refusal
         result = run_eval(
             EvalRequest(
                 eval_template=eval_template,
@@ -3858,6 +4176,12 @@ def _execute_evaluation_for_trace(
                 runtime_config=custom_eval_config.config,
                 organization_id=org_id,
                 workspace_id=ws_id,
+                # Feedback must not inherit the provider's default workspace.
+                feedback_workspace_id=(
+                    str(trace.project.workspace_id)
+                    if trace.project.workspace_id is not None
+                    else None
+                ),
             )
         )
 
@@ -3884,6 +4208,7 @@ def _execute_evaluation_for_trace(
             ws_id=ws_id,
             api_call_log_row=api_call_log_row,
             feedback_id=feedback_id,
+            target_id=str(trace.id),
         )
 
         metadata = result.metadata
@@ -3911,6 +4236,7 @@ def _execute_evaluation_for_trace(
         }
         _output_metadata = {**metadata}
         _attach_warnings_to_metadata(response, _output_metadata, run_warnings)
+        _attach_ran_on_model(_output_metadata, result)
         logger_kwargs = {
             "target_type": EvalTargetType.TRACE.value,
             "trace": trace,
@@ -3993,6 +4319,7 @@ def _execute_evaluation_for_session(
         )
         _persist_eval_logger(logger_kwargs)
         return
+    paused_refusal = _paused_custom_code_refusal(eval_template)
     eval_type_id = eval_template.config.get("eval_type_id")
     futureagi_eval = eval_type_id in FUTUREAGI_EVAL_TYPES
 
@@ -4050,7 +4377,7 @@ def _execute_evaluation_for_session(
         runtime_config=custom_eval_config.config,
     )
     api_call_log_row = None
-    if log_and_deduct_cost_for_api_request is not None:
+    if paused_refusal is None and log_and_deduct_cost_for_api_request is not None:
         api_call_log_row = log_and_deduct_cost_for_api_request(
             organization=trace_session.project.organization,
             api_call_type=api_call_type,
@@ -4103,6 +4430,8 @@ def _execute_evaluation_for_session(
             _eval_inputs["session_context"] = _session_ctx
 
     try:
+        if paused_refusal is not None:
+            raise paused_refusal
         result = run_eval(
             EvalRequest(
                 eval_template=eval_template,
@@ -4116,8 +4445,16 @@ def _execute_evaluation_for_session(
                 runtime_config=custom_eval_config.config,
                 organization_id=org_id,
                 workspace_id=ws_id,
+                # Feedback must not inherit the provider's default workspace.
+                feedback_workspace_id=(
+                    str(trace_session.project.workspace_id)
+                    if trace_session.project.workspace_id is not None
+                    else None
+                ),
             )
         )
+        if result.failure:
+            raise ValueError(result.failure)
 
         if api_call_log_row is not None:
             config_dict = json.loads(api_call_log_row.config)
@@ -4142,6 +4479,7 @@ def _execute_evaluation_for_session(
             ws_id=ws_id,
             api_call_log_row=api_call_log_row,
             feedback_id=feedback_id,
+            target_id=str(trace_session.id),
         )
 
         metadata = result.metadata
@@ -4169,6 +4507,7 @@ def _execute_evaluation_for_session(
         }
         _output_metadata = {**metadata}
         _attach_warnings_to_metadata(response, _output_metadata, run_warnings)
+        _attach_ran_on_model(_output_metadata, result)
         logger_kwargs = {
             "target_type": EvalTargetType.SESSION.value,
             "trace": None,

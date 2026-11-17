@@ -179,12 +179,18 @@ def _observe_payload(namespace: str, identity: dict[str, Any]) -> Any:
                 **common,
                 metric_id=str(identity.get("metric_id") or "session_count"),
             )
-        if namespace in {"observe-eval-graph", "observe-eval-chart-series"}:
+        if namespace in {
+            "observe-eval-graph",
+            "observe-eval-chart-series",
+            "observe-eval-graph-nk20-v1",
+            "observe-eval-chart-series-nk20-v1",
+        }:
             return read_exact_eval_graph(
                 **common,
                 req_data_config=dict(identity.get("req_data_config") or {}),
                 observe_type=str(identity.get("observe_type") or "trace"),
-                all_series=namespace == "observe-eval-chart-series",
+                all_series=namespace
+                in {"observe-eval-chart-series", "observe-eval-chart-series-nk20-v1"},
                 aggregation_context=str(identity.get("aggregation_context") or "trace"),
             )
         if namespace == "observe-annotation-graph":

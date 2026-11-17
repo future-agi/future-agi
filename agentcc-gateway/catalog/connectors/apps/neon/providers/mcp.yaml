@@ -1,0 +1,33 @@
+# Neon's hosted MCP server with OAuth: the person authorizes access to their
+# Neon account and may choose a read-only scope on the authorization page.
+schema: "connector-manifest/v1#provider"
+app: neon
+id: mcp
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.neon.tech/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent, user]
+auth:
+  kind: mcp_oauth
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://neon.com/docs/ai/neon-mcp-server
+    fetchedAt: 2026-10-21
+  - fact: transport.variant
+    url: https://neon.com/docs/ai/neon-mcp-server
+    fetchedAt: 2026-10-21
+  - fact: auth.kind
+    url: https://neon.com/docs/ai/neon-mcp-server
+    fetchedAt: 2026-10-21

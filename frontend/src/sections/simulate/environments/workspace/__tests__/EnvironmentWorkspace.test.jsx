@@ -751,6 +751,85 @@ describe("EnvironmentWorkspace route shell", () => {
     expect(screen.getByText("Sandbox launch failed")).toBeInTheDocument();
   });
 
+  // A failed or canceled build used to be a dead end: only the Back arrow.
+  it.each([
+    [
+      "an infrastructure failure",
+      {
+        stage: "failed",
+        failure: {
+          domain: "infrastructure",
+          stage: "understanding_agent",
+          code: "sandbox_launch_failed",
+          message: "Sandbox launch failed",
+        },
+      },
+      "This failure wasn't caused by your agent. Start a new build to try again.",
+    ],
+    [
+      "an agent failure",
+      {
+        stage: "failed",
+        failure: {
+          domain: "agent",
+          stage: "understanding_agent",
+          code: "agent_unreachable",
+          message: "Agent unreachable",
+        },
+      },
+      "Check the failed step above, then start a new build.",
+    ],
+    [
+      "a cancel",
+      { stage: "canceled" },
+      "Build canceled. Start a new build to try again.",
+    ],
+  ])("offers Start a new build after %s", async (_label, status, line) => {
+    const user = userEvent.setup();
+    getHarnessJob.mockResolvedValue({
+      ...BUILDING_JOB,
+      job: { ...BUILDING_JOB.job, job_id: "job-ended" },
+      status: { ...status, created_at: NOW },
+    });
+
+    renderWorkspace("/dashboard/simulate/environments/job-ended");
+
+    expect(await screen.findByText(line)).toBeInTheDocument();
+    const startNew = screen.getByRole("button", { name: "Start a new build" });
+    expect(startNew).toBeEnabled();
+
+    // It reopens the Build tab for this environment's source.
+    await user.click(startNew);
+    expect(screen.getByTestId("location")).toHaveTextContent(
+      "/dashboard/simulate/environments?tab=build&rebuild=job-ended",
+    );
+  });
+
+  it.each(["failed", "canceled"])(
+    "keeps Delete in the header overflow once the build has %s",
+    async (stage) => {
+      const user = userEvent.setup();
+      getHarnessJob.mockResolvedValue({
+        ...BUILDING_JOB,
+        job: { ...BUILDING_JOB.job, job_id: "job-ended" },
+        status: { stage, created_at: NOW },
+      });
+
+      renderWorkspace("/dashboard/simulate/environments/job-ended");
+
+      const more = await screen.findByRole("button", { name: "More actions" });
+      // Run stays off: there is nothing built to run.
+      expect(
+        screen.getByRole("button", { name: /Run simulation/ }),
+      ).toBeDisabled();
+
+      await user.click(more);
+      expect(
+        screen.getByRole("menuitem", { name: /Delete environment/ }),
+      ).toBeInTheDocument();
+    },
+  );
+
   it("swaps the build experience for the workspace in place when the job completes", async () => {
     // First poll is still building; the 2s harness-job refetch then lands
     // completed. There is no adopt hand-off — buildStatus flips building→ready

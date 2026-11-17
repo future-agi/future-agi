@@ -121,6 +121,7 @@ class TestEvalMetricDenominator:
             {"key": "groundedness", "count": 1},
         ]
         agent._cluster_session_uuids = lambda _c: []  # no session fan-out here
+        agent._cluster_span_ids = lambda _c: []  # no ClickHouse span-id read here
 
         with patch(
             "ee.agenthub.cluster_rca.agent.selectors.count_cluster_eval_metrics",

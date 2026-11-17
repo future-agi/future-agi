@@ -1,0 +1,26 @@
+schema: "connector-manifest/v1#app"
+id: google-tasks
+version: 1.0.0
+name: Google Tasks
+description: "Read task lists and tasks, one page at a time, using a supplied Google access token."
+vendor:
+  name: Google
+  domains: [google.com, googleapis.com]
+  githubOrgs: [googleapis]
+eeCategory: productivity
+group: google
+categories: [productivity, tasks]
+tags: [tasks, task-lists, read-only]
+docsUrl: https://developers.google.com/workspace/tasks/reference/rest/v1/tasks/list
+defaultProvider: futureagi-rest
+lifecycle: { status: active }
+sources:
+  - fact: vendor.githubOrgs
+    url: https://raw.githubusercontent.com/googleapis/google-api-go-client/b2487a489315d16e91d98a8d940dca2e59e0bd9d/tasks/v1/tasks-api.json
+    fetchedAt: 2026-11-15
+  - fact: vendor.domains
+    url: https://developers.google.com/workspace/tasks/reference/rest/v1/tasklists/list
+    fetchedAt: 2026-11-15
+  - fact: description
+    url: https://developers.google.com/workspace/tasks/reference/rest/v1/tasks/list
+    fetchedAt: 2026-11-15

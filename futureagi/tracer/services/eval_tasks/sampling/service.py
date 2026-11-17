@@ -220,8 +220,11 @@ def preview_policy(
 ) -> dict:
     now = now or sampling_clock()
     policy, version = task_policy(task, now=now)
+    # Validate at request time; closed eligibility uses the same settled
+    # snapshot as a cohort freezing at that time, without waiting or reserving.
+    snapshot = now - closed_settle_margin() if policy["mode"] == "closed" else now
     cells = []
-    query = SamplingQuery(task, policy, version, now)
+    query = SamplingQuery(task, policy, version, snapshot)
     try:
         statement = query.preview()
     except EvalTaskSelectionRejected:
@@ -264,7 +267,7 @@ def preview_policy(
         "window": policy["window"],
         "preview_window": query.scan_window,
         "mode": policy["mode"],
-        "as_of": now,
+        "as_of": snapshot,
         "strata": cells,
         "evaluator_count": evaluator_count,
         "expected_evaluations": sum(cell["expected_rows"] for cell in cells)
@@ -625,6 +628,7 @@ def reconcile_policy(task: EvalTask) -> ReconcileResult:
         _continuous_requires_full_reclassification,
         _live_count,
         _requeue_and_drop,
+        _session_cursor_ceiling,
         _stamp_reclassified_revision,
     )
     from tracer.services.eval_tasks.sampling.pending import revalidate_pending
@@ -642,6 +646,7 @@ def reconcile_policy(task: EvalTask) -> ReconcileResult:
                 or _continuous_requires_full_reclassification(locked)
             )
             floor = None if full else locked.continuous_cursor
+            cursor_ceiling = _session_cursor_ceiling(locked, now)
             before = _live_count(locked)
             stale = EvalLogger.objects.filter(
                 eval_task_id=str(locked.id), status=EvalEntryStatus.PENDING
@@ -711,7 +716,7 @@ def reconcile_policy(task: EvalTask) -> ReconcileResult:
                     CONTINUOUS_CURSOR_OVERLAP,
                 )
 
-                parked = now - CONTINUOUS_CURSOR_OVERLAP
+                parked = cursor_ceiling - CONTINUOUS_CURSOR_OVERLAP
                 # Forward-only, conditional on the stored value this pass saw.
                 EvalTask.objects.filter(pk=locked.pk).filter(
                     Q(continuous_cursor__isnull=True) | Q(continuous_cursor__lt=parked)

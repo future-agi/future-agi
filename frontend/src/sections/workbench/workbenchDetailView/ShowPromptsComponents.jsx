@@ -13,6 +13,7 @@ import { useMutation } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { enqueueSnackbar } from "notistack";
 import { useNavigate } from "react-router";
+import NotInReleaseChip from "src/components/NotInRelease/NotInReleaseChip";
 
 import { createDraftPayload } from "../constant";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
@@ -76,27 +77,16 @@ const ShowPromptsComponents = forwardRef(({ open, onClose, id }, ref) => {
     createDraft(createDraftPayload);
   }, [createDraft]);
 
-  const handleGeneratePrompt = () => {};
-
-  const handleExistingPrompt = () => {};
-
+  // Generate and Improve are not built in this release: they stay in the menu,
+  // greyed and inert with the shared line, and have no click handler at all.
   const prompts = useMemo(() => {
     return [
       {
         title: isLoadingCreate ? "Creating..." : "Write a prompt from scratch",
         onClick: handleWritePrompt,
-        availableFeature: true,
       },
-      {
-        title: "Generate a prompt",
-        onClick: handleGeneratePrompt,
-        availableFeature: false,
-      },
-      {
-        title: "Improve an existing prompt",
-        onClick: handleExistingPrompt,
-        availableFeature: false,
-      },
+      { title: "Generate a prompt", notInRelease: true },
+      { title: "Improve an existing prompt", notInRelease: true },
     ];
   }, [isLoadingCreate, handleWritePrompt]);
 
@@ -130,22 +120,28 @@ const ShowPromptsComponents = forwardRef(({ open, onClose, id }, ref) => {
               key={index}
               sx={{
                 ...menuItemProps,
-                cursor: item.availableFeature ? "pointer" : "not-allowed",
+                cursor: item.notInRelease ? "not-allowed" : "pointer",
               }}
-              onClick={() => {
-                if (!item.availableFeature) {
-                  return;
-                }
-                item?.onClick?.();
-              }}
+              aria-disabled={item.notInRelease || undefined}
+              onClick={item.notInRelease ? undefined : () => item?.onClick?.()}
             >
-              <Typography
-                variant="s2"
-                fontWeight={"fontWeightRegular"}
-                color={item.availableFeature ? "text.primary" : "text.disabled"}
+              <Box
+                sx={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 1,
+                  whiteSpace: "nowrap",
+                }}
               >
-                {item?.title}
-              </Typography>
+                <Typography
+                  variant="s2"
+                  fontWeight={"fontWeightRegular"}
+                  color={item.notInRelease ? "text.disabled" : "text.primary"}
+                >
+                  {item?.title}
+                </Typography>
+                {item.notInRelease && <NotInReleaseChip />}
+              </Box>
             </Box>
           ))}
         </Box>

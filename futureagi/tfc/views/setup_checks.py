@@ -31,6 +31,13 @@ remedy to offer. Every check carries them, not only the ones that happen to
 fail on a laptop, or the next check added here reintroduces the dead end this
 pair exists to close.
 
+A healthy ``/health`` does not prove the code sandbox can run code: on a host
+that blocks the Linux user namespaces each run needs, it answers and then fails
+every run. So its probe also sends one test evaluation through the client real
+runs use, and a run that does not succeed comes back as ``CannotRun`` with the
+run's own sentence. The row then warns in both modes and never blocks, since
+everything else works.
+
 This endpoint only reports. It never starts or stops anything — bringing model
 serving up or down stays an operator decision. Model serving is an add-on the
 standalone install does not run (it starts with the ``ml`` compose profile), and
@@ -73,13 +80,17 @@ import ipaddress
 import os
 import socket
 import ssl
+import time
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from functools import partial
 from urllib.parse import urlparse, urlsplit
 
 import boto3
 import redis
 import requests
+import structlog
 from botocore.config import Config
 from botocore.exceptions import ClientError
 from django.core.cache import cache
@@ -91,6 +102,7 @@ from agentic_eval.core.embeddings.serving_client import (
     serving_available,
     serving_base_url,
 )
+from agentic_eval.core_evals.fi_utils import sandbox as code_sandbox
 from model_hub.utils import is_forbidden_vendor_endpoint
 from tfc.ee_gating import is_oss
 from tfc.settings import settings
@@ -110,6 +122,8 @@ from tfc.utils.install_setup import (
     helm_namespace,
 )
 
+logger = structlog.get_logger(__name__)
+
 PASSED = "passed"
 WARNING = "warning"
 FAILED = "failed"
@@ -123,9 +137,39 @@ ABSENT = "absent"
 # passes, with the check's ``limited`` detail.
 LIMITED = "limited"
 
+
+@dataclass(frozen=True)
+class CannotRun:
+    """Probe verdict for a code sandbox that answers ``/health`` but did not
+    run the test evaluation; ``reason`` is the sentence the row shows (see
+    the check's ``cannot_run`` block). Falsy, so a check without that block
+    reads it as down."""
+
+    reason: str
+
+    def __bool__(self):
+        return False
+
+
 LIVE = "live"
 EXPERIMENT = "experiment"
 PROBE_TIMEOUT_SECONDS = 3
+
+# The code sandbox's test evaluation, sent through the client real runs use.
+# The setup screen gives up on this request after 10 s
+# (frontend/src/api/ossSetup/oss-setup.js) and the probes run side by side,
+# so the sandbox's /health (PROBE_TIMEOUT_SECONDS) and the test run's answer
+# take at most 8 s together.
+TEST_EVALUATION = "def evaluate():\n    return True\n"
+# The run's own limit, enforced by the executor (whole seconds).
+TEST_RUN_LIMIT_SECONDS = 3
+# How long the probe waits for the executor's answer to that run.
+TEST_RUN_ANSWER_SECONDS = 5
+# The reason shown when that answer never came or could not be read.
+TEST_RUN_NO_ANSWER = "The test evaluation got no answer from the sandbox."
+# How the run client words an answer it did not get or could not read
+# (sandbox._executor_error): a timeout, an HTTP error or an unusable body.
+_RUN_CLIENT_NO_ANSWER = "Code executor error: "
 
 # Host names only this machine or a private network can resolve.
 _LOCAL_HOSTNAMES = frozenset(
@@ -136,6 +180,14 @@ _LOCAL_SUFFIXES = (".localhost", ".local", ".internal", ".lan", ".home.arpa")
 _SHARED_ADDRESS_SPACE = ipaddress.ip_network("100.64.0.0/10")
 
 SNAPSHOT_TTL_SECONDS = 3
+# One request at a time runs the probes for a snapshot (see _snapshot). The
+# lock outlives a run: the probes' 8 s (see TEST_EVALUATION) and the account
+# check after them.
+PROBE_LOCK_SECONDS = 10
+# How long a snapshot is served to requests that arrive during the next run.
+LAST_SNAPSHOT_TTL_SECONDS = 60
+# How often a request waiting for a run in progress looks for its snapshot.
+PROBE_WAIT_STEP_SECONDS = 0.25
 
 
 def _tcp_up(host: str, port: int) -> bool:
@@ -179,17 +231,31 @@ def _redis_up() -> bool:
 
 
 def _websocket_relay_up() -> bool:
-    """Temporal workers push live updates by POSTing to WEBSOCKET_ENDPOINT
-    (model_hub.utils.call_websocket), whichever channel layer is configured.
-    One that does not reach this install's backend drops them silently. A
-    futureagi.com endpoint is refused without being contacted, as the relay
-    itself refuses it."""
+    """Memory mode must reach the signed relay; brokers need no HTTP relay."""
+    if settings.CHANNEL_LAYER_BACKEND in {"redis", "rabbitmq"}:
+        return True
+    from tfc.websocket_relay import sign_relay
+
     url = settings.WEBSOCKET_ENDPOINT
     if is_forbidden_vendor_endpoint(url):
         return False
-    parsed = urlparse(url)
-    port = parsed.port or (443 if parsed.scheme == "https" else 80)
-    return _tcp_up(parsed.hostname or url, port)
+    # The zero UUID has no subscribers. Prove authentication and dispatch, not
+    # merely a TCP listener; no customer key or organization row is needed.
+    body, headers = sign_relay(
+        {
+            "organization_id": "00000000-0000-0000-0000-000000000000",
+            "message": {"type": "setup_probe"},
+        },
+        url,
+    )
+    response = requests.post(
+        url,
+        data=body,
+        headers=headers,
+        timeout=PROBE_TIMEOUT_SECONDS,
+        allow_redirects=False,
+    )
+    return response.status_code == 200
 
 
 def _channel_layer_up() -> bool:
@@ -270,12 +336,44 @@ def _collector_up() -> bool:
     return _tcp_up(host, port)
 
 
-def _code_executor_up() -> bool:
-    """The standalone install runs the executor inside the app container, so
-    ``CODE_EXECUTOR_URL`` points at loopback there; the distributed install and the
-    ``sandbox`` profile run it as the ``code-executor`` container. Both serve
-    the same ``/health``, whose ``node`` is null where JavaScript evals cannot
-    run (the in-container one): LIMITED."""
+def _test_run_failure():
+    """None when the code sandbox ran the test evaluation; otherwise the
+    sentence the row shows: the run's own, or TEST_RUN_NO_ANSWER when no
+    usable answer came back."""
+    try:
+        result = code_sandbox.execute_sandboxed_python(
+            TEST_EVALUATION,
+            {},
+            timeout=TEST_RUN_LIMIT_SECONDS,
+            response_timeout=TEST_RUN_ANSWER_SECONDS,
+        )
+    except Exception:
+        # The run client turns timeouts, HTTP errors and unreadable answers into
+        # results, so a raise is a fault here. It reads as no answer, not as a
+        # down sandbox, which would block Production on a probe error.
+        logger.exception("setup_check_test_run_raised")
+        return TEST_RUN_NO_ANSWER
+    if not isinstance(result, dict):
+        return TEST_RUN_NO_ANSWER
+    if result.get("status") == "success":
+        return None
+    reason = result.get("data")
+    if not isinstance(reason, str) or not reason.strip():
+        return TEST_RUN_NO_ANSWER
+    if reason.startswith(_RUN_CLIENT_NO_ANSWER):
+        return TEST_RUN_NO_ANSWER
+    return reason.strip()
+
+
+def _code_executor_up():
+    """Both compose files run the executor as the ``code-executor`` service
+    (``CODE_EXECUTOR_URL`` defaults to it); Helm runs it with
+    codeExecutor.enabled. Its ``/health`` has ``node`` null where JavaScript
+    evals cannot run (an executor not built from that image): LIMITED.
+
+    A sandbox that answers ``/health`` then runs the test evaluation, and
+    passes only if that run succeeds; otherwise the verdict is ``CannotRun``
+    with its reason, whatever ``node`` says."""
     base = os.environ.get("CODE_EXECUTOR_URL", "http://code-executor:8060")
     if not base.strip():
         # Not deployed: the Helm chart with codeExecutor.enabled=false.
@@ -286,7 +384,10 @@ def _code_executor_up() -> bool:
     try:
         health = response.json()
     except ValueError:
-        return True
+        health = None
+    reason = _test_run_failure()
+    if reason is not None:
+        return CannotRun(reason)
     if isinstance(health, dict) and "node" in health and not health["node"]:
         return LIMITED
     return True
@@ -448,6 +549,57 @@ def _helm_datastore(values_key: str, what: str = "server") -> str:
 # Every docs_url is a heading of INSTALLATION.md (see the test for it).
 _PREFLIGHT_DOCS = (
     "https://github.com/future-agi/future-agi/blob/dev/INSTALLATION.md#pre-flight-says-"
+)
+
+# The code sandbox row's sentences, one per constant, in INSTALLATION.md's
+# words. Both compose files run `code-executor` with the stack (no profile,
+# not privileged, Node.js in its image); Helm runs it with
+# codeExecutor.enabled. Each run needs Linux user namespaces.
+_SANDBOX_START = (
+    "Start it: `docker compose up -d code-executor`, then check "
+    "`docker compose logs code-executor`."
+)
+_SANDBOX_HOST_LINE = (
+    "`code-executor` is not privileged, but code evals fail where Ubuntu "
+    "23.10+ or Docker `userns-remap` block them."
+)
+# values.yaml's words for the chart's sandbox.
+_SANDBOX_TURN_ON_HELM = (
+    "Turn it on with `codeExecutor.enabled=true` in your values; the cluster "
+    "must allow unprivileged user namespaces."
+)
+_SANDBOX_LOGS_HELM = (
+    f"Then check `kubectl -n {helm_namespace()} logs "
+    f"{helm_deployment('code-executor')}`."
+)
+_SANDBOX_CANNOT_RUN = "Custom code evaluations will not run"
+_SANDBOX_HOST_SETTINGS = (
+    "Ubuntu 23.10 and later restrict unprivileged user namespaces by default "
+    "(`kernel.apparmor_restrict_unprivileged_userns=1`), and a Docker daemon "
+    "configured with `userns-remap` puts every container inside a remapped "
+    "user namespace."
+)
+_SANDBOX_WHERE_CHANGED = (
+    "The first is a sysctl on the Docker host; the second is set in the Docker "
+    "daemon's config (`/etc/docker/daemon.json`)."
+)
+_SANDBOX_WHERE_CHANGED_HELM = "On Helm the sysctl is set on each node."
+# Plain text: the row's detail does not render inline code.
+_SANDBOX_NO_NODE = (
+    "Python code evals run here. JavaScript ones will not: this executor has "
+    "no Node.js. In Standalone, remove CODE_EXECUTOR_URL from .env so the app "
+    "uses code-executor, then run docker compose up -d"
+)
+_SANDBOX_ABSENT_STANDALONE = (
+    "Optional. `CODE_EXECUTOR_URL` is empty: remove `CODE_EXECUTOR_URL` from "
+    "`.env` so the app uses `code-executor`, then run `docker compose up -d`."
+)
+_SANDBOX_ABSENT_DISTRIBUTED = (
+    "Optional. `CODE_EXECUTOR_URL` is empty; point it at `code-executor` to turn it on."
+)
+_SANDBOX_ABSENT_HELM = (
+    "Optional. Turn it on with `codeExecutor.enabled=true` in your values; the "
+    "cluster must allow unprivileged user namespaces."
 )
 
 CHECKS = (
@@ -676,49 +828,36 @@ CHECKS = (
         "label": "Code execution sandbox",
         "down_detail": "Custom code evaluations will not run",
         "probe": _code_executor_up,
-        "fix": {
-            STANDALONE: (
-                "It runs inside `app`: `docker compose restart app`. With "
-                "`COMPOSE_PROFILES=sandbox`, run `docker compose up -d code-executor` "
-                "(the host must allow `privileged: true`)."
-            ),
-            DISTRIBUTED: (
-                "Start it: `docker compose up -d code-executor`. The host must "
-                "allow `privileged: true`."
-            ),
-            HELM: (
-                "Turn it on with `codeExecutor.enabled=true` in your values (the "
-                "nodes must allow `privileged: true`), then check "
-                f"`kubectl -n {helm_namespace()} logs {helm_deployment('code-executor')}`."
-            ),
-        },
+        "fix": _same_on_compose(
+            f"{_SANDBOX_START} {_SANDBOX_HOST_LINE}",
+            f"{_SANDBOX_TURN_ON_HELM} {_SANDBOX_LOGS_HELM}",
+        ),
         "docs_url": _PREFLIGHT_DOCS + "code-execution-sandbox-failed",
-        # Up without Node.js: Standalone's built-in sandbox.
-        "limited": {
-            "detail": {
-                STANDALONE: (
-                    "Python code evals run here. JavaScript ones need the nsjail "
-                    "sandbox: set COMPOSE_PROFILES=sandbox in .env and run "
-                    "docker compose up -d"
-                ),
-                DISTRIBUTED: (
-                    "Python code evals run here. JavaScript ones will not: this "
-                    "sandbox has no Node.js"
-                ),
-            },
+        # Answers /health but did not run the test evaluation (CannotRun): the
+        # detail ends with the run's own sentence. A warning in both modes,
+        # never blocking: everything else works, as bin/install says when it
+        # sees either host setting. FAILED here would also make it required.
+        "cannot_run": {
+            "status": WARNING,
+            "detail": _SANDBOX_CANNOT_RUN,
+            "fix": _same_on_compose(
+                f"{_SANDBOX_HOST_SETTINGS} {_SANDBOX_WHERE_CHANGED}",
+                f"{_SANDBOX_HOST_SETTINGS} {_SANDBOX_WHERE_CHANGED_HELM} "
+                f"{_SANDBOX_LOGS_HELM}",
+            ),
+            "docs_url": _PREFLIGHT_DOCS + "code-execution-sandbox-failed",
         },
-        # Not deployed (empty CODE_EXECUTOR_URL): custom code evals are off or
-        # run in the workers (CODE_EXECUTOR_LOCAL_FALLBACK); never blocking.
+        # Up without Node.js: an executor not built from the code-executor
+        # image, which has it.
+        "limited": {"detail": _SANDBOX_NO_NODE},
+        # Not deployed (empty CODE_EXECUTOR_URL): custom code evals are off,
+        # since eval code never runs in the workers; never blocking.
         "absent": {
             "detail": "Custom code evaluations are off; every other eval works",
             "fix": {
-                STANDALONE: "Optional. `CODE_EXECUTOR_URL` is empty; remove it from `.env` to use the built-in sandbox.",
-                DISTRIBUTED: "Optional. `CODE_EXECUTOR_URL` is empty; point it at the code-executor service to turn it on.",
-                HELM: (
-                    "Optional. Turn it on with `codeExecutor.enabled=true` (the nodes must "
-                    "allow `privileged: true`), or, if everyone who writes evals is trusted, "
-                    "run them in the workers with `codeExecutor.localFallback=true`."
-                ),
+                STANDALONE: _SANDBOX_ABSENT_STANDALONE,
+                DISTRIBUTED: _SANDBOX_ABSENT_DISTRIBUTED,
+                HELM: _SANDBOX_ABSENT_HELM,
             },
         },
         LIVE: {
@@ -772,12 +911,15 @@ CHECKS = (
 def _safe(probe):
     """Fail closed. A probe that raises means the service is not usable, which is
     exactly what a down service looks like — never a 500 for the whole screen.
-    ``ABSENT`` and ``LIMITED`` pass through; anything else is up or down."""
+    ``ABSENT``, ``LIMITED`` and ``CannotRun`` pass through; anything else is up
+    or down."""
     try:
         result = probe()
     except Exception:
         return False
-    return result if result in (ABSENT, LIMITED) else bool(result)
+    if isinstance(result, CannotRun) or result in (ABSENT, LIMITED):
+        return result
+    return bool(result)
 
 
 def _run_probes(request_host=None) -> dict:
@@ -848,6 +990,23 @@ def _build_checks(mode: str, probe_results: dict, setup: str = DISTRIBUTED) -> l
                 }
             )
             continue
+        cannot_run = check.get("cannot_run") if isinstance(result, CannotRun) else None
+        if cannot_run is not None:
+            # Up, but the test evaluation did not run. The block's status is
+            # the one place that decides; required follows it.
+            verdict = cannot_run["status"]
+            checks.append(
+                {
+                    "id": check["id"],
+                    "label": check["label"],
+                    "status": verdict,
+                    "required": verdict == FAILED,
+                    "detail": f"{cannot_run['detail']}: {result.reason}",
+                    "fix": _for_setup(cannot_run["fix"], setup),
+                    "docs_url": cannot_run["docs_url"],
+                }
+            )
+            continue
         # A check with no ``absent`` block cannot be optional: ABSENT is down.
         up = result != ABSENT and bool(result)
         # Up, but short of something: it passes and says what is missing.
@@ -872,21 +1031,85 @@ def _build_checks(mode: str, probe_results: dict, setup: str = DISTRIBUTED) -> l
     return checks
 
 
-def _cached_snapshot(cache_key: str):
-    """Redis is one of the services being probed, so the cache it backs cannot be
+def _fresh_snapshot(mode: str, request_host) -> dict:
+    setup = _setup()
+    checks = _build_checks(mode, _run_probes(request_host), setup)
+    blocked = any(c["required"] and c["status"] == FAILED for c in checks)
+    return {
+        "status": "issues" if blocked else "ok",
+        "mode": mode,
+        "setup": setup,
+        "collector_http_url": settings.FI_COLLECTOR_PUBLIC_URL,
+        "account_exists": _account_exists(),
+        "checks": checks,
+    }
+
+
+# What _cache_call answers for a cache call that raised.
+_CACHE_DOWN = object()
+
+
+def _cache_call(method: str, *args):
+    """``cache.<method>(*args)``, or _CACHE_DOWN when it raises.
+
+    Redis is one of the services being probed, so the cache it backs cannot be
     a precondition for answering — a down Redis would 500 the very screen that
     exists to report it as down."""
     try:
-        return cache.get(cache_key)
+        return getattr(cache, method)(*args)
     except Exception:
-        return None
+        logger.warning("setup_check_cache_unavailable", method=method, exc_info=True)
+        return _CACHE_DOWN
+
+
+def _cached_snapshot(cache_key: str):
+    result = _cache_call("get", cache_key)
+    return None if result is _CACHE_DOWN else result
 
 
 def _store_snapshot(cache_key: str, result: dict) -> None:
-    try:
-        cache.set(cache_key, result, SNAPSHOT_TTL_SECONDS)
-    except Exception:
-        pass
+    """Fresh for SNAPSHOT_TTL_SECONDS; kept as the last snapshot for
+    LAST_SNAPSHOT_TTL_SECONDS."""
+    if _cache_call("set", cache_key, result, SNAPSHOT_TTL_SECONDS) is _CACHE_DOWN:
+        return
+    _cache_call("set", f"{cache_key}:last", result, LAST_SNAPSHOT_TTL_SECONDS)
+
+
+def _snapshot(cache_key: str, fresh: Callable[[], dict]) -> dict:
+    """The snapshot cached under ``cache_key``, or ``fresh()``'s, stored.
+
+    A run includes a jailed test evaluation, so requests that miss together
+    share one run. The request that
+    claims the lock runs it; the others serve the last snapshot, or wait for
+    the run in progress when there is none yet. The lock lives in the cache
+    because the web server runs several processes. A request still without a
+    snapshot after PROBE_LOCK_SECONDS runs the probes itself, so a run that
+    died cannot hold the screen. A cache that raises takes no part: the
+    request runs the probes, as it would with no cache."""
+    result = _cached_snapshot(cache_key)
+    if result is not None:
+        return result
+    lock = f"{cache_key}:probing"
+    claimed = _cache_call("add", lock, 1, PROBE_LOCK_SECONDS)
+    if claimed is _CACHE_DOWN:
+        return fresh()
+    if claimed:
+        try:
+            # A run that ended between this request's miss and its claim has
+            # stored its snapshot already.
+            result = _cached_snapshot(cache_key)
+            if result is None:
+                result = fresh()
+                _store_snapshot(cache_key, result)
+            return result
+        finally:
+            _cache_call("delete", lock)
+    result = _cached_snapshot(f"{cache_key}:last")
+    deadline = time.monotonic() + PROBE_LOCK_SECONDS
+    while result is None and time.monotonic() < deadline:
+        time.sleep(PROBE_WAIT_STEP_SECONDS)
+        result = _cached_snapshot(cache_key)
+    return fresh() if result is None else result
 
 
 class SetupChecksView(APIView):
@@ -927,20 +1150,5 @@ class SetupChecksView(APIView):
         request_host = _request_host(request)
         reach = "local" if _reached_locally(request_host) else "remote"
         cache_key = f"setup-checks:{mode}:{reach}"
-        result = _cached_snapshot(cache_key)
-
-        if result is None:
-            setup = _setup()
-            checks = _build_checks(mode, _run_probes(request_host), setup)
-            blocked = any(c["required"] and c["status"] == FAILED for c in checks)
-            result = {
-                "status": "issues" if blocked else "ok",
-                "mode": mode,
-                "setup": setup,
-                "collector_http_url": settings.FI_COLLECTOR_PUBLIC_URL,
-                "account_exists": _account_exists(),
-                "checks": checks,
-            }
-            _store_snapshot(cache_key, result)
-
+        result = _snapshot(cache_key, partial(_fresh_snapshot, mode, request_host))
         return gm.success_response(result)

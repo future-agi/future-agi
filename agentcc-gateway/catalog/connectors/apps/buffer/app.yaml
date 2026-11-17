@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: buffer
+version: 1.0.0
+name: Buffer
+description: "Manage social channels, schedule posts, organize ideas, and retrieve post analytics."
+vendor:
+  name: Buffer
+  domains: [buffer.com]
+eeCategory: communication
+group: other
+categories: [communication, social]
+tags: [posts, messages]
+docsUrl: https://developers.buffer.com/guides/integrations/mcp
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://developers.buffer.com/guides/integrations/mcp
+    fetchedAt: 2026-11-09

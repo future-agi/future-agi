@@ -140,10 +140,10 @@ def drop_rejected_keys(apps, schema_editor):
     AgentccOrgConfig = apps.get_model("prism", "AgentccOrgConfig")
     # Every stored version, not only the active one: an old version can be
     # activated again. _base_manager skips the soft-delete and workspace filters.
-    for config in AgentccOrgConfig._base_manager.iterator():
+    for config in AgentccOrgConfig._base_manager.using(schema_editor.connection.alias).iterator():
         changed = _repair(config)
         if changed:
-            config.save(update_fields=changed)
+            config.save(using=schema_editor.connection.alias, update_fields=changed)
 
 
 class Migration(migrations.Migration):

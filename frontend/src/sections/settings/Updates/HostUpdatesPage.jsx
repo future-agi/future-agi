@@ -111,17 +111,51 @@ function maintenanceWindow(window, generatedAt) {
   return `${window.days_of_week.map((day) => DAYS[day - 1]).join(", ")}, ${window.start}–${window.end} — ${zone}`;
 }
 
+const PAGE_SX = {
+  width: "100%",
+  maxWidth: 960,
+  minWidth: 0,
+  mx: "auto",
+  px: { xs: 2, sm: 0 },
+  pb: 4,
+};
+
+function PageTitle() {
+  return (
+    <Box>
+      <Typography component="h1" variant="h5">
+        Updates
+      </Typography>
+      <Typography variant="body2" color="text.secondary">
+        Reported by the host. Read-only in the app.
+      </Typography>
+    </Box>
+  );
+}
+
+// A direct link keeps the page heading and layout while access is read and
+// where reporting is not available, with no report data and no actions.
+function AccessNotice({ children }) {
+  return (
+    <Stack spacing={2} sx={PAGE_SX}>
+      <PageTitle />
+      <Typography role="status" variant="body2">
+        {children}
+      </Typography>
+    </Stack>
+  );
+}
+AccessNotice.propTypes = { children: PropTypes.node };
+
 export default function HostUpdatesPage() {
   const query = useHostUpdateStatus();
   if (query.pending)
-    return (
-      <Typography role="status">Loading update reporting access…</Typography>
-    );
+    return <AccessNotice>Loading update reporting access…</AccessNotice>;
   if (!query.allowed || query.data?.availability === "forbidden") {
     return (
-      <Typography role="status">
+      <AccessNotice>
         Host update reporting is not available to this account or deployment.
-      </Typography>
+      </AccessNotice>
     );
   }
   const data = query.data;
@@ -129,32 +163,14 @@ export default function HostUpdatesPage() {
   const old = snapshot && data.freshness !== "fresh";
 
   return (
-    <Stack
-      data-testid="host-updates-page"
-      spacing={2}
-      sx={{
-        width: "100%",
-        maxWidth: 960,
-        minWidth: 0,
-        mx: "auto",
-        px: { xs: 2, sm: 0 },
-        pb: 4,
-      }}
-    >
+    <Stack data-testid="host-updates-page" spacing={2} sx={PAGE_SX}>
       <Stack
         direction={{ xs: "column", sm: "row" }}
         spacing={2}
         justifyContent="space-between"
         alignItems={{ xs: "flex-start", sm: "center" }}
       >
-        <Box>
-          <Typography component="h1" variant="h5">
-            Updates
-          </Typography>
-          <Typography variant="body2" color="text.secondary">
-            Reported by the host. Read-only in the app.
-          </Typography>
-        </Box>
+        <PageTitle />
         <Button
           variant="outlined"
           color="inherit"

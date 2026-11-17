@@ -17,17 +17,17 @@ const GetStartedHeaderView = ({ setShowDemoModal: _setShowDemoModal }) => {
     >
       <Box>
         <PageHeadings
-          title="Get Started with FutureAGI"
+          title="Get started"
           description={
             <>
-              {`This tour will guide you through the key features and functionalities `}
+              {`Set up your workspace. Do the steps in any order. `}
               <Link
                 href="https://docs.futureagi.com"
                 target="_blank"
                 underline="always"
                 variant="s1"
                 fontWeight={"fontWeightSemiBold"}
-                color="primary.light"
+                color="text.link"
                 onClick={() => handleOnDocsClicked("get_started_page")}
               >
                 View docs

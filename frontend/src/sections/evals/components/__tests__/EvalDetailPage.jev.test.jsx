@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
   update: vi.fn(),
   create: vi.fn(),
   run: vi.fn(),
+  playground: null,
   notify: vi.fn(),
 }));
 vi.mock("src/auth/hooks", () => ({
@@ -53,6 +54,12 @@ vi.mock("../../hooks/useEvalVersions", () => ({
 vi.mock("../../hooks/useCompositeEval", () => ({
   useCompositeDetail: () => ({}),
   useUpdateCompositeEval: () => ({}),
+}));
+// EvalDetailPage reads the eval's ground-truth list (react-query) to check JEV
+// support; this suite renders without a QueryClient, so the list is mocked empty.
+vi.mock("../../hooks/useGroundTruth", async (importOriginal) => ({
+  ...(await importOriginal()),
+  useGroundTruthList: () => ({ data: undefined }),
 }));
 vi.mock("src/utils/axios", () => ({ default: {}, endpoints: {} }));
 vi.mock("src/api/evaluations/decision-models", () => ({
@@ -108,10 +115,10 @@ vi.mock("../InstructionEditor", () => ({
   ),
 }));
 vi.mock("../TestPlayground", () => ({
-  default: forwardRef(function Playground(
-    { onReadyChange, onVersionSelect },
-    ref,
-  ) {
+  default: forwardRef(function Playground(props, ref) {
+    const { onReadyChange, onVersionSelect } = props;
+    // What the page hands the playground for its next Test.
+    mocks.playground = props;
     useEffect(() => {
       onReadyChange(true);
     }, [onReadyChange]);
@@ -249,20 +256,19 @@ describe("Jev editor save and test contract", () => {
     );
   });
 
-  it("sends the mapping on test auto-save before invoking the playground", async () => {
+  it("sends the mapping with the unsaved definition and saves nothing on Test", async () => {
     render(<EvalDetailPage />);
     await userEvent.click(test());
     await waitFor(() => expect(mocks.run).toHaveBeenCalled());
-    expect(mocks.update).toHaveBeenCalledWith(
+    expect(mocks.playground.unsavedDefinition).toEqual(
       expect.objectContaining({
+        model: "jev-latest",
         jev_mapping: mapping("noul", {
           pass: { criteria_true: "", criteria_false: "" },
         }),
       }),
     );
-    expect(mocks.update.mock.invocationCallOrder[0]).toBeLessThan(
-      mocks.run.mock.invocationCallOrder[0],
-    );
+    expect(mocks.update).not.toHaveBeenCalled();
   });
 
   it("saves exact single-choice labels, optional descriptions and zero-valued scores", async () => {
@@ -377,30 +383,36 @@ describe("Jev editor save and test contract", () => {
     });
   });
 
+  const RUBRIC_COUNT = "Jev rubric score requires 2 to 10 ordered levels";
+  const RUBRIC_REPEAT =
+    "Jev rubric levels must all be different. Rename or remove the repeated level.";
   it.each([
-    ["one", ["Low"], false],
-    ["eleven", Array.from({ length: 11 }, (_, i) => `Level ${i}`), true],
-    ["duplicate", ["Low", "Low"], true],
-    ["blank", ["Low", "  "], false],
-  ])(
-    "blocks Save and Test for %s rubric levels",
-    async (_, levels, flagged) => {
-      mocks.data.output_type = "percentage";
-      mocks.data.config.jev_mapping = mapping("score", { score: { levels } });
-      render(<EvalDetailPage />);
-      await edit();
-      // A rubric still being written isn't flagged; its count says what's missing.
-      expect(
-        screen.queryByText("Jev rubric score requires 2 to 10 ordered levels"),
-      ).toEqual(flagged ? expect.anything() : null);
-      expect(save()).toBeDisabled();
-      expect(test()).toBeDisabled();
-      fireEvent.click(save());
-      fireEvent.click(test());
-      expect(mocks.update).not.toHaveBeenCalled();
-      expect(mocks.run).not.toHaveBeenCalled();
-    },
-  );
+    ["one", ["Low"], null],
+    [
+      "eleven",
+      Array.from({ length: 11 }, (_, i) => `Level ${i}`),
+      RUBRIC_COUNT,
+    ],
+    ["duplicate", ["Low", "Low"], RUBRIC_REPEAT],
+    ["blank", ["Low", "  "], null],
+  ])("blocks Save and Test for %s rubric levels", async (_, levels, shown) => {
+    mocks.data.output_type = "percentage";
+    mocks.data.config.jev_mapping = mapping("score", { score: { levels } });
+    render(<EvalDetailPage />);
+    await edit();
+    // A rubric still being written isn't flagged; its count says what's missing.
+    // Repeated levels are a valid count: they say the levels must differ.
+    for (const message of [RUBRIC_COUNT, RUBRIC_REPEAT])
+      expect(screen.queryByText(message)).toEqual(
+        message === shown ? expect.anything() : null,
+      );
+    expect(save()).toBeDisabled();
+    expect(test()).toBeDisabled();
+    fireEvent.click(save());
+    fireEvent.click(test());
+    expect(mocks.update).not.toHaveBeenCalled();
+    expect(mocks.run).not.toHaveBeenCalled();
+  });
 
   it("accepts two levels and saves edits and reordering in order", async () => {
     mocks.data.output_type = "percentage";

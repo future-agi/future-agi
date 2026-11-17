@@ -14,6 +14,7 @@ import {
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { useUpdateMCPToolGroups } from "src/api/mcp";
+import { useWorkspace } from "src/contexts/WorkspaceContext";
 
 const TOOL_GROUP_ICONS = {
   context: "solar:compass-linear",
@@ -165,6 +166,13 @@ ToolGroupSelector.propTypes = {
 export default function ToolGroupSelector({ config }) {
   const theme = useTheme();
   const updateMutation = useUpdateMCPToolGroups();
+  const { currentWorkspaceDisplayName, currentWorkspaceName } = useWorkspace();
+  const workspaceName = currentWorkspaceDisplayName || currentWorkspaceName;
+  // The switches are saved for the signed-in person in the current workspace
+  // only; other members' editors keep their own settings.
+  const heading = workspaceName
+    ? `Your editor's tools in ${workspaceName}`
+    : "Your editor's tools in this workspace";
 
   const toolGroups = useMemo(() => normalizeMCPToolGroups(config), [config]);
   const enabledFromConfig = useMemo(
@@ -229,32 +237,39 @@ export default function ToolGroupSelector({ config }) {
           <Iconify
             icon="solar:toolbox-linear"
             width={20}
-            sx={{ color: "text.secondary" }}
+            sx={{ color: "text.secondary", flexShrink: 0 }}
           />
-          <Typography
-            sx={{
-              typography: "s1",
-              fontWeight: "fontWeightSemiBold",
-              color: "text.primary",
-            }}
-          >
-            Tool Groups
-          </Typography>
-          <Chip
-            label={
-              allEnabled
-                ? "All enabled"
-                : `${enabled.length} of ${toolGroups.length}`
-            }
-            size="small"
-            color={allEnabled ? "success" : "default"}
-            variant="outlined"
-          />
-          <Typography
-            sx={{ typography: "s2", color: "text.disabled", ml: "auto" }}
-          >
-            Restrict which tools are available to connected clients
-          </Typography>
+          <Box sx={{ minWidth: 0 }}>
+            <Box display="flex" alignItems="center" gap={1.5} flexWrap="wrap">
+              <Typography
+                sx={{
+                  typography: "s1",
+                  fontWeight: "fontWeightSemiBold",
+                  color: "text.primary",
+                  overflowWrap: "anywhere",
+                }}
+              >
+                {heading}
+              </Typography>
+              <Chip
+                label={
+                  allEnabled
+                    ? "All enabled"
+                    : `${enabled.length} of ${toolGroups.length}`
+                }
+                size="small"
+                color={allEnabled ? "success" : "default"}
+                variant="outlined"
+              />
+            </Box>
+            <Typography
+              sx={{ typography: "s2", color: "text.secondary", mt: 0.25 }}
+            >
+              {
+                "Only affects your own editor. It does not change other members' editors."
+              }
+            </Typography>
+          </Box>
         </Box>
       </AccordionSummary>
 

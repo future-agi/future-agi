@@ -19,6 +19,12 @@ import { useSnackbar } from "src/components/snackbar";
 import { Box, Divider } from "@mui/material";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import RightSectionAuth from "./RightSectionAuth";
+import {
+  authSplitSx,
+  authFormPanelSx,
+  authAsideSx,
+  authFormGutterSx,
+} from "src/layouts/auth/responsive-styles";
 import { getSsoRedirectUrl } from "./sso-redirect";
 
 // ----------------------------------------------------------------------
@@ -145,9 +151,7 @@ export default function SSOLogin() {
   return (
     <Box
       sx={{
-        width: "100%",
-        height: "100vh",
-        display: "flex",
+        ...authSplitSx,
         position: "relative",
       }}
     >
@@ -173,8 +177,7 @@ export default function SSOLogin() {
       {/* Left Side - Form */}
       <Box
         sx={{
-          width: "50%",
-          height: "100vh",
+          ...authFormPanelSx,
           display: "flex",
           justifyContent: "center",
           paddingY: "100px",
@@ -182,7 +185,13 @@ export default function SSOLogin() {
           overflowY: "auto",
         }}
       >
-        <Box sx={{ width: "640px", px: 10, height: "fit-content" }}>
+        <Box
+          sx={{
+            width: { xs: "100%", lg: "640px" },
+            ...authFormGutterSx,
+            height: "fit-content",
+          }}
+        >
           <form onSubmit={onSubmit}>
             {renderHead}
             {renderForm}
@@ -191,13 +200,7 @@ export default function SSOLogin() {
       </Box>
 
       {/* Right Side - Image with Text Overlay */}
-      <Box
-        sx={{
-          width: "50%",
-          height: "100%",
-          backgroundColor: "background.neutral",
-        }}
-      >
+      <Box sx={authAsideSx}>
         <RightSectionAuth />
       </Box>
     </Box>

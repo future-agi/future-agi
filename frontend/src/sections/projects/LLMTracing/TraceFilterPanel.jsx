@@ -392,6 +392,10 @@ export function mergeTraceFilterProperties({
         ...(field.allowCustomValue !== undefined
           ? { allowCustomValue: field.allowCustomValue }
           : {}),
+        // A supplied field may narrow its operators (see getOperatorsForFilter)
+        // and be found by other words.
+        ...(field.operators ? { operators: field.operators } : {}),
+        ...(field.searchAliases ? { searchAliases: field.searchAliases } : {}),
       };
       return attachPropertyRegistryIdentity(
         property,
@@ -3588,6 +3592,25 @@ function ValuePicker({
                   : FREE_TEXT_NO_OPTIONS_TEXT}
               </Typography>
             )}
+          {/* A fixed list that takes no typed value says the search found
+              nothing, rather than showing an empty list. */}
+          {hasStaticChoices &&
+            customSearchValue &&
+            !customSearchValueTooLong &&
+            !showCustomValueRow &&
+            filtered.length === 0 && (
+              <Typography
+                role="status"
+                sx={{
+                  p: 1.5,
+                  textAlign: "center",
+                  fontSize: 12,
+                  color: "text.disabled",
+                }}
+              >
+                No matching values
+              </Typography>
+            )}
           {/* Custom-value row is rendered below in the showCustomValueRow
               block — keeps a single source of truth for the "Specify"
               fallback (search did not match any fetched option). */}
@@ -4372,6 +4395,7 @@ function FilterRow({
       <Select
         size="small"
         value={safeOperator}
+        inputProps={{ "aria-label": `Condition ${index + 1} operator` }}
         onChange={handleOperatorChange}
         sx={{
           flex: "0 1 128px",
@@ -4393,6 +4417,7 @@ function FilterRow({
       <IconButton
         size="small"
         onClick={() => onRemove(index)}
+        aria-label={`Remove condition ${index + 1}`}
         sx={{ p: 0.25, flexShrink: 0, ml: "auto" }}
       >
         <Iconify icon="solar:close-linear" width={14} />
@@ -4418,6 +4443,7 @@ const TraceFilterPanel = ({
   onClose,
   currentFilters,
   onApply,
+  onClear,
   filterFields,
   source = "traces",
   propertyNamespace,
@@ -4428,13 +4454,14 @@ const TraceFilterPanel = ({
   ValuePickerOverride,
   showAi = true,
   showQueryTab = true,
+  aiPlaceholder = "Ask AI — e.g. 'show traces with errors on gpt-4'",
+  closeOnApply = false,
   categories: categoriesOverride,
   propertyFilter,
   operatorFilter,
   defaultOperatorForType,
   panelWidth,
   placement = "bottom-start",
-  aiPlaceholder,
   defaultRow: defaultRowOverride,
   isSimulator = false,
   freeSoloValues = false,
@@ -4571,6 +4598,7 @@ const TraceFilterPanel = ({
     parseQuery: aiParseQuery,
     loading: aiLoading,
     error: aiError,
+    limitMessage: aiLimitMessage,
   } = useAIFilter(aiFilterSchema);
   const [rows, setRows] = useState([{ ...DEFAULT_ROW }]);
   const [queryFieldSearch, setQueryFieldSearch] = useState("");
@@ -5114,6 +5142,7 @@ const TraceFilterPanel = ({
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const queryInputRef = useRef(null);
+  const [queryResetVersion, setQueryResetVersion] = useState(0);
 
   // Pure converter: query-input tokens → FilterRow shape. Extracted so the
   // query-apply path can run it directly against tokens that were just
@@ -5188,6 +5217,11 @@ const TraceFilterPanel = ({
   const onApplyRef = useRef(onApply);
   onApplyRef.current = onApply;
   // Apply only when the resulting filter set differs from the last one sent.
+  // Optional: close the panel once a changed filter set is applied.
+  const closeOnApplyRef = useRef(closeOnApply);
+  closeOnApplyRef.current = closeOnApply;
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
   const applyIfChanged = useCallback((sourceRows) => {
     // Hold while a typed editor is incomplete so partial values do not
     // auto-fire or drop the last valid, already-applied filter.
@@ -5198,6 +5232,7 @@ const TraceFilterPanel = ({
     if (serialized === lastAppliedRef.current) return;
     lastAppliedRef.current = serialized;
     onApplyRef.current(next);
+    if (closeOnApplyRef.current) onCloseRef.current();
   }, []);
 
   const handleChange = useCallback(
@@ -5263,11 +5298,18 @@ const TraceFilterPanel = ({
   }, [open, rows, applyIfChanged, queryTokensToRows]);
 
   const handleClear = useCallback(() => {
+    // Explicit resets must not commit the pending Query draft on close.
+    bypassNextCloseFlushRef.current = true;
+    // Remount even when initialTokens was already empty to discard partial state.
+    setQueryResetVersion((version) => version + 1);
     setRows([{ ...effectiveDefaultRow }]);
     lastAppliedRef.current = serializeFilterSet(null);
-    onApply(null);
+    // A parent may own filters outside these rows (for example content
+    // search). Distinguish explicit Clear all from removing the last row.
+    if (onClear) onClear();
+    else onApply(null);
     onClose();
-  }, [onApply, onClose, effectiveDefaultRow]);
+  }, [onApply, onClear, onClose, effectiveDefaultRow]);
 
   const handleAiFilter = useCallback(async () => {
     if (!aiQuery.trim()) return;
@@ -5366,7 +5408,7 @@ const TraceFilterPanel = ({
               placeholder={
                 aiLoading
                   ? "Parsing with AI..."
-                  : aiPlaceholder ||
+                  : aiPlaceholder ??
                     "Ask AI — e.g. 'show traces with errors on gpt-4'"
               }
               value={aiQuery}
@@ -5423,7 +5465,7 @@ const TraceFilterPanel = ({
                 variant="caption"
                 sx={{ fontSize: 12, color: "text.secondary", px: 0.5 }}
               >
-                AI unavailable, use filters below
+                {aiLimitMessage || "AI unavailable, use filters below"}
               </Typography>
             )}
             {aiEmpty && !aiError && !aiLoading && (
@@ -5443,7 +5485,8 @@ const TraceFilterPanel = ({
           <Tabs
             value={activeTab}
             onChange={(_, v) => setActiveTab(v)}
-            sx={{ boxShadow: "none",
+            sx={{
+              boxShadow: "none",
               borderBottom: "1px solid",
               borderColor: "divider",
               "& .MuiTab-root": {
@@ -5586,7 +5629,7 @@ const TraceFilterPanel = ({
         {showQueryTab && activeTab === "query" && (
           <Box sx={{ px: 0.5, pt: 0.25 }}>
             <QueryInput
-              key={queryScopeKey}
+              key={`${queryScopeKey}:${queryResetVersion}`}
               ref={queryInputRef}
               filterFields={queryFilterFields}
               fieldMap={queryFieldMap}
@@ -5722,6 +5765,7 @@ TraceFilterPanel.propTypes = {
   onClose: PropTypes.func.isRequired,
   currentFilters: PropTypes.array,
   onApply: PropTypes.func.isRequired,
+  onClear: PropTypes.func,
   filterFields: PropTypes.array,
   source: PropTypes.string,
   propertyNamespace: PropTypes.string,
@@ -5732,13 +5776,14 @@ TraceFilterPanel.propTypes = {
   ValuePickerOverride: PropTypes.elementType,
   showAi: PropTypes.bool,
   showQueryTab: PropTypes.bool,
+  aiPlaceholder: PropTypes.string,
+  closeOnApply: PropTypes.bool,
   categories: PropTypes.array,
   propertyFilter: PropTypes.func,
   operatorFilter: PropTypes.func,
   defaultOperatorForType: PropTypes.object,
   panelWidth: PropTypes.number,
   placement: PropTypes.oneOf(["bottom-start", "bottom-end"]),
-  aiPlaceholder: PropTypes.string,
   defaultRow: PropTypes.object,
   isSimulator: PropTypes.bool,
   freeSoloValues: PropTypes.oneOfType([PropTypes.bool, PropTypes.func]),

@@ -43,7 +43,7 @@ export const validateFilter = (filter) => {
     hasValue &&
     filterOp !== "" &&
     filterType !== "" &&
-    (filterType === "datetime"
+    (filterType === "datetime" && !requiresNoValue
       ? filterOp === "between" || filterOp === "not_between"
         ? isValid(filterValue[0]) && isValid(filterValue[1])
         : isValid(filterValue)
@@ -83,17 +83,50 @@ const transformFilterValue = (filterValue, filterType) => {
   return filterValue;
 };
 
-export const transformFilter = (filter) =>
-  buildApiFilterFromPanelRow({
+// Both dataset readers use `<columnId>::<path>` in column_id. The shared
+// filter contract has no path config field; flat column ids stay unchanged.
+export const PATH_FIELD_SEPARATOR = "::";
+
+/** `{columnId, path}` of a filter field (`path` empty for plain columns). */
+export const splitPathField = (field) => {
+  const s = String(field ?? "");
+  const at = s.indexOf(PATH_FIELD_SEPARATOR);
+  return at < 0
+    ? { columnId: s, path: "" }
+    : {
+        columnId: s.slice(0, at),
+        path: s.slice(at + PATH_FIELD_SEPARATOR.length),
+      };
+};
+
+/** Normalize older API-shaped path filters at either read boundary. */
+export const datasetReadFilter = (filter) => {
+  const { path, ...config } = filter?.filter_config ?? {};
+  if (path === undefined) return filter;
+  return {
+    ...filter,
+    column_id: `${filter.column_id}${PATH_FIELD_SEPARATOR}${path}`,
+    filter_config: config,
+  };
+};
+
+export const transformFilter = (filter) => {
+  const { path } = splitPathField(filter.columnId);
+  return buildApiFilterFromPanelRow({
     field: filter.columnId,
-    registryId: filter.registryId || filter.propertyId || filter.property_id,
+    registryId: path
+      ? undefined
+      : filter.registryId || filter.propertyId || filter.property_id,
     fieldType: filter.filterConfig.filterType,
     operator: filter.filterConfig.filterOp,
-    value: transformFilterValue(
-      filter.filterConfig.filterValue,
-      filter.filterConfig.filterType,
-    ),
+    value: NO_VALUE_FILTER_OPS.includes(filter.filterConfig.filterOp)
+      ? null
+      : transformFilterValue(
+          filter.filterConfig.filterValue,
+          filter.filterConfig.filterType,
+        ),
   });
+};
 
 export const compareFilterChange = (prevFilters, filters) => {
   if (!prevFilters || !filters) return false;

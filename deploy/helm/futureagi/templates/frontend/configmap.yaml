@@ -55,6 +55,13 @@ data:
                 default_type application/javascript;
             }
 
+            # Revalidate the unversioned worker instead of using immutable asset caching.
+            location = /service-worker.js {
+                add_header Cache-Control "no-cache" always;
+                include /etc/nginx/futureagi/security-headers.conf;
+                default_type application/javascript;
+            }
+
             # Vite build assets carry content hashes.
             location /assets/ {
                 expires 1y;
@@ -73,6 +80,37 @@ data:
                 add_header Cache-Control "no-cache, no-store, must-revalidate";
                 add_header Pragma "no-cache";
                 include /etc/nginx/futureagi/security-headers.conf;
+            }
+
+            # The app asks GET /omega/api/healthz once per page load to learn
+            # whether an Omega gateway runs here (frontend/src/sections/omega/
+            # shell/gatewayProbe.js). With omega.enabled the Omega Ingress or
+            # HTTPRoute (templates/omega/routes.yaml) sends /omega/api to the
+            # gateway and this is never reached; here the answer is "no
+            # gateway", as a 200 so the browser logs no failed request.
+            location = /omega/api/healthz {
+                types { }
+                default_type application/json;
+                add_header Cache-Control "no-store" always;
+                include /etc/nginx/futureagi/security-headers.conf;
+                return 200 '{"live":false}';
+            }
+
+            # The enabled Omega Ingress sends /omega/api to the edge instead
+            # of this UI service. Without that route Omega must stay absent.
+            location = /omega {
+                types { }
+                default_type application/json;
+                add_header Cache-Control "no-store" always;
+                include /etc/nginx/futureagi/security-headers.conf;
+                return 404 '{"error":"not_found"}';
+            }
+            location ^~ /omega/ {
+                types { }
+                default_type application/json;
+                add_header Cache-Control "no-store" always;
+                include /etc/nginx/futureagi/security-headers.conf;
+                return 404 '{"error":"not_found"}';
             }
 
             # SPA fallback: the client-side router handles unknown paths.

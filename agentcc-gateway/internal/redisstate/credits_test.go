@@ -37,8 +37,7 @@ func TestCreditStore_NilClient(t *testing.T) {
 }
 
 func TestCreditStore_UnavailableClient(t *testing.T) {
-	client := &Client{breaker: newCircuitBreaker(1, 10*time.Second)}
-	client.breaker.recordFailure()
+	client := openBreakerClient(t)
 
 	cs := NewCreditStore(client, "test:credits:")
 	if cs.Available() {

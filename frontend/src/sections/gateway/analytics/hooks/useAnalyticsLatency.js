@@ -1,5 +1,6 @@
 import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
+import { timeZoneParam } from "../../utils/timeZone";
 
 export function useAnalyticsLatency({
   start,
@@ -8,7 +9,8 @@ export function useAnalyticsLatency({
   groupBy,
   gatewayId,
 } = {}) {
-  const params = {};
+  // Day buckets are the viewer's days (utils/timeZone.js).
+  const params = { ...timeZoneParam() };
   if (start) params.start = start;
   if (end) params.end = end;
   if (granularity) params.granularity = granularity;

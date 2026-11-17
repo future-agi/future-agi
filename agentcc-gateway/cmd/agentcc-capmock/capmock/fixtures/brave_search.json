@@ -1,0 +1,22 @@
+{
+  "type": "search",
+  "query": { "original": "{{query}}", "more_results_available": false },
+  "mixed": {
+    "type": "mixed",
+    "main": [{ "type": "web", "index": 0, "all": false }]
+  },
+  "web": {
+    "type": "search",
+    "family_friendly": true,
+    "results": [
+      {
+        "type": "search_result",
+        "title": "Capmock result",
+        "url": "https://example.com/capmock",
+        "description": "Example description.",
+        "age": "October 1, 2026",
+        "extra_snippets": ["Example snippet."]
+      }
+    ]
+  }
+}

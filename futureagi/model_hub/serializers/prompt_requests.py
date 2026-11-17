@@ -7,10 +7,12 @@ from model_hub.serializers.experiments import (
     PromptConfigurationSerializer,
     PromptModelParamsSerializer,
 )
+from model_hub.serializers.pagination import PageSizeField
 from model_hub.serializers.prompt_template import (
     PromptHistoryExecutionSerializer,
     PromptTemplateSerializer,
 )
+from tfc.utils.pagination import MAX_PAGE_SIZE
 from tfc.utils.serializer_fields import JsonValueField, StringOrObjectField
 
 
@@ -66,9 +68,7 @@ class PromptRunRequestSerializer(serializers.Serializer):
 
 class PromptVersionsQuerySerializer(serializers.Serializer):
     page = serializers.IntegerField(required=False, min_value=1)
-    # The versions list never capped `limit`; documenting it must not start
-    # rejecting callers that already passed values above 100.
-    limit = serializers.IntegerField(required=False, min_value=1)
+    limit = PageSizeField(required=False, min_value=1, max_value=MAX_PAGE_SIZE)
 
 
 class PromptRunStatusQuerySerializer(serializers.Serializer):

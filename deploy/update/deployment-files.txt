@@ -12,6 +12,7 @@
 docker-compose.yml
 docker-compose.distributed.yml
 deploy/docker-compose.production.yml
+deploy/docker-compose.production.hub.yml
 deploy/docker-compose.host-status.standalone.yml
 deploy/docker-compose.host-status.distributed.yml
 .env.example

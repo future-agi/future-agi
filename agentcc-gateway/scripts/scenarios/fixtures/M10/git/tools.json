@@ -1,0 +1,17 @@
+[
+  {
+    "name": "hub_search",
+    "title": "Hub search",
+    "description": "Searches the git hub.",
+    "inputSchema": {
+      "type": "object",
+      "properties": { "q": { "type": "string" } }
+    },
+    "annotations": { "readOnlyHint": true }
+  },
+  {
+    "name": "other",
+    "description": "A tool vs-a does not include.",
+    "inputSchema": { "type": "object" }
+  }
+]

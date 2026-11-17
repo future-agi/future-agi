@@ -206,7 +206,7 @@ class TestCreateAgentVersion:
     ):
         raw_api_key = "sk-version-preserve-secret-123456"
         agent_definition.provider = "vapi"
-        agent_definition.api_key = raw_api_key
+        agent_definition.set_api_key(raw_api_key)
         agent_definition.assistant_id = "asst_version_masked"
         agent_definition.authentication_method = "api_key"
         agent_definition.save()
@@ -229,7 +229,7 @@ class TestCreateAgentVersion:
 
         assert response.status_code == status.HTTP_201_CREATED
         agent_definition.refresh_from_db()
-        assert agent_definition.api_key == raw_api_key
+        assert agent_definition.get_api_key() == raw_api_key
         version = agent_definition.latest_version
         assert version.credentials.get_api_key() == raw_api_key
         serialized = response.json()
@@ -1052,7 +1052,7 @@ class TestCreateAgentVersionObservability:
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert response.json() == _refusal("credential", "provider_agent_id")
         stored = AgentDefinition.no_workspace_objects.get(pk=agent.pk)
-        assert (stored.agent_name, stored.api_key, stored.assistant_id) == (
+        assert (stored.agent_name, stored.get_api_key(), stored.assistant_id) == (
             "Before Rename",
             "test-key",
             "assistant-1",

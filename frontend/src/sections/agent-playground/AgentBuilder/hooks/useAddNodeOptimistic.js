@@ -8,6 +8,7 @@ import { addNodeApi } from "src/api/agent-playground/agent-playground";
 import logger from "src/utils/logger";
 import { API_NODE_TYPES, NODE_TYPES } from "../../utils/constants";
 import { useSaveDraftContext } from "../saveDraftContext";
+import { resolveResponseFormatForApi } from "../NodeDrawer/nodeFormUtils";
 
 /**
  * Encapsulates the addNode pattern with optimistic-first approach:
@@ -86,6 +87,8 @@ export default function useAddNodeOptimistic() {
             prompt_template: {
               prompt_template_id: config?.prompt_template_id ?? null,
               prompt_version_id: config?.prompt_version_id ?? null,
+              template_format: config?.templateFormat ?? null,
+              response_format: resolveResponseFormatForApi(config?.modelConfig),
               messages: config?.messages?.length
                 ? config.messages.map((m) => ({
                     id: m.id || crypto.randomUUID(),

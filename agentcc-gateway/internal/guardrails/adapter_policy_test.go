@@ -33,11 +33,11 @@ func TestAdapterFailurePolicyScope(t *testing.T) {
 					var check g.Guardrail
 					switch adapter {
 					case "external-http-error":
-						check = external.New("check", map[string]interface{}{"provider": "lakera", "endpoint": srv.URL, "api_key": "synthetic-local-only"})
+						check = external.NewConfigFileRule("check", map[string]interface{}{"provider": "lakera", "endpoint": srv.URL, "api_key": "synthetic-local-only"})
 					case "evaluation-http-error":
-						check = fi.New("check", map[string]interface{}{"base_url": srv.URL, "api_key": "synthetic-local-only", "secret_key": "synthetic-local-only", "eval_id": "synthetic-evaluation"})
+						check = fi.NewConfigFileRule("check", map[string]interface{}{"base_url": srv.URL, "api_key": "synthetic-local-only", "secret_key": "synthetic-local-only", "eval_id": "synthetic-evaluation"})
 					default:
-						check = webhook.New("check", map[string]interface{}{"url": srv.URL})
+						check = webhook.NewConfigFileRule("check", map[string]interface{}{"url": srv.URL})
 					}
 					raw := fmt.Sprintf(`{"fail_open":%v,"checks":{"check":{"enabled":true,"action":"block","confidence_threshold":%g}}}`, open, threshold)
 					p := acceptancePlugin(t, false, raw, map[string]g.Guardrail{"check": check})
@@ -76,7 +76,7 @@ func TestEnkryptSummaryWithOnlyTriggeredDetectorBlocks(t *testing.T) {
 				fmt.Fprint(w, `{"summary":{"toxicity":["toxicity","insult"]},"details":{}}`)
 			}))
 			defer srv.Close()
-			check := external.New("check", map[string]interface{}{"provider": "enkrypt", "endpoint": srv.URL, "api_key": "synthetic-local-only"})
+			check := external.NewConfigFileRule("check", map[string]interface{}{"provider": "enkrypt", "endpoint": srv.URL, "api_key": "synthetic-local-only"})
 			raw := fmt.Sprintf(`{"fail_open":%v,"checks":{"check":{"enabled":true,"action":"block","confidence_threshold":0.5}}}`, open)
 			p := acceptancePlugin(t, false, raw, map[string]g.Guardrail{"check": check})
 			rc := acceptanceRC()

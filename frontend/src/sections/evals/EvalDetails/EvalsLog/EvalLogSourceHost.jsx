@@ -170,7 +170,8 @@ function TraceBody({ pinned, onClose, revalidate, onViewerReady, onState }) {
         ({ observation_span: span }) =>
           span?.observation_type === "conversation" && !span.parent_span_id,
       ));
-  const changed = (query.isError && status === 400) || mismatched;
+  const changed =
+    (query.isError && (status === 400 || status === 404)) || mismatched;
   const validation = useSourceRevalidation(
     query,
     changed,
@@ -180,8 +181,7 @@ function TraceBody({ pinned, onClose, revalidate, onViewerReady, onState }) {
 
   useEffect(() => {
     if (query.isPending) return;
-    if ((query.isError && status === 400) || mismatched)
-      onState({ nav: validation || temporary });
+    if (changed) onState({ nav: validation || temporary });
     else if (query.isError) onState({ isError: true, error: query.error });
     else onState({ nav: query.data ? pinned : temporary });
   }, [
@@ -189,8 +189,7 @@ function TraceBody({ pinned, onClose, revalidate, onViewerReady, onState }) {
     query.isError,
     query.error,
     query.data,
-    status,
-    mismatched,
+    changed,
     validation,
     pinned,
     onState,
@@ -203,7 +202,7 @@ function TraceBody({ pinned, onClose, revalidate, onViewerReady, onState }) {
     onViewerReady();
   }, [viewerVisible, onViewerReady]);
 
-  if ((query.isError && status === 400) || mismatched) {
+  if (changed) {
     return (
       <SourceNavigationRow
         nav={validation}

@@ -48,6 +48,15 @@ const hasAttributeContent = (value) => {
   return true;
 };
 
+// The call's recorded length in seconds, read from the same fields as the
+// header's Duration chip (CallDetailsBar) so Call Analytics agrees with it.
+const readCallDurationSeconds = (data) => {
+  const value = data?.duration_seconds ?? data?.duration;
+  if (value == null) return null;
+  const seconds = Number(value);
+  return Number.isFinite(seconds) ? seconds : null;
+};
+
 const VoiceRightPanel = ({
   data,
   onCompareBaseline,
@@ -92,9 +101,7 @@ const VoiceRightPanel = ({
     const tree = data?.observation_spans || data?.observation_span;
     if (!Array.isArray(tree)) return null;
     const root = tree.find(
-      (entry) =>
-        entry?.eval_rollup &&
-        !entry?.observation_span?.parent_span_id,
+      (entry) => entry?.eval_rollup && !entry?.observation_span?.parent_span_id,
     );
     return root?.eval_rollup || null;
   }, [data?.eval_rollup, data?.observation_span, data?.observation_spans]);
@@ -118,7 +125,19 @@ const VoiceRightPanel = ({
     return [];
   }, [data]);
 
-  const vapiId = getSpanAttributes(observationSpan)?.rawLog?.id;
+  const rawLog = useMemo(() => {
+    const attributes = getSpanAttributes(observationSpan);
+    const value = attributes?.raw_log ?? attributes?.rawLog;
+    try {
+      const decoded = typeof value === "string" ? JSON.parse(value) : value;
+      return decoded && typeof decoded === "object" && !Array.isArray(decoded)
+        ? decoded
+        : null;
+    } catch {
+      return null;
+    }
+  }, [observationSpan]);
+  const vapiId = rawLog?.id;
   const callLogs = getSpanAttributes(observationSpan)?.callLogs;
   const hasLogs = !!vapiId || !!callLogs || !!data?.id;
 
@@ -194,18 +213,20 @@ const VoiceRightPanel = ({
       aiInterruptionCount: data?.ai_interruption_count,
       avgStopTimeAfterInterruptionMs: data?.avg_stop_time_after_interruption,
     };
+    const callDurationSeconds = readCallDurationSeconds(data);
 
     if (isSimulate) {
       return {
         transcript: data?.transcript,
+        callStartedAt: data?.started_at,
         latencies: data?.customer_latency_metrics?.system_metrics,
         analysisSummary: data?.call_summary,
         costBreakdown: data?.customer_cost_breakdown,
         isLiveKit: isLiveKitProvider(data?.provider),
         apiMetrics,
+        callDurationSeconds,
       };
     }
-    const rawLog = getSpanAttributes(observationSpan)?.rawLog;
     // Prefer the customer-agent metrics the backend now surfaces
     // (voice_call_detail looks them up from the matching CallExecution).
     // Fall back to the provider's raw `artifact.performanceMetrics` /
@@ -215,6 +236,7 @@ const VoiceRightPanel = ({
     const customerCost = data?.customer_cost_breakdown;
     return {
       transcript: data?.transcript,
+      callStartedAt: data?.started_at,
       latencies:
         customerLatencies ||
         extractLatencies(rawLog?.artifact?.performanceMetrics),
@@ -223,8 +245,9 @@ const VoiceRightPanel = ({
         customerCost || extractCostBreakdown(rawLog?.costBreakdown),
       isLiveKit: isLiveKitProvider(data?.provider),
       apiMetrics,
+      callDurationSeconds,
     };
-  }, [isSimulate, data, observationSpan]);
+  }, [isSimulate, data, rawLog]);
 
   const evalRows = useMemo(() => {
     if (isSimulate) {
@@ -499,7 +522,7 @@ const VoiceRightPanel = ({
                   },
                 });
               }}
-              />
+            />
           </ShowComponent>
 
           <ShowComponent condition={currentTab === TABS.MESSAGES}>

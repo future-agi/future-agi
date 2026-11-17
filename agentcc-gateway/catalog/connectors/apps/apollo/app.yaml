@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: apollo
+version: 1.0.0
+name: Apollo
+description: "Sales prospecting: people and company enrichment, lists, sequences and tasks."
+vendor:
+  name: Apollo
+  domains: [apollo.io]
+eeCategory: data
+group: other
+categories: [data, sales-intelligence]
+tags: [sales, prospecting, enrichment]
+docsUrl: https://docs.apollo.io/docs/apollo-mcp
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://docs.apollo.io/docs/apollo-mcp
+    fetchedAt: 2026-10-21

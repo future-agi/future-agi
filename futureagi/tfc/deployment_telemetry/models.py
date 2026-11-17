@@ -34,10 +34,11 @@ class DeploymentTelemetryState(models.Model):
         default=RegistrationStatus.IDLE,
     )
     registration_claimed_at = models.DateTimeField(null=True, blank=True)
-    # Local copy of the last registration payload that was sent. No production
-    # code reads it — it exists as an operator diagnostic surface: a person
-    # debugging "what did this instance phone home with last?" can inspect it
-    # directly in the singleton row without rebuilding the payload from state.
+    # Local copy of the last registration payload that was sent: an operator
+    # diagnostic surface (a person debugging "what did this instance phone
+    # home with last?" can inspect it directly in the singleton row). The
+    # sender reads only whether it carried ``users``, to re-register once
+    # when FUTURE_AGI_TELEMETRY_SHARE_ADMIN_EMAILS no longer matches it.
     registration_metadata = models.JSONField(default=dict, blank=True)
     last_registration_attempt_at = models.DateTimeField(null=True, blank=True)
     # ``TextField`` because the value is a diagnostic exception/HTTP message

@@ -43,6 +43,7 @@ from model_hub.models.develop_dataset import Cell, Column, Row
 from model_hub.models.develop_optimisation import OptimizationDataset
 from model_hub.models.run_prompt import RunPrompter
 from model_hub.serializers.develop_optimisation import OptimizationDetailSerializer
+from model_hub.services import credit_ledger_port as credit_ledger
 from model_hub.utils.workspace_scope import scoped_optimization_queryset
 from model_hub.views.eval_runner import EvaluationRunner
 from tfc.constants.api_calls import APICallTypeChoices
@@ -517,6 +518,16 @@ class DevelopOptimizer:
 
             config = self.model_config
             time.time()
+
+            # One key (OK-E, R4-17): this legacy optimizer's model calls cannot
+            # be held and settled per call, so a Future AGI credits route is
+            # refused before any of them. BYOK runs are unchanged.
+            credit_ledger.refuse_legacy_managed_optimizer(
+                organization=self.dataset.organization,
+                workspace=self.dataset.workspace,
+                model_name=config["model_name"],
+                surface="develop-optimiser",
+            )
 
             model_manager = LiteLLMModelManager(config["model_name"])
             provider = model_manager.get_provider(

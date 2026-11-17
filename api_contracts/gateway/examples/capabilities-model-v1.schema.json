@@ -1,0 +1,162 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://futureagi.com/contracts/gateway/examples/capabilities-model-v1.schema.json",
+  "title": "capabilities-model-v1",
+  "description": "GET /v1/capabilities?model=<id> and GET /-/capabilities?model=<id> (Go type capabilities.ModelView): one model through each provider in the caller's view that serves it. source is catalog when the managed catalog lists the model, else config. endpoints holds the launch endpoints only. modalities are null when nothing describes the model. No provider serving the model is 404 model_not_found, not this document.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["generated_at", "model", "providers"],
+  "properties": {
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "model": {
+      "type": "string",
+      "minLength": 1
+    },
+    "providers": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/ModelCell"
+      }
+    }
+  },
+  "$defs": {
+    "ModelCell": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "credential_type",
+        "source",
+        "flags",
+        "context_length",
+        "max_output_tokens",
+        "modalities",
+        "endpoints"
+      ],
+      "properties": {
+        "credential_type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source": {
+          "type": "string",
+          "enum": ["catalog", "config"]
+        },
+        "flags": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "stream",
+            "tools",
+            "json_schema",
+            "vision",
+            "audio_input",
+            "reasoning",
+            "prompt_caching"
+          ],
+          "properties": {
+            "stream": {
+              "type": "boolean"
+            },
+            "tools": {
+              "type": "boolean"
+            },
+            "json_schema": {
+              "type": "boolean"
+            },
+            "vision": {
+              "type": "boolean"
+            },
+            "audio_input": {
+              "type": "boolean"
+            },
+            "reasoning": {
+              "type": "boolean"
+            },
+            "prompt_caching": {
+              "type": "boolean"
+            }
+          }
+        },
+        "context_length": {
+          "type": "integer"
+        },
+        "max_output_tokens": {
+          "type": "integer"
+        },
+        "modalities": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["input", "output"],
+          "properties": {
+            "input": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "output": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        },
+        "endpoints": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "chat.completions": {
+              "$ref": "#/$defs/ModelEndpoint"
+            },
+            "responses": {
+              "$ref": "#/$defs/ModelEndpoint"
+            },
+            "messages": {
+              "$ref": "#/$defs/ModelEndpoint"
+            },
+            "embeddings": {
+              "$ref": "#/$defs/ModelEndpoint"
+            },
+            "models": {
+              "$ref": "#/$defs/ModelEndpoint"
+            }
+          }
+        }
+      }
+    },
+    "ModelEndpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "managed_allowed"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["supported", "provider_dependent", "unsupported"]
+        },
+        "managed_allowed": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

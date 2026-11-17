@@ -1,21 +1,27 @@
 import React, { useCallback, useEffect, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import Box from "@mui/material/Box";
+import { enqueueSnackbar } from "src/components/snackbar";
 import useFalconStore from "./store/useFalconStore";
-import useFalconSocket from "./hooks/useFalconSocket";
-import { useFalconContext } from "./hooks/useFalconContext";
+import { captureFalconRequest } from "./store/falconRequestGuard";
 import {
-  createConversation,
-  getConversation,
-  listSkills,
-  fetchConnectors,
-} from "./hooks/useFalconAPI";
+  beginFalconSubmission,
+  clearFalconSubmission,
+} from "./store/falconSubmission";
+import useFalconSocket from "./hooks/useFalconSocket";
+import useFalconCatalog from "./hooks/useFalconCatalog";
+import { useFalconContext } from "./hooks/useFalconContext";
+import { createConversation, getConversation } from "./hooks/useFalconAPI";
 import FalconAIHeader from "./components/FalconAIHeader";
 import MessageList from "./components/MessageList";
 import ChatInput from "./components/ChatInput";
 import ChatListPanel from "./components/ChatListPanel";
 import SkillPicker from "./components/SkillPicker";
 import CustomizePanel from "./components/CustomizePanel";
+
+// A chat deleted elsewhere, or kept in another workspace, answers "not found".
+const CHAT_UNAVAILABLE =
+  "This chat isn't available. It may have been deleted, or it may be in another workspace.";
 
 export default function FalconAIFullPage() {
   const { conversationId: urlConversationId } = useParams();
@@ -29,32 +35,19 @@ export default function FalconAIFullPage() {
   const setStreaming = useFalconStore((s) => s.setStreaming);
   const setPendingPrompt = useFalconStore((s) => s.setPendingPrompt);
 
-  const setSkills = useFalconStore((s) => s.setSkills);
-  const setConnectors = useFalconStore((s) => s.setConnectors);
   const messages = useFalconStore((s) => s.messages);
   const showCustomize = useFalconStore((s) => s.showCustomize);
+  // A reset (workspace recovery, sign-out) remounts the message box, so text
+  // in it, typed or put back after a failed send, never carries over into
+  // the next workspace. A draft the reset keeps comes back through
+  // pendingPrompt when the new box mounts. The sidebar's box already starts
+  // empty, because a reset closes the sidebar.
+  const resetGeneration = useFalconStore((s) => s.resetGeneration);
 
-  const { sendChat, sendStop, sendFeedback } = useFalconSocket();
+  const { sendChat, sendStop, sendFeedback, sendReconnect } = useFalconSocket();
   const context = useFalconContext();
 
-  const loadSkillsAndConnectors = useCallback(async () => {
-    try {
-      const skillData = await listSkills();
-      setSkills(skillData.results || skillData || []);
-    } catch {
-      // silent — skills are optional
-    }
-    try {
-      const connData = await fetchConnectors();
-      setConnectors(connData.results || connData || []);
-    } catch {
-      // silent — connectors are optional
-    }
-  }, [setSkills, setConnectors]);
-
-  useEffect(() => {
-    loadSkillsAndConnectors();
-  }, [loadSkillsAndConnectors]);
+  const loadSkillsAndConnectors = useFalconCatalog();
 
   // Sync URL ↔ store (one-way: URL wins on mount, store wins after)
   const initializedRef = useRef(false);
@@ -66,8 +59,11 @@ export default function FalconAIFullPage() {
 
     if (urlConversationId) {
       setCurrentConversation(urlConversationId);
+      const isCurrent = captureFalconRequest({ conversation: true });
       getConversation(urlConversationId)
         .then((data) => {
+          // A recovery or user navigation may have invalidated this load.
+          if (!isCurrent()) return;
           const conv = data.result || data;
           // Normalize camelCase API response to snake_case for components
           const messages = (conv.messages || []).map((m) => ({
@@ -78,13 +74,38 @@ export default function FalconAIFullPage() {
           }));
           useFalconStore.getState().setMessages(messages);
         })
-        .catch(() => {});
+        .catch((error) => {
+          // Not found: the link points to a deleted chat (or one in another
+          // workspace). Say so and open a new chat; the effect below drops
+          // the dead link, and the next message starts a fresh chat.
+          if (!isCurrent() || error?.statusCode !== 404) return;
+          enqueueSnackbar(CHAT_UNAVAILABLE, { variant: "error" });
+          setCurrentConversation(null);
+        });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // A reset must also discard the old deep link so a remount cannot reload it.
+  useEffect(() => {
+    if (
+      !currentConversationId &&
+      urlConversationId &&
+      !useFalconStore.getState().currentConversationId
+    ) {
+      navigate("/dashboard/falcon-ai", { replace: true });
+    }
+  }, [currentConversationId, urlConversationId, navigate]);
+
   const handleSend = useCallback(
     async (text) => {
+      const isCurrent = captureFalconRequest({ conversation: true });
+      const attachedFiles = useFalconStore.getState().attachedFiles;
+      const submissionId = beginFalconSubmission(
+        text,
+        attachedFiles,
+        isCurrent,
+      );
       let convId = currentConversationId;
 
       if (!convId) {
@@ -92,7 +113,15 @@ export default function FalconAIFullPage() {
           const resp = await createConversation(
             text.slice(0, 50),
             context.page,
+            { submissionId },
           );
+          if (
+            !isCurrent() ||
+            useFalconStore.getState().pendingDraft?.id !== submissionId
+          ) {
+            clearFalconSubmission(submissionId);
+            return;
+          }
           const newConv = resp.result || resp;
           convId = newConv.id;
           setCurrentConversation(convId);
@@ -106,13 +135,22 @@ export default function FalconAIFullPage() {
             },
             ...(store.conversations || []),
           ]);
-        } catch {
+        } catch (error) {
+          clearFalconSubmission(submissionId);
+          // A workspace reset has already put the draft back and said why.
+          if (!isCurrent()) return;
+          // Nothing was sent: put the message back in the box to send again.
+          setPendingPrompt(text);
+          // An upgrade-required answer already showed its own message.
+          if (!error?.upgrade_required)
+            enqueueSnackbar("Couldn't send your message. Try again.", {
+              variant: "error",
+            });
           return;
         }
       }
 
       // Capture attached files before clearing
-      const attachedFiles = useFalconStore.getState().attachedFiles;
       const fileIds = attachedFiles.map((f) => f.id);
 
       const userMsg = {
@@ -141,7 +179,7 @@ export default function FalconAIFullPage() {
       setStreaming(true, assistantMsgId);
 
       // Send chat BEFORE navigate — navigate can cause re-renders
-      sendChat(text, convId, context, fileIds);
+      sendChat(text, convId, context, fileIds, attachedFiles, submissionId);
 
       // Update URL after sending (won't remount due to optional route param)
       navigate(`/dashboard/falcon-ai/${convId}`, { replace: true });
@@ -150,6 +188,7 @@ export default function FalconAIFullPage() {
       currentConversationId,
       context,
       setCurrentConversation,
+      setPendingPrompt,
       addMessage,
       setStreaming,
       sendChat,
@@ -172,7 +211,7 @@ export default function FalconAIFullPage() {
         bgcolor: "background.default",
       }}
     >
-      <ChatListPanel />
+      <ChatListPanel onResume={sendReconnect} />
 
       {showCustomize ? (
         <CustomizePanel />
@@ -204,7 +243,11 @@ export default function FalconAIFullPage() {
               </Box>
             )}
           </Box>
-          <ChatInput onSend={handleSend} onStop={sendStop} />
+          <ChatInput
+            key={resetGeneration}
+            onSend={handleSend}
+            onStop={sendStop}
+          />
         </Box>
       )}
     </Box>

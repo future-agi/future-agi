@@ -3,11 +3,12 @@ import PropTypes from "prop-types";
 import {
   Box,
   Button,
-  IconButton,
-  Divider,
-  Typography,
   Collapse,
+  Divider,
+  IconButton,
   Stack,
+  Typography,
+  useMediaQuery,
 } from "@mui/material";
 import CustomTooltip from "src/components/tooltip";
 import SvgColor from "src/components/svg-color";
@@ -29,6 +30,7 @@ export default function MoreActions({
   addToCompare,
   userRole,
 }) {
+  const roomy = useMediaQuery("(min-width:1440px)");
   return (
     <Box
       sx={{
@@ -39,7 +41,9 @@ export default function MoreActions({
     >
       <CustomTooltip
         show
-        title={isMoreOpen ? "Minimize" : "Expand"}
+        title={
+          isMoreOpen ? "Fewer actions" : "More actions: History, Compare, …"
+        }
         arrow
         size="small"
         type="black"
@@ -53,6 +57,8 @@ export default function MoreActions({
       >
         <Button
           size="small"
+          // FA-PROMPTS-07: a plain name when the button is icon-only.
+          aria-label={isMoreOpen ? "Fewer actions" : "More actions"}
           sx={{
             backgroundColor: "background.paper",
             border: "1px solid",
@@ -82,7 +88,9 @@ export default function MoreActions({
             />
           }
         >
-          {!isMoreOpen && (
+          {/* IT-R1 G4: icon-only below 1440 px so the header never wraps
+              and the prompt name keeps its room. */}
+          {!isMoreOpen && roomy && (
             <Typography variant="s1" fontWeight={"fontWeightMedium"}>
               More
             </Typography>

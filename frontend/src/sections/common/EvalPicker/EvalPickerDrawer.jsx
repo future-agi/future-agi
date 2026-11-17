@@ -12,6 +12,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { ErrorBoundary } from "react-error-boundary";
 import { useQueryClient } from "@tanstack/react-query";
 import Iconify from "src/components/iconify";
+import SelectionBar from "src/components/selection-bar";
 import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 import { evalDetailQuery } from "src/sections/evals/hooks/useEvalDetail";
 import EvalPickerProvider from "./context/EvalPickerProvider";
@@ -46,6 +47,11 @@ const EvalPickerContent = ({
     isEditMode,
     keepOpenAfterSave,
     keepOpenAfterEditSave,
+    ownsSelection,
+    selectedEvals,
+    setSelectedEvals,
+    batch,
+    setBatch,
   } = useEvalPickerContext();
 
   const queryClient = useQueryClient();
@@ -74,6 +80,9 @@ const EvalPickerContent = ({
           ...evalDetailQuery(templateId),
           staleTime: 30000,
         });
+        // L7c g7 (wiz:add-evaluation): a code check runs no judge, so it
+        // needs no model picked (Tool call accuracy attaches at once).
+        if (detail?.eval_type === "code") return false;
         return !detail?.model;
       } catch {
         // Fail toward the config screen: adding a child with no model fails
@@ -82,6 +91,39 @@ const EvalPickerContent = ({
       }
     },
     [queryClient],
+  );
+
+  // Adds an eval straight from the list, with no config screen (skipConfig).
+  // L7c g7 (wiz:add-evaluation): the keys an attached eval maps are its
+  // template's (Tool call accuracy's expected_tool_calls maps to the column
+  // of that name), read from its detail when the list row does not carry
+  // them. Shared by a row's Add and the multi-select "Add selected".
+  const addWithoutConfig = useCallback(
+    async (evalData) => {
+      const normalized = normalizeEvalPickerEval(evalData);
+      let description = normalized?.description ?? evalData?.description;
+      const tid =
+        normalized?.templateId || evalData?.template_id || evalData?.id;
+      const detail = tid
+        ? await queryClient
+            .fetchQuery({ ...evalDetailQuery(tid), staleTime: 30000 })
+            .catch(() => null)
+        : null;
+      // Every key the template reads (the list row may name only some).
+      const requiredKeys = [
+        ...new Set([
+          ...(normalized?.requiredKeys ?? []),
+          ...(detail?.required_keys ?? detail?.config?.required_keys ?? []),
+        ]),
+      ];
+      description = description || detail?.description || null;
+      await onEvalAdded?.({
+        ...normalized,
+        ...(requiredKeys?.length ? { requiredKeys } : {}),
+        ...(description ? { description } : {}),
+      });
+    },
+    [queryClient, onEvalAdded],
   );
 
   // From the list (expand → "Add Evaluation"), go directly to config.
@@ -98,7 +140,7 @@ const EvalPickerContent = ({
             setStep("config");
             return;
           }
-          await onEvalAdded?.(normalizeEvalPickerEval(evalData));
+          await addWithoutConfig(evalData);
           onClose?.();
         } catch {
           // Parent handles error display
@@ -113,23 +155,82 @@ const EvalPickerContent = ({
     [
       skipConfig,
       needsModelSelection,
-      onEvalAdded,
+      addWithoutConfig,
       onClose,
       setSelectedEval,
       setStep,
     ],
   );
 
+  // "Add selected" on the multi-select bar adds every ticked eval in one
+  // pass. With skipConfig, the picks that need no model are added at once
+  // and the rest get the config screen; otherwise each pick gets its config
+  // screen in turn. Either way the picker isn't reopened between evals.
+  const handleAddSelected = useCallback(async () => {
+    const picks = selectedEvals;
+    if (!picks.length) return;
+    let toConfigure = picks;
+    if (skipConfig) {
+      setIsSaving(true);
+      try {
+        const needsConfig = await Promise.all(
+          picks.map((evalData) => needsModelSelection(evalData)),
+        );
+        toConfigure = picks.filter((_, i) => needsConfig[i]);
+        for (const evalData of picks.filter((_, i) => !needsConfig[i])) {
+          await addWithoutConfig(evalData);
+        }
+      } catch {
+        // Parent handles error display; the picks stay ticked for a retry.
+        return;
+      } finally {
+        setIsSaving(false);
+      }
+      if (!toConfigure.length) {
+        onClose?.();
+        return;
+      }
+    }
+    setSelectedEvals([]);
+    setBatch({ queue: toConfigure.slice(1), total: toConfigure.length });
+    setSelectedEval(toConfigure[0]);
+    setStep("config");
+  }, [
+    selectedEvals,
+    skipConfig,
+    needsModelSelection,
+    addWithoutConfig,
+    onClose,
+    setSelectedEvals,
+    setBatch,
+    setSelectedEval,
+    setStep,
+  ]);
+
   // In edit mode, back closes the drawer (returns to the SavedEvalsList).
-  // In create mode, back returns to the list step.
+  // In create mode, back returns to the list step. Mid-pass, the picks not
+  // yet added go back to being ticked so the user can change them.
   const handleBackToList = useCallback(() => {
     if (isEditMode) {
       onClose?.();
       return;
     }
+    if (batch && selectedEval) {
+      setSelectedEvals([selectedEval, ...batch.queue]);
+    }
+    setBatch(null);
     setSelectedEval(null);
     setStep("list");
-  }, [isEditMode, onClose, setSelectedEval, setStep]);
+  }, [
+    isEditMode,
+    onClose,
+    batch,
+    selectedEval,
+    setSelectedEvals,
+    setBatch,
+    setSelectedEval,
+    setStep,
+  ]);
 
   const handleSaveEval = useCallback(
     async (evalConfig) => {
@@ -140,7 +241,12 @@ const EvalPickerContent = ({
           // Edit mode closes on save unless the host is walking a queue of
           // pre-selected evals (keepOpenAfterEditSave) and owns the close.
           if (!keepOpenAfterEditSave) onClose?.();
+        } else if (batch?.queue.length) {
+          // Mid multi-select pass: on to the next pick's config screen.
+          setSelectedEval(batch.queue[0]);
+          setBatch({ ...batch, queue: batch.queue.slice(1) });
         } else {
+          setBatch(null);
           setSelectedEval(null);
           setStep("list");
           // When the host wants the picker to stay open (e.g. dataset
@@ -149,8 +255,10 @@ const EvalPickerContent = ({
           // without re-opening the drawer.
           if (!keepOpenAfterSave) onClose?.();
         }
+        return true;
       } catch {
-        // Keep on config screen if save fails
+        // Keep on config screen and retain the comparison baseline on failure.
+        return false;
       } finally {
         setIsSaving(false);
       }
@@ -159,12 +267,23 @@ const EvalPickerContent = ({
       isEditMode,
       onEvalAdded,
       onClose,
+      batch,
+      setBatch,
       setSelectedEval,
       setStep,
       keepOpenAfterSave,
       keepOpenAfterEditSave,
     ],
   );
+
+  // Where the user is in a multi-select pass, on each config screen. A
+  // host's own progress takes precedence.
+  const batchProgress =
+    batch?.total > 1 ? (
+      <Typography typography="s1" color="text.secondary" noWrap>
+        Evaluation {batch.total - batch.queue.length} of {batch.total}
+      </Typography>
+    ) : null;
 
   return (
     <Box
@@ -191,6 +310,21 @@ const EvalPickerContent = ({
           </Typography>
           <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
             {headerAction}
+            {ownsSelection && (
+              <SelectionBar
+                count={selectedEvals.length}
+                noun="evaluation"
+                actions={[
+                  {
+                    label: "Add selected",
+                    icon: "solar:add-linear",
+                    onClick: handleAddSelected,
+                    disabled: isSaving,
+                  },
+                ]}
+                onCancel={() => setSelectedEvals([])}
+              />
+            )}
             <Button
               variant="outlined"
               size="small"
@@ -261,7 +395,7 @@ const EvalPickerContent = ({
               onBack={handleBackToList}
               onSave={handleSaveEval}
               isSaving={isSaving}
-              progress={progress}
+              progress={progress ?? batchProgress}
               primaryLabel={primaryLabel}
               showClose={showClose}
             />
@@ -338,7 +472,10 @@ const EvalPickerDrawer = ({
   // driven by `selectedIds`/`onToggleSelect`; `headerAction` sits in the
   // list header; `progress`/`primaryLabel` decorate the config step's
   // action bar/primary button; `showClose` adds a close control to the
-  // config header for hosts that walk a queue.
+  // config header for hosts that walk a queue. With `multiSelect` and no
+  // `onToggleSelect`, the picker keeps the selection itself: a selection
+  // bar's "Add selected" adds every ticked eval in one pass, calling
+  // `onEvalAdded` once per eval and closing after the last.
   multiSelect = false,
   selectedIds = null,
   onToggleSelect = null,
@@ -364,6 +501,9 @@ const EvalPickerDrawer = ({
   // Opt-in: for hosts that can't grade a composite eval, "Create new" drops
   // its Composite mode.
   hideCompositeCreate = false,
+  // Opt-in (IT-R3 G5 P3): list rows read like the host (`Correctness`,
+  // not `correctness_vs_reference`). Default: the eval's own name.
+  formatEvalName = null,
 }) => {
   const [currentStep, setCurrentStep] = useState("list");
   const covered = useDrawerCovered(open);
@@ -430,6 +570,7 @@ const EvalPickerDrawer = ({
         addedEvalAction={addedEvalAction}
         requireInputs={requireInputs}
         hideCompositeCreate={hideCompositeCreate}
+        formatEvalName={formatEvalName}
       >
         <EvalPickerContent
           onStepChange={setCurrentStep}
@@ -488,6 +629,7 @@ EvalPickerDrawer.propTypes = {
   }),
   requireInputs: PropTypes.bool,
   hideCompositeCreate: PropTypes.bool,
+  formatEvalName: PropTypes.func,
 };
 
 export default EvalPickerDrawer;

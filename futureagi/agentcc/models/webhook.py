@@ -25,11 +25,16 @@ class AgentccWebhook(BaseModel):
     )
     name = models.CharField(max_length=255)
     url = models.URLField(max_length=2048)
-    secret = models.CharField(max_length=255, blank=True, default="")
+    # Explicit codec boundaries only; no auto-decryption or plaintext fallback.
+    encrypted_headers = models.BinaryField(editable=False)
+    encrypted_secret = models.BinaryField(editable=False)
+    credential_storage_version = models.PositiveSmallIntegerField(editable=False)
     events = models.JSONField(default=list, blank=True)
     is_active = models.BooleanField(default=True)
-    headers = models.JSONField(default=dict, blank=True)
     description = models.TextField(blank=True, default="")
+    # budget.exceeded keys this webhook already received ({key: expires_at}),
+    # so a refusal storm yields one event per budget level and period (K1).
+    budget_event_keys = models.JSONField(default=dict, blank=True, db_default={})
 
     class Meta:
         db_table = "agentcc_webhook"
@@ -39,6 +44,15 @@ class AgentccWebhook(BaseModel):
                 fields=["organization", "name"],
                 condition=models.Q(deleted=False),
                 name="unique_agentcc_webhook_name",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(credential_storage_version=1),
+                name="webhook_credentials_v1",
+            ),
+            models.CheckConstraint(
+                condition=~models.Q(encrypted_headers=b"")
+                & ~models.Q(encrypted_secret=b""),
+                name="webhook_credentials_nonempty",
             ),
         ]
         indexes = [

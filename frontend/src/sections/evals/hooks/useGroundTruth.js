@@ -42,6 +42,8 @@ export function useUploadGroundTruth(templateId) {
       );
       return data?.result;
     },
+    // The upload drawer toasts the failure itself (file and dataset import).
+    meta: { errorHandled: true },
     onSuccess: () => {
       queryClient.invalidateQueries({
         queryKey: ["evals", "ground-truth", templateId],
@@ -175,6 +177,8 @@ export function useTriggerEmbedding() {
       );
       return data?.result;
     },
+    // The Ground Truth tab toasts the failure itself.
+    meta: { errorHandled: true },
     onSuccess: (_, gtId) => {
       queryClient.invalidateQueries({ queryKey: ["evals", "ground-truth"] });
       queryClient.invalidateQueries({

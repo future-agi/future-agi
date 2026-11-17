@@ -46,7 +46,7 @@ tenacity
 retrying
 watchdog
 jsonpath-ng
-nltk
+nltk==3.10.4
 rouge-score
 python-levenshtein
 pybars3
@@ -54,7 +54,7 @@ filetype
 
 # HTTP and networking
 requests==2.32.3
-urllib3==2.2.2
+urllib3==2.8.0
 httptools==0.6.1
 h11==0.16.0
 httpx==0.28.1
@@ -80,8 +80,8 @@ opentelemetry-instrumentation-requests>=0.41b0
 opentelemetry-instrumentation-logging>=0.41b0
 
 # Core Python packages
-anyio==4.4.0
-certifi==2024.8.30
+anyio==4.15.1
+certifi==2026.10.19
 charset-normalizer==3.3.2
 click==8.1.7
 filelock==3.15.4
@@ -103,6 +103,6 @@ sympy==1.13.1
 threadpoolctl==3.5.0
 tqdm==4.66.5
 transformers==4.44.2
-typing_extensions==4.12.2
+typing_extensions==4.16.0
 av
 pandas

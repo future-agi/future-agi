@@ -24,14 +24,16 @@ export default function MyEnvironmentsTab() {
   const { setTab } = useEnvironmentsTab();
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
-  const { data, isLoading, isPending, isError } = useMyEnvironments({
-    page,
-    pageSize,
-  });
+  const { data, isLoading, isPending, isError, isFetching, refetch } =
+    useMyEnvironments({
+      page,
+      pageSize,
+    });
   const rows = data?.rows || [];
   const total = data?.total || 0;
   const loading = isLoading || isPending;
-  // A failed list must read as an error, not as "no environments yet".
+  // A failed list must read as an error, not as "no environments yet". Its
+  // poll stops without data, so Try again is the way back to the list.
   const showError = isError && !loading && total === 0;
 
   const deleteEnvironment = useDeleteEnvironment();
@@ -71,13 +73,24 @@ export default function MyEnvironmentsTab() {
             justifyContent: "center",
           }}
         >
-          <Stack spacing={0.5} alignItems="center">
-            <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-              Couldn&apos;t load your environments.
-            </Typography>
-            <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-              Something went wrong. Try again.
-            </Typography>
+          <Stack spacing={1.5} alignItems="center">
+            <Stack spacing={0.5} alignItems="center">
+              <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+                Couldn&apos;t load your environments.
+              </Typography>
+              <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+                Something went wrong loading the list.
+              </Typography>
+            </Stack>
+            <Button
+              variant="contained"
+              color="primary"
+              size="small"
+              disabled={!!isFetching}
+              onClick={() => refetch?.()}
+            >
+              Try again
+            </Button>
           </Stack>
         </Box>
       ) : !loading && total === 0 ? (

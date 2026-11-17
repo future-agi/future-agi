@@ -8,6 +8,7 @@ import {
   Divider,
   FormHelperText,
   IconButton,
+  Link,
   Tab,
   TextField,
   Tooltip,
@@ -29,12 +30,18 @@ import { enqueueSnackbar } from "src/components/snackbar";
 import ModalWrapper from "src/components/ModalWrapper/ModalWrapper";
 import TaskSchedulingSection from "./TaskSchedulingSection";
 import TaskSamplingSection from "./task_sampling_section";
+import TaskWebhookFields from "src/sections/common/EvalsTasks/TaskWebhookFields";
 import { useGetProjectDetails } from "src/api/project/project-detail";
 import { PROJECT_SOURCE } from "src/utils/constants";
 import { mappingChipLabel } from "src/sections/evals/utils/evalMappingPath";
 import TaskFilterBar from "./TaskFilterBar";
 import { getSafeActionErrorMessage } from "src/utils/errorUtils";
+import { RouterLink } from "src/routes/components";
+import { paths } from "src/routes/paths";
 import { nextTaskRowTypeForProject } from "../taskProjectKind";
+
+const NO_OBSERVE_PROJECTS_MESSAGE =
+  "No Observe projects yet: send your first trace to create one";
 
 const ROW_TYPE_OPTIONS = [
   { value: "spans", label: "Spans", icon: "solar:layers-outline" },
@@ -374,7 +381,7 @@ const TaskConfigPanel = ({
   const evalsDetailsErrorMessage = _.get(errors, "evalsDetails")?.message || "";
 
   // Projects list — only fetch in create mode (not locked)
-  const { data: projectsList } = useQuery({
+  const { data: projectsList, isSuccess: projectsListLoaded } = useQuery({
     queryKey: ["project-list"],
     queryFn: () =>
       axios.get(endpoints.project.listProjects(), {
@@ -383,6 +390,12 @@ const TaskConfigPanel = ({
     select: (data) => data.data?.result?.projects,
     enabled: !projectLocked,
   });
+  // Only a list that loaded and came back empty means there is nothing to
+  // pick; while loading or after an error the picker keeps its plain text.
+  const noObserveProjects =
+    projectsListLoaded &&
+    Array.isArray(projectsList) &&
+    projectsList.length === 0;
 
   const handleEvalAdded = useCallback(
     async (evalConfig) => {
@@ -567,16 +580,41 @@ const TaskConfigPanel = ({
                 helperText="Project cannot be changed after creation"
               />
             ) : (
-              <TaskProjectField
-                control={control}
-                options={
-                  projectsList?.map((p) => ({
-                    label: p.name,
-                    value: p.id,
-                  })) || []
-                }
-                onChange={handleProjectFieldChange}
-              />
+              <>
+                <TaskProjectField
+                  control={control}
+                  options={
+                    projectsList?.map((p) => ({
+                      label: p.name,
+                      value: p.id,
+                    })) || []
+                  }
+                  onChange={handleProjectFieldChange}
+                  noOptionsText={
+                    noObserveProjects
+                      ? NO_OBSERVE_PROJECTS_MESSAGE
+                      : "No projects available"
+                  }
+                />
+                {/* The dropdown's empty item is disabled and cannot hold a
+                    link, so the way forward sits under the field. */}
+                {noObserveProjects && (
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    sx={{ fontSize: "12px", display: "block" }}
+                  >
+                    {NO_OBSERVE_PROJECTS_MESSAGE}.{" "}
+                    <Link
+                      component={RouterLink}
+                      href={paths.dashboard.observe}
+                      underline="hover"
+                    >
+                      Set up Observe
+                    </Link>
+                  </Typography>
+                )}
+              </>
             )}
 
             {/* Target type tabs — hidden for voice projects */}
@@ -740,6 +778,8 @@ const TaskConfigPanel = ({
             <SectionHeader title="Data to evaluate" />
             <TaskSamplingSection control={control} getValues={getValues} />
           </Box>
+          <Divider />
+          <TaskWebhookFields control={control} />
         </Box>
       </Box>
 

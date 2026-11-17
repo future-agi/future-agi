@@ -67,10 +67,12 @@ class TestTraceRetrieveAPI:
         assert trace_data.get("id") or trace_data.get("name") or isinstance(data, dict)
 
     def test_retrieve_trace_not_found(self, auth_client):
-        """Retrieve non-existent trace returns error."""
+        """Retrieve non-existent trace returns structured not found."""
         fake_id = uuid.uuid4()
         response = auth_client.get(f"/tracer/trace/{fake_id}/")
-        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        assert response.data["code"] == "not_found"
+        assert response.data["type"] == "not_found"
 
     def test_retrieve_trace_from_different_org(self, auth_client, organization):
         """Cannot retrieve trace from different organization."""

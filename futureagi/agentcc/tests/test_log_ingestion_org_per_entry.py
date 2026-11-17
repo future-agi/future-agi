@@ -11,6 +11,12 @@ from accounts.models import Organization
 from agentcc.models import AgentccAPIKey, AgentccRequestLog
 from agentcc.models.webhook import AgentccWebhook, AgentccWebhookEvent
 from agentcc.services.log_ingestion import ingest_request_logs
+from agentcc.tests.test_webhook_encrypted_fixtures import (
+    make_webhook,
+)
+from agentcc.tests.test_webhook_encrypted_fixtures import (
+    webhook_encryption_key as webhook_encryption_key,
+)
 
 
 def _entry(request_id, key_id=None, **fields):
@@ -73,7 +79,8 @@ class TestMixedOrgBatch:
         self, mock_deliver_webhook_events, organization, other_org
     ):
         webhooks = {
-            org.id: AgentccWebhook.objects.create(
+            org.id: make_webhook(
+                manager=AgentccWebhook.objects,
                 organization=org,
                 name="req-complete",
                 url="https://example.com/webhook",

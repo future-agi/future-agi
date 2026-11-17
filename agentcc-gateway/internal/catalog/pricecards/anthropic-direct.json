@@ -1,0 +1,394 @@
+{
+  "provider": "anthropic-direct",
+  "upstream_slug": "anthropic",
+  "upstream_fee_bps": 0,
+  "as_of": "2026-09-07",
+  "source_url": "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json",
+  "notes": "Original price provenance: the bundled LiteLLM price list (internal/modeldb/litellm.json, refreshed 2026-09-07). Model details remain from the bundled OpenRouter public model list. Public price verification on 2026-11-07: nine exact first-party model IDs have all four token rates confirmed by Anthropic documentation; see each row's price_certified and price_certification. The dated claude-opus-4-6-20260205 and claude-opus-4-7-20260416 IDs remain uncertified: official documentation names dateless IDs, so no alias equivalence is assumed. Certification scope is standard global Messages inference within context_length, with cache_write meaning 5-minute writes; it does not cover 1-hour writes, Batch API, fast mode, US-only inference premiums, server-tool fees or fallback repricing. Sonnet 4.5 remains capped at 200000 tokens; no higher-context tier is represented. Prices remain decimal strings in USD/token. Original as_of and source_url are retained so uncertified rows are not silently refreshed. Public-price certification does not confirm availability, account data terms, resale rights or gateway usage settlement. Record resale_terms_ref and set data_collection and zdr from account terms separately. Until then data_collection remains unknown, so a managed request under the default data_collection=deny never selects this direct card. No routing or managed behavior is changed for uncertified rows or for Claude as a whole.",
+  "models": [
+    {
+      "id": "claude-haiku-4-5-20251001",
+      "canonical": "anthropic/claude-haiku-4.5",
+      "context_length": 200000,
+      "max_output": 64000,
+      "prices": {
+        "prompt": "0.000001",
+        "completion": "0.000005",
+        "cache_read": "0.0000001",
+        "cache_write": "0.00000125"
+      },
+      "supported_parameters": [
+        "include_reasoning",
+        "max_completion_tokens",
+        "max_tokens",
+        "reasoning",
+        "response_format",
+        "stop",
+        "structured_outputs",
+        "temperature",
+        "tool_choice",
+        "tools",
+        "top_k",
+        "top_p"
+      ],
+      "modalities": {
+        "input": ["text", "image", "file"],
+        "output": ["text"]
+      },
+      "price_certified": true,
+      "price_certification": {
+        "source_url": "https://platform.claude.com/docs/en/about-claude/pricing#model-pricing",
+        "verified_on": "2026-11-07",
+        "scope": "standard-global-5m-cache"
+      }
+    },
+    {
+      "id": "claude-sonnet-4-5-20250929",
+      "canonical": "anthropic/claude-sonnet-4.5",
+      "context_length": 200000,
+      "max_output": 64000,
+      "prices": {
+        "prompt": "0.000003",
+        "completion": "0.000015",
+        "cache_read": "0.0000003",
+        "cache_write": "0.00000375"
+      },
+      "supported_parameters": [
+        "include_reasoning",
+        "max_completion_tokens",
+        "max_tokens",
+        "reasoning",
+        "response_format",
+        "stop",
+        "structured_outputs",
+        "temperature",
+        "tool_choice",
+        "tools",
+        "top_k",
+        "top_p"
+      ],
+      "modalities": {
+        "input": ["text", "image", "file"],
+        "output": ["text"]
+      },
+      "price_certified": true,
+      "price_certification": {
+        "source_url": "https://platform.claude.com/docs/en/about-claude/pricing#model-pricing",
+        "verified_on": "2026-11-07",
+        "scope": "standard-global-5m-cache"
+      }
+    },
+    {
+      "id": "claude-opus-4-5-20251101",
+      "canonical": "anthropic/claude-opus-4.5",
+      "context_length": 200000,
+      "max_output": 64000,
+      "prices": {
+        "prompt": "0.000005",
+        "completion": "0.000025",
+        "cache_read": "0.0000005",
+        "cache_write": "0.00000625"
+      },
+      "supported_parameters": [
+        "include_reasoning",
+        "max_completion_tokens",
+        "max_tokens",
+        "reasoning",
+        "response_format",
+        "stop",
+        "structured_outputs",
+        "temperature",
+        "tool_choice",
+        "tools",
+        "top_k",
+        "verbosity"
+      ],
+      "modalities": {
+        "input": ["file", "image", "text"],
+        "output": ["text"]
+      },
+      "price_certified": true,
+      "price_certification": {
+        "source_url": "https://platform.claude.com/docs/en/about-claude/pricing#model-pricing",
+        "verified_on": "2026-11-07",
+        "scope": "standard-global-5m-cache"
+      }
+    },
+    {
+      "id": "claude-sonnet-4-6",
+      "canonical": "anthropic/claude-sonnet-4.6",
+      "context_length": 1000000,
+      "max_output": 128000,
+      "prices": {
+        "prompt": "0.000003",
+        "completion": "0.000015",
+        "cache_read": "0.0000003",
+        "cache_write": "0.00000375"
+      },
+      "supported_parameters": [
+        "include_reasoning",
+        "max_completion_tokens",
+        "max_tokens",
+        "reasoning",
+        "reasoning_effort",
+        "response_format",
+        "stop",
+        "structured_outputs",
+        "temperature",
+        "tool_choice",
+        "tools",
+        "top_k",
+        "top_p",
+        "verbosity"
+      ],
+      "modalities": {
+        "input": ["text", "image", "file"],
+        "output": ["text"]
+      },
+      "price_certified": true,
+      "price_certification": {
+        "source_url": "https://platform.claude.com/docs/en/about-claude/pricing#model-pricing",
+        "verified_on": "2026-11-07",
+        "scope": "standard-global-5m-cache"
+      }
+    },
+    {
+      "id": "claude-opus-4-6-20260205",
+      "canonical": "anthropic/claude-opus-4.6",
+      "context_length": 1000000,
+      "max_output": 128000,
+      "prices": {
+        "prompt": "0.000005",
+        "completion": "0.000025",
+        "cache_read": "0.0000005",
+        "cache_write": "0.00000625"
+      },
+      "supported_parameters": [
+        "include_reasoning",
+        "max_completion_tokens",
+        "max_tokens",
+        "reasoning",
+        "reasoning_effort",
+        "response_format",
+        "stop",
+        "structured_outputs",
+        "temperature",
+        "tool_choice",
+        "tools",
+        "top_k",
+        "top_p",
+        "verbosity"
+      ],
+      "modalities": {
+        "input": ["text", "image", "file"],
+        "output": ["text"]
+      },
+      "price_certified": false
+    },
+    {
+      "id": "claude-opus-4-7-20260416",
+      "canonical": "anthropic/claude-opus-4.7",
+      "context_length": 1000000,
+      "max_output": 128000,
+      "prices": {
+        "prompt": "0.000005",
+        "completion": "0.000025",
+        "cache_read": "0.0000005",
+        "cache_write": "0.00000625"
+      },
+      "supported_parameters": [
+        "include_reasoning",
+        "max_completion_tokens",
+        "max_tokens",
+        "reasoning",
+        "reasoning_effort",
+        "response_format",
+        "stop",
+        "structured_outputs",
+        "tool_choice",
+        "tools",
+        "verbosity"
+      ],
+      "modalities": {
+        "input": ["text", "image", "file"],
+        "output": ["text"]
+      },
+      "price_certified": false
+    },
+    {
+      "id": "claude-opus-4-8",
+      "canonical": "anthropic/claude-opus-4.8",
+      "context_length": 1000000,
+      "max_output": 128000,
+      "prices": {
+        "prompt": "0.000005",
+        "completion": "0.000025",
+        "cache_read": "0.0000005",
+        "cache_write": "0.00000625"
+      },
+      "supported_parameters": [
+        "include_reasoning",
+        "max_completion_tokens",
+        "max_tokens",
+        "reasoning",
+        "reasoning_effort",
+        "response_format",
+        "stop",
+        "structured_outputs",
+        "tool_choice",
+        "tools",
+        "verbosity"
+      ],
+      "modalities": {
+        "input": ["text", "image", "file"],
+        "output": ["text"]
+      },
+      "price_certified": true,
+      "price_certification": {
+        "source_url": "https://platform.claude.com/docs/en/about-claude/pricing#model-pricing",
+        "verified_on": "2026-11-07",
+        "scope": "standard-global-5m-cache"
+      }
+    },
+    {
+      "id": "claude-sonnet-5",
+      "canonical": "anthropic/claude-sonnet-5",
+      "context_length": 1000000,
+      "max_output": 128000,
+      "prices": {
+        "prompt": "0.000002",
+        "completion": "0.00001",
+        "cache_read": "0.0000002",
+        "cache_write": "0.0000025"
+      },
+      "supported_parameters": [
+        "include_reasoning",
+        "max_completion_tokens",
+        "max_tokens",
+        "reasoning",
+        "reasoning_effort",
+        "response_format",
+        "stop",
+        "structured_outputs",
+        "tool_choice",
+        "tools",
+        "verbosity"
+      ],
+      "modalities": {
+        "input": ["text", "image", "file"],
+        "output": ["text"]
+      },
+      "price_certified": true,
+      "price_certification": {
+        "source_url": "https://platform.claude.com/docs/en/about-claude/pricing#model-pricing",
+        "verified_on": "2026-11-07",
+        "scope": "standard-global-5m-cache"
+      }
+    },
+    {
+      "id": "claude-opus-5",
+      "canonical": "anthropic/claude-opus-5",
+      "context_length": 1000000,
+      "max_output": 128000,
+      "prices": {
+        "prompt": "0.000005",
+        "completion": "0.000025",
+        "cache_read": "0.0000005",
+        "cache_write": "0.00000625"
+      },
+      "supported_parameters": [
+        "include_reasoning",
+        "max_completion_tokens",
+        "max_tokens",
+        "reasoning",
+        "reasoning_effort",
+        "response_format",
+        "stop",
+        "structured_outputs",
+        "tool_choice",
+        "tools",
+        "verbosity"
+      ],
+      "modalities": {
+        "input": ["text", "image", "file"],
+        "output": ["text"]
+      },
+      "price_certified": true,
+      "price_certification": {
+        "source_url": "https://platform.claude.com/docs/en/about-claude/pricing#model-pricing",
+        "verified_on": "2026-11-07",
+        "scope": "standard-global-5m-cache"
+      }
+    },
+    {
+      "id": "claude-fable-5",
+      "canonical": "anthropic/claude-fable-5",
+      "context_length": 1000000,
+      "max_output": 128000,
+      "prices": {
+        "prompt": "0.00001",
+        "completion": "0.00005",
+        "cache_read": "0.000001",
+        "cache_write": "0.0000125"
+      },
+      "supported_parameters": [
+        "include_reasoning",
+        "max_completion_tokens",
+        "max_tokens",
+        "reasoning",
+        "reasoning_effort",
+        "response_format",
+        "stop",
+        "structured_outputs",
+        "tool_choice",
+        "tools",
+        "verbosity"
+      ],
+      "modalities": {
+        "input": ["text", "image", "file"],
+        "output": ["text"]
+      },
+      "price_certified": true,
+      "price_certification": {
+        "source_url": "https://platform.claude.com/docs/en/about-claude/pricing#model-pricing",
+        "verified_on": "2026-11-07",
+        "scope": "standard-global-5m-cache"
+      }
+    },
+    {
+      "id": "claude-fable-5-1",
+      "canonical": "anthropic/claude-fable-5.1",
+      "context_length": 1000000,
+      "max_output": 128000,
+      "prices": {
+        "prompt": "0.00001",
+        "completion": "0.00005",
+        "cache_read": "0.00000025",
+        "cache_write": "0.0000125"
+      },
+      "supported_parameters": [
+        "include_reasoning",
+        "max_completion_tokens",
+        "max_tokens",
+        "reasoning",
+        "reasoning_effort",
+        "response_format",
+        "stop",
+        "structured_outputs",
+        "tool_choice",
+        "tools",
+        "verbosity"
+      ],
+      "modalities": {
+        "input": ["text", "image", "file"],
+        "output": ["text"]
+      },
+      "price_certified": true,
+      "price_certification": {
+        "source_url": "https://platform.claude.com/docs/en/about-claude/pricing#model-pricing",
+        "verified_on": "2026-11-07",
+        "scope": "standard-global-5m-cache"
+      }
+    }
+  ]
+}

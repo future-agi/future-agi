@@ -66,8 +66,10 @@ def test_get_is_final_oom_safe():
 
 def test_list_by_trace_is_final_oom_safe():
     client = _RecordingClient()
-    _reader_with(client).list_by_trace("trace-1")
+    _reader_with(client).list_by_trace("trace-1", project_id="project-1")
     _assert_final_oom_safe(client, "trace_id = %(trace_id)s")
+    assert "project_id = %(pid)s" in client.sql
+    assert client.params["pid"] == "project-1"
 
 
 def test_first_span_by_type_is_final_oom_safe():

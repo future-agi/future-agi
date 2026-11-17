@@ -20,6 +20,40 @@ class AuditAction:
     WS_MEMBER_REMOVED = "workspace_member.removed"
     WS_MEMBER_ROLE_UPDATED = "workspace_member.role_updated"
 
+    # Omega product rollout changes (omega_rollout/audit.py, READINESS 3.13), written under the
+    # operator's org and the target org. Not in CHOICES: adding them there changes the field's
+    # choices and needs an accounts migration, which three lanes would otherwise number 0026 at once.
+    # `action` is a CharField with no database constraint, so these values store as they are.
+    ROLLOUT_STAGE_CHANGED = "omega_rollout.stage_changed"
+    ROLLOUT_PERCENTAGE_CHANGED = "omega_rollout.percentage_changed"
+    ROLLOUT_KILLED = "omega_rollout.killed"
+    ROLLOUT_RESTORED = "omega_rollout.restored"
+    ROLLOUT_ALLOW_SET = "omega_rollout.allow_set"
+    ROLLOUT_DENY_SET = "omega_rollout.deny_set"
+    ROLLOUT_ACCESS_REMOVED = "omega_rollout.access_removed"
+    ROLLOUT_ACCESS_REQUESTED = "omega_rollout.access_requested"
+    ROLLOUT_INVITED = "omega_rollout.invited"
+    ROLLOUT_REQUEST_DECLINED = "omega_rollout.request_declined"
+    ROLLOUT_ACTIONS = frozenset(
+        {
+            ROLLOUT_STAGE_CHANGED,
+            ROLLOUT_PERCENTAGE_CHANGED,
+            ROLLOUT_KILLED,
+            ROLLOUT_RESTORED,
+            ROLLOUT_ALLOW_SET,
+            ROLLOUT_DENY_SET,
+            ROLLOUT_ACCESS_REMOVED,
+            ROLLOUT_ACCESS_REQUESTED,
+            ROLLOUT_INVITED,
+            ROLLOUT_REQUEST_DECLINED,
+        }
+    )
+
+    # Like rollout actions, these do not change field choices or storage.
+    GATEWAY_KEY_CREATED = "gateway_key.created"
+    GATEWAY_KEY_REVOKED = "gateway_key.revoked"
+    GATEWAY_KEY_ROTATED = "gateway_key.rotated"
+
     CHOICES = [
         (MEMBER_INVITED, "Member Invited"),
         (MEMBER_REMOVED, "Member Removed"),

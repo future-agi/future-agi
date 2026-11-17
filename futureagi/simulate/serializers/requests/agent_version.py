@@ -23,7 +23,9 @@ class AgentVersionCreateRequestSerializer(serializers.Serializer):
         required=False, allow_blank=True, allow_null=True
     )
     provider = serializers.CharField(required=False, allow_blank=True, allow_null=True)
-    api_key = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    api_key = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True, max_length=255
+    )
     assistant_id = serializers.CharField(
         required=False, allow_blank=True, allow_null=True
     )
@@ -65,6 +67,11 @@ class AgentVersionCreateRequestSerializer(serializers.Serializer):
     livekit_config_json = serializers.JSONField(required=False, allow_null=True)
     livekit_max_concurrency = serializers.IntegerField(
         required=False, min_value=1, max_value=DEFAULT_ORG_LIMIT
+    )
+    # Vapi public key: absent or blank carries the saved key to the new
+    # version, null removes it. Never returned.
+    vapi_public_key = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True, max_length=500
     )
 
     # Version-specific fields

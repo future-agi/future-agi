@@ -16,7 +16,7 @@ function RunTests() {
   return (
     <>
       <Helmet>
-        <title>Run Tests | Dashboard</title>
+        <title>Run Simulation | Future AGI</title>
       </Helmet>
 
       {createDialogOpen ? (

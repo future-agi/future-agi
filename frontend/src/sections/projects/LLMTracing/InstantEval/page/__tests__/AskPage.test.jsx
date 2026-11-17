@@ -3403,3 +3403,49 @@ describe("where answers aren't billed", () => {
     noCredits();
   });
 });
+
+describe("matching manually typed questions", () => {
+  it("prices and starts one question when two editors reuse the same saved question", async () => {
+    fakes.estimate.mockResolvedValue({
+      ...ESTIMATE,
+      credit_check: {
+        allowed: true,
+        credits_left: 90,
+        blocked: false,
+      },
+    });
+    fakes.startAskRun.mockResolvedValue({
+      taskId: "task-new",
+      questions: QUESTIONS,
+    });
+    renderAt(askLink(PROJECT, { unit: "sessions" }));
+    await screen.findByText(/104,233 sessions in the Sessions view/);
+    fireEvent.change(screen.getByRole("textbox", { name: "Question 1" }), {
+      target: { value: QUESTION },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Add another question" }),
+    );
+    fireEvent.change(screen.getByRole("textbox", { name: "Question 2" }), {
+      target: { value: `  ${QUESTION.toUpperCase()}  ` },
+    });
+    const sample = screen.getByRole("radio", { name: /A sample of 1,000/ });
+    expect(
+      within(sample).getByText(/Reads 1,000 sessions · about 60 credits/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Matching questions are asked once."),
+    ).toBeInTheDocument();
+    const ask = screen.getByRole("button", {
+      name: "Ask Jev about a sample of 1,000 sessions",
+    });
+    expect(ask).toBeEnabled();
+    await act(async () => {
+      fireEvent.click(ask);
+    });
+    expect(fakes.startAskRun).toHaveBeenCalledTimes(1);
+    expect(fakes.startAskRun.mock.calls[0][0].questions).toEqual([
+      expect.objectContaining({ question: QUESTION }),
+    ]);
+  });
+});

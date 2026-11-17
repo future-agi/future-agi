@@ -13,6 +13,7 @@ import {
   buildEvalMapping,
   buildTemplatePayload,
   cleanDefinitions,
+  uniqueQuestionDrafts,
 } from "./instantEvalPayloads";
 import { normalizeReads, splitScopeFilters } from "./instantEvalUnits";
 import { ERROR_ANSWER } from "./instantEvalAnswers";
@@ -104,7 +105,7 @@ export async function resolveEvaluators({ projectId, questions, reads, unit }) {
   const mapping = buildEvalMapping(reads);
   const now = new Date();
   return Promise.all(
-    questions.map(async (question, index) => {
+    uniqueQuestionDrafts(questions).map(async (question, index) => {
       const text = question.question.trim();
       const labels = answerLabels(question);
       const definitions = cleanDefinitions(question.definitions, labels);
@@ -274,6 +275,7 @@ export const AI_PROVIDERS_SETTINGS_PATH = "/dashboard/settings/ai-providers";
 export const JEV_KEY_NEEDED =
   "Jev runs on your own TypeSafe key. Add it in Settings → AI Providers to start.";
 const JEV_KEY_MISSING = "JEV_KEY_MISSING";
+const JEV_KEY_UNREADABLE = "JEV_KEY_UNREADABLE";
 
 /**
  * A start, read more, resume or retry refused because the questions run on
@@ -284,7 +286,9 @@ export class AskKeyMissing extends Error {
   constructor(detail) {
     super(detail?.message || JEV_KEY_NEEDED);
     this.name = "AskKeyMissing";
-    this.code = JEV_KEY_MISSING;
+    this.code = [detail?.error_code, detail?.code].includes(JEV_KEY_UNREADABLE)
+      ? JEV_KEY_UNREADABLE
+      : JEV_KEY_MISSING;
     this.settingsPath = AI_PROVIDERS_SETTINGS_PATH;
   }
 }
@@ -308,7 +312,9 @@ export function askError(error) {
     return new AskNoCredits(detail);
   if (
     status === 400 &&
-    [detail.error_code, detail.code, error?.code].includes(JEV_KEY_MISSING)
+    [detail.error_code, detail.code, error?.code].some(
+      (code) => code === JEV_KEY_MISSING || code === JEV_KEY_UNREADABLE,
+    )
   )
     return new AskKeyMissing(detail);
   if (

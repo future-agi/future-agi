@@ -8,7 +8,7 @@ def forwards(apps, schema_editor):
     QueueItem = apps.get_model("model_hub", "QueueItem")
     QueueItemAssignment = apps.get_model("model_hub", "QueueItemAssignment")
 
-    items_with_assignment = QueueItem.objects.filter(
+    items_with_assignment = QueueItem.objects.using(schema_editor.connection.alias).filter(
         assigned_to__isnull=False, deleted=False
     ).values_list("id", "assigned_to_id")
 
@@ -22,7 +22,7 @@ def forwards(apps, schema_editor):
     ]
 
     if assignments:
-        QueueItemAssignment.objects.bulk_create(assignments, ignore_conflicts=True)
+        QueueItemAssignment.objects.using(schema_editor.connection.alias).bulk_create(assignments, ignore_conflicts=True)
 
 
 def backwards(apps, schema_editor):

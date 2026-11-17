@@ -1,0 +1,111 @@
+# Pipedrive's MCP server with OAuth from Pipedrive's authorization server
+# (issuer https://oauth.pipedrive.com), which takes a client ID metadata
+# document or registers clients dynamically, and lists "none" among its token
+# endpoint auth methods. Its metadata also lists PKCE "plain"; the sign-in
+# always sends S256. A connection acts within the Pipedrive user's own
+# permissions and visibility settings, and the person installing it needs
+# permission to install apps in the Pipedrive account. The endpoints below
+# are recorded from the metadata, not pinned: each sign-in discovers them
+# again, and goes on only where the server's protected-resource metadata
+# names this server as its resource and the issuer as its authorization
+# server, the issuer's metadata names itself, PKCE S256 is supported and
+# every endpoint is https. No metadata fetch follows a redirect, and the
+# callback checks the iss the issuer returns. The scopes are every one the
+# server's protected-resource metadata lists except admin, which Pipedrive's
+# scope reference describes as administering the company account (pipelines
+# and stages, fields, activity types, users and permissions, webhooks) and
+# which no tool on Pipedrive's MCP tools page needs. The sign-in asks only
+# for those of them the metadata still lists. Pipedrive's page says usage
+# counts against token limits set by the plan, and more tokens can be
+# bought. EE reads a pre-registered client from its environment and cannot
+# register one, so it gets none.
+schema: "connector-manifest/v1#provider"
+app: pipedrive
+id: mcp
+version: 1.1.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.pipedrive.ai/mcp
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent, user]
+auth:
+  kind: oauth2
+  oauth2:
+    authorizeUrl: https://oauth.pipedrive.com/oauth/authorize
+    tokenUrl: https://oauth.pipedrive.com/oauth/token
+    scopes:
+      - "activities:full"
+      - base
+      - "contact-fields:full"
+      - "contacts:full"
+      - "deal-fields:full"
+      - "deals:full"
+      - "leads:full"
+      - "mail-sending:full"
+      - "mail:full"
+      - "product-fields:full"
+      - "products:full"
+      - "project-fields:full"
+      - "projects:full"
+      - "search:read"
+      - "users:read"
+    pkce: true
+    tokenBody: form
+    clientAuth: body
+    revocation:
+      url: https://oauth.pipedrive.com/oauth/revoke
+      method: POST
+      tokenBody: form
+      tokenField: token
+      clientAuth: body
+    registration: [cimd, dcr]
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_metered
+  notes: "Usage counts against token limits set by the Pipedrive plan; more tokens can be bought."
+  source: https://www.pipedrive.com/en/features/mcp-server
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://support.pipedrive.com/en/article/mcp-chatgpt
+    fetchedAt: 2026-11-12
+  - fact: transport.url
+    url: https://mcp.pipedrive.ai/.well-known/oauth-protected-resource/mcp
+    fetchedAt: 2026-11-12
+  - fact: auth.kind
+    url: https://www.pipedrive.com/en/features/mcp-server
+    fetchedAt: 2026-11-12
+  - fact: auth.oauth2.authorizeUrl
+    url: https://oauth.pipedrive.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-11-12
+  - fact: auth.oauth2.tokenUrl
+    url: https://oauth.pipedrive.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-11-12
+  - fact: auth.oauth2.scopes
+    url: https://mcp.pipedrive.ai/.well-known/oauth-protected-resource/mcp
+    fetchedAt: 2026-11-12
+  - fact: auth.oauth2.scopes
+    url: https://support.pipedrive.com/en/article/mcp-tools
+    fetchedAt: 2026-11-12
+  - fact: auth.oauth2.scopes
+    url: https://pipedrive.readme.io/docs/marketplace-scopes-and-permissions-explanations
+    fetchedAt: 2026-11-12
+  - fact: auth.oauth2.pkce
+    url: https://oauth.pipedrive.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-11-12
+  - fact: auth.oauth2.clientAuth
+    url: https://oauth.pipedrive.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-11-12
+  - fact: auth.oauth2.revocation.url
+    url: https://oauth.pipedrive.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-11-12
+  - fact: auth.oauth2.registration
+    url: https://oauth.pipedrive.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-11-12
+x-omega: { ee: exclude }

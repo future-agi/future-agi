@@ -1,0 +1,228 @@
+[
+  {
+    "tool": "list_mail_folders",
+    "arguments": {}
+  },
+  {
+    "tool": "list_messages",
+    "arguments": {
+      "search": "\"quarterly\"",
+      "top": 2,
+      "select": "subject,from,receivedDateTime,bodyPreview"
+    }
+  },
+  {
+    "tool": "list_folder_messages",
+    "arguments": {
+      "mailFolder-id": "inbox",
+      "filter": "isRead eq false",
+      "top": 5
+    }
+  },
+  {
+    "tool": "get_message",
+    "arguments": {
+      "message-id": "m-1"
+    }
+  },
+  {
+    "tool": "create_draft",
+    "arguments": {
+      "body": {
+        "subject": "Q3 numbers",
+        "body": {
+          "contentType": "text",
+          "content": "Hi Bob, the Q3 numbers are attached."
+        },
+        "toRecipients": [
+          {
+            "emailAddress": {
+              "address": "user-2@example.com"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "tool": "create_reply_draft",
+    "arguments": {
+      "message-id": "m-1",
+      "body": {
+        "Comment": "Thanks, the numbers look right."
+      }
+    }
+  },
+  {
+    "tool": "send_draft",
+    "arguments": {
+      "message-id": "m-3"
+    }
+  },
+  {
+    "tool": "send_mail",
+    "arguments": {
+      "body": {
+        "Message": {
+          "subject": "Lunch",
+          "body": {
+            "contentType": "text",
+            "content": "Friday at 1?"
+          },
+          "toRecipients": [
+            {
+              "emailAddress": {
+                "address": "user-2@example.com"
+              }
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "tool": "reply_to_message",
+    "arguments": {
+      "message-id": "m-1",
+      "body": {
+        "Comment": "Thanks, Thursday at 3pm works."
+      }
+    }
+  },
+  {
+    "tool": "reply_all",
+    "arguments": {
+      "message-id": "m-1",
+      "body": {
+        "Comment": "Adding everyone: Thursday at 3pm."
+      }
+    }
+  },
+  {
+    "tool": "update_message",
+    "arguments": {
+      "message-id": "m-1",
+      "body": {
+        "isRead": true,
+        "flag": {
+          "flagStatus": "flagged"
+        }
+      }
+    }
+  },
+  {
+    "tool": "list_calendars",
+    "arguments": {}
+  },
+  {
+    "tool": "list_calendar_view",
+    "arguments": {
+      "startDateTime": "2026-10-21T00:00:00Z",
+      "endDateTime": "2026-10-28T00:00:00Z",
+      "select": "subject,start,end,location,attendees",
+      "top": 10
+    }
+  },
+  {
+    "tool": "get_event",
+    "arguments": {
+      "event-id": "ev-1"
+    }
+  },
+  {
+    "tool": "get_schedule",
+    "arguments": {
+      "body": {
+        "Schedules": ["user-2@example.com", "user-3@example.com"],
+        "StartTime": {
+          "dateTime": "2026-10-22T09:00:00",
+          "timeZone": "Pacific Standard Time"
+        },
+        "EndTime": {
+          "dateTime": "2026-10-22T17:00:00",
+          "timeZone": "Pacific Standard Time"
+        },
+        "AvailabilityViewInterval": 120
+      }
+    }
+  },
+  {
+    "tool": "create_event",
+    "arguments": {
+      "body": {
+        "subject": "Design review",
+        "start": {
+          "dateTime": "2026-10-23T15:00:00",
+          "timeZone": "Pacific Standard Time"
+        },
+        "end": {
+          "dateTime": "2026-10-23T16:00:00",
+          "timeZone": "Pacific Standard Time"
+        },
+        "location": {
+          "displayName": "Room 4"
+        },
+        "attendees": [
+          {
+            "emailAddress": {
+              "address": "user-2@example.com"
+            },
+            "type": "required"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "tool": "update_event",
+    "arguments": {
+      "event-id": "ev-1",
+      "body": {
+        "start": {
+          "dateTime": "2026-10-22T11:00:00",
+          "timeZone": "Pacific Standard Time"
+        },
+        "end": {
+          "dateTime": "2026-10-22T11:30:00",
+          "timeZone": "Pacific Standard Time"
+        }
+      }
+    }
+  },
+  {
+    "tool": "accept_event",
+    "arguments": {
+      "event-id": "ev-2",
+      "body": {
+        "Comment": "See you there.",
+        "SendResponse": true
+      }
+    }
+  },
+  {
+    "tool": "tentatively_accept_event",
+    "arguments": {
+      "event-id": "ev-3",
+      "body": {
+        "Comment": "I may be late.",
+        "SendResponse": true
+      }
+    }
+  },
+  {
+    "tool": "decline_event",
+    "arguments": {
+      "event-id": "ev-4",
+      "body": {
+        "Comment": "I am out that day.",
+        "SendResponse": true
+      }
+    }
+  },
+  {
+    "tool": "get_message",
+    "arguments": {
+      "message-id": "m-9"
+    }
+  }
+]

@@ -23,7 +23,7 @@ const HeaderPromptRenderer = ({ messages }) => {
     >
       <Typography
         typography={"s1"}
-        color={"text.disabled"}
+        color={"text.secondary"}
         fontWeight={"fontWeightBold"}
       >
         Prompt

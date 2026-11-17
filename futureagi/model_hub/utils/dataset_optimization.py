@@ -58,6 +58,10 @@ OPTIMIZATION_RUN_TABLE_CONFIG = [
 ]
 
 OPTIMIZER_PARAMETER_LABELS = {
+    "execution_model_name": {
+        "label": "Execution Model",
+        "description": "Model used to execute the baseline and candidate prompts",
+    },
     "num_variations": {
         "label": "Number of Variations",
         "description": "Number of prompt variations to generate",

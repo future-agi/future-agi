@@ -1,0 +1,421 @@
+{
+  "about": "Next-run times shared by the JS cronModel tests now and the Python scheduler tests later (notify DESIGN 2.2, BUILD-BRIEF 4.0). Times are UTC. shifted_from names a wall time that didn't exist that day.",
+  "generated_by": "scripts/generate-next-runs-golden.py (Python zoneinfo, independent of the JS model)",
+  "tzdata": "system",
+  "runs": [
+    {
+      "name": "daily 03:41 Asia/Kolkata across 8 Mar",
+      "cadence": {
+        "preset": "daily",
+        "cron": "41 3 * * *",
+        "tz": "Asia/Kolkata"
+      },
+      "from": "2026-03-07T00:00:00Z",
+      "n": 3,
+      "expect": [
+        {
+          "at": "2026-03-07T22:11:00.000Z",
+          "shifted_from": null
+        },
+        {
+          "at": "2026-03-08T22:11:00.000Z",
+          "shifted_from": null
+        },
+        {
+          "at": "2026-03-09T22:11:00.000Z",
+          "shifted_from": null
+        }
+      ]
+    },
+    {
+      "name": "daily 03:41 Asia/Kolkata across 1 Nov",
+      "cadence": {
+        "preset": "daily",
+        "cron": "41 3 * * *",
+        "tz": "Asia/Kolkata"
+      },
+      "from": "2026-10-31T00:00:00Z",
+      "n": 3,
+      "expect": [
+        {
+          "at": "2026-10-31T22:11:00.000Z",
+          "shifted_from": null
+        },
+        {
+          "at": "2026-11-01T22:11:00.000Z",
+          "shifted_from": null
+        },
+        {
+          "at": "2026-11-02T22:11:00.000Z",
+          "shifted_from": null
+        }
+      ]
+    },
+    {
+      "name": "daily 09:00 America/New_York across 8 Mar (offset changes)",
+      "cadence": {
+        "preset": "daily",
+        "cron": "0 9 * * *",
+        "tz": "America/New_York"
+      },
+      "from": "2026-03-07T00:00:00Z",
+      "n": 3,
+      "expect": [
+        {
+          "at": "2026-03-07T14:00:00.000Z",
+          "shifted_from": null
+        },
+        {
+          "at": "2026-03-08T13:00:00.000Z",
+          "shifted_from": null
+        },
+        {
+          "at": "2026-03-09T13:00:00.000Z",
+          "shifted_from": null
+        }
+      ]
+    },
+    {
+      "name": "daily 02:30 America/New_York across 8 Mar (02:30 doesn't exist: runs 03:00)",
+      "cadence": {
+        "preset": "daily",
+        "cron": "30 2 * * *",
+        "tz": "America/New_York"
+      },
+      "from": "2026-03-07T12:00:00Z",
+      "n": 3,
+      "expect": [
+        {
+          "at": "2026-03-08T07:00:00.000Z",
+          "shifted_from": "02:30"
+        },
+        {
+          "at": "2026-03-09T06:30:00.000Z",
+          "shifted_from": null
+        },
+        {
+          "at": "2026-03-10T06:30:00.000Z",
+          "shifted_from": null
+        }
+      ]
+    },
+    {
+      "name": "daily 09:00 America/New_York across 1 Nov (offset changes)",
+      "cadence": {
+        "preset": "daily",
+        "cron": "0 9 * * *",
+        "tz": "America/New_York"
+      },
+      "from": "2026-10-31T00:00:00Z",
+      "n": 3,
+      "expect": [
+        {
+          "at": "2026-10-31T13:00:00.000Z",
+          "shifted_from": null
+        },
+        {
+          "at": "2026-11-01T14:00:00.000Z",
+          "shifted_from": null
+        },
+        {
+          "at": "2026-11-02T14:00:00.000Z",
+          "shifted_from": null
+        }
+      ]
+    },
+    {
+      "name": "daily 01:30 America/New_York across 1 Nov (01:30 happens twice: runs once, the first)",
+      "cadence": {
+        "preset": "daily",
+        "cron": "30 1 * * *",
+        "tz": "America/New_York"
+      },
+      "from": "2026-10-31T12:00:00Z",
+      "n": 3,
+      "expect": [
+        {
+          "at": "2026-11-01T05:30:00.000Z",
+          "shifted_from": null
+        },
+        {
+          "at": "2026-11-02T06:30:00.000Z",
+          "shifted_from": null
+        },
+        {
+          "at": "2026-11-03T06:30:00.000Z",
+          "shifted_from": null
+        }
+      ]
+    },
+    {
+      "name": "hourly anchored, America/New_York through fall-back (no gap)",
+      "cadence": {
+        "preset": "hourly",
+        "interval_min": 60,
+        "anchor_at": "2026-11-01T03:41:00Z",
+        "tz": "America/New_York"
+      },
+      "from": "2026-11-01T04:00:00Z",
+      "n": 5,
+      "expect": [
+        {
+          "at": "2026-11-01T04:41:00.000Z",
+          "shifted_from": null
+        },
+        {
+          "at": "2026-11-01T05:41:00.000Z",
+          "shifted_from": null
+        },
+        {
+          "at": "2026-11-01T06:41:00.000Z",
+          "shifted_from": null
+        },
+        {
+          "at": "2026-11-01T07:41:00.000Z",
+          "shifted_from": null
+        },
+        {
+          "at": "2026-11-01T08:41:00.000Z",
+          "shifted_from": null
+        }
+      ]
+    },
+    {
+      "name": "hourly at minute :41 unanchored, America/New_York through fall-back",
+      "cadence": {
+        "preset": "hourly",
+        "interval_min": 60,
+        "minute": 41,
+        "tz": "America/New_York"
+      },
+      "from": "2026-11-01T04:00:00Z",
+      "n": 5,
+      "expect": [
+        {
+          "at": "2026-11-01T04:41:00.000Z",
+          "shifted_from": null
+        },
+        {
+          "at": "2026-11-01T05:41:00.000Z",
+          "shifted_from": null
+        },
+        {
+          "at": "2026-11-01T06:41:00.000Z",
+          "shifted_from": null
+        },
+        {
+          "at": "2026-11-01T07:41:00.000Z",
+          "shifted_from": null
+        },
+        {
+          "at": "2026-11-01T08:41:00.000Z",
+          "shifted_from": null
+        }
+      ]
+    },
+    {
+      "name": "hourly at minute :41 unanchored, Asia/Kolkata (UTC minute 11)",
+      "cadence": {
+        "preset": "hourly",
+        "interval_min": 60,
+        "minute": 41,
+        "tz": "Asia/Kolkata"
+      },
+      "from": "2026-10-21T00:00:00Z",
+      "n": 3,
+      "expect": [
+        {
+          "at": "2026-10-21T00:11:00.000Z",
+          "shifted_from": null
+        },
+        {
+          "at": "2026-10-21T01:11:00.000Z",
+          "shifted_from": null
+        },
+        {
+          "at": "2026-10-21T02:11:00.000Z",
+          "shifted_from": null
+        }
+      ]
+    },
+    {
+      "name": "every 6 hours anchored, America/New_York across 8 Mar (even spacing)",
+      "cadence": {
+        "preset": "every_n_hours",
+        "interval_min": 360,
+        "anchor_at": "2026-03-07T22:11:00Z",
+        "tz": "America/New_York"
+      },
+      "from": "2026-03-08T00:00:00Z",
+      "n": 5,
+      "expect": [
+        {
+          "at": "2026-03-08T04:11:00.000Z",
+          "shifted_from": null
+        },
+        {
+          "at": "2026-03-08T10:11:00.000Z",
+          "shifted_from": null
+        },
+        {
+          "at": "2026-03-08T16:11:00.000Z",
+          "shifted_from": null
+        },
+        {
+          "at": "2026-03-08T22:11:00.000Z",
+          "shifted_from": null
+        },
+        {
+          "at": "2026-03-09T04:11:00.000Z",
+          "shifted_from": null
+        }
+      ]
+    },
+    {
+      "name": "weekdays 03:41 Asia/Kolkata from a Friday",
+      "cadence": {
+        "preset": "weekdays",
+        "cron": "41 3 * * 1-5",
+        "tz": "Asia/Kolkata"
+      },
+      "from": "2026-10-23T00:00:00Z",
+      "n": 4,
+      "expect": [
+        {
+          "at": "2026-10-25T22:11:00.000Z",
+          "shifted_from": null
+        },
+        {
+          "at": "2026-10-26T22:11:00.000Z",
+          "shifted_from": null
+        },
+        {
+          "at": "2026-10-27T22:11:00.000Z",
+          "shifted_from": null
+        },
+        {
+          "at": "2026-10-28T22:11:00.000Z",
+          "shifted_from": null
+        }
+      ]
+    },
+    {
+      "name": "weekly Monday 09:00 Asia/Kolkata",
+      "cadence": {
+        "preset": "weekly",
+        "cron": "0 9 * * 1",
+        "tz": "Asia/Kolkata"
+      },
+      "from": "2026-10-20T00:00:00Z",
+      "n": 3,
+      "expect": [
+        {
+          "at": "2026-10-26T03:30:00.000Z",
+          "shifted_from": null
+        },
+        {
+          "at": "2026-11-02T03:30:00.000Z",
+          "shifted_from": null
+        },
+        {
+          "at": "2026-11-09T03:30:00.000Z",
+          "shifted_from": null
+        }
+      ]
+    },
+    {
+      "name": "custom 0 9 1 * 1 in UTC: day 1 OR Monday (day_or)",
+      "cadence": {
+        "preset": "cron",
+        "cron": "0 9 1 * 1",
+        "tz": "UTC"
+      },
+      "from": "2026-10-20T00:00:00Z",
+      "n": 4,
+      "expect": [
+        {
+          "at": "2026-10-26T09:00:00.000Z",
+          "shifted_from": null
+        },
+        {
+          "at": "2026-11-01T09:00:00.000Z",
+          "shifted_from": null
+        },
+        {
+          "at": "2026-11-02T09:00:00.000Z",
+          "shifted_from": null
+        },
+        {
+          "at": "2026-11-09T09:00:00.000Z",
+          "shifted_from": null
+        }
+      ]
+    },
+    {
+      "name": "custom 17 3 * * * in Asia/Calcutta (alias of Asia/Kolkata)",
+      "cadence": {
+        "preset": "cron",
+        "cron": "17 3 * * *",
+        "tz": "Asia/Calcutta"
+      },
+      "from": "2026-10-20T00:00:00Z",
+      "n": 2,
+      "expect": [
+        {
+          "at": "2026-10-20T21:47:00.000Z",
+          "shifted_from": null
+        },
+        {
+          "at": "2026-10-21T21:47:00.000Z",
+          "shifted_from": null
+        }
+      ]
+    }
+  ],
+  "rejected": [
+    {
+      "cron": "* * * * *",
+      "code": "tooOften"
+    },
+    {
+      "cron": "*/5 * * * *",
+      "code": "tooOften"
+    },
+    {
+      "cron": "0,30 * * * *",
+      "code": "tooOften"
+    },
+    {
+      "cron": "0 9 L * *",
+      "code": "unsupported"
+    },
+    {
+      "cron": "0 9 ? * 1",
+      "code": "unsupported"
+    },
+    {
+      "cron": "0 9 * * 1#2",
+      "code": "unsupported"
+    },
+    {
+      "cron": "0 9 15W * *",
+      "code": "unsupported"
+    },
+    {
+      "cron": "0 9 * *",
+      "code": "fields"
+    },
+    {
+      "cron": "0 0 9 * * 1",
+      "code": "fields"
+    },
+    {
+      "cron": "0 24 * * *",
+      "code": "range"
+    },
+    {
+      "cron": "0 9 31 2 *",
+      "code": "never"
+    }
+  ]
+}

@@ -1,0 +1,83 @@
+[
+  {
+    "tool": "get_spreadsheet",
+    "arguments": {
+      "spreadsheetId": "sheet-fixture",
+      "includeGridData": false
+    }
+  },
+  {
+    "tool": "create_spreadsheet",
+    "arguments": {
+      "body": {
+        "properties": {
+          "title": "Budget"
+        }
+      }
+    }
+  },
+  {
+    "tool": "get_values",
+    "arguments": {
+      "spreadsheetId": "sheet-fixture",
+      "range": "Sheet1!A1:B2"
+    }
+  },
+  {
+    "tool": "batch_get_values",
+    "arguments": {
+      "spreadsheetId": "sheet-fixture",
+      "ranges": ["Sheet1!A1:B2"]
+    }
+  },
+  {
+    "tool": "update_values",
+    "arguments": {
+      "spreadsheetId": "sheet-fixture",
+      "range": "Sheet1!A1:B2",
+      "valueInputOption": "RAW",
+      "body": {
+        "values": [
+          ["Item", "Amount"],
+          ["Travel", 20]
+        ]
+      }
+    }
+  },
+  {
+    "tool": "append_values",
+    "arguments": {
+      "spreadsheetId": "sheet-fixture",
+      "range": "Sheet1!A1:B2",
+      "valueInputOption": "RAW",
+      "body": {
+        "values": [["Travel", 20]]
+      }
+    }
+  },
+  {
+    "tool": "clear_values",
+    "arguments": {
+      "spreadsheetId": "sheet-fixture",
+      "range": "Sheet1!A1:B2",
+      "body": {}
+    }
+  },
+  {
+    "tool": "copy_sheet",
+    "arguments": {
+      "spreadsheetId": "sheet-fixture",
+      "sheetId": 0,
+      "body": {
+        "destinationSpreadsheetId": "sheet-destination"
+      }
+    }
+  },
+  {
+    "tool": "get_spreadsheet",
+    "arguments": {
+      "spreadsheetId": "missing-fixture",
+      "includeGridData": false
+    }
+  }
+]

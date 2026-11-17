@@ -27,9 +27,19 @@ export const WORKSPACE_TABS = [
     icon: "solar:shield-check-linear",
     badge: "evals",
   },
-  { id: "runs", label: "Runs", icon: "solar:play-circle-linear", badge: "runs" },
+  {
+    id: "runs",
+    label: "Runs",
+    icon: "solar:play-circle-linear",
+    badge: "runs",
+  },
   // Shown only once the environment has a fix (Fix my agent).
-  { id: "improvements", label: "Improvements", icon: "solar:magic-stick-3-linear", badge: "improvements" },
+  {
+    id: "improvements",
+    label: "Improvements",
+    icon: "solar:magic-stick-3-linear",
+    badge: "improvements",
+  },
   // Shown only when the environment has versioning switched on.
   { id: "versions", label: "Versions", icon: "solar:history-linear" },
   {
@@ -46,6 +56,19 @@ export const WORKSPACE_TABS = [
 export const GAP_AREA_TO_TAB = {
   Contract: "contract",
   Grading: "evals",
+};
+
+// An environment built from a private GitHub repository that this deployment no
+// longer reads says so in one sentence: on its page, and on a run, build, check
+// or rebuild that failed for it. The code is the backend's typed failure code.
+export const PRIVATE_GITHUB_UNAVAILABLE_CODE = "github_private_unavailable";
+export const PRIVATE_GITHUB_ENVIRONMENT_MESSAGE =
+  "Private GitHub repositories are not available on Future AGI cloud. Upload the code to keep using this environment.";
+
+// Why a failed run failed, by its job's failure code. A code not listed adds no
+// line: the run header keeps its status chip alone, as before.
+export const RUN_FAILURE_REASONS = {
+  [PRIVATE_GITHUB_UNAVAILABLE_CODE]: PRIVATE_GITHUB_ENVIRONMENT_MESSAGE,
 };
 
 // Header, overflow-menu and empty-state copy for the workspace shell.
@@ -102,11 +125,14 @@ export const WORKSPACE_COPY = {
   },
   runBlocked: {
     agent: "No agent is connected to this environment yet",
-    scenarios: "Add scenarios on the Scenarios tab",
+    // The Scenarios tab has no working Add; the builder chat adds scenarios.
+    scenarios:
+      "This environment has no scenarios. Ask the builder in the chat to add some.",
     generic: "Setup incomplete",
     starting: "Starting a run",
     notReady: "This environment hasn't finished building",
-    noRunTest: "This environment isn't linked to a run yet. Rebuild it to run simulations.",
+    noRunTest:
+      "This environment isn't linked to a run yet. Rebuild it to run simulations.",
     detailFailed: "This environment's details didn't load. Retry them first.",
     detailLoading: "Loading this environment's details",
   },
@@ -139,7 +165,6 @@ export const WORKSPACE_COPY = {
     testSubject: "Test subject",
     // The agent has no name on record; the Overview agent card says the same.
     unnamedAgent: "Agent",
-    beforeVersioning: "before versioning",
     noAgent: "none",
     scenariosShared: (n) =>
       `${n} scenario${n === 1 ? "" : "s"}, shared across agent versions`,
@@ -167,6 +192,22 @@ export const WORKSPACE_COPY = {
 
 // The Versions tab: the agent, environment and scenario versions of this
 // environment, what changed in each, and which scenarios a suite version holds.
+// Versioning's three states (env.versioning.state; versions.js
+// versioningState). Every versioning surface stays visible: while versioning is
+// off or being enabled it says so in one line, and an action that needs a saved
+// version is shown disabled with the reason.
+export const VERSIONING_STATE_COPY = {
+  off: "Versioning is off for this install.",
+  enabling: "Versioning is being enabled.",
+  offAction: "Versioning is off for this install, so this isn't available.",
+  enablingAction: "Versioning is being enabled, so this isn't available yet.",
+  // Being enabled, and this environment's backfill failed: it is not still running, and whoever runs the install
+  // (not an org admin) can run it again.
+  enablingFailed: "Versioning couldn't finish being enabled for this environment. The team that runs Future AGI here can run it again.",
+  enablingFailedAction: "Versioning couldn't finish being enabled, so this isn't available yet.",
+  noVersions: "no versions recorded",
+};
+
 export const VERSIONS_COPY = {
   title: "Versions",
   subtitle:
@@ -182,7 +223,7 @@ export const VERSIONS_COPY = {
     body: "A version is recorded the next time the environment is built or saved.",
   },
   loadError: "Couldn't load the versions. Try again in a moment.",
-  disabled: "Versioning is switched off for this environment.",
+  disabled: VERSIONING_STATE_COPY.off,
   default: "default",
   unlabelled: "Unnumbered version",
   status: { draft: "draft", discarded: "discarded" },
@@ -264,7 +305,7 @@ export const AGENT_VERSIONS_COPY = {
   title: "Agent versions",
   empty: "This environment's agent has no versions yet.",
   loadError: "Couldn't load the agent versions. Try again in a moment.",
-  disabled: "Versioning is switched off for this environment.",
+  disabled: VERSIONING_STATE_COPY.off,
   preflight: {
     pending: "Checking…",
     failed: "Check failed",
@@ -278,6 +319,10 @@ export const AGENT_VERSIONS_COPY = {
   missing: (names) => `Missing: ${names.join(", ")}`,
   invalid: (names) => `Rejected by the provider: ${names.join(", ")}`,
   checkError: (code) => `The check couldn't finish (${code}).`,
+  // A check's error code that has words of its own, said instead of the code.
+  checkErrors: {
+    [PRIVATE_GITHUB_UNAVAILABLE_CODE]: PRIVATE_GITHUB_ENVIRONMENT_MESSAGE,
+  },
   // Why a version whose check passed is not this environment's default.
   activation: {
     environment_busy: "Not made default: the environment was busy",
@@ -367,6 +412,7 @@ export const AGENT_VERSIONS_COPY = {
     watchHint:
       "New commits become new agent versions automatically; they're checked before becoming the default.",
     privateNotWatched: "Private repositories aren't watched for new commits.",
+    privateUnavailable: PRIVATE_GITHUB_ENVIRONMENT_MESSAGE,
     checkRunning: "Another change is still being checked",
     upload: "Upload new source",
     uploading: (progress) => `Uploading… ${progress}%`,
@@ -420,7 +466,7 @@ export const RUN_DIALOG_COPY = {
   unlabelled: "Unnumbered version",
   loading: "Loading versions…",
   loadError: "Couldn't load the versions. The run uses the current defaults.",
-  disabled: "Versioning is switched off, so the run uses the current versions.",
+  disabled: "Versioning is off for this install, so the run uses the current versions.",
   checking: "Checking these versions…",
   planError: "Couldn't check these versions for warnings.",
   refused: "These versions can't run.",
@@ -508,7 +554,10 @@ export const COMPARE_COPY = {
   clear: "Clear",
   loading: "Comparing runs…",
   error: "Couldn't compare these runs. Close this and select two other runs.",
-  versions: (label, pieces) => `${label}: ${pieces || "before versioning"}`,
+  versions: (label, pieces) => `${label}: ${pieces || "no versions recorded"}`,
+  // Scenarios are paired by key, so an edit to one between the runs shows
+  // only when both runs have a suite version.
+  editedScenarioNote: "An edited scenario is compared as the same scenario.",
   pieces: { agent: "Agent", environment: "Environment", suite: "Scenarios" },
   verdicts: {
     improved: "Improved",

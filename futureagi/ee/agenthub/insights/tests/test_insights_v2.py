@@ -1446,6 +1446,9 @@ class TestUnitTextForV2:
             def activity_by_trace_ids(self, ids, **kwargs):
                 return []  # This fixture has roots only, not unreadable steps.
 
+            def first_span_by_type(self, trace_id, observation_type, *, project_id):
+                return None  # No descendant conversation in this roots-only fixture.
+
         monkeypatch.setattr("tracer.services.clickhouse.v2.get_reader", Reader)
         monkeypatch.setattr(units_module, "_user_labels", lambda ids: {})
 

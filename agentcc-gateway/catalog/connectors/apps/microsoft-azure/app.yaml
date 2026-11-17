@@ -1,0 +1,31 @@
+schema: "connector-manifest/v1#app"
+id: microsoft-azure
+version: 1.0.0
+name: Microsoft Azure
+description: "Interact with Azure resources through Microsoft's local MCP server."
+vendor:
+  name: Microsoft
+  domains: [microsoft.com]
+  githubOrgs: [microsoft]
+eeCategory: developer
+group: microsoft
+categories: [cloud, developer-tools]
+docsUrl: https://learn.microsoft.com/en-us/azure/developer/azure-mcp-server/overview
+defaultProvider: local
+lifecycle: { status: active }
+sources:
+  - fact: name
+    url: https://azure.microsoft.com/en-us/resources/cloud-computing-dictionary/what-is-azure
+    fetchedAt: 2026-11-16
+  - fact: description
+    url: https://learn.microsoft.com/en-us/azure/developer/azure-mcp-server/overview?accept=text/markdown
+    fetchedAt: 2026-11-16
+  - fact: vendor.name
+    url: https://azure.microsoft.com/en-us/resources/cloud-computing-dictionary/what-is-azure
+    fetchedAt: 2026-11-16
+  - fact: vendor.domains
+    url: https://github.com/microsoft
+    fetchedAt: 2026-11-16
+  - fact: vendor.githubOrgs
+    url: https://github.com/microsoft
+    fetchedAt: 2026-11-16

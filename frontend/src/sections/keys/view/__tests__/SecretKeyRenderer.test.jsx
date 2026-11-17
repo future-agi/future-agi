@@ -10,12 +10,16 @@ describe("SecretKeyRenderer", () => {
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
   });
 
-  it("masks raw fallback values defensively", () => {
-    render(<SecretKeyRenderer value="1234567890abcdef1234567890abcdef" />);
+  it("shows eight stars for a raw value, never a hint built from it", () => {
+    const { container } = render(
+      <SecretKeyRenderer value="1234567890abcdef1234567890abcdef" />,
+    );
 
-    expect(screen.getByText("1234**********cdef")).toBeInTheDocument();
-    expect(
-      screen.queryByText("1234567890abcdef1234567890abcdef"),
-    ).not.toBeInTheDocument();
+    expect(container.textContent).toBe("********");
+    expect(screen.queryByText("1234**********cdef")).not.toBeInTheDocument();
+    expect(container.innerHTML).not.toContain(
+      "1234567890abcdef1234567890abcdef",
+    );
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
   });
 });

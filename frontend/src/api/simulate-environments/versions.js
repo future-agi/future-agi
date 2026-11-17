@@ -207,6 +207,47 @@ const errorStatus = (error) => error?.statusCode ?? error?.response?.status;
 // not as a failure worth retrying.
 export const isVersioningDisabled = (error) =>
   errorStatus(error) === 404 && error?.error === "versioning_disabled";
+
+/** An environment's versioning states, as `env.versioning.state` names them. */
+export const VERSIONING_STATE = Object.freeze({
+  OFF: "off",
+  ENABLING: "enabling",
+  READY: "ready",
+});
+const KNOWN_STATES = new Set(Object.values(VERSIONING_STATE));
+
+/**
+ * This environment's versioning state:
+ * - "off": the install's versioning flag is off, even if versions exist;
+ * - "enabling": the flag is on, but the environment has no environment and
+ *   scenario pin yet;
+ * - "ready": runs are pinned.
+ * A server that does not send `versioning.state` is read from `enabled`
+ * (on is "ready", anything else "off"). A read that answered 404
+ * versioning_disabled is "off". Every versioning surface stays visible in each
+ * state; only "off" sends no versioning read.
+ */
+export function versioningState(env, error) {
+  if (isVersioningDisabled(error)) return VERSIONING_STATE.OFF;
+  const state = env?.versioning?.state;
+  if (KNOWN_STATES.has(state)) return state;
+  return env?.versioning?.enabled
+    ? VERSIONING_STATE.READY
+    : VERSIONING_STATE.OFF;
+}
+
+/** Whether versioning reads may be sent: never while versioning is off. */
+export const versioningReadable = (env) =>
+  versioningState(env) !== VERSIONING_STATE.OFF;
+
+/**
+ * Whether THIS environment's versioning backfill failed (env.versioning.backfill.state, fi-cli's step 2). Only the
+ * environment's own state counts, never the organization's progress counts, so another environment's failure is
+ * never shown here. A server without the field claims no failure. It changes only what "being enabled" says:
+ * readiness (versioningState) is unchanged, so a ready environment stays usable after an older failure.
+ */
+export const versioningBackfillFailed = (env) =>
+  env?.versioning?.backfill?.state === "failed";
 // A 404 means versioning is off or the environment is gone; asking again won't help.
 const retryUnlessNotFound = (failureCount, error) =>
   errorStatus(error) !== 404 && failureCount < 2;

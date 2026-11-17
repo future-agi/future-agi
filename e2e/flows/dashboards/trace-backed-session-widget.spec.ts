@@ -370,7 +370,7 @@ test('DASH-E2E-007: a saved Session widget counts only the selected project sess
         await uiExpect(card.getByText('Project', { exact: true })).toHaveCount(0);
         await uiExpect(card.getByText('Session', { exact: true })).toHaveCount(0);
       }
-      await uiExpect(page.locator('.breakdown-section-title').locator('../..').getByText('Session', { exact: true })).toBeVisible();
+      await uiExpect(page.getByRole('button', { name: 'Change breakdown Session', exact: true })).toBeVisible();
       await uiExpect(page.getByRole('combobox').filter({ hasText: 'Day' })).toBeVisible();
       await uiExpect(page.getByText('7D', { exact: true })).toBeVisible();
     };
@@ -589,7 +589,7 @@ test('DASH-E2E-007: a saved Session widget counts only the selected project sess
           await popup.getByRole('button', { name: 'Add', exact: true }).click();
         });
         await queryAfter('S1-grouped', canonicalS1, [1, 2, 4], async () => {
-          await page.locator('.breakdown-section-title').click(); await selectTraces();
+          await page.getByRole('button', { name: 'Add breakdown', exact: true }).click(); await selectTraces();
           await page.getByPlaceholder('Search breakdown attributes...').fill('Session'); await assertCatalog(properties[4], false);
           await page.getByRole('button', { name: 'Session (string, Traces)', exact: true }).click();
         });

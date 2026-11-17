@@ -3,7 +3,7 @@
 import React from "react";
 import { Suspense } from "react";
 import lazyWithRetry from "src/utils/lazyWithRetry";
-import { Outlet } from "react-router-dom";
+import { Navigate, Outlet } from "react-router-dom";
 
 import {
   AuthGuard,
@@ -42,6 +42,19 @@ const InviteAccepted = lazyWithRetry(
 
 // ----------------------------------------------------------------------
 
+// Static gate (HO S2 leak scan): other builds keep every auth page.
+const PROTOTYPE_BUILD =
+  import.meta.env.VITE_ENVIRONMENT === "local" &&
+  import.meta.env.VITE_PROTOTYPE_MODE === "true";
+
+/**
+ * L7c g1 (switcher:logout): the prototype signs in with email and password
+ * only (POST /accounts/token/ is mocked). Sign up, password reset and SSO
+ * are not mocked, so their deep links land on sign-in instead.
+ */
+const protoSignIn = (element) =>
+  PROTOTYPE_BUILD ? <Navigate to="/auth/jwt/login" replace /> : element;
+
 const authJwt = {
   path: "jwt",
   element: (
@@ -76,36 +89,36 @@ const authJwt = {
     },
     {
       path: "forget-password",
-      element: (
+      element: protoSignIn(
         <AuthClassicLayout>
           <ForgetPassword />
-        </AuthClassicLayout>
+        </AuthClassicLayout>,
       ),
     },
     {
       path: "verify/:uuid/:token",
-      element: (
+      element: protoSignIn(
         <AuthClassicLayout>
           <ResetPassword />
-        </AuthClassicLayout>
+        </AuthClassicLayout>,
       ),
     },
     {
       path: "register",
-      element: (
+      element: protoSignIn(
         <OssSetupGuard>
           <JwtRegisterPage />
-        </OssSetupGuard>
+        </OssSetupGuard>,
       ),
     },
     {
       path: "sso-sml",
-      element: (
+      element: protoSignIn(
         <OssRestrictedGuard>
           <AuthClassicLayout>
             <SSOLogin />
           </AuthClassicLayout>
-        </OssRestrictedGuard>
+        </OssRestrictedGuard>,
       ),
     },
     {

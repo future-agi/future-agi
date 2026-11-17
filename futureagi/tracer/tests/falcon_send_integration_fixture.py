@@ -1,0 +1,46 @@
+"""Historical 38-module graph binding before witnessed transport integration.
+
+Used only for the original exact-size assertion; every integrated source is
+still fed through both frozen diagnostic oracles immediately afterwards.
+"""
+
+HISTORICAL_MODULES = (
+    "agentic_eval.core.database.ch_vector",
+    "agentic_eval.core.embeddings.embedding_manager",
+    "agentic_eval.core.embeddings.serving_client",
+    "agentic_eval.core.utils.functions",
+    "agentic_eval.core.utils.json_utils",
+    "agentic_eval.core_evals.fi_utils.json",
+    "ai_tools.background",
+    "ai_tools.base",
+    "ai_tools.error_codes",
+    "ai_tools.formatting",
+    "ai_tools.tools.tracing.explore_trace",
+    "ai_tools.tools.tracing.read_trace_span",
+    "ai_tools.tools.tracing.submit_trace_finding",
+    "ai_tools.tools.tracing.submit_trace_scores",
+    "analytics.utils",
+    "ee.agenthub.traceerroragent.error_cluster",
+    "ee.agenthub.traceerroragent.prompts",
+    "ee.falcon_ai.agent",
+    "ee.falcon_ai.context_manager",
+    "ee.falcon_ai.llm_client",
+    "ee.falcon_ai.prompt_builder",
+    "ee.falcon_ai.tool_scope",
+    "ee.licensing.activation_client",
+    "ee.licensing.managed_ai",
+    "ee.prompts.eval_prompts",
+    "model_hub.services.row_source_gate",
+    "tracer.constants.provider_icons",
+    "tracer.queries.error_analysis",
+    "tracer.services.background_transport",
+    "tracer.services.clickhouse.application_read_policy",
+    "tracer.services.clickhouse.application_read_transport",
+    "tracer.services.clickhouse.client",
+    "tracer.services.clickhouse.server_readonly",
+    "tracer.services.clickhouse.v2",
+    "tracer.services.clickhouse.v2.id_remap_sql",
+    "tracer.services.clickhouse.v2.query_settings",
+    "tracer.services.clickhouse.v2.span_reader",
+    "tracer.utils.sql_queries",
+)

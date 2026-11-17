@@ -14,8 +14,9 @@ Design:
     is no open transaction, so the ``error_analysis.filter().update()`` path
     is covered too.
   • Best-effort. A CH hiccup must NEVER break PG ingestion. Every failure is
-    logged and swallowed; the periodic ch25 validate/doctor + a re-run of the
-    backfill reconcile any gap. PG remains the system of record.
+    logged and swallowed. A refused insert is first sent once more on a new
+    client. Nothing re-runs a failed batch later; an operator run of
+    ch25_backfill_traces fills the gap. PG remains the system of record.
   • Idempotent + amplification-aware. ReplacingMergeTree dedups by ``id``
     (latest ``_version`` wins, ``_version = updated_at`` in ns). Callers gate
     on created/changed so a 100-span trace doesn't fire 100 identical upserts.
@@ -28,6 +29,7 @@ import json
 import os
 import threading
 import time
+from contextlib import contextmanager
 from datetime import timezone
 from typing import Any, Iterable
 
@@ -54,6 +56,29 @@ _TRACE_COLUMNS: tuple[str, ...] = (
 _client = None
 _client_lock = threading.Lock()
 
+# A copy its caller's request waits for runs inside ``short_waits`` and goes
+# through a second client that gives up within seconds, so a ClickHouse that
+# accepts and never answers holds that request for one short wait.
+SHORT_CONNECT_TIMEOUT_S = 1
+SHORT_SEND_RECEIVE_TIMEOUT_S = 2
+_short_client = None
+_short_waits = threading.local()
+
+
+@contextmanager
+def short_waits():
+    """Inserts on this thread use the short-wait client, not the 15 s one."""
+    previous = getattr(_short_waits, "on", False)
+    _short_waits.on = True
+    try:
+        yield
+    finally:
+        _short_waits.on = previous
+
+
+def _waits_short() -> bool:
+    return getattr(_short_waits, "on", False)
+
 
 def _truthy(v: str | None) -> bool:
     return str(v).strip().lower() in ("1", "true", "yes", "on") if v is not None else False
@@ -69,26 +94,61 @@ def dual_write_enabled() -> bool:
     return _truthy(os.getenv("CH25_DROP_LEGACY_CDC_CHAIN"))
 
 
+def _build_client(**timeouts):
+    import clickhouse_connect
+    cfg = get_v2_config()
+    # No session id. The span and trace mirrors share this client across
+    # threads, and clickhouse-connect refuses a second query while one is
+    # open on a session. Inserts use no session state.
+    return clickhouse_connect.get_client(
+        host=cfg["host"], port=cfg["http_port"],
+        username=cfg["user"], password=cfg["password"] or "",
+        database=cfg["database"], autogenerate_session_id=False,
+        **timeouts,
+    )
+
+
 def _get_client():
     """Lazily build a cached clickhouse-connect client. Reset on error so a
-    transient CH outage doesn't wedge the cached handle permanently."""
-    global _client
-    if _client is not None:
-        return _client
+    transient CH outage doesn't wedge the cached handle permanently.
+
+    Inside ``short_waits`` it is the short-wait client, built without the
+    lock: on a hung ClickHouse a lock would queue each request behind the
+    build ahead of it, and two threads building at once cost one spare
+    client."""
+    global _client, _short_client
+    if _waits_short():
+        client = _short_client
+        if client is None:
+            client = _short_client = _build_client(
+                connect_timeout=SHORT_CONNECT_TIMEOUT_S,
+                send_receive_timeout=SHORT_SEND_RECEIVE_TIMEOUT_S,
+            )
+        return client
+    # Read the shared client once: another mirror's reset may set it back to
+    # None at any moment, so a second read could return None.
+    client = _client
+    if client is not None:
+        return client
     with _client_lock:
         if _client is None:
-            import clickhouse_connect
-            cfg = get_v2_config()
-            _client = clickhouse_connect.get_client(
-                host=cfg["host"], port=cfg["http_port"],
-                username=cfg["user"], password=cfg["password"] or "",
-                database=cfg["database"], send_receive_timeout=15,
-            )
-    return _client
+            _client = _build_client(send_receive_timeout=15)
+        # Taken under the lock, which a reset also needs, so it is never None.
+        return _client
 
 
 def _reset_client() -> None:
-    global _client
+    """Drop the cached clients. Inside ``short_waits`` only the short-wait
+    one, so a request never waits for the lock a background build holds."""
+    global _client, _short_client
+    short, _short_client = _short_client, None
+    try:
+        if short is not None:
+            short.close()
+    except Exception:
+        pass
+    if _waits_short():
+        return
     with _client_lock:
         try:
             if _client is not None:
@@ -96,6 +156,25 @@ def _reset_client() -> None:
         except Exception:
             pass
         _client = None
+
+
+def insert_rows(table: str, rows: list, column_names: list[str]) -> None:
+    """Insert on the shared client; send a refused batch once more.
+
+    clickhouse-connect raises ProgrammingError, before sending anything, when
+    the client's session already has a query open. The client above carries no
+    session, but a refusal must not drop the batch, so the same rows go once
+    more on a new client. They keep their ``_version``, so a duplicate
+    collapses on merge. A second failure raises to the caller.
+    """
+    from clickhouse_connect.driver.exceptions import ProgrammingError
+
+    try:
+        _get_client().insert(table, rows, column_names=column_names)
+    except ProgrammingError:
+        log.warning("dual_write_insert_refused", table=table, n_rows=len(rows))
+        _reset_client()
+        _get_client().insert(table, rows, column_names=column_names)
 
 
 def _trace_to_row(t, *, version_from_updated_at: bool = False) -> list[Any]:
@@ -138,18 +217,19 @@ def _trace_to_row(t, *, version_from_updated_at: bool = False) -> list[Any]:
     ]
 
 
-def mirror_traces_to_clickhouse(trace_ids: Iterable[Any]) -> None:
+def mirror_traces_to_clickhouse(trace_ids: Iterable[Any]) -> bool:
     """Upsert the current PG state of the given trace ids into CH ``traces``.
 
     Best-effort: never raises. Re-reads PG so the row mirrored is exactly what
     committed (covers create + name promotion + status update in one place).
-    Call inside ``transaction.on_commit`` from the PG write sites.
+    Call inside ``transaction.on_commit`` from the PG write sites. Returns
+    False only when the copy failed, so a caller can skip what would follow.
     """
     if not dual_write_enabled():
-        return
+        return True
     ids = [str(i) for i in trace_ids if i]
     if not ids:
-        return
+        return True
     try:
         from tracer.models.trace import Trace
         # all_objects: include soft-deleted so a deletion mirrors as is_deleted=1
@@ -157,8 +237,10 @@ def mirror_traces_to_clickhouse(trace_ids: Iterable[Any]) -> None:
         manager = getattr(Trace, "all_objects", Trace.objects)
         rows = [_trace_to_row(t) for t in manager.filter(id__in=ids)]
         if not rows:
-            return
-        _get_client().insert("traces", rows, column_names=list(_TRACE_COLUMNS))
+            return True
+        insert_rows("traces", rows, list(_TRACE_COLUMNS))
     except Exception as e:  # noqa: BLE001 — best-effort by design
         log.warning("trace_dual_write_failed", err=str(e), n=len(ids))
         _reset_client()
+        return False
+    return True

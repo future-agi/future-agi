@@ -1,14 +1,12 @@
-from typing import List, Optional
-
 import structlog
 from django.conf import settings
 from pydantic import BaseModel as PydanticBaseModel
-
-logger = structlog.get_logger(__name__)
 from pydantic import Field
 
 from ai_tools.base import BaseTool, ToolContext, ToolResult
 from ai_tools.registry import register_tool
+
+logger = structlog.get_logger(__name__)
 
 
 class EvaluateWithAgentInput(PydanticBaseModel):
@@ -29,7 +27,7 @@ class EvaluateWithAgentInput(PydanticBaseModel):
             "The agent will formalize vague criteria automatically."
         )
     )
-    choices: Optional[List[str]] = Field(
+    choices: list[str] | None = Field(
         default=None,
         description=(
             "Labels for the evaluation result. "
@@ -37,20 +35,126 @@ class EvaluateWithAgentInput(PydanticBaseModel):
             "Pass a list like ['Passed', 'Failed'] or ['Good', 'Acceptable', 'Poor'] for categorical evaluation."
         ),
     )
-    eval_template_id: Optional[str] = Field(
+    eval_template_id: str | None = Field(
         default=None,
         description=(
             "UUID of an existing eval template to associate with this evaluation. "
             "When provided, enables few-shot examples from past human feedback."
         ),
     )
-    kb_id: Optional[str] = Field(
+    kb_id: str | None = Field(
         default=None,
         description=(
             "UUID of a knowledge base to consult during evaluation. "
             "Useful when criteria reference domain-specific standards or policies."
         ),
     )
+
+
+def _source_in_scope(input_scope, source_id, organization, workspace, *, user=None):
+    """Whether the actor can access this source in a live workspace."""
+    import uuid
+
+    from django.db.models import F, Q
+
+    from model_hub.models.develop_dataset import Cell, Row
+    from tfc.utils.tenant_scope import scope_to_accessible_workspace
+    from tracer.models.observation_span import ObservationSpan
+    from tracer.models.trace import Trace
+    from tracer.models.trace_session import TraceSession
+
+    if organization is None or not source_id:
+        return False
+    if input_scope == "span":
+        # Span ids are the tracer's own string ids, not UUIDs.
+        return scope_to_accessible_workspace(
+            ObservationSpan.no_workspace_objects.filter(id=str(source_id)),
+            organization,
+            workspace,
+            user=user,
+            organization_field="project__organization",
+            workspace_field="project__workspace",
+        ).exists() or _ch_source_in_scope(
+            input_scope, str(source_id), organization, workspace, user=user
+        )
+    try:
+        source_uuid = uuid.UUID(str(source_id))
+    except (TypeError, ValueError, AttributeError):
+        return False
+    if input_scope in ("trace", "session"):
+        model = Trace if input_scope == "trace" else TraceSession
+        rows = scope_to_accessible_workspace(
+            model.no_workspace_objects.filter(id=source_uuid),
+            organization,
+            workspace,
+            user=user,
+            organization_field="project__organization",
+            workspace_field="project__workspace",
+        )
+    elif input_scope == "dataset_row":
+        rows = scope_to_accessible_workspace(
+            Row.no_workspace_objects.filter(id=source_uuid, dataset__deleted=False),
+            organization,
+            workspace,
+            user=user,
+            organization_field="dataset__organization",
+            workspace_field="dataset__workspace",
+        )
+    else:
+        # The row owns the cell; the duplicate dataset link may be absent,
+        # but a contradictory dataset or column link must never grant access.
+        rows = Cell.no_workspace_objects.filter(
+            Q(dataset__isnull=True) | Q(dataset_id=F("row__dataset_id")),
+            id=source_uuid,
+            row__dataset__deleted=False,
+            row__deleted=False,
+            column__dataset_id=F("row__dataset_id"),
+            column__deleted=False,
+            deleted=False,
+        )
+        rows = scope_to_accessible_workspace(
+            rows,
+            organization,
+            workspace,
+            user=user,
+            organization_field="row__dataset__organization",
+            workspace_field="row__dataset__workspace",
+        )
+    return rows.exists() or (
+        input_scope == "session"
+        and _ch_source_in_scope(
+            input_scope, str(source_uuid), organization, workspace, user=user
+        )
+    )
+
+
+def _ch_source_in_scope(input_scope, source_id, organization, workspace, *, user=None):
+    """Post-cutover sources have no PG row; their projects still authorize reads.
+
+    Filter the canonical readers by the same project org/workspace rule as the
+    legacy checks. Never issue an unscoped CH lookup, including when the caller
+    has no projects (an empty project list is unscoped for the session reader).
+    """
+    from tfc.utils.tenant_scope import scope_to_accessible_workspace
+    from tracer.models.project import Project
+    from tracer.services.clickhouse.v2 import get_reader
+    from tracer.services.clickhouse.v2.trace_session_dict_reader import (
+        resolve_session_fields,
+    )
+
+    project_ids = list(
+        scope_to_accessible_workspace(
+            Project.no_workspace_objects.all(), organization, workspace, user=user
+        ).values_list("id", flat=True)
+    )
+    if not project_ids:
+        return False
+    if input_scope == "span":
+        with get_reader() as reader:
+            return source_id in reader.scope_by_ids(
+                [source_id], project_ids=project_ids
+            )
+    return source_id in resolve_session_fields([source_id], project_ids=project_ids)
 
 
 @register_tool
@@ -98,7 +202,9 @@ class EvaluateWithAgentTool(BaseTool):
             )
         except ImportError:
             if settings.DEBUG:
-                logger.warning("Could not import ee.agenthub.eval_orchestrator", exc_info=True)
+                logger.warning(
+                    "Could not import ee.agenthub.eval_orchestrator", exc_info=True
+                )
             return ToolResult.feature_unavailable(EEFeature.AGENTIC_EVAL.value)
 
         if params.input_scope not in self._VALID_SCOPES:
@@ -107,11 +213,35 @@ class EvaluateWithAgentTool(BaseTool):
                 f"Must be one of: {', '.join(sorted(self._VALID_SCOPES))}"
             )
 
+        # Evaluate only the caller's own item, with the caller's own knowledge
+        # base; any other id is not found.
+        if not _source_in_scope(
+            params.input_scope,
+            params.source_id,
+            context.organization,
+            context.workspace,
+            user=context.user,
+        ):
+            return ToolResult.not_found(
+                params.input_scope.replace("_", " ").title(), str(params.source_id)
+            )
+        if params.kb_id:
+            from model_hub.utils.workspace_scope import knowledge_base_id_for
+
+            if (
+                knowledge_base_id_for(
+                    context.organization, context.workspace, params.kb_id
+                )
+                is None
+            ):
+                return ToolResult.not_found("Knowledge base", str(params.kb_id))
+
         # Gather external resources (KB, feedback examples, MCP tools)
         available_resources = gather_available_resources(
             organization_id=str(context.organization_id),
             eval_template_id=params.eval_template_id,
             kb_id=params.kb_id,
+            workspace=context.workspace,
         )
 
         # Build a lightweight input summary for the Scout pre-pass
@@ -136,6 +266,9 @@ class EvaluateWithAgentTool(BaseTool):
             eval_template_id=params.eval_template_id,
             kb_id=params.kb_id,
             available_resources=available_resources,
+            organization_id=str(context.organization_id),
+            workspace=context.workspace,
+            user=context.user,
         )
 
         # Run the orchestrator (agentic loop)

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/futureagi/agentcc-gateway/internal/auth"
+	"github.com/futureagi/agentcc-gateway/internal/middleware"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/providers"
 	"github.com/futureagi/agentcc-gateway/internal/realtime"
@@ -28,6 +30,9 @@ type RealtimeHandler struct {
 	maxMessageSize     int64
 	upgrader           websocket.Upgrader
 	logger             *slog.Logger
+	// known is the catalogue check of a gateway with keys
+	// (Handlers.catalogueKnows); nil when there is no catalogue.
+	known func(providerID, model string) bool
 }
 
 // NewRealtimeHandler creates a new handler for the realtime API.
@@ -105,18 +110,34 @@ func (rh *RealtimeHandler) HandleRealtime(w http.ResponseWriter, r *http.Request
 
 	// Validate API key through the key store.
 	orgID := "default"
+	var apiKey *auth.APIKey
 	if rh.keyStore != nil {
 		if rawKey == "" {
 			http.Error(w, `{"error":{"message":"API key is required","type":"authentication_error"}}`, http.StatusUnauthorized)
 			return
 		}
-		apiKey := rh.keyStore.Authenticate(rawKey)
+		if rh.keyStore.ConfigKeyPending(rawKey) {
+			models.WriteError(w, &models.APIError{Status: http.StatusServiceUnavailable,
+				Type: models.ErrTypeServer, Code: "key_list_not_loaded", Message: "Waiting for the first control-plane key list"})
+			return
+		}
+		apiKey = rh.keyStore.Authenticate(rawKey)
 		if apiKey == nil {
 			http.Error(w, `{"error":{"message":"Invalid API key","type":"authentication_error"}}`, http.StatusUnauthorized)
 			return
 		}
 		if id, ok := apiKey.Metadata["org_id"]; ok && id != "" {
 			orgID = id
+		}
+		// The org-confinement guard chat applies (Handlers.orgProvidersOnly):
+		// a key limited to its org's providers never gets the gateway's own
+		// provider. A session is relayed with no budget, credits, guardrails
+		// or request log, so it is refused before any provider is resolved
+		// or a session slot taken; confinement through the org's own
+		// provider build is for the release that ships a realtime provider.
+		if apiKey.KeyType != "internal" && !middleware.IsLicenseAuthorized(r.Context()) {
+			models.WriteError(w, models.ErrForbidden(fmt.Sprintf("model %q is not available for this API key", model)))
+			return
 		}
 	}
 
@@ -126,18 +147,115 @@ func (rh *RealtimeHandler) HandleRealtime(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Resolve provider.
-	_, err := rh.registry.Resolve(model)
+	// Resolve provider: on a gateway with keys only an internal key or a
+	// licence-authorized request gets here, and it is served only catalogue
+	// or configured models.
+	provider, err := rh.resolve(model)
 	if err != nil {
 		rh.tracker.Release(orgID)
 		http.Error(w, fmt.Sprintf(`{"error":{"message":"No provider for model %q","type":"not_found_error"}}`, model), http.StatusNotFound)
 		return
 	}
+	if apiKey != nil && apiKey.KeyType != "internal" && !apiKey.CanAccessProvider(provider.ID()) {
+		rh.tracker.Release(orgID)
+		models.WriteError(w, errKeyProviderDenied(provider.ID()))
+		return
+	}
 
-	// No shipped provider implements a supported generic realtime protocol. A
-	// provider URL interface alone does not establish protocol support.
+	rp, ok := provider.(providers.RealtimeProvider)
+	if !ok {
+		rh.tracker.Release(orgID)
+		http.Error(w, `{"error":{"message":"Provider does not support realtime API","type":"not_found_error"}}`, http.StatusNotImplemented)
+		return
+	}
+
+	// Get upstream connection params.
+	providerURL, err := rp.RealtimeURL(model)
+	if err != nil {
+		rh.tracker.Release(orgID)
+		http.Error(w, fmt.Sprintf(`{"error":{"message":"Failed to get provider URL: %s","type":"server_error"}}`, err), http.StatusBadGateway)
+		return
+	}
+	providerHeaders, err := rp.RealtimeHeaders(model)
+	if err != nil {
+		rh.tracker.Release(orgID)
+		http.Error(w, fmt.Sprintf(`{"error":{"message":"Failed to get provider headers: %s","type":"server_error"}}`, err), http.StatusBadGateway)
+		return
+	}
+
+	// Upgrade client connection.
+	clientConn, err := rh.upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		rh.tracker.Release(orgID)
+		rh.logger.Error("websocket upgrade failed", "error", err)
+		return
+	}
+
+	// Connect to upstream provider.
+	dialer := websocket.Dialer{
+		HandshakeTimeout: 10 * time.Second,
+		Subprotocols:     rp.RealtimeSubprotocols(),
+	}
+	providerConn, _, err := dialer.Dial(providerURL, providerHeaders)
+	if err != nil {
+		rh.tracker.Release(orgID)
+		closeMsg := websocket.FormatCloseMessage(4502, "Unable to connect to upstream provider: "+err.Error())
+		clientConn.WriteControl(websocket.CloseMessage, closeMsg, time.Now().Add(2*time.Second))
+		clientConn.Close()
+		rh.logger.Error("upstream connection failed", "model", model, "error", err)
+		return
+	}
+
+	// Create session.
+	requestID := models.GetRequestID(r.Context())
+	sessionID := fmt.Sprintf("rt-%s", requestID)
+	session := realtime.NewSession(sessionID, requestID, orgID, model, provider.ID(), clientConn, providerConn)
+	rh.tracker.Register(session)
+
+	// Session timeout.
+	go func() {
+		select {
+		case <-time.After(rh.maxSessionDuration):
+			if !session.IsClosed() {
+				session.Close("timeout")
+			}
+		case <-session.StopChan():
+		}
+	}()
+
+	// Send gateway event.
+	gatewayEvent, _ := json.Marshal(map[string]string{
+		"type":       "gateway.session.created",
+		"session_id": sessionID,
+		"request_id": requestID,
+	})
+	clientConn.WriteMessage(websocket.TextMessage, gatewayEvent)
+
+	// Start relay (blocks until session is done).
+	relayConfig := realtime.RelayConfig{
+		ChannelBufferSize: 64,
+		PingInterval:      rh.pingInterval,
+		PongTimeout:       rh.pongTimeout,
+		MaxMessageSize:    rh.maxMessageSize,
+	}
+	relay := realtime.NewRelay(session, relayConfig, rh.logger)
+	relay.Start()
+
+	// Post-session cleanup.
+	session.Close("relay_done")
+	usage := session.Usage.Snapshot()
+
+	rh.logger.Info("realtime session ended",
+		"session_id", sessionID,
+		"model", model,
+		"provider", provider.ID(),
+		"duration", session.Duration(),
+		"input_tokens", usage.InputTokens,
+		"output_tokens", usage.OutputTokens,
+		"messages", usage.TotalMessages,
+		"close_reason", session.CloseReason,
+	)
+
 	rh.tracker.Release(orgID)
-	models.WriteError(w, &models.APIError{Status: http.StatusNotImplemented,
-		Type: models.ErrTypeServer, Code: "realtime_not_supported",
-		Message: "generic realtime is not supported; use a documented vendor speech route"})
+	rh.tracker.Unregister(sessionID)
 }

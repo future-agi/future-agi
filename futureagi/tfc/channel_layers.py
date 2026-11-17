@@ -3,10 +3,11 @@ call from any thread.
 
 Which layer
 -----------
-Every ``group_send`` runs in the web (Granian) process:
+Broker-backed workers publish directly through a process-owned event loop.
+In memory mode, ``group_send`` runs in the web (Granian) process:
 
 * ``tfc/views/socket.py`` CallWebsocketView. Temporal workers relay to it over
-  HTTP via ``model_hub.utils.call_websocket`` -> ``WEBSOCKET_ENDPOINT``;
+  signed HTTP via ``model_hub.utils.call_websocket`` -> ``WEBSOCKET_ENDPOINT``;
 * ``model_hub/views/annotation_queues.py`` discussion broadcasts;
 * ``sockets/consumer.py`` DataConsumer.handle_message.
 
@@ -104,6 +105,65 @@ class ThreadSafeInMemoryChannelLayer(InMemoryChannelLayer):
 
     async def flush(self):
         return await self._on_home(super().flush)
+
+
+# Broker clients (especially RabbitMQ) own background tasks on their event
+# loop. Repeated async_to_sync calls would tear those tasks down after each
+# message. Keep a worker-only layer and loop alive across sync activities.
+_worker_lock = threading.Lock()
+_worker_state = None
+
+
+def _worker_layer():
+    from channels.layers import ChannelLayerManager
+
+    loop = asyncio.get_running_loop()
+    if not hasattr(loop, "_fa_worker_channel_layer"):
+        loop._fa_worker_channel_layer = ChannelLayerManager()["default"]
+    return loop._fa_worker_channel_layer
+
+
+def publish_worker_message(organization_id, message, *, stream=None):
+    import os
+    from django.conf import settings
+
+    if settings.CHANNEL_LAYER_BACKEND not in {"redis", "rabbitmq"}:
+        raise ValueError("Direct worker publishing requires a shared channel layer")
+    if not isinstance(message, dict):
+        raise ValueError("Websocket messages must be objects")
+    global _worker_state
+    with _worker_lock:
+        if _worker_state is None or _worker_state[0] != os.getpid():
+            loop = asyncio.new_event_loop()
+            ready = threading.Event()
+
+            def run():
+                asyncio.set_event_loop(loop)
+                loop.call_soon(ready.set)
+                loop.run_forever()
+
+            thread = threading.Thread(
+                target=run, name="websocket-publisher", daemon=True
+            )
+            thread.start()
+            ready.wait()
+            _worker_state = (os.getpid(), loop)
+        loop = _worker_state[1]
+
+    async def publish():
+        group = (
+            f"org_{organization_id}"
+            if stream is None
+            else f"uuid_org_{organization_id}_{stream}"
+        )
+        await _worker_layer().group_send(group, {"type": "send_data", "data": message})
+
+    future = asyncio.run_coroutine_threadsafe(publish(), loop)
+    try:
+        future.result(timeout=_CROSS_LOOP_TIMEOUT_S)
+    except BaseException:
+        future.cancel()
+        raise
 
 
 # -- settings -----------------------------------------------------------------

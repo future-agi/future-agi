@@ -1,0 +1,61 @@
+{
+  "about": "What the fake Linear server lists by default (tests/fakemcp.py). The manifest's tools.snapshot.toolsHash is this list's tools hash; test_fixture_snapshot_matches_live_tools keeps the two equal. archive_issue is listed live but is not in the manifest, so it is never called.",
+  "tools": [
+    {
+      "name": "list_issues",
+      "title": "List issues",
+      "description": "List issues in the user's workspace, filtered by team.",
+      "inputSchema": {
+        "type": "object",
+        "properties": { "team": { "type": "string" } }
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "create_issue",
+      "title": "Create issue",
+      "description": "Create an issue in a team.",
+      "inputSchema": {
+        "type": "object",
+        "properties": { "title": { "type": "string" } },
+        "required": ["title"]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "delete_issue",
+      "title": "Delete issue",
+      "description": "Delete an issue.",
+      "inputSchema": {
+        "type": "object",
+        "properties": { "id": { "type": "string" } },
+        "required": ["id"]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "archive_issue",
+      "description": "Archive an issue.",
+      "inputSchema": {
+        "type": "object",
+        "properties": { "id": { "type": "string" } }
+      },
+      "annotations": { "readOnlyHint": true }
+    }
+  ]
+}

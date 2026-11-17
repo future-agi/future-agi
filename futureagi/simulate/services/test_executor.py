@@ -158,6 +158,12 @@ from simulate.temporal.activities.xl import (
     stringify_leaf,
     walk_subject_path,
 )
+from simulate.utils.ended_reason import (
+    EndedReasonSource,
+    end_calls_with_reason,
+    set_ended_reason,
+    without_ended_reason_source,
+)
 from simulate.utils.eval_summary import derive_kpi_output_type
 from simulate.utils.processing_outcomes import (
     build_skipped_eval_output_payload,
@@ -174,6 +180,7 @@ from tfc.temporal.drop_in import temporal_activity
 
 # Note: run_eval_summary_task imported lazily to avoid circular imports
 from tfc.utils.error_codes import get_specific_error_message
+from tfc.utils.tenant_scope import workspace_scope_q
 
 try:
     from ee.usage.models.usage import APICallType
@@ -198,6 +205,15 @@ except ImportError:
         return SimpleNamespace(allowed=True, reason=None)
 
 
+# The reason a call shows when the usage check itself failed. The error itself
+# goes to the server log.
+USAGE_CHECK_FAILED = "The usage check could not be completed, so the call was ended."
+# What a voice call shows as the reason it ended when it fails on an error.
+# The error itself goes to the server log.
+CALL_STOPPED = "The call stopped because of an error. Re-run it."
+CALL_COULD_NOT_START = "The call could not start because of an error. Re-run it."
+
+
 try:
     from ee.usage.utils.usage_entries import (
         deduct_cost_for_request,
@@ -210,6 +226,40 @@ except ImportError:
 
     def log_and_deduct_cost_for_api_request(*args, **kwargs):
         return None
+
+
+# A run whose saved dataset rows are all gone is refused with this sentence.
+SAVED_ROWS_NONE_LEFT = (
+    "None of the dataset rows saved for this test are available any more. "
+    "Clear the row selection or pick rows again."
+)
+
+# A run that needs the voice services, on an install with no Vapi API key, is
+# refused with this sentence.
+VOICE_PROVIDER_KEY_MISSING = (
+    "Voice simulations need a Vapi API key. Add VAPI_API_KEY to this install, "
+    "then run again."
+)
+
+
+class VoiceProviderKeyMissing(ValueError):
+    """The voice services were asked for on an install with no Vapi API key."""
+
+
+def _build_voice_service_manager(system_voice_provider):
+    """The voice services for ``system_voice_provider``.
+
+    Building them for Vapi with no ``VAPI_API_KEY`` set raises
+    ``VoiceProviderKeyMissing``, whose message names the missing key in plain
+    words; any other failure is raised as it is.
+    """
+    try:
+        return VoiceServiceManager(system_voice_provider=system_voice_provider)
+    except ValueError as error:
+        key_missing = not os.getenv("VAPI_API_KEY")
+        if system_voice_provider == ProviderChoices.VAPI and key_missing:
+            raise VoiceProviderKeyMissing(VOICE_PROVIDER_KEY_MISSING) from error
+        raise
 
 
 class TestExecutor:
@@ -233,12 +283,14 @@ class TestExecutor:
         Args:
             monitor_interval: How often to check test progress (seconds)
             initialize_voice_service: Whether to initialize voice-provider services.
+                Only a run that calls a voice agent needs them; with no Vapi
+                API key set, asking for them raises ``VoiceProviderKeyMissing``.
         """
         self.monitor_interval = monitor_interval
         self.running = False
         self.monitor_thread = None
         self.voice_service_manager = (
-            VoiceServiceManager(system_voice_provider=system_voice_provider)
+            _build_voice_service_manager(system_voice_provider)
             if initialize_voice_service and VoiceServiceManager
             else None
         )
@@ -357,7 +409,12 @@ class TestExecutor:
                                 error_msg = f"Outbound call {call.id} is missing an api_key on AgentVersion {agent_version.id if agent_version else None}. Cancelling."
                                 logger.error(error_msg)
                                 call.status = CallExecution.CallStatus.FAILED
-                                call.ended_reason = "Configuration error: Missing API key for outbound call."
+                                set_ended_reason(
+                                    call,
+                                    "Configuration error: Missing API key for "
+                                    "outbound call.",
+                                    EndedReasonSource.FIXED,
+                                )
                                 call.completed_at = timezone.now()
                                 call.save()
                                 continue
@@ -395,10 +452,12 @@ class TestExecutor:
                         # Mark call as failed for any error
                         try:
                             call.status = CallExecution.CallStatus.FAILED
-                            call.ended_reason = f"Error: {error_message[:10000]}"
+                            set_ended_reason(
+                                call, CALL_STOPPED, EndedReasonSource.FIXED
+                            )
                             call.completed_at = timezone.now()
                             call.call_metadata = call.call_metadata or {}
-                            call.call_metadata["error"] = error_message
+                            call.call_metadata["error"] = CALL_STOPPED
                             call.call_metadata["failure_reason"] = "api_error"
                             call.save(
                                 update_fields=[
@@ -578,6 +637,26 @@ class TestExecutor:
                     "run_test_id": run_test_id,
                 }
 
+            # Resolve the saved selection before creating an execution. Rows are
+            # checked against all attached scenarios so executing a scenario
+            # subset still intersects, rather than rejects, the selection. Saved
+            # rows that are no longer available are skipped; the run is refused
+            # only when none of them is left.
+            selected_row_ids, skipped_row_count = self._saved_row_selection(run_test)
+            if skipped_row_count:
+                logger.warning(
+                    "saved_dataset_rows_skipped",
+                    run_test_id=str(run_test.id),
+                    skipped_row_count=skipped_row_count,
+                    remaining_row_count=len(selected_row_ids),
+                )
+                if not selected_row_ids:
+                    return {
+                        "success": False,
+                        "error": SAVED_ROWS_NONE_LEFT,
+                        "run_test_id": run_test_id,
+                    }
+
             # Create TestExecution record in a separate transaction
             try:
                 # Get simulator agent and agent definition
@@ -596,6 +675,10 @@ class TestExecutor:
                 else:
                     simulator_agent = run_test.simulator_agent
 
+                execution_metadata = {}
+                if selected_row_ids:
+                    execution_metadata["skipped_dataset_row_count"] = skipped_row_count
+
                 test_execution_record = TestExecution.objects.create(
                     run_test=run_test,
                     status=TestExecution.ExecutionStatus.PENDING,
@@ -606,6 +689,7 @@ class TestExecutor:
                     simulator_agent=simulator_agent,
                     agent_definition=agent_definition,
                     agent_version=agent_version,
+                    execution_metadata=execution_metadata,
                 )
             except Exception as e:
                 logger.error(f"Error creating TestExecution record: {str(e)}")
@@ -641,6 +725,10 @@ class TestExecutor:
                     scenario_objects[scenario_id] = scenario
 
                     row_ids = self._parse_dataset_scenario(scenario)
+                    if selected_row_ids:
+                        row_ids = [
+                            row_id for row_id in row_ids if row_id in selected_row_ids
+                        ]
                     # Convert row IDs to call data format
                     calls_to_make = [
                         {"row_id": row_id, "metadata": {}} for row_id in row_ids
@@ -752,6 +840,7 @@ class TestExecutor:
                 "status": "started",
                 "total_scenarios": len(scenario_ids),
                 "total_calls": total_calls,
+                "skipped_dataset_row_count": skipped_row_count,
             }
 
         except ObjectDoesNotExist:
@@ -888,12 +977,48 @@ class TestExecutor:
             logger.error(f"Error parsing dataset scenario {scenario.id}: {str(e)}")
             return []
 
+    def _saved_row_selection(self, run_test: RunTest) -> tuple[set[str], int]:
+        """The saved dataset rows a run can still run, and how many it skips.
+
+        A saved row runs while it is a live row of a live dataset that a
+        scenario attached to the run test uses, with that scenario and dataset
+        in the run test's organization and, by the shared workspace rule, its
+        workspace: a default workspace also covers rows with no workspace. A
+        saved id that is not a UUID, or names no such row, is skipped. With no
+        rows saved this returns an empty set and 0, and every row runs.
+        """
+        saved_row_ids = {
+            str(UUID(str(row_id))) if _is_uuid(row_id) else str(row_id)
+            for row_id in run_test.dataset_row_ids or []
+        }
+        row_ids = {row_id for row_id in saved_row_ids if _is_uuid(row_id)}
+        if not row_ids:
+            return set(), len(saved_row_ids)
+        workspace = run_test.workspace
+        attached_dataset_ids = run_test.scenarios.filter(
+            workspace_scope_q(workspace),
+            organization=run_test.organization,
+        ).values_list("dataset_id", flat=True)
+        available_row_ids = {
+            str(row_id)
+            for row_id in Row.objects.filter(
+                workspace_scope_q(workspace, "dataset__workspace"),
+                id__in=row_ids,
+                dataset_id__in=attached_dataset_ids,
+                dataset__organization=run_test.organization,
+                dataset__deleted=False,
+            ).values_list("id", flat=True)
+        }
+        return available_row_ids, len(saved_row_ids) - len(available_row_ids)
+
     def _get_row_data_and_generate_prompt(
         self,
         row_id: str,
         base_prompt: str,
         agent_version: AgentVersion | None,
         call_type: str | None = None,
+        *,
+        organization_id=None,
     ) -> dict[str, Any]:
         """
         Get row data from dataset and generate dynamic prompt
@@ -901,13 +1026,21 @@ class TestExecutor:
         Args:
             row_id: ID of the Row from dataset
             base_prompt: The base prompt template from simulator agent
+            organization_id: When given, read the row only from a dataset of
+                this organization (the execution's). Callers that run with no
+                workspace bound, such as the runner's /batch ingest, pass it:
+                Row has no workspace of its own, so no manager filters it
+                (T6 #7e). A row of another organization reads as missing.
 
         Returns:
             Dict containing row data and dynamic prompt
         """
         try:
             # Get the row
-            row = Row.objects.get(id=row_id)
+            rows = Row.objects.filter(id=row_id)
+            if organization_id is not None:
+                rows = rows.filter(dataset__organization_id=organization_id)
+            row = rows.get()
 
             # Get all cells for this row
             cells = Cell.objects.filter(row=row)
@@ -2071,7 +2204,9 @@ class TestExecutor:
 
         Requires Redis — ``check_usage`` is Redis-backed. If Redis is
         unavailable the ``except`` branch fails closed (returns
-        ``allowed=False``), which is the safer default.
+        ``allowed=False``), which is the safer default. Its reason is the
+        fixed ``USAGE_CHECK_FAILED``: callers store the reason on the call,
+        so the exception's text goes only to the log.
 
         Args:
             organization: Organization object.
@@ -2098,7 +2233,7 @@ class TestExecutor:
 
         except Exception as e:
             logger.error(f"Error checking call balance: {str(e)}")
-            return False, 0, 0, f"Error checking balance: {str(e)}"
+            return False, 0, 0, USAGE_CHECK_FAILED
 
     def _validate_call_prerequisites(
         self, run_test: RunTest, scenario: Scenarios, call_data: dict[str, Any]
@@ -2330,7 +2465,7 @@ class TestExecutor:
                     prompt=fallback_prompt,
                     voice_provider=validated_data.get("voice_provider", "elevenlabs"),
                     voice_name=validated_data.get("voice_name", "marissa"),
-                    model=validated_data.get("model", "gpt-4"),
+                    model=validated_data.get("model", "gpt-4o"),
                     llm_temperature=validated_data.get("llm_temperature", 0.7),
                     initial_message=validated_data.get("initial_message", "Hi!"),
                     max_call_duration_in_minutes=validated_data.get(
@@ -2480,8 +2615,10 @@ class TestExecutor:
             if not has_sufficient_balance:
                 # Update call execution status to failed
                 call_execution.status = CallExecution.CallStatus.FAILED
-                call_execution.ended_reason = (
-                    balance_error[:10000] if balance_error else "Insufficient balance"
+                set_ended_reason(
+                    call_execution,
+                    balance_error[:10000] if balance_error else "Insufficient balance",
+                    EndedReasonSource.USAGE,
                 )
                 call_execution.ended_at = timezone.now()
                 call_execution.save()
@@ -2620,7 +2757,6 @@ class TestExecutor:
                 metadata["call_direction"] = "outbound"
                 metadata["user_assistant_id"] = snapshot.get("assistant_id")
                 metadata["user_phone_number"] = call_execution_phone_number
-                metadata["user_api_key"] = snapshot.get("api_key")
 
             # Ensure call_data metadata is a dictionary
             call_metadata = call_data.get("metadata", {})
@@ -2671,8 +2807,9 @@ class TestExecutor:
 
                 # Update call execution status to failed
                 call_execution.status = CallExecution.CallStatus.FAILED
-                error_msg = f"{str(e)}"
-                call_execution.ended_reason = error_msg[:10000]
+                set_ended_reason(
+                    call_execution, CALL_COULD_NOT_START, EndedReasonSource.FIXED
+                )
                 call_execution.ended_at = timezone.now()
                 call_execution.save()
 
@@ -2685,7 +2822,7 @@ class TestExecutor:
                     "end_time": None,
                     "duration": None,
                     "success": False,
-                    "error": f"{str(e)}",
+                    "error": CALL_COULD_NOT_START,
                 }
 
             # Step 8: Update CallExecution record
@@ -2877,10 +3014,15 @@ class TestExecutor:
 
             cancelled_calls = 0
             failed_cancellations = 0
-            call_executions.update(
+            end_calls_with_reason(
+                call_executions,
+                "Cancelled by user",
+                EndedReasonSource.FIXED,
                 status=CallExecution.CallStatus.CANCELLED,
-                ended_reason="Cancelled by user",
             )
+            # A fresh queryset: the loop below reads the calls as they are now,
+            # not the rows cached by the loop above.
+            call_executions = call_executions.all()
 
             logger.info(
                 f"Cancelled {cancelled_calls} CallExecution records, {failed_cancellations} failed"
@@ -3134,10 +3276,12 @@ class TestExecutor:
                 # Mark call as failed for any error
                 try:
                     call_execution.status = CallExecution.CallStatus.FAILED
-                    call_execution.ended_reason = f"Error: {error_message[:10000]}"  # Truncate long error messages
+                    set_ended_reason(
+                        call_execution, CALL_STOPPED, EndedReasonSource.FIXED
+                    )
                     call_execution.ended_at = timezone.now()
                     call_execution.call_metadata = call_execution.call_metadata or {}
-                    call_execution.call_metadata["error"] = error_message
+                    call_execution.call_metadata["error"] = CALL_STOPPED
                     call_execution.call_metadata["failure_reason"] = "api_error"
                     call_execution.save(
                         update_fields=[
@@ -3283,8 +3427,16 @@ class TestExecutor:
                         call_execution.duration_seconds = 0
                         call_execution.status = CallExecution.CallStatus.FAILED
                     ended_reason = call_data.ended_reason
-                    call_execution.ended_reason = (
-                        ended_reason[:10000] if ended_reason else None
+                    # Bland keeps its error message in the same field.
+                    voice_provider = voice_service_manager.system_voice_provider
+                    set_ended_reason(
+                        call_execution,
+                        ended_reason[:10000] if ended_reason else None,
+                        (
+                            EndedReasonSource.PROVIDER_ERROR
+                            if voice_provider == ProviderChoices.BLAND
+                            else EndedReasonSource.PROVIDER
+                        ),
                     )
 
                 # Store cost information
@@ -3498,10 +3650,15 @@ class TestExecutor:
                 # Store metadata if available
                 if call_data.metadata:
                     # Merge with existing metadata
+                    # The provider's metadata never sets where the end reason
+                    # came from.
                     existing_metadata = call_execution.call_metadata or {}
-                    existing_metadata |= call_data.metadata.get(provider_key, {})
+                    existing_metadata |= without_ended_reason_source(
+                        call_data.metadata.get(provider_key, {})
+                    )
                     call_execution.call_metadata = (
-                        existing_metadata | call_data.metadata
+                        existing_metadata
+                        | without_ended_reason_source(call_data.metadata)
                     )
 
                 call_execution.transcript_available = call_data.transcript_available
@@ -5152,8 +5309,19 @@ class TestExecutor:
             #     else []
             # )
             scenario_ids = call_execution.test_execution.scenario_ids
+            # Grading runs with no workspace bound, so the manager adds no tenant
+            # filter. Every scenario, column and dataset read here is limited to
+            # the execution's own organization. An id of another organization's
+            # scenario, stored before execute checked scenario_ids (T6 #7e), then
+            # adds none of its columns to the cell-read gate below and no name
+            # to the mismatch message.
+            organization_id = call_execution.test_execution.run_test.organization_id
             scenario_column_order_qs = (
-                Scenarios.objects.filter(id__in=scenario_ids, deleted=False)
+                Scenarios.objects.filter(
+                    id__in=scenario_ids,
+                    organization_id=organization_id,
+                    deleted=False,
+                )
                 .select_related("dataset")
                 .values_list("dataset__column_order", flat=True)
             )
@@ -5265,14 +5433,17 @@ class TestExecutor:
                         column_scenario_name = None
                         try:
                             column = Column.objects.select_related("dataset").get(
-                                id=value, deleted=False
+                                id=value,
+                                dataset__organization_id=organization_id,
+                                deleted=False,
                             )
                             column_name = column.name
                             if column.dataset:
                                 column_dataset_name = column.dataset.name
                                 # Find which scenario uses this dataset
                                 column_scenario = Scenarios.objects.get(
-                                    dataset=column.dataset
+                                    dataset=column.dataset,
+                                    organization_id=organization_id,
                                 )
                                 if column_scenario:
                                     column_scenario_name = column_scenario.name
@@ -5282,7 +5453,9 @@ class TestExecutor:
                         # Get test scenario names for context
                         test_scenarios = list(
                             Scenarios.objects.filter(
-                                id__in=scenario_ids, deleted=False
+                                id__in=scenario_ids,
+                                organization_id=organization_id,
+                                deleted=False,
                             ).values_list("name", flat=True)
                         )
                         test_scenarios_str = (
@@ -5400,7 +5573,7 @@ class TestExecutor:
                 template=eval_template,
                 org=organization,
                 model=eval_config.model,
-                kb_id=eval_config.kb_id,
+                kb_id=eval_config.kb_id_id,
                 error_localizer=eval_config.error_localizer,
                 workspace=call_execution.test_execution.run_test.workspace,
                 source=eval_source(call_execution.test_execution_id),

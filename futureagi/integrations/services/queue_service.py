@@ -1,9 +1,15 @@
 import json
 import logging
 import time
-from typing import Any, Optional
+from typing import Any
 
 from integrations.services.base import BaseIntegrationService, register_service
+from integrations.services.cloud_storage_service import (
+    GOOGLE_KEY_NOT_ACCEPTED,
+    GoogleKeyNotAccepted,
+)
+from integrations.services.export_failures import validation_failure
+from model_hub.utils.model_endpoints import signs_in_only_at_googles_own_addresses
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +41,7 @@ class QueueService(BaseIntegrationService):
         self,
         host_url: str,
         credentials: dict,
-        ca_certificate: Optional[str] = None,
+        ca_certificate: str | None = None,
     ) -> dict:
         sub_platform = credentials.get("sub_platform", "")
         if not sub_platform:
@@ -49,8 +55,7 @@ class QueueService(BaseIntegrationService):
             else:
                 return {"valid": False, "error": f"Unknown queue type: {sub_platform}"}
         except Exception as e:
-            logger.exception("Error validating queue credentials")
-            return {"valid": False, "error": f"Validation failed: {str(e)}"}
+            return validation_failure("message_queue", e, logger)
 
     def _validate_sqs(self, credentials: dict) -> dict:
         queue_url = credentials.get("queue_url", "")
@@ -86,9 +91,7 @@ class QueueService(BaseIntegrationService):
             return {"valid": True, "projects": [], "total_traces": 0}
 
         except ClientError as e:
-            code = e.response["Error"]["Code"]
-            msg = e.response["Error"]["Message"]
-            return {"valid": False, "error": f"SQS error ({code}): {msg}"}
+            return validation_failure("message_queue", e, logger)
         except ImportError:
             return {"valid": False, "error": "boto3 is not installed on the server."}
 
@@ -106,6 +109,8 @@ class QueueService(BaseIntegrationService):
             from google.oauth2 import service_account
 
             info = json.loads(sa_json)
+            if not signs_in_only_at_googles_own_addresses(info):
+                return {"valid": False, "error": GOOGLE_KEY_NOT_ACCEPTED}
             creds = service_account.Credentials.from_service_account_info(info)
             publisher = pubsub_v1.PublisherClient(credentials=creds)
 
@@ -122,17 +127,17 @@ class QueueService(BaseIntegrationService):
         except json.JSONDecodeError:
             return {"valid": False, "error": "Invalid service account JSON."}
         except Exception as e:
-            return {"valid": False, "error": f"Pub/Sub error: {str(e)}"}
+            return validation_failure("message_queue", e, logger)
 
     def fetch_traces(
         self,
         host_url: str,
         credentials: dict,
-        from_timestamp: Optional[str] = None,
-        to_timestamp: Optional[str] = None,
+        from_timestamp: str | None = None,
+        to_timestamp: str | None = None,
         page: int = 1,
         limit: int = 100,
-        ca_certificate: Optional[str] = None,
+        ca_certificate: str | None = None,
     ) -> dict:
         """Not used — message queue is an export target."""
         return {"traces": [], "has_more": False, "next_page": 1, "total_items": 0}
@@ -142,7 +147,7 @@ class QueueService(BaseIntegrationService):
         host_url: str,
         credentials: dict,
         trace_id: str,
-        ca_certificate: Optional[str] = None,
+        ca_certificate: str | None = None,
     ) -> dict[str, Any]:
         """Not used — message queue is an export target."""
         return {}
@@ -248,6 +253,8 @@ class QueueService(BaseIntegrationService):
         from google.oauth2 import service_account
 
         info = json.loads(credentials["service_account_json"])
+        if not signs_in_only_at_googles_own_addresses(info):
+            raise GoogleKeyNotAccepted()
         creds = service_account.Credentials.from_service_account_info(info)
         publisher = pubsub_v1.PublisherClient(credentials=creds)
         topic_path = credentials["topic_path"]

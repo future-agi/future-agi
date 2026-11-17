@@ -185,7 +185,7 @@ test('OBS-E2E-013: a voice call with no recording says so', {
     expect(observed.detail.result.recording).toStrictEqual({ stereo_url: null, mono: {
       combined_url: null, customer_url: null, assistant_url: null,
     } });
-    await expect(page.getByText(/no recording found/i)).toBeVisible({ timeout: UI_READY });
+    await expect(page.getByText(/no recording for this call/i)).toBeVisible({ timeout: UI_READY });
     await expect(page.getByText(LOADER_COPY)).toBeHidden();
     await expect(page.getByText(/recording unavailable/i)).toHaveCount(0);
     await testInfo.attach('recording-state', { body: await page.screenshot(), contentType: 'image/png' });

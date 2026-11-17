@@ -2,6 +2,14 @@ import { describe, expect, it } from "vitest";
 import { normalizeApiKey } from "./useApiKeys";
 
 describe("normalizeApiKey", () => {
+  it("preserves a partial-revocation warning for the mutation caller", () => {
+    const warning = "Key revoked locally but the gateway could not be reached.";
+    expect(normalizeApiKey({ status: "revoked", warning })).toMatchObject({
+      status: "revoked",
+      warning,
+    });
+  });
+
   it("maps canonical snake_case API key fields to UI field names", () => {
     const normalized = normalizeApiKey({
       id: "key-id",

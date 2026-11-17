@@ -1,6 +1,11 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "src/utils/test-utils";
 import RuntimePreflight from "../RuntimePreflight";
+import { palette } from "src/theme/palette";
+
+// The component colors its rows with theme tokens (design system pass
+// b9c482fe76); the test renders with the light palette.
+const tokens = palette("light");
 
 const hostedReport = {
   ready_to_submit: false,
@@ -70,6 +75,70 @@ describe("RuntimePreflight", () => {
     expect(screen.getByText("GOOGLE_APPLICATION_CREDENTIALS_JSON")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Re-run" }));
     expect(onRun).toHaveBeenCalledTimes(1);
+  });
+
+  // Future AGI Cloud does not send the LiveKit probe to a
+  // customer URL. The backend marks those rows skipped (ok stays true so the run is
+  // not blocked); the panel must say "not verified on hosted", never "verified" in
+  // green and never "failed" in red.
+  it("shows a LiveKit probe Future AGI Cloud did not send as not verified on hosted", () => {
+    const notVerified =
+      "not verified on Future AGI Cloud: preflight does not contact customer LiveKit URLs; connection problems will show when the run connects.";
+    const aliases = ["LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET"];
+    const result = {
+      ...hostedReport,
+      ready_to_submit: true,
+      credentials: {
+        ...hostedReport.credentials,
+        requirements: hostedReport.credentials.requirements.map((item) => ({
+          ...item,
+          status: "configured",
+        })),
+        probe: [
+          {
+            provider: "livekit",
+            label: "LiveKit",
+            aliases,
+            ok: true,
+            skipped: true,
+            message: `LiveKit ${notVerified}`,
+          },
+          {
+            provider: "livekit_target",
+            label: "LiveKit agent",
+            aliases,
+            ok: true,
+            skipped: true,
+            message: `LiveKit agent 'returns-agent' ${notVerified}`,
+          },
+          {
+            provider: "openai",
+            label: "OpenAI",
+            aliases: ["OPENAI_API_KEY"],
+            ok: true,
+            message: "OpenAI accepted OPENAI_API_KEY",
+          },
+        ],
+      },
+    };
+    render(<RuntimePreflight status="done" result={result} onRun={vi.fn()} />);
+
+    // The run still proceeds.
+    expect(screen.getByText("Ready to build")).toBeInTheDocument();
+    const livekit = screen.getByText("LiveKit: not verified on hosted");
+    const agent = screen.getByText("LiveKit agent: not verified on hosted");
+    for (const row of [livekit, agent]) {
+      // Neutral, neither the success green nor the failure red.
+      expect(row).toHaveStyle({ color: tokens.text.secondary });
+    }
+    expect(screen.queryByText("LiveKit: verified")).toBeNull();
+    expect(screen.queryByText("LiveKit agent: verified")).toBeNull();
+    expect(screen.queryByText(/: failed$/)).toBeNull();
+    expect(screen.getByText(`LiveKit ${notVerified}`)).toBeInTheDocument();
+    // A probe that really ran keeps its verdict.
+    expect(screen.getByText("OpenAI: verified")).toHaveStyle({
+      color: tokens.status.success.fg,
+    });
   });
 
   it("explains the alternative credential sets in an ambiguous source", () => {

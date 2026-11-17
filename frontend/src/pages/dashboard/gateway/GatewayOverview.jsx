@@ -1,16 +1,7 @@
 import React from "react";
-import { Helmet } from "react-helmet-async";
-import GatewayOverviewSection from "src/sections/gateway/GatewayOverviewSection";
+import GatewayOverviewPage from "src/sections/gateway/overview/GatewayOverviewPage";
 
-const GatewayOverview = () => {
-  return (
-    <>
-      <Helmet>
-        <title>Gateway</title>
-      </Helmet>
-      <GatewayOverviewSection />
-    </>
-  );
-};
+// The page frame sets the browser-tab title.
+const GatewayOverview = () => <GatewayOverviewPage />;
 
 export default GatewayOverview;

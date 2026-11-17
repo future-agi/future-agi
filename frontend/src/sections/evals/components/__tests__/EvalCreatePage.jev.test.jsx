@@ -440,7 +440,7 @@ describe("EvalCreatePage with a Jev model", () => {
     expect(mocks.navigate).toHaveBeenCalledWith("/dashboard/evaluations");
   });
 
-  it("flags a Score whose levels repeat", async () => {
+  it("flags a Score whose levels repeat and says they must be different", async () => {
     renderPage();
     await screen.findByDisplayValue("Jev latest");
     await userEvent.click(screen.getByLabelText("Scoring"));
@@ -450,7 +450,13 @@ describe("EvalCreatePage with a Jev model", () => {
       );
       await userEvent.type(screen.getByLabelText(`Level ${index}`), "Same");
     }
-    expect(await screen.findByText(JEV_RUBRIC_ERROR)).toBeInTheDocument();
+    // W10-EVALS-U09: two levels is a valid count; the repeat is the problem.
+    expect(
+      await screen.findByText(
+        "Jev rubric levels must all be different. Rename or remove the repeated level.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(JEV_RUBRIC_ERROR)).toBeNull();
   });
 
   it("autosaves a reopened draft's choices in the authored order", async () => {

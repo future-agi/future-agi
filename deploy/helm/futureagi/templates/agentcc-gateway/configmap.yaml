@@ -8,7 +8,8 @@ metadata:
   labels:
     {{- include "futureagi.componentLabels" $ctx | nindent 4 }}
 data:
-  # ${VAR} references expand from the gateway's environment (secrets.llm).
+  # ${VAR} references expand from the gateway's environment (secrets.llm, or
+  # agentccGateway.providerCredentials).
   config.yaml: |
     {{- toYaml .Values.agentccGateway.config | nindent 4 }}
 {{- end }}

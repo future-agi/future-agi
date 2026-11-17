@@ -1,0 +1,8 @@
+extend = "../../pyproject.toml"
+force-exclude = true
+
+[lint]
+exclude = ["gateway_admin.py"]
+
+[format]
+exclude = ["gateway_admin.py"]

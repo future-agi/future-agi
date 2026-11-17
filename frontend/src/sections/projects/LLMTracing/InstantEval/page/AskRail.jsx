@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useId, useMemo, useState } from "react";
 import PropTypes from "prop-types";
 import {
   Box,
@@ -210,18 +210,15 @@ function RunCard({
   ]
     .filter(Boolean)
     .join(" · ");
+  const statusId = useId();
   const open = () => onOpen(runItem);
+  // The card opens the run on a click anywhere in it (the fixes below stop
+  // their clicks), but only its summary is the link: a failed run's status
+  // and fixes sit beside the link, not inside it, and the link names the
+  // status as its description.
   return (
     <Box
-      role="link"
-      tabIndex={0}
-      aria-current={selected ? "page" : undefined}
-      aria-label={`Open the run: ${question}`}
       onClick={open}
-      onKeyDown={(event) => {
-        if (event.key === "Enter" && event.target === event.currentTarget)
-          open();
-      }}
       sx={{
         p: 1.5,
         borderRadius: 1,
@@ -233,78 +230,109 @@ function RunCard({
         cursor: "pointer",
         transition: "border-color 120ms",
         "&:hover": selected ? undefined : { borderColor: "text.disabled" },
-        "&:focus-visible": {
-          outline: "2px solid",
-          outlineColor: "primary.main",
-          outlineOffset: 2,
-        },
       }}
     >
-      <Stack direction="row" spacing={0.75} alignItems="flex-start">
-        {mark && (
-          <Box
-            title={mark.title}
-            aria-label={mark.title}
-            role="img"
+      <Box
+        role="link"
+        tabIndex={0}
+        aria-current={selected ? "page" : undefined}
+        aria-label={`Open the run: ${question}`}
+        aria-describedby={failed ? statusId : undefined}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" && event.target === event.currentTarget)
+            open();
+        }}
+        sx={{
+          borderRadius: 0.5,
+          "&:focus-visible": {
+            outline: "2px solid",
+            outlineColor: "primary.main",
+            outlineOffset: 2,
+          },
+        }}
+      >
+        <Stack direction="row" spacing={0.75} alignItems="flex-start">
+          {mark && (
+            <Box
+              title={mark.title}
+              aria-label={mark.title}
+              role="img"
+              sx={{
+                width: 7,
+                height: 7,
+                mt: 0.75,
+                borderRadius: "50%",
+                flexShrink: 0,
+                bgcolor: mark.color,
+                ...(mark.pulse && {
+                  animation: `${pulse} 1.6s ease-in-out infinite`,
+                  "@media (prefers-reduced-motion: reduce)": {
+                    animation: "none",
+                  },
+                }),
+              }}
+            />
+          )}
+          <Typography
+            variant="subtitle2"
+            title={runItem.items.map((entry) => entry.question).join("\n")}
             sx={{
-              width: 7,
-              height: 7,
-              mt: 0.75,
-              borderRadius: "50%",
-              flexShrink: 0,
-              bgcolor: mark.color,
-              ...(mark.pulse && {
-                animation: `${pulse} 1.6s ease-in-out infinite`,
-                "@media (prefers-reduced-motion: reduce)": {
-                  animation: "none",
-                },
-              }),
+              display: "-webkit-box",
+              WebkitLineClamp: 2,
+              WebkitBoxOrient: "vertical",
+              overflow: "hidden",
+              lineHeight: 1.4,
+              minWidth: 0,
             }}
-          />
+          >
+            {question}
+          </Typography>
+        </Stack>
+        {runItem.items.length > 1 && (
+          <Typography variant="caption" color="text.secondary" component="p">
+            +{runItem.items.length - 1} more question
+            {runItem.items.length > 2 ? "s" : ""}
+          </Typography>
         )}
         <Typography
-          variant="subtitle2"
-          title={runItem.items.map((entry) => entry.question).join("\n")}
-          sx={{
-            display: "-webkit-box",
-            WebkitLineClamp: 2,
-            WebkitBoxOrient: "vertical",
-            overflow: "hidden",
-            lineHeight: 1.4,
-            minWidth: 0,
-          }}
+          variant="caption"
+          color="text.secondary"
+          noWrap
+          component="p"
+          title={meta}
+          sx={{ mt: 0.25, fontVariantNumeric: "tabular-nums" }}
         >
-          {question}
+          {meta}
         </Typography>
-      </Stack>
-      {runItem.items.length > 1 && (
-        <Typography variant="caption" color="text.secondary" component="p">
-          +{runItem.items.length - 1} more question
-          {runItem.items.length > 2 ? "s" : ""}
-        </Typography>
-      )}
-      <Typography
-        variant="caption"
-        color="text.secondary"
-        noWrap
-        component="p"
-        title={meta}
-        sx={{ mt: 0.25, fontVariantNumeric: "tabular-nums" }}
-      >
-        {meta}
-      </Typography>
+        {item && runItem.counts?.[item.configId] && (
+          <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 1 }}>
+            <Box sx={{ flex: 1, minWidth: 0 }}>
+              <SplitBar item={item} counts={runItem.counts[item.configId]} />
+            </Box>
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              sx={{ flexShrink: 0, fontVariantNumeric: "tabular-nums" }}
+            >
+              {topAnswer(item, runItem.counts[item.configId])}
+            </Typography>
+          </Stack>
+        )}
+      </Box>
       {failed && (
         <Stack spacing={0.5} sx={{ mt: 1 }}>
-          <Typography variant="caption" color="error.main" fontWeight={600}>
-            {failedBeforeAnswering
-              ? "Failed before answering"
-              : `Failed · ${answersSaved.toLocaleString()} ${answersSaved === 1 ? "answer" : "answers"} saved`}
-          </Typography>
-          <Typography variant="caption" color="text.secondary">
-            {failedBeforeAnswering
-              ? "No answers were saved. Check the evaluator or recreate the question."
-              : "The run stopped before finishing. Its saved answers are still available."}
-          </Typography>
+          <Stack id={statusId} spacing={0.5}>
+            <Typography variant="caption" color="error.main" fontWeight={600}>
+              {failedBeforeAnswering
+                ? "Failed before answering"
+                : `Failed · ${answersSaved.toLocaleString()} ${answersSaved === 1 ? "answer" : "answers"} saved`}
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              {failedBeforeAnswering
+                ? "No answers were saved. Check the evaluator or recreate the question."
+                : "The run stopped before finishing. Its saved answers are still available."}
+            </Typography>
+          </Stack>
           {editable.map((entry, index) => (
             <Button
               key={entry.configId}
@@ -329,20 +357,6 @@ function RunCard({
               Recreate question
             </Button>
           )}
-        </Stack>
-      )}
-      {item && runItem.counts?.[item.configId] && (
-        <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 1 }}>
-          <Box sx={{ flex: 1, minWidth: 0 }}>
-            <SplitBar item={item} counts={runItem.counts[item.configId]} />
-          </Box>
-          <Typography
-            variant="caption"
-            color="text.secondary"
-            sx={{ flexShrink: 0, fontVariantNumeric: "tabular-nums" }}
-          >
-            {topAnswer(item, runItem.counts[item.configId])}
-          </Typography>
         </Stack>
       )}
     </Box>

@@ -5,8 +5,91 @@ from django.db import connection, transaction
 
 from model_hub.models.choices import DatasetSourceChoices, SourceChoices
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
+from model_hub.services.row_activity_writes import row_activity_write
+from tfc.routers import force_primary
 
 logger = structlog.get_logger(__name__)
+
+# Why an earlier dataset version can't be copied into a new experiment. The
+# copy must equal the version exactly (persist_snapshot_identity checks it).
+VERSION_SIZE_REFUSAL = (
+    "This dataset version can't be run: it must hold 1 to 10,000 rows."
+)
+VERSION_NOT_FROM_TABLE_REFUSAL = (
+    "This dataset version can't be run: its rows weren't saved from this "
+    "dataset's table."
+)
+VERSION_ROWS_GONE_REFUSAL = (
+    "This dataset version can't be run: some of its rows were deleted from "
+    "the dataset after it was saved."
+)
+VERSION_COLUMNS_GONE_REFUSAL = (
+    "This dataset version can't be run: some of its columns were deleted from "
+    "the dataset after it was saved."
+)
+VERSION_SCOPED_REFUSAL = (
+    "An earlier dataset version runs on all of its rows, not on a selection."
+)
+
+
+def _version_values(item):
+    """The {source column id: cell value} a table-saved item holds, or None."""
+    data = item.input
+    if not isinstance(data, dict) or set(data) != {"values"}:
+        return None
+    values = data["values"]
+    if not isinstance(values, dict) or not all(
+        isinstance(value, str) or value is None for value in values.values()
+    ):
+        return None
+    return values
+
+
+def _version_source(source_dataset, experiment, version):
+    """Lock the live rows an earlier version was saved from.
+
+    Returns (version, items, rows by id). Every item must come from a live row
+    of this dataset with plain cell values, so the copy can equal the version.
+    """
+    from model_hub.models.dataset_versions import DatasetVersion, DatasetVersionItem
+    from model_hub.services.experiment_run_writes import RunWriteError
+
+    if getattr(experiment, "run_scope", None):
+        raise RunWriteError(VERSION_SCOPED_REFUSAL)
+    live = DatasetVersion.no_workspace_objects.filter(
+        pk=version.pk,
+        dataset=source_dataset,
+        organization_id=source_dataset.organization_id,
+        workspace_id=source_dataset.workspace_id,
+        deleted=False,
+    ).first()
+    if live is None:
+        raise RunWriteError("requested dataset version is unavailable")
+    items = list(
+        DatasetVersionItem.no_workspace_objects.filter(
+            dataset_version=live, deleted=False
+        )
+    )
+    if not items or len(items) > 10000:
+        raise RunWriteError(VERSION_SIZE_REFUSAL)
+    row_ids = [item.legacy_row_id for item in items]
+    if (
+        None in row_ids
+        or len(set(row_ids)) != len(row_ids)
+        or any(item.expected is not None for item in items)
+        or any(_version_values(item) is None for item in items)
+    ):
+        raise RunWriteError(VERSION_NOT_FROM_TABLE_REFUSAL)
+    rows = {
+        row.id: row
+        for row in Row.no_workspace_objects.select_for_update().filter(
+            id__in=row_ids, dataset=source_dataset, deleted=False
+        )
+    }
+    if len(rows) != len(row_ids):
+        raise RunWriteError(VERSION_ROWS_GONE_REFUSAL)
+    items.sort(key=lambda item: (rows[item.legacy_row_id].order, item.legacy_row_id))
+    return live, items, rows
 
 
 def _copy_cells_raw_sql(source_dataset, snapshot_dataset, column_mapping, row_mapping):
@@ -53,7 +136,7 @@ def _copy_cells_raw_sql(source_dataset, snapshot_dataset, column_mapping, row_ma
         WHERE c.dataset_id = %s AND c.deleted = false
     """
 
-    with connection.cursor() as cursor:
+    with row_activity_write(connection.alias), connection.cursor() as cursor:
         cursor.execute(
             sql,
             [
@@ -68,27 +151,72 @@ def _copy_cells_raw_sql(source_dataset, snapshot_dataset, column_mapping, row_ma
         return cursor.rowcount
 
 
+@force_primary()
 @transaction.atomic
 def create_dataset_snapshot(
-    source_dataset, experiment, batch_size=5000, use_raw_sql_cells=False
+    source_dataset, experiment, batch_size=5000, use_raw_sql_cells=False,
+    *, dataset_version=None, rows_from_version=None,
 ):
+    """Create a snapshot and its immutable source/example bindings atomically.
+
+    Returns the unchanged (snapshot_dataset, column_mapping, row_mapping)
+    tuple. An optional pinned DatasetVersion must match the copied inputs and
+    exact source IDs; it is never guessed from row order or current outputs.
+    `rows_from_version` instead copies an earlier version's own rows (its
+    items' cell values, onto the live rows they were saved from) and pins the
+    run to that version; a version that can't be copied exactly is refused.
+    Existing snapshots are deliberately not backfilled or replaced.
     """
-    Create a full snapshot of a dataset for experiment isolation.
+    from model_hub.models.dataset_versions import DatasetVersionItem
+    from model_hub.models.experiments import ExperimentsTable
+    from model_hub.services.experiment_run_scope import snapshot_source_rows
+    from model_hub.services.experiment_run_writes import RunWriteError
+    from model_hub.services.native_run_binding import live_dataset, persist_snapshot_identity
 
-    Copies all columns, rows, and cells from source_dataset into a new
-    snapshot dataset. The snapshot becomes the single source of truth
-    for all experiment data (original data + result columns + eval columns).
+    # Dataset-before-experiment lock order matches canonical run creation.
+    source_dataset = live_dataset(source_dataset, lock=True)
+    locked = ExperimentsTable.no_workspace_objects.select_for_update().filter(
+        pk=experiment.pk, dataset=source_dataset, deleted=False,
+    ).first()
+    if locked is None:
+        raise RunWriteError("experiment is unavailable in the authorized dataset")
+    if locked.snapshot_dataset_id is not None:
+        raise RunWriteError("experiment already has a snapshot; historical backfill is not allowed")
+    experiment.run_scope = locked.run_scope
+    experiment.run_metadata = locked.run_metadata
+    version_items = None
+    if rows_from_version is not None:
+        if dataset_version is not None:
+            raise RunWriteError("pass a version to reuse or a version to copy, not both")
+        dataset_version, version_items, version_rows = _version_source(
+            source_dataset, experiment, rows_from_version
+        )
+        source_rows = [version_rows[item.legacy_row_id] for item in version_items]
+    else:
+        source_rows = list(snapshot_source_rows(source_dataset, experiment))
+        if not source_rows and DatasetVersionItem.no_workspace_objects.filter(
+            dataset_version__dataset=source_dataset,
+            dataset_version__organization_id=source_dataset.organization_id,
+            dataset_version__workspace_id=source_dataset.workspace_id,
+            dataset_version__deleted=False,
+            deleted=False,
+        ).exists():
+            raise RunWriteError(
+                "native snapshot requires 1 to 10000 rows: this dataset's rows "
+                "exist only in a dataset version, not in its table. Upload them "
+                "to the table (re-upload with an SDK that writes table rows), "
+                "then create the experiment."
+            )
+        if not source_rows or len(source_rows) > 10000:
+            raise RunWriteError("native snapshot requires 1 to 10000 rows")
+        # Lock actual selected rows even for the full-dataset legacy path.
+        row_ids = [row.id for row in source_rows]
+        source_rows = list(Row.no_workspace_objects.select_for_update().filter(
+            id__in=row_ids, dataset=source_dataset, deleted=False,
+        ).order_by("order", "id"))
+        if len(source_rows) != len(row_ids):
+            raise RunWriteError("selected source rows changed before snapshot capture")
 
-    Args:
-        source_dataset: The original Dataset to snapshot.
-        experiment: The ExperimentsTable instance to attach the snapshot to.
-        batch_size: Chunk size for bulk operations.
-
-    Returns:
-        tuple: (snapshot_dataset, column_mapping, row_mapping)
-            - column_mapping: {old_column_id: new_column} dict
-            - row_mapping: {old_row_id: new_row} dict
-    """
     logger.info(
         "Creating dataset snapshot",
         source_dataset_id=str(source_dataset.id),
@@ -105,18 +233,18 @@ def create_dataset_snapshot(
         model_type=source_dataset.model_type,
         column_config=source_dataset.column_config or {},
         dataset_config=source_dataset.dataset_config or {},
-        column_order=[],  # Will be updated after columns are copied
+        column_order=[],
     )
+    # Keep the source's exact tenant (including a legacy NULL workspace)
+    # against ambient save signals; native identity requires them to match.
+    snapshot_dataset.disable_auto_workspace_assignment = True
     snapshot_dataset.save()
 
-    # 2. Copy Columns — preserve source/data_type, track provenance via source_id
-    # Exclude experiment_evaluation columns — they belong to specific experiments
-    # and should not propagate to new snapshots.
-    source_columns = Column.objects.filter(
+    # 2. Copy Columns; preserve provenance without propagating experiment evals.
+    source_columns = Column.objects.select_for_update().filter(
         dataset=source_dataset, deleted=False
     ).exclude(source=SourceChoices.EXPERIMENT_EVALUATION.value)
-    column_mapping = {}  # old_col_id -> new_column
-
+    column_mapping = {}
     new_columns = []
     for col in source_columns:
         new_col = Column(
@@ -125,7 +253,7 @@ def create_dataset_snapshot(
             data_type=col.data_type,
             dataset=snapshot_dataset,
             source=col.source,
-            source_id=str(col.id),  # Track provenance back to original column
+            source_id=str(col.id),
             metadata=col.metadata or {},
             status=col.status,
         )
@@ -135,13 +263,9 @@ def create_dataset_snapshot(
     if new_columns:
         Column.objects.bulk_create(new_columns, batch_size=batch_size)
 
-    logger.info(
-        "Copied columns",
-        count=len(new_columns),
-        experiment_id=str(experiment.id),
-    )
+    logger.info("Copied columns", count=len(new_columns), experiment_id=str(experiment.id))
 
-    # 3. Update column_order on snapshot dataset using the mapping
+    # 3. Preserve column ordering.
     if source_dataset.column_order:
         new_column_order = []
         for old_col_id_str in source_dataset.column_order:
@@ -152,100 +276,98 @@ def create_dataset_snapshot(
             except (ValueError, KeyError):
                 continue
         snapshot_dataset.column_order = new_column_order
-        Dataset.objects.filter(id=snapshot_dataset.id).update(
-            column_order=new_column_order
-        )
+        Dataset.objects.filter(id=snapshot_dataset.id).update(column_order=new_column_order)
 
-    # 4. Copy Rows — preserve order and metadata
-    source_rows = Row.objects.filter(dataset=source_dataset, deleted=False).order_by(
-        "order"
-    )
-    row_mapping = {}  # old_row_id -> new_row
+    # An earlier version's values must land in columns the copy has.
+    version_metadata = {}
+    if version_items is not None:
+        copied_columns = {str(old_id): new_col for old_id, new_col in column_mapping.items()}
+        if any(
+            key not in copied_columns
+            for item in version_items
+            for key in _version_values(item)
+        ):
+            raise RunWriteError(VERSION_COLUMNS_GONE_REFUSAL)
+        version_metadata = {
+            item.legacy_row_id: item.metadata or {} for item in version_items
+        }
 
+    # 4. Copy Rows and retain the exact mapping, not an ordinal reconstruction.
+    row_mapping = {}
     new_rows = []
-    for row in source_rows.iterator(chunk_size=batch_size):
+    for row in source_rows:
         new_row = Row(
-            id=uuid.uuid4(),
-            dataset=snapshot_dataset,
-            order=row.order,
-            metadata=row.metadata or {},
+            id=uuid.uuid4(), dataset=snapshot_dataset, order=row.order,
+            metadata=(
+                version_metadata[row.id] if version_items is not None else row.metadata
+            ) or {},
         )
         row_mapping[row.id] = new_row
         new_rows.append(new_row)
-
     if new_rows:
         Row.objects.bulk_create(new_rows, batch_size=batch_size)
 
-    logger.info(
-        "Copied rows",
-        count=len(new_rows),
-        experiment_id=str(experiment.id),
-    )
+    logger.info("Copied rows", count=len(new_rows), experiment_id=str(experiment.id))
 
-    # 5. Copy Cells — either via raw SQL (fast path, opt-in) or Python loop
-    if use_raw_sql_cells:
+    # 5. Copy Cells using the existing raw-SQL or Python representation, or
+    # write an earlier version's own values.
+    if version_items is not None:
+        cell_batch = [
+            Cell(
+                id=uuid.uuid4(), dataset=snapshot_dataset,
+                column=copied_columns[key], row=row_mapping[item.legacy_row_id],
+                value=value,
+            )
+            for item in version_items
+            for key, value in _version_values(item).items()
+        ]
+        if cell_batch:
+            Cell.objects.bulk_create(cell_batch, batch_size=batch_size)
+        total_cells = len(cell_batch)
+    elif use_raw_sql_cells:
         total_cells = _copy_cells_raw_sql(
             source_dataset, snapshot_dataset, column_mapping, row_mapping
         )
     else:
         total_cells = 0
         cell_batch = []
-
         source_cells = Cell.objects.filter(
-            dataset=source_dataset, deleted=False
+            dataset=source_dataset, row_id__in=row_mapping, deleted=False
         ).select_related("column", "row")
-
         for cell in source_cells.iterator(chunk_size=batch_size):
             new_col = column_mapping.get(cell.column_id)
             new_row = row_mapping.get(cell.row_id)
-
             if not new_col or not new_row:
                 continue
-
-            cell_batch.append(
-                Cell(
-                    id=uuid.uuid4(),
-                    dataset=snapshot_dataset,
-                    column=new_col,
-                    row=new_row,
-                    value=cell.value,
-                    value_infos=cell.value_infos,
-                    feedback_info=cell.feedback_info,
-                    status=cell.status,
-                    column_metadata=cell.column_metadata,
-                    prompt_tokens=cell.prompt_tokens,
-                    completion_tokens=cell.completion_tokens,
-                    response_time=cell.response_time,
-                )
-            )
-
+            cell_batch.append(Cell(
+                id=uuid.uuid4(), dataset=snapshot_dataset, column=new_col, row=new_row,
+                value=cell.value, value_infos=cell.value_infos,
+                feedback_info=cell.feedback_info, status=cell.status,
+                column_metadata=cell.column_metadata, prompt_tokens=cell.prompt_tokens,
+                completion_tokens=cell.completion_tokens, response_time=cell.response_time,
+            ))
             if len(cell_batch) >= batch_size:
                 Cell.objects.bulk_create(cell_batch, batch_size=batch_size)
                 total_cells += len(cell_batch)
                 cell_batch = []
-
-        # Flush remaining cells
         if cell_batch:
             Cell.objects.bulk_create(cell_batch, batch_size=batch_size)
             total_cells += len(cell_batch)
 
-    logger.info(
-        "Copied cells",
-        count=total_cells,
-        experiment_id=str(experiment.id),
-    )
+    logger.info("Copied cells", count=total_cells, experiment_id=str(experiment.id))
 
-    # 6. Link snapshot to experiment
+    # 6. Link and capture from the exact copied cells, in this transaction.
     experiment.snapshot_dataset = snapshot_dataset
     experiment.save(update_fields=["snapshot_dataset"])
+    persist_snapshot_identity(
+        dataset=source_dataset, experiment=experiment,
+        snapshot_dataset=snapshot_dataset, column_mapping=column_mapping,
+        row_mapping=row_mapping, dataset_version=dataset_version,
+    )
 
     logger.info(
         "Dataset snapshot complete",
-        snapshot_dataset_id=str(snapshot_dataset.id),
-        experiment_id=str(experiment.id),
-        columns=len(column_mapping),
-        rows=len(row_mapping),
-        cells=total_cells,
+        snapshot_dataset_id=str(snapshot_dataset.id), experiment_id=str(experiment.id),
+        columns=len(column_mapping), rows=len(row_mapping), cells=total_cells,
     )
-
     return snapshot_dataset, column_mapping, row_mapping

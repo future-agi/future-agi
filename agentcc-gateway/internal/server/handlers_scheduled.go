@@ -14,28 +14,43 @@ import (
 
 // scheduledSubmitRequest is the API request body for submitting a scheduled job.
 type scheduledSubmitRequest struct {
-	ScheduledAt string                          `json:"scheduled_at"` // RFC3339
-	Delay       string                          `json:"delay"`        // Go duration string
-	Request     json.RawMessage                 `json:"request"`
-	WebhookURL  string                          `json:"webhook_url"`
-	Metadata    map[string]string               `json:"metadata"`
+	ScheduledAt string            `json:"scheduled_at"` // RFC3339
+	Delay       string            `json:"delay"`        // Go duration string
+	Request     json.RawMessage   `json:"request"`
+	WebhookURL  string            `json:"webhook_url"`
+	Metadata    map[string]string `json:"metadata"`
+}
+
+// errScheduledNotConfigured answers every /v1/scheduled route while the
+// store is unset, which is always in this build: config validation refuses
+// routing.scheduled.enabled, because a scheduled job runs with no org, key,
+// credit reserve or attribution (plan V1).
+func errScheduledNotConfigured() *models.APIError {
+	return errEndpointNotConfigured("Scheduled completions are not available in this build: scheduled jobs are not org-scoped, billed or attributed")
 }
 
 // SubmitScheduled handles POST /v1/scheduled.
 func (h *Handlers) SubmitScheduled(w http.ResponseWriter, r *http.Request) {
 	if h.scheduledStore == nil {
-		models.WriteError(w, &models.APIError{
-			Status:  http.StatusNotImplemented,
-			Type:    models.ErrTypeServer,
-			Code:    "not_enabled",
-			Message: "Scheduled completions are not enabled",
-		})
+		models.WriteError(w, errScheduledNotConfigured())
+		return
+	}
+
+	// Like async jobs, a scheduled job resolves its provider from the global
+	// registry when it runs; refuse it to keys limited to their org's providers.
+	keyRC := models.AcquireRequestContext()
+	setAuthMetadataFromRequest(keyRC, r)
+	h.peekKeyOrgID(keyRC)
+	restricted := h.orgProvidersOnly(r.Context(), keyRC)
+	keyRC.Release()
+	if restricted {
+		models.WriteError(w, errDeferredRunUnavailable("scheduled completions"))
 		return
 	}
 
 	var req scheduledSubmitRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		models.WriteError(w, models.ErrBadRequest("invalid_json", "Invalid JSON: "+err.Error()))
+		models.WriteError(w, models.ErrBadRequest("invalid_json", "Invalid JSON: "+models.DescribeJSONError(err)))
 		return
 	}
 
@@ -90,9 +105,12 @@ func (h *Handlers) SubmitScheduled(w http.ResponseWriter, r *http.Request) {
 	}
 	json.Unmarshal(req.Request, &partial)
 
-	requestID := models.GetRequestID(r.Context())
-	orgID := "" // extracted from auth middleware if available
+	orgID, ok := h.callerOrgID(w, r)
+	if !ok {
+		return
+	}
 
+	requestID := models.GetRequestID(r.Context())
 	job := &scheduled.ScheduledJob{
 		ID:          "sched-" + requestID,
 		OrgID:       orgID,
@@ -129,7 +147,7 @@ func (h *Handlers) SubmitScheduled(w http.ResponseWriter, r *http.Request) {
 // GetScheduledJob handles GET /v1/scheduled/{job_id}.
 func (h *Handlers) GetScheduledJob(w http.ResponseWriter, r *http.Request) {
 	if h.scheduledStore == nil {
-		models.WriteError(w, models.ErrNotFound("not_enabled", "Scheduled completions are not enabled"))
+		models.WriteError(w, errScheduledNotConfigured())
 		return
 	}
 
@@ -139,7 +157,12 @@ func (h *Handlers) GetScheduledJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	job, err := h.scheduledStore.Get(jobID)
+	orgID, ok := h.callerOrgID(w, r)
+	if !ok {
+		return
+	}
+	// Another org's job answers 404, the same as a missing one.
+	job, err := h.scheduledStore.GetForOrg(jobID, orgID)
 	if err != nil {
 		models.WriteError(w, models.ErrNotFound("job_not_found", "Scheduled job not found"))
 		return
@@ -152,7 +175,7 @@ func (h *Handlers) GetScheduledJob(w http.ResponseWriter, r *http.Request) {
 // ListScheduledJobs handles GET /v1/scheduled.
 func (h *Handlers) ListScheduledJobs(w http.ResponseWriter, r *http.Request) {
 	if h.scheduledStore == nil {
-		models.WriteError(w, models.ErrNotFound("not_enabled", "Scheduled completions are not enabled"))
+		models.WriteError(w, errScheduledNotConfigured())
 		return
 	}
 
@@ -167,7 +190,10 @@ func (h *Handlers) ListScheduledJobs(w http.ResponseWriter, r *http.Request) {
 		limit = 100
 	}
 
-	orgID := "" // from auth
+	orgID, ok := h.callerOrgID(w, r)
+	if !ok {
+		return
+	}
 	jobs, err := h.scheduledStore.ListByOrg(orgID, status, limit)
 	if err != nil {
 		models.WriteError(w, models.ErrInternal("Failed to list jobs: "+err.Error()))
@@ -184,7 +210,7 @@ func (h *Handlers) ListScheduledJobs(w http.ResponseWriter, r *http.Request) {
 // CancelScheduledJob handles DELETE /v1/scheduled/{job_id}.
 func (h *Handlers) CancelScheduledJob(w http.ResponseWriter, r *http.Request) {
 	if h.scheduledStore == nil {
-		models.WriteError(w, models.ErrNotFound("not_enabled", "Scheduled completions are not enabled"))
+		models.WriteError(w, errScheduledNotConfigured())
 		return
 	}
 
@@ -194,7 +220,12 @@ func (h *Handlers) CancelScheduledJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	job, err := h.scheduledStore.Get(jobID)
+	orgID, ok := h.callerOrgID(w, r)
+	if !ok {
+		return
+	}
+	// Another org's job answers 404, the same as a missing one.
+	job, err := h.scheduledStore.GetForOrg(jobID, orgID)
 	if err != nil {
 		models.WriteError(w, models.ErrNotFound("job_not_found", "Scheduled job not found"))
 		return

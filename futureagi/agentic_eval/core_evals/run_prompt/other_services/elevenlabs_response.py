@@ -445,6 +445,7 @@ def elevenlabs_transcription_response(run_prompt_instance, start_time, api_key):
             "audio_seconds": duration_seconds,
         },
         "response_time": response_time_ms,
+        "response_time_unit": "ms",
     }
 
     value_info = {

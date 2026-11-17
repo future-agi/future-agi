@@ -43,6 +43,10 @@ import {
 } from "src/api/harness/harness";
 import { paths } from "src/routes/paths";
 import { useCreditExhaustion } from "src/hooks/use-credit-exhaustion";
+import {
+  isHiddenFromRestrictedOrgs,
+  useRestrictSimulateToEnvironments,
+} from "src/hooks/useRestrictSimulateToEnvironments";
 
 import {
   adjustmentStatus,
@@ -206,6 +210,7 @@ export default function HarnessDetail() {
   const { jobId } = useParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const restrictSimulateToEnvironments = useRestrictSimulateToEnvironments();
   const {
     exhaustionError,
     handleError: handleCreditError,
@@ -682,6 +687,24 @@ export default function HarnessDetail() {
     status?.stage === "completed" &&
     Boolean(simulation?.run_test_id) &&
     Boolean(simulation?.test_execution_id);
+  // Run Simulation's pages are not registered for an organization that sees
+  // only Environments; there the same run opens on its environment's run page
+  // (a harness job's id is its environment's id).
+  const viewSimulation = () => {
+    const path = paths.dashboard.simulate.testCallDetails(
+      simulation.run_test_id,
+      simulation.test_execution_id,
+    );
+    navigate(
+      restrictSimulateToEnvironments && isHiddenFromRestrictedOrgs(path)
+        ? paths.dashboard.simulate.environments.execution(
+            jobId,
+            simulation.run_test_id,
+            simulation.test_execution_id,
+          )
+        : path,
+    );
+  };
 
   if (error) {
     return (
@@ -791,14 +814,7 @@ export default function HarnessDetail() {
                 <Button
                   variant="contained"
                   size="small"
-                  onClick={() =>
-                    navigate(
-                      paths.dashboard.simulate.testCallDetails(
-                        simulation.run_test_id,
-                        simulation.test_execution_id,
-                      ),
-                    )
-                  }
+                  onClick={viewSimulation}
                   endIcon={
                     <Iconify icon="solar:arrow-right-linear" width={18} />
                   }

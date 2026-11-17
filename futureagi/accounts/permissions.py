@@ -13,3 +13,11 @@ class RequiresIndependentAuth(BasePermission):
         if getattr(request, "auth_scope", None) is not None:
             raise PermissionDenied(self.message, code="saml_scoped_session")
         return True
+
+
+class RequiresPersonalKeySession(BasePermission):
+    def has_permission(self, request, view):
+        from accounts.api_key_policy import require_personal_key_session
+
+        require_personal_key_session(request)
+        return True

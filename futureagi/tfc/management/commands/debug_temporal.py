@@ -26,6 +26,26 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
+        from django.core.management.base import CommandError
+
+        from tfc.capabilities.background_analysis import (
+            BACKGROUND_ANALYSIS_UNAVAILABLE_MESSAGE,
+            background_analysis_enabled,
+        )
+
+        # Reject fresh analysis admission before connecting or starting a workflow.
+        # Keep this outside the diagnostic exception handlers so CLI exits non-zero.
+        if (
+            options.get("test_activity")
+            in {
+                "check_and_process_trace_errors",
+                "run_deep_analysis_on_demand",
+                "analyze_traces_on_demand",
+            }
+            and not background_analysis_enabled()
+        ):
+            raise CommandError(BACKGROUND_ANALYSIS_UNAVAILABLE_MESSAGE)
+
         self.stdout.write("=" * 60)
         self.stdout.write("Temporal Debug Information")
         self.stdout.write("=" * 60)

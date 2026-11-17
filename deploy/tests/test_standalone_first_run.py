@@ -1,13 +1,15 @@
 """First-run experience of the standalone app container (deploy/standalone):
 the boot summary, the boot phase the starting page shows, the JSON 503 the
 API port answers while the bootstrap runs, the waiter that switches the UI to
-the app, and the nginx wiring that serves the starting page until then.
+the app, the nginx wiring that serves the starting page until then, and the
+integration key bin/start keeps for an install whose .env sets none.
 
 bootstrap.py is loaded from its file; nothing here imports Django or needs a
 running stack."""
 
 from __future__ import annotations
 
+import base64
 import contextlib
 import importlib.util
 import io
@@ -15,6 +17,7 @@ import json
 import os
 import re
 import socket
+import subprocess
 import sys
 import tempfile
 import threading
@@ -29,6 +32,8 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[2]
 BACKEND = ROOT / "futureagi"
 STANDALONE = ROOT / "deploy" / "standalone"
+# The host checks bin/install runs before it installs.
+SANDBOX_HOST_LIB = ROOT / "bin" / "lib" / "sandbox-host.sh"
 
 _spec = importlib.util.spec_from_file_location(
     "standalone_bootstrap", STANDALONE / "bin" / "bootstrap.py"
@@ -63,12 +68,15 @@ def free_port() -> int:
 
 class RunDir(unittest.TestCase):
     """Points the module's /run/futureagi paths at a temporary directory, and
-    its backend at the source tree."""
+    its backend at the source tree. The /proc files the summary reads about
+    the host are missing files here, so the test host's own settings never
+    show."""
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
         run = Path(self._tmp.name) / "futureagi"
+        absent = Path(self._tmp.name) / "absent"
         for patcher in (
             mock.patch.object(bootstrap, "RUN_DIR", run),
             mock.patch.object(bootstrap, "STATUS_FILE", run / "status.json"),
@@ -77,6 +85,10 @@ class RunDir(unittest.TestCase):
             mock.patch.object(
                 bootstrap, "VERTEX_KEY", Path(self._tmp.name) / "vertex.json"
             ),
+            mock.patch.object(
+                bootstrap, "APPARMOR_USERNS", absent / "apparmor", create=True
+            ),
+            mock.patch.object(bootstrap, "UID_MAP", absent / "uid_map", create=True),
             mock.patch.object(bootstrap, "PROJECT_ROOT", BACKEND),
             mock.patch.object(sys, "path", list(sys.path)),
             mock.patch.dict(sys.modules, {"structlog": fake_structlog()}),
@@ -187,11 +199,31 @@ class BootSummaryTest(RunDir):
         )
 
     def test_telemetry(self):
+        # Admin emails go out only with FUTURE_AGI_TELEMETRY_SHARE_ADMIN_EMAILS.
         self.assertEqual(
             self.row("Telemetry"),
-            "on: owner, admin and staff emails once, then usage counts every 6 h, "
-            "never content, to api.futureagi.com. FUTURE_AGI_TELEMETRY_DISABLED=true "
-            "turns it off",
+            "on: for install counts and release-test planning; registration once the first owner/admin account exists "
+            "(schema_version, instance_id, version, deployment_type, timestamp, "
+            "telemetry_disabled=false; no emails unless "
+            "FUTURE_AGI_TELEMETRY_SHARE_ADMIN_EMAILS=true), then usage counts every "
+            "6 h, never content, to api.futureagi.com. "
+            "FUTURE_AGI_TELEMETRY_DISABLED=true turns it off",
+        )
+        for value in ("false", "garbage"):
+            self.assertEqual(
+                self.row("Telemetry", FUTURE_AGI_TELEMETRY_SHARE_ADMIN_EMAILS=value),
+                self.row("Telemetry"),
+                value,
+            )
+        self.assertEqual(
+            self.row("Telemetry", FUTURE_AGI_TELEMETRY_SHARE_ADMIN_EMAILS="true"),
+            "on: for install counts and release-test planning; registration once the first owner/admin account exists "
+            "(schema_version, instance_id, version, deployment_type, timestamp, "
+            "telemetry_disabled=false, plus the emails and domains of owner, "
+            "admin and staff/superuser accounts; "
+            "FUTURE_AGI_TELEMETRY_SHARE_ADMIN_EMAILS=true), then usage counts every "
+            "6 h, never content, to api.futureagi.com. "
+            "FUTURE_AGI_TELEMETRY_DISABLED=true turns it off",
         )
         # The sender's own rules: an interval it does not accept falls back to 6.
         for hours, shown in (("12", "12 h"), ("5", "6 h"), ("often", "6 h")):
@@ -206,11 +238,10 @@ class BootSummaryTest(RunDir):
                 "Telemetry", FUTURE_AGI_TELEMETRY_URL="https://t.example.com:8443/in/"
             ),
         )
-        # What the opt-out still sends (wire_reference.toml [opt_out], the telemetry page).
+        # Opt-out makes no deployment-telemetry requests, including registration.
         self.assertEqual(
             self.row("Telemetry", FUTURE_AGI_TELEMETRY_DISABLED="true"),
-            "off: one registration ping (instance id, version, deployment type, "
-            "timestamp) only",
+            "off: sends nothing to Future AGI",
         )
 
     def test_password_reset(self):
@@ -252,11 +283,119 @@ class BootSummaryTest(RunDir):
         )
         self.assertNotIn("pat-secret", text)
 
-    def test_code_evals_sandbox_and_edition(self):
-        self.assertIn("built-in sandbox", self.summary())
-        self.assertIn("nsjail", self.summary(COMPOSE_PROFILES="ml,sandbox"))
+    def test_edition(self):
         self.assertIn("Open source", self.summary())
         self.assertIn("Enterprise", self.summary(EE_LICENSE_KEY="x"))
+
+    def host(self, apparmor=None, uid_map=None) -> None:
+        """Gives the summary the two /proc files it reads about the host,
+        with this content; None leaves that file missing."""
+        directory = Path(tempfile.mkdtemp(dir=self._tmp.name))
+        for attr, content in (("APPARMOR_USERNS", apparmor), ("UID_MAP", uid_map)):
+            path = directory / attr.lower()
+            if isinstance(content, str):
+                content = content.encode()
+            if content is not None:
+                path.write_bytes(content)
+            patcher = mock.patch.object(bootstrap, attr, path, create=True)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def bin_install_conditions(self) -> set[str]:
+        """The host conditions bin/install prints, word for word."""
+        return set(re.findall(r'echo "([^"]+)"', SANDBOX_HOST_LIB.read_text()))
+
+    def test_code_evals_are_not_tested_at_start_up(self):
+        """docker-compose.yml runs the `code-executor` service by default (no
+        profile); it is not run here: the setup screen runs a test evaluation."""
+        self.host(apparmor="0\n", uid_map="         0          0 4294967295\n")
+        untested = (
+            "code-executor, not tested at start-up "
+            "(the setup screen runs a test evaluation)"
+        )
+
+        self.assertEqual(self.row("Code evals"), untested)
+        # bin/start's name for the same container, from an old .env.
+        self.assertEqual(
+            self.row(
+                "Code evals",
+                COMPOSE_PROFILES="sandbox",
+                CODE_EXECUTOR_URL="http://code-executor-nsjail:8060",
+            ),
+            untested,
+        )
+        # An executor of the operator's own is named by its host.
+        self.assertEqual(
+            self.row("Code evals", CODE_EXECUTOR_URL="http://evals.internal:8060"),
+            "evals.internal, not tested at start-up "
+            "(the setup screen runs a test evaluation)",
+        )
+        compose = (ROOT / "docker-compose.yml").read_text()
+        service = compose.split("\n  code-executor:\n", 1)[1].split("\n  # ", 1)[0]
+        self.assertNotIn("profiles:", service)
+
+    def test_code_evals_name_each_host_condition_seen(self):
+        restricted, remapped = sorted(
+            self.bin_install_conditions(), key=lambda line: "userns-remap" in line
+        )
+        for apparmor, uid_map, expected in (
+            ("1\n", "         0          0 4294967295\n", [restricted]),
+            ("0\n", "         0     100000      65536\n", [remapped]),
+            ("1\n", "         0     100000      65536\n", [restricted, remapped]),
+        ):
+            with self.subTest(apparmor=apparmor, uid_map=uid_map):
+                self.host(apparmor=apparmor, uid_map=uid_map)
+                self.assertEqual(
+                    self.row("Code evals"),
+                    "will fail on this host: " + "; ".join(expected),
+                )
+
+    def test_the_restriction_is_not_named_under_the_profile_setting(self):
+        """With CODE_EXECUTOR_APPARMOR_PROFILE=fa-code-executor the executor runs
+        under the shipped profile, which lifts the restriction; bin/install stops
+        before start-up when that profile is not loaded on the host."""
+        self.host(apparmor="1\n", uid_map="         0          0 4294967295\n")
+
+        self.assertEqual(
+            self.row("Code evals", CODE_EXECUTOR_APPARMOR_PROFILE="fa-code-executor"),
+            "code-executor, not tested at start-up "
+            "(the setup screen runs a test evaluation)",
+        )
+        self.assertTrue(
+            self.row(
+                "Code evals", CODE_EXECUTOR_APPARMOR_PROFILE="unconfined"
+            ).startswith("will fail on this host: ")
+        )
+
+    def test_a_host_file_that_cannot_be_read_is_no_condition(self):
+        untested = "code-executor, not tested at start-up"
+        for apparmor, uid_map in (
+            (None, None),
+            ("", ""),
+            (b"\xff\xfe", b"\xff\xfe"),
+        ):
+            with self.subTest(apparmor=apparmor, uid_map=uid_map):
+                self.host(apparmor=apparmor, uid_map=uid_map)
+                self.assertTrue(self.row("Code evals").startswith(untested))
+        # A directory where a file should be.
+        directory = Path(tempfile.mkdtemp(dir=self._tmp.name))
+        with (
+            mock.patch.object(bootstrap, "APPARMOR_USERNS", directory, create=True),
+            mock.patch.object(bootstrap, "UID_MAP", directory, create=True),
+        ):
+            self.assertTrue(self.row("Code evals").startswith(untested))
+
+    def test_the_host_conditions_are_bin_install_s_words(self):
+        conditions = self.bin_install_conditions()
+
+        self.assertEqual(len(conditions), 2)
+        self.assertEqual(
+            {
+                getattr(bootstrap, "USERNS_RESTRICTED", None),
+                getattr(bootstrap, "USERNS_REMAPPED", None),
+            },
+            conditions,
+        )
 
     def test_model_serving(self):
         with mock.patch.object(
@@ -576,6 +715,105 @@ class NginxStartingPageTest(unittest.TestCase):
         conf = (STANDALONE / "supervisord.conf").read_text()
         web = conf.split("[program:web]", 1)[1].split("[", 1)[0]
         self.assertIn("priority=10", web)
+
+
+class IntegrationKeyTest(unittest.TestCase):
+    """Integration credentials and system API keys are stored encrypted under
+    INTEGRATION_ENCRYPTION_KEY, so it must outlive the process. bin/start's
+    function runs on its own, with FI_DATA_DIR standing in for /data. Keys are
+    compared in memory, never printed."""
+
+    start = (STANDALONE / "bin" / "start").read_text()
+    name = "keep_integration_encryption_key"
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.data = Path(temporary.name, "data")
+        self.data.mkdir(mode=0o700)
+        self.kept = self.data / ".integration-encryption-key"
+        self.key_out = Path(temporary.name, "exported")
+        # The image's interpreter is `python`; the runner's may be python3 only.
+        self.bin = Path(temporary.name, "bin")
+        self.bin.mkdir()
+        (self.bin / "python").symlink_to(sys.executable)
+
+    def keep(self, **env) -> tuple[subprocess.CompletedProcess, str]:
+        """Run the function as bin/start does; return what it exported."""
+        head = f"\n{self.name}() {{\n"
+        self.assertIn(head, self.start)
+        body = self.start.split(head, 1)[1].split("\n}\n", 1)[0]
+        script = (
+            "set -euo pipefail\n"
+            'fail() { echo "[start] $*" >&2; exit 1; }\n'
+            f"{head}{body}\n}}\n{self.name}\n"
+            'printf "%s" "${INTEGRATION_ENCRYPTION_KEY:-}" > "$KEY_OUT"\n'
+        )
+        self.key_out.unlink(missing_ok=True)
+        result = subprocess.run(
+            ["bash", "-c", script],
+            env={
+                "PATH": f"{self.bin}{os.pathsep}{os.environ.get('PATH', os.defpath)}",
+                "FI_DATA_DIR": str(self.data),
+                "KEY_OUT": str(self.key_out),
+                **env,
+            },
+            text=True, capture_output=True, timeout=30,
+        )
+        exported = self.key_out.read_text() if self.key_out.exists() else ""
+        return result, exported
+
+    def test_without_a_key_one_is_made_once_and_kept_in_the_data_volume(self):
+        first, key = self.keep()
+        self.assertEqual(first.returncode, 0)
+        self.assertTrue(
+            len(key) == 44 and len(base64.urlsafe_b64decode(key)) == 32, "not a Fernet key"
+        )
+        self.assertTrue(self.kept.read_text().strip() == key, "the key was not kept")
+        self.assertEqual(self.kept.stat().st_mode & 0o777, 0o600)
+        self.assertIn("INTEGRATION_ENCRYPTION_KEY", first.stdout)
+        self.assertTrue(key not in first.stdout + first.stderr, "the key was printed")
+        again, same = self.keep()
+        self.assertEqual(again.returncode, 0)
+        self.assertTrue(same == key, "the next start made another key")
+        self.assertEqual(again.stdout, "")
+
+    def test_a_key_from_the_environment_wins_and_nothing_is_written(self):
+        given = base64.urlsafe_b64encode(b"g" * 32).decode()
+        result, key = self.keep(INTEGRATION_ENCRYPTION_KEY=given)
+        self.assertEqual(result.returncode, 0)
+        self.assertTrue(key == given, "the key from the environment was replaced")
+        self.assertFalse(self.kept.exists())
+
+    def test_a_kept_key_is_never_replaced(self):
+        kept = base64.urlsafe_b64encode(b"k" * 32).decode()
+        self.kept.write_text(kept + "\n")
+        result, key = self.keep(INTEGRATION_ENCRYPTION_KEY="")
+        self.assertEqual(result.returncode, 0)
+        self.assertTrue(key == kept, "the kept key was replaced")
+        self.assertTrue(self.kept.read_text() == kept + "\n", "the kept file changed")
+
+    def test_a_different_kept_key_is_named_and_the_env_key_used(self):
+        kept = base64.urlsafe_b64encode(b"k" * 32).decode()
+        given = base64.urlsafe_b64encode(b"g" * 32).decode()
+        self.kept.write_text(kept + "\n")
+        result, key = self.keep(INTEGRATION_ENCRYPTION_KEY=given)
+        self.assertEqual(result.returncode, 0)
+        self.assertTrue(key == given, "the key from .env was not used")
+        self.assertIn("differs from the key kept in the app-data volume", result.stderr)
+        output = result.stdout + result.stderr
+        self.assertTrue(given not in output and kept not in output, "a key was printed")
+        self.assertTrue(self.kept.read_text() == kept + "\n", "the kept file changed")
+        # The same key in both places: nothing to say.
+        self.kept.write_text(given + "\n")
+        same, _ = self.keep(INTEGRATION_ENCRYPTION_KEY=given)
+        self.assertEqual(same.returncode, 0)
+        self.assertEqual(same.stderr, "")
+
+    def test_every_program_starts_with_the_key(self):
+        call = f"\n{self.name}\n"
+        self.assertIn(call, self.start)
+        self.assertLess(self.start.index(call), self.start.index("exec supervisord"))
 
 
 if __name__ == "__main__":

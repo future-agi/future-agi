@@ -12,6 +12,7 @@ import contextlib
 import fnmatch
 import hashlib
 import inspect
+import io
 import json
 import os
 from pathlib import Path
@@ -22,6 +23,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import tokenize
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA = Path("deploy/update")
@@ -75,6 +77,11 @@ def migration_path(path):
     return p.suffix == ".py" and p.parent.name == "migrations" and p.stem != "__init__"
 
 
+def migration_helper(path):
+    """A module in a migrations package that Django's MigrationLoader skips (name starts with _ or ~)."""
+    return migration_path(path) and Path(path).stem[:1] in ("_", "~")
+
+
 def registry_tables(registry, database):
     require(registry.get("schema_version") == 1, "unsupported table registry schema", DATA / "high-volume-tables.json")
     rows = registry.get("tables", [])
@@ -111,8 +118,16 @@ def layout_projection(model):
     require(not any(model.get(key) for key in ("configs", "secrets", "include")),
             "docker-compose.yml: unqualified config/secret/include mounts", DATA / "automatic-layout.json and backup coverage together")
     for name, service in model.get("services", {}).items():
-        require(not any(service.get(k) for k in ("volumes_from", "tmpfs", "configs", "secrets")),
-                f"docker-compose.yml {name}: unqualified indirect/temporary mount", DATA / "automatic-layout.json and backup coverage together")
+        require(not any(service.get(k) for k in ("volumes_from", "configs", "secrets")),
+                f"docker-compose.yml {name}: unqualified indirect mount", DATA / "automatic-layout.json and backup coverage together")
+        # A tmpfs mount is ephemeral: it needs no backup, but the layout names each target.
+        tmpfs = service.get("tmpfs") or []
+        tmpfs = [tmpfs] if isinstance(tmpfs, str) else tmpfs
+        require(isinstance(tmpfs, list) and all(isinstance(t, str) and t.startswith("/") for t in tmpfs),
+                f"docker-compose.yml {name}: unsupported tmpfs entry", DATA / "automatic-layout.json and backup coverage together")
+        tmpfs_targets = sorted(t.split(":", 1)[0] for t in tmpfs)
+        require(len(set(tmpfs_targets)) == len(tmpfs_targets),
+                f"docker-compose.yml {name}: duplicate tmpfs target", DATA / "automatic-layout.json and backup coverage together")
         require(not service.get("deploy", {}).get("restart_policy"),
                 f"docker-compose.yml {name}: deploy.restart_policy is unsupported", "docker-compose.yml (restart: unless-stopped or 'no')")
         restart = service.get("restart", "no")
@@ -135,6 +150,8 @@ def layout_projection(model):
                     f"docker-compose.yml {name}: unsupported volume options", DATA / "automatic-layout.json and backup coverage together")
         result["services"][name] = {"profiles": sorted(service.get("profiles", [])), "restart": restart,
                                      "mounts": sorted(mounts, key=lambda m: m["target"])}
+        if tmpfs_targets:
+            result["services"][name]["tmpfs"] = tmpfs_targets
     for name, volume in model.get("volumes", {}).items():
         # Compose synthesizes the default physical name; an explicit nondefault
         # name, external volume, driver or options must change the contract.
@@ -150,8 +167,20 @@ def check_layout(model, contract):
     for key in ("services", "volumes"):
         require(actual[key] == contract.get(key), f"docker-compose.yml: {key} differ from reviewed automatic layout", update)
     require(contract.get("automatic_profiles") == [], "only base Standalone is qualified", update)
+    # Known services and volumes that automatic updates do not cover yet, each by name with
+    # a reason. The updater refuses an install that runs one; everything else stays covered.
+    unsupported = contract.get("automatic_unsupported")
+    require(isinstance(unsupported, dict) and set(unsupported) == {"services", "volumes"},
+            "automatic_unsupported must list services and volumes by name", update)
+    for kind in ("services", "volumes"):
+        rows = unsupported[kind]
+        require(isinstance(rows, dict) and all(isinstance(r, str) and r.strip() for r in rows.values()),
+                f"automatic_unsupported {kind}: every entry needs a reason", update)
+        require(set(rows) <= set(actual[kind]), f"automatic_unsupported {kind}: names one that Compose does not define", update)
+    unsupported_volumes = set(unsupported["volumes"])
     coverage = contract.get("backup_coverage", {})
-    require(set(coverage) == set(actual["volumes"]), "named volume missing/extraneous backup coverage", update)
+    require(set(coverage) == set(actual["volumes"]) - unsupported_volumes,
+            "named volume missing/extraneous backup coverage", update)
     covered = set()
     for name, row in coverage.items():
         require(row.get("method") == "cold_archive" and row.get("domains") and
@@ -166,6 +195,8 @@ def check_layout(model, contract):
         require(set(storage[name].get("volumes", [])) == volumes and
                 storage[name].get("ephemeral") is (not bool(volumes)) and storage[name].get("reason"),
                 f"service {name}: storage coverage disagrees with Compose", update)
+        require(not set(entry.get("tmpfs", [])) & {m["target"] for m in entry["mounts"]},
+                f"service {name}: a tmpfs target is also a mount target", update)
     binds = {f"{service}:{m['target']}" for service, entry in actual["services"].items()
              for m in entry["mounts"] if m["type"] == "bind"}
     require(set(contract.get("bind_coverage", {})) == binds, "bind backup coverage does not match Compose", update)
@@ -174,7 +205,12 @@ def check_layout(model, contract):
                 f"bind {name}: missing coverage reason/method", update)
     for name, entry in actual["services"].items():
         for mount in entry["mounts"]:
-            if mount["type"] == "volume":
+            if mount["type"] != "volume":
+                continue
+            if mount["source"] in unsupported_volumes:
+                require(name in unsupported["services"],
+                        f"service {name}: mounts {mount['source']}, which automatic updates do not cover", update)
+            else:
                 require(mount["source"] in coverage, f"service {name}: unknown named volume {mount['source']}", update)
 
 
@@ -492,6 +528,43 @@ def declaration_only_addition(root, baseline, path):
     return ast.dump(new, include_attributes=False) == ast.dump(old, include_attributes=False)
 
 
+SHA256 = re.compile(r"[0-9a-f]{64}")
+EDIT_REVIEWS = DATA / "migration-edit-reviews.json"
+
+
+def migration_edit_reviews(value):
+    """Closed registry of reviewed edits to already-applied migrations, keyed by path."""
+    require(isinstance(value, dict) and set(value) == {"schema_version", "reviews"} and value["schema_version"] == 1
+            and isinstance(value["reviews"], list), "unsupported migration edit review schema", EDIT_REVIEWS)
+    result = {}
+    for index, row in enumerate(value["reviews"]):
+        require(isinstance(row, dict) and set(row) == {"path", "before_sha256", "after_sha256", "reason"},
+                f"migration edit review {index}: expected exactly path, before_sha256, after_sha256, reason", EDIT_REVIEWS)
+        path = row["path"]
+        require(isinstance(path, str) and migration_path(path) and path not in result,
+                f"migration edit review {index}: name one migration path, once", EDIT_REVIEWS)
+        before = row["before_sha256"]
+        require(isinstance(before, list) and before and all(isinstance(h, str) and SHA256.fullmatch(h) for h in before),
+                f"{path}: before_sha256 lists the sha256 of each reviewed base version", EDIT_REVIEWS)
+        require(isinstance(row["after_sha256"], str) and SHA256.fullmatch(row["after_sha256"]),
+                f"{path}: after_sha256 is the sha256 of the reviewed new version", EDIT_REVIEWS)
+        require(isinstance(row["reason"], str) and row["reason"].strip(),
+                f"{path}: a reviewed migration edit needs a reason", EDIT_REVIEWS)
+        result[path] = row
+    return result
+
+
+def reviewed_migration_edit(root, baseline, path, reviews):
+    """Exact base-to-head bytes of a reviewed edit; any other byte keeps the history immutable."""
+    row = reviews.get(path)
+    current = root / path
+    if row is None or not current.is_file():
+        return False
+    before = base_bytes(root, baseline, path)
+    return (before is not None and content_sha(before) in row["before_sha256"]
+            and content_sha(current.read_bytes()) == row["after_sha256"])
+
+
 def declaration(source, path):
     tree = ast.parse(source)
     values = [n.value for n in tree.body if declaration_assignment(n)]
@@ -561,6 +634,17 @@ def operation_risks(operation, app, state, registry, fresh=None):
     pg = registry_tables(registry, "postgres")
     kind = type(operation).__name__
     module = type(operation).__module__
+    bridge = sys.modules.get("tfc.migration_bridge")
+    if bridge is not None and type(operation) is getattr(bridge, "SkipDatabaseIfLegacyApplied", None):
+        # The renamed-migration bridge runs exactly its wrapped operations on every
+        # database without the legacy row, so their risks are its risks. Exact type
+        # only: a subclass can change behavior and stays unclassified below.
+        risks = []
+        nested_state = state.clone()
+        for op in operation.operations:
+            risks += operation_risks(op, app, nested_state, registry, fresh)
+            op.state_forwards(app, nested_state)
+        return risks
     require(isinstance(operation, (migrations.RunPython, migrations.RunSQL)) or
             module.startswith(("django.db.migrations.operations.", "django.contrib.postgres.operations")),
             f"unclassified custom migration operation {module}.{kind}", "the migration and scripts/check_update_safety.py (explicit classifier)")
@@ -771,13 +855,42 @@ def source_blob(path, content):
         (not suffix and content.startswith(b"#!")) or bool(SHELL_SHEBANG.match(content)))
 
 
-def schema_statements(content):
+def schema_statements(content, path=None):
     if content is None:
         return []
     text = content.decode("utf-8", errors="strict")
-    # Ignore whole-line source/SQL comments while preserving diagnostic lines.
     # No untrusted code is imported and no SQL strings are reconstructed.
-    text = re.sub(r"(?m)^[ \t]*(?:#|//|--)[^\n]*", lambda m: " " * len(m.group()), text)
+    if path is not None and Path(path).suffix == ".py" and not SHELL_SHEBANG.match(content):
+        text = text.replace("\r\n", "\n").replace("\r", "\n")
+        try:
+            tree = ast.parse(text)
+            tokens = list(tokenize.generate_tokens(io.StringIO(text).readline))
+        except (SyntaxError, ValueError, tokenize.TokenError):
+            pass  # Invalid/unsupported Python keeps every keyword, without partial masking.
+        else:
+            lines, offsets = text.split("\n"), [0]
+            for line in lines:
+                offsets.append(offsets[-1] + len(line.encode("utf-8")) + 1)
+            spans = []
+            for token in tokens:
+                if token.type == tokenize.COMMENT:
+                    spans.append(tuple(offsets[row - 1] + len(lines[row - 1][:col].encode("utf-8"))
+                                       for row, col in (token.start, token.end)))
+            for node in ast.walk(tree):
+                if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)) and node.body:
+                    first = node.body[0]
+                    if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant) and isinstance(first.value.value, str):
+                        doc = first.value
+                        # AST columns are UTF-8 byte offsets, unlike tokenize's character columns.
+                        spans.append((offsets[doc.lineno - 1] + doc.col_offset,
+                                      offsets[doc.end_lineno - 1] + doc.end_col_offset))
+            masked = bytearray(text, "utf-8")
+            for start, end in spans:
+                masked[start:end] = re.sub(rb"[^\r\n]", b" ", masked[start:end])
+            text = masked.decode("utf-8")
+    else:
+        # Preserve the legacy/non-Python whole-line comment behavior.
+        text = re.sub(r"(?m)^[ \t]*(?:#|//|--)[^\n]*", lambda m: " " * len(m.group()), text)
     return [{"line": text.count("\n", 0, match.start()) + 1,
              "keyword": " ".join(match.group().upper().split())}
             for match in DDL_DISCOVERY.finditer(text)]
@@ -848,7 +961,7 @@ def check_source_coverage(root, registry, paths=None):
         if migration_path(path):
             continue
         content = target.read_bytes()
-        if not source_blob(path, content) or excluded_source(path, registry["exclusions"], content) or not schema_statements(content):
+        if not source_blob(path, content) or excluded_source(path, registry["exclusions"], content) or not schema_statements(content, path):
             continue
         if matches(path, registry["sources"]):
             covered.append(path)
@@ -892,8 +1005,8 @@ def clickhouse_review_candidates(root, changes, baseline, sources, head=None):
         after = base_bytes(root, head, relative) if head else (current.read_bytes() if current.is_file() else None)
         if before == after or excluded_source(relative, sources["exclusions"], after if after is not None else before):
             continue
-        old_statements = schema_statements(before) if source_blob(relative, before) else []
-        new_statements = schema_statements(after) if source_blob(relative, after) else []
+        old_statements = schema_statements(before, relative) if source_blob(relative, before) else []
+        new_statements = schema_statements(after, relative) if source_blob(relative, after) else []
         if old_statements or new_statements:
             result.append({"path": relative, "before_sha256": content_sha(before), "after_sha256": content_sha(after),
                            "before_statements": old_statements, "after_statements": new_statements})
@@ -1091,14 +1204,24 @@ def main(argv=None):
             return 0 if calibration["status"] == "calibrated" else 1
         require(args.base, "PR comparison needs an explicit --base commit/ref", ".github/workflows/backend-ci.yml or your CLI invocation")
         registry = document(root / DATA / "high-volume-tables.json")
+        edits = migration_edit_reviews(document(root / EDIT_REVIEWS))
         changes = changed_paths(root, args.base)
         baseline = base_commit(root, args.base)
         migrations = []
         for status, path in changes:
             if not migration_path(path):
                 continue
-            require(status == "A" or status == "M" and declaration_only_addition(root, baseline, path),
+            if status == "M" and not declaration_only_addition(root, baseline, path) \
+                    and reviewed_migration_edit(root, baseline, path, edits):
+                # Already applied wherever it exists; reviewed byte for byte, not a new migration.
+                continue
+            require(status == "A" or status == "M" and not migration_helper(path)
+                    and declaration_only_addition(root, baseline, path),
                     "existing migration changed/deleted: deployed histories are immutable", "add a new migration instead of editing the existing migration")
+            if migration_helper(path):
+                # Imported by migrations, never loaded as one: immutable once it exists,
+                # but not a new migration to lint or count.
+                continue
             migrations.append(path)
         rehearsals = []
         if args.static or not args.django:

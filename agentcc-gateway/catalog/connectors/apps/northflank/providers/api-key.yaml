@@ -1,0 +1,45 @@
+# Northflank's hosted MCP server accepts a team API token as a bearer.
+schema: "connector-manifest/v1#provider"
+app: northflank
+id: api-key
+version: 1.1.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.northflank.com/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: Team API token
+      help: "Create a team-scoped Northflank API token with the resource permissions you need. Personal and organization-scoped logins are unsupported. Deployments create billable resources. Supply the token without the Bearer prefix."
+      helpUrl: https://northflank.com/docs/v1/application/ai-agents/mcp-server
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_metered
+  source: https://northflank.com/docs/v1/application/ai-agents/mcp-server
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://northflank.com/docs/v1/application/ai-agents/mcp-server
+    fetchedAt: 2026-11-09
+  - fact: transport.variant
+    url: https://northflank.com/docs/v1/application/ai-agents/mcp-server
+    fetchedAt: 2026-11-09
+  - fact: auth.kind
+    url: https://northflank.com/docs/v1/application/ai-agents/mcp-server
+    fetchedAt: 2026-11-09
+  - fact: auth.credentialParts
+    url: https://northflank.com/docs/v1/application/ai-agents/mcp-server
+    fetchedAt: 2026-11-09

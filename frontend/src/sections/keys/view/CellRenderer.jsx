@@ -22,6 +22,7 @@ import axios, { endpoints } from "src/utils/axios";
 import { useMutation } from "@tanstack/react-query";
 import { LoadingButton } from "@mui/lab";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
+import SecretKeyRenderer from "./SecretKeyRenderer";
 
 const allMenuItems = [
   {
@@ -79,6 +80,7 @@ const ActionMenu = (props) => {
   };
 
   const handleMenuItemClick = (action) => {
+    if (data?.type === "system") return;
     setOpenConfirmation(action);
   };
   const handledialogClose = () => {
@@ -93,6 +95,9 @@ const ActionMenu = (props) => {
      * @returns
      */
     mutationFn: (variable) => {
+      if (data?.type === "system") {
+        throw new Error("System keys cannot be changed.");
+      }
       const payload = { key_id: data.id };
       if (variable?.action == "disable") {
         return axios.post(endpoints.keys.disablekey, payload);
@@ -238,6 +243,7 @@ const ActionMenu = (props) => {
         action={
           <LoadingButton
             loading={loading}
+            disabled={data?.type === "system"}
             size="small"
             variant="contained"
             color="error"
@@ -282,6 +288,7 @@ const ActionMenu = (props) => {
         action={
           <LoadingButton
             loading={loading}
+            disabled={data?.type === "system"}
             size="small"
             variant="contained"
             color="error"
@@ -316,6 +323,7 @@ const ActionMenu = (props) => {
         action={
           <LoadingButton
             loading={loading}
+            disabled={data?.type === "system"}
             size="small"
             variant="contained"
             color="primary"
@@ -346,6 +354,11 @@ ActionMenu.propTypes = {
 const CellRenderer = (props) => {
   const { value } = props;
   const columnKey = props?.column?.colDef?.field || "";
+
+  // Key columns show the server's masked hint as sent, never a copy action.
+  if (["api_key", "secret_key", "apiKey", "secretKey"].includes(columnKey)) {
+    return <SecretKeyRenderer value={value} />;
+  }
 
   if (columnKey === "createdBy" || columnKey === "created_by") {
     if (!props?.value?.length) {

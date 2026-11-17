@@ -1,8 +1,10 @@
 """Read and edit Compose dotenv files without disturbing anything else in them.
 
-The updater only ever changes image version keys. Every unrelated byte is
+The updater changes image version keys, and once, before an update, the API
+secret pepper keys (pepper.py). Every unrelated byte is
 kept; unchanged env contents are not copied into recovery records, and lexical
-recovery data never enters receipts. New values are plain image tags. Transaction recovery reverses saved lexical
+recovery data never enters receipts. New values are plain image tags, or
+Literal values written in single quotes. Transaction recovery reverses saved lexical
 edits, not parsed values: duplicate definitions and dollar escaping retain
 their original semantics. A legacy verbatim helper refuses ambiguous dollars.
 
@@ -43,6 +45,10 @@ _VALUE_RE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}")
 # A value put back verbatim may hold anything but these: each would end the
 # line or break the file.
 _NOT_VERBATIM = ("\x00", "\r", "\n")
+# A Literal is written in single quotes, so it may not hold a single quote
+# either (nor, as bin/lib/secrets.sh refuses them, two backslashes or a
+# trailing backslash).
+_NOT_LITERAL = ("'",) + _NOT_VERBATIM
 # The escape sequences Compose expands in double-quoted values. \$ is "$"
 # once Compose interpolates; \c matches its pattern but is no escape.
 _ESCAPE_RE = re.compile(r"\\(?:[abcfnrtv$\"\\]|0[0-9]{0,3})")
@@ -60,6 +66,15 @@ class EnvCommitError(EnvFileError):
 
 class EnvPreimageError(EnvFileError):
     """The env file is not the exact preimage the caller approved: nothing was prepared or written."""
+
+
+class Literal(str):
+    """A value written in single quotes, whatever quotes its line had, so Compose reads it as written.
+
+    For secrets (the API secret pepper and its retired list): an error about
+    one names only its key. It holds no single quote, line break, NUL, pair of
+    backslashes or trailing backslash, and every write of one is read back.
+    """
 
 
 class _Definition(NamedTuple):
@@ -269,6 +284,9 @@ def _allowed(value: object, verbatim: bool) -> bool:
         return True
     if not isinstance(value, str):
         return False
+    if isinstance(value, Literal):
+        return (not any(char in value for char in _NOT_LITERAL) and "\\\\" not in value
+                and not value.endswith("\\"))
     if verbatim:
         # read_env intentionally does not expand variables and is not a lexical
         # snapshot: '$X' might have come from "\\$X", '$X' or $X. Never guess
@@ -285,10 +303,12 @@ def render_changes(text: str, changes: Mapping[str, Optional[str]], *, verbatim:
     writing a key and then its old value again gives back the original text.
     Every definition of a key is changed; a key with none is appended.
 
-    New values must be image tags. The legacy verbatim=True helper accepts
-    only unambiguous, single-line values that read back unchanged. Dollar
-    values are refused: read_env does not preserve interpolation semantics.
-    Transaction recovery must use recovery_record/restore_changes instead.
+    New values must be image tags, or Literal values (secrets), which replace
+    the quotes too and are always written in single quotes. The legacy
+    verbatim=True helper accepts only unambiguous, single-line values that
+    read back unchanged. Dollar values are refused: read_env does not preserve
+    interpolation semantics. Transaction recovery must use
+    recovery_record/restore_changes instead.
     """
 
     for key, value in changes.items():
@@ -296,11 +316,21 @@ def render_changes(text: str, changes: Mapping[str, Optional[str]], *, verbatim:
         if not isinstance(key, str) or not _KEY_RE.fullmatch(key):
             raise EnvFileError(f"refusing to write unexpected key {key!r}")
         if not _allowed(value, verbatim):
-            raise EnvFileError(f"refusing to write unexpected value for {key}: {value!r}")
+            # A Literal is a secret: never print it.
+            shown = "" if isinstance(value, Literal) else f": {value!r}"
+            raise EnvFileError(f"refusing to write unexpected value for {key}{shown}")
     rendered = _render(text, changes)
-    if verbatim:
+    if verbatim or any(isinstance(value, Literal) for value in changes.values()):
         _check_reads_back(text, rendered, changes)
     return rendered
+
+
+def _written(value: str, quote: str) -> str:
+    """How a value is written in place of a definition's value (and its quotes, for a Literal)."""
+
+    if isinstance(value, Literal):
+        return f"'{value}'"
+    return f"{quote}{value}{quote}"
 
 
 def _render(text: str, changes: Mapping[str, Optional[str]],
@@ -317,7 +347,7 @@ def _render(text: str, changes: Mapping[str, Optional[str]],
             start, end, replacement = definition.start, definition.end, ""
         else:
             start, end = definition.token, definition.token_end
-            replacement = f"{definition.quote}{value}{definition.quote}"
+            replacement = _written(value, definition.quote)
         out.extend((text[cursor:start], replacement))
         if edits is not None and text[start:end] != replacement:
             edits.append((start, end, replacement))
@@ -333,7 +363,7 @@ def _render(text: str, changes: Mapping[str, Optional[str]],
     elif rendered not in ("", _BOM) and not rendered.endswith("\n"):
         suffix = _line_ending(rendered)
     ending = _line_ending(rendered + suffix)
-    suffix += "".join(f"{key}={value}{ending}" for key, value in additions)
+    suffix += "".join(f"{key}={_written(value, '')}{ending}" for key, value in additions)
     if edits is not None:
         edits.append((len(text), len(text), suffix))
     return rendered + suffix
@@ -373,8 +403,9 @@ def _check_reads_back(before: str, after: str, changes: Mapping[str, Optional[st
     wrong = [key for key in keys
              if [item for item in actual if item[0] == key] != [item for item in expected if item[0] == key]]
     key = (wrong or keys or list(changes))[0]
+    shown = "its new value" if isinstance(changes[key], Literal) else repr(changes[key])
     raise EnvFileError(
-        f"refusing to write back {key}: {changes[key]!r} would not read back as the same value where {key} is "
+        f"refusing to write back {key}: {shown} would not read back as the same value where {key} is "
         f"defined. Set {key} in the env file by hand"
     )
 

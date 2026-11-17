@@ -26,6 +26,36 @@ from django.db import migrations
 
 logger = logging.getLogger(__name__)
 
+UPDATE_SAFETY = {
+    "schema_version": 1,
+    "risk_classes": ["data_migration"],
+    "tables": [
+        "postgres:tracer_custom_eval_config",
+        "postgres:tracer_eval_task",
+        "postgres:tracer_saved_view",
+        "postgres:tracer_useralertmonitor",
+    ],
+    "mitigation": (
+        "Rewrites the legacy filter_op names is, is_not, equal_to, not_equal_to and "
+        "not_in_between to their canonical names inside stored filter JSON: the "
+        "span_attributes_filters list of tracer_eval_task.filters, the filter lists "
+        "of tracer_saved_view.config, tracer_useralertmonitor.filters and "
+        "tracer_custom_eval_config.filters. Reads every row of each table with "
+        "iterator(chunk_size=500) and saves only a row it changed, with "
+        "save(update_fields=[that field]); a row that raises is logged and left "
+        "unchanged. The migration is atomic: every saved row stays locked until the "
+        "step commits, and a failed run rolls back as a whole. Row scale: one row per "
+        "eval task, saved view, alert monitor and custom eval config, soft-deleted "
+        "rows included; tracer_eval_task is a registered high-volume table, the other "
+        "three are not. Second run: canonical names are never rewritten, so rows the "
+        "first run changed are not written again; a re-run would still rewrite legacy "
+        "names in filters written since. No schema change; the reverse is a no-op."
+    ),
+    "reviewer": "<actual-github-login>",
+    "review": "<actual-PR-review-discussion-permalink>",
+    "large_volume_rehearsal": True,
+}
+
 
 _LEGACY_OP_ALIAS = {
     "is": "equals",
@@ -54,9 +84,9 @@ def _rewrite_filter_list(filter_dicts):
     return n
 
 
-def _migrate_eval_task(apps, stats):
+def _migrate_eval_task(apps, stats, alias):
     EvalTask = apps.get_model("tracer", "EvalTask")
-    for et in EvalTask.objects.iterator(chunk_size=500):
+    for et in EvalTask.objects.using(alias).iterator(chunk_size=500):
         try:
             f = et.filters
             if not isinstance(f, dict):
@@ -67,7 +97,7 @@ def _migrate_eval_task(apps, stats):
             before = stats["rewritten"]
             stats["rewritten"] += _rewrite_filter_list(nested)
             if stats["rewritten"] > before:
-                et.save(update_fields=["filters"])
+                et.save(using=alias, update_fields=["filters"])
         except Exception as e:
             stats["failed"] += 1
             logger.exception(
@@ -75,10 +105,10 @@ def _migrate_eval_task(apps, stats):
             )
 
 
-def _migrate_saved_view(apps, stats):
+def _migrate_saved_view(apps, stats, alias):
     SavedView = apps.get_model("tracer", "SavedView")
     keys = ("filters", "compareFilters", "extraFilters", "compareExtraFilters")
-    for sv in SavedView.objects.iterator(chunk_size=500):
+    for sv in SavedView.objects.using(alias).iterator(chunk_size=500):
         try:
             cfg = sv.config
             if not isinstance(cfg, dict):
@@ -87,7 +117,7 @@ def _migrate_saved_view(apps, stats):
             for k in keys:
                 stats["rewritten"] += _rewrite_filter_list(cfg.get(k))
             if stats["rewritten"] > before:
-                sv.save(update_fields=["config"])
+                sv.save(using=alias, update_fields=["config"])
         except Exception as e:
             stats["failed"] += 1
             logger.exception(
@@ -95,9 +125,9 @@ def _migrate_saved_view(apps, stats):
             )
 
 
-def _migrate_flat_list_field(Model, field_name, stats):
+def _migrate_flat_list_field(Model, field_name, stats, alias):
     """Models where `filters` (or similar) is the bare list of filter dicts."""
-    for obj in Model.objects.iterator(chunk_size=500):
+    for obj in Model.objects.using(alias).iterator(chunk_size=500):
         try:
             val = getattr(obj, field_name)
             if not isinstance(val, list):
@@ -105,7 +135,7 @@ def _migrate_flat_list_field(Model, field_name, stats):
             before = stats["rewritten"]
             stats["rewritten"] += _rewrite_filter_list(val)
             if stats["rewritten"] > before:
-                obj.save(update_fields=[field_name])
+                obj.save(using=alias, update_fields=[field_name])
         except Exception as e:
             stats["failed"] += 1
             logger.exception(
@@ -113,9 +143,9 @@ def _migrate_flat_list_field(Model, field_name, stats):
             )
 
 
-def _migrate_user_alert_monitor(apps, stats):
+def _migrate_user_alert_monitor(apps, stats, alias):
     UserAlertMonitor = apps.get_model("tracer", "UserAlertMonitor")
-    for m in UserAlertMonitor.objects.iterator(chunk_size=500):
+    for m in UserAlertMonitor.objects.using(alias).iterator(chunk_size=500):
         try:
             f = m.filters
             # Some rows store filters as a dict with `span_attributes_filters`
@@ -128,7 +158,7 @@ def _migrate_user_alert_monitor(apps, stats):
             elif isinstance(f, list):
                 stats["rewritten"] += _rewrite_filter_list(f)
             if stats["rewritten"] > before:
-                m.save(update_fields=["filters"])
+                m.save(using=alias, update_fields=["filters"])
         except Exception as e:
             stats["failed"] += 1
             logger.exception(
@@ -147,17 +177,18 @@ def _safe_step(fn, *args, **kwargs):
 
 
 def forwards(apps, schema_editor):
+    alias = schema_editor.connection.alias
     stats = {"rewritten": 0, "failed": 0}
 
-    _safe_step(_migrate_eval_task, apps, stats)
-    _safe_step(_migrate_saved_view, apps, stats)
-    _safe_step(_migrate_user_alert_monitor, apps, stats)
+    _safe_step(_migrate_eval_task, apps, stats, alias)
+    _safe_step(_migrate_saved_view, apps, stats, alias)
+    _safe_step(_migrate_user_alert_monitor, apps, stats, alias)
 
     # Defensive walks for tables that had zero matches at survey time but
     # may have received data between survey and deploy.
     try:
         CustomEvalConfig = apps.get_model("tracer", "CustomEvalConfig")
-        _safe_step(_migrate_flat_list_field, CustomEvalConfig, "filters", stats)
+        _safe_step(_migrate_flat_list_field, CustomEvalConfig, "filters", stats, alias)
     except Exception as e:
         logger.exception(
             f"[canonicalise_filter_ops] CustomEvalConfig walk failed: {e}"

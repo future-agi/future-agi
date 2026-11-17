@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -75,6 +76,27 @@ type DecisionResponse struct {
 	Usage DecisionUsage
 	// Answers is the body's answers field, kept for the request log.
 	Answers json.RawMessage
+
+	// inputReported and outputReported record which of Usage's counts the
+	// vendor's answer measured: missing, null and invalid counts remain unknown.
+	inputReported, outputReported bool
+}
+
+// TokenUsage is the usage cost, budgets and logs read for the call: the
+// vendor's own counts, each marked measured (NewUsage) only when the
+// vendor's answer carried it, so a count it left out is never settled as a
+// measured zero.
+func (r *DecisionResponse) TokenUsage() *Usage {
+	var in, out *int
+	if r.inputReported {
+		n := r.Usage.InputTokens
+		in = &n
+	}
+	if r.outputReported {
+		n := r.Usage.OutputTokens
+		out = &n
+	}
+	return NewUsage(in, out)
 }
 
 // DecisionUsage is the vendor's own token count; the gateway does not recount.
@@ -128,8 +150,8 @@ func objectMembers(data []byte) ([]jsonMember, error) {
 	return members, nil
 }
 
-// jsonKind returns the first byte of a JSON value: '{', '[', '"', 'n' and so on.
-func jsonKind(raw json.RawMessage) byte {
+// rawJSONKind returns the first byte of a JSON value: '{', '[', '"', 'n' and so on.
+func rawJSONKind(raw json.RawMessage) byte {
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 {
 		return 0
@@ -181,17 +203,76 @@ func ParseDecisionRequest(body []byte) (*DecisionRequest, *APIError) {
 	}
 	req.UpstreamModel = req.Model
 
+	var apiErr *APIError
 	questions := fields["questions"]
-	switch jsonKind(questions) {
+	switch rawJSONKind(questions) {
 	case '{':
 		req.Format = DecisionFormatSystemOne
-		return req, req.parseSystemOne(fields)
+		apiErr = req.parseSystemOne(fields)
 	case '[':
 		req.Format = DecisionFormatOpenAI
-		return req, req.parseOpenAI(fields)
+		apiErr = req.parseOpenAI(fields)
 	default:
 		return nil, ErrBadRequest("missing_questions",
 			"questions is required: an object keyed by question id (System One) or an array (OpenAI Decisions)")
+	}
+	if apiErr != nil {
+		return req, apiErr
+	}
+	// The checks on the request read the body as one occurrence of each key,
+	// and parsers differ on which one they keep (Go's the last, others the
+	// first), so a vendor could act on a value no check read. A repeated key
+	// is refused without naming it: it may be the caller's content.
+	if repeatedKey(body) {
+		return nil, ErrBadRequest("duplicate_field",
+			"A key appears more than once in the same object of this decision. Send each key once.")
+	}
+	return req, nil
+}
+
+// repeatedKey reports whether any object in data, at any depth, holds a key
+// more than once. data is a valid JSON object (objectMembers read it).
+func repeatedKey(data []byte) bool {
+	type object struct {
+		keys map[string]bool
+		key  bool // the next string is a key
+	}
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.UseNumber()
+	var stack []*object // nil for a list
+	valueDone := func() {
+		if n := len(stack); n > 0 && stack[n-1] != nil {
+			stack[n-1].key = true
+		}
+	}
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			return false // io.EOF: every object read; the parse above refuses anything else
+		}
+		var top *object
+		if n := len(stack); n > 0 {
+			top = stack[n-1]
+		}
+		if s, ok := tok.(string); ok && top != nil && top.key {
+			if top.keys[s] {
+				return true
+			}
+			top.keys[s] = true
+			top.key = false
+			continue
+		}
+		switch tok {
+		case json.Delim('{'):
+			stack = append(stack, &object{keys: map[string]bool{}, key: true})
+		case json.Delim('['):
+			stack = append(stack, nil)
+		case json.Delim('}'), json.Delim(']'):
+			stack = stack[:len(stack)-1]
+			valueDone()
+		default:
+			valueDone()
+		}
 	}
 }
 
@@ -241,7 +322,7 @@ func (r *DecisionRequest) parseOpenAI(fields map[string]json.RawMessage) *APIErr
 		var named struct {
 			Name json.RawMessage `json:"name"`
 		}
-		if jsonKind(raw) == '{' && json.Unmarshal(raw, &named) == nil {
+		if rawJSONKind(raw) == '{' && json.Unmarshal(raw, &named) == nil {
 			var name string
 			if json.Unmarshal(named.Name, &name) == nil && name != "" {
 				id = name
@@ -261,7 +342,7 @@ func (r *DecisionRequest) parseOpenAI(fields map[string]json.RawMessage) *APIErr
 // type, and returns that type.
 func questionType(id string, raw json.RawMessage) (string, *APIError) {
 	var question map[string]json.RawMessage
-	if jsonKind(raw) != '{' || json.Unmarshal(raw, &question) != nil {
+	if rawJSONKind(raw) != '{' || json.Unmarshal(raw, &question) != nil {
 		return "", invalidQuestion(id, "must be a JSON object")
 	}
 	var kind string
@@ -287,6 +368,32 @@ func (r *DecisionRequest) SetUpstreamModel(model string) {
 	r.UpstreamModel = model
 }
 
+// SetBody makes body the body forwarded upstream: the same decision with a
+// check's rewrite of its text (pii-detection's mask), which a check writes
+// only where the decision model reads text. It must still be a decision of
+// the same format, for the model the vendor is sent, with the same questions
+// of the same types; what else was read from the caller's body (Model) is
+// kept. On an error the body stays as it was.
+func (r *DecisionRequest) SetBody(body []byte) error {
+	if bytes.Equal(body, r.Body) {
+		return nil
+	}
+	again, apiErr := ParseDecisionRequest(body)
+	switch {
+	case apiErr != nil:
+		return errors.New("the rewritten body is not a decision (" + apiErr.Code + ")")
+	case again.Format != r.Format:
+		return errors.New("the rewrite changed the decision's format")
+	case again.Model != r.UpstreamModel:
+		return errors.New("the rewrite changed the model")
+	case !slices.Equal(again.QuestionIDs, r.QuestionIDs) || !slices.Equal(again.QuestionTypes, r.QuestionTypes):
+		return errors.New("the rewrite changed the questions")
+	}
+	r.Body, r.StateBytes = again.Body, again.StateBytes
+	r.modelStart, r.modelEnd = again.modelStart, again.modelEnd
+	return nil
+}
+
 // ParseDecisionResponse reads a vendor's 200 body. Only a JSON object is a
 // usable answer; its model, usage and answers are read best effort, since the
 // body goes back to the caller unchanged either way.
@@ -303,32 +410,32 @@ func ParseDecisionResponse(body []byte) (*DecisionResponse, bool) {
 		case "answers":
 			resp.Answers = m.value
 		case "usage":
-			resp.Usage = parseDecisionUsage(m.value)
+			resp.Usage, resp.inputReported, resp.outputReported = parseDecisionUsage(m.value)
 		}
 	}
 	return resp, true
 }
 
-// parseDecisionUsage reads System One's input/output token counts, or the
-// prompt/completion names OpenAI uses. A count it cannot read is zero.
-func parseDecisionUsage(raw json.RawMessage) DecisionUsage {
+// parseDecisionUsage reads both values and evidence from one validated parse.
+// Invalid primary fields do not hide valid aliases. An explicit numeric zero
+// is measured; null, negative, non-integer and omitted counters are unknown.
+func parseDecisionUsage(raw json.RawMessage) (usage DecisionUsage, inputReported, outputReported bool) {
 	var fields map[string]json.RawMessage
 	if json.Unmarshal(raw, &fields) != nil {
-		return DecisionUsage{}
+		return usage, false, false
 	}
-	count := func(names ...string) int {
+	count := func(names ...string) (int, bool) {
 		for _, name := range names {
-			var n int
-			if v, ok := fields[name]; ok && json.Unmarshal(v, &n) == nil {
-				return max(n, 0)
+			var n *int
+			if v, ok := fields[name]; ok && json.Unmarshal(v, &n) == nil && n != nil && *n >= 0 {
+				return *n, true
 			}
 		}
-		return 0
+		return 0, false
 	}
-	return DecisionUsage{
-		InputTokens:  count("input_tokens", "prompt_tokens"),
-		OutputTokens: count("output_tokens", "completion_tokens"),
-	}
+	usage.InputTokens, inputReported = count("input_tokens", "prompt_tokens")
+	usage.OutputTokens, outputReported = count("output_tokens", "completion_tokens")
+	return usage, inputReported, outputReported
 }
 
 // UpstreamErrorMessage is the message a vendor's non-200 answer passes on.
@@ -437,7 +544,7 @@ func (r *DecisionRequest) contentPayloads() ([]json.RawMessage, bool) {
 		switch m.key {
 		case "model":
 		case "questions":
-			switch jsonKind(m.value) {
+			switch rawJSONKind(m.value) {
 			case '{':
 				questions, err := objectMembers(m.value)
 				if err != nil {
@@ -492,7 +599,7 @@ func retryAfter(header http.Header) string {
 // where the vendor set one. message is the vendor's own text, already through
 // SafeUpstreamMessage; only a 400 or 422 carries it to the caller.
 func DecisionUpstreamError(vendor string, status int, header http.Header, message string) *APIError {
-	e := &APIError{UpstreamStatus: status}
+	e := &APIError{UpstreamStatus: status, UpstreamStatusVisible: true}
 	switch status {
 	case http.StatusUnauthorized, http.StatusForbidden:
 		e.Status, e.Type, e.Code = http.StatusForbidden, ErrTypePermission, "provider_key_rejected"
@@ -530,11 +637,12 @@ func DecisionUpstreamError(vendor string, status int, header http.Header, messag
 // DecisionInvalidResponse is the error for a 200 that is not a JSON object.
 func DecisionInvalidResponse(vendor string) *APIError {
 	return &APIError{
-		Status:         http.StatusBadGateway,
-		Type:           ErrTypeUpstream,
-		Code:           "upstream_invalid_response",
-		Message:        vendor + " returned a response that is not a JSON object.",
-		UpstreamStatus: http.StatusOK,
+		Status:                http.StatusBadGateway,
+		Type:                  ErrTypeUpstream,
+		Code:                  "upstream_invalid_response",
+		Message:               vendor + " returned a response that is not a JSON object.",
+		UpstreamStatus:        http.StatusOK,
+		UpstreamStatusVisible: true,
 	}
 }
 

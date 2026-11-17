@@ -22,6 +22,7 @@ read FK *columns* (``*_id``), never PG ``Trace`` joins (collector traces have no
 from __future__ import annotations
 
 import uuid
+from collections.abc import Iterable
 from dataclasses import dataclass
 from types import SimpleNamespace
 
@@ -369,7 +370,8 @@ def get_scan_issue_for_read(
 
 def count_cluster_eval_metrics(scope_q: Q) -> list[CountBucket]:
     """[transitive] DISTINCT eval-row counts grouped by eval-config name, scoped by
-    ``scope_q`` (trace OR session — see the agent's _eval_scope_q)."""
+    ``scope_q`` (trace and project span OR session — see the agent's
+    _project_eval_scope_q)."""
     rows = (
         EvalLogger.objects.filter(scope_q, deleted=False)
         .values("custom_eval_config__name")
@@ -404,15 +406,19 @@ def list_cluster_eval_results(
     return rows, total
 
 
-def trace_eval_results(trace_uuid: str) -> list[EvalLogger]:
-    """[per-trace, UNSCOPED] Eval rows for ONE trace. Filters ``EvalLogger`` by
-    ``trace_id`` ALONE — no project/cluster guard of its own. Tenant-safe ONLY
-    because its sole caller, ``ClusterAnalysisAgent._read_trace``, gates on a
-    project-scoped CH spans read first (``_spans_for_trace`` → NOT_FOUND for a
-    trace outside ``self.project_id``), so it never reaches this for a foreign
-    trace. select_related('custom_eval_config')."""
+def trace_eval_results(trace_uuid: str, span_ids: Iterable[str]) -> list[EvalLogger]:
+    """[per-trace, span-scoped] Eval rows for ONE trace, kept to ``span_ids``: the
+    spans the caller's project-scoped read returned (``_read_trace`` passes the
+    ids of ``_spans_for_trace``). Span and trace rows both name a span (a trace
+    row its root span), so a row is read only when its span is one of those. No
+    span ids, no rows. select_related('custom_eval_config')."""
+    ids = sorted({str(span_id) for span_id in span_ids or () if span_id})
+    if not ids:
+        return []
     return list(
-        EvalLogger.objects.filter(trace_id=trace_uuid, deleted=False)
+        EvalLogger.objects.filter(
+            trace_id=trace_uuid, observation_span_id__in=ids, deleted=False
+        )
         .select_related("custom_eval_config")
         .only(
             "id",
@@ -430,7 +436,8 @@ def trace_eval_results(trace_uuid: str) -> list[EvalLogger]:
 
 def get_eval_result_for_read(scope_q: Q, eval_uuid: str) -> EvalLogger | None:
     """[transitive] One eval row for ``read(eval_result)`` — the ``scope_q`` is the
-    project guard (membership in this cluster's evidence). ``None`` if absent.
+    project guard (membership in this cluster's evidence on this project's spans,
+    see the agent's _project_eval_scope_q). ``None`` if absent.
     select_related('custom_eval_config')."""
     return (
         EvalLogger.objects.filter(scope_q)

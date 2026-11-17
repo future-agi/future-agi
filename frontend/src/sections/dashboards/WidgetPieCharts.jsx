@@ -4,7 +4,7 @@ import { Box, Stack, Typography } from "@mui/material";
 import ReactApexChart from "react-apexcharts";
 import { useTheme } from "@mui/material/styles";
 import ChartLegend from "./ChartLegend";
-import { formatValueWithConfig, getUnitRendering } from "./widgetUtils";
+import { formatValueWithConfig, getSeriesFormatConfig } from "./widgetUtils";
 import {
   DONUT_ANIMATION_MS,
   GEOMETRY_SETTLE_MS,
@@ -284,9 +284,7 @@ export default function WidgetPieCharts({
         {groups.map((group) => {
           // Each pie formats in its own metric's unit; the shared axis config
           // blanks the unit whenever the widget mixes them.
-          const cfg = group.unit
-            ? { ...baseFormatConfig, ...getUnitRendering(group.unit) }
-            : baseFormatConfig;
+          const cfg = getSeriesFormatConfig(group, baseFormatConfig);
           const formatValue = (val, { includeUnit = true } = {}) =>
             formatValueWithConfig(val, cfg, { fallbackDecimals, includeUnit });
           return (

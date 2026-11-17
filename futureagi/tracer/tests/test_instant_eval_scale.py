@@ -211,7 +211,9 @@ def _answer(
         status=(
             EvalEntryStatus.PENDING
             if pending
-            else EvalEntryStatus.ERRORED if error else EvalEntryStatus.COMPLETED
+            else EvalEntryStatus.ERRORED
+            if error
+            else EvalEntryStatus.COMPLETED
         ),
         output_metadata={"jev": {"confidence": confidence}},
         eval_explanation=f"because {label}",
@@ -508,6 +510,7 @@ def test_summary_counts_match_the_answers(
         "read": 12,
         "is_sample": True,
         "can_extend": True,
+        "can_read_all": True,
         "next_size": 12,
     }
     assert [q["answer_type"] for q in s["questions"]] == ["yes_no", "category"]
@@ -709,8 +712,7 @@ def test_rows_select_a_time_pattern_over_401_matching_days(
     resolve_desired_rows(task)
     _read_everything(task)
     groups = [
-        f"hour3:{(start + timedelta(days=d)).date().isoformat()}|06"
-        for d in range(401)
+        f"hour3:{(start + timedelta(days=d)).date().isoformat()}|06" for d in range(401)
     ]
     base = {
         "project_id": str(observe_project.id),
@@ -977,7 +979,13 @@ def test_an_exported_excerpt_that_starts_like_a_formula_is_quoted(
 @pytest.mark.django_db
 @pytest.mark.parametrize(
     "method, endpoint",
-    [("get", SUMMARY), ("get", ROWS), ("get", EXPORT), ("post", ROWS), ("post", EXPORT)],
+    [
+        ("get", SUMMARY),
+        ("get", ROWS),
+        ("get", EXPORT),
+        ("post", ROWS),
+        ("post", EXPORT),
+    ],
 )
 def test_read_of_another_organizations_run_is_not_found(
     auth_client, answered_run, method, endpoint
@@ -3216,3 +3224,64 @@ def test_a_run_with_an_answer_or_another_failure_names_no_key_problem(
         "every": False,
         "ai_providers": False,
     }
+
+
+@pytest.mark.django_db
+def test_duplicate_question_ids_check_only_the_credits_for_unique_answers(
+    auth_client, observe_project, yes_no, fake_view, started, monkeypatch
+):
+    # Enough for ten answers (0.6), but not the duplicate count (1.2).
+    calls = _credit_cap(monkeypatch, left=0.9)
+    response = _start(auth_client, observe_project, [yes_no, yes_no], sample_size=10)
+    assert response.status_code == status.HTTP_200_OK, response.json()
+    result = response.json()["result"]
+    assert result["credits_estimate"] == pytest.approx(0.6)
+    assert ("jev_evaluator", 0.6) in calls
+    assert ("jev_evaluator", 1.2) not in calls
+    run = InstantEvalRun.objects.get(eval_task_id=result["task_id"])
+    assert run.questions == run.eval_task.evals.count() == 1
+    assert run.credits_estimate == pytest.approx(0.6)
+    assert len(started) == 1
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "mixed", [False, True], ids=["one-question", "mixed-questions"]
+)
+def test_duplicate_question_ids_finish_and_allow_reading_more(
+    auth_client,
+    observe_project,
+    yes_no,
+    category,
+    fake_view,
+    started,
+    monkeypatch,
+    mixed,
+):
+    _credit_cap(monkeypatch, left=10)
+    configs = [category, yes_no, category, yes_no] if mixed else [yes_no, yes_no]
+    expected = [str(category.id), str(yes_no.id)] if mixed else [str(yes_no.id)]
+    response = _start(auth_client, observe_project, configs, sample_size=10)
+    assert response.status_code == status.HTTP_200_OK, response.json()
+    task = EvalTask.objects.get(id=response.json()["result"]["task_id"])
+    assert task.filters["instant_config_ids"] == expected
+    assert set(task.evals.values_list("id", flat=True)) == {c.id for c in configs}
+    resolve_desired_rows(task)
+    _read_everything(task)
+    more = auth_client.post(
+        CONTROL,
+        {
+            "project_id": str(observe_project.id),
+            "eval_task_id": str(task.id),
+            "action": "read_more",
+            "more": 5,
+        },
+        format="json",
+    )
+    # One answer per row/config settles the run; no impossible resume is needed.
+    assert more.status_code == status.HTTP_200_OK, more.json()
+    run = InstantEvalRun.objects.get(eval_task_id=task.id)
+    assert run.questions == len(expected)
+    assert run.rows_requested == 15
+    task.refresh_from_db()
+    assert len(resolve_desired_rows(task).matched_ids) == 15

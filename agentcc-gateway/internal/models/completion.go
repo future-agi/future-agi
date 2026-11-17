@@ -147,7 +147,9 @@ type CompletionStreamChunk struct {
 	Choices           []CompletionStreamChoice `json:"choices"`
 	Usage             *Usage                   `json:"usage,omitempty"`
 	SystemFingerprint string                   `json:"system_fingerprint,omitempty"`
-	AgentccMetadata   *AgentccStreamMetadata   `json:"agentcc_metadata,omitempty"`
+	// AgentccMetadata is on the stream's final chunk when the client sent
+	// x-agentcc-include-metadata, as on a chat stream.
+	AgentccMetadata *AgentccStreamMetadata `json:"agentcc_metadata,omitempty"`
 }
 
 // CompletionStreamChoice represents a streaming choice in the legacy format.

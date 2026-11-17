@@ -13,7 +13,7 @@ import ast
 import json
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import structlog
 
@@ -21,6 +21,36 @@ from agentic_eval.core.utils.json_utils import strip_code_fence
 from agentic_eval.core_evals.fi_utils.token_count_helper import calculate_total_cost
 
 logger = structlog.get_logger(__name__)
+
+# What a tenant sees when a custom model's endpoint answers HTTP 200 with
+# something other than an answer. Never the body, its text or the URL: the
+# endpoint could be an internal service (see tfc.utils.ssrf_guard). Each is
+# under 200 characters, so the run-prompt error path shows it whole.
+ENDPOINT_ANSWERED_ERROR_MESSAGE = (
+    "The model's endpoint answered with an error instead of an answer. Check "
+    "the model name and key for this model in Settings > AI Providers, then "
+    "run again."
+)
+NOT_CHAT_COMPLETIONS_MESSAGE = (
+    "The model's endpoint answered, but not in the chat-completions format. "
+    "Its API Base URL must be the full chat-completions URL, such as "
+    "https://your-host/v1/chat/completions."
+)
+
+
+class UnreadableCompletionError(RuntimeError):
+    """A custom endpoint's 200 answer that holds no chat completion."""
+
+
+@dataclass
+class ChatCompletionBody:
+    """The parts of an OpenAI-compatible chat-completions body a run uses."""
+
+    content: str | None = None
+    tool_calls: list[dict[str, Any]] | None = None
+    reasoning: str | None = None
+    usage: dict[str, Any] | None = None
+
 
 @dataclass
 class UsageInfo:
@@ -35,7 +65,7 @@ class UsageInfo:
     completion_tokens: int = 0
     total_tokens: int = 0
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for API response."""
         return {
             "prompt_tokens": self.prompt_tokens,
@@ -43,7 +73,7 @@ class UsageInfo:
             "total_tokens": self.total_tokens,
         }
 
-    def to_cost_dict(self) -> Dict[str, Any]:
+    def to_cost_dict(self) -> dict[str, Any]:
         """Convert to dictionary format expected by calculate_total_cost."""
         return {
             "prompt_tokens": self.prompt_tokens,
@@ -67,9 +97,9 @@ class ResponseFormatter:
         response_content: Any,
         runtime: float,
         model: str,
-        metadata: Optional[Dict[str, Any]] = None,
-        failure: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        metadata: dict[str, Any] | None = None,
+        failure: str | None = None,
+    ) -> dict[str, Any]:
         """
         Build a standardized value_info dictionary.
 
@@ -98,9 +128,7 @@ class ResponseFormatter:
         }
 
     @staticmethod
-    def extract_reasoning_content(
-        response, show_reasoning_process: bool
-    ) -> Optional[str]:
+    def extract_reasoning_content(response, show_reasoning_process: bool) -> str | None:
         """Extract reasoning/thinking content and prepend to response if enabled."""
         if not show_reasoning_process:
             return None
@@ -124,10 +152,11 @@ class ResponseFormatter:
         response: Any,
         model: str,
         start_time: float,
-        tools: Optional[List[Dict]] = None,
-        output_format: Optional[str] = None,
+        tools: list[dict] | None = None,
+        output_format: str | None = None,
         show_reasoning_process: bool = False,
-    ) -> Tuple[Any, Dict[str, Any]]:
+        organization_id: str | None = None,
+    ) -> tuple[Any, dict[str, Any]]:
         """
         Format a standard LLM completion response.
 
@@ -137,6 +166,8 @@ class ResponseFormatter:
             start_time: Request start time (time.time())
             tools: Optional list of tools if tool calling was used
             output_format: Optional output format specification
+            organization_id: The caller's organization, so a custom model of
+                that organization is priced at its saved price
 
         Returns:
             Tuple of (formatted_response, value_info dict)
@@ -158,8 +189,14 @@ class ResponseFormatter:
         # Build metadata
         metadata = {
             "usage": usage.to_dict(),
-            "cost": calculate_total_cost(response_model, usage.to_cost_dict()),
+            "cost": calculate_total_cost(
+                response_model,
+                usage.to_cost_dict(),
+                organization_id=organization_id,
+                custom_model_name=model,
+            ),
             "response_time": completion_time,
+            "response_time_unit": "ms",
         }
 
         # Handle tool calls
@@ -197,7 +234,7 @@ class ResponseFormatter:
         return formatted_response, value_info
 
     @staticmethod
-    def _format_tool_calls(tool_calls: List[Any]) -> List[Dict[str, Any]]:
+    def _format_tool_calls(tool_calls: list[Any]) -> list[dict[str, Any]]:
         """
         Format tool calls from LiteLLM response to list of dicts.
 
@@ -220,10 +257,135 @@ class ResponseFormatter:
         ]
 
     @staticmethod
+    def parse_chat_completion_body(body_text: str) -> ChatCompletionBody | None:
+        """
+        Read the answer out of a custom endpoint's chat-completions body.
+
+        Custom models are called over plain HTTP, so their answer arrives as
+        the body text, not a LiteLLM response object. This reads it the way
+        format_llm_response reads ``response.choices[0].message``.
+
+        Args:
+            body_text: The endpoint's response body, decoded
+
+        Returns:
+            None when the body is not JSON, or is a JSON number, true/false or
+            null: the caller uses the body text as the answer, so plain-text
+            endpoints keep working. A JSON string is the answer text. A body
+            with ``choices`` gives choices[0]'s message text (text parts
+            joined; the completions-style ``text`` when the message has no
+            content), its tool calls, its reasoning and the top-level usage.
+
+        Any other JSON (an ``error`` object, an endpoint's own shape) returns
+        None as well, so the call succeeds with the body as the answer, as it
+        did before this parser existed: a custom model that works today keeps
+        working. A text-generation body (``{"generated_text": "..."}`` or a
+        one-item list of it) is read as its text.
+        """
+        not_json = object()
+        try:
+            data = json.loads(body_text)
+        except (TypeError, ValueError):
+            data = not_json
+        # Raised outside the except block: a JSONDecodeError carries the body.
+        if data is not_json or data is None or isinstance(data, (bool, int, float)):
+            return None
+        if isinstance(data, str):
+            return ChatCompletionBody(content=data)
+        if isinstance(data, dict) and isinstance(data.get("choices"), list):
+            choices = data["choices"]
+            if choices and isinstance(choices[0], dict):
+                return ResponseFormatter._read_first_choice(data)
+            return None
+        generated = data[0] if isinstance(data, list) and len(data) == 1 else data
+        if isinstance(generated, dict) and isinstance(
+            generated.get("generated_text"), str
+        ):
+            return ChatCompletionBody(content=generated["generated_text"])
+        return None
+
+    @staticmethod
+    def _read_first_choice(data: dict[str, Any]) -> ChatCompletionBody:
+        """The answer parts of ``data["choices"][0]`` and the body's usage."""
+        choice = data["choices"][0]
+        message = choice.get("message")
+        if not isinstance(message, dict):
+            message = {}
+
+        content = ResponseFormatter._message_text(message.get("content"))
+        if content is None and isinstance(choice.get("text"), str):
+            content = choice["text"]
+
+        tool_calls = message.get("tool_calls")
+        tool_calls = (
+            ResponseFormatter._format_tool_call_dicts(tool_calls)
+            if isinstance(tool_calls, list)
+            else []
+        )
+        reasoning = message.get("reasoning_content") or message.get("reasoning")
+        usage = data.get("usage")
+        return ChatCompletionBody(
+            content=content,
+            tool_calls=tool_calls or None,
+            reasoning=reasoning if isinstance(reasoning, str) and reasoning else None,
+            usage=usage if isinstance(usage, dict) else None,
+        )
+
+    @staticmethod
+    def _message_text(content: Any) -> str | None:
+        """A message's content as text: a list of parts is the text of its
+        text parts, joined; None (no content) stays None."""
+        if content is None or isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            texts = []
+            for part in content:
+                if isinstance(part, str):
+                    texts.append(part)
+                elif (
+                    isinstance(part, dict)
+                    and part.get("type") in ("text", "output_text")
+                    and isinstance(part.get("text"), str)
+                ):
+                    texts.append(part["text"])
+            return "".join(texts)
+        if isinstance(content, (int, float)) and not isinstance(content, bool):
+            return str(content)
+        return None
+
+    @staticmethod
+    def _format_tool_call_dicts(tool_calls: list[Any]) -> list[dict[str, Any]]:
+        """Tool calls from a JSON body, in the _format_tool_calls shape."""
+        formatted = []
+        for tool_call in tool_calls:
+            if not isinstance(tool_call, dict):
+                continue
+            function = tool_call.get("function")
+            if not isinstance(function, dict):
+                function = {}
+            formatted.append(
+                {
+                    "id": tool_call.get("id"),
+                    "type": tool_call.get("type") or "function",
+                    "function": {
+                        "name": function.get("name"),
+                        "arguments": function.get("arguments"),
+                    },
+                }
+            )
+        return formatted
+
+    @staticmethod
     def _apply_output_format(response: Any, output_format: str) -> Any:
         """Parse `output_format` to a list/dict/float, else return raw content."""
-        content = response.choices[0].message.content
+        return ResponseFormatter.format_output_text(
+            response.choices[0].message.content, output_format
+        )
 
+    @staticmethod
+    def format_output_text(content: Any, output_format: str | None) -> Any:
+        """``content`` (the model's text) as `output_format` asks: a list,
+        dict or float when it parses as one, else the text unchanged."""
         if output_format == "array":
             parsed = ResponseFormatter._parse_structured(content)
             return parsed if isinstance(parsed, list) else content
@@ -255,28 +417,36 @@ class ResponseFormatter:
             try:
                 return ast.literal_eval(unfenced)
             except (ValueError, SyntaxError):
-                logger.warning(
-                    "response_format_parse_failed", preview=unfenced[:200]
-                )
+                logger.warning("response_format_parse_failed", preview=unfenced[:200])
                 return content
 
     @staticmethod
     def build_streaming_metadata(
         chunk: Any,
         start_time: float,
-    ) -> Dict[str, Any]:
+        model: str | None = None,
+        organization_id: str | None = None,
+    ) -> dict[str, Any]:
         """
         Build metadata from the final streaming chunk.
 
         Args:
             chunk: Final chunk from streaming response with usage info
             start_time: Request start time
+            model: The model name the call was made with
+            organization_id: The caller's organization, so a custom model of
+                that organization is priced at its saved price
 
         Returns:
-            Metadata dictionary
+            Metadata dictionary; response_time is in milliseconds and
+            response_time_unit says so
         """
         end_time = time.time()
-        completion_time = end_time - start_time
+        # Milliseconds, like format_llm_response and every other producer;
+        # dataset cells and experiments read ms. Prompts runs saved before
+        # this stored seconds with no unit, and the time chip shows those
+        # as seconds.
+        completion_time = (end_time - start_time) * 1000
 
         if not hasattr(chunk, "usage") or chunk.usage is None:
             return {
@@ -287,6 +457,7 @@ class ResponseFormatter:
                 },
                 "cost": {"total_cost": 0, "prompt_cost": 0, "completion_cost": 0},
                 "response_time": completion_time,
+                "response_time_unit": "ms",
             }
 
         usage_dict = {
@@ -297,15 +468,21 @@ class ResponseFormatter:
 
         return {
             "usage": usage_dict,
-            "cost": calculate_total_cost(chunk.model, dict(chunk.usage)),
+            "cost": calculate_total_cost(
+                chunk.model,
+                dict(chunk.usage),
+                organization_id=organization_id,
+                custom_model_name=model,
+            ),
             "response_time": completion_time,
+            "response_time_unit": "ms",
         }
 
     @staticmethod
     def accumulate_tool_calls(
-        existing_tool_calls: List[Dict[str, Any]],
-        chunk_tool_calls: List[Any],
-    ) -> List[Dict[str, Any]]:
+        existing_tool_calls: list[dict[str, Any]],
+        chunk_tool_calls: list[Any],
+    ) -> list[dict[str, Any]]:
         """
         Accumulate tool calls from streaming chunks.
 

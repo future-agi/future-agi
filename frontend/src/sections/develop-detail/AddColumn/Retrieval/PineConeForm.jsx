@@ -8,6 +8,7 @@ import EmbeddingConfigField from "./EmbeddingConfigField";
 import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectField";
 import HeadingAndSubHeading from "src/components/HeadingAndSubheading/HeadingAndSubheading";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
+import { vectorStoreAuthHelp } from "./retrievalCopy";
 
 const PineConeForm = ({ allColumns, control }) => {
   return (
@@ -39,7 +40,7 @@ const PineConeForm = ({ allColumns, control }) => {
         fieldName="apiKey"
         fullWidth
         helperText={
-          <HelperText text="API Key for authenticating with Pinecone" />
+          <HelperText text={vectorStoreAuthHelp("Pinecone", "index")} />
         }
         size="small"
       />
@@ -123,7 +124,7 @@ const PineConeForm = ({ allColumns, control }) => {
             fieldName="key"
             fullWidth
             helperText={
-              <HelperText text="The key to extract from the Weaviate collection" />
+              <HelperText text="The metadata key to read from each Pinecone match" />
             }
           />
         </RetrievalFormItemWrapper>

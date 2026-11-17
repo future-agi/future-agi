@@ -1,0 +1,45 @@
+# Vapi's hosted Streamable HTTP endpoint accepts a Vapi API key as a bearer.
+schema: "connector-manifest/v1#provider"
+app: vapi
+id: api-key
+version: 1.1.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.vapi.ai/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: Vapi private (server-side) API key
+      help: "Use a PRIVATE (server-side) Vapi API key from the dashboard, not a public SDK key. The server can create assistants and place billable outbound calls; outbound calling requires an imported number. Supply the key without the Bearer prefix."
+      helpUrl: https://docs.vapi.ai/security-and-privacy/api-keys
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_metered
+  source: https://vapi.ai/pricing
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://docs.vapi.ai/sdk/mcp-server
+    fetchedAt: 2026-11-09
+  - fact: transport.variant
+    url: https://docs.vapi.ai/sdk/mcp-server
+    fetchedAt: 2026-11-09
+  - fact: auth.kind
+    url: https://docs.vapi.ai/sdk/mcp-server
+    fetchedAt: 2026-11-09
+  - fact: auth.credentialParts
+    url: https://docs.vapi.ai/sdk/mcp-server
+    fetchedAt: 2026-11-09

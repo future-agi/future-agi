@@ -1,0 +1,45 @@
+# Langfuse authenticates its project API-key pair with HTTP Basic, not Bearer.
+# The supplied credential is the pre-encoded pair; no key value is stored here.
+schema: "connector-manifest/v1#provider"
+app: langfuse
+id: api-key
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://cloud.langfuse.com/api/public/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Basic "
+      secret: true
+      label: Base64 project API key pair
+      help: "Create project API keys in Langfuse Cloud EU project settings. Base64-encode public-key:secret-key without a trailing newline and supply the encoded token without the Basic prefix. The server accesses that project; other regions require different endpoints."
+      helpUrl: https://langfuse.com/docs/api-and-data-platform/features/mcp-server
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://langfuse.com/docs/api-and-data-platform/features/mcp-server
+    fetchedAt: 2026-11-09
+  - fact: transport.variant
+    url: https://langfuse.com/docs/api-and-data-platform/features/mcp-server
+    fetchedAt: 2026-11-09
+  - fact: auth.kind
+    url: https://langfuse.com/docs/api-and-data-platform/features/mcp-server
+    fetchedAt: 2026-11-09
+  - fact: auth.credentialParts
+    url: https://langfuse.com/docs/api-and-data-platform/features/mcp-server
+    fetchedAt: 2026-11-09
+x-omega: { oss: exclude }

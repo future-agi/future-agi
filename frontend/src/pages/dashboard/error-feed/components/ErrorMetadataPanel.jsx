@@ -2,17 +2,21 @@ import React, { useState } from "react";
 import {
   Box,
   Button,
+  ButtonBase,
   CircularProgress,
   Dialog,
   DialogContent,
   DialogTitle,
   Divider,
   IconButton,
+  InputAdornment,
   Link,
+  ListSubheader,
   Menu,
   MenuItem,
   Skeleton,
   Stack,
+  TextField,
   Tooltip,
   Typography,
   useTheme,
@@ -29,10 +33,19 @@ import {
   useLinearTeams,
   useUpdateErrorFeedIssue,
 } from "src/api/errorFeed/error-feed";
-import { useOrgMembers } from "src/api/annotation-queues/annotation-queues";
+import { useOrgMembersInfinite } from "src/api/annotation-queues/annotation-queues";
 import { useOrganization } from "src/contexts/OrganizationContext";
+import { useDebounce } from "src/hooks/use-debounce";
 import { useSharedIssueSidebar } from "src/api/shared-links";
+import { useAuthContext } from "src/auth/hooks";
+import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
+import { canManageIntegrations } from "src/sections/settings/integrations/access";
+import { getErrorMessage } from "src/sections/settings/integrations/utils";
 import openExternal, { safeExternalUrl } from "../openExternal";
+import {
+  LINEAR_CONNECT_ADMIN_ONLY,
+  LINEAR_CREATE_VIEWER,
+} from "../linearAccess";
 import { useErrorFeedStore } from "../store";
 import { useSharedIssue } from "../sharedIssueContext";
 import ErrorStatusChip from "./ErrorStatusChip";
@@ -70,7 +83,7 @@ function FieldRow({ label, children }) {
 FieldRow.propTypes = { label: PropTypes.string, children: PropTypes.node };
 
 // ── Meta row ────────────────────────────────────────────────────────────────
-function MetaRow({ label, value, icon, monospace, linkHref }) {
+function MetaRow({ label, value, icon, linkHref }) {
   if (value == null || value === "") return null;
   return (
     <Stack
@@ -212,11 +225,14 @@ function StatusDropdown({ clusterId, current }) {
 
   return (
     <>
-      <Box
+      <ButtonBase
         onClick={(e) => {
           e.stopPropagation();
           setAnchorEl(e.currentTarget);
         }}
+        aria-label={`Status: ${cur.label}`}
+        aria-haspopup="menu"
+        aria-expanded={Boolean(anchorEl)}
         sx={{
           display: "inline-flex",
           alignItems: "center",
@@ -232,7 +248,12 @@ function StatusDropdown({ clusterId, current }) {
         }}
       >
         <Iconify icon={cur.icon} width={12} sx={{ color: "inherit" }} />
-        <Typography fontSize="12px" fontWeight={500} sx={{ color: "inherit" }}>
+        <Typography
+          component="span"
+          fontSize="12px"
+          fontWeight={500}
+          sx={{ color: "inherit" }}
+        >
           {cur.label}
         </Typography>
         <Iconify
@@ -240,7 +261,7 @@ function StatusDropdown({ clusterId, current }) {
           width={12}
           sx={{ color: "inherit", opacity: 0.7 }}
         />
-      </Box>
+      </ButtonBase>
       <Menu
         anchorEl={anchorEl}
         open={Boolean(anchorEl)}
@@ -253,7 +274,11 @@ function StatusDropdown({ clusterId, current }) {
           },
         }}
       >
-        <Box sx={{ px: 1.5, py: 0.75 }}>
+        {/* A ListSubheader, not a Box: MenuList skips it and the Divider
+            when it picks the item to focus, so the menu opens on its first
+            option and the arrow keys and Enter work. A Box was picked
+            instead, ignored the focus, and left the keys on the paper. */}
+        <ListSubheader component="div" disableSticky sx={{ px: 1.5, py: 0.75 }}>
           <Typography
             sx={{
               fontSize: "12px",
@@ -265,7 +290,7 @@ function StatusDropdown({ clusterId, current }) {
           >
             Change status
           </Typography>
-        </Box>
+        </ListSubheader>
         <Divider sx={{ borderColor: "divider" }} />
         {STATUS_OPTIONS.filter((option) => option.value !== current).map(
           (option) => {
@@ -326,18 +351,31 @@ const SEVERITY_OPTIONS = [
   },
 ];
 
-function SeverityDropdown({ current, onChange }) {
+function SeverityDropdown({ current, source, assessmentStatus, onChange }) {
   const [anchorEl, setAnchorEl] = useState(null);
   const cur =
     SEVERITY_OPTIONS.find((s) => s.value === current) || SEVERITY_OPTIONS[1];
+  // Same rule as ErrorSeverityBadge (header and list): a "default" severity
+  // is only a placeholder until the assessment completes.
+  const unestablished =
+    source === "default" && assessmentStatus !== "completed";
+  const label = unestablished
+    ? assessmentStatus === "pending"
+      ? "Pending"
+      : "Unassessed"
+    : cur.label;
+  const role = unestablished ? "neutral" : cur.role;
 
   return (
     <>
-      <Box
+      <ButtonBase
         onClick={(e) => {
           e.stopPropagation();
           setAnchorEl(e.currentTarget);
         }}
+        aria-label={`Severity: ${label}`}
+        aria-haspopup="menu"
+        aria-expanded={Boolean(anchorEl)}
         sx={{
           display: "inline-flex",
           alignItems: "center",
@@ -347,34 +385,36 @@ function SeverityDropdown({ current, onChange }) {
           borderRadius: "4px",
           cursor: "pointer",
           border: "1px solid",
-          borderColor: `status.${cur.role}.border`,
-          bgcolor: `status.${cur.role}.bg`,
-          "&:hover": { borderColor: `status.${cur.role}.solid` },
+          borderColor: `status.${role}.border`,
+          bgcolor: `status.${role}.bg`,
+          "&:hover": { borderColor: `status.${role}.solid` },
           transition: "all 0.15s",
         }}
       >
         <Box
+          component="span"
           sx={{
             width: 6,
             height: 6,
             borderRadius: "50%",
-            bgcolor: `status.${cur.role}.solid`,
+            bgcolor: `status.${role}.solid`,
             flexShrink: 0,
           }}
         />
         <Typography
+          component="span"
           fontSize="12px"
           fontWeight={600}
-          sx={{ color: `status.${cur.role}.fg` }}
+          sx={{ color: `status.${role}.fg` }}
         >
-          {cur.label}
+          {label}
         </Typography>
         <Iconify
           icon="solar:alt-arrow-down-linear"
           width={12}
-          sx={{ color: `status.${cur.role}.fg`, opacity: 0.7 }}
+          sx={{ color: `status.${role}.fg`, opacity: 0.7 }}
         />
-      </Box>
+      </ButtonBase>
       <Menu
         anchorEl={anchorEl}
         open={Boolean(anchorEl)}
@@ -387,7 +427,8 @@ function SeverityDropdown({ current, onChange }) {
           },
         }}
       >
-        <Box sx={{ px: 1.5, py: 0.75 }}>
+        {/* As in Status: the menu opens on its first option. */}
+        <ListSubheader component="div" disableSticky sx={{ px: 1.5, py: 0.75 }}>
           <Typography
             sx={{
               fontSize: "12px",
@@ -399,9 +440,11 @@ function SeverityDropdown({ current, onChange }) {
           >
             Change severity
           </Typography>
-        </Box>
+        </ListSubheader>
         <Divider sx={{ borderColor: "divider" }} />
-        {SEVERITY_OPTIONS.filter((s) => s.value !== current).map((s) => {
+        {SEVERITY_OPTIONS.filter(
+          (s) => unestablished || s.value !== cur.value,
+        ).map((s) => {
           return (
             <MenuItem
               key={s.value}
@@ -432,6 +475,8 @@ function SeverityDropdown({ current, onChange }) {
 }
 SeverityDropdown.propTypes = {
   current: PropTypes.string,
+  source: PropTypes.string,
+  assessmentStatus: PropTypes.string,
   onChange: PropTypes.func,
 };
 
@@ -446,18 +491,46 @@ function getInitials(name, email) {
   return (email || "??").slice(0, 2).toUpperCase();
 }
 
-function AssigneeDropdown({ current, onChange, members = [] }) {
+function AssigneeDropdown({ current, onChange, orgId }) {
   const [anchorEl, setAnchorEl] = useState(null);
+  const [search, setSearch] = useState("");
+  const debouncedSearch = useDebounce(search.trim(), 300);
+  // Members come a page at a time and are searched on the server: past the
+  // first page, a member is reached by searching or by "Show more members".
+  const {
+    data: members = [],
+    fetchNextPage,
+    hasNextPage,
+    isFetching,
+    isFetchingNextPage,
+  } = useOrgMembersInfinite(orgId, debouncedSearch);
   const member = members.find((m) => m.email === current);
+  const assigneeName = member
+    ? member.name || member.email
+    : current || "Unassigned";
+  // An assignee outside the loaded page still owns the issue: show them by
+  // their email rather than as unassigned.
+  const shown = member ?? (current ? { email: current } : null);
+
+  const close = () => {
+    setAnchorEl(null);
+    setSearch("");
+  };
+  const pick = (email) => {
+    onChange?.(email);
+    close();
+  };
 
   return (
     <>
-      <Box
+      <ButtonBase
         onClick={(e) => {
           e.stopPropagation();
           setAnchorEl(e.currentTarget);
         }}
+        aria-label={`Assignee: ${assigneeName}`}
         aria-haspopup="menu"
+        aria-expanded={Boolean(anchorEl)}
         sx={{
           display: "inline-flex",
           alignItems: "center",
@@ -476,9 +549,10 @@ function AssigneeDropdown({ current, onChange, members = [] }) {
           transition: "all 0.15s",
         }}
       >
-        {member ? (
+        {shown ? (
           <>
             <Box
+              component="span"
               sx={{
                 width: 16,
                 height: 16,
@@ -491,20 +565,22 @@ function AssigneeDropdown({ current, onChange, members = [] }) {
               }}
             >
               <Typography
+                component="span"
                 fontSize="12px"
                 fontWeight={600}
                 sx={{ color: "status.discovery.fg" }}
               >
-                {getInitials(member.name, member.email)}
+                {getInitials(shown.name, shown.email)}
               </Typography>
             </Box>
             <Typography
+              component="span"
               fontSize="12px"
               color="text.primary"
               noWrap
               sx={{ maxWidth: 90 }}
             >
-              {member.name || member.email.split("@")[0]}
+              {shown.name || shown.email.split("@")[0]}
             </Typography>
           </>
         ) : (
@@ -514,7 +590,7 @@ function AssigneeDropdown({ current, onChange, members = [] }) {
               width={12}
               sx={{ color: "text.disabled" }}
             />
-            <Typography fontSize="12px" color="text.disabled">
+            <Typography component="span" fontSize="12px" color="text.disabled">
               Assign
             </Typography>
           </>
@@ -524,15 +600,18 @@ function AssigneeDropdown({ current, onChange, members = [] }) {
           width={12}
           sx={{ color: "text.disabled", opacity: 0.7 }}
         />
-      </Box>
+      </ButtonBase>
       <Menu
         anchorEl={anchorEl}
         open={Boolean(anchorEl)}
-        onClose={() => setAnchorEl(null)}
+        onClose={close}
+        // The search field takes focus on open, not the first member.
+        autoFocus={false}
         PaperProps={{
           sx: {
             borderRadius: "8px",
             minWidth: 200,
+            maxHeight: 360,
             mt: 0.5,
           },
         }}
@@ -550,15 +629,46 @@ function AssigneeDropdown({ current, onChange, members = [] }) {
             Assign to
           </Typography>
         </Box>
+        <Box sx={{ px: 1, pb: 0.75 }}>
+          <TextField
+            autoFocus
+            size="small"
+            fullWidth
+            placeholder="Search members"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            onKeyDown={(e) => {
+              // Typed letters go to the field, not the menu's jump-to-item;
+              // Escape and Tab still close the menu, ArrowDown moves to the
+              // list.
+              if (e.key === "Escape" || e.key === "Tab") return;
+              e.stopPropagation();
+              if (e.key === "ArrowDown") {
+                e.preventDefault();
+                e.currentTarget
+                  .closest('[role="menu"]')
+                  ?.querySelector('[role="menuitem"]')
+                  ?.focus();
+              }
+            }}
+            inputProps={{ "aria-label": "Search members" }}
+            InputProps={{
+              startAdornment: (
+                <InputAdornment position="start">
+                  <Iconify
+                    icon="solar:magnifier-linear"
+                    width={14}
+                    sx={{ color: "text.disabled" }}
+                  />
+                </InputAdornment>
+              ),
+              sx: { fontSize: "12px" },
+            }}
+          />
+        </Box>
         <Divider sx={{ borderColor: "divider" }} />
         {current && (
-          <MenuItem
-            onClick={() => {
-              onChange?.(null);
-              setAnchorEl(null);
-            }}
-            sx={{ gap: 1, py: 0.75 }}
-          >
+          <MenuItem onClick={() => pick(null)} sx={{ gap: 1, py: 0.75 }}>
             <Iconify
               icon="solar:user-minus-linear"
               width={16}
@@ -574,10 +684,7 @@ function AssigneeDropdown({ current, onChange, members = [] }) {
           .map((m) => (
             <MenuItem
               key={m.email}
-              onClick={() => {
-                onChange?.(m.email);
-                setAnchorEl(null);
-              }}
+              onClick={() => pick(m.email)}
               sx={{ gap: 1, py: 0.75 }}
             >
               <Box
@@ -605,6 +712,24 @@ function AssigneeDropdown({ current, onChange, members = [] }) {
               </Typography>
             </MenuItem>
           ))}
+        {!isFetching && members.length === 0 && (
+          <Typography
+            sx={{ px: 1.5, py: 0.75, fontSize: "12px", color: "text.disabled" }}
+          >
+            No members found
+          </Typography>
+        )}
+        {hasNextPage && (
+          <MenuItem
+            disabled={isFetchingNextPage}
+            onClick={() => fetchNextPage()}
+            sx={{ py: 0.75 }}
+          >
+            <Typography fontSize="12px" color="text.secondary">
+              {isFetchingNextPage ? "Loading…" : "Show more members"}
+            </Typography>
+          </MenuItem>
+        )}
       </Menu>
     </>
   );
@@ -612,7 +737,7 @@ function AssigneeDropdown({ current, onChange, members = [] }) {
 AssigneeDropdown.propTypes = {
   current: PropTypes.string,
   onChange: PropTypes.func,
-  members: PropTypes.array,
+  orgId: PropTypes.string,
 };
 
 // ── Eval row ──────────────────────────────────────────────────────────────────
@@ -769,19 +894,12 @@ ActivityItem.propTypes = {
 };
 
 // ── Co-occurring issues ───────────────────────────────────────────────────────
-const SEV_COLOR = {
-  critical: "#DB2F2D",
-  high: "#E9690C",
-  medium: "#F5A623",
-  low: "#71717a",
-};
 
 function CoOccurringList({ issues, readOnly = false }) {
   const navigate = useNavigate();
   return (
     <Stack gap={0.5}>
       {issues.map((issue) => {
-        const c = SEV_COLOR[issue.severity] || "#71717a";
         return (
           <Stack
             key={issue.id}
@@ -868,10 +986,15 @@ export function LinearTeamPicker({ open, onClose, clusterId, traceId }) {
           }
           onClose();
         },
+        // The refusal the API gave, once (the mutation's meta.errorHandled
+        // keeps the app's error handler from adding a second toast).
         onError: (err) => {
-          const message =
-            err?.response?.data?.result || "Failed to create Linear issue";
-          enqueueSnackbar(message, { variant: "error" });
+          enqueueSnackbar(
+            getErrorMessage(err, "Failed to create Linear issue"),
+            {
+              variant: "error",
+            },
+          );
         },
       },
     );
@@ -994,8 +1117,17 @@ LinearTeamPicker.propTypes = {
   traceId: PropTypes.string,
 };
 
-function ConnectorRow({ icon, color, name, subtitle, action, onAction }) {
+function ConnectorRow({
+  icon,
+  color,
+  name,
+  subtitle,
+  action,
+  onAction,
+  disabledReason,
+}) {
   const theme = useTheme();
+  const disabled = Boolean(disabledReason);
 
   return (
     <Stack
@@ -1044,14 +1176,21 @@ function ConnectorRow({ icon, color, name, subtitle, action, onAction }) {
       </Stack>
 
       {action && (
-        <Button
-          size="small"
-          variant="outlined"
-          onClick={onAction}
-          sx={{ whiteSpace: "nowrap", flexShrink: 0 }}
-        >
-          {action}
-        </Button>
+        <Tooltip title={disabledReason || ""} describeChild>
+          <Button
+            size="small"
+            variant="outlined"
+            aria-disabled={disabled || undefined}
+            onClick={disabled ? undefined : onAction}
+            sx={{
+              whiteSpace: "nowrap",
+              flexShrink: 0,
+              ...(disabled && { cursor: "not-allowed", opacity: 0.5 }),
+            }}
+          >
+            {action}
+          </Button>
+        </Tooltip>
       )}
     </Stack>
   );
@@ -1063,6 +1202,7 @@ ConnectorRow.propTypes = {
   subtitle: PropTypes.string.isRequired,
   action: PropTypes.string,
   onAction: PropTypes.func,
+  disabledReason: PropTypes.string,
 };
 
 function SharedLinearLink({ url, issueId }) {
@@ -1101,7 +1241,8 @@ SharedLinearLink.propTypes = {
   issueId: PropTypes.string,
 };
 
-function Integrations({
+// The issue's connector rows (Linear): exported for its role tests.
+export function Integrations({
   clusterId,
   traceId,
   externalIssueUrl,
@@ -1118,6 +1259,11 @@ function Integrations({
   } = useLinearTeams(currentOrganizationId);
   const linearConnected = linearData?.connected === true;
   const [teamPickerOpen, setTeamPickerOpen] = useState(false);
+  const { role } = useAuthContext();
+  const canConnect = canManageIntegrations(role);
+  const canCreate =
+    RolePermission.OBSERVABILITY[PERMISSIONS.CREATE_EDIT_PROJECT]?.[role] ===
+    true;
 
   const linked = !!externalIssueUrl;
 
@@ -1149,6 +1295,16 @@ function Integrations({
       : linearConnected
         ? "Create issue"
         : "Connect";
+  const linearDisabledReason =
+    linked || linearLoading
+      ? undefined
+      : linearConnected
+        ? canCreate
+          ? undefined
+          : LINEAR_CREATE_VIEWER
+        : canConnect
+          ? undefined
+          : LINEAR_CONNECT_ADMIN_ONLY;
 
   return (
     <>
@@ -1161,6 +1317,7 @@ function Integrations({
           subtitle={linearSubtitle}
           action={linearAction}
           onAction={handleLinearAction}
+          disabledReason={linearDisabledReason}
         />
       </Stack>
 
@@ -1190,27 +1347,54 @@ const EVAL_TYPE_MAP = {
 };
 
 export default function ErrorMetadataPanel({ error }) {
-  const [severity, setSeverityLocal] = useState(error?.severity ?? "high");
   const [assignee, setAssigneeLocal] = useState(error?.assignees?.[0] ?? null);
+  // Severity shows the issue's own value, as the header badge does, except
+  // while a pick is saving: then the pick shows. It gives way when its save
+  // settles, saved or refused, or as soon as the issue's own severity changes
+  // (an assessment or another user's pick), so the latest issue value shows.
+  // New data for the same issue with the same severity keeps the pick.
+  const [pendingSeverity, setPendingSeverity] = useState(null);
+  const [issueSeverity, setIssueSeverity] = useState(error?.severity);
+  if (error?.severity !== issueSeverity) {
+    setIssueSeverity(error?.severity);
+    setPendingSeverity(null);
+  }
   // Use the live active org (matches the X-Organization-Id header) instead of
   // the cached user.organization.id, which can drift and 404 the members
   // request (TH-6156).
   // A shared issue is read-only and its viewer may be signed out: nothing
-  // here fetches, and triage shows as text.
+  // here fetches (the Assignee picker that loads members is not rendered),
+  // and triage shows as text.
   const shared = useSharedIssue();
   const { currentOrganizationId } = useOrganization();
-  const { data: orgMembers = [] } = useOrgMembers(
-    shared ? null : currentOrganizationId,
-  );
   const updateIssue = useUpdateErrorFeedIssue();
+  // Severity saves on a mutation of its own: a mutation runs the per-call
+  // callbacks of its latest call only, so an Assignee save made meanwhile on
+  // a shared one would drop this save's settle and leave the pick showing.
+  const updateSeverity = useUpdateErrorFeedIssue();
 
   const setSeverity = (val) => {
-    setSeverityLocal(val);
-    updateIssue.mutate({ clusterId: error?.cluster_id, severity: val });
+    setPendingSeverity(val);
+    updateSeverity.mutate(
+      { clusterId: error?.cluster_id, severity: val },
+      {
+        onSettled: () =>
+          setPendingSeverity((shown) => (shown === val ? null : shown)),
+      },
+    );
   };
   const setAssignee = (val) => {
+    const previous = assignee;
     setAssigneeLocal(val);
-    updateIssue.mutate({ clusterId: error?.cluster_id, assignee: val });
+    updateIssue.mutate(
+      { clusterId: error?.cluster_id, assignee: val },
+      {
+        // A refused save puts the previous assignee back, unless a later
+        // pick has replaced this one since.
+        onError: () =>
+          setAssigneeLocal((shown) => (shown === val ? previous : shown)),
+      },
+    );
   };
 
   const selectedTraceId = useErrorFeedStore(
@@ -1307,7 +1491,18 @@ export default function ErrorMetadataPanel({ error }) {
                   reason={error.severity_reason}
                 />
               ) : (
-                <SeverityDropdown current={severity} onChange={setSeverity} />
+                <SeverityDropdown
+                  current={pendingSeverity ?? error.severity}
+                  // A pick is a manual severity, as the saved issue will say,
+                  // so it shows by name even over a placeholder severity.
+                  source={pendingSeverity ? "manual" : error.severity_source}
+                  assessmentStatus={
+                    pendingSeverity
+                      ? "manual"
+                      : error.severity_assessment_status
+                  }
+                  onChange={setSeverity}
+                />
               )}
             </FieldRow>
             <FieldRow label="Assignee">
@@ -1319,7 +1514,7 @@ export default function ErrorMetadataPanel({ error }) {
                 <AssigneeDropdown
                   current={assignee}
                   onChange={setAssignee}
-                  members={orgMembers}
+                  orgId={currentOrganizationId}
                 />
               )}
             </FieldRow>

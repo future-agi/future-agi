@@ -8,6 +8,7 @@ import ShareDialog from "./ShareDialog";
 
 const mocks = vi.hoisted(() => ({
   useGetSharedLinks: vi.fn(),
+  useGetSharedLinkDetail: vi.fn(),
   useCreateSharedLink: vi.fn(),
   useUpdateSharedLink: vi.fn(),
   useAddSharedLinkAccess: vi.fn(),
@@ -101,6 +102,11 @@ beforeEach(() => {
     .fn()
     .mockResolvedValue({ data: [activeLink], isError: false, isSuccess: true });
   mocks.useGetSharedLinks.mockReturnValue(linksState());
+  mocks.useGetSharedLinkDetail.mockImplementation((id) => ({
+    data: id ? { id, access_list: [] } : undefined,
+    isLoading: false,
+    isError: false,
+  }));
   mocks.useCreateSharedLink.mockReturnValue(createState());
   mocks.useUpdateSharedLink.mockReturnValue(updateState());
   mocks.useAddSharedLinkAccess.mockReturnValue({

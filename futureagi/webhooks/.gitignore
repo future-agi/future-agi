@@ -1,0 +1,2 @@
+# DESIGN.md section 17.1 evidence written by the Django test runs (webhooks/tests/evidence.py); the cloud runs pull it.
+.evidence/

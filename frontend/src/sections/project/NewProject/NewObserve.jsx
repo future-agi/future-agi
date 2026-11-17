@@ -1,13 +1,19 @@
+import PersonalKeySnippet, {
+  PersonalKeyControl,
+} from "src/sections/keys/view/PersonalKeySnippet";
 import { Box, LinearProgress, Tab } from "@mui/material";
-import { SegmentedTabs } from "src/components/tabs/tabs";
 import React, { useState } from "react";
 import { Events, handleOnDocsClicked, trackEvent } from "src/utils/Mixpanel";
 import { useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
+import ErrorState from "src/components/error-state";
+import { getRequestErrorMessage } from "src/utils/errorUtils";
 
 import InstructionTitle from "./InstructionTitle";
 import InstructionCodeCopy from "./InstructionCodeCopy";
 import ObserveInstruments from "./ObserveInstuments";
+import CollectorUrlNote from "./CollectorUrlNote";
+import { SegmentedTabs } from "src/components/tabs/tabs";
 
 const NewObserve = () => {
   const [languageTab, setLanguageTab] = useState("python");
@@ -16,8 +22,9 @@ const NewObserve = () => {
     isSuccess,
     isLoading,
     error,
+    refetch,
   } = useQuery({
-    queryKey: ["keys"],
+    queryKey: ["project-sdk-code", "observe"],
     queryFn: () =>
       axios.get(endpoints.project.getCodeBlockTracer, {
         params: {
@@ -43,7 +50,24 @@ const NewObserve = () => {
     return cleanCode(keysData[section]?.[languageKey]);
   };
 
+  if (error) {
+    return (
+      <ErrorState
+        title="Could not load setup instructions"
+        detail={getRequestErrorMessage(
+          error,
+          "Could not load setup instructions",
+        )}
+        onRetry={() => refetch()}
+      />
+    );
+  }
+
   if (!isSuccess || !keysData) return <LinearProgress />;
+
+  // register() puts traces in the project with this name, creating it if new.
+  const projectNameSetting =
+    languageTab === "python" ? "project_name" : "projectName";
 
   return (
     <Box
@@ -57,8 +81,8 @@ const NewObserve = () => {
       {/* Installation & Keys Section */}
       <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
         <InstructionTitle
-          title="Install Dependencies"
-          description="For more instructions, checkout our "
+          title="Install dependencies"
+          description="For more instructions, check out our "
           url="https://docs.futureagi.com/docs/observe"
           urltext="Docs"
           onUrlClick={() => handleOnDocsClicked("observe_page")}
@@ -92,23 +116,25 @@ const NewObserve = () => {
         {/* API Keys */}
         <Box sx={{ mt: 1.5 }}>
           <InstructionTitle
-            title="Load API keys"
-            description="load your API keys"
+            title="Use a personal API key"
+            description="Create a key or replace the placeholders with your saved values."
           />
         </Box>
 
+        <PersonalKeyControl />
         <InstructionCodeCopy
           text={getCodeBySection("keys")}
           language={languageTab}
           onCopy={() => trackEvent(Events.apikeys)}
         />
+        <CollectorUrlNote missing={Boolean(keysData?.collector_url_missing)} />
       </Box>
 
       {/* Telemetry Section with its own tab control */}
       <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
         <InstructionTitle
-          title="Setup Telemetry"
-          description="Register your application to send traces to this project. The code should be added BEFORE any code execution."
+          title="Set up telemetry"
+          description={`Set ${projectNameSetting} to the project you want. Observe creates it when its first trace arrives; reuse a name to send to an existing project. Add this code before the rest of your app runs.`}
         />
 
         {/* Separate tab selector for telemetry */}
@@ -138,7 +164,7 @@ const NewObserve = () => {
       {/* Instruments Section */}
       <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
         <InstructionTitle
-          title="Setup Instrumentation"
+          title="Set up instrumentation"
           description="Add tracing instrumentation to give you observability into your application."
         />
 
@@ -155,4 +181,10 @@ const NewObserve = () => {
   );
 };
 
-export default NewObserve;
+export default function NewObserveWithKey() {
+  return (
+    <PersonalKeySnippet>
+      <NewObserve />
+    </PersonalKeySnippet>
+  );
+}

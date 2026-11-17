@@ -26,7 +26,9 @@ export default function PromptSTTInput({
       )
       ?.map((col) => ({
         label: col?.headerName,
-        value: col?.col?.id ?? col?.id,
+        // The experiment's columns carry their id in `field` (options-truth
+        // L3 G7 W5): without it the select never takes a column.
+        value: col?.col?.id ?? col?.id ?? col?.field,
       }));
   }, [allColumns, currentColId]);
 
@@ -64,7 +66,8 @@ export default function PromptSTTInput({
             fontWeight={"fontWeightRegular"}
             color={"text.primary"}
           >
-            Choose the input that you want to transcribe speech for
+            Transcribe audio: choose the audio column whose speech each row
+            transcribes
           </Typography>
         </Stack>
       </ImportPromptSection>

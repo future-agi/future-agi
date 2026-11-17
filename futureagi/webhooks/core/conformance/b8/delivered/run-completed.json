@@ -1,0 +1,24 @@
+{
+  "conformance_version": "1.4.0",
+  "source": "B8-EVENT-CONTRACT.md section 12.5",
+  "secret": "whsec_AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+  "msg_id": "evt_01M5HJ03YMFHNNMJ9R4WB0BX73",
+  "timestamp": 1792664415,
+  "body_bytes_b64": "eyJpZCI6ImV2dF8wMU01SEowM1lNRkhOTk1KOVI0V0IwQlg3MyIsInR5cGUiOiJkZXBsb3ltZW50LnJ1bi5jb21wbGV0ZWQiLCJhcGlfdmVyc2lvbiI6InYxIiwidGltZXN0YW1wIjoiMjAyNi0xMC0yMlQxMDoyMDowNy45NTBaIiwib3JnYW5pemF0aW9uX2lkIjoiMTExMTExMTEtMTExMS00MTExLTgxMTEtMTExMTExMTExMTExIiwid29ya3NwYWNlX2lkIjoiMjIyMjIyMjItMjIyMi00MjIyLTgyMjItMjIyMjIyMjIyMjIyIiwiZGF0YSI6eyJkZXBsb3ltZW50Ijp7ImlkIjoiZGVwLTNmOWEwYzFkMmU0YjVhNjkiLCJuYW1lIjoic3VwcG9ydC1hZ2VudCIsImVudmlyb25tZW50IjoicHJvZHVjdGlvbiIsInJldmlzaW9uIjo0fSwicnVuIjp7ImlkIjoicnVuXzAxTTVISFpYM0pCOEYwUkZDVkZXUTRNVjQxIiwidGhyZWFkX2lkIjoidGhfMDFNNUhIWEo2QzNXNzJURjJCQjlNUUgxV1AiLCJhc3Npc3RhbnRfaWQiOm51bGwsIndvcmtmbG93X2lkIjoic3VwcG9ydC1hZ2VudCIsInN0YXR1cyI6InN1Y2NlZWRlZCIsImF0dGVtcHQiOjEsInRyaWdnZXIiOnsia2luZCI6ImFwaSIsImNyb25faWQiOm51bGx9LCJjcmVhdGVkX2F0IjoiMjAyNi0xMC0yMlQxMDoyMDowMS4wMTBaIiwic3RhcnRlZF9hdCI6IjIwMjYtMTAtMjJUMTA6MjA6MDEuMTIwWiIsImVuZGVkX2F0IjoiMjAyNi0xMC0yMlQxMDoyMDowNy45NTBaIiwiZHVyYXRpb25fbXMiOjY4MzAsInF1ZXVlX21zIjoxMTAsInN1cGVyc3RlcHMiOjksImVycm9yIjpudWxsLCJjb250ZXh0Ijp7InRpY2tldCI6IjQ4MjEzIiwicXVldWUiOiJyZWZ1bmRzIn0sInZlcmlmaWVkX2J5X3RyYWNlIjp0cnVlfSwidXNhZ2UiOnsiaW5wdXRfdG9rZW5zIjoxODM0LCJvdXRwdXRfdG9rZW5zIjo0MDIsInRvdGFsX3Rva2VucyI6MjIzNiwibW9kZWxfY2FsbHMiOjMsInNvdXJjZSI6Im9ic2VydmUifSwiY29zdCI6eyJ1c2RfbWljcm9zIjo0MTI3LCJmaW5hbCI6dHJ1ZSwiYmFzaXMiOiJvYnNlcnZlX21vZGVsX3ByaWNlcyJ9LCJ0cmFjZSI6eyJpZCI6IjRiZjkyZjM1NzdiMzRkYTZhM2NlOTI5ZDBlMGU0NzM2IiwicHJvamVjdF9pZCI6IjhkM2U1ZjEwLTJhNGItNGM2ZC04ZTlmLTBhMWIyYzNkNGU1ZiJ9LCJsaW5rcyI6eyJkZXBsb3ltZW50IjoiaHR0cHM6Ly9hcHAuZXhhbXBsZS50ZXN0L2Rhc2hib2FyZC9kZXBsb3ltZW50cy9kZXAtM2Y5YTBjMWQyZTRiNWE2OSIsInRyYWNlIjoiaHR0cHM6Ly9hcHAuZXhhbXBsZS50ZXN0L2Rhc2hib2FyZC9vYnNlcnZlLzhkM2U1ZjEwLTJhNGItNGM2ZC04ZTlmLTBhMWIyYzNkNGU1Zi90cmFjZS80YmY5MmYzNTc3YjM0ZGE2YTNjZTkyOWQwZTBlNDczNiIsInJ1bl9hcGkiOiJodHRwczovL3N1cHBvcnQtYWdlbnQuZXhhbXBsZS50ZXN0L3N0dWRpby92MS9ydW5zL3J1bl8wMU01SEhaWDNKQjhGMFJGQ1ZGV1E0TVY0MSJ9fX0=",
+  "body_text": "{\"id\":\"evt_01M5HJ03YMFHNNMJ9R4WB0BX73\",\"type\":\"deployment.run.completed\",\"api_version\":\"v1\",\"timestamp\":\"2026-10-22T10:20:07.950Z\",\"organization_id\":\"11111111-1111-4111-8111-111111111111\",\"workspace_id\":\"22222222-2222-4222-8222-222222222222\",\"data\":{\"deployment\":{\"id\":\"dep-3f9a0c1d2e4b5a69\",\"name\":\"support-agent\",\"environment\":\"production\",\"revision\":4},\"run\":{\"id\":\"run_01M5HHZX3JB8F0RFCVFWQ4MV41\",\"thread_id\":\"th_01M5HHXJ6C3W72TF2BB9MQH1WP\",\"assistant_id\":null,\"workflow_id\":\"support-agent\",\"status\":\"succeeded\",\"attempt\":1,\"trigger\":{\"kind\":\"api\",\"cron_id\":null},\"created_at\":\"2026-10-22T10:20:01.010Z\",\"started_at\":\"2026-10-22T10:20:01.120Z\",\"ended_at\":\"2026-10-22T10:20:07.950Z\",\"duration_ms\":6830,\"queue_ms\":110,\"supersteps\":9,\"error\":null,\"context\":{\"ticket\":\"48213\",\"queue\":\"refunds\"},\"verified_by_trace\":true},\"usage\":{\"input_tokens\":1834,\"output_tokens\":402,\"total_tokens\":2236,\"model_calls\":3,\"source\":\"observe\"},\"cost\":{\"usd_micros\":4127,\"final\":true,\"basis\":\"observe_model_prices\"},\"trace\":{\"id\":\"4bf92f3577b34da6a3ce929d0e0e4736\",\"project_id\":\"8d3e5f10-2a4b-4c6d-8e9f-0a1b2c3d4e5f\"},\"links\":{\"deployment\":\"https://app.example.test/dashboard/deployments/dep-3f9a0c1d2e4b5a69\",\"trace\":\"https://app.example.test/dashboard/observe/8d3e5f10-2a4b-4c6d-8e9f-0a1b2c3d4e5f/trace/4bf92f3577b34da6a3ce929d0e0e4736\",\"run_api\":\"https://support-agent.example.test/studio/v1/runs/run_01M5HHZX3JB8F0RFCVFWQ4MV41\"}}}",
+  "bytes": 1415,
+  "sha256": "4c9fa8f5522c936a8308bf01decbd1568966efbb1deacbc03ad6bb9211a1b7ed",
+  "webhook_signature": "v1,HYzAQwCNM0KEuW/OEXXlN/vKbkPawb4S6CuIDuyRXho=",
+  "headers": {
+    "content-type": "application/json; charset=utf-8",
+    "user-agent": "FutureAGI-Webhooks/1.0",
+    "webhook-id": "evt_01M5HJ03YMFHNNMJ9R4WB0BX73",
+    "webhook-timestamp": "1792664415",
+    "webhook-signature": "v1,HYzAQwCNM0KEuW/OEXXlN/vKbkPawb4S6CuIDuyRXho=",
+    "X-FutureAGI-Event": "deployment.run.completed",
+    "X-FutureAGI-Delivery": "dlv_01M5HJ08XP18DJRFAEBXG730MK",
+    "X-FutureAGI-Attempt": "1",
+    "X-FutureAGI-Sequence": "214"
+  },
+  "notes": "links hosts are placeholders and the two app paths are illustrative until B8c pins them; the bytes, sha256 and signature are exact for this text."
+}

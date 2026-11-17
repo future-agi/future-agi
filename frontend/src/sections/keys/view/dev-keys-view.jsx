@@ -3,20 +3,29 @@ import React, { useCallback, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
 import PageHeader from "src/components/page-header";
+import { ROW_HEIGHT } from "src/theme/sizes";
 import ApiKeyBar from "./ApiKeyBar";
 import { DataTable, DataTablePagination } from "src/components/data-table";
 import { useDebounce } from "src/hooks/use-debounce";
 import axios, { endpoints } from "src/utils/axios";
-import Image from "src/components/image";
+import KeysEmptyState from "./KeysEmptyState";
+import { personalKeyRows } from "./personalKeys";
 import CreateApiKey from "./CreateApiKey";
 import ActionMenu from "./ActionMenu";
 import SecretKeyRenderer from "./SecretKeyRenderer";
 import KeyExpiryStatus, { KeyStatusChip } from "./KeyExpiryStatus";
+import OverflowTooltip from "src/components/tooltip/OverflowTooltip";
+import { keyAccessLabel, keyScopesShown } from "./keyScopes";
 import stringAvatar from "src/utils/stringAvatar";
-import { ROW_HEIGHT } from "src/theme/sizes";
+import { useAuthContext } from "src/auth/hooks";
+import { useOrganization } from "src/contexts/OrganizationContext";
+import { useWorkspace } from "src/contexts/WorkspaceContext";
 
 export default function DevKeysView() {
   const queryClient = useQueryClient();
+  const { user } = useAuthContext();
+  const { currentOrganizationId } = useOrganization();
+  const { currentWorkspaceId } = useWorkspace();
   const [searchQuery, setSearchQuery] = useState("");
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(25);
@@ -30,6 +39,9 @@ export default function DevKeysView() {
   const { data, isLoading } = useQuery({
     queryKey: [
       "dev-keys",
+      user?.id,
+      currentOrganizationId,
+      currentWorkspaceId,
       page,
       pageSize,
       debouncedSearchQuery,
@@ -47,12 +59,19 @@ export default function DevKeysView() {
         },
       }),
     select: (d) => d.data,
-    keepPreviousData: true,
+    // An inline create elsewhere must be visible on the next Keys visit.
+    staleTime: 0,
   });
 
+  // Each row keeps the server's masked hints, so a person can tell keys apart.
   const rows = useMemo(
-    () => (data?.status ? data?.result?.table : []) ?? [],
+    () => personalKeyRows((data?.status ? data?.result?.table : []) ?? []),
     [data],
+  );
+  // The create dialog numbers its default name when one of these is taken.
+  const keyNames = useMemo(
+    () => rows.map((row) => row.key_name).filter((n) => typeof n === "string"),
+    [rows],
   );
   const total =
     data?.result?.metadata?.totalRows ??
@@ -70,7 +89,11 @@ export default function DevKeysView() {
         id: "key_name",
         accessorKey: "key_name",
         header: "Key Name",
-        meta: { flex: 1 },
+        // The name and its status tag share this column: it takes the room
+        // the masked columns do not need. At 240 the columns' least widths
+        // still fit the grid at 1024 px, so the actions stay on screen.
+        meta: { flex: 2 },
+        minSize: 240,
         cell: ({ getValue, row }) => (
           <Box
             sx={{
@@ -80,13 +103,15 @@ export default function DevKeysView() {
               width: "100%",
             }}
           >
-            <Typography
-              variant="body2"
-              noWrap
-              sx={{ fontSize: 12, minWidth: 0, flex: "0 1 auto" }}
-            >
-              {getValue()}
-            </Typography>
+            <OverflowTooltip title={getValue()}>
+              <Typography
+                variant="body2"
+                noWrap
+                sx={{ fontSize: 12, minWidth: 0, flex: "0 1 auto" }}
+              >
+                {getValue()}
+              </Typography>
+            </OverflowTooltip>
             <KeyStatusChip row={row.original} />
           </Box>
         ),
@@ -95,7 +120,10 @@ export default function DevKeysView() {
         id: "api_key",
         accessorKey: "api_key",
         header: "API Key",
-        meta: { flex: 1 },
+        // The server's masked hint: first four, up to ten stars, last four.
+        // Its 18 characters are about 121 px in 12 px Inter, plus the cell's
+        // padding.
+        size: 150,
         enableSorting: false,
         cell: ({ getValue }) => <SecretKeyRenderer value={getValue()} />,
       },
@@ -103,10 +131,27 @@ export default function DevKeysView() {
         id: "secret_key",
         accessorKey: "secret_key",
         header: "Secret Key",
-        meta: { flex: 1 },
+        size: 150,
         enableSorting: false,
         cell: ({ getValue }) => <SecretKeyRenderer value={getValue()} />,
       },
+      // H-8 (HO S3): what the key may do (prototype mode only).
+      ...(keyScopesShown()
+        ? [
+            {
+              id: "scopes",
+              accessorKey: "scopes",
+              header: "Access",
+              meta: { flex: 1 },
+              enableSorting: false,
+              cell: ({ getValue }) => (
+                <Typography variant="body2" noWrap sx={{ fontSize: 12 }}>
+                  {keyAccessLabel(getValue())}
+                </Typography>
+              ),
+            },
+          ]
+        : []),
       {
         id: "created_by",
         accessorKey: "created_by",
@@ -160,7 +205,10 @@ export default function DevKeysView() {
         id: "actions",
         accessorKey: "id",
         header: "Actions",
-        size: 120,
+        // The icon-only menu button is 64 px at least, plus the cell's
+        // padding. At 85 the columns' least widths, the Expires column's
+        // included, still fit the grid at 1024 px.
+        size: 85,
         enableSorting: false,
         cell: ({ row }) => (
           <ActionMenu data={row.original} onRefresh={handleRefresh} />
@@ -185,7 +233,7 @@ export default function DevKeysView() {
     >
       <PageHeader
         title="Keys"
-        description="Create and manage API keys to send traces and call Future AGI from your code."
+        description="Create and manage API keys to send traces and call Future AGI from your code. API keys are personal. Secrets are shown only when you create a key."
         sx={{ mb: 0 }}
       />
       <ApiKeyBar
@@ -218,45 +266,13 @@ export default function DevKeysView() {
           />
         </>
       ) : (
-        <Box
-          display="flex"
-          flexDirection="column"
-          justifyContent="center"
-          alignItems="center"
-          gap={2}
-          height="100%"
-        >
-          <Image
-            src="/assets/icons/blank_table_icon.png"
-            sx={{ width: 68, height: 68 }}
-          />
-          <Box
-            display="flex"
-            flexDirection="column"
-            gap="2px"
-            textAlign="center"
-          >
-            <Typography
-              typography="m3"
-              fontWeight="fontWeightMedium"
-              color="text.primary"
-            >
-              No keys has been added yet
-            </Typography>
-            <Typography
-              typography="s1"
-              fontWeight="fontWeightRegular"
-              color="text.primary"
-            >
-              Click on + Add API Key to create and manage your API key
-            </Typography>
-          </Box>
-        </Box>
+        <KeysEmptyState onCreate={() => setOpenCreateApiKey(true)} />
       )}
       <CreateApiKey
         open={openCreateApiKey}
         onClose={() => setOpenCreateApiKey(false)}
         refreshGrid={() => handleRefresh()}
+        existingKeyNames={keyNames}
       />
     </Box>
   );

@@ -27,7 +27,15 @@ import StatusBadge from "src/components/status-badge/StatusBadge";
 import { useQuery } from "@tanstack/react-query";
 import axiosInstance, { endpoints } from "src/utils/axios";
 import useSessions from "./hooks/useSessions";
-import { formatCost } from "../utils/formatters";
+import { NO_CHARGE, noChargeComputed } from "./logCost";
+import {
+  EMPTY,
+  NO_PRICE,
+  costTooltip,
+  formatCost,
+  formatCostCell,
+  isUnpriced,
+} from "../utils/formatters";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -52,7 +60,7 @@ const SESSION_ORDERING_BY_SORT = {
 // ---------------------------------------------------------------------------
 
 function formatTimestamp(iso) {
-  if (!iso) return "N/A";
+  if (!iso) return EMPTY;
   try {
     return new Date(iso).toLocaleString(undefined, {
       month: "short",
@@ -62,7 +70,7 @@ function formatTimestamp(iso) {
       hour12: false,
     });
   } catch {
-    return "N/A";
+    return EMPTY;
   }
 }
 
@@ -159,11 +167,11 @@ function SessionDetail({ sessionId, onRequestClick }) {
                 </Typography>
               </Tooltip>
             </TableCell>
-            <TableCell>{req.model || "-"}</TableCell>
+            <TableCell>{req.model || EMPTY}</TableCell>
             <TableCell>
               <StatusBadge
                 status={req.status_code}
-                label={String(req.status_code ?? "-")}
+                label={String(req.status_code ?? EMPTY)}
                 role={CHIP_ROLE[getStatusChipColor(req.status_code)]}
               />
             </TableCell>
@@ -177,12 +185,24 @@ function SessionDetail({ sessionId, onRequestClick }) {
                       : undefined,
                 }}
               >
-                {req.latency_ms != null ? `${req.latency_ms}ms` : "-"}
+                {req.latency_ms != null ? `${req.latency_ms}ms` : EMPTY}
               </Typography>
             </TableCell>
-            <TableCell sx={{ fontVariantNumeric: "tabular-nums" }}>
-              {formatCost(req.cost)}
-            </TableCell>
+            {isUnpriced(req) || noChargeComputed(req) ? (
+              <TableCell
+                title={isUnpriced(req) ? NO_PRICE : NO_CHARGE}
+                sx={{ fontVariantNumeric: "tabular-nums" }}
+              >
+                {EMPTY}
+              </TableCell>
+            ) : (
+              <TableCell
+                title={costTooltip(req.cost) ?? undefined}
+                sx={{ fontVariantNumeric: "tabular-nums" }}
+              >
+                {formatCostCell(req.cost)}
+              </TableCell>
+            )}
           </TableRow>
         ))}
       </TableBody>
@@ -335,7 +355,7 @@ const SessionExplorer = ({ filters, onRequestClick }) => {
                     noWrap
                     sx={{ maxWidth: 200 }}
                   >
-                    {(session.models || []).join(", ") || "-"}
+                    {(session.models || []).join(", ") || EMPTY}
                   </Typography>
 
                   <Typography variant="body2" noWrap>

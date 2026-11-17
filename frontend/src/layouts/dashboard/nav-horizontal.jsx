@@ -11,9 +11,10 @@ import { bgBlur } from "src/theme/css";
 
 import Scrollbar from "src/components/scrollbar";
 import { NavSectionHorizontal } from "src/components/nav-section";
+import SearchCommandsButton from "src/sections/common/CommandPalette/SearchCommandsButton";
 
 import { HEADER } from "../config-layout";
-import { useNavData } from "./config-navigation";
+import { useShellNavData } from "./useShellNavData";
 import HeaderShadow from "../common/header-shadow";
 
 // ----------------------------------------------------------------------
@@ -23,7 +24,7 @@ function NavHorizontal() {
 
   const { user } = useAuthContext();
 
-  const navData = useNavData();
+  const navData = useShellNavData();
 
   return (
     <AppBar
@@ -39,6 +40,9 @@ function NavHorizontal() {
           }),
         }}
       >
+        {/* No side navigation in this layout: the command palette's own
+            button leads the bar instead. */}
+        <SearchCommandsButton collapsed placement="bottom" />
         <Scrollbar
           sx={{
             "& .simplebar-content": {

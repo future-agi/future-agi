@@ -55,6 +55,10 @@ from deploy.update import receipt as receipt_module  # noqa: E402
 PROJECT = "fagi-test"
 SECRET = "Zx9-super-secret-key-value-0042"
 PG_SECRET = "pg-hunter2-password"
+# The install's own API secret pepper, as bin/install writes one: the updater keeps it and its pepper step
+# changes nothing. test_update_pepper_step.py covers installs without one (v1.58.0 wrote no pepper).
+OPERATOR_PEPPER = "operator-pepper-from-the-secret-store-0123456789"
+PEPPER_LINE = f"FI_API_SECRET_PEPPER={OPERATOR_PEPPER}\n"
 BACKUP = "/opt/backup/run --all"
 TARGET = "v1.1.0"
 VERSIONS = ("v1.0.0", "v1.1.0", "v1.2.0")
@@ -409,7 +413,8 @@ class UpdaterCase(unittest.TestCase):
 
     def render_env(self, values):
         lines = ["# Future AGI configuration written by bin/install", f"SECRET_KEY={SECRET}",
-                 f"PG_PASSWORD='{PG_SECRET}'"]
+                 f"PG_PASSWORD='{PG_SECRET}'", PEPPER_LINE.rstrip("\n"),
+                 f"AGENTCC_MCP_STATE_KEYS={'synthetic-mcp-state-' + 'x' * 32}"]
         if self.mode == "distributed":
             lines.append("COMPOSE_FILE=docker-compose.distributed.yml")
         lines.append("")
@@ -665,7 +670,7 @@ class CrashRecoveryPreservationTests(UpdaterCase):
     def test_old_unicode_tables_do_not_rewrite_inside_unrelated_multiline_values(self):
         for char in ("ࡰ", "\U0001e030", "\U00031350"):
             with self.subTest(char=char):
-                text = f'FUTURE_AGI_VERSION=v1.0.0\n{char}="first\nFUTURE_AGI_VERSION=v0.0.1\nlast"\n'
+                text = PEPPER_LINE + 'AGENTCC_MCP_STATE_KEYS=synthetic-configured-mcp-state-key\n' + f'FUTURE_AGI_VERSION=v1.0.0\n{char}="first\nFUTURE_AGI_VERSION=v0.0.1\nlast"\n'
                 self.build(env_text=text)
                 with mock.patch.object(envfile_module, "unicodedata", unicodedata.ucd_3_2_0):
                     self.interrupt_apply()
@@ -676,6 +681,8 @@ class CrashRecoveryPreservationTests(UpdaterCase):
 
     def test_killed_apply_restores_duplicate_definitions_and_intervening_interpolation(self):
         self.build(env_text=(f'﻿SECRET_KEY={SECRET}\r\n'
+                             f'FI_API_SECRET_PEPPER={OPERATOR_PEPPER}\r\n'
+                             'AGENTCC_MCP_STATE_KEYS=synthetic-configured-mcp-state-key\r\n'
                              'export FUTURE_AGI_VERSION : "v0.9.0"  # first\r\n'
                              'MIDDLE=${FUTURE_AGI_VERSION}\r\n'
                              '  FUTURE_AGI_VERSION= v1.0.0 # last'))
@@ -714,7 +721,7 @@ class CrashRecoveryPreservationTests(UpdaterCase):
 
         for char in ("ࡰ", "\U0001e030", "\U00031350"):
             with self.subTest(key=char), mock.patch.object(envfile_module, "unicodedata", unicodedata.ucd_3_2_0):
-                text = f'FUTURE_AGI_VERSION=v1.0.0\n{char}="\nFUTURE_AGI_VERSION=v0.0.1\n"\n'
+                text = PEPPER_LINE + 'AGENTCC_MCP_STATE_KEYS=synthetic-configured-mcp-state-key\n' + f'FUTURE_AGI_VERSION=v1.0.0\n{char}="\nFUTURE_AGI_VERSION=v0.0.1\n"\n'
                 self.build(env_text=text)
                 self.apply()
                 expected = text.replace("FUTURE_AGI_VERSION=v1.0.0", "FUTURE_AGI_VERSION=v1.1.0")
@@ -798,7 +805,8 @@ class RecoveryTransactionInvariantTests(UpdaterCase):
                 self.assertEqual(self.receipts(), [])
 
     def test_killed_recovery_after_env_rename_is_idempotent_and_durable_on_retry(self):
-        self.build(env_text='FUTURE_AGI_VERSION=v0.9.0\nMIDDLE=${FUTURE_AGI_VERSION}\n'
+        self.build(env_text=PEPPER_LINE + 'AGENTCC_MCP_STATE_KEYS=synthetic-configured-mcp-state-key\n'
+                            'FUTURE_AGI_VERSION=v0.9.0\nMIDDLE=${FUTURE_AGI_VERSION}\n'
                             'FUTURE_AGI_VERSION=v1.0.0')
         self.interrupt_apply()
         journal = self.state.journal_path.read_bytes()
@@ -861,7 +869,7 @@ class RecoveryTransactionInvariantTests(UpdaterCase):
 
     def test_receipts_never_publish_private_recovery_bytes(self):
         private = 'version-comment-private-value'
-        self.build(env_text='SECRET_KEY=' + SECRET + '\nFUTURE_AGI_VERSION=v1.0.0 # ' + private + '\n')
+        self.build(env_text=PEPPER_LINE + 'SECRET_KEY=' + SECRET + '\nFUTURE_AGI_VERSION=v1.0.0 # ' + private + '\n')
         self.interrupt_apply()
         journal = self.journal()
         # Simulate a removed line's comment in private recovery metadata; StateDir must strip it regardless.
@@ -972,6 +980,9 @@ class ApplySuccessTests(UpdaterCase):
             ("containers",),
             ("receipt", "succeeded"),
             ("clear_journal",),
+            # After the receipt: the harness versions backfill one-shot (test_update_backfill_after_apply.py).
+            ("compose", ("exec", "-T", "-e", "SERVICE_TYPE=bootstrap", "-e", "STARTUP_DB_MUTATION_MODE=operator",
+                         "app", "python", "manage.py", "harness_versions_backfill", "--auto"), False),
         ])
 
     def test_journal_is_on_disk_before_the_env_file_changes(self):
@@ -1121,10 +1132,13 @@ class ApplyModeTests(UpdaterCase):
         self.apply()
         calls = self.compose_calls()
         self.assertEqual(calls, [("config", "--quiet"), ("pull", "backend", "frontend", "worker"),
-                                 ("up", "-d", "--no-build", "--wait", "--wait-timeout", "1200")])
+                                 ("up", "-d", "--no-build", "--wait", "--wait-timeout", "1200"),
+                                 ("exec", "-T", "-e", "SERVICE_TYPE=bootstrap", "-e",
+                                  "STARTUP_DB_MUTATION_MODE=operator", "backend", "python", "manage.py",
+                                  "harness_versions_backfill", "--auto")])
         self.assertIn(("wait_api",), self.log)
         self.assertNotIn(("wait_standalone",), self.log)
-        self.assertLess(self.log.index(("compose", calls[-1], True)), self.log.index(("wait_api",)))
+        self.assertLess(self.log.index(("compose", calls[2], True)), self.log.index(("wait_api",)))
 
     def test_standalone_never_uses_compose_wait(self):
         self.apply()
@@ -1186,20 +1200,25 @@ class ApplyModeTests(UpdaterCase):
 
 class EnvFileFidelityTests(UpdaterCase):
     def test_crlf_line_endings_are_kept(self):
-        text = "SECRET_KEY=%s\r\nFUTURE_AGI_VERSION=v1.0.0\r\nOTHER=x\r\n" % SECRET
+        text = ("SECRET_KEY=%s\r\nFI_API_SECRET_PEPPER=%s\r\nFUTURE_AGI_VERSION=v1.0.0\r\nOTHER=x\r\n"
+                "AGENTCC_MCP_STATE_KEYS=synthetic-configured-mcp-state-key\r\n"
+                % (SECRET, OPERATOR_PEPPER))
         self.build(env_text=text)
         self.apply()
         self.assertEqual(self.env_bytes(), text.replace("v1.0.0", "v1.1.0").encode())
 
     def test_crlf_restored_byte_for_byte_after_failure(self):
-        text = "SECRET_KEY=%s\r\nFUTURE_AGI_VERSION=v1.0.0\r\nOTHER=x\r\n" % SECRET
+        text = ("SECRET_KEY=%s\r\nFI_API_SECRET_PEPPER=%s\r\nFUTURE_AGI_VERSION=v1.0.0\r\nOTHER=x\r\n"
+                "AGENTCC_MCP_STATE_KEYS=synthetic-configured-mcp-state-key\r\n"
+                % (SECRET, OPERATOR_PEPPER))
         self.build(env_text=text)
         self.inst.failures["pull"] = InstallError("pull failed")
         self.assertRaisesExactly(FailedBeforeRollout, self.apply)
         self.assertEqual(self.env_bytes(), text.encode())
 
     def test_export_prefix_is_kept(self):
-        text = "export FUTURE_AGI_VERSION=v1.0.0\nexport SECRET_KEY=%s\n" % SECRET
+        text = ("export FUTURE_AGI_VERSION=v1.0.0\nexport SECRET_KEY=%s\n" % SECRET + PEPPER_LINE
+                + 'AGENTCC_MCP_STATE_KEYS=synthetic-configured-mcp-state-key\n')
         self.build(env_text=text)
         self.apply()
         self.assertEqual(self.env_bytes(), text.replace("v1.0.0", "v1.1.0").encode())
@@ -1228,7 +1247,8 @@ class EnvFileFidelityTests(UpdaterCase):
 
     def test_commented_version_line_restored_byte_for_byte_after_failure(self):
         # "Nothing was changed": a failed update must not eat the operator's note.
-        text = ("SECRET_KEY=%s\nFUTURE_AGI_VERSION=v1.0.0  # pinned until QA signs off v1.1\nOTHER=x\n" % SECRET)
+        text = ("SECRET_KEY=%s\nFUTURE_AGI_VERSION=v1.0.0  # pinned until QA signs off v1.1\nOTHER=x\n" % SECRET
+                + PEPPER_LINE + 'AGENTCC_MCP_STATE_KEYS=synthetic-configured-mcp-state-key\n')
         self.build(env_text=text)
         self.inst.failures["pull"] = InstallError("pull failed")
         self.assertRaisesExactly(FailedBeforeRollout, self.apply)
@@ -4119,7 +4139,7 @@ class StagedUpdateTests(UpdaterCase):
         self.assertEqual({c["component"]: c["current_tags"] for c in receipt["components"]},
                          {"standalone": ["v1.0.0"]})
         # The staged images are on the host with their signed digests: verified again, not pulled again.
-        self.assertEqual([c[0] for c in self.compose_calls()], ["config", "up"])
+        self.assertEqual([c[0] for c in self.compose_calls()], ["config", "up", "exec"])
         self.assertEqual([e[1] for e in self.log if e[0] == "env_write"], [{}])
         self.assertNotIn(("env_restore",), self.log)
         self.assertEqual(self.inst.running["app"]["image_id"], id_of("futureagi/standalone", "v1.1.0"))
@@ -4274,7 +4294,7 @@ class InterpolatedVersionValueTests(UpdaterCase):
     """A version key that refers to another variable is put back exactly as it was found."""
 
     TEXT = ("# Future AGI configuration\nSECRET_KEY=%s\nRELEASE=v1.0.0\nFUTURE_AGI_VERSION=${RELEASE}\n"
-            "INSTALL_READY_TIMEOUT_SECONDS=600\n" % SECRET)
+            "INSTALL_READY_TIMEOUT_SECONDS=600\n" % SECRET + PEPPER_LINE)
 
     def setUp(self):
         super().setUp()
@@ -4283,6 +4303,9 @@ class InterpolatedVersionValueTests(UpdaterCase):
         self.inst.env = read_env(self.env_path)
 
     def test_failure_before_the_restart_restores_the_reference(self):
+        self.env_path.write_bytes(self.original + b'AGENTCC_MCP_STATE_KEYS=synthetic-configured-mcp-state-key\n')
+        self.original = self.env_bytes()
+        self.inst.reload_env()
         self.inst.failures["pull"] = InstallError("`docker compose pull` failed: network unreachable")
         exc = self.assertRaisesExactly(FailedBeforeRollout, self.apply)
         self.assertIn("Nothing was changed", str(exc))
@@ -4293,6 +4316,9 @@ class InterpolatedVersionValueTests(UpdaterCase):
         self.assertIn("recovery", self.env_write_kwargs[-1])
 
     def test_a_killed_run_is_recovered_and_the_next_apply_proceeds(self):
+        self.env_path.write_bytes(self.original + b'AGENTCC_MCP_STATE_KEYS=synthetic-configured-mcp-state-key\n')
+        self.original = self.env_bytes()
+        self.inst.reload_env()
         self.inst.failures["pull"] = SystemExit(137)
         with self.assertRaises(SystemExit):
             self.apply()
@@ -4343,8 +4369,9 @@ class UnwritableFoundValueTests(UpdaterCase):
 
     def test_failure_before_the_restart_puts_back_the_original_bytes(self):
         # Compose reads "\n" in a double-quoted value as a line break: no write can put that value back,
-        # but the original bytes can.
-        text = 'SECRET_KEY=%s\nFUTURE_AGI_VERSION="v1.0.0\\nnote"\nOTHER=x\n' % SECRET
+        # but the original bytes can. MCP is configured: this tests version recovery, not its initial fill.
+        text = ('SECRET_KEY=%s\nFUTURE_AGI_VERSION="v1.0.0\\nnote"\nOTHER=x\n' % SECRET + PEPPER_LINE
+                + 'AGENTCC_MCP_STATE_KEYS=synthetic-configured-mcp-state-key\n')
         self.build(env_text=text)
         self.assertEqual(self.inst.env["FUTURE_AGI_VERSION"], "v1.0.0\nnote")
         self.inst.failures["pull"] = InstallError("`docker compose pull` failed: network unreachable")
@@ -4355,7 +4382,7 @@ class UnwritableFoundValueTests(UpdaterCase):
         self.assertNotIn("unrestored_values", self.last_receipt())
 
     def test_when_the_file_was_edited_meanwhile_it_says_what_to_fix_and_keeps_the_journal(self):
-        text = 'SECRET_KEY=%s\nFUTURE_AGI_VERSION="v1.0.0\\nnote"\nOTHER=x\n' % SECRET
+        text = 'SECRET_KEY=%s\nFUTURE_AGI_VERSION="v1.0.0\\nnote"\nOTHER=x\n' % SECRET + PEPPER_LINE
         self.build(env_text=text)
 
         def edit_then_fail(*args):
@@ -4379,7 +4406,7 @@ class ScrubOnlyFreeTextTests(UpdaterCase):
 
     def setUp(self):
         super().setUp()
-        text = ("SECRET_KEY=%s\nS3_ACCESS_KEY=futureagi\nFUTURE_AGI_VERSION=v1.0.0\n" % SECRET)
+        text = ("SECRET_KEY=%s\nS3_ACCESS_KEY=futureagi\nFUTURE_AGI_VERSION=v1.0.0\n" % SECRET + PEPPER_LINE)
         self.build(env_text=text, project="futureagi")
 
     def test_receipt_keeps_the_project_images_and_paths(self):
@@ -6153,7 +6180,7 @@ class Round4PullOnlyWhatIsNeededTests(UpdaterCase):
         self.apply(finishing_plan(self))
         receipt = self.last_receipt()
         self.assertEqual((receipt["status"], receipt["resumes"]), ("succeeded", str(staged)))
-        self.assertEqual([call[0] for call in self.compose_calls()], ["config", "up"])
+        self.assertEqual([call[0] for call in self.compose_calls()], ["config", "up", "exec"])
         self.assertEqual(self.inst.running["app"]["image_id"], id_of("futureagi/standalone", TARGET))
         self.assertIn("Already on this host with the expected digest, not pulled: futureagi/standalone:v1.1.0",
                       self.out.getvalue())

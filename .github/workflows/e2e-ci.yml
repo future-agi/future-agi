@@ -34,6 +34,8 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
+  # HR-JRN-01: this certifying workflow has no value-free opt-out.
+  E2E_VALUE_FREE: "1"
   CACHE_REPO: ghcr.io/future-agi/future-agi/e2e-cache
   # The release builds' layer cache, read only (the slim backend's).
   BUILD_CACHE: ghcr.io/future-agi/future-agi/build-cache
@@ -52,10 +54,22 @@ jobs:
       gateway: ${{ steps.filter.outputs.gateway || steps.always.outputs.gateway }}
       stacks: ${{ steps.stacks.outputs.stacks }}
     steps:
+      - name: Require mandatory value-free mode
+        shell: bash
+        run: |
+          if [ "${E2E_VALUE_FREE:-}" != "1" ]; then
+            printf '%s\n' '::error::Mandatory value-free mode is required.'
+            exit 1
+          fi
       - name: Validate host update fallibility opt-in
         if: github.event_name == 'workflow_dispatch' && inputs.host_update_fallibility && inputs.stack != 'distributed'
         run: |
           printf '%s\n' '::error::host_update_fallibility=true requires stack=distributed; no builds were started.'
+          exit 1
+      - name: Reject unsealed host update fallibility proof
+        if: github.event_name == 'workflow_dispatch' && inputs.host_update_fallibility && inputs.stack == 'distributed'
+        run: |
+          printf '%s\n' '::error::Host update fallibility proof is unavailable in the value-free certifying workflow; no builds were started.'
           exit 1
       - uses: actions/checkout@v4
       - id: filter
@@ -129,9 +143,8 @@ jobs:
       matrix:
         stack: ${{ fromJSON(needs.changes.outputs.stacks) }}
     runs-on: ubuntu-latest
-    # Image builds (~20 min), the Playwright suite (~70 min and growing with
-    # the flow catalog) and the SDK live suites run in this one job. Dev runs
-    # already finish at 66-89 min, so 90 min cancels healthy runs mid-SDK-suite.
+    # Keep dev's 120-minute budget for image builds and the growing Playwright
+    # suite. SDK live suites are disabled below, not part of this job's coverage.
     timeout-minutes: 120
     permissions:
       contents: read
@@ -153,6 +166,13 @@ jobs:
       # :latest that predates that behavior.
       BUILD_GATEWAY: "true"
     steps:
+      - name: Require mandatory value-free mode
+        shell: bash
+        run: |
+          if [ "${E2E_VALUE_FREE:-}" != "1" ]; then
+            printf '%s\n' '::error::Mandatory value-free mode is required.'
+            exit 1
+          fi
       - uses: actions/checkout@v4
 
       - name: Tag for the images built below
@@ -390,35 +410,55 @@ jobs:
         id: boot
         run: bin/e2e up
 
+      # Mandatory value-free mode (HR-JRN-01): suite output leaves the runner only
+      # through the publication choke point (e2e/lib/value-free-boundary.mjs).
+      # Prepare a 0700 registries root holding the run's adopted registry and a
+      # runner-private file holding suite stdout/stderr. No unheld suite arm exists.
+      - name: Prepare the value-free registry
+        if: ${{ env.E2E_VALUE_FREE == '1' }}
+        run: |
+          root=$(mktemp -d "$RUNNER_TEMP/vf-XXXXXX")
+          mkdir -m 700 "$root/registries" "$root/registries/run"
+          {
+            echo "E2E_VALUE_FREE_REGISTRIES=$root/registries"
+            echo "E2E_VALUE_FREE_REGISTRY=$root/registries/run"
+            echo "E2E_VALUE_FREE_HELD=$root/held.log"
+          } >> "$GITHUB_ENV"
+
       - name: Start Redis diagnostics
         continue-on-error: true
         run: node e2e/scripts/redis-diagnostics.mjs start --output-dir "$RUNNER_TEMP/redis-diagnostics"
 
       - name: Run E2E suite
         id: suite
-        run: bin/e2e test
+        run: |
+          bin/e2e test > "$E2E_VALUE_FREE_HELD" 2>&1
 
-      - name: Prove host update assertion fallibility
-        id: host-update-fallibility
-        if: github.event_name == 'workflow_dispatch' && inputs.host_update_fallibility && matrix.stack == 'distributed'
-        # Default success() gating: the unchanged normal suite must pass first.
-        # Driver: 20m aggregate cap, 360s per child, <=7s termination grace.
-        timeout-minutes: 22
-        env:
-          HOST_UPDATE_FALLIBILITY: ${{ inputs.host_update_fallibility }}
-        run: node e2e/scripts/host-update-fallibility.mjs --output-dir "$RUNNER_TEMP/host-update-fallibility"
+      # Value-free: the choke point decides what the upload may take and prints the held suite
+      # output. An intact publication uploads its html/ alone and a refused run its REFUSED.json
+      # alone, each only when it, its path, the held output and this step's output line hold no
+      # registered value; then it prints exactly the bytes it scanned. Anything else (a broken
+      # seal, which leaves the upload path, a missing directory, no html/, a hit, registries it
+      # cannot read whole) uploads nothing and prints one STATUS constant. Its output is never
+      # captured or echoed here. No upload can select an unsealed fallback directory.
+      - name: Value-free publication boundary
+        id: value_free_seal
+        if: ${{ !cancelled() && env.E2E_VALUE_FREE == '1' }}
+        working-directory: e2e
+        run: node lib/value-free-boundary.mjs ci --registries "$E2E_VALUE_FREE_REGISTRIES" --print "$E2E_VALUE_FREE_HELD" --publish "${E2E_VALUE_FREE_PUBLISH:-value-free-publish}" --github-output "$GITHUB_OUTPUT"
 
-      - name: Upload host update fallibility evidence
-        if: >-
-          !cancelled() && github.event_name == 'workflow_dispatch' && inputs.host_update_fallibility
-          && matrix.stack == 'distributed' && steps.host-update-fallibility.outcome != 'skipped'
+      - name: Upload report
+        if: ${{ !cancelled() && steps.value_free_seal.outputs.path != '' }}
         uses: actions/upload-artifact@v4
         with:
-          name: host-update-fallibility-distributed
-          path: ${{ runner.temp }}/host-update-fallibility
+          name: ${{ matrix.stack == 'standalone' && 'playwright-report-standalone' || 'playwright-report' }}
+          path: ${{ steps.value_free_seal.outputs.path }}
           retention-days: 7
-          if-no-files-found: error
+          # A job that dies before the suite runs has no report; the real
+          # failure is upstream and must not be buried by an upload error.
+          if-no-files-found: warn
 
+      # The diagnostics file stays on the runner: it is not a sealed publication, so nothing uploads it.
       - name: Stop Redis diagnostics
         if: ${{ !cancelled() && steps.boot.outcome == 'success' }}
         continue-on-error: true
@@ -426,38 +466,13 @@ jobs:
           SUITE_OUTCOME: ${{ steps.suite.outcome }}
         run: node e2e/scripts/redis-diagnostics.mjs stop --output-dir "$RUNNER_TEMP/redis-diagnostics" --suite-outcome "$SUITE_OUTCOME"
 
-      - name: Upload Redis diagnostics
-        if: ${{ !cancelled() && steps.boot.outcome == 'success' }}
-        continue-on-error: true
-        uses: actions/upload-artifact@v4
-        with:
-          name: redis-diagnostics-${{ matrix.stack }}
-          path: ${{ runner.temp }}/redis-diagnostics/redis-diagnostics.json
-          retention-days: 3
-          if-no-files-found: warn
-
-      - name: Upload report
-        if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.stack == 'standalone' && 'playwright-report-standalone' || 'playwright-report' }}
-          path: e2e/playwright-report
-          retention-days: 7
-          # A job that dies before the suite runs has no report; the real
-          # failure is upstream and must not be buried by an upload error.
-          if-no-files-found: warn
-
-      # --- SDK live suites -------------------------------------------------
-      # The futureagi-sdk repository's E2E tests against this stack, so a
-      # backend change that breaks the SDKs fails here, before a release:
-      # python/tests/platform calls every operation of the generated client,
-      # src/platform/__tests__/live.test.ts covers the TypeScript transport.
-      # Resolve a full SDK commit with the required live suites. Explicit refs
-      # fail closed; defaults lacking the harness use the pinned bootstrap from
-      # SDK PR #35. Both suites still run after Playwright on a booted stack.
+      # --- SDK live suites: deliberately disabled --------------------------
+      # The FA e2e certifying workflow does not run the SDK live suites; SDK behaviour is covered by the SDK repositories' own test suites.
+      # Preserve dev's step bodies as union context, but no input can enable
+      # these unheld producers. There is no SDK held-output adapter here.
       - name: Resolve the futureagi-sdk ref
         id: sdk-ref
-        if: ${{ !cancelled() && steps.boot.outcome == 'success' }}
+        if: ${{ false }}
         env:
           SDK_REF_INPUT: ${{ inputs.sdk-ref }}
           HEAD_REF: ${{ github.head_ref || github.ref_name }}
@@ -467,7 +482,7 @@ jobs:
           python3 -I .github/scripts/resolve-sdk-test-ref.py
 
       - name: Check out futureagi-sdk
-        if: ${{ !cancelled() && steps.sdk-ref.outcome == 'success' }}
+        if: ${{ false }}
         uses: actions/checkout@v4
         with:
           repository: future-agi/futureagi-sdk
@@ -476,12 +491,12 @@ jobs:
           fetch-depth: 1
 
       - uses: actions/setup-python@v5
-        if: ${{ !cancelled() && steps.sdk-ref.outcome == 'success' }}
+        if: ${{ false }}
         with:
           python-version: "3.12"
 
       - name: Install the Python SDK and sign up an account on the stack
-        if: ${{ !cancelled() && steps.sdk-ref.outcome == 'success' }}
+        if: ${{ false }}
         working-directory: futureagi-sdk
         run: |
           python -m pip install --quiet --upgrade pip
@@ -491,14 +506,14 @@ jobs:
           python sdkgen/local_api_key.py --signup --base-url http://localhost:8100 --label "gh${{ github.run_id }}"
 
       - name: Python SDK live suite
-        if: ${{ !cancelled() && steps.sdk-ref.outcome == 'success' }}
+        if: ${{ false }}
         working-directory: futureagi-sdk
         env:
           FI_E2E_REQUIRED: "1"
         run: PYTHONPATH=python pytest -q python/tests/platform
 
       - name: TypeScript SDK live suite
-        if: ${{ !cancelled() && steps.sdk-ref.outcome == 'success' }}
+        if: ${{ false }}
         working-directory: futureagi-sdk/typescript/futureagi
         env:
           FI_E2E_REQUIRED: "1"
@@ -516,7 +531,7 @@ jobs:
         # (futureagi-sdk: sdkgen/check_mcp_parity.py). A tool this tree gained
         # since that release shows up here first, as the reminder to add its
         # catalog entry.
-        if: ${{ !cancelled() && steps.sdk-ref.outcome == 'success' }}
+        if: ${{ false }}
         run: |
           python3 -m pip install --quiet pyyaml
           python3 - <<'EOF'
@@ -533,36 +548,10 @@ jobs:
               print(f"{len(tools)} MCP tools, same names in the SDK catalog")
           EOF
 
-      - name: Capture backend lifecycle on failure
-        if: failure() && steps.boot.outcome == 'success'
-        run: |
-          mkdir -p "$RUNNER_TEMP/backend-lifecycle"
-          if [ "$E2E_STACK" = standalone ]; then
-            services=(app)
-          else
-            services=(backend fi-collector)
-          fi
-          bin/e2e compose logs --no-color --timestamps "${services[@]}" > "$RUNNER_TEMP/backend-lifecycle/logs.txt" 2>&1
-          for id in $(bin/e2e compose ps -aq "${services[@]}"); do
-            docker inspect --format '{{.Name}} restartCount={{.RestartCount}} state={{json .State}}' "$id"
-          done > "$RUNNER_TEMP/backend-lifecycle/state.txt"
-
-      - name: Upload backend lifecycle diagnostics
-        if: failure() && steps.boot.outcome == 'success'
-        uses: actions/upload-artifact@v4
-        with:
-          name: backend-lifecycle-${{ matrix.stack }}
-          path: ${{ runner.temp }}/backend-lifecycle
-          retention-days: 7
-          if-no-files-found: warn
-
-      - name: Dump stack state on failure
-        if: failure()
-        run: |
-          df -h / /mnt
-          cat /tmp/e2e-pull.log || true
-          bin/e2e ps
-          bin/e2e logs --tail 200
+      # Value-free: the stack's logs hold what the run registered and are never scanned, so they
+      # stay on the runner.
+      # The same holds for a backend lifecycle capture and its upload: in value-free mode the
+      # sealed report is the only upload, so neither step is carried here.
 
   e2e-tests:
     name: E2E Tests Pass
@@ -571,6 +560,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      - name: Require mandatory value-free mode
+        shell: bash
+        run: |
+          if [ "${E2E_VALUE_FREE:-}" != "1" ]; then
+            printf '%s\n' '::error::Mandatory value-free mode is required.'
+            exit 1
+          fi
       - name: Fail closed unless every dependency succeeded or was skipped
         env:
           NEEDS: ${{ toJSON(needs) }}

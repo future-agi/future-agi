@@ -227,23 +227,26 @@ def _launch(source_run, user, targets=(KEYS[0],)):
     )
 
 
-def _tree(files=AGENT):
+def _tree(files=AGENT, *, modes=None):
     out = io.BytesIO()
     with tarfile.open(fileobj=out, mode="w:gz") as archive:
         for path, data in files.items():
             member = tarfile.TarInfo(f"source/{path}")
             member.size = len(data)
+            member.mode = (modes or {}).get(path, 0o644)
             archive.addfile(member, io.BytesIO(data))
     return out.getvalue()
 
 
-def _candidate(fix_run, attempt=1, *, tree=None, base=BASE_AGENT):
+def _candidate(fix_run, attempt=1, *, tree=None, base=BASE_AGENT, base_modes=None):
     """A candidate added the engine's way on ``base``, with a preflight that passes."""
     with ExitStack() as stack:
         for one in _passing():
             stack.enter_context(one)
         stack.enter_context(
-            patch.object(engine, "source_archive", return_value=_tree(base))
+            patch.object(
+                engine, "source_archive", return_value=_tree(base, modes=base_modes)
+            )
         )
         return engine.add_candidate(
             fix_run, attempt=attempt, summary=f"attempt {attempt}", tree=tree or _tree()
@@ -721,6 +724,78 @@ class TestAddCandidate:
         patch_body = storage.objects[candidate.patch_object_key]
         assert _applied(tmp_path / "applied", base, patch_body) == tree
         assert b"prompts/system.md" not in patch_body
+
+    @pytest.mark.parametrize(
+        ("base_data", "data", "base_mode", "expected_mode"),
+        [
+            (None, b"#!/bin/sh\nexit 0\n", 0o644, 0o755),
+            (None, b"plain text\n", 0o644, 0o644),
+            (b"#!/bin/sh\nexit 1\n", b"#!/bin/sh\nexit 0\n", 0o755, 0o755),
+            (b"#!/bin/sh\nexit 1\n", b"#!/bin/sh\nexit 0\n", 0o644, 0o755),
+            (b"exit 1\n", b"#!/bin/sh\nexit 0\n", 0o644, 0o755),
+            (b"#!/bin/sh\nexit 1\n", b"exit 0\n", 0o755, 0o644),
+            (b"#!/bin/sh\nexit 0\n", b"#!/bin/sh\nexit 0\n", 0o644, 0o755),
+        ],
+        ids=[
+            "new-script",
+            "new-plain-file",
+            "edit-executable-script",
+            "edit-non-executable-shebang",
+            "add-shebang",
+            "remove-shebang",
+            "mode-only-change",
+        ],
+    )
+    def test_shipped_patch_modes_match_checked_archive(
+        self, source_run, storage, tmp_path, base_data, data, base_mode, expected_mode
+    ):
+        fix_run = _fix_run(source_run)
+        path = "tools/run.sh"
+        base = dict(BASE_AGENT)
+        if base_data is not None:
+            base[path] = base_data
+        files = {**base, path: data}
+        candidate = _candidate(
+            fix_run, tree=_tree(files), base=base, base_modes={path: base_mode}
+        )
+        runtime = _runtime(candidate.agent_version_id)
+        source = storage.objects[
+            _source_object_key(
+                fix_run.organization_id, runtime.source["archive_artifact_id"]
+            )
+        ]
+        with tarfile.open(fileobj=io.BytesIO(source), mode="r:gz") as archive:
+            member = archive.getmember(f"source/{path}")
+            assert member.mode == expected_mode
+            assert archive.extractfile(member).read() == data
+
+        # Match shipping's real git apply --index path, including the base index modes.
+        repo = tmp_path / "shipping"
+        repo.mkdir()
+        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        subprocess.run(
+            ["git", "-C", str(repo), "config", "core.filemode", "true"], check=True
+        )
+        for name, content in base.items():
+            target = repo / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(content)
+            target.chmod(base_mode if name == path else 0o644)
+        subprocess.run(
+            ["git", "-C", str(repo), "add", "--", *sorted(base)], check=True
+        )
+        subprocess.run(
+            ["git", "-C", str(repo), "apply", "--index", "--binary", "-"],
+            input=storage.objects[candidate.patch_object_key],
+            capture_output=True,
+            check=True,
+        )
+        entry = subprocess.check_output(
+            ["git", "-C", str(repo), "ls-files", "--stage", "--", path]
+        )
+        assert entry.split()[0] == f"{0o100000 | expected_mode:o}".encode()
+        assert (repo / path).read_bytes() == data
+        assert bool((repo / path).stat().st_mode & 0o111) == (expected_mode == 0o755)
 
     def test_refuses_a_tree_over_the_unpacked_limit(self, source_run, settings):
         settings.AGENT_FIX_MAX_TREE_BYTES = 10

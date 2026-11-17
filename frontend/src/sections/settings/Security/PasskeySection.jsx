@@ -294,6 +294,7 @@ const PasskeySection = ({ passkey: _passkey, onStatusChange }) => {
             setRecoveryCodes([]);
           }}
           codes={recoveryCodes}
+          reason="passkey"
         />
       )}
 

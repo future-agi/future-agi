@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { buildJevMapping, orderChoiceScores } from "../jevMapping";
+import {
+  buildJevMapping,
+  getJevValidationErrors,
+  orderChoiceScores,
+} from "../jevMapping";
 
 // What the detail API returns for scores authored as Resolved, Unresolved,
 // Escalated: choice_scores is jsonb, which hands keys back shortest first.
@@ -69,6 +73,42 @@ describe("buildJevMapping choice labels", () => {
         { choice: { labels: ["10", "2", "1"] } },
       ),
     ).toEqual(["10", "2", "1"]);
+  });
+});
+
+describe("getJevValidationErrors score levels", () => {
+  const COUNT = "Jev rubric score requires 2 to 10 ordered levels";
+  const DUPLICATE =
+    "Jev rubric levels must all be different. Rename or remove the repeated level.";
+  const scoreErrors = (levels) =>
+    getJevValidationErrors({
+      mapping: buildJevMapping("percentage", {}, { score: { levels } }),
+      config: {},
+      choiceScores: {},
+      messages: [],
+    });
+
+  it("says repeated levels must be different, not that the count is wrong", () => {
+    // W10-EVALS-U09: two identical levels read "requires 2 to 10 ordered
+    // levels" while the counter showed 2 / 10.
+    expect(scoreErrors(["Same", "Same"])).toEqual([DUPLICATE]);
+    expect(scoreErrors(["Low", " Low "])).toEqual([DUPLICATE]);
+  });
+
+  it("keeps the count message for too few or too many levels", () => {
+    expect(scoreErrors([])).toEqual([COUNT]);
+    expect(scoreErrors(["Low"])).toEqual([COUNT]);
+    expect(
+      scoreErrors(Array.from({ length: 11 }, (_, i) => `Level ${i}`)),
+    ).toEqual([COUNT]);
+  });
+
+  it("doesn't call a rubric with a blank level a repeat", () => {
+    expect(scoreErrors(["Same", "Same", ""])).toEqual([COUNT]);
+  });
+
+  it("accepts two to ten different levels", () => {
+    expect(scoreErrors(["Unresolved", "Resolved"])).toEqual([]);
   });
 });
 

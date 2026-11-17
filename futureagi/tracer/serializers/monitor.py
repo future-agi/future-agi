@@ -1,6 +1,10 @@
 import json
+import math
+from collections.abc import Mapping
 
+from django.db.models import Model
 from rest_framework import serializers
+from rest_framework.settings import api_settings
 
 from accounts.serializers.user import UserSerializer
 from tfc.utils.ssrf_guard import SsrfBlocked
@@ -10,6 +14,7 @@ from tracer.models.monitor import (
     AlertTypeChoices,
     MonitorMetricTypeChoices,
     ThresholdCalculationMethodChoices,
+    ThresholdRuleChoices,
     UserAlertMonitor,
     UserAlertMonitorLog,
 )
@@ -24,6 +29,129 @@ from tracer.serializers.filters import (
 from tracer.utils.monitor import uses_choice_threshold
 
 OBSERVATION_SPAN_TYPES = [t[0] for t in ObservationSpan.OBSERVATION_SPAN_TYPES]
+
+# A new value in any of these changes how the monitor's thresholds are judged,
+# so a monitor saved before the threshold update moves to the current rule. A
+# name, filter, notification or mute change keeps the rule it was saved with.
+THRESHOLD_RULE_FIELDS = (
+    "threshold_type",
+    "threshold_operator",
+    "critical_threshold_value",
+    "warning_threshold_value",
+    "auto_threshold_time_window",
+    "alert_frequency",
+    "metric_type",
+    "metric",
+    "threshold_metric_value",
+)
+
+
+def _stored_value(value):
+    """A blank text value is stored as no value."""
+    return None if value == "" else value
+
+
+# A static alert on these metrics compares a share, from 0 to 1, with its
+# thresholds, so a level outside that range is one the share never crosses: the
+# alert never fires, or fires on every check. The alert form refuses such a
+# level with these sentences, and so does the server.
+SHARE_RANGE_MESSAGES = {
+    MonitorMetricTypeChoices.SERVICE_PROVIDER_ERROR_RATES.value: (
+        "Enter a share from 0 to 1, for example 0.2 for 20% of providers."
+    ),
+    MonitorMetricTypeChoices.LLM_API_FAILURE_RATES.value: (
+        "Enter a share from 0 to 1, for example 0.2 for 20% of LLM calls."
+    ),
+    MonitorMetricTypeChoices.ERROR_RATES_FOR_FUNCTION_CALLING.value: (
+        "Enter a share from 0 to 1, for example 0.2 for 20% of function calls."
+    ),
+    MonitorMetricTypeChoices.ERROR_FREE_SESSION_RATES.value: (
+        "Enter a share from 0 to 1, for example 0.9 for 90% of sessions."
+    ),
+}
+SHARE_THRESHOLD_FIELDS = ("critical_threshold_value", "warning_threshold_value")
+
+
+def _number_or_none(value):
+    """A threshold as a number, or None when it is empty or not a number (the
+    field's own check answers those)."""
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _switches_off(data):
+    """True when the request mutes the alert, read as the mute field reads it.
+    A value the field cannot read is no switch; the field refuses it."""
+    try:
+        return data.get("is_mute") in serializers.BooleanField.TRUE_VALUES
+    except TypeError:
+        return False
+
+
+def _same_value(value, saved):
+    """True when a value read from the request is the one the alert holds: a
+    related row by its key, a level as a number, a blank text as no value."""
+    if isinstance(value, Model):
+        value = value.pk
+    return _stored_value(value) == _stored_value(saved)
+
+
+def threshold_words(value) -> str | None:
+    """Words for a saved threshold that is not a finite number; None otherwise.
+
+    The words say the value itself: "Infinity", "-Infinity", or "Not a
+    number" for NaN.
+    """
+    if value is None or math.isfinite(value):
+        return None
+    if math.isnan(value):
+        return "Not a number"
+    return "Infinity" if value > 0 else "-Infinity"
+
+
+class ThresholdWordsMixin:
+    """Sends an infinite or not-a-number threshold as null, with its words.
+
+    PostgreSQL float columns hold Infinity and NaN, and an alert body such as
+    1e309, "Infinity" or "NaN" saves them. Strict JSON has no token for either,
+    so the answer says the level in ``<level>_threshold_label`` instead. A
+    finite threshold answers as before, with no label.
+    """
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        for level in ("critical", "warning"):
+            field = f"{level}_threshold_value"
+            words = threshold_words(data.get(field))
+            if words is not None:
+                data[field] = None
+                data[f"{level}_threshold_label"] = words
+        return data
+
+
+THRESHOLD_LEVEL_FIELDS = ("critical_threshold_value", "warning_threshold_value")
+THRESHOLD_NOT_A_NUMBER = "Enter a number for the threshold."
+
+
+class FiniteThresholdField(serializers.FloatField):
+    """A threshold level, which must be a finite number.
+
+    Python's JSON parser reads 1e309 as infinity, and a float field reads the
+    text "1e309", "Infinity", "-Infinity" or "NaN" as infinity or not-a-number.
+    No alert can be judged by such a level, so it is refused before any other
+    rule, the minimum included. A level saved that way before stays as saved
+    while an update leaves it out.
+    """
+
+    def to_internal_value(self, data):
+        value = super().to_internal_value(data)
+        if not math.isfinite(value):
+            raise serializers.ValidationError(THRESHOLD_NOT_A_NUMBER, code="invalid")
+        return value
 
 
 class UserAlertMonitorListQuerySerializer(serializers.Serializer):
@@ -63,6 +191,13 @@ class UserAlertMonitorListItemSerializer(serializers.Serializer):
     no_of_alerts = serializers.IntegerField(min_value=0)
     last_triggered = serializers.DateTimeField(allow_null=True)
     is_mute = serializers.BooleanField()
+    threshold_type = serializers.ChoiceField(
+        choices=ThresholdCalculationMethodChoices.choices,
+    )
+    threshold_rule = serializers.ChoiceField(
+        choices=ThresholdRuleChoices.choices,
+        help_text="How the saved thresholds are judged: earlier for monitors saved before the threshold update and not edited since, current otherwise.",
+    )
     trends = UserAlertMonitorTrendSerializer(many=True)
 
 
@@ -82,7 +217,7 @@ class UserAlertMonitorListResponseSerializer(serializers.Serializer):
     result = UserAlertMonitorListResultSerializer()
 
 
-class UserAlertMonitorSerializer(serializers.ModelSerializer):
+class UserAlertMonitorSerializer(ThresholdWordsMixin, serializers.ModelSerializer):
     project = serializers.PrimaryKeyRelatedField(
         queryset=Project.objects.filter(trace_type="observe"), required=True
     )
@@ -92,9 +227,36 @@ class UserAlertMonitorSerializer(serializers.ModelSerializer):
     class Meta:
         model = UserAlertMonitor
         fields = "__all__"
-        read_only_fields = ("last_checked_at", "logs", "deleted", "deleted_at")
+        read_only_fields = (
+            "last_checked_at",
+            "logs",
+            "deleted",
+            "deleted_at",
+            "threshold_rule",
+        )
         # Switching from email to webhook explicitly clears the email channel.
         extra_kwargs = {"notification_emails": {"allow_empty": True}}
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        from tracer.serializers.relation_scope import scope_relations
+
+        scope_relations(self, {"project": ("organization", "workspace")})
+        self.fields["project"].queryset = self.fields["project"].queryset.filter(
+            trace_type="observe"
+        )
+        # Set when the request only switches a saved alert off.
+        self._switching_off_only = False
+
+    def build_standard_field(self, field_name, model_field):
+        field_class, field_kwargs = super().build_standard_field(
+            field_name, model_field
+        )
+        if field_name in THRESHOLD_LEVEL_FIELDS:
+            # The model's own arguments (null allowed, minimum 0) are kept, so
+            # the API schema stays the same.
+            field_class = FiniteThresholdField
+        return field_class, field_kwargs
 
     def get_metric_name(self, obj):
         if obj.metric_type == MonitorMetricTypeChoices.EVALUATION_METRICS.value:
@@ -238,6 +400,67 @@ class UserAlertMonitorSerializer(serializers.ModelSerializer):
         #     if critical_threshold_value is not None or warning_threshold_value is not None:
         #         raise serializers.ValidationError("Critical and warning threshold values are not allowed for anomaly detection.")
 
+    def to_internal_value(self, data):
+        if isinstance(data, Mapping):
+            values = self._values_if_only_switching_off(data)
+            if values is not None:
+                self._switching_off_only = True
+                return values
+            # Ahead of the fields' own checks, so a negative share gets the
+            # range sentence rather than the field's minimum.
+            self._validate_share_range(data)
+        return super().to_internal_value(data)
+
+    def _values_if_only_switching_off(self, data):
+        """The request's values when all it does is switch a saved alert off: it
+        mutes the alert, and every other value it sends, read as its field reads
+        it, is the one the alert holds. Such a request changes no level, so the
+        levels are not judged, whatever they are. Otherwise None: switching on,
+        or switching off together with any other change, is judged like any
+        edit."""
+        if self.instance is None or not _switches_off(data):
+            return None
+        try:
+            values = super().to_internal_value(data)
+        except serializers.ValidationError:
+            return None
+        if values.get("is_mute") is not True:
+            return None
+        if all(
+            _same_value(value, self.instance.serializable_value(name))
+            for name, value in values.items()
+            if name != "is_mute"
+        ):
+            return values
+        return None
+
+    def _validate_share_range(self, data):
+        """Refuses a static alert on a share metric with a level outside 0 to 1,
+        with the sentence the alert form shows for that metric.
+
+        The alert is judged as it would be saved: a field the request leaves out
+        keeps its saved value, so a saved alert with a level outside the range
+        cannot be edited until both levels are inside it, though it can always
+        be switched off (_values_if_only_switching_off). A percentage change
+        alert compares a percent and has no such range.
+        """
+
+        def sent_or_saved(name):
+            if name in data:
+                return data.get(name)
+            return getattr(self.instance, name, None)
+
+        message = SHARE_RANGE_MESSAGES.get(str(sent_or_saved("metric_type")))
+        static = ThresholdCalculationMethodChoices.STATIC.value
+        if message is None or str(sent_or_saved("threshold_type")) != static:
+            return
+        for name in SHARE_THRESHOLD_FIELDS:
+            level = _number_or_none(sent_or_saved(name))
+            if level is not None and not 0 <= level <= 1:
+                raise serializers.ValidationError(
+                    {api_settings.NON_FIELD_ERRORS_KEY: [message]}
+                )
+
     def validate_filters(self, filters):
         if filters:
             if not isinstance(filters, dict):
@@ -305,11 +528,37 @@ class UserAlertMonitorSerializer(serializers.ModelSerializer):
         )
         if self._validate_metric_type(full_data, choice_from_row=choice_from_row):
             validated_data["threshold_metric_value"] = None
-        self._validate_threshold_type(full_data)
+        # A request that only switches a saved alert off changes no level, so
+        # the levels are not judged here either, whatever their order.
+        if not self._switching_off_only:
+            self._validate_threshold_type(full_data)
         if "filters" in validated_data and filters:
             validated_data["filters"] = self.validate_filters(filters)
 
         return validated_data
+
+    def update(self, instance, validated_data):
+        if instance.threshold_rule == ThresholdRuleChoices.EARLIER and (
+            self._changes_a_threshold(instance, validated_data)
+        ):
+            validated_data["threshold_rule"] = ThresholdRuleChoices.CURRENT.value
+        return super().update(instance, validated_data)
+
+    def _changes_a_threshold(self, instance, validated_data) -> bool:
+        """True when the request sets a threshold field to a new value.
+
+        Only fields the request sent count: a value ``validate`` sets itself
+        (a stale choice it drops) is no edit. A field sent unchanged is no
+        edit either, since the edit form sends every field.
+        """
+        sent = self.initial_data
+        return any(
+            name in sent
+            and name in validated_data
+            and _stored_value(validated_data[name])
+            != _stored_value(getattr(instance, name))
+            for name in THRESHOLD_RULE_FIELDS
+        )
 
 
 class UserAlertMonitorBulkMuteRequestSerializer(StrictInputSerializer):
@@ -329,6 +578,35 @@ class UserAlertMonitorBulkMuteRequestSerializer(StrictInputSerializer):
 
 class UserAlertMonitorPreviewGraphSerializer(UserAlertMonitorSerializer):
     name = serializers.CharField(required=False, allow_blank=True)
+
+
+class UserAlertMonitorThresholdPreviewPointSerializer(serializers.Serializer):
+    timestamp = serializers.DateTimeField()
+    end_timestamp = serializers.DateTimeField()
+    value = serializers.FloatField(allow_null=True)
+    critical_threshold = serializers.FloatField(allow_null=True)
+    warning_threshold = serializers.FloatField(allow_null=True)
+    status = serializers.ChoiceField(
+        choices=("healthy", "warning", "critical", "insufficient_data")
+    )
+
+
+class UserAlertMonitorThresholdPreviewResultSerializer(serializers.Serializer):
+    series = UserAlertMonitorThresholdPreviewPointSerializer(many=True)
+    fired_buckets = UserAlertMonitorThresholdPreviewPointSerializer(many=True)
+    fire_count = serializers.IntegerField(min_value=0)
+    bucket_count = serializers.IntegerField(min_value=0)
+    evaluated_count = serializers.IntegerField(min_value=0)
+    window_start = serializers.DateTimeField()
+    window_end = serializers.DateTimeField()
+    window_limited = serializers.BooleanField()
+    interval_minutes = serializers.IntegerField(min_value=5)
+    reason = serializers.ChoiceField(choices=("interval_exceeds_window",), required=False)
+
+
+class UserAlertMonitorThresholdPreviewResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = UserAlertMonitorThresholdPreviewResultSerializer()
 
 
 class UserAlertMonitorGraphPointSerializer(serializers.Serializer):
@@ -540,7 +818,9 @@ class UserAlertMonitorMetricOptionsResponseSerializer(serializers.Serializer):
     result = UserAlertMonitorMetricOptionSerializer(many=True, read_only=True)
 
 
-class UserAlertMonitorDetailSerializer(serializers.ModelSerializer):
+class UserAlertMonitorDetailSerializer(
+    ThresholdWordsMixin, serializers.ModelSerializer
+):
     metric_name = serializers.SerializerMethodField()
     created_by = UserSerializer(read_only=True)
 
@@ -634,8 +914,23 @@ _FETCH_GRAPH_POINT_SCHEMA = {
     "required": ["timestamp", "value"],
     "properties": {
         "timestamp": {"type": "string"},
-        "value": {"type": "number"},
+        "value": {"type": "number", "x-nullable": True},
         "primary_traffic": {"type": "number"},
+        "error_rate": {"type": "number", "x-nullable": True},
+        **{
+            key: {"type": "integer", "minimum": 0}
+            for key in (
+                "count",
+                "scored_count",
+                "unscored_count",
+                "completed_count",
+                "error_count",
+                "pending_count",
+                "running_count",
+                "skipped_count",
+                "failed_count",
+            )
+        },
     },
     "additionalProperties": True,
 }

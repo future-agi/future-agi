@@ -36,6 +36,18 @@ export const secondaryFont = "Inter, sans-serif";
 // are snapped onto the same scale so existing screens keep their meaning.
 export const typography = {
   ...dsTypography,
+  // Typed so `tsc --noEmit` accepts the generated string values as MUI's
+  // TextTransform union (the project type-checks its JS).
+  overline: {
+    ...dsTypography.overline,
+    textTransform: /** @type {"uppercase"} */ (
+      dsTypography.overline.textTransform
+    ),
+  },
+  button: {
+    ...dsTypography.button,
+    textTransform: /** @type {"none"} */ (dsTypography.button.textTransform),
+  },
   fontFamily: primaryFont,
   fontSecondaryFamily: secondaryFont,
   subheader: {

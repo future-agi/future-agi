@@ -1,0 +1,14 @@
+{
+  "extract_id": "extract_{{id}}",
+  "results": [
+    {
+      "url": "https://example.com/capmock",
+      "title": "Capmock page",
+      "excerpts": ["Example excerpt."],
+      "full_content": "Example page text."
+    }
+  ],
+  "errors": [],
+  "warnings": null,
+  "usage": [{ "name": "sku_extract_excerpts", "count": 1 }]
+}

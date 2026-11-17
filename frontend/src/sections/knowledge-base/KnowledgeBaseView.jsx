@@ -82,6 +82,11 @@ const KnowledgeBaseView = () => {
               Create knowledge base
             </Button>
           }
+          actionDisabledReason={
+            canCreate
+              ? undefined
+              : "Viewers can't create knowledge bases. Ask a workspace admin for Member access."
+          }
           docsHref="https://docs.futureagi.com/docs/knowledge-base"
           onDocsClick={() => handleOnDocsClicked("knowledge_base_empty")}
         />

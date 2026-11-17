@@ -292,7 +292,7 @@ func TestDecisionTransportError(t *testing.T) {
 
 func TestWriteErrorSetsRetryAfterAndUpstreamStatus(t *testing.T) {
 	w := httptest.NewRecorder()
-	WriteError(w, &APIError{Status: 429, Type: ErrTypeRateLimit, Code: "rate_limit_exceeded", Message: "m", RetryAfter: "7", UpstreamStatus: 429})
+	WriteError(w, &APIError{Status: 429, Type: ErrTypeRateLimit, Code: "rate_limit_exceeded", Message: "m", RetryAfter: "7", UpstreamStatus: 429, UpstreamStatusVisible: true})
 	if w.Header().Get("Retry-After") != "7" || w.Header().Get("x-agentcc-upstream-status") != "429" {
 		t.Fatalf("headers = %v", w.Header())
 	}

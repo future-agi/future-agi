@@ -77,7 +77,7 @@ const PromptPreview = ({ scenario }) => {
         }}
       >
         <Typography typography="s1">
-          There was an error generating the prompt
+          Scenario generation failed, so there is no prompt to show.
         </Typography>
       </Box>
     );

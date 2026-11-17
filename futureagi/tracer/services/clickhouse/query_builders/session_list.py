@@ -244,13 +244,19 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         "last_message": "last_message",
     }
 
+    # Count microseconds before converting to seconds: whole-second dateDiff
+    # counts boundaries and can reverse the ordering of subsecond sessions.
+    _DURATION_AGGREGATE = (
+        "dateDiff('microsecond', min(start_time), max(end_time)) / 1000000.0"
+    )
+
     # Aggregate projections shared by build() and build_id_query() so a HAVING on
     # any of these aliases resolves in both (build_id_query returns only session_id
     # but still applies the same HAVING).
     _AGGREGATE_SELECT = (
         "min(start_time) AS session_start, "
         "max(end_time) AS session_end, "
-        "dateDiff('second', min(start_time), max(end_time)) AS duration, "
+        f"{_DURATION_AGGREGATE} AS duration, "
         "max(session_usage_cost) AS total_cost, "
         "max(session_usage_tokens) AS total_tokens, "
         "uniqExact(trace_id) AS traces_count"
@@ -1788,7 +1794,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             session_metric_columns.extend(
                 [
                     "max(end_time) AS session_end",
-                    "dateDiff('second', min(start_time), max(end_time)) AS duration",
+                    f"{self._DURATION_AGGREGATE} AS duration",
                 ]
             )
         if needs_cost:
@@ -3462,7 +3468,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                 session_id,
                 min(start_time) AS session_start,
                 max(end_time) AS session_end,
-                dateDiff('second', min(start_time), max(end_time)) AS duration,
+                {self._DURATION_AGGREGATE} AS duration,
                 {self._COST_AGGREGATE} AS root_total_cost,
                 sum(total_tokens) AS root_total_tokens,
                 uniqExact(trace_id) AS traces_count,
@@ -3865,7 +3871,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         SELECT count() AS total FROM (
             SELECT
                 trace_session_id,
-                dateDiff('second', min(start_time), max(end_time)) AS duration,
+                {self._DURATION_AGGREGATE} AS duration,
                 max(session_usage_cost) AS total_cost,
                 max(session_usage_tokens) AS total_tokens,
                 uniqExact(trace_id) AS traces_count

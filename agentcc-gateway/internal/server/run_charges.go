@@ -39,6 +39,11 @@ type runChargeStore interface {
 	Take(ctx context.Context, runID string) (pendingCharge, bool)
 }
 
+// pendingChargeDropsPrefixes are the families of the starting call's own
+// pipeline state (a rate limit's token hold, a cache entry to fill), which a
+// charge made on another call must not settle or fill again.
+var pendingChargeDropsPrefixes = []string{"ratelimit_", "cache_"}
+
 // newPendingCharge copies what a charge needs from the call that started the
 // run. The caller's credential stays behind: the store may be shared Redis.
 func newPendingCharge(rc *models.RequestContext, model string) pendingCharge {
@@ -47,9 +52,21 @@ func newPendingCharge(rc *models.RequestContext, model string) pendingCharge {
 		if key == "authorization" || (isCredentialShapedKey(key) && !strings.HasPrefix(key, "auth_")) {
 			continue
 		}
+		if hasAnyPrefix(key, pendingChargeDropsPrefixes) {
+			continue
+		}
 		metadata[key] = value
 	}
 	return pendingCharge{Metadata: metadata, Model: model, Provider: rc.Provider, UserID: rc.UserID}
+}
+
+func hasAnyPrefix(key string, prefixes []string) bool {
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(key, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // memoryRunCharges keeps pending charges in this process. Without Redis a

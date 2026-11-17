@@ -1,0 +1,67 @@
+# Prisma's remote MCP server. The person signs in with a Prisma account and
+# picks one workspace to approve. OAuth comes from Prisma's authorization
+# server, which registers clients dynamically; the scopes are those the
+# server's protected-resource metadata lists. EE reads a pre-registered
+# client id and secret from its environment and cannot register a client,
+# so it gets none.
+schema: "connector-manifest/v1#provider"
+app: prisma
+id: mcp
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.prisma.io/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent, user]
+auth:
+  kind: oauth2
+  oauth2:
+    authorizeUrl: https://auth.prisma.io/authorize
+    tokenUrl: https://auth.prisma.io/token
+    scopes: ["workspace:admin", offline_access]
+    pkce: true
+    tokenBody: form
+    clientAuth: body
+    registration: [dcr]
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://www.prisma.io/docs/ai/tools/mcp-server
+    fetchedAt: 2026-10-21
+  - fact: transport.variant
+    url: https://www.prisma.io/docs/ai/tools/mcp-server
+    fetchedAt: 2026-10-21
+  - fact: auth.kind
+    url: https://www.prisma.io/docs/ai/tools/mcp-server
+    fetchedAt: 2026-10-21
+  - fact: auth.kind
+    url: https://mcp.prisma.io/.well-known/oauth-protected-resource/mcp
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.authorizeUrl
+    url: https://auth.prisma.io/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.tokenUrl
+    url: https://auth.prisma.io/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.scopes
+    url: https://mcp.prisma.io/.well-known/oauth-protected-resource/mcp
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.pkce
+    url: https://auth.prisma.io/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.clientAuth
+    url: https://auth.prisma.io/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.registration
+    url: https://auth.prisma.io/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-21
+x-omega: { ee: exclude }

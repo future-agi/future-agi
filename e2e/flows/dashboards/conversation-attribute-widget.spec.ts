@@ -25,7 +25,9 @@ type Filter = { column_id: string; property_id: string; display_name: string; so
 type Metric = { id: string; name: string; property_id: string; display_name: string; type: string;
   source: string; aggregation: string; attribute_key: string; attribute_type: string };
 type Config = { project_ids: string[]; time_range: { preset: string }; granularity: string;
-  metrics: Metric[]; filters: Filter[]; breakdowns: Record<string, string>[] };
+  metrics: Metric[]; filters: Filter[]; breakdowns: Record<string, string>[];
+  // One trace-backed custom attribute breakdown defaults to top-5 grouping (WidgetEditorView buildWidgetGroupBy).
+  group_by?: { type: string; key: string; limit: number } };
 type Result = { query_complete: boolean; query_exact: boolean; granularity: string; time_range: { start: string; end: string };
   metrics: { id: string; name: string; unit: string; aggregation: string; query_complete: boolean; query_exact: boolean;
     series: { name: string; data: { timestamp: string; value: number | null }[] }[] }[] };
@@ -214,7 +216,8 @@ test('DASH-E2E-009: a saved conversation widget excludes child-model call-metric
     filters: [...(project === null ? [] : [filter(projectProperty, [project])]), ...(kind ? [filter(kindProperty, [kind])] : []),
       ...(types ? [filter(callProperty, types)] : [])],
     breakdowns: grouped ? [{ name: CALL_TYPE, property_id: `custom_attribute:${CALL_TYPE}`, display_name: CALL_TYPE,
-      type: 'custom_attribute', source: 'traces', attribute_type: 'string' }] : [] });
+      type: 'custom_attribute', source: 'traces', attribute_type: 'string' }] : [],
+    ...(grouped ? { group_by: { type: 'attribute', key: CALL_TYPE, limit: 5 } } : {}) });
   const canonical = configFor('conversation', ['inbound', 'outbound'], true);
   const both: Groups = { inbound: [12, 4], outbound: [25, 8] };
   const catalogMetadata = { query_complete: true, query_exact: false, query_status: 'complete', query_provenance: 'current_property_catalog' };
@@ -299,7 +302,7 @@ test('DASH-E2E-009: a saved conversation widget excludes child-model call-metric
       if (property.name === TURNS) expect(selected[0].data_type).toBe(EXPECTED_CATALOG_TYPE);
     };
     const chooseProperty = async (property: Property, breakdown = false) => {
-      await page.locator(breakdown ? '.breakdown-section-title' : '.filter-section-title').click();
+      await (breakdown ? page.getByRole('button', { name: 'Add breakdown', exact: true }) : page.locator('.filter-section-title')).click();
       const custom = property.property_kind === 'custom_attribute', category = custom ? 'Trace Attributes' : 'Traces';
       await selectCategory(category);
       await page.getByPlaceholder(breakdown ? 'Search breakdown attributes...' : 'Search filter attributes...').fill(property.display_name);
@@ -427,7 +430,7 @@ test('DASH-E2E-009: a saved conversation widget excludes child-model call-metric
         await uiExpect(metricCard.getByText('Sum', { exact: true })).toBeVisible();
         for (const filterName of ['Project', 'Span Kind', CALL_TYPE]) await uiExpect(metricCard.getByText(filterName, { exact: true })).toHaveCount(0);
       }
-      await uiExpect(page.locator('.breakdown-section-title').locator('../..').getByText(CALL_TYPE, { exact: true })).toBeVisible();
+      await uiExpect(page.getByRole('button', { name: `Change breakdown ${CALL_TYPE}`, exact: true })).toBeVisible();
       await uiExpect(page.getByRole('combobox').filter({ hasText: 'Day' })).toBeVisible();
       await uiExpect(page.getByText('7D', { exact: true })).toBeVisible();
     };

@@ -118,6 +118,40 @@ describe("CreateQueueDrawer status update", () => {
   });
 });
 
+describe("CreateQueueDrawer pairwise mode", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("creates a draft pairwise queue without labels", async () => {
+    const user = userEvent.setup();
+    render(<CreateQueueDrawer open onClose={vi.fn()} />);
+    await user.type(screen.getByLabelText(/queue name/i), "Response comparison");
+    await user.click(screen.getByRole("combobox", { name: /queue mode/i }));
+    await user.click(screen.getByRole("option", { name: "Pairwise" }));
+    await user.click(screen.getByRole("button", { name: /create annotation queue/i }));
+
+    await waitFor(() => expect(mockCreateQueue).toHaveBeenCalledOnce());
+    expect(mockCreateQueue.mock.calls[0][0]).toMatchObject({
+      name: "Response comparison",
+      mode: "pairwise",
+    });
+    expect(mockCreateQueue.mock.calls[0][0]).not.toHaveProperty("label_ids");
+    expect(mockCreateQueue.mock.calls[0][0]).not.toHaveProperty("status");
+    expect(mockUpdateStatus).not.toHaveBeenCalled();
+  });
+
+  it("keeps pairwise mode immutable when editing and does not require labels", async () => {
+    const user = userEvent.setup();
+    render(<CreateQueueDrawer open onClose={vi.fn()} editQueue={{
+      ...ACTIVE_QUEUE, mode: "pairwise", labels: [],
+    }} />);
+    expect(screen.getByRole("combobox", { name: /queue mode/i })).toHaveAttribute("aria-disabled", "true");
+    await user.click(screen.getByRole("button", { name: /save changes/i }));
+    await waitFor(() => expect(mockUpdateQueue).toHaveBeenCalledOnce());
+    expect(mockUpdateQueue.mock.calls[0][0]).not.toHaveProperty("mode");
+    expect(mockUpdateQueue.mock.calls[0][0]).not.toHaveProperty("label_ids");
+  });
+});
+
 describe("CreateQueueDrawer label requirement", () => {
   beforeEach(() => {
     vi.clearAllMocks();

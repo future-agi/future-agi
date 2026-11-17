@@ -20,6 +20,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { alpha } from "@mui/material/styles";
 import Editor from "@monaco-editor/react";
 import { DataTable, DataTablePagination } from "src/components/data-table";
+import EmptyContent from "src/components/empty-content";
 import Iconify from "src/components/iconify";
 import StatusBadge from "src/components/status-badge/StatusBadge";
 import DateTimeRangePicker from "src/sections/projects/DateTimeRangePicker";
@@ -672,24 +673,37 @@ const DetailPanelContent = ({ row, isDark, onOpenTrace }) => {
           gap: 0.5,
         }}
       >
-        {["formatted", "json"].map((m) => (
-          <Box
-            key={m}
-            onClick={() => setViewMode(m)}
-            sx={{
-              px: 1.5,
-              py: 0.375,
-              borderRadius: "6px",
-              fontSize: "12px",
-              cursor: "pointer",
-              fontWeight: viewMode === m ? 600 : 400,
-              color: viewMode === m ? "text.primary" : "text.disabled",
-              backgroundColor: viewMode === m ? "action.hover" : "transparent",
-            }}
-          >
-            {m === "formatted" ? "Formatted" : "JSON"}
-          </Box>
-        ))}
+        <Box
+          role="group"
+          aria-label="Run detail view"
+          sx={{ display: "flex", alignItems: "center", gap: 0.5 }}
+        >
+          {["formatted", "json"].map((m) => (
+            <ButtonBase
+              key={m}
+              disableRipple
+              aria-pressed={viewMode === m}
+              onClick={() => setViewMode(m)}
+              sx={{
+                px: 1.5,
+                py: 0.375,
+                borderRadius: "6px",
+                fontSize: "12px",
+                fontWeight: viewMode === m ? 600 : 400,
+                color: viewMode === m ? "text.primary" : "text.secondary",
+                backgroundColor:
+                  viewMode === m ? "action.hover" : "transparent",
+                "&.Mui-focusVisible": {
+                  outline: "2px solid",
+                  outlineColor: "primary.main",
+                  outlineOffset: 1,
+                },
+              }}
+            >
+              {m === "formatted" ? "Formatted" : "JSON"}
+            </ButtonBase>
+          ))}
+        </Box>
         {onOpenTrace && (
           <Button
             size="small"
@@ -788,15 +802,32 @@ const DetailPanelContent = ({ row, isDark, onOpenTrace }) => {
                   color="text.secondary"
                   sx={{ display: "block", py: 0.75, fontSize: "12px" }}
                 >
-                  Large span JSON and mapped input details are omitted from this
-                  bounded list response.
+                  Some large fields are not shown here.
+                  {onOpenTrace && " Open the trace to see the full span."}
                 </Typography>
               )}
               {detail.eval_name && (
                 <DetailRow label="Eval" value={detail.eval_name} />
               )}
               {detail.model && (
-                <DetailRow label="Model" value={detail.model} mono />
+                <DetailRow
+                  label="Model"
+                  value={
+                    detail.ran_on_label
+                      ? `Chosen: ${detail.model}`
+                      : detail.model
+                  }
+                  mono
+                />
+              )}
+              {detail.ran_on_label && (
+                <Typography
+                  variant="caption"
+                  color="text.secondary"
+                  sx={{ display: "block", py: 0.75, fontSize: "12px" }}
+                >
+                  {`Ran on ${detail.ran_on_label}`}
+                </Typography>
               )}
 
               {detail.target_type === "session" ? (
@@ -931,8 +962,13 @@ const DetailPanelContent = ({ row, isDark, onOpenTrace }) => {
   );
 };
 
+// Usage is metered on successful runs only, so an empty period does not mean
+// the task never ran: its failed runs and their errors are in the Logs tab.
+const NO_SUCCESSFUL_RUNS_MESSAGE =
+  "No successful evaluation runs in this period";
+
 // ── Main ──
-const TaskUsageTab = ({ taskId, projectId }) => {
+const TaskUsageTab = ({ taskId, projectId, onViewLogs }) => {
   const isDark = useTheme().palette.mode === "dark";
 
   const [dateOption, setDateOption] = useState(DATE_OPTION.THIRTY_DAYS);
@@ -953,6 +989,7 @@ const TaskUsageTab = ({ taskId, projectId }) => {
 
   const period = DATE_OPTION_TO_PERIOD[dateOption] || DEFAULT_USAGE_PERIOD;
   const apiEvalId = evalIdFilter === "all" ? undefined : evalIdFilter;
+  // DateTimeRangePicker already supplies an exclusive end, including for Custom.
   const explicitDateRange = [
     DATE_OPTION.CUSTOM,
     DATE_OPTION.TODAY,
@@ -960,7 +997,6 @@ const TaskUsageTab = ({ taskId, projectId }) => {
   ].includes(dateOption)
     ? dateFilter
     : undefined;
-  const customEndInclusive = dateOption === DATE_OPTION.CUSTOM;
 
   const {
     data: chartData,
@@ -971,7 +1007,6 @@ const TaskUsageTab = ({ taskId, projectId }) => {
     period,
     evalId: apiEvalId,
     dateRange: explicitDateRange,
-    endInclusive: customEndInclusive,
   });
   const {
     data: logsData,
@@ -985,7 +1020,6 @@ const TaskUsageTab = ({ taskId, projectId }) => {
     period,
     evalId: apiEvalId,
     dateRange: explicitDateRange,
-    endInclusive: customEndInclusive,
   });
 
   const stats = chartData?.stats || {};
@@ -998,8 +1032,11 @@ const TaskUsageTab = ({ taskId, projectId }) => {
   const lowerBoundSuffix = summaryIsSampled ? "+" : "";
   const hasMoreLogs = !!logsData?.has_more;
   const pageLimitReached = !!logsData?.page_limit_reached;
+  // The server flags only its last allowed page, so the runs browsed up to
+  // and including this page are everything the list can show.
+  const browsedRunCount = (page + 1) * pageSize;
   const paginationTotal = pageLimitReached
-    ? (page + 1) * pageSize
+    ? browsedRunCount
     : hasMoreLogs
       ? Math.max(totalLogs, (page + 1) * pageSize + 1)
       : totalLogs;
@@ -1196,9 +1233,10 @@ const TaskUsageTab = ({ taskId, projectId }) => {
                 py: 0.5,
               }}
             >
-              {/* Usage counts successful runs only; errors stay in the logs. */}
+              {/* Usage counts successful runs only; errors stay in the Logs
+                  tab, so the label names that scope. */}
               <StatPill
-                label="Runs"
+                label="Successful runs"
                 value={`${stats.runs_period ?? 0}${lowerBoundSuffix}`}
               />
             </Box>
@@ -1251,7 +1289,7 @@ const TaskUsageTab = ({ taskId, projectId }) => {
               }}
             >
               <Typography variant="caption" color="text.disabled">
-                No data for this period
+                {NO_SUCCESSFUL_RUNS_MESSAGE}
               </Typography>
             </Box>
           )}
@@ -1276,7 +1314,7 @@ const TaskUsageTab = ({ taskId, projectId }) => {
             }}
           >
             <Typography variant="body2" fontWeight={600}>
-              Evaluation Runs
+              Successful evaluation runs
               {logsFetching && (
                 <Typography
                   component="span"
@@ -1295,8 +1333,9 @@ const TaskUsageTab = ({ taskId, projectId }) => {
                   color="warning.main"
                   sx={{ fontSize: "12px" }}
                 >
-                  Bounded {(100 * pageSize).toLocaleString()}-run browsing
-                  window
+                  Showing the most recent {browsedRunCount.toLocaleString()}{" "}
+                  runs. Narrow the date range or pick one evaluation to see
+                  older runs.
                 </Typography>
               )}
               {totalLogs > 0 && (
@@ -1328,7 +1367,27 @@ const TaskUsageTab = ({ taskId, projectId }) => {
               emptyMessage={
                 logsError
                   ? QUERY_FAILED_RETRY_MESSAGE
-                  : "No evaluation runs for this period"
+                  : NO_SUCCESSFUL_RUNS_MESSAGE
+              }
+              // A failed read keeps the plain retry message above.
+              emptyContent={
+                logsError ? undefined : (
+                  <EmptyContent
+                    title={NO_SUCCESSFUL_RUNS_MESSAGE}
+                    description="Failed runs and their errors are in the Logs tab."
+                    action={
+                      onViewLogs ? (
+                        <Button
+                          size="small"
+                          variant="outlined"
+                          onClick={onViewLogs}
+                        >
+                          View logs
+                        </Button>
+                      ) : undefined
+                    }
+                  />
+                )
               }
             />
           </Box>
@@ -1426,6 +1485,8 @@ const TaskUsageTab = ({ taskId, projectId }) => {
               <Tooltip title="Previous (k)">
                 <span>
                   <IconButton
+                    aria-label="Previous run"
+                    aria-keyshortcuts="k"
                     size="small"
                     disabled={detailIndex === 0}
                     onClick={() => showRunAt(detailIndex - 1)}
@@ -1437,6 +1498,8 @@ const TaskUsageTab = ({ taskId, projectId }) => {
               <Tooltip title="Next (j)">
                 <span>
                   <IconButton
+                    aria-label="Next run"
+                    aria-keyshortcuts="j"
                     size="small"
                     disabled={detailIndex >= visibleLogs.length - 1}
                     onClick={() => showRunAt(detailIndex + 1)}
@@ -1497,9 +1560,16 @@ const TaskUsageTab = ({ taskId, projectId }) => {
                   {detailRow.id?.slice(0, 12)}
                 </Typography>
               )}
-              <IconButton size="small" onClick={closeDetail}>
-                <Iconify icon="solar:close-linear" width={16} />
-              </IconButton>
+              <Tooltip title="Close (Esc)">
+                <IconButton
+                  aria-label="Close run details"
+                  aria-keyshortcuts="Escape"
+                  size="small"
+                  onClick={closeDetail}
+                >
+                  <Iconify icon="solar:close-linear" width={16} />
+                </IconButton>
+              </Tooltip>
             </Box>
           </Box>
           {detailRow && (
@@ -1538,6 +1608,8 @@ const TaskUsageTab = ({ taskId, projectId }) => {
 TaskUsageTab.propTypes = {
   taskId: PropTypes.string.isRequired,
   projectId: PropTypes.string,
+  // Switches the task page to its Logs tab, where failed runs are listed.
+  onViewLogs: PropTypes.func,
 };
 
 export default TaskUsageTab;

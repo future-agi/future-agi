@@ -27,7 +27,9 @@ type Filter = { column_id: string; property_id: string; display_name: string;
 type Metric = { id: string; name: string; property_id: string; display_name: string;
   type: string; source: string; aggregation: string; attribute_key?: string; attribute_type?: string };
 type Config = { project_ids: string[]; time_range: { preset: string }; granularity: string;
-  metrics: Metric[]; filters: Filter[]; breakdowns: Record<string, string>[] };
+  metrics: Metric[]; filters: Filter[]; breakdowns: Record<string, string>[];
+  // One trace-backed custom attribute breakdown defaults to top-5 grouping (WidgetEditorView buildWidgetGroupBy).
+  group_by?: { type: string; key: string; limit: number } };
 type Result = { query_complete: boolean; query_exact: boolean; granularity: string;
   time_range: { start: string; end: string }; metrics: { id: string; name: string;
     unit: string; aggregation: string; query_complete: boolean; query_exact: boolean;
@@ -181,7 +183,8 @@ test('DASH-E2E-004: a saved numeric attribute widget preserves numeric filtering
   const expectedConfig: Config = { project_ids: [], time_range: { preset: '7D' }, granularity: 'day',
     metrics, filters: [projectFilter], breakdowns: [] };
   // This independent positive snapshot never aliases the temporary 999 edits below.
-  const expectedSavedConfig: Config = structuredClone({ ...expectedConfig, filters: [projectFilter, numericFilter], breakdowns: [breakdown] });
+  const groupBy = { type: 'attribute', key: amountKey, limit: 5 };
+  const expectedSavedConfig: Config = structuredClone({ ...expectedConfig, filters: [projectFilter, numericFilter], breakdowns: [breakdown], group_by: groupBy });
   const context = await scopeActors.openContext(browser, actor);
   const queries: QueryReceipt[] = [];
   const catalogs: CatalogReceipt[] = [];
@@ -354,7 +357,7 @@ test('DASH-E2E-004: a saved numeric attribute widget preserves numeric filtering
               await page.locator(`p[title="${projectNames[0]}"]`).click();
               await page.getByRole('button', { name: 'Add', exact: true }).click();
             } else if (action === 'equals' || action === 'group') {
-              await page.locator(action === 'equals' ? '.filter-section-title' : '.breakdown-section-title').click();
+              await (action === 'equals' ? page.locator('.filter-section-title') : page.getByRole('button', { name: 'Add breakdown', exact: true })).click();
               await page.getByLabel(/^Trace Attributes property count: /).locator('..').getByText('Trace Attributes', { exact: true }).click();
               await page.getByPlaceholder(action === 'equals' ? 'Search filter attributes...' : 'Search breakdown attributes...').fill(amountKey);
               await page.getByRole('button', { name: `${amountKey} (number, number, Traces)`, exact: true }).click();
@@ -365,7 +368,7 @@ test('DASH-E2E-004: a saved numeric attribute widget preserves numeric filtering
                 await uiExpect(numericCard.getByRole('spinbutton')).toHaveAttribute('placeholder', 'Value');
                 await numericCard.getByRole('spinbutton').fill('10');
                 expectedConfig.filters.push(numericFilter);
-              } else expectedConfig.breakdowns = [breakdown];
+              } else { expectedConfig.breakdowns = [breakdown]; expectedConfig.group_by = { ...groupBy }; }
             } else if (action === 'save') {
               const [saved] = await Promise.all([
                 page.waitForResponse(r => new URL(r.url()).pathname === `${DASHBOARDS}${dashboardId}/widgets/` && r.request().method() === 'POST'),
@@ -430,9 +433,10 @@ test('DASH-E2E-004: a saved numeric attribute widget preserves numeric filtering
             for (let day = Math.floor(from / DAY) * DAY; day <= to; day += DAY) buckets.push(day);
             expect(result.metrics.map(m => ({ id: m.id, name: m.name, unit: m.unit, aggregation: m.aggregation })))
               .toEqual(choices.map(({ id, name, aggregation }) => ({ id, name, unit: '', aggregation })));
-            // Float64 str is "10.0"; an empty query produces total/null, NOT zero or no series.
+            // The default top-5 grouping names a series by ClickHouse toString(value) (dashboard_group_by.py
+            // grouped_span_sql), so Float64 10 is "10"; an empty query produces total/null, NOT zero or no series.
             const grouped = expectedConfig.breakdowns.length > 0 && action !== '999';
-            const group = grouped ? '10.0' : 'total';
+            const group = grouped ? '10' : 'total';
             const vector = action === 'project' ? [77, 6] : action === '999' ? [null, null] : [10, 1];
             if (action === 'reopen') vector[0] = EXPECTED_REOPENED_SUM;
             const expectedColumns: Record<string, (number | null)[]> = {};
@@ -497,7 +501,7 @@ test('DASH-E2E-004: a saved numeric attribute widget preserves numeric filtering
               await uiExpect(numericCard.getByRole('spinbutton')).toHaveAttribute('type', 'number');
               await uiExpect(numericCard.getByRole('spinbutton')).toHaveValue('10');
               await uiExpect(globalSection.getByText('Project', { exact: true }).locator('../..').locator('.filter-value-name')).toHaveText(projectNames[0]);
-              await uiExpect(page.locator('.breakdown-section-title').locator('../..').getByText(amountKey, { exact: true })).toBeVisible();
+              await uiExpect(page.getByRole('button', { name: `Change breakdown ${amountKey}`, exact: true })).toBeVisible();
               await uiExpect(page.getByRole('combobox').filter({ hasText: 'Day' })).toBeVisible();
               // Preset chips lack semantic selected state; the full native query independently pins 7D.
               await uiExpect(page.getByText('7D', { exact: true })).toBeVisible();

@@ -6,12 +6,14 @@ import AgentGraph from "src/sections/projects/LLMTracing/GraphSection/AgentGraph
 import TraceTreeV2 from "./TraceTreeV2";
 import SpanTreeTimeline from "./SpanTreeTimeline";
 import { buildTraceGraph } from "./buildTraceGraph";
+import { isPrototypeMode } from "src/utils/prototype";
 import { withoutTimingSpans } from "./timingSpans";
 
 // Memoized agent graph from span tree — uses buildTraceGraph for grouping.
 // Click cycles through spans belonging to the clicked node.
 export const TraceAgentGraph = React.memo(({ spans, onSelectSpan }) => {
   const graphData = useMemo(() => buildTraceGraph(spans), [spans]);
+  const proto = isPrototypeMode();
   const clickIndexRef = useRef({});
 
   const handleNodeClick = useCallback(
@@ -57,6 +59,10 @@ export const TraceAgentGraph = React.memo(({ spans, onSelectSpan }) => {
           isLoading={false}
           onNodeClick={handleNodeClick}
           direction="TB"
+          {...(proto
+            ? // Prototype (IT-R1 G4): readable labels, pan, a visible Expand.
+              { readableMinZoom: 0.92, wrapLabels: true, expandLabel: "Expand" }
+            : {})}
         />
       </Box>
     </Box>
@@ -82,8 +88,13 @@ const LeftPanelSplit = ({
   onRefresh,
 }) => {
   const [showTimingSpans, setShowTimingSpans] = useState(false);
-  const graphSpans = useMemo(() => showTimingSpans ? spans : withoutTimingSpans(spans || []), [spans, showTimingSpans]);
-  const [topPercent, setTopPercent] = useState(showAgentGraph ? 50 : 100);
+  const graphSpans = useMemo(
+    () => (showTimingSpans ? spans : withoutTimingSpans(spans || [])),
+    [spans, showTimingSpans],
+  );
+  // Only read while the graph is shown (hidden gives the tree 100%), so a panel
+  // mounted with the graph off still opens it at half height when turned on.
+  const [topPercent, setTopPercent] = useState(50);
   const containerRef = useRef(null);
 
   const handleVDragStart = useCallback(

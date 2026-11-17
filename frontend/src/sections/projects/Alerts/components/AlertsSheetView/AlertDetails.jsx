@@ -4,8 +4,16 @@ import { format } from "date-fns";
 import _ from "lodash";
 import SvgColor from "src/components/svg-color";
 import PropTypes from "prop-types";
-import { formatConditionText, transformAlertToConditions } from "../../common";
+import {
+  earlierRuleNote,
+  formatConditionText,
+  shareCannotFireNote,
+  transformAlertToConditions,
+} from "../../common";
 import { useAlertSheetView } from "../../store/useAlertSheetView";
+
+// Rows that hold a time, printed in the browser's own zone.
+const TIME_KEYS = ["created_at", "last_triggered", "last_checked"];
 
 const AlertRuleDetails = ({ details }) => {
   const isValidDate = (value) => {
@@ -20,7 +28,7 @@ const AlertRuleDetails = ({ details }) => {
       let formattedValue = value;
 
       if (
-        (key === "created_at" || key === "last_triggered") &&
+        TIME_KEYS.includes(key) &&
         typeof value === "string" &&
         isValidDate(value)
       ) {
@@ -61,6 +69,7 @@ AlertRuleDetails.propTypes = {
     created_by: PropTypes.string,
     created_at: PropTypes.string,
     last_triggered: PropTypes.string,
+    last_checked: PropTypes.string,
   }),
 };
 
@@ -238,6 +247,11 @@ export default function AlertDetails() {
     () => transformAlertToConditions(alertRuleDetails),
     [alertRuleDetails],
   );
+  const earlierNote = earlierRuleNote(alertRuleDetails);
+  const cannotFireNote = shareCannotFireNote(alertRuleDetails);
+  // An alert that has never fired says so, and the time it was last checked
+  // has its own row. Both wait until the alert has loaded.
+  const loaded = Boolean(alertRuleDetails?.id);
 
   return (
     <Stack gap={2.5}>
@@ -245,7 +259,12 @@ export default function AlertDetails() {
         details={{
           created_by: alertRuleDetails?.createdBy,
           created_at: alertRuleDetails?.createdAt,
-          last_triggered: alertRuleDetails?.lastTriggered,
+          last_triggered: loaded
+            ? alertRuleDetails.lastTriggered || "Never"
+            : undefined,
+          last_checked: loaded
+            ? alertRuleDetails.lastChecked || "Not checked yet"
+            : undefined,
         }}
       />
       <Divider
@@ -254,6 +273,26 @@ export default function AlertDetails() {
         }}
       />
       <AlertConditions conditions={conditions} />
+      {earlierNote && (
+        <Typography
+          variant="s1"
+          color="text.secondary"
+          fontWeight="fontWeightRegular"
+          data-alert-earlier-rule=""
+        >
+          {earlierNote}
+        </Typography>
+      )}
+      {cannotFireNote && (
+        <Typography
+          variant="s1"
+          color="text.secondary"
+          fontWeight="fontWeightRegular"
+          data-alert-cannot-fire=""
+        >
+          {cannotFireNote}
+        </Typography>
+      )}
       <Divider
         sx={{
           borderColor: "divider",

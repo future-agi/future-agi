@@ -1,22 +1,29 @@
-import React, { useMemo } from "react";
+import React, { useId, useMemo } from "react";
 import { Box, Button, Collapse, Stack, Typography } from "@mui/material";
 import PropTypes from "prop-types";
-import { formatDistanceToNowStrict } from "date-fns";
+import { format, formatDistanceToNowStrict } from "date-fns";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import openExternal from "../openExternal";
 import { useErrorFeedStore } from "../store";
 import { useSharedIssue } from "../sharedIssueContext";
-import { CONFIDENCE, MESSAGE_TYPE, RUN_STATE, STEP_STATUS } from "../constants";
+import {
+  ANALYSIS_COST_NOTE,
+  CONFIDENCE,
+  MESSAGE_TYPE,
+  RUN_STATE,
+  STEP_STATUS,
+} from "../constants";
 
-// Short relative label for the cached-analysis timestamp (date-fns, same
-// pattern as ErrorFeedTable / ErrorMetadataPanel).
+// Label for a saved analysis: when it ran plus how long ago, e.g.
+// "Mar 3, 14:05 (3 days ago)" (date-fns relative time, same pattern as
+// ErrorFeedTable / ErrorMetadataPanel).
 function formatAnalyzedAt(iso) {
   if (!iso) return null;
   const then = new Date(iso);
   if (Number.isNaN(then.getTime())) return null;
   try {
-    return `${formatDistanceToNowStrict(then)} ago`;
+    return `${format(then, "MMM d, HH:mm")} (${formatDistanceToNowStrict(then)} ago)`;
   } catch {
     return null;
   }
@@ -43,6 +50,7 @@ const CONFIDENCE_LABEL = {
 
 // ── State: not_analyzed (empty) ──────────────────────────────────────────────
 function NotAnalyzedState({ onAnalyze, readOnly = false }) {
+  const costNoteId = useId();
   return (
     <Stack direction="row" alignItems="center" gap={2} sx={{ py: 0.5 }}>
       <Box
@@ -78,17 +86,22 @@ function NotAnalyzedState({ onAnalyze, readOnly = false }) {
         </Typography>
       </Stack>
       {!readOnly && (
-        <Button
-          size="small"
-          variant="outlined"
-          startIcon={
-            <Iconify icon="solar:stars-minimalistic-linear" width={14} />
-          }
-          onClick={onAnalyze}
-          sx={{ flexShrink: 0 }}
-        >
-          Debug this cluster
-        </Button>
+        <Stack alignItems="flex-end" gap={0.5} sx={{ flexShrink: 0 }}>
+          <Button
+            size="small"
+            variant="outlined"
+            startIcon={
+              <Iconify icon="solar:stars-minimalistic-linear" width={14} />
+            }
+            onClick={onAnalyze}
+            aria-describedby={costNoteId}
+          >
+            Debug this cluster
+          </Button>
+          <Typography id={costNoteId} fontSize="11px" color="text.secondary">
+            {ANALYSIS_COST_NOTE}
+          </Typography>
+        </Stack>
       )}
     </Stack>
   );
@@ -363,7 +376,12 @@ export default function ClusterHeadlineCard({
       fix: synthesisMsg.fix,
       confidence: synthesisMsg.confidence ?? CONFIDENCE.MEDIUM,
       category,
-      analyzedAt: "just now",
+      // A saved result replayed on page load carries analyzedAt (null when
+      // unknown); only a run finished in this session is "just now".
+      analyzedAt:
+        "analyzedAt" in synthesisMsg
+          ? formatAnalyzedAt(synthesisMsg.analyzedAt)
+          : "just now",
     };
   } else if (cachedRca) {
     state = "analyzed";
@@ -484,10 +502,14 @@ export default function ClusterHeadlineCard({
               color="text.disabled"
               sx={{ textTransform: "none", letterSpacing: 0 }}
             >
-              Analyzed {data?.analyzedAt ?? "just now"}
+              {data?.analyzedAt ? `Analyzed ${data.analyzedAt}` : "Analyzed"}
             </Typography>
             {!readOnly && (
-              <CustomTooltip show title="Re-run analysis (1 credit)" arrow>
+              <CustomTooltip
+                show
+                title="Re-run analysis (credits based on usage)"
+                arrow
+              >
                 <Box
                   onClick={(e) => {
                     e.stopPropagation();

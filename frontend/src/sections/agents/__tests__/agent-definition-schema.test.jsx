@@ -213,4 +213,79 @@ describe("createAgentDefinitionSchema — voice transport", () => {
   });
 });
 
+describe("createAgentDefinitionSchema — name and description whitespace (#1389)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    axiosMocks.post.mockResolvedValue({ data: {} });
+  });
+
+  // Same shape as the voice transport cases: inbound with a non-LiveKit
+  // provider, so no key or number rules apply.
+  const agent = {
+    ...baseAgent,
+    inbound: true,
+    provider: "vapi",
+  };
+
+  function messagesFor(result, field) {
+    return result.error.issues
+      .filter((issue) => issue.path.join(".") === field)
+      .map((issue) => issue.message);
+  }
+
+  it("trims surrounding spaces from the agent name", async () => {
+    const result = await createAgentDefinitionSchema().safeParseAsync({
+      ...agent,
+      agentName: " support bot ",
+    });
+
+    expect(result.success ? [] : errorPaths(result)).toEqual([]);
+    expect(result.data.agentName).toBe("support bot");
+  });
+
+  it("keeps spaces inside the agent name", async () => {
+    const result = await createAgentDefinitionSchema().safeParseAsync({
+      ...agent,
+      agentName: "hello   world",
+    });
+
+    expect(result.success ? [] : errorPaths(result)).toEqual([]);
+    expect(result.data.agentName).toBe("hello   world");
+  });
+
+  it("rejects an agent name that is only spaces", async () => {
+    const result = await createAgentDefinitionSchema().safeParseAsync({
+      ...agent,
+      agentName: "   ",
+    });
+
+    expect(result.success).toBe(false);
+    expect(messagesFor(result, "agentName")).toContain(
+      "Agent name is required",
+    );
+  });
+
+  it("trims surrounding spaces from the description", async () => {
+    const result = await createAgentDefinitionSchema().safeParseAsync({
+      ...agent,
+      description: "  hello  ",
+    });
+
+    expect(result.success ? [] : errorPaths(result)).toEqual([]);
+    expect(result.data.description).toBe("hello");
+  });
+
+  it("rejects a description that is only spaces", async () => {
+    const result = await createAgentDefinitionSchema().safeParseAsync({
+      ...agent,
+      description: "   ",
+    });
+
+    expect(result.success).toBe(false);
+    expect(messagesFor(result, "description")).toContain(
+      "Description is required",
+    );
+  });
+});
+
 import { createAgentDefinitionSchema } from "../helper";

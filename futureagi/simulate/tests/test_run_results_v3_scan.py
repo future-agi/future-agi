@@ -994,6 +994,34 @@ def test_every_stored_entry_shape_scores_like_the_sql_read_model(
     )
 
 
+@pytest.mark.django_db
+def test_a_choice_padded_with_unicode_space_scores_like_the_sql_read_model(
+    run, organization
+):
+    execution, scenario = run
+    specs = dict(CORPUS_SPECS)
+    choices, reversed_choices = (
+        _config(execution, organization, name, **specs[name])
+        for name in ("choices", "reversed choices")
+    )
+    # The corpus entry "SAFE\u3000": the label padded with an ideographic space.
+    entry = {"output": "SAFE\u3000"}
+    CallExecution.objects.create(
+        test_execution=execution,
+        scenario=scenario,
+        status="completed",
+        eval_outputs={choices: entry, reversed_choices: entry},
+    )
+    columns = [{"id": choices}, {"id": reversed_choices}]
+    (scan_row,) = scan_call_values(execution, columns)
+    (sql_row,) = _orm_rows(execution, columns, None)
+    outcomes = (scan_row["result_outcome"], sql_row["result_outcome"])
+    # The call rows strip that space, so the choice is "safe": reversed, it fails.
+    assert outcomes == ("failed", "failed")
+    scores = {choices: 1.0, reversed_choices: 0.0}
+    assert scan_row["scores"] == sql_row["scores"] == scores
+
+
 ORDERING_CHOICES = list(RunCallsV3QuerySerializer().fields["ordering"].choices)
 
 

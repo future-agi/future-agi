@@ -8,10 +8,20 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
+import {
+  ThemeProvider,
+  createTheme,
+  getContrastRatio,
+} from "@mui/material/styles";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { HelmetProvider } from "react-helmet-async";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import axios from "src/utils/axios";
+import { palette } from "src/theme/palette";
+import { typography } from "src/theme/typography";
+import { customShadows } from "src/theme/custom-shadows";
+import { dsShape } from "src/theme/ds-tokens";
+import { componentsOverrides } from "src/theme/overrides";
 import {
   CODE_AGENT_DETAIL,
   HOSTED_AGENT_DETAIL,
@@ -19,6 +29,7 @@ import {
 import AgentDetailLayout from "../AgentDetailLayout";
 import AgentDetailIndexRedirect from "../AgentDetailIndexRedirect";
 import { agentDetailPath, resolveVersionId } from "../agentDetailTabs";
+import { NOT_IN_RELEASE_SHORT } from "src/components/NotInRelease/notInRelease";
 
 vi.mock("src/utils/axios", () => ({
   default: { get: vi.fn(), put: vi.fn() },
@@ -43,11 +54,12 @@ const Tab = ({ name }) => <div data-testid={`tab-${name}`} />;
 Tab.propTypes = { name: PropTypes.string.isRequired };
 
 // Mirrors the connected/:agentId block in routes/sections/dashboard.jsx.
-const renderAt = (url) => {
+// Pass a theme to render with the app's theme instead of MUI's default.
+const renderAt = (url, theme) => {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
-  render(
+  const tree = (
     <HelmetProvider>
       <QueryClientProvider client={client}>
         <MemoryRouter initialEntries={[url]}>
@@ -70,10 +82,31 @@ const renderAt = (url) => {
           <LocationProbe />
         </MemoryRouter>
       </QueryClientProvider>
-    </HelmetProvider>,
+    </HelmetProvider>
   );
+  render(theme ? <ThemeProvider theme={theme}>{tree}</ThemeProvider> : tree);
   return client;
 };
+
+// The app's theme, built as theme/index.jsx builds it. Its Tabs default to
+// textColor="inherit", which is what fades a disabled tab in the app.
+const appTheme = (mode) => {
+  const theme = createTheme({
+    palette: palette(mode),
+    typography,
+    customShadows: customShadows(mode),
+    shape: dsShape,
+  });
+  theme.components = componentsOverrides(theme);
+  return theme;
+};
+
+const rgb = (hex) =>
+  `rgb(${hex
+    .slice(1)
+    .match(/../g)
+    .map((v) => parseInt(v, 16))
+    .join(", ")})`;
 
 // The agent detail, its paginated versions list (newest first, `pageSize`
 // per page) and each version's own detail.
@@ -188,15 +221,158 @@ describe("AgentDetailLayout", () => {
     ).toBeInTheDocument();
   });
 
-  it("shows Constraints, Improvements and Connections as disabled Coming soon tabs", async () => {
+  it("shows Constraints, Improvements and Connections as disabled tabs that say Not available in this release", async () => {
     serve(HOSTED);
     renderAt(`${base(HOSTED)}/overview`);
     await screen.findByRole("tab", { name: "Overview" });
     ["Constraints", "Improvements", "Connections"].forEach((name) => {
       const tab = screen.getByRole("tab", { name: new RegExp(name) });
       expect(tab).toBeDisabled();
-      expect(within(tab).getByLabelText("Coming soon")).toBeInTheDocument();
+      expect(
+        within(tab).getByText("Not available in this release"),
+      ).toBeInTheDocument();
     });
+    expect(screen.queryByText(/coming soon/i)).toBeNull();
+  });
+
+  // With the whole line in a chip on each of the
+  // three tabs the strip was about 1090 px, so at 1024 px the Improvements
+  // chip was cut mid-word and Connections sat behind a scroll arrow, and at
+  // 1280 the Connections chip was cut to "No". The first round merged the
+  // three into one tab, which hid two of them (owner rule: never hide a
+  // visible feature to make a screen cleaner). Each keeps its own tab and
+  // name; the chip carries a short word, and the whole line stays in its
+  // tooltip and in what a screen reader reads.
+  //
+  // Widths are measured from the app's own font, Inter (@fontsource/inter
+  // 5.2.8), by its advance widths with and without pair kerning, the wider:
+  // tab labels at 12 px/500, the chip at 11 px/500. The built tabs are
+  // taken at two-digit counts.
+  const TAB_LABEL_PX = {
+    Overview: 54.7,
+    Definition: 55.2,
+    "Versions 99": 68.9,
+    "Environments 99": 97.3,
+    Constraints: 66.1,
+    Improvements: 82.7,
+    Connections: 72.5,
+  };
+  const CHIP_TEXT_PX = { "N/A": 20.2 };
+  // Theme MuiTab: 2 x 6 px padding, 8 px between tabs; the chip sits 6 px
+  // after the name with 2 x 6 px padding of its own.
+  const TAB_PADDING = 2 * 6;
+  const TAB_GAP = 8;
+  const CHIP_GAP = 6;
+  const CHIP_PADDING = 2 * 6;
+  // 1024 - 200 menu - 2 x 16 page padding.
+  const STRIP_WIDTH_AT_1024 = 792;
+  const UNRELEASED = ["Constraints", "Improvements", "Connections"];
+
+  it("keeps Constraints, Improvements and Connections as three disabled tabs, each named, with a short chip, so the strip fits a 1024 px window", async () => {
+    serve(HOSTED);
+    renderAt(`${base(HOSTED)}/overview`);
+    await screen.findByRole("tab", { name: "Overview" });
+    const strip = screen.getByRole("tablist");
+    // Overview, Definition, Versions, Environments, and the three unbuilt.
+    expect(within(strip).getAllByRole("tab")).toHaveLength(7);
+    expect(strip.querySelectorAll("[data-not-in-release]")).toHaveLength(3);
+
+    const tabs = UNRELEASED.map((name) =>
+      screen.getByRole("tab", { name: new RegExp(`^${name}`) }),
+    );
+    expect(new Set(tabs).size).toBe(3);
+    tabs.forEach((tab, i) => {
+      expect(tab).toBeDisabled();
+      expect(within(tab).getByText(UNRELEASED[i])).toBeVisible();
+      const chip = tab.querySelector("[data-not-in-release]");
+      // The chip shows the short word; the whole line is still in the tab.
+      expect(within(chip).getByText(NOT_IN_RELEASE_SHORT)).toBeVisible();
+      expect(
+        within(tab).getByText("Not available in this release"),
+      ).toBeInTheDocument();
+    });
+
+    const chipPx = CHIP_TEXT_PX[NOT_IN_RELEASE_SHORT];
+    expect(chipPx).toBeGreaterThan(0);
+    const built = ["Overview", "Definition", "Versions 99", "Environments 99"]
+      .map((label) => TAB_LABEL_PX[label] + TAB_PADDING)
+      .reduce((a, b) => a + b, 0);
+    const unbuilt = UNRELEASED.map(
+      (label) =>
+        TAB_LABEL_PX[label] + CHIP_GAP + CHIP_PADDING + chipPx + TAB_PADDING,
+    ).reduce((a, b) => a + b, 0);
+    expect(built + unbuilt + 6 * TAB_GAP).toBeLessThanOrEqual(
+      STRIP_WIDTH_AT_1024,
+    );
+  });
+
+  it("gives each short chip the whole line in a tooltip", async () => {
+    serve(HOSTED);
+    renderAt(`${base(HOSTED)}/overview`);
+    await screen.findByRole("tab", { name: "Overview" });
+    const tab = screen.getByRole("tab", { name: /^Improvements/ });
+    const chip = tab.querySelector("[data-not-in-release]");
+    // The tab is disabled and takes no pointer; the chip still does.
+    expect(getComputedStyle(chip).pointerEvents).toBe("auto");
+    fireEvent.mouseOver(chip);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "Not available in this release",
+    );
+  });
+
+  it.each(["light", "dark"])(
+    "keeps the unreleased tabs and their chips readable in %s, at 4.5:1 or better, while they stay disabled",
+    async (mode) => {
+      const theme = appTheme(mode);
+      const { secondary } = theme.palette.text;
+      expect(
+        getContrastRatio(secondary, theme.palette.background.paper),
+      ).toBeGreaterThanOrEqual(4.5);
+      serve(HOSTED);
+      renderAt(`${base(HOSTED)}/overview`, theme);
+      await screen.findByRole("tab", { name: "Overview" });
+      ["Constraints", "Improvements", "Connections"].forEach((name) => {
+        const tab = screen.getByRole("tab", { name: new RegExp(name) });
+        // MUI fades a disabled tab to action.disabledOpacity (0.48), which
+        // took the label and its chip to about 2.3:1.
+        expect(getComputedStyle(tab).opacity).toBe("1");
+        const chip = within(tab).getByText("Not available in this release");
+        expect(getComputedStyle(chip).color).toBe(rgb(secondary));
+        // Still disabled: no hover, no click.
+        expect(tab).toBeDisabled();
+        expect(getComputedStyle(tab).pointerEvents).toBe("none");
+      });
+    },
+  );
+
+  it("offers a scroll button when the tab strip is wider than the page, so no tab is cut off", async () => {
+    // MUI shows the arrows when an IntersectionObserver reports the first or
+    // last tab is not fully in view. setupTests stubs the observer as a no-op,
+    // so report "not in view", as at narrower widths, for this test only.
+    const SavedObserver = globalThis.IntersectionObserver;
+    globalThis.IntersectionObserver = class {
+      constructor(callback) {
+        this.callback = callback;
+      }
+
+      observe() {
+        this.callback([{ isIntersecting: false }]);
+      }
+
+      unobserve() {}
+
+      disconnect() {}
+    };
+    try {
+      serve(HOSTED);
+      renderAt(`${base(HOSTED)}/overview`);
+      await screen.findByRole("tab", { name: "Overview" });
+      await waitFor(() =>
+        expect(document.querySelector(".MuiTabs-scrollButtons")).not.toBeNull(),
+      );
+    } finally {
+      globalThis.IntersectionObserver = SavedObserver;
+    }
   });
 
   it("opens Environments on a hosted agent", async () => {

@@ -87,10 +87,15 @@ const CustomDialog = ({
       aria-labelledby="custom-dialog-title"
     >
       <StyledBox>
+        {/* Decoration beside the title: not a control, hidden from assistive technology. */}
         {preTitleIcon && (
-          <IconButton size="small" disableRipple>
+          <Box
+            component="span"
+            aria-hidden="true"
+            sx={{ display: "inline-flex", alignItems: "center", flexShrink: 0 }}
+          >
             <Iconify icon={preTitleIcon} sx={{ color: "text.primary" }} />
-          </IconButton>
+          </Box>
         )}
         <DialogTitle id="custom-dialog-title">
           <Typography
@@ -104,7 +109,7 @@ const CustomDialog = ({
         </DialogTitle>
       </StyledBox>
 
-      <StyledIconButton onClick={onClose} disabled={loading}>
+      <StyledIconButton aria-label="Close" onClick={onClose} disabled={loading}>
         <Iconify icon="solar:close-linear" color="text.primary" />
       </StyledIconButton>
 

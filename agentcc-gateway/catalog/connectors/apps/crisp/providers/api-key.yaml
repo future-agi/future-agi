@@ -1,0 +1,45 @@
+# Crisp's hosted Streamable HTTP MCP server accepts a workspace MCP token as a bearer.
+schema: "connector-manifest/v1#provider"
+app: crisp
+id: api-key
+version: 1.1.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://api.crisp.chat/mcp/
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: MCP server token
+      help: "Generate an MCP Server Token in Settings > Workspace Settings > Advanced configuration. Supply the token without the Bearer prefix. Token regeneration also rotates related REST API credentials; coordinate before regenerating."
+      helpUrl: https://docs.crisp.chat/guides/mcp-server/quickstart/
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_plan
+  source: https://crisp.chat/en/pricing/
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://docs.crisp.chat/guides/mcp-server/quickstart/
+    fetchedAt: 2026-11-09
+  - fact: transport.variant
+    url: https://docs.crisp.chat/guides/mcp-server/quickstart/
+    fetchedAt: 2026-11-09
+  - fact: auth.kind
+    url: https://docs.crisp.chat/guides/mcp-server/quickstart/
+    fetchedAt: 2026-11-09
+  - fact: auth.credentialParts
+    url: https://docs.crisp.chat/guides/mcp-server/quickstart/
+    fetchedAt: 2026-11-09

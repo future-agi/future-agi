@@ -7,6 +7,7 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from accounts.authentication import allows_no_workspace
 from accounts.models.webauthn_credential import WebAuthnCredential
 from accounts.permissions import RequiresIndependentAuth
 from accounts.serializers.contracts import (
@@ -47,6 +48,7 @@ class PasskeyRegisterOptionsView(APIView):
         responses={200: PasskeyOptionsResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
         reject_unknown_fields=True,
     )
+    @allows_no_workspace("POST")
     def post(self, request):
         try:
             options_json, _ = get_registration_options(request.user)
@@ -70,6 +72,7 @@ class PasskeyRegisterVerifyView(APIView):
         },
         reject_unknown_fields=True,
     )
+    @allows_no_workspace("POST")
     def post(self, request):
         credential_response = request.validated_data["credential"]
         name = request.validated_data.get("name", "")
@@ -149,6 +152,7 @@ class PasskeyDetailView(APIView):
         responses={200: PasskeyRenameResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
         reject_unknown_fields=True,
     )
+    @allows_no_workspace("PATCH")
     def patch(self, request, pk):
         try:
             passkey = WebAuthnCredential.objects.get(id=pk, user=request.user)
@@ -161,6 +165,7 @@ class PasskeyDetailView(APIView):
         return Response({"id": str(passkey.id), "name": passkey.name})
 
     @validated_request(responses={204: "Passkey deleted.", **ACCOUNTS_ERROR_RESPONSES})
+    @allows_no_workspace("DELETE")
     def delete(self, request, pk):
         try:
             passkey = WebAuthnCredential.objects.get(id=pk, user=request.user)

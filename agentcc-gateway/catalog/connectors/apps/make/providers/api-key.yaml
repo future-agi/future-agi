@@ -1,0 +1,48 @@
+# This fixed-host provider is only for Make organizations hosted in EU2.
+# Make documents https://<MAKE_ZONE>/mcp/v2 and eu2.make.com as a zone.
+# Other zones require a different endpoint; the global endpoint uses OAuth.
+schema: "connector-manifest/v1#provider"
+app: make
+id: api-key
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://eu2.make.com/mcp/v2
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: EU2 API key
+      help: "Only for organizations hosted at eu2.make.com. Create a token under Profile > API access, selecting mcp:use for scenario tools and any needed management scopes. Calls use the selected scopes; scenario actions consume Make credits. Management tools require a paid plan."
+      helpUrl: https://developers.make.com/mcp-server/connect-using-mcp-token
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_metered
+  source: https://www.make.com/en/pricing
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://developers.make.com/mcp-server
+    fetchedAt: 2026-11-09
+  - fact: transport.variant
+    url: https://developers.make.com/mcp-server
+    fetchedAt: 2026-11-09
+  - fact: auth.kind
+    url: https://developers.make.com/mcp-server
+    fetchedAt: 2026-11-09
+  - fact: auth.credentialParts
+    url: https://developers.make.com/mcp-server/connect-using-api-key/usage-with-cursor
+    fetchedAt: 2026-11-09
+x-omega: { oss: exclude }

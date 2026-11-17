@@ -12,6 +12,7 @@ import React, { useState } from "react";
 import Iconify from "src/components/iconify";
 import KeyCard from "./KeyCard";
 import { useApiKeysStatus } from "src/api/model/api-keys";
+import { providerMatchesSearch } from "src/components/custom-model-dropdown/KeysHelper";
 import { ShowComponent } from "src/components/show";
 import {
   useDeleteApiKey,
@@ -28,9 +29,9 @@ const ConfigureKeys = ({ open, onClose }) => {
 
   const [searchQuery, setSearchQuery] = useState("");
 
-  // Function to filter keys based on displayName
+  // Cards whose name or provider id matches the search
   const filteredData = data?.filter((d) =>
-    d.display_name.toLowerCase().includes(searchQuery.toLowerCase()),
+    providerMatchesSearch(d, searchQuery),
   );
 
   const closeModal = () => {

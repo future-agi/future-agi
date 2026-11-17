@@ -168,9 +168,16 @@ def test_legacy_runner_retrieves_with_correct_input_keys(
         workspace_id="owning-workspace",
     )
     if dataset_bound:
+        runner.dataset = SimpleNamespace(
+            organization_id="owning-organization",
+            workspace_id="owning-workspace",
+        )
         runner.user_eval_metric = SimpleNamespace(
             template=template,
             config={"mapping": {"output": "dataset-column-id"}},
+            organization_id="owning-organization",
+            workspace_id="owning-workspace",
+            dataset=runner.dataset,
         )
     params = runner.map_fields(
         required_field=["output"], mapping=["current case"], eval_template=template
@@ -181,12 +188,13 @@ def test_legacy_runner_retrieves_with_correct_input_keys(
         inputs=["current case"],
         input_cols=input_keys,
         organization_id="owning-organization",
-        workspace_id=None,
+        workspace_id="owning-workspace",
     )
     assert manager.process_examples.call_args.kwargs["inputs"] == input_keys
     assert params["few_shots"] == feedback
     assert params["output"] == "current case"
-    manager.close.assert_called_once()
+    manager.db_client.close.assert_called_once()
+    manager.close.assert_not_called()
 
 
 @pytest.mark.parametrize(
@@ -255,7 +263,10 @@ def test_shared_params_logs_retrieval_failure_and_continues(monkeypatch):
     )
 
     params = prepare_run_params(
-        {"output": "case"}, template, organization_id="organization-id"
+        {"output": "case"},
+        template,
+        organization_id="organization-id",
+        workspace_id="workspace-id",
     )
 
     assert params["few_shots"] == []

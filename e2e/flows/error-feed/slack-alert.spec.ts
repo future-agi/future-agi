@@ -23,7 +23,7 @@ test('ERR-E2E-001: connect Slack and notify only for matching Error Feed issues'
   tag: ['@flow'],
   annotation: flowAnnotation({
     id: 'ERR-E2E-001', area: 'error-feed',
-    userGoal: 'A developer connects Slack, creates an Error Feed rule, and receives only matching issue notifications',
+    userGoal: 'A developer connects Slack, creates an Error Feed rule, and receives only matching issue notifications; runs on the e2e test image, which opens Error Feed without a licence; a real build without a licence shows the Error Feed upgrade wall',
     steps: [
       'open the Error Feed alert builder and enter a project, trigger, and filters',
       'connect a Slack workspace from the builder and return to the saved draft',

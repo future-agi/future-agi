@@ -20,13 +20,14 @@ from model_hub.serializers.contracts import (
     AIEvalWriterResponseSerializer,
 )
 from model_hub.services.ai_eval_writer_service import generate_eval_prompt
+from model_hub.throttles import AIEvalWriterThrottle, PlatformFeatureLimited
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.general_methods import GeneralMethods
 
 logger = structlog.get_logger(__name__)
 
 
-class AIEvalWriterView(APIView):
+class AIEvalWriterView(PlatformFeatureLimited, APIView):
     """
     POST /model-hub/ai-eval-writer/
 
@@ -45,10 +46,18 @@ class AIEvalWriterView(APIView):
 
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
+    # Each POST runs the platform model: limited per organization and user.
+    platform_throttle = AIEvalWriterThrottle
 
     @validated_request(
         request_serializer=AIEvalWriterRequestSerializer,
-        responses={200: AIEvalWriterResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: AIEvalWriterResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+            # Past the limit; while the limit store is down.
+            429: MODEL_HUB_ERROR_RESPONSES[500],
+            503: MODEL_HUB_ERROR_RESPONSES[500],
+        },
         reject_unknown_fields=True,
     )
     def post(self, request, *args, **kwargs):
@@ -56,6 +65,9 @@ class AIEvalWriterView(APIView):
             result = generate_eval_prompt(
                 description=request.validated_data.get("description", ""),
                 output_format=request.validated_data.get("output_format", "prompt"),
+                organization=getattr(request, "organization", None)
+                or request.user.organization,
+                workspace=getattr(request, "workspace", None),
             )
             return self._gm.success_response(result)
 

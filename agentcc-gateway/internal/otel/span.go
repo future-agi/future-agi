@@ -14,7 +14,7 @@ import (
 type SpanStatus int
 
 const (
-	StatusOK    SpanStatus = iota
+	StatusOK SpanStatus = iota
 	StatusError
 )
 
@@ -27,8 +27,17 @@ func (s SpanStatus) String() string {
 	}
 }
 
+// SpanKind is additive: the empty value preserves the legacy LLM CLIENT kind.
+type SpanKind string
+
+const (
+	KindClient SpanKind = "CLIENT"
+	KindServer SpanKind = "SERVER"
+)
+
 // Span represents a single trace span with OTel-compatible attributes.
 type Span struct {
+	Kind        SpanKind               `json:"kind,omitempty"`
 	TraceID     string                 `json:"trace_id"`
 	SpanID      string                 `json:"span_id"`
 	ParentID    string                 `json:"parent_id,omitempty"`
@@ -57,12 +66,12 @@ func NewSpan(name, serviceName string) *Span {
 // NewChildSpan creates a child span under an existing trace.
 func NewChildSpan(name, traceID, parentSpanID string) *Span {
 	return &Span{
-		TraceID:  traceID,
-		SpanID:   generateID(8),
-		ParentID: parentSpanID,
-		Name:     name,
-		StartTime: time.Now(),
-		Status:    StatusOK.String(),
+		TraceID:    traceID,
+		SpanID:     generateID(8),
+		ParentID:   parentSpanID,
+		Name:       name,
+		StartTime:  time.Now(),
+		Status:     StatusOK.String(),
 		Attributes: make(map[string]interface{}, 8),
 	}
 }

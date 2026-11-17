@@ -1,7 +1,7 @@
-# Air-gapped install: the platform's own calls to the internet are off (one
-# minimal telemetry registration attempt remains; offline it fails harmlessly
-# and is retried). Layer it over examples/external.yaml (datastores inside
-# your network).
+# Air-gapped install: the platform's own calls to the internet are off, and
+# deployment telemetry sends nothing to Future AGI (no registration attempt
+# or retry). Layer it over examples/external.yaml (datastores inside your
+# network).
 #
 # 1. Mirror the chart and every image it pulls, keeping digests and signatures.
 #    List the upstream images (global.imageRegistry reset: this file points

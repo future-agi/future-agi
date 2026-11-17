@@ -8,6 +8,8 @@ on:
       - "futureagi/tracer/utils/normalization/**"
       - "scripts/sync_trace_normalization.py"
       - "docker-compose*.yml"
+      - "futureagi/docker-compose.yml"
+      - "futureagi/docker-compose.harness.yml"
       - "bin/install*"
       - "bin/lib/**"
       - "bin/uninstall"
@@ -28,6 +30,8 @@ on:
       - "futureagi/tracer/utils/normalization/**"
       - "scripts/sync_trace_normalization.py"
       - "docker-compose*.yml"
+      - "futureagi/docker-compose.yml"
+      - "futureagi/docker-compose.harness.yml"
       - "bin/install*"
       - "bin/lib/**"
       - "bin/uninstall"
@@ -109,6 +113,8 @@ jobs:
       - name: Real ClickHouse, Kafka, PostgreSQL and OTLP HTTP tests
         working-directory: fi-collector
         timeout-minutes: 10
+        env:
+          FI_COLLECTOR_TEST_PG_URL: ${{ env.OBS_TEST_PG_DSN }}
         run: |
           set -o pipefail
           go test -race -count=1 -p 1 -timeout 8m -json \
@@ -135,8 +141,7 @@ jobs:
               "TestBackfillCLIThroughKafkaWithResume",
               "TestObservedCatalogHTTPToLocalStack",
               "TestClickHouseDirectObservedCatalogFromOTLPHTTP",
-              "TestValidateKeyReadsTheAgentOfAnIngestKey",
-              "TestValidateKeyFallsBackWhenTheColumnDisappears",
+              "TestValidateKeyAgainstPostgresBeforeAndAfterTheMigration",
               "TestRoutingColumnCheckSeesBothColumns",
               "TestRoutingColumnStateIsSharedThroughNew",
               "TestEnsureSimulationProject",
@@ -352,6 +357,8 @@ jobs:
           python-version: "3.11"
       - name: Compose and bootstrap contracts without running services
         run: python -m unittest discover -s deploy/tests -p 'test_observed_catalog_*.py' -v
+      - name: Collector and backend resolve one API-secret pepper in every stack
+        run: python -m unittest discover -s deploy/tests -p 'test_api_secret_pepper_compose.py' -v
       - name: Shell syntax
         run: |
           for script in bin/install bin/uninstall bin/dev bin/e2e bin/lib/*.sh deploy/standalone/bin/start deploy/standalone/bin/after-bootstrap; do

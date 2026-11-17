@@ -13,7 +13,16 @@ import structlog
 logger = structlog.get_logger(__name__)
 
 
-def format_eval_value(result_data, eval_template):
+_CHOICE_VALUE_UNSET = object()
+
+
+def format_eval_value(
+    result_data,
+    eval_template,
+    choice_scores=_CHOICE_VALUE_UNSET,
+    *,
+    multi_choice=_CHOICE_VALUE_UNSET,
+):
     """
     Convert raw eval result into the formatted output value.
 
@@ -22,6 +31,10 @@ def format_eval_value(result_data, eval_template):
                      metrics, metadata, output (output_type string)
         eval_template: EvalTemplate instance (needs config, choice_scores,
                       multi_choice, choices)
+        choice_scores: The binding's effective label -> score map
+                      (``resolve_choice_scores``); omitted uses the template's,
+                      while explicit None/empty preserves a saved empty map.
+        multi_choice: Selected live/saved metadata; omitted uses the template's.
 
     Returns:
         The formatted value — type depends on output_type:
@@ -32,13 +45,13 @@ def format_eval_value(result_data, eval_template):
           - choices → {"score": float, "choice": str} or raw choice data
     """
     output_type = result_data.get("output")
+    if choice_scores is _CHOICE_VALUE_UNSET:
+        choice_scores = getattr(eval_template, "choice_scores", None)
+    if multi_choice is _CHOICE_VALUE_UNSET:
+        multi_choice = getattr(eval_template, "multi_choice", False)
 
     # If choice_scores exist, force choices processing
-    if (
-        eval_template
-        and eval_template.choice_scores
-        and output_type not in ("Pass/Fail",)
-    ):
+    if eval_template and choice_scores and output_type not in ("Pass/Fail",):
         output_type = "choices"
 
     value = None
@@ -51,7 +64,7 @@ def format_eval_value(result_data, eval_template):
         if isinstance(data, dict):
             value = "Passed" if not result_data.get("failure") else "Failed"
         elif eval_type_id == "DeterministicEvaluator":
-            if not eval_template.multi_choice:
+            if not multi_choice:
                 data = data if data else []
                 value = data[0] if data else None
             else:
@@ -91,19 +104,15 @@ def format_eval_value(result_data, eval_template):
         # Map choice string to numeric score via choice_scores
         from model_hub.utils.scoring import apply_choice_scores
 
-        if (
-            eval_template
-            and eval_template.choice_scores
-            and isinstance(choice_result, str)
-        ):
-            mapped = apply_choice_scores(choice_result, eval_template.choice_scores)
+        if eval_template and choice_scores and isinstance(choice_result, str):
+            mapped = apply_choice_scores(choice_result, choice_scores)
             value = {
                 "score": mapped if mapped is not None else 0.0,
                 "choice": choice_result,
             }
         elif (
             eval_template
-            and eval_template.choice_scores
+            and choice_scores
             and isinstance(choice_result, list)
             and choice_result
         ):
@@ -111,8 +120,7 @@ def format_eval_value(result_data, eval_template):
             picked_scores = [
                 s
                 for s in (
-                    apply_choice_scores(str(c), eval_template.choice_scores)
-                    for c in choice_result
+                    apply_choice_scores(str(c), choice_scores) for c in choice_result
                 )
                 if s is not None
             ]

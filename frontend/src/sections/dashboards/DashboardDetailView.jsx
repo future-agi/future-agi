@@ -42,7 +42,6 @@ import {
   useDeleteDashboard,
   useReorderWidgets,
   useDuplicateWidget,
-  useCreateWidget,
 } from "src/hooks/useDashboards";
 import { format } from "date-fns";
 import Iconify from "src/components/iconify";
@@ -59,9 +58,14 @@ import { useSnackbar } from "src/components/snackbar";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import WidgetChart from "./WidgetChart";
 import SQLQueryWidget from "src/sections/projects/SQLQuery/SQLQueryWidget";
-import { resolveGlobalDateRange } from "./dashboardDateRange";
+import {
+  readCustomDateRange,
+  resolveGlobalDateRange,
+  withDateFilterSearch,
+} from "./dashboardDateRange";
 import useCanEditDashboard from "./hooks/useCanEditDashboard";
 import TruncatedTooltipText from "./TruncatedTooltipText";
+import { computeRows } from "./dashboardRows";
 import {
   DndContext,
   DragOverlay,
@@ -73,33 +77,16 @@ import {
   useDroppable,
 } from "@dnd-kit/core";
 
-/** Group a flat sorted widget list into rows based on cumulative widths.
- *  Widgets in each row are normalized so their widths sum to exactly 12. */
-function computeRows(widgets) {
-  const sorted = [...widgets].sort((a, b) => a.position - b.position);
-  const rows = [];
-  let currentRow = [];
-  let rowWidth = 0;
-  for (const w of sorted) {
-    const width = w.width || 12;
-    if (rowWidth + width > 12 && currentRow.length > 0) {
-      rows.push(currentRow);
-      currentRow = [{ ...w, width }];
-      rowWidth = width;
-    } else {
-      currentRow.push({ ...w, width });
-      rowWidth += width;
-    }
-  }
-  if (currentRow.length > 0) rows.push(currentRow);
-
-  return rows;
-}
-
-const widgetEditPath = (widget, dashboardId, datePreset) =>
+// A SQL widget opens its saved query; any other widget opens the widget
+// editor with the dashboard's date filter, custom dates included.
+const widgetEditPath = (widget, dashboardId, datePreset, customDateRange) =>
   widget.query_config?.source === "sql"
     ? `/dashboard/observe/${encodeURIComponent(widget.query_config.project_id)}/query?saved=${encodeURIComponent(widget.query_config.saved_query_id)}`
-    : `/dashboard/dashboards/${dashboardId}/widget/${widget.id}${datePreset ? `?timePreset=${datePreset}` : ""}`;
+    : withDateFilterSearch(
+        `/dashboard/dashboards/${dashboardId}/widget/${widget.id}`,
+        datePreset,
+        customDateRange,
+      );
 
 const widgetPropType = PropTypes.shape({
   id: PropTypes.oneOfType([PropTypes.string, PropTypes.number]).isRequired,
@@ -115,6 +102,13 @@ const widgetPropType = PropTypes.shape({
 // ---------------------------------------------------------------------------
 // InlineEdit — click-to-edit text field
 // ---------------------------------------------------------------------------
+
+// The field draws a 2px frame (on hover and while editing) with 8px of
+// padding inside it. The -10px margin moves that frame out into the page
+// gutter, so the text itself starts on the gutter, in line with the
+// breadcrumb, and stays put when the field switches to editing.
+const INLINE_EDIT_FRAME_SX = { px: "8px", py: 0.5, mx: "-10px" };
+
 const InlineEdit = forwardRef(function InlineEdit(
   { value, onSave, placeholder, typographyProps, multiline, readOnly = false },
   ref,
@@ -169,8 +163,10 @@ const InlineEdit = forwardRef(function InlineEdit(
             border: "2px solid",
             borderColor: "primary.main",
             borderRadius: 1,
-            px: 1,
-            py: 0.5,
+            ...INLINE_EDIT_FRAME_SX,
+            // fullWidth is 100%; widen by both margins to match the frame
+            // the field shows when it is not being edited.
+            width: "calc(100% + 20px)",
           }}
         />
       </ClickAwayListener>
@@ -184,8 +180,7 @@ const InlineEdit = forwardRef(function InlineEdit(
       sx={{
         cursor: readOnly ? "default" : "pointer",
         borderRadius: 1,
-        px: 1,
-        py: 0.5,
+        ...INLINE_EDIT_FRAME_SX,
         border: "2px solid transparent",
         "&:hover": readOnly
           ? undefined
@@ -198,7 +193,11 @@ const InlineEdit = forwardRef(function InlineEdit(
       }}
     >
       {value || (
-        <span style={{ opacity: 0.45 }}>{placeholder || "Click to edit"}</span>
+        // A theme text colour, not an opacity over the field's own colour:
+        // that left the placeholder at about 1.4:1 contrast in dark theme.
+        <Box component="span" sx={{ color: "text.tertiary" }}>
+          {placeholder || "Click to edit"}
+        </Box>
       )}
     </Typography>
   );
@@ -416,9 +415,10 @@ function RowResizeHandle({ row, onRowResize }) {
   const handleMouseDown = (e) => {
     e.preventDefault();
     const startY = e.clientY;
-    // Find the row container (parent of this handle)
+    // The row wrapper sits just before this handle. Each card in it is the
+    // Section directly inside a widget's [data-widget-id] box.
     const rowEl = e.currentTarget.previousElementSibling;
-    const cards = rowEl ? rowEl.querySelectorAll(".MuiCard-root") : [];
+    const cards = rowEl ? rowEl.querySelectorAll("[data-widget-id] > div") : [];
     const startHeight = cards.length > 0 ? cards[0].offsetHeight : 320;
 
     const onMouseMove = (moveE) => {
@@ -490,10 +490,17 @@ function DraggableWidgetCard({
   _isDragActive,
   rowHeight,
   datePreset,
+  customDateRange,
   isReadOnly,
   refreshRequestId,
   onQuerySettled,
 }) {
+  const editorPath = widgetEditPath(
+    widget,
+    dashboardId,
+    datePreset,
+    customDateRange,
+  );
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: widget.id,
     data: { widget },
@@ -519,12 +526,17 @@ function DraggableWidgetCard({
         opacity: isDragging ? 0.25 : 1,
         transition: "opacity 0.2s, flex 0.2s",
         position: "relative",
-        "&:hover .widget-actions": { opacity: 1 },
+        // Keyboard focus reveals the actions too, so Tab never lands on an
+        // invisible Edit / More button.
+        "&:hover .widget-actions, &:focus-within .widget-actions": {
+          opacity: 1,
+        },
         "&:hover .drag-handle": { opacity: 1 },
       }}
     >
       <Section
         variant="panel"
+        fillBody
         sx={{
           height: widgetHeight,
           display: "flex",
@@ -532,141 +544,119 @@ function DraggableWidgetCard({
           overflow: "hidden",
         }}
       >
-        <Box
-          sx={{
-            flex: 1,
+        {/* Header — title row plus description; the block is the drag activator */}
+        <div
+          {...(isReadOnly ? {} : { ...attributes, ...listeners })}
+          style={{
             display: "flex",
             flexDirection: "column",
-            overflow: "hidden",
+            marginBottom: 4,
+            cursor: isReadOnly ? "default" : "grab",
           }}
         >
-          {/* Header — title row plus description; the block is the drag activator */}
           <div
-            {...(isReadOnly ? {} : { ...attributes, ...listeners })}
             style={{
               display: "flex",
-              flexDirection: "column",
-              marginBottom: 4,
-              cursor: isReadOnly ? "default" : "grab",
+              flexDirection: "row",
+              alignItems: "center",
+              minHeight: 24,
             }}
           >
-            <div
-              style={{
-                display: "flex",
-                flexDirection: "row",
-                alignItems: "center",
-                minHeight: 24,
+            {!isReadOnly && (
+              <Iconify
+                icon="solar:grip-vertical-linear"
+                width={16}
+                sx={{ color: "text.disabled", mr: 0.5, flexShrink: 0 }}
+              />
+            )}
+
+            <Typography
+              variant="subtitle2"
+              fontWeight="fontWeightSemiBold"
+              noWrap
+              sx={{
+                flex: 1,
+                cursor: "pointer",
+                "&:hover": { textDecoration: "underline" },
               }}
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={() => navigate(editorPath)}
             >
-              {!isReadOnly && (
-                <Iconify
-                  icon="solar:grip-vertical-linear"
-                  width={16}
-                  sx={{ color: "text.disabled", mr: 0.5, flexShrink: 0 }}
-                />
-              )}
+              {widget.name}
+            </Typography>
 
-              <Typography
-                variant="subtitle2"
-                fontWeight="fontWeightSemiBold"
-                noWrap
-                sx={{
-                  flex: 1,
-                  cursor: "pointer",
-                  "&:hover": { textDecoration: "underline" },
-                }}
+            {/* Actions */}
+            {!isReadOnly && (
+              <Stack
+                className="widget-actions"
+                direction="row"
+                spacing={0}
                 onPointerDown={(e) => e.stopPropagation()}
-                onClick={() =>
-                  navigate(widgetEditPath(widget, dashboardId, datePreset))
-                }
+                sx={{ opacity: 0, transition: "opacity 0.15s" }}
               >
-                {widget.name}
-              </Typography>
-
-              {/* Actions */}
-              {!isReadOnly && (
-                <Stack
-                  className="widget-actions"
-                  direction="row"
-                  spacing={0}
-                  onPointerDown={(e) => e.stopPropagation()}
-                  sx={{ opacity: 0, transition: "opacity 0.15s" }}
-                >
-                  <Tooltip title="Edit">
-                    <IconButton
-                      size="small"
-                      onClick={() =>
-                        navigate(
-                          widgetEditPath(widget, dashboardId, datePreset),
-                        )
-                      }
-                    >
-                      <Iconify icon="solar:pen-linear" width={16} />
-                    </IconButton>
-                  </Tooltip>
-                  <Tooltip title="More">
-                    <IconButton
-                      size="small"
-                      aria-label="Widget options"
-                      onClick={(e) => onMenuOpen(e, widget)}
-                    >
-                      <Iconify
-                        icon="solar:menu-dots-vertical-linear"
-                        width={16}
-                      />
-                    </IconButton>
-                  </Tooltip>
-                </Stack>
-              )}
-            </div>
-
-            {description && (
-              <TruncatedTooltipText text={description}>
-                {(measureRef) => (
-                  <Typography
-                    ref={measureRef}
-                    variant="caption"
-                    noWrap
-                    onPointerDown={(e) => e.stopPropagation()}
-                    sx={{
-                      color: "text.secondary",
-                      pl: isReadOnly ? 0 : "20px",
-                      pr: 1,
-                      mt: 0.25,
-                    }}
+                <Tooltip title="Edit">
+                  <IconButton size="small" onClick={() => navigate(editorPath)}>
+                    <Iconify icon="solar:pen-linear" width={16} />
+                  </IconButton>
+                </Tooltip>
+                <Tooltip title="More">
+                  <IconButton
+                    size="small"
+                    aria-label="Widget options"
+                    onClick={(e) => onMenuOpen(e, widget)}
                   >
-                    {description}
-                  </Typography>
-                )}
-              </TruncatedTooltipText>
+                    <Iconify
+                      icon="solar:menu-dots-vertical-linear"
+                      width={16}
+                    />
+                  </IconButton>
+                </Tooltip>
+              </Stack>
             )}
           </div>
 
-          {/* Chart */}
-          <Box sx={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
-            {widget.query_config?.source === "sql" ? (
-              <SQLQueryWidget
-                widget={widget}
-                dashboardId={dashboardId}
-                onQuerySettled={onQuerySettled}
-                globalDateRange={globalDateRange}
-                refreshRequestId={refreshRequestId}
-              />
-            ) : (
-              <WidgetChart
-                key={`${widget.id}:${datePreset || "default"}${
-                  globalDateRange
-                    ? `:${globalDateRange.start}:${globalDateRange.end}`
-                    : ""
-                }`}
-                widget={widget}
-                dashboardId={dashboardId}
-                globalDateRange={globalDateRange}
-                refreshRequestId={refreshRequestId}
-                onQuerySettled={onQuerySettled}
-              />
-            )}
-          </Box>
+          {description && (
+            <TruncatedTooltipText text={description}>
+              {(measureRef) => (
+                <Typography
+                  ref={measureRef}
+                  variant="caption"
+                  noWrap
+                  onPointerDown={(e) => e.stopPropagation()}
+                  sx={{
+                    color: "text.secondary",
+                    pl: isReadOnly ? 0 : "20px",
+                    pr: 1,
+                    mt: 0.25,
+                  }}
+                >
+                  {description}
+                </Typography>
+              )}
+            </TruncatedTooltipText>
+          )}
+        </div>
+
+        {/* Chart */}
+        <Box sx={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
+          {widget.query_config?.source === "sql" ? (
+            <SQLQueryWidget
+              widget={widget}
+              dashboardId={dashboardId}
+              onQuerySettled={onQuerySettled}
+              globalDateRange={globalDateRange}
+              refreshRequestId={refreshRequestId}
+            />
+          ) : (
+            <WidgetChart
+              key={widget.id}
+              widget={widget}
+              dashboardId={dashboardId}
+              globalDateRange={globalDateRange}
+              refreshRequestId={refreshRequestId}
+              onQuerySettled={onQuerySettled}
+            />
+          )}
         </Box>
       </Section>
     </Box>
@@ -683,6 +673,7 @@ DraggableWidgetCard.propTypes = {
   _isDragActive: PropTypes.bool,
   rowHeight: PropTypes.number,
   datePreset: PropTypes.string,
+  customDateRange: PropTypes.arrayOf(PropTypes.instanceOf(Date)),
   isReadOnly: PropTypes.bool,
   refreshRequestId: PropTypes.number,
   onQuerySettled: PropTypes.func,
@@ -752,27 +743,40 @@ export default function DashboardDetailView() {
 
   const { canUpdate, isReadOnly } = useCanEditDashboard();
 
-  const { data: dashboard, isLoading } = useDashboardDetail(dashboardId);
+  const {
+    data: dashboard,
+    isLoading,
+    isError,
+    error,
+    refetch,
+  } = useDashboardDetail(dashboardId);
   const updateDashboard = useUpdateDashboard();
   const updateWidget = useUpdateWidget();
   const deleteWidget = useDeleteWidget();
   const deleteDashboard = useDeleteDashboard();
   const reorderWidgets = useReorderWidgets();
   const duplicateWidget = useDuplicateWidget();
-  const createWidget = useCreateWidget();
 
   // Global date filter — restore from URL so returning from widget editor
   // preserves the previously selected preset.
   const [searchParams] = useSearchParams();
-  const [datePreset, setDatePreset] = useState(
+  const [datePreset, setDatePresetValue] = useState(
     () => searchParams.get("timePreset") || null,
   );
-  const [customDateRange, setCustomDateRange] = useState(null); // [start, end]
+  const [rangeReference, setRangeReference] = useState(() => new Date());
+  const setDatePreset = useCallback((preset) => {
+    setRangeReference(new Date());
+    setDatePresetValue(preset);
+  }, []);
+  // [start, end]; restored with the Custom preset when the editor returns here.
+  const [customDateRange, setCustomDateRange] = useState(() =>
+    readCustomDateRange(searchParams),
+  );
   const [isDatePickerOpen, setIsDatePickerOpen] = useState(false);
   const customDateAnchorRef = useRef(null);
   const globalDateRange = useMemo(
-    () => resolveGlobalDateRange(datePreset, customDateRange),
-    [datePreset, customDateRange],
+    () => resolveGlobalDateRange(datePreset, customDateRange, rangeReference),
+    [datePreset, customDateRange, rangeReference],
   );
 
   // Widget context menu
@@ -852,6 +856,7 @@ export default function DashboardDetailView() {
     refreshPausedRef.current = false;
     refreshTimesRef.current = [];
     setIsRefreshing(true);
+    setRangeReference(new Date());
     setRefreshRequestId(refreshSequenceRef.current);
   }, [widgets]);
 
@@ -1156,70 +1161,32 @@ export default function DashboardDetailView() {
     [dashboardId, widgets, reorderWidgets],
   );
 
+  // Open the new-widget editor for this row. Nothing is saved here: the
+  // editor creates the widget and shares the row's width only on Save, so
+  // backing out leaves the dashboard as it was.
   const handleAddToRow = useCallback(
-    async (rowIdx) => {
+    (rowIdx) => {
       const row = rows[rowIdx];
       if (!row || row.length >= 4) return;
 
-      // Compute new widget width — redistribute evenly
-      const newCount = row.length + 1;
-      const perWidget = Math.floor(12 / newCount);
-      const remainder = 12 - perWidget * newCount;
-
-      // Compute position: just after the last widget in this row
-      const lastInRow = row[row.length - 1];
-      const lastPos = lastInRow?.position ?? 0;
-
-      try {
-        // Create a blank widget placed into this row
-        const res = await createWidget.mutateAsync({
-          dashboardId,
-          data: {
-            name: "Untitled widget",
-            query_config: {},
-            chart_config: {},
-            width: perWidget,
-            height: row[0]?.height || DEFAULT_WIDGET_HEIGHT,
-            position: lastPos + 1,
-          },
-        });
-
-        const newWidgetId = res.data?.result?.id;
-        if (!newWidgetId) return;
-
-        // Build updated order: redistribute widths for this row
-        const newOrder = [];
-        for (let ri = 0; ri < rows.length; ri++) {
-          for (let wi = 0; wi < rows[ri].length; wi++) {
-            const w = rows[ri][wi];
-            if (ri === rowIdx) {
-              const idx = wi;
-              newOrder.push({
-                id: w.id,
-                width: perWidget + (idx < remainder ? 1 : 0),
-              });
-            } else {
-              newOrder.push({ id: w.id, width: w.width || 12 });
-            }
-          }
-          // Insert new widget at end of target row
-          if (ri === rowIdx) {
-            newOrder.push({
-              id: newWidgetId,
-              width: perWidget + (row.length < remainder ? 1 : 0),
-            });
-          }
-        }
-
-        await reorderWidgets.mutateAsync({ dashboardId, order: newOrder });
-
-        // Navigate to edit the new widget
-        navigate(`/dashboard/dashboards/${dashboardId}/widget/${newWidgetId}`);
-      } catch (err) {
-        // error handled silently
-      }
+      const params = new URLSearchParams({
+        addAfter: String(row[row.length - 1].id),
+      });
+      navigate(
+        withDateFilterSearch(
+          `/dashboard/dashboards/${dashboardId}/widget/new?${params.toString()}`,
+          datePreset,
+          customDateRange,
+        ),
+      );
     },
-    [dashboardId, rows, createWidget, reorderWidgets, navigate],
+    [dashboardId, rows, datePreset, customDateRange, navigate],
+  );
+
+  const newWidgetPath = withDateFilterSearch(
+    `/dashboard/dashboards/${dashboardId}/widget/new`,
+    datePreset,
+    customDateRange,
   );
 
   // --- Render ---
@@ -1229,16 +1196,52 @@ export default function DashboardDetailView() {
   }
 
   if (!dashboard) {
+    // Say "not found" only when the server answered 404. Every other way of
+    // ending up here (network error, timeout, server error, a fetch paused
+    // while offline, an empty answer) is a failed load: the dashboard may
+    // well exist, so offer Retry rather than tell the user it is gone. A
+    // failed background refetch keeps the cached dashboard, so this branch
+    // only runs when nothing has loaded.
+    const notFound = isError && error?.statusCode === 404;
+    const backToDashboards = (
+      <Button
+        variant={notFound ? "outlined" : "text"}
+        size="small"
+        onClick={() => navigate(paths.dashboard.dashboards.root)}
+      >
+        Back to dashboards
+      </Button>
+    );
     return (
       <Box
         sx={{
           display: "flex",
-          justifyContent: "center",
-          alignItems: "center",
-          height: "60vh",
+          flex: 1,
+          flexDirection: "column",
+          bgcolor: "background.paper",
+          minHeight: "100vh",
         }}
       >
-        <Typography color="text.secondary">Dashboard not found</Typography>
+        {notFound ? (
+          <EmptyState
+            icon="solar:link-broken-linear"
+            title="Dashboard not found"
+            description="It may have been deleted, or the link may be wrong."
+            action={backToDashboards}
+          />
+        ) : (
+          <EmptyState
+            icon="solar:danger-triangle-linear"
+            title="Could not load this dashboard"
+            description="The dashboard didn't load. Nothing in it was changed."
+            action={
+              <Button variant="outlined" size="small" onClick={() => refetch()}>
+                Retry
+              </Button>
+            }
+            secondaryAction={backToDashboards}
+          />
+        )}
       </Box>
     );
   }
@@ -1422,6 +1425,9 @@ export default function DashboardDetailView() {
       )}
 
       {/* ---- Dashboard title & description (inline editable) ---- */}
+      {/* Header rows keep the 24px inset of the widgets grid below, whose rows
+          reach 28px to the left for the add-to-row "+" button, so the title,
+          breadcrumb and widget cards share one left edge. */}
       <Box sx={{ px: 3, pt: 2 }}>
         <InlineEdit
           ref={titleEditRef}
@@ -1449,7 +1455,9 @@ export default function DashboardDetailView() {
           typographyProps={{
             variant: "body2",
             sx: {
-              color: dashboard.description ? "text.secondary" : "text.disabled",
+              // The empty-state placeholder sets its own colour; this one is
+              // also the colour of the text typed into the field.
+              color: "text.secondary",
               mt: 0.5,
               fontSize: "12px",
               whiteSpace: "pre-wrap",
@@ -1483,11 +1491,7 @@ export default function DashboardDetailView() {
                     color="primary"
                     size="small"
                     disabled={isReadOnly}
-                    onClick={() =>
-                      navigate(
-                        `/dashboard/dashboards/${dashboardId}/widget/new${datePreset ? `?timePreset=${datePreset}` : ""}`,
-                      )
-                    }
+                    onClick={() => navigate(newWidgetPath)}
                   >
                     Add widget
                   </Button>
@@ -1534,7 +1538,9 @@ export default function DashboardDetailView() {
                         position: "relative",
                         ml: "-28px",
                         pl: "28px",
-                        "&:hover .row-add-btn": { opacity: 1 },
+                        "&:hover .row-add-btn, &:focus-within .row-add-btn": {
+                          opacity: 1,
+                        },
                       }}
                     >
                       {/* Add-to-row button */}
@@ -1592,6 +1598,7 @@ export default function DashboardDetailView() {
                               isDragActive={!!activeWidget}
                               rowHeight={rowHeight}
                               datePreset={datePreset}
+                              customDateRange={customDateRange}
                               isReadOnly={isReadOnly}
                               refreshRequestId={refreshRequestId}
                               onQuerySettled={handleWidgetQuerySettled}
@@ -1651,11 +1658,7 @@ export default function DashboardDetailView() {
                 <Button
                   variant="outlined"
                   startIcon={<Iconify icon="solar:add-linear" />}
-                  onClick={() =>
-                    navigate(
-                      `/dashboard/dashboards/${dashboardId}/widget/new${datePreset ? `?timePreset=${datePreset}` : ""}`,
-                    )
-                  }
+                  onClick={() => navigate(newWidgetPath)}
                   sx={{ borderStyle: "dashed" }}
                 >
                   Add Widget
@@ -1678,7 +1681,14 @@ export default function DashboardDetailView() {
         <MenuItem
           onClick={() => {
             if (menuWidget) {
-              navigate(widgetEditPath(menuWidget, dashboardId, datePreset));
+              navigate(
+                widgetEditPath(
+                  menuWidget,
+                  dashboardId,
+                  datePreset,
+                  customDateRange,
+                ),
+              );
             }
             closeWidgetMenu();
           }}

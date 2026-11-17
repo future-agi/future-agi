@@ -1,3 +1,4 @@
+from datetime import UTC
 from unittest.mock import MagicMock
 from uuid import uuid4
 
@@ -165,10 +166,9 @@ def test_sentry_scrubs_outbound_telemetry_request_breadcrumb_body():
     assert other_crumb["data"]["body"] == '{"keep":"me"}'
 
 
-def test_minimal_disabled_registration_payload_drops_user_data():
-    """The opt-out path must carry only the four documented fields plus
-    ``telemetry_disabled=true``. ``users`` is the field most often added by a
-    careless refactor and the most damaging leak — assert it's absent."""
+def test_legacy_minimal_registration_payload_drops_user_data():
+    """Retain the historical wire helper's contract, though opt-out no longer
+    sends this payload. Legacy receiver compatibility must not add users."""
     payload = build_minimal_registration_payload(uuid4())
 
     assert payload["telemetry_disabled"] is True
@@ -190,10 +190,10 @@ def test_heartbeat_payload_shape_matches_contract(counts):
     """Any field added to the heartbeat payload that isn't on the documented
     HEARTBEAT_FIELDS contract is a wire leak — fail loudly instead of letting
     it ship to PostHog/HubSpot."""
-    from datetime import datetime, timezone
+    from datetime import datetime
 
-    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
-    end = datetime(2026, 1, 1, 6, tzinfo=timezone.utc)
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    end = datetime(2026, 1, 1, 6, tzinfo=UTC)
 
     payload = build_heartbeat_payload(uuid4(), start, end, counts)
 
@@ -201,9 +201,8 @@ def test_heartbeat_payload_shape_matches_contract(counts):
     assert not extras, f"heartbeat payload added off-contract fields: {extras}"
 
 
-def test_opt_out_disclosure_names_every_field_the_minimal_ping_sends(monkeypatch):
-    """The log line an operator reads after opting out must not understate
-    what still leaves the install."""
+def test_opt_out_disclosure_says_nothing_is_sent(monkeypatch):
+    """The log line must state the zero-egress opt-out contract."""
     from structlog.testing import capture_logs
 
     from tfc.deployment_telemetry import sender
@@ -214,7 +213,5 @@ def test_opt_out_disclosure_names_every_field_the_minimal_ping_sends(monkeypatch
         sender._log_disclosure()
 
     (record,) = [r for r in records if r["event"] == "deployment_telemetry_disclosure"]
-    sent = set(build_minimal_registration_payload(uuid4()))
-    # schema_version and telemetry_disabled describe the ping, not the install.
-    for field in sent - {"schema_version", "telemetry_disabled"}:
-        assert field.replace("_", " ") in record["sends"], field
+    assert record["mode"] == "opt_out"
+    assert record["sends"] == "nothing to Future AGI"

@@ -32,7 +32,8 @@ function core(mode) {
       headerFontWeight: 500,
       selectedRowBackgroundColor: p.action.selected,
       rowHoverColor: p.action.hover,
-      checkboxUncheckedBorderColor: p.border.strong,
+      // Same unchecked outline as the MUI checkbox: 3:1 on every surface.
+      checkboxUncheckedBorderColor: p.action.active,
       checkboxBorderWidth: 1,
       checkboxCheckedBackgroundColor: p.control.checked,
       checkboxCheckedBorderColor: p.control.checked,

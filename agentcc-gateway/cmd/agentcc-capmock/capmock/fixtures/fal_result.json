@@ -1,0 +1,14 @@
+{
+  "images": [
+    {
+      "url": "{{file_url}}",
+      "width": 1024,
+      "height": 1024,
+      "content_type": "image/png"
+    }
+  ],
+  "timings": { "inference": 1.2 },
+  "seed": 42,
+  "has_nsfw_concepts": [false],
+  "prompt": "{{prompt}}"
+}

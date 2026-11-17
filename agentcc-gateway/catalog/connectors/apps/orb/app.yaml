@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: orb
+version: 1.0.0
+name: Orb
+description: "Manage customers, subscriptions, invoices, credits, plans and usage-based billing."
+vendor:
+  name: Orb
+  domains: [withorb.com]
+eeCategory: data
+group: other
+categories: [data, payments]
+tags: [payments, billing]
+docsUrl: https://docs.withorb.com/api-reference/mcp-server.md
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://docs.withorb.com/api-reference/mcp-server.md
+    fetchedAt: 2026-11-09

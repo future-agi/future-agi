@@ -1,6 +1,11 @@
+from unittest.mock import patch
+
 import pytest
 from rest_framework import status
 
+from accounts.models import Organization, User
+from accounts.models.workspace import Workspace
+from model_hub.models.ai_model import AIModel
 from model_hub.models.choices import (
     DatasetSourceChoices,
     DataTypeChoices,
@@ -9,7 +14,6 @@ from model_hub.models.choices import (
     SourceChoices,
     StatusType,
 )
-from model_hub.models.ai_model import AIModel
 from model_hub.models.develop_dataset import Column, Dataset
 from model_hub.models.eval_groups import EvalGroup
 from model_hub.models.evals_metric import EvalTemplate, UserEvalMetric
@@ -17,10 +21,13 @@ from model_hub.models.experiments import ExperimentsTable
 from model_hub.models.run_prompt import PromptEvalConfig, PromptTemplate
 from simulate.models.eval_config import SimulateEvalConfig
 from simulate.models.run_test import RunTest
-from accounts.models import Organization, User
-from accounts.models.workspace import Workspace
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.project import Project
+
+# The apply tests that send turing_small run where Turing models are available
+# (the cloud case). They are about what apply stores, not the model rule, which
+# test_eval_group_member_model.py covers.
+TURING_DENIED = "tfc.ee_gates._turing_denied_off_cloud"
 
 
 @pytest.fixture
@@ -166,6 +173,7 @@ def test_prompt_eval_config_update_and_get_uses_config_params(
 
 
 @pytest.mark.django_db
+@patch(TURING_DENIED, new=lambda: False)
 def test_apply_eval_group_dataset_propagates_shared_params(
     auth_client, user, workspace, rag_function_template, dataset_for_eval
 ):
@@ -204,6 +212,7 @@ def test_apply_eval_group_dataset_propagates_shared_params(
 
 
 @pytest.mark.django_db
+@patch(TURING_DENIED, new=lambda: False)
 def test_apply_eval_group_rejects_a_non_path_mapping_with_400(
     auth_client, user, workspace, rag_function_template, dataset_for_eval
 ):
@@ -212,6 +221,10 @@ def test_apply_eval_group_rejects_a_non_path_mapping_with_400(
     The view maps ValueError to 400 and everything else to a 500 whose body is
     the stringified exception, so raising a DRF ValidationError from the gate
     answered 500 and leaked ErrorDetail(...) to the caller.
+
+    Turing models are available here, so the model passes and the mapping is
+    what is refused. Where the model is refused as well, that refusal comes
+    first: Add evaluation checks the model before the mapping too.
     """
     dataset, _hypothesis_col, reference_col = dataset_for_eval
     eval_group = EvalGroup.objects.create(
@@ -280,6 +293,7 @@ def test_apply_eval_group_prompt_propagates_shared_params(
 
 
 @pytest.mark.django_db
+@patch(TURING_DENIED, new=lambda: False)
 def test_apply_eval_group_simulate_propagates_shared_params(
     auth_client, user, workspace, rag_function_template, simulate_run_test
 ):
@@ -326,6 +340,7 @@ def test_apply_eval_group_simulate_propagates_shared_params(
 
 
 @pytest.mark.django_db
+@patch(TURING_DENIED, new=lambda: False)
 def test_apply_eval_group_eval_task_propagates_shared_params(
     auth_client, user, workspace, rag_function_template, observe_project_for_eval
 ):
@@ -428,6 +443,7 @@ def test_apply_eval_group_eval_task_rejects_other_org_project(
 
 
 @pytest.mark.django_db
+@patch(TURING_DENIED, new=lambda: False)
 def test_apply_eval_group_experiment_propagates_shared_params(
     auth_client,
     user,

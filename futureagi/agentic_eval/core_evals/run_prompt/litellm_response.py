@@ -1,3 +1,8 @@
+# Pre-existing lint debt, suppressed file-wide so a fix can touch this file
+# without reshuffling its import graph: the import blocks are interleaved with
+# module code and repeat names (E402, F401, F811, I001), and some handlers
+# re-raise without a cause (B904) or keep an unused local (F841).
+# ruff: noqa: B904, E402, F401, F811, F841, I001
 import ast
 import json
 import os
@@ -15,7 +20,20 @@ from model_hub.queries.tts_voices import resolve_voice_id
 from model_hub.utils import call_websocket
 from django.core.cache import cache
 from model_hub.utils.azure_endpoints import normalize_azure_custom_model_config
+from model_hub.utils.model_endpoints import (
+    calls_endpoint_url,
+    endpoint_call_error_message,
+    guarded_acompletion,
+    guarded_completion,
+    guarded_image_generation,
+    is_endpoint_error,
+)
 from model_hub.utils.utils import MyCustomLLM, convert_messages_to_text_only
+from model_hub.services.model_route import (
+    ManagedRouteUnsupported,
+    is_managed_route_binding,
+    managed_route_failure,
+)
 from model_hub.utils.websocket_manager import get_websocket_manager
 from channels.db import sync_to_async
 
@@ -89,6 +107,21 @@ async def create_model_manager_async(model_name, organization_id):
     manager = LiteLLMModelManager(model_name)
     await sync_to_async(manager._add_custom_models)(organization_id)
     return manager
+
+
+def _meter_refusal(error):
+    """A credit-meter refusal in ``error``'s chain (its message is our own
+    copy, e.g. a visible single-charge cut), else None."""
+    from model_hub.services.credit_ledger_port import ManagedCallRefusal
+
+    seen = set()
+    item = error
+    while item is not None and id(item) not in seen:
+        seen.add(id(item))
+        if isinstance(item, ManagedCallRefusal):
+            return item
+        item = item.__cause__ or item.__context__
+    return None
 
 
 class RunPrompt:
@@ -199,6 +232,11 @@ class RunPrompt:
             try:
                 return func(*args, **kwargs)
             except (TimeoutError, requests.exceptions.Timeout) as e:
+                if (
+                    is_managed_route_binding(getattr(self, "api_key", None))
+                    and managed_route_failure(e) is not None
+                ):
+                    raise
                 last_exception = e
                 if attempt < max_retries - 1:
                     # Exponential backoff: delay = min(initial_delay * (2 ** attempt), max_delay)
@@ -215,6 +253,16 @@ class RunPrompt:
                     )
                     raise
             except Exception as e:
+                from model_hub.services.credit_ledger_port import is_managed_refusal
+
+                # Provider-key media errors must retain the ordinary retry loop.
+                # Only a concrete managed binding permits gateway normalization;
+                # an already-typed terminal refusal remains terminal on any path.
+                if is_managed_refusal(e) or (
+                    is_managed_route_binding(getattr(self, "api_key", None))
+                    and managed_route_failure(e) is not None
+                ):
+                    raise
                 error_str = str(e).lower()
                 is_timeout = (
                     "timeout" in error_str
@@ -566,9 +614,19 @@ class RunPrompt:
 
         # Call litellm image_generation
         try:
-            response = litellm.image_generation(**image_params, drop_params=True)
+            # A tenant api_base is called through a guarded client.
+            response = guarded_image_generation(**image_params, drop_params=True)
         except Exception as e:
-            logger.error(f"Image generation failed: {str(e)}")
+            if is_endpoint_error(e):
+                # A tenant endpoint's error: generic already; logged without
+                # its text.
+                logger.error(
+                    "Image generation failed",
+                    error_type=type(e).__name__,
+                    category=getattr(e, "category", None),
+                )
+            else:
+                logger.error(f"Image generation failed: {str(e)}")
             raise
 
         end_time = time.time()
@@ -680,7 +738,7 @@ class RunPrompt:
         2. From direct file upload:
            {"type": "audio_url", "audioUrl": {"url": "<s3_or_public_url>"}}
         """
-        logger.info(f"[STT] Searching for audio in messages")
+        logger.info("[STT] Searching for audio in messages")
         for msg in self.messages:
             content = msg.get("content")
             if not isinstance(content, list):
@@ -946,14 +1004,34 @@ class RunPrompt:
         return " ".join(text_parts), image_urls
 
     def _custom_model_response(self, payload, start_time):
+        # Dormant while USE_NEW_RUNPROMPT_HANDLERS is True; guarded like
+        # CustomModelHandler so flipping the flag does not reopen the SSRF,
+        # and it reads the answer like it so the raw body is never the output.
+        from agentic_eval.core_evals.run_prompt.runprompt_handlers.utils.response_formatter import (
+            ResponseFormatter,
+        )
+        from model_hub.utils.model_endpoints import custom_endpoint_from_config
+        from tfc.utils.ssrf_guard import endpoint_status_message, guarded_post
+
         try:
             payload.pop("custom_llm_provider")
             api_key = payload.pop("api_key")
-            url = api_key.pop("api_base")
-            headers = api_key.pop("headers")
+            url, headers = custom_endpoint_from_config(api_key)
 
-            response = requests.post(url, headers=headers, json=payload)
-            response_content = response.text
+            response = guarded_post(url, json=payload, headers=headers, timeout=300)
+            if response.status_code >= 400:
+                raise RuntimeError(endpoint_status_message(response.status_code))
+            # The assistant message, not the envelope; a body that is not
+            # JSON is the answer as it is.
+            parsed = ResponseFormatter.parse_chat_completion_body(response.text)
+            response_content = parsed.content if parsed is not None else response.text
+            if self.tools and parsed is not None and parsed.tool_calls:
+                response_content = json.dumps(parsed.tool_calls)
+            if not isinstance(response_content, str) or not response_content.strip():
+                raise RuntimeError(
+                    "Custom model returned empty response content. "
+                    "This may be due to content filtering or API issues."
+                )
             end_time = time.time()
 
             # Get custom model to calculate cost based on stored token costs
@@ -1001,6 +1079,7 @@ class RunPrompt:
                     model_name=self.model,
                     token_usage=token_usage,
                     fallback_pricing=fallback_pricing,
+                    organization_id=self.organization_id,
                 )
 
                 metadata = {
@@ -1040,7 +1119,11 @@ class RunPrompt:
             }
             return response_content, value_info, "completed"
         except Exception as e:
-            logger.exception(f"An error occurred: {str(e)}")
+            logger.warning(
+                "custom model request failed",
+                error_type=type(e).__name__,
+                category=getattr(e, "category", None),
+            )
             return str(e), {}, "error"
 
     def _streaming_response(
@@ -1114,7 +1197,7 @@ class RunPrompt:
         try:
             response = None
             with litellm_try_except():
-                response = litellm.completion(**payload, drop_params=True)
+                response = guarded_completion(**payload, drop_params=True)
 
             tool_calls = []
             tool_calls_str = ""
@@ -1277,9 +1360,9 @@ class RunPrompt:
                             if tool_call.function.name:
                                 tc["function"]["name"] += tool_call.function.name
                             if tool_call.function.arguments:
-                                tc["function"][
-                                    "arguments"
-                                ] += tool_call.function.arguments
+                                tc["function"]["arguments"] += (
+                                    tool_call.function.arguments
+                                )
 
         except Exception as e:
             if "value must be a string" in str(e):
@@ -1298,7 +1381,9 @@ class RunPrompt:
             )
 
             # Use error handler for concise message and verbose logging
-            concise_error = handle_api_error(e, logger, context)
+            concise_error = (
+                str(e) if is_endpoint_error(e) else handle_api_error(e, logger, context)
+            )
 
             # Send any remaining buffered chunks before sending error
             if chunk_buffer:
@@ -1343,6 +1428,8 @@ class RunPrompt:
             except Exception as cache_error:
                 logger.error(f"Failed to cache error response: {str(cache_error)}")
 
+            if is_endpoint_error(e):
+                raise
             raise Exception(concise_error)
 
         # Send any remaining buffered chunks
@@ -1439,7 +1526,7 @@ class RunPrompt:
 
         response = None
         with litellm_try_except():
-            response = litellm.completion(**payload, drop_params=True)
+            response = guarded_completion(**payload, drop_params=True)
 
         # Validate that response is not None
         if response is None:
@@ -2047,7 +2134,7 @@ class RunPrompt:
 
                         completion_response = None
                         with litellm_try_except():
-                            completion_response = litellm.completion(
+                            completion_response = guarded_completion(
                                 **fallback_payload, drop_params=True
                             )
 
@@ -2114,7 +2201,7 @@ class RunPrompt:
                             # Call completion endpoint
                             completion_response = None
                             with litellm_try_except():
-                                completion_response = litellm.completion(
+                                completion_response = guarded_completion(
                                     **fallback_payload, drop_params=True
                                 )
 
@@ -2153,6 +2240,8 @@ class RunPrompt:
                 return self._regular_response(payload, start_time)
 
         except Exception as e:
+            if is_endpoint_error(e) and not getattr(e, "requires_text_messages", False):
+                raise
             # Build context for error logging
             context = ErrorContext(
                 model=self.model,
@@ -2168,7 +2257,7 @@ class RunPrompt:
 
             # Try message conversion for "value must be a string" errors
             try:
-                if "value must be a string" in str(e):
+                if getattr(e, "requires_text_messages", False) or "value must be a string" in str(e):
                     payload["messages"] = convert_messages_to_text_only(
                         payload["messages"]
                     )
@@ -2180,12 +2269,16 @@ class RunPrompt:
                     else:
                         return self._regular_response(payload, start_time)
             except Exception as retry_error:
+                if is_endpoint_error(retry_error):
+                    raise
                 # If retry fails, use error handler on the retry error
                 concise_error = handle_api_error(retry_error, logger, context)
                 raise Exception(concise_error)
 
             # Use error handler for concise message and verbose logging
-            concise_error = handle_api_error(e, logger, context)
+            concise_error = (
+                str(e) if is_endpoint_error(e) else handle_api_error(e, logger, context)
+            )
             raise Exception(concise_error)
 
     async def _litellm_response_async_old(
@@ -2494,7 +2587,7 @@ class RunPrompt:
                                         {"type": "text", "text": content}
                                     ]
 
-                        completion_response = await litellm.acompletion(
+                        completion_response = await guarded_acompletion(
                             **fallback_payload, drop_params=True
                         )
 
@@ -2607,7 +2700,7 @@ class RunPrompt:
                                     ]
 
                             # Call completion endpoint
-                            completion_response = await litellm.acompletion(
+                            completion_response = await guarded_acompletion(
                                 **fallback_payload, drop_params=True
                             )
 
@@ -2730,6 +2823,8 @@ class RunPrompt:
             else:
                 return await sync_to_async(self._regular_response)(payload, start_time)
         except Exception as e:
+            if is_endpoint_error(e) and not getattr(e, "requires_text_messages", False):
+                raise
             # Build context for error logging
             context = ErrorContext(
                 model=self.model,
@@ -2744,7 +2839,7 @@ class RunPrompt:
             logger.info(f"Original messages: {payload.get('messages', [])}")
 
             try:
-                if "value must be a string" in str(e):
+                if getattr(e, "requires_text_messages", False) or "value must be a string" in str(e):
                     payload["messages"] = convert_messages_to_text_only(
                         payload["messages"]
                     )
@@ -2758,11 +2853,15 @@ class RunPrompt:
                             payload, start_time
                         )
             except Exception as retry_error:
+                if is_endpoint_error(retry_error):
+                    raise
                 concise_error = handle_api_error(retry_error, logger, context)
                 raise Exception(concise_error)
 
             # Use error handler for concise message and verbose logging
-            concise_error = handle_api_error(e, logger, context)
+            concise_error = (
+                str(e) if is_endpoint_error(e) else handle_api_error(e, logger, context)
+            )
             raise Exception(concise_error)
 
     async def _streaming_response_async(
@@ -2827,7 +2926,7 @@ class RunPrompt:
 
         chunk_buffer = ""
         try:
-            response = await litellm.acompletion(**payload, drop_params=True)
+            response = await guarded_acompletion(**payload, drop_params=True)
             tool_calls = []
             tool_calls_str = ""
 
@@ -2988,9 +3087,9 @@ class RunPrompt:
                             if tool_call.function.name:
                                 tc["function"]["name"] += tool_call.function.name
                             if tool_call.function.arguments:
-                                tc["function"][
-                                    "arguments"
-                                ] += tool_call.function.arguments
+                                tc["function"]["arguments"] += (
+                                    tool_call.function.arguments
+                                )
 
         except Exception as e:
             if "value must be a string" in str(e):
@@ -3009,7 +3108,9 @@ class RunPrompt:
             )
 
             # Use error handler for concise message and verbose logging
-            concise_error = handle_api_error(e, logger, context)
+            concise_error = (
+                str(e) if is_endpoint_error(e) else handle_api_error(e, logger, context)
+            )
 
             if chunk_buffer:
                 try:
@@ -3054,6 +3155,8 @@ class RunPrompt:
             except Exception as cache_error:
                 logger.error(f"Failed to cache error response: {str(cache_error)}")
 
+            if is_endpoint_error(e):
+                raise
             raise Exception(concise_error)
 
         if chunk_buffer:
@@ -3155,6 +3258,15 @@ class RunPrompt:
 
         Enable via environment variable: USE_NEW_RUNPROMPT_HANDLERS=true
         """
+        # Set when litellm is given a tenant base URL (an openai/azure custom
+        # model): its errors then reach the tenant as generic categorised
+        # text, not the provider's (which can carry the endpoint's body).
+        endpoint_call = False
+        from model_hub.services.credit_ledger_port import (
+            ManagedDispatchUnavailableError,
+        )
+
+        managed_route = False
         try:
             # Resolve voice_id if present in config (keep voice as display name)
             if self.run_prompt_config and "voice_id" in self.run_prompt_config:
@@ -3172,17 +3284,41 @@ class RunPrompt:
                 organization_id=self.organization_id,
                 workspace_id=self.workspace_id,
                 provider=provider,
+                allow_managed=True,
+                operation=getattr(self, "route_operation", None),
             )
+            # One key: a key-less model the gateway admits for this
+            # organization comes back as a managed binding: no provider key
+            # and nothing admitted yet. It never reaches litellm:
+            # guarded_completion sends each completion to the gateway
+            # managed client, one admission and one request id per call.
+            managed_route = is_managed_route_binding(api_key)
+            if managed_route and template_id is not None:
+                # One key: the prompt workbench's run debits its
+                # own legacy billing for this call. Only an outer meter (the
+                # async workbench) makes it a single charge; otherwise the
+                # visible cut, before anything is admitted or sent.
+                from model_hub.services.credit_ledger_port import (
+                    MANAGED_PROMPT_CUT_MESSAGE,
+                    require_outer_meter,
+                )
+
+                require_outer_meter(MANAGED_PROMPT_CUT_MESSAGE)
 
             # Normalize API key format
             if isinstance(api_key, dict) and "key" in api_key:
                 if "custom_provider" in api_key:
                     api_key.pop("custom_provider")
-                elif "api_base" in api_key:
+                elif "api_base" in api_key or (
+                    provider == "azure" and ("apiBase" in api_key or "base_url" in api_key)
+                ):
                     api_key["api_key"] = api_key.pop("key")
+                    if provider == "azure":
+                        api_key.pop("apiKey", None)
                 else:
                     api_key = api_key.get("key")
             self.api_key = api_key
+            endpoint_call = provider != "custom" and calls_endpoint_url(api_key)
 
             # Create handler context
             context = ModelHandlerContext.from_run_prompt(
@@ -3198,6 +3334,11 @@ class RunPrompt:
 
             # Get the appropriate handler for this model type
             handler = ModelHandlerFactory.create_handler(context)
+            if managed_route and handler.__class__ is not LLMHandler:
+                # Future AGI credits run text chat completions only: an
+                # audio, image, transcription or custom-endpoint handler is
+                # refused before anything is admitted or sent.
+                raise ManagedRouteUnsupported()
 
             # Execute with handler
             # LLM handlers handle their own WebSocket streaming
@@ -3216,7 +3357,27 @@ class RunPrompt:
             # Convert to legacy format (response, value_info)
             return handler_response.to_value_info()
 
+        except ManagedDispatchUnavailableError:
+            # Local pre-dispatch cuts keep their class and copy. All other
+            # gateway/charged/pending failures still use terminal normalization.
+            raise
         except Exception as e:
+            # One key: a managed run fails with its typed refusal (the
+            # gateway's error.code, our message), found through any wrapping
+            # (litellm_try_except re-raises a plain Exception from it) and
+            # raised without the chain; never gateway or provider text. A
+            # credit-meter refusal (a visible single-charge cut) keeps its type
+            # and its own copy.
+            managed_error = managed_route_failure(e) if managed_route else None
+            if managed_error is None and managed_route:
+                managed_error = _meter_refusal(e)
+            if managed_error is not None:
+                logger.warning(
+                    "[NEW] managed run refused",
+                    code=managed_error.code,
+                    error_type=managed_error.__class__.__name__,
+                )
+                raise managed_error from None
             context = ErrorContext(
                 model=self.model,
                 temperature=self.temperature,
@@ -3227,9 +3388,14 @@ class RunPrompt:
                 workspace_id=self.workspace_id,
                 template_id=template_id,
             )
-            concise_error = handle_api_error(e, logger, context)
+            if endpoint_call:
+                concise_error = endpoint_call_error_message(e)
+            else:
+                concise_error = handle_api_error(e, logger, context)
             logger.error(f"[NEW] An error occurred: {concise_error}")
-            raise Exception(concise_error) from e
+            # An endpoint call drops the chain: callers log the error with its
+            # traceback, which would carry the provider's text.
+            raise Exception(concise_error) from (None if endpoint_call else e)
 
     async def _litellm_response_async_new(
         self,
@@ -3248,6 +3414,15 @@ class RunPrompt:
 
         NOTE: Uses 'type' parameter (NOT 'run_type') - must preserve this for backward compatibility.
         """
+        # Set when litellm is given a tenant base URL (an openai/azure custom
+        # model): its errors then reach the tenant as generic categorised
+        # text, not the provider's (which can carry the endpoint's body).
+        endpoint_call = False
+        from model_hub.services.credit_ledger_port import (
+            ManagedDispatchUnavailableError,
+        )
+
+        managed_route = False
         try:
             # Resolve voice_id if present in config (keep voice as display name)
             if self.run_prompt_config and "voice_id" in self.run_prompt_config:
@@ -3267,17 +3442,39 @@ class RunPrompt:
                 organization_id=self.organization_id,
                 workspace_id=self.workspace_id,
                 provider=provider,
+                allow_managed=True,
+                operation=getattr(self, "route_operation", None),
             )
+            # One key: see the sync path. Admission, the access check and
+            # the gateway client run off the event loop at the send
+            # (guarded_acompletion).
+            managed_route = is_managed_route_binding(api_key)
+            if managed_route and template_id is not None:
+                # One key: the prompt workbench's run debits its
+                # own legacy billing for this call. Only an outer meter (the
+                # async workbench) makes it a single charge; otherwise the
+                # visible cut, before anything is admitted or sent.
+                from model_hub.services.credit_ledger_port import (
+                    MANAGED_PROMPT_CUT_MESSAGE,
+                    require_outer_meter,
+                )
+
+                require_outer_meter(MANAGED_PROMPT_CUT_MESSAGE)
 
             # Normalize API key format
             if isinstance(api_key, dict) and "key" in api_key:
                 if "custom_provider" in api_key:
                     api_key.pop("custom_provider")
-                elif "api_base" in api_key:
+                elif "api_base" in api_key or (
+                    provider == "azure" and ("apiBase" in api_key or "base_url" in api_key)
+                ):
                     api_key["api_key"] = api_key.pop("key")
+                    if provider == "azure":
+                        api_key.pop("apiKey", None)
                 else:
                     api_key = api_key.get("key")
             self.api_key = api_key
+            endpoint_call = provider != "custom" and calls_endpoint_url(api_key)
 
             # Create handler context
             # Note: Pass "type" as "run_type" for consistency in handler
@@ -3294,6 +3491,9 @@ class RunPrompt:
 
             # Get the appropriate handler for this model type
             handler = ModelHandlerFactory.create_handler(context)
+            if managed_route and handler.__class__ is not LLMHandler:
+                # One key: see the sync path.
+                raise ManagedRouteUnsupported()
 
             # Execute with handler (async)
             # LLM handlers handle their own WebSocket streaming
@@ -3312,7 +3512,22 @@ class RunPrompt:
             # Convert to legacy format (response, value_info)
             return handler_response.to_value_info()
 
+        except ManagedDispatchUnavailableError:
+            # Local pre-dispatch cuts keep their class and copy. All other
+            # gateway/charged/pending failures still use terminal normalization.
+            raise
         except Exception as e:
+            # One key: see the sync path.
+            managed_error = managed_route_failure(e) if managed_route else None
+            if managed_error is None and managed_route:
+                managed_error = _meter_refusal(e)
+            if managed_error is not None:
+                logger.warning(
+                    "[NEW] managed run refused",
+                    code=managed_error.code,
+                    error_type=managed_error.__class__.__name__,
+                )
+                raise managed_error from None
             context = ErrorContext(
                 model=self.model,
                 temperature=self.temperature,
@@ -3323,9 +3538,14 @@ class RunPrompt:
                 workspace_id=self.workspace_id,
                 template_id=template_id,
             )
-            concise_error = handle_api_error(e, logger, context)
+            if endpoint_call:
+                concise_error = endpoint_call_error_message(e)
+            else:
+                concise_error = handle_api_error(e, logger, context)
             logger.error(f"[NEW] An error occurred: {concise_error}")
-            raise Exception(concise_error) from e
+            # An endpoint call drops the chain: callers log the error with its
+            # traceback, which would carry the provider's text.
+            raise Exception(concise_error) from (None if endpoint_call else e)
 
     # =========================================================================
     # PUBLIC API - WRAPPER METHODS THAT TOGGLE BETWEEN OLD AND NEW

@@ -5,20 +5,21 @@ import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import numpy as np
-from tfc.telemetry import wrap_for_thread
+import structlog
 from tqdm import tqdm
 
 from agentic_eval.core.llm.llm import LLM
 from agentic_eval.core.utils.model_config import ModelConfigs
-import structlog
-from model_hub.utils.optimization_scope import optimization_metrics
-
-logger = structlog.get_logger(__name__)
-
-PROMPT_OPTIMIZER_THREAD_WORKER_COUNT = 2
-
 from model_hub.models.develop_dataset import Column
+from model_hub.utils.optimization_scope import optimization_metrics
 from model_hub.views.eval_runner import EvaluationRunner
+from tfc.telemetry import wrap_for_thread
+
+from .prompts import (
+    CRITERIA_CORRECTOR_PROMPT_MB,
+    FOLLOW_UP_PROMPT,
+    INSTRUCTION_CORRECTOR_PROMPT_MB,
+)
 
 try:
     from ee.usage.utils.usage_entries import (
@@ -31,11 +32,9 @@ except ImportError:
     APICallTypeChoices = None
     log_api_call = None
 
-from .prompts import (
-    CRITERIA_CORRECTOR_PROMPT_MB,
-    FOLLOW_UP_PROMPT,
-    INSTRUCTION_CORRECTOR_PROMPT_MB,
-)
+logger = structlog.get_logger(__name__)
+
+PROMPT_OPTIMIZER_THREAD_WORKER_COUNT = 2
 
 futureagi_eval_types = [
     "OutputEvaluator",
@@ -46,13 +45,6 @@ futureagi_eval_types = [
     "ImageInputOutputEvaluator",
     "DeterministicEvaluator",
 ]
-
-client = LLM(
-    model_name=ModelConfigs.CLAUDE_4_5_SONNET_BEDROCK_ARN.model_name,
-    temperature=ModelConfigs.CLAUDE_4_5_SONNET_BEDROCK_ARN.temperature,
-    max_tokens=ModelConfigs.CLAUDE_4_5_SONNET_BEDROCK_ARN.max_tokens,
-    provider=ModelConfigs.CLAUDE_4_5_SONNET_BEDROCK_ARN.provider,
-)
 
 
 def get_improvements(improvement_str):
@@ -201,22 +193,42 @@ class PromptOptimizer:
         provider=ModelConfigs.CLAUDE_4_5_SONNET_BEDROCK_ARN.provider,
         config=None,
         optimizer=None,
+        criteria_breakdown=None,
+        client=None,
     ):
         self.prompt = prompt
         self.prompt_optimizer = TextGradientDescent()
         self.train_data = train_data
         self.variables = variables
         self.optimizer = optimizer
-        self.dataset = optimizer.dataset
-        self.user_eval_metrics = optimization_metrics(optimizer)
-        self.client = LLM(
-            model_name=model_name,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            provider=provider,
-            config=config,
-            optimizer=True,
+        # The Prompt Template optimizer (model_hub/tasks/prompt_template_optimizer.py)
+        # has no dataset optimization record to read eval metrics from: it
+        # passes its metrics' criteria breakdown, and each candidate is scored
+        # against those criteria. Without criteria nothing changes.
+        self.criteria_breakdown = (
+            list(criteria_breakdown) if criteria_breakdown else None
         )
+        if optimizer is None and self.criteria_breakdown:
+            self.dataset = None
+            self.user_eval_metrics = []
+        else:
+            self.dataset = optimizer.dataset
+            self.user_eval_metrics = optimization_metrics(optimizer)
+        # A caller that meters its model calls passes the client to make them
+        # with; the Prompt Template runner binds it to the run's organization
+        # route. Every call of the loop and of the criteria scoring goes
+        # through self.client. Without one, the client is built as before.
+        if client is not None:
+            self.client = client
+        else:
+            self.client = LLM(
+                model_name=model_name,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                provider=provider,
+                config=config,
+                optimizer=True,
+            )
 
     def _get_evaluation_feedback(self, chat_history):
         """
@@ -228,6 +240,8 @@ class PromptOptimizer:
         Returns:
             tuple: (aggregated_judgement_criterias, aggregated_score)
         """
+        if self.criteria_breakdown:
+            return self._get_criteria_feedback(chat_history)
         if not self.user_eval_metrics:
             return "", 0.0
 
@@ -466,6 +480,25 @@ class PromptOptimizer:
             return normalized * 100 if normalized <= 1.0 else normalized
         except (ValueError, TypeError):
             return 0.0
+
+    def _get_criteria_feedback(self, chat_history):
+        """Judgements and a 0-100 score of one chat against the criteria
+        breakdown, from the scorer the Prompt Template run's scheduled
+        scoring uses (EvalTextLLM.score_chat_history), on this client."""
+        from ee.agenthub.text_eval_agent.eval_text_llm import EvalTextLLM
+
+        result = EvalTextLLM(llm=self.client).score_chat_history(
+            criteria_breakdown=self.criteria_breakdown,
+            chat_history=chat_history,
+            model_type="test",
+            is_rag=False,
+        )
+        judgements = [
+            {"criteria": item.get("criteria"), "judgment": item.get("judgment")}
+            for item in result.get("judgments") or []
+        ]
+        score = round(float(result["score"]) * 100, 2)
+        return self._format_judgements(judgements), score
 
     def _format_judgements(self, judgements):
         """Helper method to format judgements"""

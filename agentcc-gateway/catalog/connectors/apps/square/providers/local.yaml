@@ -1,0 +1,46 @@
+schema: "connector-manifest/v1#provider"
+# Square's local stdio server acts with the token's full permissions on the
+# account. Use a least-privilege token for the agent and try Sandbox first.
+# Production is the default unless SANDBOX is the string true.
+app: square
+id: local
+version: 1.0.0
+kind: vendor_local
+publisher: vendor
+vendorStatus:
+  label: beta
+  source: https://raw.githubusercontent.com/square/square-mcp-server/HEAD/README.md
+transport:
+  kind: stdio
+  command: npx
+  args: [square-mcp-server, start]
+  env:
+    ACCESS_TOKEN: Required Square API access token for the selected environment. The server acts with the token's full permissions on the account; use a least-privilege token for the agent.
+    SANDBOX: "Optional: set to the string true for Sandbox; otherwise production is the default. Do not combine with PRODUCTION=true. Use Sandbox first with a matching access token."
+hosted: false
+trusted: false
+accountModes: [agent]
+auth: { kind: local_setup }
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.command
+    url: https://raw.githubusercontent.com/square/square-mcp-server/HEAD/README.md
+    fetchedAt: 2026-11-16
+  - fact: transport.args
+    url: https://raw.githubusercontent.com/square/square-mcp-server/HEAD/README.md
+    fetchedAt: 2026-11-16
+  - fact: transport.env
+    url: https://raw.githubusercontent.com/square/square-mcp-server/HEAD/README.md
+    fetchedAt: 2026-11-16
+  - fact: transport.env
+    url: https://raw.githubusercontent.com/square/square-mcp-server/HEAD/server.ts
+    fetchedAt: 2026-11-16
+  - fact: transport.env
+    url: https://developer.squareup.com/docs/build-basics/access-tokens
+    fetchedAt: 2026-11-16
+  - fact: auth.kind
+    url: https://raw.githubusercontent.com/square/square-mcp-server/HEAD/README.md
+    fetchedAt: 2026-11-16

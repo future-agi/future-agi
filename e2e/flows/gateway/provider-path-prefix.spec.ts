@@ -1,12 +1,25 @@
-import { request } from '@playwright/test';
+// SELECTOR_RECHECK_AFTER_FE(FE-GW-OPS): WHOLE_FILE, not only conflict regions.
+// Recheck every selector, imported grid/picker helper, declaration and repeated use,
+// including all auto-merged hunks; change dependent references together after FE lands.
 import { test, expect } from '../../lib/fixtures';
-import { E2E } from '../../lib/env';
+import { GatewayAdmin } from '../../lib/gateway-admin';
 import { flowAnnotation } from '../../lib/flow-meta';
+import { GRID_VIEWPORT } from '../../lib/gateway-grid';
+import { syntheticProviderKey } from '../../lib/provider-key';
 
-// docker-compose.distributed.yml AGENTCC_ADMIN_TOKEN default. This flow talks to the
-// managed E2E gateway's admin read endpoint to prove Django pushed the value.
-const GATEWAY_ADMIN_TOKEN = 'local-dev-only-admin-token-replace-me';
+// The managed E2E gateway's admin read endpoint proves Django pushed the value;
+// it is reached through the shared GatewayAdmin helper (lib/gateway-admin.ts).
 const UI_READY = 60_000;
+// Providers is one list (providers/ProviderManagementSection.jsx: the old
+// /providers/config tab opens it), a gateway grid whose row actions are
+// "Edit provider <name>" and "Remove provider <name>" (providers/ProviderList.jsx
+// ActionsCell; the provider's display name, here its name). Edit opens
+// AddProviderDialog in edit mode, which holds the API Path Prefix field. That
+// field is an ordinary editable input, but it sits in the collapsed "Advanced
+// connection settings" region (AddProviderDialog.jsx: `hidden={!advancedExpanded}`,
+// state starts false and resets to false on every open), so it is in the DOM yet
+// not visible until the toggle button is clicked.
+const PROVIDERS_PATH = '/dashboard/gateway/providers';
 
 interface ProviderCredentialResponse {
   result: {
@@ -21,10 +34,8 @@ interface GatewayConfigResponse {
   };
 }
 
-interface GatewayOrgConfigList {
-  data: Record<string, {
-    providers?: Record<string, { api_path_prefix?: string | null }>;
-  }>;
+interface GatewayOrgConfig {
+  providers?: Record<string, { api_path_prefix?: string | null }>;
 }
 
 test('GW-E2E-002: custom provider keeps an explicitly empty API path prefix', {
@@ -35,7 +46,7 @@ test('GW-E2E-002: custom provider keeps an explicitly empty API path prefix', {
     userGoal: 'A user configures a custom OpenAI-compatible provider without an API version prefix',
     steps: [
       'seed a custom provider for the current organization',
-      'open Gateway provider configuration',
+      'open Gateway Providers',
       'edit the provider and clear its API path prefix',
       'save and reopen the provider',
       'see that the empty prefix was preserved',
@@ -52,6 +63,7 @@ test('GW-E2E-002: custom provider keeps an explicitly empty API path prefix', {
   // harness precedent is 300s for OBS-E2E-001. Under-budgeting means the outer
   // timeout fires first and hides which assertion actually ran out.
   test.setTimeout(300_000);
+  await page.setViewportSize(GRID_VIEWPORT);
   const suffix = `${testInfo.workerIndex}-${Date.now().toString(36)}`;
   const providerName = `e2e-prefix-${suffix}`;
   const modelName = `e2e-model-${suffix}`;
@@ -69,7 +81,8 @@ test('GW-E2E-002: custom provider keeps an explicitly empty API path prefix', {
     '/agentcc/provider-credentials/',
     {
       provider_name: providerName,
-      credentials: { api_key: `e2e-key-${suffix}` },
+      // synthetic test value; visibly synthetic under R-LIT-2.
+      credentials: { api_key: syntheticProviderKey([modelName, manuallyAddedModel]) },
       base_url: 'https://api.perplexity.ai',
       api_format: 'openai',
       models_list: [modelName],
@@ -81,18 +94,29 @@ test('GW-E2E-002: custom provider keeps an explicitly empty API path prefix', {
     contentType: 'text/plain',
   });
 
-  await page.goto('/dashboard/gateway/providers/config');
-  // Each provider is a flat panel holding its name and its Edit/Remove buttons.
-  const providerCard = page.locator('div').filter({ hasText: providerName })
-    .filter({ has: page.getByTitle('Edit provider') }).last();
-  await expect(providerCard).toBeVisible({ timeout: UI_READY });
-  await providerCard.getByTitle('Edit provider').click();
+  // SELECTOR_RECHECK_AFTER_FE(FE-GW-OPS): candidate hunk: PROVIDERS_PATH + row action aria-label "Edit provider <name>" (ProviderList.jsx); FE-GW-OPS keeps candidate v2 and deletes ProviderConfigView
+  await page.goto(PROVIDERS_PATH);
+  // Each provider is a grid row; its Edit action is an icon button labelled
+  // "Edit provider <name>" (ProviderList.jsx ActionsCell), with no title attribute.
+  const editButton = page.getByRole('button', { name: `Edit provider ${providerName}`, exact: true });
+  await expect(editButton).toBeVisible({ timeout: UI_READY });
+  await editButton.click();
 
+  // The dialog opens with Advanced connection settings collapsed, so the field
+  // is hidden until it is expanded. The toggle's name is its text plus a +/- glyph.
+  const advancedToggle = page.getByRole('button', { name: /^Advanced connection settings/ });
+  await advancedToggle.click({ timeout: UI_READY });
+  await expect(advancedToggle).toHaveAttribute('aria-expanded', 'true', { timeout: UI_READY });
   const prefixInput = page.getByLabel('API Path Prefix');
   await expect(prefixInput).toHaveValue('/openai/v1', { timeout: UI_READY });
   await prefixInput.fill('');
-  await page.getByPlaceholder(/type manually/i).fill(manuallyAddedModel);
-  await page.getByPlaceholder(/type manually/i).press('Enter');
+  // The model field's placeholder follows the deployment: with model discovery
+  // off (the stock stack) it asks for comma-separated ids, with it on it offers
+  // to type manually (AddProviderDialog.jsx model field placeholder); Enter adds
+  // the id either way.
+  const modelInput = page.getByPlaceholder(/type manually|comma-separated model IDs/i);
+  await modelInput.fill(manuallyAddedModel);
+  await modelInput.press('Enter');
   await expect(page.getByRole('button', { name: 'Save Changes' })).toBeEnabled({ timeout: UI_READY });
 
   const updateResponse = page.waitForResponse(
@@ -103,7 +127,11 @@ test('GW-E2E-002: custom provider keeps an explicitly empty API path prefix', {
   await page.getByRole('button', { name: 'Save Changes' }).click();
   expect((await updateResponse).status()).toBe(200);
 
-  await providerCard.getByTitle('Edit provider').click();
+  // Reopening resets the disclosure to collapsed (AddProviderDialog.jsx), so expand again.
+  await editButton.click();
+  const reopenedToggle = page.getByRole('button', { name: /^Advanced connection settings/ });
+  await reopenedToggle.click({ timeout: UI_READY });
+  await expect(reopenedToggle).toHaveAttribute('aria-expanded', 'true', { timeout: UI_READY });
   await expect(page.getByLabel('API Path Prefix')).toHaveValue('', { timeout: UI_READY });
 
   const credential = await actor.api.get<ProviderCredentialResponse>(
@@ -116,15 +144,13 @@ test('GW-E2E-002: custom provider keeps an explicitly empty API path prefix', {
   );
   expect(backendConfig.result.providers[providerName]?.api_path_prefix).toBe('');
 
-  const gatewayRequest = await request.newContext({
-    baseURL: E2E.gatewayUrl,
-    extraHTTPHeaders: { Authorization: `Bearer ${GATEWAY_ADMIN_TOKEN}` },
-  });
-  const gatewayResponse = await gatewayRequest.get('/-/orgs/configs');
-  expect(gatewayResponse.status()).toBe(200);
-  const gatewayConfigs = await gatewayResponse.json() as GatewayOrgConfigList;
-  expect(
-    gatewayConfigs.data[actor.organizationId]?.providers?.[providerName]?.api_path_prefix,
-  ).toBe('');
-  await gatewayRequest.dispose();
+  // GatewayAdmin.orgConfig reads the same redacted org config the list endpoint holds
+  // for this organization (GET /-/orgs/{org}/config; null when the gateway has none).
+  const admin = await GatewayAdmin.open();
+  try {
+    const pushed = await admin.orgConfig(actor.organizationId) as GatewayOrgConfig | null;
+    expect(pushed?.providers?.[providerName]?.api_path_prefix).toBe('');
+  } finally {
+    await admin.dispose();
+  }
 });

@@ -101,3 +101,62 @@ describe("ObjectFilterPanel enum fields", () => {
     );
   });
 });
+
+// The Alerts Project field: the stored values are project ids, shown by name,
+// so a typed name is never one of its values.
+const projectField = {
+  value: "project_id",
+  label: "Project",
+  type: "enum",
+  operators: ["is"],
+  choices: ["proj-1", "proj-2"],
+  choiceLabels: { "proj-1": "Production", "proj-2": "Staging" },
+};
+
+describe("ObjectFilterPanel fixed-choice search", () => {
+  const renderProjectPanel = () => {
+    const onApply = vi.fn();
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <ObjectFilterPanel
+          anchorEl={document.body}
+          open
+          onClose={vi.fn()}
+          filterFields={[projectField]}
+          currentFilters={null}
+          onApply={onApply}
+          basicOnly
+        />
+      </QueryClientProvider>,
+    );
+    return onApply;
+  };
+
+  it("lists only matching options, with no typed value to add", async () => {
+    const onApply = renderProjectPanel();
+    await pickProperty("Project");
+    fireEvent.click(await screen.findByText("Select values..."));
+    fireEvent.change(screen.getByPlaceholderText("Search values..."), {
+      target: { value: "prod" },
+    });
+
+    expect(screen.getByText("Production")).toBeInTheDocument();
+    expect(screen.queryByText("Staging")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Specify:/)).not.toBeInTheDocument();
+    expect(onApply).not.toHaveBeenCalled();
+  });
+
+  it("says nothing matches instead of offering the typed text", async () => {
+    const onApply = renderProjectPanel();
+    await pickProperty("Project");
+    fireEvent.click(await screen.findByText("Select values..."));
+    fireEvent.change(screen.getByPlaceholderText("Search values..."), {
+      target: { value: "zzz" },
+    });
+
+    expect(screen.queryByText(/Specify:/)).not.toBeInTheDocument();
+    expect(screen.getByText("No matching values")).toBeInTheDocument();
+    expect(screen.queryAllByRole("checkbox")).toHaveLength(0);
+    expect(onApply).not.toHaveBeenCalled();
+  });
+});

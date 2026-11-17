@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import PropTypes from "prop-types";
 import { ClosableDialog } from "src/components/custom-dialog";
 import {
@@ -23,9 +23,11 @@ import { UNITS, unitWord } from "src/sections/projects/observePopulation";
 import ScopeFilterBar from "src/sections/projects/ScopeFilterBar";
 import { defaultScope } from "src/sections/projects/observeScope";
 import {
+  COST_UNCHECKED,
   insightsKeys,
   recallPopulation,
   rememberPopulation,
+  scopeRefusal,
   startRun,
   usePopulationCount,
 } from "./insightsApi";
@@ -64,6 +66,7 @@ function RerunForm({
   initialRediscover,
   onClose,
   onStarted,
+  onBusy,
 }) {
   const queryClient = useQueryClient();
   const unit = config.unit;
@@ -111,6 +114,9 @@ function RerunForm({
   const counting =
     !sameRows &&
     (count.isLoading || count.isPlaceholderData || settledScope !== countScope);
+  // The server can't count this scope at all: its reason names what to
+  // change, and a retry gets the same answer.
+  const refusal = !sameRows && count.isError ? scopeRefusal(count.error) : null;
 
   const sameLabel = remembered
     ? `The same ${formatCount(remembered.length)} ${unitWord(unit, remembered.length)} as last run`
@@ -146,6 +152,15 @@ function RerunForm({
     });
 
   const busy = starting.state.status === "busy";
+  // The server may start (and charge) the run before it answers, so the
+  // dialog stays open until it does: a cancel or close would only stop the
+  // browser waiting. The answer, or a started run unmounting the form, lets
+  // the dialog close again.
+  useEffect(() => {
+    if (!busy) return undefined;
+    onBusy?.(true);
+    return () => onBusy?.(false);
+  }, [busy, onBusy]);
   // What the run costs, and whether the credits left pay for it.
   const credits =
     (sameRows ? sameCost.data?.credits : count.data?.credits) || null;
@@ -254,23 +269,27 @@ function RerunForm({
               )}
             </Typography>
           </Stack>
-          {((sameRows ? sameCost.isError : count.isError) ||
-            credits?.unavailable) && (
-            <Alert
-              severity="error"
-              action={
-                <Button
-                  color="inherit"
-                  onClick={() => (sameRows ? sameCost : count).refetch()}
-                >
-                  Retry cost check
-                </Button>
-              }
-            >
-              {credits?.unavailable
-                ? credits.message
-                : "The report cost could not be checked. Check it before running again."}
+          {refusal ? (
+            <Alert severity="error">
+              {`${refusal} Change the date or filters, then run it again.`}
             </Alert>
+          ) : (
+            ((sameRows ? sameCost.isError : count.isError) ||
+              credits?.unavailable) && (
+              <Alert
+                severity="error"
+                action={
+                  <Button
+                    color="inherit"
+                    onClick={() => (sameRows ? sameCost : count).refetch()}
+                  >
+                    Retry cost check
+                  </Button>
+                }
+              >
+                {credits?.unavailable ? credits.message : COST_UNCHECKED}
+              </Alert>
+            )
           )}
           {creditLimited && !credits.unavailable && (
             <CreditLimit credits={credits} onSample={setSampleSize} />
@@ -316,7 +335,7 @@ function RerunForm({
         </Stack>
       </DialogContent>
       <DialogActions sx={{ px: 3, pb: 2.5 }}>
-        <Button color="inherit" onClick={busy ? starting.cancel : onClose}>
+        <Button color="inherit" onClick={onClose} disabled={busy}>
           Cancel
         </Button>
         <Button
@@ -349,13 +368,17 @@ RerunForm.propTypes = {
   initialRediscover: PropTypes.bool,
   onClose: PropTypes.func.isRequired,
   onStarted: PropTypes.func.isRequired,
+  onBusy: PropTypes.func,
 };
 
 export default function RerunDialog({ open, config, onClose, ...rest }) {
+  // While a run is starting nothing closes the dialog: no cross, Escape or
+  // click outside (see RerunForm).
+  const [starting, setStarting] = useState(false);
   return (
     <ClosableDialog
       open={open && Boolean(config)}
-      onClose={onClose}
+      onClose={starting ? undefined : onClose}
       fullWidth
       maxWidth="sm"
     >
@@ -364,6 +387,7 @@ export default function RerunDialog({ open, config, onClose, ...rest }) {
           key={config.id}
           config={config}
           onClose={onClose}
+          onBusy={setStarting}
           {...rest}
         />
       )}

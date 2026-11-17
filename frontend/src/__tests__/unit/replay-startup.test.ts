@@ -3,7 +3,7 @@ import { runInNewContext } from "node:vm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { replayIntegration } from "@sentry-internal/replay";
 import { createSentryReplay } from "src/utils/sentry-replay";
-import { scrubSamlRecordingEvent } from "src/utils/saml-telemetry-urls";
+import { SENTRY_REPLAY_BLOCK_SELECTORS } from "src/sections/omega/embed/telemetry/sdk-guards";
 
 vi.mock("@sentry-internal/replay", () => ({
   replayIntegration: vi.fn(() => ({ name: "Replay" })),
@@ -150,12 +150,16 @@ describe("Replay after the committed frame", () => {
     expect(state.Sentry.addIntegration).not.toHaveBeenCalled();
   });
 
+  // The recording hook projects SAML URLs, then applies the embed guard, which
+  // decides last; the envelope stays uncompressed for the transport scrubber.
   it("keeps the existing Replay masking and recording URL projection", () => {
     createSentryReplay();
     expect(replayIntegration).toHaveBeenCalledExactlyOnceWith({
+      useCompression: false,
       maskAllText: true,
       blockAllMedia: true,
-      beforeAddRecordingEvent: scrubSamlRecordingEvent,
+      block: [...SENTRY_REPLAY_BLOCK_SELECTORS],
+      beforeAddRecordingEvent: expect.any(Function),
     });
     const options = vi.mocked(replayIntegration).mock.calls[0][0]!;
     expect(

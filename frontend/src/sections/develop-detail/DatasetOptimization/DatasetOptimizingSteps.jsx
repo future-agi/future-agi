@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import {
   Accordion,
   AccordionDetails,
@@ -130,9 +130,17 @@ const DatasetOptimizingSteps = ({ status, optimizationId }) => {
 
   const stepsArray = Array.isArray(steps) ? steps : [];
 
+  // Controlled: status arrives after the first render (the run detail is
+  // still loading), and MUI rejects a changing defaultExpanded. Collapsed for
+  // completed runs until the user opens it.
+  const [expandedByUser, setExpandedByUser] = useState(null);
+  const expanded =
+    expandedByUser ?? status !== AgentPromptOptimizerStatus.COMPLETED;
+
   return (
     <Accordion
-      defaultExpanded={status !== AgentPromptOptimizerStatus.COMPLETED}
+      expanded={expanded}
+      onChange={(_, isExpanded) => setExpandedByUser(isExpanded)}
       disableGutters
       sx={{
         border: "1px solid var(--border-default)",

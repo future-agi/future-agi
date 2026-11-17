@@ -1,0 +1,17 @@
+{
+  "http": {
+    "status": 409,
+    "headers": {
+      "content-type": "application/json"
+    }
+  },
+  "body": {
+    "status": false,
+    "type": "conflict",
+    "code": "connection_mode_conflict",
+    "detail": "This connection already has a virtual server in agent mode. Detach it before changing the mode.",
+    "message": "This connection already has a virtual server in agent mode. Detach it before changing the mode.",
+    "error": "This connection already has a virtual server in agent mode. Detach it before changing the mode.",
+    "result": "This connection already has a virtual server in agent mode. Detach it before changing the mode."
+  }
+}

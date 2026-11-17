@@ -76,7 +76,10 @@ const ActionMenu = (props) => {
     setAnchorEl(null);
   };
 
+  // The menu closes as its action's confirmation opens, so it does not stay
+  // open behind the dialog.
   const handleMenuItemClick = (action) => {
+    handleClose();
     setOpenConfirmation(action);
   };
   const handledialogClose = () => {

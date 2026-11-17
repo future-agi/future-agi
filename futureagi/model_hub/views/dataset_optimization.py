@@ -6,51 +6,51 @@ Following the same patterns as simulate.views.agent_prompt_optimiser.
 
 import structlog
 from django.db import transaction
-from django.http import Http404
 from django.db.models import Avg, Count, Q
+from django.http import Http404
 from django.utils import timezone
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework import serializers, status
 from rest_framework.decorators import action
+from rest_framework.exceptions import APIException
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
 
+from model_hub.models.dataset_optimization_step import DatasetOptimizationStep
 from model_hub.models.dataset_optimization_trial import DatasetOptimizationTrial
 from model_hub.models.dataset_optimization_trial_item import (
     DatasetOptimizationItemEvaluation,
     DatasetOptimizationTrialItem,
 )
-from model_hub.models.dataset_optimization_step import DatasetOptimizationStep
 from model_hub.models.optimize_dataset import OptimizeDataset
-from drf_yasg.utils import swagger_auto_schema
-
+from model_hub.serializers.catalog_queries import OptimizationListQuerySerializer
 from model_hub.serializers.dataset_optimization import (
     DatasetOptimizationCreateSerializer,
     DatasetOptimizationDetailApiResponseSerializer,
     DatasetOptimizationDetailSerializer,
+    DatasetOptimizationListApiResponseSerializer,
     DatasetOptimizationListSerializer,
     DatasetOptimizationSerializer,
     DatasetOptimizationTrialSerializer,
 )
-from model_hub.utils.llm_providers import is_model_in_catalog
 from model_hub.utils.dataset_optimization import (
     OPTIMIZATION_RUN_TABLE_CONFIG,
-    TRIAL_TABLE_BASE_COLUMNS,
     calculate_percentage_point_change,
     create_dataset_optimization_steps,
     get_dataset_optimization_steps,
     get_optimization_graph_data,
 )
+from model_hub.utils.llm_providers import is_model_in_catalog
 from tfc.temporal.dataset_optimization.client import (
     cancel_dataset_optimization,
 )
+from tfc.utils.api_contracts import ExplicitQueryAutoSchema, validated_request
 from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.errors import format_validation_error
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
-from tfc.utils.api_contracts import ExplicitQueryAutoSchema, validated_request
-from model_hub.serializers.catalog_queries import OptimizationListQuerySerializer
 
 logger = structlog.get_logger(__name__)
 
@@ -64,7 +64,9 @@ class DatasetOptimizationPagination(ExtendedPageNumberPagination):
 def _request_workspace_filter(request, field_name="column__dataset__workspace"):
     workspace = getattr(request, "workspace", None)
     if workspace is None:
-        return Q()
+        from tfc.utils.workspace_scope import empty_workspace_filter
+
+        return empty_workspace_filter()
     if getattr(workspace, "is_default", False):
         organization = getattr(workspace, "organization", None)
         query = Q(**{field_name: workspace})
@@ -186,6 +188,7 @@ class DatasetOptimizationViewSet(BaseModelViewSetMixin, ModelViewSet):
     @validated_request(
         query_serializer=OptimizationListQuerySerializer,
         auto_schema=ExplicitQueryAutoSchema,
+        responses={200: DatasetOptimizationListApiResponseSerializer},
     )
     def list(self, request, *args, **kwargs):
         """
@@ -209,6 +212,8 @@ class DatasetOptimizationViewSet(BaseModelViewSetMixin, ModelViewSet):
                     "column_config": OPTIMIZATION_RUN_TABLE_CONFIG,
                 }
             )
+        except APIException:
+            raise
         except Exception as e:
             logger.exception(f"Error listing DatasetOptimizationRuns: {str(e)}")
             return self._gm.bad_request(get_error_message("FAILED_TO_FETCH_DATA"))
@@ -547,7 +552,7 @@ class DatasetOptimizationViewSet(BaseModelViewSetMixin, ModelViewSet):
                     }
                     # Add individual eval scores if available
                     if "individual_scores" in result:
-                        for i, (score, reason) in enumerate(
+                        for i, (score, _reason) in enumerate(
                             result["individual_scores"]
                         ):
                             eval_key = f"eval_{i}"

@@ -1,0 +1,46 @@
+# Tinybird documents Bearer header authentication at the bare hosted URL.
+# Use a region-aware static Token; JWTs or older Tokens can need a host parameter.
+schema: "connector-manifest/v1#provider"
+app: tinybird
+id: api-key
+version: 1.1.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.tinybird.co
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: Tinybird Token
+      help: "Create a region-aware static Token with the resource scopes your tools need. Older Tokens or JWTs needing a host query parameter are not supported by this fixed-URL configuration. Supply the Token without the Bearer prefix."
+      helpUrl: https://www.tinybird.co/docs/forward/work-with-data/mcp
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_metered
+  source: https://www.tinybird.co/pricing
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://www.tinybird.co/docs/forward/work-with-data/mcp
+    fetchedAt: 2026-11-09
+  - fact: transport.variant
+    url: https://www.tinybird.co/docs/forward/work-with-data/mcp
+    fetchedAt: 2026-11-09
+  - fact: auth.kind
+    url: https://www.tinybird.co/docs/forward/work-with-data/mcp
+    fetchedAt: 2026-11-09
+  - fact: auth.credentialParts
+    url: https://www.tinybird.co/docs/forward/work-with-data/mcp
+    fetchedAt: 2026-11-09

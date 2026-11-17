@@ -22,6 +22,19 @@ def embedding_manager(monkeypatch):
     return manager
 
 
+@pytest.fixture(autouse=True)
+def kb_belongs_to_caller(monkeypatch):
+    """The tool searches only a knowledge base of the caller's organization and
+    workspace, and checks that first; stand in one that is."""
+
+    def knowledge_base_id_for(organization, workspace, kb_id):
+        return UUID("9b2f3c1e-0d4a-4e5b-8c6d-7e8f9a0b1c2d")
+
+    monkeypatch.setattr(
+        "model_hub.utils.workspace_scope.knowledge_base_id_for", knowledge_base_id_for
+    )
+
+
 @pytest.mark.parametrize(
     "organization_id",
     ["org-current", UUID("12345678-1234-5678-1234-567812345678")],

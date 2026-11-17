@@ -42,7 +42,7 @@ def backfill_roles(apps, schema_editor):
     )
 
     for membership in (
-        AnnotationQueueAnnotator.objects.select_related("queue").all().iterator()
+        AnnotationQueueAnnotator.objects.using(schema_editor.connection.alias).select_related("queue").all().iterator()
     ):
         roles = normalize_roles(membership.roles or membership.role)
         if (
@@ -53,24 +53,24 @@ def backfill_roles(apps, schema_editor):
             roles = merge_roles(roles, CREATOR_FULL_ACCESS_ROLES)
         membership.roles = roles
         membership.role = roles[0] if roles else "annotator"
-        membership.save(update_fields=["role", "roles"])
+        membership.save(using=schema_editor.connection.alias, update_fields=["role", "roles"])
 
     # Existing queues created before multi-role support may not have a creator
     # membership at all. Add one so creators keep manager/reviewer/annotator
     # access after deploy, matching the new queue creation default.
     for queue in (
-        AnnotationQueue.objects.filter(deleted=False, created_by_id__isnull=False)
+        AnnotationQueue.objects.using(schema_editor.connection.alias).filter(deleted=False, created_by_id__isnull=False)
         .only("id", "created_by_id")
         .iterator()
     ):
-        exists = AnnotationQueueAnnotator.objects.filter(
+        exists = AnnotationQueueAnnotator.objects.using(schema_editor.connection.alias).filter(
             queue_id=queue.id,
             user_id=queue.created_by_id,
             deleted=False,
         ).exists()
         if exists:
             continue
-        AnnotationQueueAnnotator.objects.create(
+        AnnotationQueueAnnotator.objects.using(schema_editor.connection.alias).create(
             queue_id=queue.id,
             user_id=queue.created_by_id,
             role="manager",

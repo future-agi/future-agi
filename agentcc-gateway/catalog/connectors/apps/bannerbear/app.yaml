@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: bannerbear
+version: 1.0.0
+name: Bannerbear
+description: "Manage templates and publications, generate images and animations, and run creative workflows."
+vendor:
+  name: Bannerbear
+  domains: [bannerbear.com]
+eeCategory: developer
+group: other
+categories: [developer, design]
+tags: [design, automation]
+docsUrl: https://www.bannerbear.com/blog/how-to-set-up-bannerbear-mcp-in-openclaw/
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://www.bannerbear.com/blog/how-to-set-up-bannerbear-mcp-in-openclaw/
+    fetchedAt: 2026-11-09

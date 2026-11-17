@@ -1,4 +1,16 @@
+import React from "react";
 import { describe, it, expect, vi } from "vitest";
+
+vi.mock("src/hooks/useCapabilities", async (importOriginal) => ({
+  .../** @type {typeof import("src/hooks/useCapabilities")} */ (
+    await importOriginal()
+  ),
+  useFeatureAllowed: () => ({
+    allowed: true,
+    isLoading: false,
+    isError: false,
+  }),
+}));
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, userEvent } from "src/utils/test-utils";
 import SpanDetailPane from "../SpanDetailPane";

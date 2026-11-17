@@ -1027,7 +1027,7 @@ class ShippingRehearsal:
             for mount in service.get('volumes',[]):
                 if mount['type']=='bind' and sys.platform=='darwin':
                     # The shipped /dev/null bind is intentionally NOT rewritten.
-                    p.need(Path(mount['source']).is_relative_to(Path('/Users/nikhilpareek')),'home-only Docker bind required')
+                    p.need(Path(mount['source']).is_relative_to(Path.home()),'home-only Docker bind required')
         from deploy.update.manifest import parse_image_ref
         dependencies=[]
         for name,service in model['services'].items():

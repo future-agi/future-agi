@@ -1,6 +1,14 @@
 from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
+from model_hub.views.dataset_results import DatasetResultsView
+from model_hub.views.results_analysis import ResultsAnalysisView
+from model_hub.views.results_runs import ResultsRunsView
+
+# Preserve the inherited duplicate imports separately from the sorted view block.
+# isort: split
+from rest_framework.routers import DefaultRouter
+
 from model_hub.views.ai_eval_writer import AIEvalWriterView
 from model_hub.views.ai_filter import AIFilterView
 from model_hub.views.annotation_queues import (
@@ -19,6 +27,26 @@ from model_hub.views.custom_model import (
     UpdateMetricCustomAIModelView,
 )
 from model_hub.views.dataset_optimization import DatasetOptimizationViewSet
+from model_hub.views.dataset_results import DatasetResultsView
+from model_hub.views.dataset_runs import (
+    DatasetBaselineView,
+    DatasetExperimentRunsView,
+)
+from model_hub.views.dataset_schema import DatasetSchemaView
+from model_hub.views.dataset_splits import (
+    DatasetSplitDetailView,
+    DatasetSplitExportView,
+    DatasetSplitMembershipView,
+    DatasetSplitsView,
+)
+from model_hub.views.dataset_versions import (
+    DatasetVersionDetailView,
+    DatasetVersionListView,
+)
+from model_hub.views.dataset_views import (
+    DatasetSavedViewDetailView,
+    DatasetSavedViewsView,
+)
 from model_hub.views.datasets.add_rows.existing_dataset import AddRowsFromExistingView
 from model_hub.views.datasets.add_rows.huggingface import AddRowsFromHuggingFaceView
 from model_hub.views.datasets.add_rows.synthetic import AddSyntheticData
@@ -49,8 +77,8 @@ from model_hub.views.derived_variables import (
 from model_hub.views.develop_annotations import (
     AnnotationsLabelsViewSet,
     AnnotationSummaryView,
-    AnnotationTaskViewSet,
     AnnotationsViewSet,
+    AnnotationTaskViewSet,
     UserViewSet,
 )
 from model_hub.views.develop_dataset import *  # noqa: F403
@@ -58,10 +86,12 @@ from model_hub.views.develop_dataset import (
     ColumnConfigView,
     CreateKnowledgeBaseView,
     GetCellDataView,
+    GetDatasetExplanationSummary,
     GetDatasetsView,
     GetEmbeddingsListView,
     GetEvalConfigView,
     GetJsonColumnSchemaView,
+    RefreshDatasetExplanationSummary,
     SingleRowEvaluationView,
     StopUserEvalView,
 )
@@ -77,7 +107,6 @@ from model_hub.views.dynamic_columns import (
     AddVectorDBColumnView,
     ClassifyColumnView,
     ConditionalColumnView,
-    ExecutePythonCodeView,
     ExtractEntitiesView,
     ExtractJsonColumnView,
     GetOperationConfigView,
@@ -95,12 +124,25 @@ from model_hub.views.eval_summary_templates import (
     EvalSummaryTemplateDetailView,
     EvalSummaryTemplateListView,
 )
+from model_hub.views.experiment_ci_summary import (
+    ExperimentCICommentView,
+    ExperimentCISummaryView,
+)
 from model_hub.views.experiment_feedback_v2 import (
     ExperimentFeedbackCreateV2View,
     ExperimentFeedbackDetailsV2View,
     ExperimentFeedbackGetTemplateV2View,
     ExperimentFeedbackSubmitV2View,
 )
+from model_hub.views.experiment_run_api import (
+    ExperimentRunDetailView,
+    ExperimentRunItemsView,
+    ExternalRunCreateView,
+    ExternalRunEvaluationView,
+    ExternalRunResultsView,
+)
+from model_hub.views.experiment_run_traces import ExperimentRunTracesView
+from model_hub.views.experiment_summary import SummaryBindingView, SummaryScoresView
 from model_hub.views.experiments import (
     AddExperimentEvalView,
     DatasetExperimentsView,
@@ -131,6 +173,8 @@ from model_hub.views.experiments import (
     GetRowDiffView,
     RunAdditionalEvaluationsView,
 )
+from model_hub.views.external_metrics import ExternalMetricsView
+from model_hub.views.http_endpoint_test import HttpEndpointTestView
 from model_hub.views.kb import KnowledgeBaseViewSet
 from model_hub.views.metric import (
     AllMetricApiView,
@@ -154,6 +198,12 @@ from model_hub.views.optimize_dataset import (
     TemplateResultsView,
 )
 from model_hub.views.overview import OverviewView
+from model_hub.views.pairwise_judges import (
+    PairwiseJudgeCancelView,
+    PairwiseJudgeCreateView,
+    PairwiseJudgeDetailView,
+)
+from model_hub.views.pairwise_preferences import PairwisePreferenceView
 from model_hub.views.performance import (
     GetPerformanceOptionsView,
     GetPerformanceTagDistributionView,
@@ -181,11 +231,21 @@ from model_hub.views.prompt_template import (  # UserResponseSchemaView,
     UploadFileView,
     UserResponseSchemaViewSet,
 )
+from model_hub.views.results_analysis import ResultsAnalysisView
+from model_hub.views.results_runs import ResultsRunsView
+from model_hub.views.results_to_dataset import (
+    NewResultsToDatasetView,
+    ResultsToDatasetView,
+)
+from model_hub.views.row_activity import RowActivityView
+from model_hub.views.run_comparison import RunComparisonView
 from model_hub.views.run_prompt import *  # noqa: F403
 from model_hub.views.run_prompt import (
     ApiKeyViewSet,
     LitellmAPIView,
     LiteLLMModelListView,
+    LiteLLMModelVoicesView,
+    ModelParametersView,
 )
 from model_hub.views.scores import ScoreViewSet
 from model_hub.views.secrets import SecretViewSet
@@ -207,11 +267,6 @@ from model_hub.views.separate_evals import (
     EvalTemplateDetailView,
     EvalTemplateListChartsView,
     EvalTemplateListView,
-)
-from model_hub.views.separate_evals import (
-    EvalTemplateUpdateView as EvalTemplateUpdateViewV2,
-)
-from model_hub.views.separate_evals import (
     EvalTemplateVersionCreateView,
     EvalTemplateVersionListView,
     EvalUsageStatsView,
@@ -230,6 +285,9 @@ from model_hub.views.separate_evals import (
     SetDefaultVersionView,
     TestEvaluationTemplateAPIView,
     UpdateEvalTemplateView,
+)
+from model_hub.views.separate_evals import (
+    EvalTemplateUpdateView as EvalTemplateUpdateViewV2,
 )
 from model_hub.views.tools import ToolsViewSet
 from model_hub.views.tts_voices import TTSVoiceViewSet
@@ -283,6 +341,7 @@ queue_items_router.register(
 )
 
 urlpatterns = [
+    path("r4/endpoints/test/", HttpEndpointTestView.as_view(), name="http-endpoint-test"),
     path("", include(router.urls)),
     path(
         "annotation-queues/<uuid:queue_id>/",
@@ -1232,11 +1291,132 @@ urlpatterns = [
         get_dataset_derived_variables_view,
         name="get-dataset-derived-variables",
     ),
+    # Selected result copies; the new target is deliberately not a UUID.
+    path(
+        "datasets/new/rows/from-results/",
+        NewResultsToDatasetView.as_view(),
+        name="dataset-new-rows-from-results",
+    ),
+    path(
+        "datasets/<uuid:dataset_id>/rows/from-results/",
+        ResultsToDatasetView.as_view(),
+        name="dataset-rows-from-results",
+    ),
+    # S1 Results reads. SDK catalogs and classic routes remain unchanged.
+    path("datasets/<uuid:dataset_id>/runs/", ResultsRunsView.as_view(), name="dataset-results-runs"),
+    path("datasets/<uuid:dataset_id>/results/", DatasetResultsView.as_view(), name="dataset-results"),
+    path("datasets/<uuid:dataset_id>/results/analysis/", ResultsAnalysisView.as_view(), name="dataset-results-analysis"),
+    # Dataset version identity and source provenance (M1 compatibility API)
+    path(
+        "datasets/<uuid:dataset_id>/versions/",
+        DatasetVersionListView.as_view(),
+        name="dataset-version-list",
+    ),
+    path(
+        "datasets/<uuid:dataset_id>/versions/<uuid:version_id>/",
+        DatasetVersionDetailView.as_view(),
+        name="dataset-version-detail",
+    ),
+    path(
+        "datasets/<uuid:dataset_id>/external-metrics/",
+        ExternalMetricsView.as_view(),
+        name="dataset-external-metrics",
+    ),
+    path(
+        "datasets/<uuid:dataset_id>/experiment-runs/",
+        DatasetExperimentRunsView.as_view(),
+        name="dataset-experiment-runs",
+    ),
+    path(
+        "datasets/<uuid:dataset_id>/baseline/",
+        DatasetBaselineView.as_view(),
+        name="dataset-baseline",
+    ),
+    path(
+        "experiment-runs/compare/",
+        RunComparisonView.as_view(),
+        name="experiment-run-compare",
+    ),
+    path(
+        "experiment-runs/",
+        ExternalRunCreateView.as_view(),
+        name="external-experiment-run-create",
+    ),
+    path(
+        "experiment-runs/<uuid:run_id>/evaluate/",
+        ExternalRunEvaluationView.as_view(),
+        name="external-experiment-run-evaluate",
+    ),
+    path(
+        "experiment-runs/<uuid:run_id>/results/",
+        ExternalRunResultsView.as_view(),
+        name="external-experiment-run-results",
+    ),
+    path(
+        "experiment-runs/<uuid:run_id>/",
+        ExperimentRunDetailView.as_view(),
+        name="experiment-run-detail",
+    ),
+    path(
+        "experiment-runs/<uuid:run_id>/items/",
+        ExperimentRunItemsView.as_view(),
+        name="experiment-run-items",
+    ),
+    path(
+        "experiment-runs/<uuid:run_id>/traces/",
+        ExperimentRunTracesView.as_view(),
+        name="experiment-run-traces",
+    ),
     # V2 Experiment APIs
+    path(
+        "experiments/v2/<uuid:experiment_id>/summary-evaluators/",
+        SummaryBindingView.as_view(),
+        name="experiment-summary-evaluators",
+    ),
+    path(
+        "experiments/v2/<uuid:experiment_id>/runs/<uuid:run_id>/summary-scores/",
+        SummaryScoresView.as_view(),
+        name="experiment-summary-scores",
+    ),
+    path(
+        "experiments/v2/<uuid:experiment_id>/pairwise/judges/",
+        PairwiseJudgeCreateView.as_view(),
+        name="experiment-pairwise-judge-create",
+    ),
+    path(
+        "experiments/v2/<uuid:experiment_id>/pairwise/judges/<uuid:job_id>/",
+        PairwiseJudgeDetailView.as_view(),
+        name="experiment-pairwise-judge-detail",
+    ),
+    path(
+        "experiments/v2/<uuid:experiment_id>/pairwise/judges/<uuid:job_id>/cancel/",
+        PairwiseJudgeCancelView.as_view(),
+        name="experiment-pairwise-judge-cancel",
+    ),
+    path(
+        "experiments/v2/<uuid:experiment_id>/pairwise/",
+        PairwisePreferenceView.as_view(http_method_names=["post", "options"]),
+        name="experiment-pairwise-preference",
+    ),
+    path(
+        "experiments/v2/<uuid:experiment_id>/pairwise/summary/",
+        PairwisePreferenceView.as_view(http_method_names=["get", "head", "options"]),
+        name="experiment-pairwise-summary",
+    ),
     path(
         "experiments/v2/",
         ExperimentsTableV2CreateView.as_view(),
         name="experiments-v2-create",
+    ),
+    path(
+        "experiments/v2/<uuid:experiment_id>/ci-summary/",
+        ExperimentCISummaryView.as_view(),
+        name="experiment-ci-summary",
+    ),
+    path(
+        "experiments/v2/<uuid:experiment_id>/ci-summary/comment/",
+        ExperimentCICommentView.as_view(),
+        name="experiment-ci-comment",
     ),
     path(
         "experiments/v2/<uuid:experiment_id>/",
@@ -1350,3 +1530,263 @@ urlpatterns = [
         name="experiments-v2-feedback-submit",
     ),
 ]
+
+# BEGIN T-ORG
+from model_hub.views.dataset_stars import DatasetStarView  # noqa: E402
+
+urlpatterns += [
+    path(
+        "datasets/<uuid:dataset_id>/star/",
+        DatasetStarView.as_view(),
+        name="dataset-star",
+    ),
+]
+from model_hub.views.dataset_folders import (  # noqa: E402
+    DatasetFoldersView,
+    DatasetFolderView,
+    MoveDatasetsToFolderView,
+)
+
+urlpatterns += [
+    path("dataset-folders/", DatasetFoldersView.as_view(), name="dataset-folders"),
+    path(
+        "dataset-folders/move-datasets/",
+        MoveDatasetsToFolderView.as_view(),
+        name="dataset-folders-move",
+    ),
+    path(
+        "dataset-folders/<uuid:folder_id>/",
+        DatasetFolderView.as_view(),
+        name="dataset-folder",
+    ),
+]
+from model_hub.views.dataset_transfer import DatasetTransferView  # noqa: E402
+
+urlpatterns += [
+    path(
+        "datasets/<uuid:dataset_id>/transfer/",
+        DatasetTransferView.as_view(),
+        name="dataset-transfer",
+    ),
+]
+# END T-ORG
+
+# BEGIN T-EVALB
+from model_hub.views.composite_jury import (  # noqa: E402
+    CompositeJuryConfigView,
+    CompositeJuryReportView,
+)
+
+urlpatterns += [
+    path(
+        "eval-templates/<uuid:template_id>/composite/jury/config/",
+        CompositeJuryConfigView.as_view(),
+        name="composite-jury-config",
+    ),
+    path(
+        "eval-templates/<uuid:template_id>/composite/jury/",
+        CompositeJuryReportView.as_view(),
+        name="composite-jury-report",
+    ),
+]
+
+from model_hub.views.dag_eval import (  # noqa: E402
+    DagCreateView,
+    DagDetailView,
+    DagExecuteAdhocView,
+    DagPathsView,
+    DagRunView,
+)
+
+urlpatterns += [
+    path("eval-templates/create-dag/", DagCreateView.as_view(), name="dag-create"),
+    path(
+        "eval-templates/dag/execute-adhoc/",
+        DagExecuteAdhocView.as_view(),
+        name="dag-execute-adhoc",
+    ),
+    path(
+        "eval-templates/<uuid:template_id>/dag/",
+        DagDetailView.as_view(),
+        name="dag-detail",
+    ),
+    path(
+        "eval-templates/<uuid:template_id>/dag/runs/",
+        DagRunView.as_view(),
+        name="dag-runs",
+    ),
+    path(
+        "eval-templates/<uuid:template_id>/dag/paths/",
+        DagPathsView.as_view(),
+        name="dag-paths",
+    ),
+]
+from model_hub.views.dag_inputs import DagInputsView  # noqa: E402
+
+urlpatterns += [
+    path("eval-templates/dag/inputs/", DagInputsView.as_view(), name="dag-inputs"),
+]
+# END T-EVALB
+
+from model_hub.views.remote_eval import (  # noqa: E402
+    RemoteCreateView,
+    RemoteDetailView,
+    RemoteJobView,
+    RemoteScoreRunView,
+    RemoteTestView,
+)
+
+urlpatterns += [
+    path("eval-templates/create-remote/", RemoteCreateView.as_view(), name="remote-eval-create"),
+    path("eval-templates/<uuid:template_id>/remote/", RemoteDetailView.as_view(), name="remote-eval-detail"),
+    path("eval-templates/remote/test/", RemoteTestView.as_view(), name="remote-eval-test"),
+    path("eval-templates/<uuid:template_id>/remote/score-run/", RemoteScoreRunView.as_view(), name="remote-eval-score-run"),
+    path("eval-templates/remote/jobs/<uuid:job_id>/", RemoteJobView.as_view(), name="remote-eval-job"),
+]
+
+# BEGIN T-XPB
+from model_hub.views.experiment_run_control import (  # noqa: E402
+    ExperimentResumeV2View,
+    ExperimentRunControlView,
+)
+
+urlpatterns += [
+    path(
+        "experiments/v2/<uuid:experiment_id>/resume/",
+        ExperimentResumeV2View.as_view(),
+        name="experiments-v2-resume",
+    ),
+    path(
+        "experiments/v2/<uuid:experiment_id>/run-control/",
+        ExperimentRunControlView.as_view(),
+        name="experiments-v2-run-control",
+    ),
+]
+# END T-XPB
+
+# BEGIN T-GRID
+urlpatterns += [
+    path(
+        "r3/saved-views/", DatasetSavedViewsView.as_view(), name="dataset-saved-views"
+    ),
+    path(
+        "r3/saved-views/<uuid:view_id>/",
+        DatasetSavedViewDetailView.as_view(),
+        name="dataset-saved-view-detail",
+    ),
+]
+# END T-GRID
+
+# BEGIN T-GRIDB
+
+urlpatterns += [
+    path(
+        "datasets/<uuid:dataset_id>/splits/",
+        DatasetSplitsView.as_view(),
+        name="dataset-splits",
+    ),
+    path(
+        "datasets/<uuid:dataset_id>/splits/membership/",
+        DatasetSplitMembershipView.as_view(),
+        name="dataset-split-membership",
+    ),
+    path(
+        "datasets/<uuid:dataset_id>/splits/export/",
+        DatasetSplitExportView.as_view(),
+        name="dataset-split-export",
+    ),
+    path(
+        "datasets/<uuid:dataset_id>/splits/<uuid:split_id>/",
+        DatasetSplitDetailView.as_view(),
+        name="dataset-split-detail",
+    ),
+]
+urlpatterns += [
+    path(
+        "datasets/<uuid:dataset_id>/schema/",
+        DatasetSchemaView.as_view(),
+        name="dataset-schema",
+    ),
+]
+# END T-GRIDB
+
+# BEGIN T-EVAL
+from model_hub.views.eval_mapping_preview import EvalMappingPreviewView  # noqa: E402
+
+urlpatterns += [
+    path(
+        "eval-mapping-preview/",
+        EvalMappingPreviewView.as_view(),
+        name="eval-mapping-preview",
+    ),
+]
+from model_hub.views.eval_agreement import EvalAgreementView  # noqa: E402
+from model_hub.views.eval_improve import EvalImproveView  # noqa: E402
+
+urlpatterns += [
+    path(
+        "eval-templates/<uuid:template_id>/agreement/",
+        EvalAgreementView.as_view(),
+        name="eval-agreement",
+    ),
+    path(
+        "eval-templates/<uuid:template_id>/improve/",
+        EvalImproveView.as_view(),
+        name="eval-improve",
+    ),
+]
+# END T-EVAL
+
+# BEGIN P-GRID-F54
+from model_hub.views.dataset_row_read import DatasetRowReadView  # noqa: E402
+
+urlpatterns += [
+    path(
+        "datasets/<uuid:dataset_id>/rows/<uuid:row_id>/",
+        DatasetRowReadView.as_view(),
+        name="dataset-row-read",
+    ),
+]
+# END P-GRID-F54
+
+urlpatterns += [
+    path(
+        "datasets/<uuid:dataset_id>/rows/<uuid:row_id>/activity/",
+        RowActivityView.as_view(),
+        name="dataset-row-activity",
+    ),
+]
+
+# A dataset row's runs across experiments (the Row view's Runs tab).
+from model_hub.views.row_runs import DatasetRowRunsView  # noqa: E402
+
+urlpatterns += [
+    path(
+        "datasets/<uuid:dataset_id>/rows/<uuid:row_id>/runs/",
+        DatasetRowRunsView.as_view(),
+        name="dataset-row-runs",
+    ),
+]
+
+# BEGIN T-COLLAB
+# The workspace tag registry and an experiment's tags (EXP-E2E-010).
+from model_hub.views.workspace_tags import (  # noqa: E402
+    ExperimentTagsView,
+    WorkspaceTagDetailView,
+    WorkspaceTagsView,
+)
+
+urlpatterns += [
+    path("tags/", WorkspaceTagsView.as_view(), name="workspace-tags"),
+    path(
+        "tags/<uuid:tag_id>/",
+        WorkspaceTagDetailView.as_view(),
+        name="workspace-tag-detail",
+    ),
+    path(
+        "experiments/v2/<uuid:experiment_id>/tags/",
+        ExperimentTagsView.as_view(),
+        name="experiment-tags-v2",
+    ),
+]
+# END T-COLLAB

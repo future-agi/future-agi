@@ -208,9 +208,10 @@ def test_eval_graph_primary_traffic_follows_the_bucket_its_statement_returned(
 
     series = _add_primary_traffic(builder.format_result(rows, columns), rows, columns)
 
-    assert _populated(series["data"]) == [
-        {"timestamp": expected, "value": 50.0, "primary_traffic": 3}
-    ]
+    assert [
+        {key: point[key] for key in ("timestamp", "value", "primary_traffic")}
+        for point in _populated(series["data"])
+    ] == [{"timestamp": expected, "value": 50.0, "primary_traffic": 3}]
 
 
 def test_bucket_key_converts_an_offset_to_utc_before_dropping_it():

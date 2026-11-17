@@ -25,13 +25,13 @@ notify-only. Legacy/manual CLI behavior is unchanged.
 | Change | Required action |
 | --- | --- |
 | Models changed without migrations | `makemigrations --check --dry-run` fails. Add a migration. |
-| Existing migration edited/deleted | Deployed histories are immutable; add a new migration. The sole exemption is a modified (`M`) path whose merge-base version has no module-level `UPDATE_SAFETY` assignment and whose working-tree version adds exactly one: removing that statement must leave an identical `ast.dump()` of the module, without line/column attributes (comments/formatting are not compared). The declaration still receives the same static metadata and Django operation/table-risk validation as a new migration. Deletions, renames, changes/removals of an existing declaration, and any other AST edit remain forbidden. |
+| Existing migration edited/deleted | Deployed histories are immutable; add a new migration. Two exemptions, both for a modified (`M`) path only. (1) The merge-base version has no module-level `UPDATE_SAFETY` assignment and the working-tree version adds exactly one: removing that statement must leave an identical `ast.dump()` of the module, without line/column attributes (comments/formatting are not compared). The declaration still receives the same static metadata and Django operation/table-risk validation as a new migration. (2) The path is listed in `deploy/update/migration-edit-reviews.json` with the sha256 of its merge-base bytes among `before_sha256`, the sha256 of its working-tree bytes as `after_sha256` and a `reason`: an exact, reviewed edit of an applied history (for example running its queries on the migration's own connection), which never runs again on a database that applied it; such an edit is neither counted nor linted as a new migration. Modules in a migrations package whose names start with `_` or `~` are helpers that Django never loads as migrations: a new one is neither linted nor counted as a migration, but an existing one is history like a migration, so changing or deleting it is refused unless exemption (2) lists it. Everything else remains forbidden: other bytes, an unlisted base version, deletions, renames, and changes or removals of an existing declaration. |
 | New non-noop `RunPython` or `RunSQL` | Add a reviewed module-level `UPDATE_SAFETY` declaration, including small tables, read-only payloads and imported helpers. Only exact Django forward/reverse noop pairs are exempt. |
 | Risky schema operation on a registered existing high-volume table | Declare its resolved physical tables and risks. Real Django loader/model state and backend field parameters resolve these, not filename or class-name guesses. |
 | Changed production source containing a schema/mutation statement in either blob | Add an exact before/after hash-bound human review to `clickhouse-change-reviews.json`. |
 | New statement source outside the scan roots | Register its path/root in `clickhouse-sources.json`, then add its review. |
 | Required env variable with no unattended value | Supply a Compose default or a real generator/entrypoint in `env-generators.json`, and document it in `env-reference.toml`. |
-| Unsupported Compose service, mount, named volume, profile or restart policy | Update `automatic-layout.json`, runtime support and backup/restore coverage together. Only `unless-stopped` and string `"no"` restart policies are supported. |
+| Unsupported Compose service, mount, named volume, profile or restart policy | Update `automatic-layout.json`, runtime support and backup/restore coverage together, or name the service and its volumes in `automatic_unsupported` with a reason so automatic updates refuse installs that run it. `tmpfs` targets are listed per service and need no backup. Only `unless-stopped` and string `"no"` restart policies are supported. |
 | Unknown active app, squash/replacement, custom `MIGRATION_MODULES`, or unclassified operation | Update the fixed mapping/classifier and its tests, or keep that layout unsupported. |
 
 Declarations cannot authorize a manual script, new credentials or an operator
@@ -122,7 +122,9 @@ migrations.RunSQL(migrations.RunSQL.noop, migrations.RunSQL.noop)
 ```
 
 A missing reverse, user-defined noop or overridable subclass is not exempt.
-`SeparateDatabaseAndState` and `RunSQL.state_operations` are traversed too.
+`SeparateDatabaseAndState` and `RunSQL.state_operations` are traversed too, and so are
+the operations inside `tfc.migration_bridge.SkipDatabaseIfLegacyApplied` (exact type only;
+a subclass stays unclassified): an install without the legacy row runs them.
 
 On registered existing tables the gate resolves type/collation changes (including
 inbound FKs), FK targets/`to_field`, NOT NULL additions without `db_default`,
@@ -223,7 +225,12 @@ conditionals. Update the fixed host observer with it. `high-volume-tables.json`
 pins growth-prone PostgreSQL/ClickHouse tables and source rationales; do not
 remove tables to silence a risk. `automatic-layout.json` pins services, mounts,
 profiles, named volumes and complete physical/logical backup coverage; changing
-expected JSON alone does not implement runtime/restore support.
+expected JSON alone does not implement runtime/restore support. A `tmpfs` mount is
+ephemeral: it needs no backup coverage, but the layout names each target per service.
+`automatic_unsupported` names, each with a reason, the services and volumes that
+automatic updates do not cover yet; their volumes have no backup coverage, no covered
+service may mount them, and setup and the observer refuse an install that runs one.
+A service the layout does not name at all is refused as well.
 
 ## A9 measurement scope and developer cost
 

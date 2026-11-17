@@ -1,0 +1,5 @@
+workflow: line 11: `uses: actions/checkout@v4` is not pinned to a full commit SHA
+workflow: line 12: `uses: docker/login-action@5e57cd1` is not pinned to a full commit SHA
+workflow: no step with `id: provenance`
+workflow: step `sign` does not run `cosign sign`
+workflow: no job grants `id-token: write` (keyless signing needs it)

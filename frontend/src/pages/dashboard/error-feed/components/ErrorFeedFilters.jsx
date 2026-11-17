@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   Button,
   Divider,
@@ -13,6 +13,7 @@ import {
 import Iconify from "src/components/iconify";
 import SelectionBar from "src/components/selection-bar";
 import { FilterButton } from "src/components/filter";
+import { useDebounce } from "src/hooks/use-debounce";
 import { useUpdateErrorFeedIssue } from "src/api/errorFeed/error-feed";
 import { useErrorFeedStore } from "../store";
 import PropTypes from "prop-types";
@@ -54,6 +55,10 @@ const FIX_LAYER_OPTIONS = [
   { value: "Orchestration", label: "Orchestration" },
   { value: "Guardrails", label: "Guardrails" },
 ];
+
+// The search box shows every keystroke; the list searches once typing pauses
+// for this long, so a word sends one request instead of one per letter.
+const SEARCH_DEBOUNCE_MS = 300;
 
 // Filter panel fields. Each maps to one store value (a single selection), so
 // the panel rows and the store stay interchangeable.
@@ -282,6 +287,7 @@ export default function ErrorFeedFilters({
   const {
     searchQuery,
     setSearchQuery,
+    filtersClearedCount,
     selectedProject,
     setSelectedProject,
 
@@ -296,6 +302,24 @@ export default function ErrorFeedFilters({
     timeRange,
     setTimeRange,
   } = useErrorFeedStore();
+
+  const [searchInput, setSearchInput] = useState(searchQuery);
+  const debouncedSearch = useDebounce(searchInput, SEARCH_DEBOUNCE_MS);
+  useEffect(() => {
+    // Only a changed search resets the page; mounting with the stored search
+    // leaves the current page alone.
+    if (debouncedSearch !== useErrorFeedStore.getState().searchQuery) {
+      setSearchQuery(debouncedSearch);
+    }
+  }, [debouncedSearch, setSearchQuery]);
+  useEffect(() => {
+    // "Clear filters" in the table's empty state clears the stored search.
+    // Empty the box with it, so it never shows a search the list isn't using.
+    // Every clear counts, even when the stored search was already empty:
+    // emptying the box also cancels a search still waiting out the debounce,
+    // which would otherwise filter the list again just after the clear.
+    if (searchQuery === "") setSearchInput("");
+  }, [searchQuery, filtersClearedCount]);
 
   const filterFields = useMemo(
     () => buildFilterFields(projectOptions),
@@ -347,8 +371,8 @@ export default function ErrorFeedFilters({
         <Stack direction="row" alignItems="center" gap={1}>
           {/* Search */}
           <OutlinedInput
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
             placeholder="Search errors"
             size="small"
             startAdornment={
@@ -361,11 +385,11 @@ export default function ErrorFeedFilters({
               </InputAdornment>
             }
             endAdornment={
-              searchQuery ? (
+              searchInput ? (
                 <InputAdornment position="end">
                   <IconButton
                     size="small"
-                    onClick={() => setSearchQuery("")}
+                    onClick={() => setSearchInput("")}
                     edge="end"
                   >
                     <Iconify icon="solar:close-linear" width={14} />

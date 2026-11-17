@@ -16,12 +16,14 @@ import PropTypes from "prop-types";
 import React, {
   useCallback,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
 } from "react";
 import { useWatch } from "react-hook-form";
 import Iconify from "src/components/iconify";
+import { visuallyHidden } from "src/components/empty-state/useCopyCode";
 import { ShowComponent } from "src/components/show/ShowComponent";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import ResizablePanels from "src/components/resizablePanels/ResizablePanels";
@@ -52,6 +54,9 @@ import DatasetTestMode from "src/sections/evals/components/DatasetTestMode";
 import TracingTestMode from "src/sections/evals/components/TracingTestMode";
 import SimulationTestMode from "src/sections/evals/components/SimulationTestMode";
 import { useEvalPickerContext } from "./context/EvalPickerContext";
+import AllowNaSwitch from "./AllowNaSwitch";
+import { createNameErrorOf } from "src/sections/evals/components/createNameError";
+import { allowNaApplies } from "./allowNaModel";
 import { buildCompositeChildConfigs } from "src/sections/evals/Helpers/compositeRuntimeConfig";
 import {
   contextOptionsForRowType,
@@ -91,6 +96,9 @@ def evaluate(input: Any, output: Any, expected: Any, context: dict, **kwargs):
     return {"score": 1.0, "reason": "Evaluation passed"}
 `;
 
+// Code is always listed, as on Create evaluation; where the deployment does
+// not run code evaluations it shows turned off, with the sentence the
+// capabilities answer carries.
 const EVAL_TYPE_TABS = [
   { value: "agent", label: "Agents" },
   { value: "llm", label: "LLM-As-A-Judge" },
@@ -135,6 +143,13 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
   const { locked: fagiLocked, isLoading: capabilitiesLoading } =
     useFeatureLocked(CAPABILITY.TURING_MODELS);
   const { locked: agentEvalLocked } = useFeatureLocked(CAPABILITY.AGENTIC_EVAL);
+  // Code is off only on the server's answer that carries its sentence; while
+  // loading, on a failed read or on an older server it works as before.
+  const { locked: codeEvalsLocked, reason: codeEvalsReason } = useFeatureLocked(
+    CAPABILITY.CUSTOM_CODE_EVALS,
+  );
+  const codeEvalsOff = codeEvalsLocked && Boolean(codeEvalsReason);
+  const codeEvalsReasonId = useId();
   // Confirmed denial (loaded AND not allowed). Seed model/evalType defaults raw
   // and only strip them on confirmed denial — seeding off `locked` (true while
   // loading) blanks the default model / flips the eval type for entitled users.
@@ -154,6 +169,8 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
   const [openModelMenuSignal, setOpenModelMenuSignal] = useState(0);
   const [outputType, setOutputType] = useState("pass_fail");
   const [passThreshold, setPassThreshold] = useState(0.5);
+  // W1-4: the judge may answer N/A (saved on the template as allow_na).
+  const [allowNa, setAllowNa] = useState(false);
   const [choiceScores, setChoiceScores] = useState({});
   const [decisionMapping, setDecisionMapping] = useState({});
   const [agentMode, setAgentMode] = useState("agent");
@@ -343,7 +360,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
         Object.keys(choiceScores || {}).length > 0 ? choiceScores : null,
       messages: evalType === "llm" ? messages : undefined,
       few_shot_examples:
-        evalType === "llm" && fewShotExamples.length > 0
+        evalType === "llm"
           ? fewShotExamples.map((ds) => ({ id: ds.id, name: ds.name }))
           : undefined,
       template_format: templateFormat,
@@ -353,8 +370,10 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
         evalType === "agent"
           ? dataInjectionFromContextOptions(contextOptions)
           : undefined,
+      ...(allowNaApplies({ evalType }) ? { allow_na: allowNa } : {}),
     }),
     [
+      allowNa,
       evalType,
       instructions,
       code,
@@ -397,6 +416,16 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
       enqueueSnackbar(decision.blockedReason, { variant: "error" });
       return;
     }
+    // options-truth L3 G2 (evals:create-new): a composite tests its unsaved
+    // children, weights and aggregation (execute-adhoc), no draft needed.
+    if (mode === "composite") {
+      setIsTesting(true);
+      setTestError(null);
+      setTestPassed(false);
+      sourceRef.current?.runTest?.();
+      setTimeout(() => setIsTesting((v) => (v ? false : v)), 60000);
+      return;
+    }
     if (fagiLocked && evalType !== "code" && !model) {
       enqueueSnackbar("Please select a model.", { variant: "error" });
       setOpenModelMenuSignal((n) => n + 1);
@@ -418,6 +447,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
     }
   }, [
     draftId,
+    mode,
     fagiLocked,
     evalType,
     model,
@@ -561,8 +591,11 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
       return;
     }
     if (agentEvalLocked && evalType === "agent") {
+      // Code is named only where code evaluations run.
       enqueueSnackbar(
-        "Agent evaluations aren't enabled for this workspace. Use LLM-as-a-Judge or Code evaluations instead.",
+        codeEvalsOff
+          ? "Agent evaluations aren't enabled for this workspace. Use LLM-as-a-Judge instead."
+          : "Agent evaluations aren't enabled for this workspace. Use LLM-as-a-Judge or Code evaluations instead.",
         { variant: "error" },
       );
       return;
@@ -622,6 +655,9 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
         evalType,
         outputType,
         instructions,
+        ...(allowNaApplies({ evalType })
+          ? { config: { allow_na: allowNa } }
+          : {}),
         ...(decision.active
           ? {
               ...decision.payload,
@@ -635,9 +671,16 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
             : undefined,
       });
     } catch (error) {
-      enqueueSnackbar(getSafeActionErrorMessage(error, "Failed to save"), {
-        variant: "error",
-      });
+      // L7c g7 (evalcreate:name): a name the workspace already uses (or
+      // one the rules refuse) is said at the field, not only in a toast.
+      const msg = createNameErrorOf(error);
+      if (msg) setErrors((prev) => ({ ...prev, name: msg }));
+      enqueueSnackbar(
+        msg ?? getSafeActionErrorMessage(error, "Failed to save"),
+        {
+          variant: "error",
+        },
+      );
     } finally {
       setIsSaving(false);
     }
@@ -656,9 +699,11 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
     evalType,
     outputType,
     instructions,
+    allowNa,
     contextOptions,
     enqueueSnackbar,
     agentEvalLocked,
+    codeEvalsOff,
     fagiLocked,
     source,
     onFiltersChange,
@@ -980,18 +1025,48 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                       );
                       return;
                     }
+                    if (codeEvalsOff && val === "code") {
+                      enqueueSnackbar(codeEvalsReason, { variant: "info" });
+                      return;
+                    }
                     setEvalType(val);
                   }}
                   sx={{ width: "fit-content" }}
                 >
                   {EVAL_TYPE_TABS.map((tab) => {
                     const locked = agentEvalLocked && tab.value === "agent";
+                    const codeOff = codeEvalsOff && tab.value === "code";
                     return (
                       <Tab
                         key={tab.value}
                         value={tab.value}
+                        // Turned off but still focusable, so its reason is
+                        // read by keyboard and screen reader.
+                        {...(codeOff && {
+                          "aria-disabled": true,
+                          "aria-describedby": codeEvalsReasonId,
+                        })}
                         label={
-                          locked ? (
+                          codeOff ? (
+                            <CustomTooltip
+                              show
+                              type=""
+                              arrow
+                              describeChild
+                              title={codeEvalsReason}
+                            >
+                              <Box
+                                sx={{
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: 0.5,
+                                }}
+                              >
+                                {tab.label}
+                                <Iconify icon="solar:lock-linear" width={14} />
+                              </Box>
+                            </CustomTooltip>
+                          ) : locked ? (
                             <CustomTooltip
                               show
                               type=""
@@ -1017,6 +1092,15 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                     );
                   })}
                 </SegmentedTabs>
+              )}
+              {!isComposite && codeEvalsOff && (
+                <Box
+                  component="span"
+                  id={codeEvalsReasonId}
+                  sx={visuallyHidden}
+                >
+                  {codeEvalsReason}
+                </Box>
               )}
 
               {/* Agent type */}
@@ -1152,6 +1236,9 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                       passThreshold={passThreshold}
                       onPassThresholdChange={handlePassThresholdChange}
                     />
+                    {allowNaApplies({ evalType }) && (
+                      <AllowNaSwitch checked={allowNa} onChange={setAllowNa} />
+                    )}
                     {errors.choiceScores && (
                       <Typography variant="caption" color="error.main">
                         {errors.choiceScores}
@@ -1231,7 +1318,12 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                   fontWeight={600}
                   sx={{ fontSize: "12px" }}
                 >
-                  {`${SOURCE_LABELS[source] || "Preview"} — ${isComposite ? "Composite Test" : "Variable Mapping"}`}
+                  {[
+                    SOURCE_LABELS[source],
+                    isComposite ? "Composite Test" : "Variable mapping",
+                  ]
+                    .filter(Boolean)
+                    .join(" — ")}
                 </Typography>
                 {source === "task" && ROW_TYPE_LABELS[sourceRowType] && (
                   <Chip
@@ -1446,8 +1538,8 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                   isTesting ||
                   !!disabledReason ||
                   !sourceReady ||
-                  !draftId ||
-                  isComposite ||
+                  (!draftId && !isComposite) ||
+                  (isComposite && !selectedChildren.length) ||
                   source === "workbench"
                 }
                 startIcon={

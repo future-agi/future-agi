@@ -15,6 +15,7 @@ export default function OnboardingProfileForm({
   setActiveStep,
   saveUserData,
   isSavingUserData,
+  userDataSaved,
 }) {
   const customRole = !DEFAULT_ROLES.includes(initialData.role);
   // The first successful read seeds this wizard's draft; refetches must not reset it.
@@ -45,6 +46,19 @@ export default function OnboardingProfileForm({
     }
   }, [roleValue, userForm]);
 
+  // The role is saved together with the goals, so a reload on the goals step
+  // loses an unsaved role. Send the user back to choose it instead of leaving
+  // Continue disabled. A save in progress or done already carried a role.
+  useEffect(() => {
+    if (activeStep !== 1 || isSavingUserData || userDataSaved) {
+      return;
+    }
+    const { role, customRole } = userForm.getValues();
+    if (!role && !customRole) {
+      setActiveStep(0, { replace: true });
+    }
+  }, [activeStep, isSavingUserData, userDataSaved, setActiveStep, userForm]);
+
   const onSubmitUserData = (data, isSkipped = false) => {
     if (isSavingUserData) {
       return;
@@ -58,11 +72,13 @@ export default function OnboardingProfileForm({
           ),
     });
   };
+  // The only check on the goals step is the role, which step 0 shows.
+  const showRoleStep = () => setActiveStep(0);
 
   switch (activeStep) {
     case 0:
       return (
-        <Stack spacing={2} width="440px">
+        <Stack spacing={2} width={{ xs: "100%", lg: "440px" }}>
           <Box>
             <Typography
               fontWeight={"fontWeightSemiBold"}
@@ -136,7 +152,17 @@ export default function OnboardingProfileForm({
 
     case 1:
       return (
-        <Stack spacing={2} width="440px">
+        <Stack spacing={2} width={{ xs: "100%", lg: "440px" }}>
+          <Button
+            variant="text"
+            color="inherit"
+            size="small"
+            disabled={isSavingUserData}
+            onClick={() => setActiveStep(0)}
+            sx={{ alignSelf: "flex-start" }}
+          >
+            Back
+          </Button>
           <Box>
             <Typography
               fontWeight={"fontWeightSemiBold"}
@@ -180,31 +206,27 @@ export default function OnboardingProfileForm({
             variant="contained"
             loading={isSavingUserData}
             disabled={isSavingUserData || (!roleValue && !customRoleValue)}
-            onClick={userForm.handleSubmit((data) =>
-              onSubmitUserData(data, false),
+            onClick={userForm.handleSubmit(
+              (data) => onSubmitUserData(data, false),
+              showRoleStep,
             )}
             color="primary"
           >
             Continue
           </LoadingButton>
 
-          <Typography
-            textAlign="center"
-            onClick={
-              !isSavingUserData
-                ? userForm.handleSubmit((data) => onSubmitUserData(data, true))
-                : undefined
-            }
-            sx={{
-              cursor: isSavingUserData ? "not-allowed" : "pointer",
-              opacity: isSavingUserData ? 0.6 : 1,
-            }}
-            color="primary.main"
-            variant="s1.2"
-            fontWeight={"fontWeightMedium"}
+          <Button
+            variant="text"
+            color="primary"
+            disabled={isSavingUserData}
+            onClick={userForm.handleSubmit(
+              (data) => onSubmitUserData(data, true),
+              showRoleStep,
+            )}
+            sx={{ alignSelf: "center" }}
           >
             Skip for now
-          </Typography>
+          </Button>
         </Stack>
       );
 
@@ -222,4 +244,5 @@ OnboardingProfileForm.propTypes = {
   setActiveStep: PropTypes.func.isRequired,
   saveUserData: PropTypes.func.isRequired,
   isSavingUserData: PropTypes.bool.isRequired,
+  userDataSaved: PropTypes.bool.isRequired,
 };

@@ -66,8 +66,11 @@ test('OBS-E2E-062: Users setup preserves project names as Python string literals
         expect(lines).toEqual([`    project_name=${literal},`]);
         // Pinned from catalog-user-parity.spec.ts and the Observe users route.
         await page.goto(`/dashboard/observe/${projectId}/users`, { waitUntil: 'domcontentloaded' });
-        await expect(page.getByText('Setup Telemetry', { exact: true })).toBeVisible({ timeout: UI_READY });
-        const code = page.locator(CODE);
+        const heading = page.getByText('Set up telemetry', { exact: true });
+        await expect(heading).toBeVisible({ timeout: UI_READY });
+        // The screen draws two pre > code blocks: the install command (above the
+        // heading) and the Python example (the first block after it).
+        const code = heading.locator(`xpath=following::pre[1]//code`);
         await expect(code).toHaveCount(1, { timeout: UI_READY });
         // textContent retains line breaks and backslashes; whitespace-normalized
         // substring assertions would miss exactly the defect this flow covers.

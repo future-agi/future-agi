@@ -121,10 +121,10 @@ class _ScoreClassification:
     project_id: str | None = None
 
 
-def _pending_scores():
+def _pending_scores(using=None):
     from model_hub.models.score import Score
 
-    return Score.no_workspace_objects.filter(
+    return Score.no_workspace_objects.using(using).filter(
         Q(trace_id__isnull=False) | Q(observation_span_id__isnull=False),
         tracer_project_id__isnull=True,
         deleted=False,
@@ -163,14 +163,14 @@ def _tag(project_id, field: str, ids: list) -> int:
     ).update(tracer_project_id=project_id)
 
 
-def _tag_score_ids(project_id: str, score_ids: Iterable[str]) -> int:
+def _tag_score_ids(project_id: str, score_ids: Iterable[str], using=None) -> int:
     """Idempotently stamp an exact, already-audited score-id batch."""
     from model_hub.models.score import Score
 
     ids = tuple(score_ids)
     if not ids:
         return 0
-    return Score.no_workspace_objects.filter(
+    return Score.no_workspace_objects.using(using).filter(
         id__in=ids,
         tracer_project_id__isnull=True,
     ).update(tracer_project_id=project_id)
@@ -278,14 +278,14 @@ def _read_project_matches(
 
 
 def _projects_for_pending_scores(
-    base, only_project: str | None
+    base, only_project: str | None, using=None
 ) -> tuple[tuple[_ProjectRef, ...], object]:
     """Load the finite PG project catalog used as the tenancy boundary."""
     from tracer.models.project import Project
 
     # model_hub 0120 runs this before tracer 0115 adds simulation_agent_id: the base
     # manager adds no hidden-project filter and values() selects no other column.
-    projects_manager = Project._base_manager
+    projects_manager = Project._base_manager.using(using)
 
     if only_project:
         row = (
@@ -446,6 +446,7 @@ def backfill_tracer_project_ids(
     orphan_grace_hours: float = DEFAULT_ORPHAN_GRACE_HOURS,
     max_scores: int | None = None,
     start_after: str | None = None,
+    db_connection=None,
 ) -> dict:
     """Run an idempotent backfill or read-only readiness audit.
 
@@ -467,8 +468,9 @@ def backfill_tracer_project_ids(
         raise ValueError("max_scores must be positive")
     max_scores = int(max_scores) if max_scores is not None else None
 
-    base = _pending_scores()
-    projects, base = _projects_for_pending_scores(base, only_project)
+    using = db_connection.alias if db_connection is not None else None
+    base = _pending_scores(using=using)
+    projects, base = _projects_for_pending_scores(base, only_project, using=using)
     total = base.count()
     emit(f"Scores missing tracer_project_id in scope: {total}")
 
@@ -541,7 +543,7 @@ def backfill_tracer_project_ids(
         # first PG write in a page.  A partial CH result can never be stamped.
         if not audit_only:
             for project_id, score_ids in resolved_by_project.items():
-                updated += _tag_score_ids(project_id, score_ids)
+                updated += _tag_score_ids(project_id, score_ids, using=using)
 
         scanned += len(rows)
         cursor = rows[-1].score_id

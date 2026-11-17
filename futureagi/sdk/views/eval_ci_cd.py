@@ -18,6 +18,8 @@ from sdk.utils.api_errors import sdk_validation_error_response
 from sdk.utils.cicd_evaluations import (
     are_evaluation_runs_processing,
     create_evaluation_run,
+    get_evaluation_runs_completed,
+    get_evaluation_runs_failures,
     get_evaluation_runs_summaries,
 )
 from tfc.utils.api_contracts import validated_request
@@ -92,6 +94,8 @@ class CICDEvaluationsView(APIView):
                 )
 
             summaries = get_evaluation_runs_summaries(evaluation_runs)
+            failures = get_evaluation_runs_failures(evaluation_runs)
+            completed = get_evaluation_runs_completed(evaluation_runs)
 
             results = []
             for evaluation_run in evaluation_runs:
@@ -101,6 +105,8 @@ class CICDEvaluationsView(APIView):
                         "project": evaluation_run.project.name,
                         "version": evaluation_run.version,
                         "results_summary": summaries.get(evaluation_run.version, {}),
+                        "failed_evaluations": failures[str(evaluation_run.id)],
+                        "completed_evaluations": completed[str(evaluation_run.id)],
                     }
                 )
 

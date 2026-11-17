@@ -1,0 +1,67 @@
+# PagerDuty's hosted MCP server with a PagerDuty API key, sent as
+# "Authorization: Token token=<key>", the form PagerDuty's pages give.
+# User-level and account-level keys both work; some tools and filters
+# (list_incidents by teams or assigned) need a user key. Accounts in
+# PagerDuty's EU service region use mcp.eu.pagerduty.com. The vault stores
+# the key alone and the push carries it alone; the gateway places this
+# record's prefix before it.
+# PagerDuty's OAuth needs a client registered in PagerDuty beforehand (its
+# authorization server offers no dynamic registration) and is not in this
+# record.
+schema: "connector-manifest/v1#provider"
+app: pagerduty
+id: api-key
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://{mcpHost}/mcp
+  urlVariables:
+    mcpHost:
+      description: "Your PagerDuty service region: mcp.pagerduty.com (US) or mcp.eu.pagerduty.com (EU)."
+      pattern: '^mcp(\.eu)?\.pagerduty\.com$'
+      default: mcp.pagerduty.com
+      scope: org
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Token token="
+      secret: true
+      label: API key
+      help: "A PagerDuty user or account API key. A user API key enables every tool and filter."
+      helpUrl: https://support.pagerduty.com/main/docs/pagerduty-mcp-server
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://support.pagerduty.com/main/docs/pagerduty-mcp-server
+    fetchedAt: 2026-11-11
+  - fact: transport.url
+    url: https://docs.pagerduty.com/developer/mcp-tooling-remote-server
+    fetchedAt: 2026-11-11
+  - fact: transport.urlVariables.mcpHost
+    url: https://support.pagerduty.com/main/docs/pagerduty-mcp-server
+    fetchedAt: 2026-11-11
+  - fact: transport.urlVariables.mcpHost
+    url: https://mcp.eu.pagerduty.com/.well-known/oauth-protected-resource/mcp
+    fetchedAt: 2026-11-11
+  - fact: auth.kind
+    url: https://support.pagerduty.com/main/docs/pagerduty-mcp-server
+    fetchedAt: 2026-11-11
+  - fact: auth.credentialParts
+    url: https://support.pagerduty.com/main/docs/pagerduty-mcp-server
+    fetchedAt: 2026-11-11
+  - fact: auth.credentialParts
+    url: https://docs.pagerduty.com/developer/mcp-tooling-remote-server
+    fetchedAt: 2026-11-11
+x-omega: { oss: exclude }

@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: ashby
+version: 1.0.0
+name: Ashby
+description: "Candidates, jobs, applications and hiring stages in Ashby."
+vendor:
+  name: Ashby
+  domains: [ashbyhq.com]
+eeCategory: data
+group: other
+categories: [data, recruiting]
+tags: [hiring, candidates]
+docsUrl: https://docs.ashbyhq.com/ashby-mcp-server-beta
+defaultProvider: mcp
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://docs.ashbyhq.com/ashby-mcp-server-beta
+    fetchedAt: 2026-11-12

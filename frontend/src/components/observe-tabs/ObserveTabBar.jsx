@@ -1,6 +1,16 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import PropTypes from "prop-types";
-import { Box, ButtonBase, Divider } from "@mui/material";
+import {
+  Box,
+  Button,
+  ButtonBase,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogContentText,
+  DialogTitle,
+  Divider,
+} from "@mui/material";
 import {
   DndContext,
   closestCenter,
@@ -314,18 +324,35 @@ const ObserveTabBar = ({
     [openContextMenu],
   );
 
-  const handleClose = useCallback(
-    (viewId) => {
-      deleteView(viewId, {
-        onSuccess: () => {
-          if (activeTab === `view-${viewId}`) {
-            onTabChange("traces");
-          }
-        },
-      });
-    },
-    [deleteView, activeTab, onTabChange],
-  );
+  // The tab's "x" deletes the saved view (for the whole team when shared), so
+  // it asks first, like the tab's right-click Delete.
+  const [pendingDeleteId, setPendingDeleteId] = useState(null);
+  const pendingDeleteView = customViews.find((v) => v.id === pendingDeleteId);
+
+  const handleClose = useCallback((viewId) => {
+    setPendingDeleteId(viewId);
+  }, []);
+
+  const handleDeleteCancel = useCallback(() => {
+    setPendingDeleteId(null);
+  }, []);
+
+  const handleDeleteConfirm = useCallback(() => {
+    const viewId = pendingDeleteId;
+    setPendingDeleteId(null);
+    if (!viewId) return;
+    deleteView(viewId, {
+      onSuccess: () => {
+        if (activeTab === `view-${viewId}`) {
+          onTabChange("traces");
+        }
+      },
+      onError: (err) =>
+        enqueueSnackbar(getRequestErrorMessage(err, "Failed to delete view"), {
+          variant: "error",
+        }),
+    });
+  }, [pendingDeleteId, deleteView, activeTab, onTabChange]);
 
   const handleRenameSubmit = useCallback(
     (viewId, newName) => {
@@ -518,6 +545,41 @@ const ObserveTabBar = ({
         isLoading={isSavingView}
         existingNames={ownViewNames}
       />
+
+      {/* Delete confirmation for the tab's "x" — same copy as TabContextMenu */}
+      {pendingDeleteView && (
+        <Dialog
+          open
+          onClose={handleDeleteCancel}
+          maxWidth={false}
+          PaperProps={{ sx: { maxWidth: 560 } }}
+        >
+          <DialogTitle>
+            Delete &ldquo;{pendingDeleteView.name}&rdquo;?
+          </DialogTitle>
+          <DialogContent>
+            <DialogContentText>
+              This view will be permanently removed.
+              {pendingDeleteView.visibility === "project" &&
+                " This will remove the view for all team members."}{" "}
+              This action cannot be undone.
+            </DialogContentText>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={handleDeleteCancel} size="small">
+              Cancel
+            </Button>
+            <Button
+              onClick={handleDeleteConfirm}
+              color="error"
+              variant="contained"
+              size="small"
+            >
+              Delete
+            </Button>
+          </DialogActions>
+        </Dialog>
+      )}
     </Box>
   );
 };

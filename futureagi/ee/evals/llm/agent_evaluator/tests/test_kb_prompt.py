@@ -58,6 +58,7 @@ def test_dataset_runner_passes_user_eval_metric_kb_id_to_eval_instance():
     from model_hub.views.eval_runner import EvaluationRunner
 
     runner = EvaluationRunner.__new__(EvaluationRunner)
+    runner.source = None
     runner.user_eval_metric = SimpleNamespace(
         model="turing_flash", kb_id="dataset-kb-id"
     )

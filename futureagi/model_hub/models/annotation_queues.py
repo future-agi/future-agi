@@ -91,6 +91,11 @@ class AnnotationQueue(BaseModel):
     name = models.CharField(max_length=255)
     description = models.TextField(null=True, blank=True)
     instructions = models.TextField(null=True, blank=True)
+    mode = models.CharField(
+        max_length=20,
+        choices=[("standard", "Standard"), ("pairwise", "Pairwise")],
+        default="standard",
+    )
     status = models.CharField(
         max_length=20,
         choices=AnnotationQueueStatusChoices.get_choices(),
@@ -367,8 +372,12 @@ class QueueItem(BaseModel):
     )
     source_type = models.CharField(
         max_length=50,
-        choices=QueueItemSourceType.get_choices(),
+        choices=QueueItemSourceType.get_choices() + [("pairwise", "Pairwise")],
     )
+    # Validated source references, not snapshots. Each holds source_type/source_id
+    # and, for collector sources, the resolved project_id to disambiguate IDs.
+    source_a = models.JSONField(null=True, blank=True)
+    source_b = models.JSONField(null=True, blank=True)
     status = models.CharField(
         max_length=20,
         choices=QueueItemStatus.get_choices(),
@@ -543,6 +552,21 @@ class QueueItem(BaseModel):
 
     def clean(self):
         super().clean()
+        if self.source_type == "pairwise":
+            if (
+                not self.queue_id or self.queue.mode != "pairwise"
+                or not self.source_a or not self.source_b
+            ):
+                raise ValidationError(
+                    "Pairwise items require a pairwise queue and two sources."
+                )
+            if self.source_a == self.source_b:
+                raise ValidationError("A pair must contain two different sources.")
+            if any(getattr(self, f"{field}_id") for field in SOURCE_TYPE_FK_MAP.values()):
+                raise ValidationError("Pairwise items cannot have single-source references.")
+            return
+        if (self.queue_id and self.queue.mode == "pairwise") or self.source_a or self.source_b:
+            raise ValidationError("Standard items cannot contain pairwise sources.")
         fk_field = SOURCE_TYPE_FK_MAP.get(self.source_type)
         if not fk_field:
             raise ValidationError(f"Invalid source_type: {self.source_type}")
@@ -588,6 +612,41 @@ class QueueItemAssignment(BaseModel):
 
     def __str__(self):
         return f"QueueItemAssignment: {self.queue_item_id} - {self.user_id}"
+
+
+class PairwiseAnnotation(BaseModel):
+    """One editable A/B/tie vote per pair and reviewer, separate from label scores."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    queue_item = models.ForeignKey(
+        QueueItem, on_delete=models.CASCADE, related_name="pairwise_annotations"
+    )
+    annotator = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, related_name="pairwise_annotations"
+    )
+    choice = models.CharField(
+        max_length=3, choices=[("A", "A"), ("B", "B"), ("tie", "Tie")]
+    )
+    comment = models.TextField(blank=True, default="")
+    organization = models.ForeignKey(
+        Organization, on_delete=models.CASCADE, related_name="pairwise_annotations"
+    )
+    workspace = models.ForeignKey(
+        Workspace, on_delete=models.CASCADE, null=True, blank=True,
+        related_name="pairwise_annotations",
+    )
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["queue_item", "annotator"], condition=Q(deleted=False),
+                name="unique_active_pairwise_vote",
+            ),
+            models.CheckConstraint(
+                condition=Q(choice__in=["A", "B", "tie"]),
+                name="valid_pairwise_vote_choice",
+            ),
+        ]
 
 
 class ItemAnnotation(BaseModel):

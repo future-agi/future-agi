@@ -1,0 +1,20 @@
+schema: "connector-manifest/v1#app"
+id: salesforce
+version: 1.0.0
+name: Salesforce
+description: "CRM records: accounts, contacts, leads, opportunities and cases."
+vendor:
+  name: Salesforce
+  domains: [salesforce.com]
+eeCategory: data
+group: other
+categories: [data, crm]
+tags: [crm, sales]
+docsUrl: https://developer.salesforce.com/docs/platform/hosted-mcp-servers/guide/hosted-mcp-servers-overview.html
+archetype: crm
+defaultProvider: hosted-mcp
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://developer.salesforce.com/docs/platform/hosted-mcp-servers/guide/hosted-mcp-servers-overview.html
+    fetchedAt: 2026-10-21

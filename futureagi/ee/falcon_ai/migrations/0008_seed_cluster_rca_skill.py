@@ -17,9 +17,9 @@ from django.db import migrations
 
 def seed_cluster_rca(apps, schema_editor):
     Skill = apps.get_model("falcon_ai", "Skill")
-    from ee.falcon_ai.builtin_skills_loader import seed_builtin_skills
+    from ._builtin_skills import seed_builtin_skills
 
-    seed_builtin_skills(skill_model=Skill)
+    seed_builtin_skills(Skill, schema_editor.connection.alias)
 
 
 def reverse_noop(apps, schema_editor):

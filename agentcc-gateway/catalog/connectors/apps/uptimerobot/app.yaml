@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: uptimerobot
+version: 1.0.0
+name: UptimeRobot
+description: "Inspect uptime and response times, manage monitors, and maintain status pages and incidents."
+vendor:
+  name: UptimeRobot
+  domains: [uptimerobot.com]
+eeCategory: developer
+group: other
+categories: [developer, observability]
+tags: [monitors, alerts, metrics]
+docsUrl: https://help.uptimerobot.com/en/articles/12928342-uptimerobot-mcp-integration-guide
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://help.uptimerobot.com/en/articles/12928342-uptimerobot-mcp-integration-guide
+    fetchedAt: 2026-11-09

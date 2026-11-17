@@ -62,32 +62,40 @@ func TestKeyPublicationAfterInvalidation(t *testing.T) {
 					t.Fatal(err)
 				}
 				ck := CacheKey("publication-key", "publication-secret")
-				done := make(chan struct{})
+				done := make(chan composeAuthOutcome, 1)
 				if path == "warm" {
+					// ICU01/02 retain the expired seed, but never admit it stale.
 					a.cache.m.Store(ck, &cacheEntry{result: old, fetchedAt: time.Now().Add(-2 * time.Minute)})
-					got, err := a.Authenticate(ctx, "publication-key", "publication-secret")
-					if got != old || err != nil {
-						t.Fatalf("warm precondition: %v", err)
-					}
-				} else {
-					go func() { defer close(done); _, _ = a.Authenticate(ctx, "publication-key", "publication-secret") }()
 				}
+				go func() {
+					got, err := a.Authenticate(ctx, "publication-key", "publication-secret")
+					done <- composeAuthOutcome{got, err}
+				}()
 				select {
 				case <-r.entered:
 				case <-ctx.Done():
 					t.Fatal("validation barrier not reached")
 				}
+				select {
+				case <-done:
+					close(r.release)
+					t.Fatal("expired authentication returned before validation was released")
+				default:
+				}
 				r.changed.Store(true)
 				a.InvalidateKey(ck)
 				close(r.release)
-				if path == "warm" {
-					a.sfKey.Do(ck+":refresh", func() (any, error) { return nil, nil })
-				} else {
-					select {
-					case <-done:
-					case <-ctx.Done():
-						t.Fatal("cold authentication did not finish")
+				select {
+				case outcome := <-done:
+					if change == "revoke" {
+						if outcome.result != nil || !errors.Is(outcome.err, ErrUnauthenticated) {
+							t.Fatalf("overtaken caller accepted revoked result: %v", outcome.err)
+						}
+					} else if outcome.err != nil || outcome.result != fresh {
+						t.Fatalf("overtaken caller did not use fresh scope: %v", outcome.err)
 					}
+				case <-ctx.Done():
+					t.Fatal("foreground authentication did not finish")
 				}
 				if e, _ := a.cache.peek(ck); e != nil && e.result == old {
 					t.Error("stale key validation published after invalidation")

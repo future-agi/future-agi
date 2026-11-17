@@ -19,15 +19,18 @@ import {
   Typography,
 } from "@mui/material";
 import {
+  VERSIONING_STATE,
   VERSION_PIECES,
   canMakeDefault,
-  isVersioningDisabled,
   useEnvironmentVersions,
   useMoveDefault,
   useSuiteMembers,
   useVersionDiff,
+  versioningBackfillFailed,
+  versioningReadable,
+  versioningState,
 } from "src/api/simulate-environments/versions";
-import { VERSIONS_COPY } from "../workspace.constants";
+import { VERSIONING_STATE_COPY, VERSIONS_COPY } from "../workspace.constants";
 import { refusalText } from "../evals/refusalText";
 import { ROW_HEIGHT } from "src/theme/sizes";
 import { PreflightReport } from "../agents/PreflightStatus";
@@ -358,10 +361,11 @@ VersionDetail.propTypes = {
 // and, for the version picked, what changed in it and a way to make it the
 // default.
 export default function VersionsPanel({ env }) {
-  const enabled = Boolean(env?.versioning?.enabled);
+  // No versioning read while versioning is off; the tab still shows and says so.
   const { data, isLoading, error } = useEnvironmentVersions(env?.id, {
-    enabled,
+    enabled: versioningReadable(env),
   });
+  const state = versioningState(env, error);
   // A link (the unsaved-changes bar) may name the version to show first.
   const [params, setParams] = useSearchParams();
   const [linkedPiece, linkedId] = (params.get("version") || "").split(":");
@@ -389,8 +393,6 @@ export default function VersionsPanel({ env }) {
     return { piece, id: version.id };
   }, [data, picked]);
 
-  if (!enabled) return null;
-
   const frame = (children) => (
     <Stack spacing={2.5} sx={{ p: 3 }}>
       <Box>
@@ -400,19 +402,33 @@ export default function VersionsPanel({ env }) {
         <Typography sx={{ typography: "s2", color: "text.subtitle", mt: 0.5 }}>
           {VERSIONS_COPY.subtitle}
         </Typography>
+        {state === VERSIONING_STATE.ENABLING && (
+          <Typography
+            data-testid="versioning-state-line"
+            sx={{ typography: "s2", color: "text.secondary", mt: 0.5 }}
+          >
+            {versioningBackfillFailed(env)
+              ? VERSIONING_STATE_COPY.enablingFailed
+              : VERSIONING_STATE_COPY.enabling}
+          </Typography>
+        )}
       </Box>
       {children}
     </Stack>
   );
 
-  if (isLoading) return frame(<CircularProgress size={22} />);
-  if (isVersioningDisabled(error)) {
+  // Off (the install's flag, or a 404 that says so): the tab stays and says so.
+  if (state === VERSIONING_STATE.OFF) {
     return frame(
-      <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+      <Typography
+        data-testid="versioning-state-line"
+        sx={{ typography: "s2", color: "text.secondary" }}
+      >
         {VERSIONS_COPY.disabled}
       </Typography>,
     );
   }
+  if (isLoading) return frame(<CircularProgress size={22} />);
   // A failed refresh keeps the versions it already has.
   if (!data) {
     return frame(
@@ -488,6 +504,9 @@ export default function VersionsPanel({ env }) {
 VersionsPanel.propTypes = {
   env: PropTypes.shape({
     id: PropTypes.string,
-    versioning: PropTypes.shape({ enabled: PropTypes.bool }),
+    versioning: PropTypes.shape({
+      enabled: PropTypes.bool,
+      state: PropTypes.oneOf(["off", "enabling", "ready"]),
+    }),
   }).isRequired,
 };

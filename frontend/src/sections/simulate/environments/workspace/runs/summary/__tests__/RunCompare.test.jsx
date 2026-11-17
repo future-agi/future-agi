@@ -144,7 +144,7 @@ describe("RunCompare", () => {
     );
     expect(
       within(section()).getByText(
-        "Run 2: Agent v2 · Environment v2 · Scenarios v3 · Run 1: before versioning",
+        "Run 2: Agent v2 · Environment v2 · Scenarios v3 · Run 1: no versions recorded",
       ),
     ).toBeInTheDocument();
     expect(
@@ -297,5 +297,56 @@ describe("RunCompare", () => {
     expect(
       within(row("Left out there")).getByText("Not in the compared run"),
     ).toBeInTheDocument();
+  });
+
+  const noVersions = { agent: null, environment: null, suite: null };
+  const editedNote = "An edited scenario is compared as the same scenario.";
+
+  it("names runs with no versions plainly when versioning is off", () => {
+    useCompareRuns.mockReturnValue({
+      data: {
+        ...comparison,
+        versions: { current: noVersions, against: noVersions },
+      },
+      isPending: false,
+      isError: false,
+    });
+    renderCompare({ env: { id: "env-1", versioning: { enabled: false } } });
+
+    expect(
+      within(section()).getByText(
+        "Run 2: no versions recorded · Run 1: no versions recorded",
+      ),
+    ).toBeInTheDocument();
+    expect(within(section()).queryByText(/before versioning/)).toBeNull();
+    expect(within(section()).getByText(editedNote)).toBeInTheDocument();
+  });
+
+  it("says an edited scenario is compared as the same scenario when a run has no suite version", () => {
+    renderCompare();
+
+    expect(within(section()).getByText(editedNote)).toBeInTheDocument();
+  });
+
+  it("leaves out the edited-scenario line when both runs have a suite version", () => {
+    useCompareRuns.mockReturnValue({
+      data: {
+        ...comparison,
+        versions: {
+          current: comparison.versions.current,
+          against: { ...noVersions, suite: { id: "s2", label: "v2" } },
+        },
+      },
+      isPending: false,
+      isError: false,
+    });
+    renderCompare();
+
+    expect(
+      within(section()).getByText(
+        "Run 2: Agent v2 · Environment v2 · Scenarios v3 · Run 1: Scenarios v2",
+      ),
+    ).toBeInTheDocument();
+    expect(within(section()).queryByText(editedNote)).toBeNull();
   });
 });

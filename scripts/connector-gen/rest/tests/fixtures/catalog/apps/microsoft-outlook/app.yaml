@@ -1,0 +1,20 @@
+# Fixture for the REST generator's tests, not catalog data (see ../gmail/app.yaml).
+schema: "connector-manifest/v1#app"
+id: microsoft-outlook
+version: 1.0.0
+name: Microsoft Outlook
+description: "Read, search and send mail, and manage calendar events, over Microsoft Graph."
+vendor: { name: Microsoft, domains: [microsoft.com, outlook.com] }
+eeCategory: communication
+group: microsoft
+categories: [communication, email, calendar]
+tags: [email, calendar]
+docsUrl: https://learn.microsoft.com/en-us/graph/outlook-mail-concept-overview
+archetype: mailbox
+defaultProvider: futureagi-rest
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://learn.microsoft.com/en-us/graph/outlook-mail-concept-overview
+    fetchedAt: 2026-10-21
+x-omega: { ee: exclude, oss: exclude }

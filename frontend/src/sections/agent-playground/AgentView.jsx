@@ -4,7 +4,9 @@ import React, { useEffect } from "react";
 import { useNavigate } from "react-router";
 import axios, { endpoints } from "src/utils/axios";
 import { LoadingButton } from "@mui/lab";
+import ContentSkeleton from "src/components/content-skeleton";
 import EmptyLayout from "src/components/EmptyLayout/EmptyLayout";
+import ErrorState from "src/components/error-state";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import AgentListView from "./AgentListView";
 import useCanEditAgent from "./hooks/useCanEditAgent";
@@ -15,7 +17,7 @@ import {
 import { useCreateGraph } from "../../api/agent-playground/agent-playground";
 
 export default function AgentView({ embedded = false }) {
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, isPaused, isFetching, refetch } = useQuery({
     queryKey: ["agent-playground", "graphs", { page: 1 }],
     queryFn: () =>
       axios.get(endpoints.agentPlayground.listGraphs, {
@@ -31,7 +33,24 @@ export default function AgentView({ embedded = false }) {
     };
   }, []);
 
-  if (isLoading) return null;
+  if (isLoading) {
+    return <ContentSkeleton variant="rows" label="Loading agents" />;
+  }
+
+  // A first load that failed, or is waiting for a connection, says nothing
+  // about whether agents exist, so it must not read as "No agents yet" with
+  // a Create agent button.
+  if (!data && (isError || isPaused)) {
+    return (
+      <ErrorState
+        role="alert"
+        title="Couldn't load agents"
+        detail="Try again. If it keeps failing, check your connection."
+        onRetry={() => refetch()}
+        retrying={isFetching}
+      />
+    );
+  }
 
   return hasData ? <AgentListView embedded={embedded} /> : <AgentEmptyState />;
 }

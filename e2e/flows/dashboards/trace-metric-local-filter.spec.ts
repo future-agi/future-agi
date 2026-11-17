@@ -280,7 +280,7 @@ test('DASH-E2E-003: a metric-specific Model filter changes only that metric afte
               filter_type: 'text', filter_op: 'in', filter_value: ['alpha'], col_type: 'SPAN_ATTRIBUTE', attribute_value_types: ['string'],
             } });
         } else if (stage === 'model') {
-          await page.locator('.breakdown-section-title').click();
+          await page.getByRole('button', { name: 'Add breakdown', exact: true }).click();
           await page.getByPlaceholder('Search breakdown attributes...').fill('Model');
           await page.getByRole('button', { name: 'Model (string, Traces)', exact: true }).click();
           expectedConfig.breakdowns = breakdowns;
@@ -424,7 +424,7 @@ test('DASH-E2E-003: a metric-specific Model filter changes only that metric afte
           // WidgetEditorView's global filter card and FilterValueLabel must resolve the UUID to its name.
           await expect(page.getByText('Project', { exact: true }).locator('../..').locator('.filter-value-name'))
             .toHaveText(projectNames[0], { timeout: UI_READY });
-          await expect(page.locator('.breakdown-section-title').locator('../..').getByText('Model', { exact: true })).toBeVisible({ timeout: UI_READY });
+          await expect(page.getByRole('button', { name: 'Change breakdown Model', exact: true })).toBeVisible({ timeout: UI_READY });
           await expect(page.getByRole('combobox').filter({ hasText: 'Day' })).toBeVisible({ timeout: UI_READY });
           // The preset chips have no semantic selected state; exact native query above proves 7D.
           await expect(page.getByText('7D', { exact: true })).toBeVisible({ timeout: UI_READY });

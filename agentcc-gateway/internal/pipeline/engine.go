@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"log/slog"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -109,9 +110,7 @@ func (e *Engine) Process(ctx context.Context, rc *models.RequestContext, provide
 			if result.Response != nil {
 				rc.Response = result.Response
 			}
-			if err := e.RunPostPlugins(ctx, rc); err != nil {
-				return err
-			}
+			e.RunPostPlugins(ctx, rc)
 			return nil
 		}
 	}
@@ -124,7 +123,9 @@ func (e *Engine) Process(ctx context.Context, rc *models.RequestContext, provide
 	}
 
 	start := time.Now()
-	if err := providerCall(ctx, rc); err != nil {
+	// Any HTTP request the provider call makes marks the request as sent to
+	// a model (x-agentcc-dispatched), on every route.
+	if err := providerCall(models.WithDispatchTrace(ctx), rc); err != nil {
 		providerElapsed := time.Since(start)
 		rc.RecordTiming("provider", providerElapsed)
 		rc.AddError(err)
@@ -143,8 +144,58 @@ func (e *Engine) Process(ctx context.Context, rc *models.RequestContext, provide
 	// Post-plugins — skip for streaming requests; the stream handler
 	// will call RunPostPlugins after the stream completes with final usage.
 	if !rc.IsStream {
-		if err := e.RunPostPlugins(ctx, rc); err != nil {
-			return err
+		e.RunPostPlugins(ctx, rc)
+	}
+	return nil
+}
+
+// RunRequestPlugins runs the request stage of the plugins named, in
+// priority order, and returns the first error, which it records on rc. It is
+// for a handler that sends the request to the provider without Process (a
+// video job), so the plugins named still refuse a request before the
+// provider gets it: the auth plugin, which writes the key's identity the
+// guardrail plugin reads, and the guardrail plugin. A plugin that
+// short-circuits is passed over: such a handler has no answer to serve in
+// place of the provider's. No post-plugin runs.
+func (e *Engine) RunRequestPlugins(ctx context.Context, rc *models.RequestContext, names ...string) *models.APIError {
+	if e == nil {
+		return nil
+	}
+	for _, p := range e.plugins {
+		if !slices.Contains(names, p.Name()) {
+			continue
+		}
+		start := time.Now()
+		result := p.ProcessRequest(ctx, rc)
+		rc.RecordTiming("pre_"+p.Name(), time.Since(start))
+		if result.Error != nil {
+			rc.AddError(result.Error)
+			return result.Error
+		}
+	}
+	return nil
+}
+
+// RunResponsePlugins runs the response stage of the plugins named, in post
+// order, and returns the first error, which it records on rc. It is for a
+// handler that receives an answer outside Process (a background response's
+// answer, refreshed on GET), so the plugins named still check that answer
+// before it is served: the guardrail plugin's output checks. No other plugin
+// runs, so nothing is priced, logged or counted again.
+func (e *Engine) RunResponsePlugins(ctx context.Context, rc *models.RequestContext, names ...string) *models.APIError {
+	if e == nil {
+		return nil
+	}
+	for _, p := range append(slices.Clone(e.postSequential), e.postParallel...) {
+		if !slices.Contains(names, p.Name()) {
+			continue
+		}
+		start := time.Now()
+		result := p.ProcessResponse(ctx, rc)
+		rc.RecordTiming("post_"+p.Name(), time.Since(start))
+		if result.Error != nil {
+			rc.AddError(result.Error)
+			return result.Error
 		}
 	}
 	return nil
@@ -183,19 +234,12 @@ func loggedError(rc *models.RequestContext, err error) any {
 //
 // Exported so that streaming handlers can call it after the stream completes,
 // when rc.Response and usage data are populated.
-//
-// It returns the first error a sequential plugin reported: an output
-// guardrail's block, which Process hands to the handler so a non-streamed
-// response is refused instead of sent. The error is also recorded on rc, so
-// the plugins after it, logging among them, see the request as refused. A
-// streamed response is already sent, so its caller has nothing to refuse.
-func (e *Engine) RunPostPlugins(ctx context.Context, rc *models.RequestContext) *models.APIError {
+func (e *Engine) RunPostPlugins(ctx context.Context, rc *models.RequestContext) {
 	// Streaming handlers can invoke RunPostPlugins directly after Process returns,
 	// so reattach RequestContext here as well.
 	ctx = models.WithRequestContext(ctx, rc)
 
 	isCacheHit := rc.Flags.ShortCircuited && rc.Metadata["cache_status"] == "hit_exact"
-	var blocked *models.APIError
 
 	// Phase 1: Sequential post-plugins (e.g., cost → credits dependency chain).
 	for _, p := range e.postSequential {
@@ -215,10 +259,6 @@ func (e *Engine) RunPostPlugins(ctx context.Context, rc *models.RequestContext) 
 				"error", result.Error.Message,
 				"request_id", rc.RequestID,
 			)
-			rc.AddError(result.Error)
-			if blocked == nil {
-				blocked = result.Error
-			}
 		}
 	}
 
@@ -233,7 +273,7 @@ func (e *Engine) RunPostPlugins(ctx context.Context, rc *models.RequestContext) 
 	// mutex. So each goroutine times itself into its own slot, and the timings
 	// are recorded once the window has closed and execution is serial again.
 	if len(e.postParallel) == 0 {
-		return blocked
+		return
 	}
 
 	toRun := e.postParallel
@@ -272,16 +312,6 @@ func (e *Engine) RunPostPlugins(ctx context.Context, rc *models.RequestContext) 
 	for i, p := range toRun {
 		rc.RecordTiming("post_"+p.Name(), durations[i])
 	}
-	return blocked
-}
-
-// postPriority is where p's response-side work runs among the sequential
-// post-plugins.
-func postPriority(p Plugin) int {
-	if pp, ok := p.(PostPriority); ok {
-		return pp.PostPriority()
-	}
-	return p.Priority()
 }
 
 // PluginCount returns the number of registered plugins.

@@ -1,33 +1,46 @@
 /* eslint-disable react/prop-types */
+import Section from "src/components/section";
 import React, { useState } from "react";
 import {
   Stack,
+  Box,
+  Card,
   Typography,
-  TextField,
   MenuItem,
   FormControlLabel,
-  Switch,
-  Button,
   ToggleButton,
-  ToggleButtonGroup,
-  Chip,
-  IconButton,
   Collapse,
   Divider,
-  Slider,
   Alert,
-  Box,
 } from "@mui/material";
-import Section from "src/components/section";
 import Iconify from "src/components/iconify";
-import FallbackChainEditor from "./FallbackChainEditor";
-import { useAvailableModels } from "../hooks/useAvailableModels";
+// Mutations use the same Owner/Admin gate as the save action. Disclosure
+// headers remain ordinary controls, so every reader can inspect the config.
 import {
-  DEFAULT_ROUTING_STRATEGY,
-  ROUTING_STRATEGY_OPTIONS,
-} from "../constants/routing";
+  AdminButton as Button,
+  AdminSwitch as Switch,
+  AdminTextField as TextField,
+  AdminChip as Chip,
+  AdminIconButton as IconButton,
+  AdminSlider as Slider,
+  AdminToggleButtonGroup as ToggleButtonGroup,
+} from "../components/GatewayWriteControls";
+import FallbackChainEditor from "./FallbackChainEditor";
+import {
+  fallbackChainsOn,
+  NO_ROUTING_STRATEGY,
+  retryOnTimeout,
+  ROUTING_STRATEGY_CHOICES,
+  routingStrategyChoice,
+} from "../fallbacks/fallbackSwitches";
+import { useAvailableModels } from "../hooks/useAvailableModels";
+import { storedRoutingOnly } from "./routingNotApplied";
+import { useConfirmRemoval } from "../hooks/useConfirmRemoval";
+import { PROVIDER_LOCK_FAILOVER_NOTE } from "../constants/routing";
 
 // ---------- Section wrapper for collapsible cards ----------
+// The header is a button that says whether the section is open; Enter or
+// Space toggles it, and its icons keep their size at phone width.
 const ConfigSection = ({
   title,
   subtitle,
@@ -36,20 +49,42 @@ const ConfigSection = ({
   defaultOpen = false,
 }) => {
   const [open, setOpen] = useState(defaultOpen);
+  const toggle = () => setOpen((v) => !v);
   return (
-    <Section variant="panel">
+    <Section component={Card} elevation={0} variant="panel">
       <Box
-        sx={{ cursor: "pointer", userSelect: "none" }}
-        onClick={() => setOpen((v) => !v)}
+        role="button"
+        tabIndex={0}
+        aria-expanded={open}
+        sx={{
+          cursor: "pointer",
+          userSelect: "none",
+          "&:focus-visible": {
+            outline: "2px solid",
+            outlineColor: "primary.main",
+            outlineOffset: -2,
+          },
+        }}
+        onClick={toggle}
+        onKeyDown={(e) => {
+          if (e.key !== "Enter" && e.key !== " ") return;
+          e.preventDefault();
+          toggle();
+        }}
       >
         <Stack
           direction="row"
           justifyContent="space-between"
           alignItems="center"
+          spacing={1}
         >
-          <Stack direction="row" alignItems="center" spacing={1}>
-            <Iconify icon={icon} width={20} sx={{ color: "primary.main" }} />
-            <Stack>
+          <Stack direction="row" alignItems="center" spacing={1} minWidth={0}>
+            <Iconify
+              icon={icon}
+              width={20}
+              sx={{ color: "primary.main", flexShrink: 0 }}
+            />
+            <Stack minWidth={0}>
               <Typography variant="subtitle2">{title}</Typography>
               {subtitle && (
                 <Typography variant="caption" color="text.secondary">
@@ -63,7 +98,7 @@ const ConfigSection = ({
               open ? "solar:alt-arrow-up-linear" : "solar:alt-arrow-down-linear"
             }
             width={20}
-            sx={{ color: "text.secondary" }}
+            sx={{ color: "text.secondary", flexShrink: 0 }}
           />
         </Stack>
       </Box>
@@ -76,10 +111,17 @@ const ConfigSection = ({
 };
 
 // ---------- Main component ----------
-const RoutingConfigTab = ({ routing, onChange }) => {
+// `managedOffered` false: the deployment offers no managed models, so no
+// fallback can go to one.
+const RoutingConfigTab = ({ routing, onChange, managedOffered = true }) => {
+  const [requestRemoval, confirmation] = useConfirmRemoval();
   const availableModels = useAvailableModels();
   const config = routing || {};
   const fallbacks = config.model_fallbacks || config.modelFallbacks || {};
+  const unusedPrimary = availableModels.find(
+    (model) =>
+      model.trim() && !Object.prototype.hasOwnProperty.call(fallbacks, model),
+  );
 
   const handleChange = (field, value) => {
     onChange({ ...config, [field]: value });
@@ -90,24 +132,43 @@ const RoutingConfigTab = ({ routing, onChange }) => {
     onChange({ ...config, [section]: { ...current, [field]: value } });
   };
 
+  // None clears the stored strategy (the org's keys then use the first of
+  // its providers by ID); clicking the chosen button again changes nothing.
   const handleStrategyChange = (_, value) => {
-    if (value) handleChange("strategy", value);
+    if (!value) return;
+    if (value === NO_ROUTING_STRATEGY) {
+      const rest = { ...config };
+      delete rest.strategy;
+      onChange(rest);
+      return;
+    }
+    handleChange("strategy", value);
   };
 
   // Fallback chain handlers
   const handleFallbackChange = (primaryModel, newFallbacks, oldPrimary) => {
-    const updated = { ...fallbacks };
-    if (oldPrimary && oldPrimary !== primaryModel) {
-      delete updated[oldPrimary];
-    }
-    updated[primaryModel] = newFallbacks;
+    if (
+      !primaryModel.trim() ||
+      (primaryModel !== oldPrimary &&
+        Object.prototype.hasOwnProperty.call(fallbacks, primaryModel))
+    )
+      return;
+    // Rename in place: a collision must never replace another chain.
+    const updated = Object.fromEntries(
+      Object.entries(fallbacks).map(([primary, backups]) =>
+        primary === oldPrimary
+          ? [primaryModel, newFallbacks]
+          : [primary, backups],
+      ),
+    );
     onChange({ ...config, model_fallbacks: updated });
   };
 
   const handleAddChain = () => {
+    if (!unusedPrimary) return;
     onChange({
       ...config,
-      model_fallbacks: { ...fallbacks, "": [] },
+      model_fallbacks: { ...fallbacks, [unusedPrimary]: [] },
     });
   };
 
@@ -118,6 +179,11 @@ const RoutingConfigTab = ({ routing, onChange }) => {
   };
 
   const fallbackEntries = Object.entries(fallbacks);
+  // The default model, conditional routes, race mode, scheduled completions,
+  // access groups and traffic mirroring: stored values this gateway does not
+  // run. They are not shown, one line says they are stored, and a save keeps
+  // them unchanged (the draft is never cleared of them).
+  const stored = storedRoutingOnly(config);
 
   // Complexity config
   const complexity = config.complexity || {};
@@ -132,22 +198,20 @@ const RoutingConfigTab = ({ routing, onChange }) => {
 
   const handleAddComplexityTier = () => {
     const tiers = { ...complexityTiers };
-    const name = `tier_${Object.keys(tiers).length + 1}`;
+    let index = 1;
+    while (Object.prototype.hasOwnProperty.call(tiers, `tier_${index}`)) index += 1;
+    const name = `tier_${index}`;
     tiers[name] = { max_score: 50, model: "", provider: "" };
     handleNestedChange("complexity", "tiers", tiers);
   };
 
   const handleRemoveComplexityTier = (name) => {
-    const tiers = { ...complexityTiers };
-    delete tiers[name];
-    handleNestedChange("complexity", "tiers", tiers);
+    requestRemoval(`Complexity tier ${name}`, () => {
+      const tiers = { ...complexityTiers };
+      delete tiers[name];
+      handleNestedChange("complexity", "tiers", tiers);
+    });
   };
-
-  // Fastest config
-  const fastest = config.fastest || {};
-
-  // Scheduled config
-  const scheduled = config.scheduled || {};
 
   // Adaptive config
   const adaptive = config.adaptive || {};
@@ -155,9 +219,6 @@ const RoutingConfigTab = ({ routing, onChange }) => {
 
   // Provider lock config
   const providerLock = config.provider_lock || config.providerLock || {};
-
-  // Access groups config
-  const accessGroups = config.access_groups || config.accessGroups || {};
 
   // ---------- Provider lock list handlers ----------
   const [newAllowed, setNewAllowed] = useState("");
@@ -176,33 +237,14 @@ const RoutingConfigTab = ({ routing, onChange }) => {
   };
 
   const handleRemoveFromList = (listField, idx) => {
-    const current = [...(providerLock[listField] || [])];
-    current.splice(idx, 1);
-    handleNestedChange("provider_lock", listField, current);
-  };
-
-  // Conditional routes config
-  const conditionalRoutes =
-    config.conditional_routes || config.conditionalRoutes || [];
-
-  const handleAddConditionalRoute = () => {
-    const routes = [
-      ...conditionalRoutes,
-      { field: "", operator: "$eq", value: "", target: "" },
-    ];
-    handleChange("conditional_routes", routes);
-  };
-
-  const handleConditionalRouteChange = (idx, field, value) => {
-    const routes = [...conditionalRoutes];
-    routes[idx] = { ...routes[idx], [field]: value };
-    handleChange("conditional_routes", routes);
-  };
-
-  const handleRemoveConditionalRoute = (idx) => {
-    const routes = [...conditionalRoutes];
-    routes.splice(idx, 1);
-    handleChange("conditional_routes", routes);
+    requestRemoval(
+      `Provider ${providerLock[listField]?.[idx]} from ${listField}`,
+      () => {
+        const current = [...(providerLock[listField] || [])];
+        current.splice(idx, 1);
+        handleNestedChange("provider_lock", listField, current);
+      },
+    );
   };
 
   // Circuit breaker config
@@ -224,11 +266,18 @@ const RoutingConfigTab = ({ routing, onChange }) => {
   };
 
   const handleRemoveCBStatusCode = (idx) => {
-    const current = [
-      ...(circuitBreaker.on_status_codes || circuitBreaker.onStatusCodes || []),
-    ];
-    current.splice(idx, 1);
-    handleNestedChange("circuit_breaker", "on_status_codes", current);
+    requestRemoval(
+      `Circuit breaker status code ${(circuitBreaker.on_status_codes || circuitBreaker.onStatusCodes || [])[idx]}`,
+      () => {
+        const current = [
+          ...(circuitBreaker.on_status_codes ||
+            circuitBreaker.onStatusCodes ||
+            []),
+        ];
+        current.splice(idx, 1);
+        handleNestedChange("circuit_breaker", "on_status_codes", current);
+      },
+    );
   };
 
   // Retry config
@@ -247,40 +296,16 @@ const RoutingConfigTab = ({ routing, onChange }) => {
   };
 
   const handleRemoveRetryStatusCode = (idx) => {
-    const current = [
-      ...(retryConfig.on_status_codes || retryConfig.onStatusCodes || []),
-    ];
-    current.splice(idx, 1);
-    handleNestedChange("retry", "on_status_codes", current);
-  };
-
-  // Mirror config
-  const mirrorConfig = config.mirror || {};
-  const mirrorRules = mirrorConfig.rules || [];
-
-  const handleAddMirrorRule = () => {
-    const rules = [
-      ...mirrorRules,
-      {
-        source_model: "",
-        target_provider: "",
-        target_model: "",
-        sample_rate: 1.0,
+    requestRemoval(
+      `Retry status code ${(retryConfig.on_status_codes || retryConfig.onStatusCodes || [])[idx]}`,
+      () => {
+        const current = [
+          ...(retryConfig.on_status_codes || retryConfig.onStatusCodes || []),
+        ];
+        current.splice(idx, 1);
+        handleNestedChange("retry", "on_status_codes", current);
       },
-    ];
-    onChange({ ...config, mirror: { ...mirrorConfig, rules } });
-  };
-
-  const handleMirrorRuleChange = (idx, field, value) => {
-    const rules = [...mirrorRules];
-    rules[idx] = { ...rules[idx], [field]: value };
-    onChange({ ...config, mirror: { ...mirrorConfig, rules } });
-  };
-
-  const handleRemoveMirrorRule = (idx) => {
-    const rules = [...mirrorRules];
-    rules.splice(idx, 1);
-    onChange({ ...config, mirror: { ...mirrorConfig, rules } });
+    );
   };
 
   // Model timeouts config
@@ -300,71 +325,31 @@ const RoutingConfigTab = ({ routing, onChange }) => {
   };
 
   const handleRemoveModelTimeout = (model) => {
-    const updated = { ...modelTimeouts };
-    delete updated[model];
-    handleChange("model_timeouts", updated);
-  };
-
-  // ---------- Access group handlers ----------
-  const [newGroupName, setNewGroupName] = useState("");
-  const [newModelInput, setNewModelInput] = useState({});
-
-  const handleAddGroup = () => {
-    if (!newGroupName.trim()) return;
-    const groups = { ...accessGroups };
-    groups[newGroupName.trim()] = { models: [], description: "" };
-    handleChange("access_groups", groups);
-    setNewGroupName("");
-  };
-
-  const handleRemoveGroup = (name) => {
-    const groups = { ...accessGroups };
-    delete groups[name];
-    handleChange("access_groups", groups);
-  };
-
-  const handleGroupField = (name, field, value) => {
-    const groups = { ...accessGroups };
-    groups[name] = { ...(groups[name] || {}), [field]: value };
-    handleChange("access_groups", groups);
-  };
-
-  const handleAddModelToGroup = (groupName) => {
-    const model = (newModelInput[groupName] || "").trim();
-    if (!model) return;
-    const group = accessGroups[groupName] || {};
-    const models = [...(group.models || [])];
-    if (!models.includes(model)) {
-      models.push(model);
-      handleGroupField(groupName, "models", models);
-    }
-    setNewModelInput((prev) => ({ ...prev, [groupName]: "" }));
-  };
-
-  const handleRemoveModelFromGroup = (groupName, idx) => {
-    const group = accessGroups[groupName] || {};
-    const models = [...(group.models || [])];
-    models.splice(idx, 1);
-    handleGroupField(groupName, "models", models);
+    requestRemoval(`Model timeout ${model}`, () => {
+      const updated = { ...modelTimeouts };
+      delete updated[model];
+      handleChange("model_timeouts", updated);
+    });
   };
 
   return (
     <Stack spacing={2}>
+      {confirmation}
       {/* ===================== BASIC STRATEGY ===================== */}
       <ConfigSection
         title="Routing Strategy"
-        subtitle="Select load balancing strategy and default model"
+        subtitle="How requests are spread across your providers that serve a model"
         icon="solar:transfer-horizontal-linear"
         defaultOpen
       >
         <ToggleButtonGroup
-          value={config.strategy || DEFAULT_ROUTING_STRATEGY}
+          value={routingStrategyChoice(config)}
           exclusive
           onChange={handleStrategyChange}
           size="small"
-          sx={{ mb: 2 }}
+          sx={{ mb: 2, flexWrap: "wrap" }}
         >
-          {ROUTING_STRATEGY_OPTIONS.map((s) => (
+          {ROUTING_STRATEGY_CHOICES.map((s) => (
             <ToggleButton key={s.value} value={s.value}>
               {s.label}
             </ToggleButton>
@@ -376,9 +361,8 @@ const RoutingConfigTab = ({ routing, onChange }) => {
             control={
               <Switch
                 size="small"
-                checked={
-                  config.fallback_enabled ?? config.fallbackEnabled ?? false
-                }
+                inputProps={{ "aria-label": "Fallback Enabled" }}
+                checked={fallbackChainsOn(config)}
                 onChange={(e) =>
                   handleChange("fallback_enabled", e.target.checked)
                 }
@@ -386,41 +370,39 @@ const RoutingConfigTab = ({ routing, onChange }) => {
             }
             label={<Typography variant="body2">Fallback Enabled</Typography>}
           />
-          <TextField
-            select
-            size="small"
-            label="Default Model"
-            value={config.default_model || config.defaultModel || ""}
-            onChange={(e) => handleChange("default_model", e.target.value)}
-            sx={{ minWidth: 200 }}
-          >
-            <MenuItem value="">
-              <em>None</em>
-            </MenuItem>
-            {availableModels.map((m) => (
-              <MenuItem key={m} value={m}>
-                {m}
-              </MenuItem>
-            ))}
-          </TextField>
+          <Typography variant="caption" color="text.secondary">
+            Until you turn it on or off, fallback chains run whenever one
+            exists.{" "}
+            {managedOffered
+              ? "For your organization's API keys, strategy, retry, provider failover and circuit breakers use only your own providers; a model fallback can go to a Future AGI model after your organization turns Future AGI credits on."
+              : "For your organization's API keys, strategy, retry, provider failover, circuit breakers and model fallbacks use only your own providers."}
+          </Typography>
         </Stack>
       </ConfigSection>
 
       {/* ===================== FALLBACK CHAINS ===================== */}
       <Stack direction="row" justifyContent="space-between" alignItems="center">
-        <Typography variant="subtitle1">Model Fallback Chains</Typography>
+        <Typography variant="subtitle1">Model fallback chains</Typography>
         <Button
           size="small"
           variant="outlined"
-          startIcon={<Iconify icon="solar:add-linear" width={20} />}
+          startIcon={<Iconify icon="solar:add-linear" width={18} />}
           onClick={handleAddChain}
+          disabled={!unusedPrimary}
         >
-          Add Fallback Chain
+          Add fallback chain
         </Button>
       </Stack>
+      {!unusedPrimary && (
+        <Typography variant="caption" color="text.secondary">
+          {availableModels.length
+            ? "Every available model already has a chain. Edit an existing chain or remove one to use its primary."
+            : "No available primary models. Check your provider models before adding a chain."}
+        </Typography>
+      )}
 
       {fallbackEntries.length === 0 && (
-        <Section variant="panel">
+        <Section component={Card} elevation={0} variant="panel">
           <Box sx={{ textAlign: "center" }}>
             <Typography variant="body2" color="text.secondary">
               No fallback chains configured. Add one to define model fallback
@@ -436,6 +418,7 @@ const RoutingConfigTab = ({ routing, onChange }) => {
           primaryModel={primary}
           fallbacks={fbs}
           models={availableModels}
+          usedPrimaries={Object.keys(fallbacks)}
           onChange={(newPrimary, newFbs) =>
             handleFallbackChange(newPrimary, newFbs, primary)
           }
@@ -530,7 +513,13 @@ const RoutingConfigTab = ({ routing, onChange }) => {
               </Stack>
 
               {Object.entries(complexityTiers).map(([name, tier]) => (
-                <Section variant="panel" key={name} sx={{ p: 1.5 }}>
+                <Section
+                  component={Card}
+                  elevation={0}
+                  key={name}
+                  variant="panel"
+                  sx={{ p: 1.5 }}
+                >
                   <Stack
                     direction="row"
                     spacing={1.5}
@@ -592,11 +581,12 @@ const RoutingConfigTab = ({ routing, onChange }) => {
                     />
                     <IconButton
                       size="small"
+                      aria-label={`Remove complexity tier ${name}`}
                       onClick={() => handleRemoveComplexityTier(name)}
                     >
                       <Iconify
                         icon="solar:trash-bin-trash-linear"
-                        width={20}
+                        width={18}
                         color="error.main"
                       />
                     </IconButton>
@@ -604,173 +594,6 @@ const RoutingConfigTab = ({ routing, onChange }) => {
                 </Section>
               ))}
             </>
-          )}
-        </Stack>
-      </ConfigSection>
-
-      {/* ===================== FASTEST RESPONSE ===================== */}
-      <ConfigSection
-        title="Fastest Response (Race Mode)"
-        subtitle="Send request to multiple providers simultaneously, use first response"
-        icon="solar:bolt-linear"
-      >
-        <Stack spacing={2}>
-          <Alert severity="info" variant="outlined" sx={{ mb: 1 }}>
-            Race mode sends the same request to multiple providers in parallel.
-            The first response wins. Use strategy &quot;fastest&quot; to
-            activate.
-          </Alert>
-          <Stack direction="row" spacing={2} flexWrap="wrap">
-            <TextField
-              size="small"
-              type="number"
-              label="Max Concurrent"
-              value={fastest.max_concurrent ?? fastest.maxConcurrent ?? 3}
-              onChange={(e) =>
-                handleNestedChange(
-                  "fastest",
-                  "max_concurrent",
-                  Number(e.target.value),
-                )
-              }
-              sx={{ width: 140 }}
-              helperText="Max parallel requests"
-              inputProps={{ min: 2, max: 10 }}
-            />
-            <TextField
-              size="small"
-              label="Cancel Delay"
-              value={fastest.cancel_delay ?? fastest.cancelDelay ?? "100ms"}
-              onChange={(e) =>
-                handleNestedChange("fastest", "cancel_delay", e.target.value)
-              }
-              sx={{ width: 140 }}
-              helperText="e.g. 100ms, 1s"
-            />
-          </Stack>
-          <TextField
-            size="small"
-            label="Excluded Providers"
-            value={(
-              fastest.excluded_providers ||
-              fastest.excludedProviders ||
-              []
-            ).join(", ")}
-            onChange={(e) =>
-              handleNestedChange(
-                "fastest",
-                "excluded_providers",
-                e.target.value
-                  .split(",")
-                  .map((s) => s.trim())
-                  .filter(Boolean),
-              )
-            }
-            helperText="Comma-separated provider names to exclude from race"
-            fullWidth
-          />
-        </Stack>
-      </ConfigSection>
-
-      {/* ===================== SCHEDULED COMPLETIONS ===================== */}
-      <ConfigSection
-        title="Scheduled Completions"
-        subtitle="Queue requests for future execution at a specified time"
-        icon="solar:clock-circle-linear"
-      >
-        <Stack spacing={2}>
-          <FormControlLabel
-            control={
-              <Switch
-                size="small"
-                checked={scheduled.enabled || false}
-                onChange={(e) =>
-                  handleNestedChange("scheduled", "enabled", e.target.checked)
-                }
-              />
-            }
-            label={
-              <Typography variant="body2">
-                Enable Scheduled Completions
-              </Typography>
-            }
-          />
-
-          {scheduled.enabled && (
-            <Stack direction="row" spacing={2} flexWrap="wrap">
-              <TextField
-                size="small"
-                type="number"
-                label="Max Pending Jobs"
-                value={
-                  scheduled.max_pending_jobs ?? scheduled.maxPendingJobs ?? 1000
-                }
-                onChange={(e) =>
-                  handleNestedChange(
-                    "scheduled",
-                    "max_pending_jobs",
-                    Number(e.target.value),
-                  )
-                }
-                sx={{ width: 150 }}
-              />
-              <TextField
-                size="small"
-                label="Result TTL"
-                value={scheduled.result_ttl ?? scheduled.resultTtl ?? "24h"}
-                onChange={(e) =>
-                  handleNestedChange("scheduled", "result_ttl", e.target.value)
-                }
-                sx={{ width: 120 }}
-                helperText="e.g. 24h, 1h"
-              />
-              <TextField
-                size="small"
-                label="Max Schedule Ahead"
-                value={
-                  scheduled.max_schedule_ahead ??
-                  scheduled.maxScheduleAhead ??
-                  "168h"
-                }
-                onChange={(e) =>
-                  handleNestedChange(
-                    "scheduled",
-                    "max_schedule_ahead",
-                    e.target.value,
-                  )
-                }
-                sx={{ width: 160 }}
-                helperText="Max future window"
-              />
-              <TextField
-                size="small"
-                type="number"
-                label="Retry Attempts"
-                value={scheduled.retry_attempts ?? scheduled.retryAttempts ?? 3}
-                onChange={(e) =>
-                  handleNestedChange(
-                    "scheduled",
-                    "retry_attempts",
-                    Number(e.target.value),
-                  )
-                }
-                sx={{ width: 130 }}
-              />
-              <TextField
-                size="small"
-                type="number"
-                label="Worker Count"
-                value={scheduled.worker_count ?? scheduled.workerCount ?? 4}
-                onChange={(e) =>
-                  handleNestedChange(
-                    "scheduled",
-                    "worker_count",
-                    Number(e.target.value),
-                  )
-                }
-                sx={{ width: 130 }}
-              />
-            </Stack>
           )}
         </Stack>
       </ConfigSection>
@@ -1049,235 +872,8 @@ const RoutingConfigTab = ({ routing, onChange }) => {
         </Stack>
       </ConfigSection>
 
-      {/* ===================== ACCESS GROUPS ===================== */}
-      <ConfigSection
-        title="Model Access Groups"
-        subtitle="Define named groups of models that can be referenced by alias"
-        icon="solar:users-group-rounded-linear"
-      >
-        <Stack spacing={2}>
-          <Stack direction="row" spacing={1}>
-            <TextField
-              size="small"
-              placeholder="Group name (e.g. premium, standard)"
-              value={newGroupName}
-              onChange={(e) => setNewGroupName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  handleAddGroup();
-                }
-              }}
-              sx={{ width: 280 }}
-            />
-            <Button
-              size="small"
-              variant="outlined"
-              onClick={handleAddGroup}
-              startIcon={<Iconify icon="solar:add-linear" width={16} />}
-            >
-              Add Group
-            </Button>
-          </Stack>
-
-          {Object.keys(accessGroups).length === 0 && (
-            <Typography variant="body2" color="text.secondary">
-              No access groups defined. Groups let you organize models into
-              tiers (e.g. premium, standard) and control access per API key.
-            </Typography>
-          )}
-
-          {Object.entries(accessGroups).map(([name, group]) => (
-            <Section variant="panel" key={name} sx={{ p: 1.5 }}>
-              <Stack spacing={1.5}>
-                <Stack
-                  direction="row"
-                  justifyContent="space-between"
-                  alignItems="center"
-                >
-                  <Chip label={name} size="small" color="primary" />
-                  <IconButton
-                    size="small"
-                    onClick={() => handleRemoveGroup(name)}
-                  >
-                    <Iconify
-                      icon="solar:trash-bin-trash-linear"
-                      width={20}
-                      color="error.main"
-                    />
-                  </IconButton>
-                </Stack>
-                <TextField
-                  size="small"
-                  label="Description"
-                  value={group.description || ""}
-                  onChange={(e) =>
-                    handleGroupField(name, "description", e.target.value)
-                  }
-                  fullWidth
-                />
-                <Typography variant="caption" fontWeight={500}>
-                  Models
-                </Typography>
-                <Stack direction="row" spacing={0.5} flexWrap="wrap">
-                  {(group.models || []).map((m, i) => (
-                    <Chip
-                      key={i}
-                      label={m}
-                      size="small"
-                      variant="outlined"
-                      onDelete={() => handleRemoveModelFromGroup(name, i)}
-                    />
-                  ))}
-                </Stack>
-                <Stack direction="row" spacing={1}>
-                  <TextField
-                    select
-                    size="small"
-                    label="Add model"
-                    value={newModelInput[name] || ""}
-                    onChange={(e) =>
-                      setNewModelInput((prev) => ({
-                        ...prev,
-                        [name]: e.target.value,
-                      }))
-                    }
-                    sx={{ minWidth: 200 }}
-                  >
-                    {availableModels.map((m) => (
-                      <MenuItem key={m} value={m}>
-                        {m}
-                      </MenuItem>
-                    ))}
-                  </TextField>
-                  <Button
-                    size="small"
-                    onClick={() => handleAddModelToGroup(name)}
-                  >
-                    Add
-                  </Button>
-                </Stack>
-              </Stack>
-            </Section>
-          ))}
-        </Stack>
-      </ConfigSection>
-
       <Divider sx={{ my: 1 }} />
       <Typography variant="subtitle1">Reliability & Advanced</Typography>
-
-      {/* ===================== CONDITIONAL ROUTES ===================== */}
-      <ConfigSection
-        title="Conditional Routes"
-        subtitle="Route requests to specific targets based on metadata field matching"
-        icon="solar:git-branch-linear"
-      >
-        <Stack spacing={2}>
-          <Alert severity="info" variant="outlined" sx={{ mb: 1 }}>
-            Define rules to route requests based on metadata fields. Rules are
-            evaluated in order; first match wins.
-          </Alert>
-
-          {conditionalRoutes.length === 0 && (
-            <Typography variant="body2" color="text.secondary">
-              No conditional routes defined. Add rules to route based on
-              metadata fields like model, user, or custom properties.
-            </Typography>
-          )}
-
-          {conditionalRoutes.map((route, idx) => (
-            <Section variant="panel" key={idx} sx={{ p: 1.5 }}>
-              <Stack
-                direction="row"
-                spacing={1.5}
-                alignItems="center"
-                flexWrap="wrap"
-              >
-                <TextField
-                  size="small"
-                  label="Field"
-                  value={route.field || ""}
-                  onChange={(e) =>
-                    handleConditionalRouteChange(idx, "field", e.target.value)
-                  }
-                  sx={{ width: 160 }}
-                  helperText="e.g. model, user, metadata.env"
-                />
-                <TextField
-                  select
-                  size="small"
-                  label="Operator"
-                  value={route.operator || "$eq"}
-                  onChange={(e) =>
-                    handleConditionalRouteChange(
-                      idx,
-                      "operator",
-                      e.target.value,
-                    )
-                  }
-                  sx={{ width: 120 }}
-                >
-                  {["$eq", "$ne", "$in", "$regex", "$gt", "$lt"].map((op) => (
-                    <MenuItem key={op} value={op}>
-                      {op}
-                    </MenuItem>
-                  ))}
-                </TextField>
-                <TextField
-                  size="small"
-                  label="Value"
-                  value={
-                    typeof route.value === "object"
-                      ? JSON.stringify(route.value)
-                      : route.value || ""
-                  }
-                  onChange={(e) => {
-                    let val = e.target.value;
-                    if (route.operator === "$in") {
-                      try {
-                        val = JSON.parse(val);
-                      } catch {
-                        /* keep as string */
-                      }
-                    }
-                    handleConditionalRouteChange(idx, "value", val);
-                  }}
-                  sx={{ width: 180 }}
-                  helperText={route.operator === "$in" ? '["a","b"]' : ""}
-                />
-                <TextField
-                  size="small"
-                  label="Target Provider"
-                  value={route.target || ""}
-                  onChange={(e) =>
-                    handleConditionalRouteChange(idx, "target", e.target.value)
-                  }
-                  sx={{ width: 160 }}
-                />
-                <IconButton
-                  size="small"
-                  onClick={() => handleRemoveConditionalRoute(idx)}
-                >
-                  <Iconify
-                    icon="solar:trash-bin-trash-linear"
-                    width={20}
-                    color="error.main"
-                  />
-                </IconButton>
-              </Stack>
-            </Section>
-          ))}
-
-          <Button
-            size="small"
-            variant="outlined"
-            onClick={handleAddConditionalRoute}
-            startIcon={<Iconify icon="solar:add-linear" width={16} />}
-          >
-            Add Route Rule
-          </Button>
-        </Stack>
-      </ConfigSection>
 
       {/* ===================== CIRCUIT BREAKER ===================== */}
       <ConfigSection
@@ -1304,6 +900,9 @@ const RoutingConfigTab = ({ routing, onChange }) => {
               <Typography variant="body2">Enable Circuit Breaker</Typography>
             }
           />
+          <Typography typography="s2" color="text.secondary">
+            {PROVIDER_LOCK_FAILOVER_NOTE}
+          </Typography>
 
           {circuitBreaker.enabled && (
             <>
@@ -1493,9 +1092,7 @@ const RoutingConfigTab = ({ routing, onChange }) => {
                 control={
                   <Switch
                     size="small"
-                    checked={
-                      retryConfig.on_timeout ?? retryConfig.onTimeout ?? true
-                    }
+                    checked={retryOnTimeout(config)}
                     onChange={(e) =>
                       handleNestedChange(
                         "retry",
@@ -1557,143 +1154,6 @@ const RoutingConfigTab = ({ routing, onChange }) => {
         </Stack>
       </ConfigSection>
 
-      {/* ===================== TRAFFIC MIRRORING ===================== */}
-      <ConfigSection
-        title="Traffic Mirroring"
-        subtitle="Mirror requests to secondary providers for comparison and testing"
-        icon="solar:copy-linear"
-      >
-        <Stack spacing={2}>
-          <FormControlLabel
-            control={
-              <Switch
-                size="small"
-                checked={mirrorConfig.enabled || false}
-                onChange={(e) =>
-                  onChange({
-                    ...config,
-                    mirror: { ...mirrorConfig, enabled: e.target.checked },
-                  })
-                }
-              />
-            }
-            label={
-              <Typography variant="body2">Enable Traffic Mirroring</Typography>
-            }
-          />
-
-          {mirrorConfig.enabled && (
-            <>
-              <Alert severity="info" variant="outlined" sx={{ mb: 1 }}>
-                Mirror rules send a copy of matching requests to a secondary
-                provider. The primary response is returned to the client; the
-                mirror response is logged for comparison.
-              </Alert>
-
-              {mirrorRules.length === 0 && (
-                <Typography variant="body2" color="text.secondary">
-                  No mirror rules defined. Add rules to specify which models to
-                  mirror and to which target.
-                </Typography>
-              )}
-
-              {mirrorRules.map((rule, idx) => (
-                <Section variant="panel" key={idx} sx={{ p: 1.5 }}>
-                  <Stack
-                    direction="row"
-                    spacing={1.5}
-                    alignItems="center"
-                    flexWrap="wrap"
-                  >
-                    <TextField
-                      select
-                      size="small"
-                      label="Source Model"
-                      value={rule.source_model || ""}
-                      onChange={(e) =>
-                        handleMirrorRuleChange(
-                          idx,
-                          "source_model",
-                          e.target.value,
-                        )
-                      }
-                      sx={{ minWidth: 180 }}
-                    >
-                      {availableModels.map((m) => (
-                        <MenuItem key={m} value={m}>
-                          {m}
-                        </MenuItem>
-                      ))}
-                    </TextField>
-                    <TextField
-                      size="small"
-                      label="Target Provider"
-                      value={rule.target_provider || rule.targetProvider || ""}
-                      onChange={(e) =>
-                        handleMirrorRuleChange(
-                          idx,
-                          "target_provider",
-                          e.target.value,
-                        )
-                      }
-                      sx={{ width: 150 }}
-                    />
-                    <TextField
-                      size="small"
-                      label="Target Model"
-                      value={rule.target_model || rule.targetModel || ""}
-                      onChange={(e) =>
-                        handleMirrorRuleChange(
-                          idx,
-                          "target_model",
-                          e.target.value,
-                        )
-                      }
-                      sx={{ width: 180 }}
-                    />
-                    <TextField
-                      size="small"
-                      type="number"
-                      label="Sample Rate"
-                      value={rule.sample_rate ?? 1.0}
-                      onChange={(e) =>
-                        handleMirrorRuleChange(
-                          idx,
-                          "sample_rate",
-                          Number(e.target.value),
-                        )
-                      }
-                      sx={{ width: 120 }}
-                      inputProps={{ step: 0.1, min: 0, max: 1 }}
-                      helperText="0-1 (1 = 100%)"
-                    />
-                    <IconButton
-                      size="small"
-                      onClick={() => handleRemoveMirrorRule(idx)}
-                    >
-                      <Iconify
-                        icon="solar:trash-bin-trash-linear"
-                        width={20}
-                        color="error.main"
-                      />
-                    </IconButton>
-                  </Stack>
-                </Section>
-              ))}
-
-              <Button
-                size="small"
-                variant="outlined"
-                onClick={handleAddMirrorRule}
-                startIcon={<Iconify icon="solar:add-linear" width={16} />}
-              >
-                Add Mirror Rule
-              </Button>
-            </>
-          )}
-        </Stack>
-      </ConfigSection>
-
       {/* ===================== MODEL TIMEOUTS ===================== */}
       <ConfigSection
         title="Model Timeouts"
@@ -1731,11 +1191,12 @@ const RoutingConfigTab = ({ routing, onChange }) => {
               </Typography>
               <IconButton
                 size="small"
+                aria-label={`Remove model timeout ${model}`}
                 onClick={() => handleRemoveModelTimeout(model)}
               >
                 <Iconify
                   icon="solar:trash-bin-trash-linear"
-                  width={20}
+                  width={18}
                   color="error.main"
                 />
               </IconButton>
@@ -1781,6 +1242,18 @@ const RoutingConfigTab = ({ routing, onChange }) => {
           </Stack>
         </Stack>
       </ConfigSection>
+
+      {stored.rows.length > 0 && (
+        <Typography
+          typography="s2"
+          color="text.secondary"
+          data-testid="routing-stored-not-run"
+        >
+          This configuration also stores routing settings this gateway does not
+          run (default model, conditional or scheduled routes, race mode). A
+          save keeps them unchanged.
+        </Typography>
+      )}
     </Stack>
   );
 };

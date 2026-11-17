@@ -27,7 +27,9 @@ def _schema(serializer):
 
 @pytest.fixture
 def eval_template(monkeypatch):
-    template = SimpleNamespace(owner="custom", config={})
+    # A saved template's eval_type defaults to llm; the request check
+    # refuses an external one.
+    template = SimpleNamespace(owner="custom", config={}, eval_type="llm")
     monkeypatch.setattr(
         EvalTemplate.no_workspace_objects, "get", Mock(return_value=template)
     )
@@ -121,6 +123,8 @@ def test_configure_view_preserves_provider_credentials(monkeypatch, eval_templat
     request = SimpleNamespace(
         method="POST",
         user=SimpleNamespace(organization="organization"),
+        # The view looks the template up in the request's workspace.
+        workspace=None,
         data={
             "eval_config": {"eval_templates": "example", "inputs": {}},
             "platform": "langfuse",

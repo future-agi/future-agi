@@ -1,0 +1,14 @@
+# U1: OTel uses the base walk OAuth recorder and capture sink, never H-MCP's
+# public-only override. Only the app's declared MCP state/catalogue differs here.
+services:
+  app:
+    environment:
+      AGENTCC_MCP_UPSTREAM_OAUTH_ENABLED: ${AGENTCC_MCP_UPSTREAM_OAUTH_ENABLED:-false}
+      AGENTCC_MCP_CLIENT_OAUTH_ENABLED: ${AGENTCC_MCP_CLIENT_OAUTH_ENABLED:-false}
+      AGENTCC_MCP_K2_APPS_ENABLED: ${AGENTCC_MCP_K2_APPS_ENABLED:-false}
+      AGENTCC_MCP_STATE_KEYS: e2e-only-mcp-state-key-not-a-secret-0000
+      SSL_CERT_FILE: /opt/e2e/mcp/ca.pem
+    volumes:
+      - ./e2e/.mcp/catalog:/opt/e2e/mcp/catalog:ro
+      - ./e2e/.mcp/catalog/dist/catalog.json:/app/backend/agentcc/connector_catalog/catalog.json:ro
+      - ./e2e/.mcp/ca.pem:/opt/e2e/mcp/ca.pem:ro

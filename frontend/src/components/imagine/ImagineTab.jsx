@@ -20,6 +20,9 @@ import { enqueueSnackbar } from "notistack";
 import { useCreateSavedView } from "src/api/project/saved-views";
 import useImagineStore from "./useImagineStore";
 import useFalconStore from "src/sections/falcon-ai/store/useFalconStore";
+import { captureFalconRequest } from "src/sections/falcon-ai/store/falconRequestGuard";
+import useFalconDeferredAction from "src/sections/falcon-ai/hooks/useFalconDeferredAction";
+import { getConversation } from "src/sections/falcon-ai/hooks/useFalconAPI";
 import WidgetCanvas from "./WidgetCanvas";
 import ImagineChatPanel from "./ImagineChatPanel";
 import SuggestedPrompts from "./SuggestedPrompts";
@@ -43,27 +46,137 @@ export default function ImagineTab({
   suggestedPrompts,
 }) {
   const widgets = useImagineStore((s) => s.widgets);
+  const boundSavedViewId = useImagineStore((s) => s._savedViewId);
   const replaceAll = useImagineStore((s) => s.replaceAll);
   const [chatWidth, setChatWidth] = useState(360);
   const [showChat, setShowChat] = useState(!readOnly);
 
   const chatRef = useRef(null);
+  const schedule = useFalconDeferredAction();
+  // Bind saved props when selected, not when a later widget update reruns the
+  // hydration effect. Recovery must not make an old saved conversation current.
+  const savedScope = useMemo(
+    () => captureFalconRequest(),
+    [savedViewId, savedConversationId, traceId, projectId],
+  );
   const { mutate: createSavedView, isPending: isSaving } =
     useCreateSavedView(projectId);
+
+  const tabScopeRef = useRef(savedScope);
+  const draftAttemptRef = useRef(null);
+  useEffect(() => {
+    tabScopeRef.current = savedScope;
+    if (draftAttemptRef.current?.scope !== savedScope) {
+      draftAttemptRef.current = null;
+    }
+    return () => {
+      tabScopeRef.current = null;
+    };
+  }, [savedScope]);
+
+  const bindSavedView = useCallback(
+    (response) => {
+      if (tabScopeRef.current !== savedScope || !savedScope()) return false;
+      const id = response?.data?.result?.id;
+      if (!id) return false;
+      const store = useImagineStore.getState();
+      draftAttemptRef.current = null;
+      store.setSavedViewId(id);
+      // A successful explicit save also recovers widgets whose draft failed.
+      store.widgets
+        .filter((w) => w.dynamicAnalysis)
+        .forEach((w) => {
+          store.setAnalysis(traceId, w.id, null);
+        });
+      return true;
+    },
+    [savedScope, traceId],
+  );
+
+  // Dynamic analyses require a persisted identity, even in a newly authored
+  // tab. Make a private draft once; the analysis hook waits for its returned ID.
+  useEffect(() => {
+    if (
+      readOnly ||
+      savedViewId ||
+      boundSavedViewId ||
+      !projectId ||
+      !traceId ||
+      !widgets.some((w) => w.dynamicAnalysis?.prompt) ||
+      draftAttemptRef.current ||
+      !savedScope()
+    )
+      return;
+    const attempt = { scope: savedScope };
+    draftAttemptRef.current = attempt;
+    const isCurrent = () =>
+      draftAttemptRef.current === attempt &&
+      tabScopeRef.current === savedScope &&
+      savedScope();
+    const fail = () => {
+      if (!isCurrent()) return;
+      const store = useImagineStore.getState();
+      store.widgets
+        .filter((w) => w.dynamicAnalysis)
+        .forEach((w) => {
+          store.setAnalysis(
+            traceId,
+            w.id,
+            "*Analysis could not start. Use Save View to retry.*",
+          );
+        });
+      enqueueSnackbar(
+        "Could not create analysis draft. Use Save View to retry.",
+        { variant: "error" },
+      );
+    };
+    createSavedView(
+      {
+        project_id: projectId,
+        name: `Imagine draft ${crypto.randomUUID()}`,
+        tab_type: "imagine",
+        visibility: "personal",
+        config: {
+          widgets: consolidateAnalysisPrompts(
+            widgets,
+            useFalconStore.getState().messages,
+          ),
+          conversation_id: useImagineStore.getState().conversationId,
+        },
+      },
+      {
+        onSuccess: (response) => {
+          if (isCurrent() && !bindSavedView(response)) fail();
+        },
+        onError: fail,
+      },
+    );
+  }, [
+    readOnly,
+    savedViewId,
+    boundSavedViewId,
+    projectId,
+    traceId,
+    widgets,
+    savedScope,
+    createSavedView,
+    bindSavedView,
+  ]);
 
   // Load saved widgets when tab changes (savedViewId changes)
   const prevViewIdRef = useRef(savedViewId);
   useEffect(() => {
+    if (!savedScope()) return;
     const viewChanged = savedViewId !== prevViewIdRef.current;
     prevViewIdRef.current = savedViewId;
 
     if (savedWidgets?.length && (viewChanged || widgets.length === 0)) {
       replaceAll(savedWidgets);
     }
-    if (savedConversationId) {
-      useImagineStore.getState().setConversationId(savedConversationId);
-    }
-    if (savedViewId) {
+    if (
+      savedViewId &&
+      (viewChanged || !useImagineStore.getState()._savedViewId)
+    ) {
       useImagineStore.getState().setSavedViewId(savedViewId);
     }
   }, [
@@ -72,16 +185,36 @@ export default function ImagineTab({
     savedConversationId,
     widgets.length,
     replaceAll,
+    savedScope,
   ]);
 
+  // Saved-view props can outlive recovery in a parent/query cache, including
+  // across remounts. An ID alone is not proof of access in the current scope.
+  useEffect(() => {
+    if (!savedConversationId || !savedScope()) return undefined;
+    const isCurrent = captureFalconRequest({ conversation: true });
+    let active = true;
+    getConversation(savedConversationId)
+      .then(() => {
+        if (!active || !savedScope() || !isCurrent()) return;
+        useImagineStore.getState().setConversationId(savedConversationId);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [savedConversationId, savedScope]);
+
   // Handle prompt chip selection — sends directly to chat
-  const handlePromptSelect = useCallback((text) => {
-    setShowChat(true);
-    // Small delay to let chat panel mount if it was hidden
-    setTimeout(() => {
-      chatRef.current?.send(text);
-    }, 100);
-  }, []);
+  const handlePromptSelect = useCallback(
+    (text) => {
+      setShowChat(true);
+      // Small delay to let chat panel mount if it was hidden. Scope is captured
+      // now; capturing it inside ImagineChatPanel.send would be too late.
+      schedule(() => chatRef.current?.send(text), 100, { conversation: true });
+    },
+    [schedule],
+  );
 
   // Horizontal resize handler
   const handleResizeStart = useCallback(
@@ -138,6 +271,7 @@ export default function ImagineTab({
   );
 
   const handleSaveConfirm = useCallback(() => {
+    if (isSaving || !savedScope()) return;
     if (!projectId) {
       enqueueSnackbar("Cannot save — project context is missing", {
         variant: "error",
@@ -160,7 +294,14 @@ export default function ImagineTab({
         },
       },
       {
-        onSuccess: () => {
+        onSuccess: (response) => {
+          if (tabScopeRef.current !== savedScope || !savedScope()) return;
+          if (!bindSavedView(response)) {
+            enqueueSnackbar("Saved view identity is missing. Please retry.", {
+              variant: "error",
+            });
+            return;
+          }
           enqueueSnackbar("View saved as new tab", { variant: "success" });
           setSaveAnchorEl(null);
           onSaved?.();
@@ -170,7 +311,17 @@ export default function ImagineTab({
         },
       },
     );
-  }, [saveName, suggestedName, widgets, projectId, createSavedView, onSaved]);
+  }, [
+    saveName,
+    suggestedName,
+    widgets,
+    projectId,
+    createSavedView,
+    onSaved,
+    isSaving,
+    savedScope,
+    bindSavedView,
+  ]);
 
   // Empty state with suggested prompts
   const emptyState = (
@@ -320,6 +471,7 @@ export default function ImagineTab({
             emptyState={emptyState}
             chatRef={chatRef}
             traceId={traceId}
+            projectId={projectId}
           />
         </Box>
 

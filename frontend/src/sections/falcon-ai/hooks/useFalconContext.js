@@ -5,6 +5,17 @@ import { useMemo } from "react";
 const PAGE_CONTEXT_MAP = [
   { prefix: "/dashboard/data/", page: "datasets", entity: "dataset" },
   { prefix: "/dashboard/data", page: "datasets" },
+  // Experiment and compare pages before the dataset prefix (§3.13).
+  {
+    prefix: "/dashboard/develop/experiment/",
+    page: "experiments",
+    entity: "experiment",
+  },
+  {
+    pattern: /^\/dashboard\/develop\/([^/]+)\/compare(\/|$)/,
+    page: "experiments",
+    entity: "dataset",
+  },
   { prefix: "/dashboard/develop/", page: "datasets", entity: "dataset" },
   { prefix: "/dashboard/develop", page: "datasets" },
   { prefix: "/dashboard/workbench/", page: "prompts", entity: "prompt" },
@@ -79,6 +90,16 @@ export function useFalconContext() {
 
   return useMemo(() => {
     for (const mapping of PAGE_CONTEXT_MAP) {
+      if (mapping.pattern) {
+        const match = mapping.pattern.exec(pathname);
+        if (!match) continue;
+        return {
+          page: mapping.page,
+          path: pathname,
+          entity_type: mapping.entity,
+          entity_id: match[1],
+        };
+      }
       if (pathname.startsWith(mapping.prefix)) {
         const result = {
           page: mapping.page,

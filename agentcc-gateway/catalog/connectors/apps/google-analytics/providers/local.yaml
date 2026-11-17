@@ -1,0 +1,38 @@
+schema: "connector-manifest/v1#provider"
+# Google's Analytics MCP server runs locally with Application Default Credentials.
+# Write tools are disabled by default and require explicit opt-in.
+app: google-analytics
+id: local
+version: 1.0.0
+kind: vendor_local
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: stdio
+  command: pipx
+  args: [run, analytics-mcp]
+  env:
+    GOOGLE_APPLICATION_CREDENTIALS: Absolute path to the local Application Default Credentials (ADC) or service-account JSON file.
+    GOOGLE_CLOUD_PROJECT: Google Cloud project ID with the Analytics Admin API and Analytics Data API enabled; recommended for the quota project.
+    ANALYTICS_MCP_ALLOW_WRITE: Optional boolean enabling tools that create or modify Analytics resources; defaults to false. Leave unset or false for the default read-only configuration.
+hosted: false
+trusted: false
+accountModes: [agent]
+auth: { kind: local_setup }
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.command
+    url: https://github.com/googleanalytics/google-analytics-mcp
+    fetchedAt: 2026-11-16
+  - fact: transport.args
+    url: https://github.com/googleanalytics/google-analytics-mcp
+    fetchedAt: 2026-11-16
+  - fact: transport.env
+    url: https://github.com/googleanalytics/google-analytics-mcp
+    fetchedAt: 2026-11-16
+  - fact: auth.kind
+    url: https://github.com/googleanalytics/google-analytics-mcp
+    fetchedAt: 2026-11-16

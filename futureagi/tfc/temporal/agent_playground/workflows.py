@@ -55,7 +55,14 @@ NODE_EXECUTION_RETRY_POLICY = RetryPolicy(
     maximum_interval=timedelta(minutes=2),
     maximum_attempts=3,
     backoff_coefficient=2.0,
-    non_retryable_error_types=["ValueError", "NodeRunnerNotFoundError"],
+    # A catalog miss and a missing provider key are ValueError subclasses;
+    # the names match exactly.
+    non_retryable_error_types=[
+        "ValueError",
+        "ModelNotInCatalog",
+        "MissingProviderKeyError",
+        "NodeRunnerNotFoundError",
+    ],
 )
 
 
@@ -98,6 +105,14 @@ class GraphExecutionWorkflow:
     @workflow.run
     async def run(self, input: ExecuteGraphInput) -> ExecuteGraphOutput:
         self._graph_execution_id = input.graph_execution_id
+        if input.native_context is not None:
+            result = await workflow.execute_activity(
+                'execute_native_graph_activity',
+                {'native_context': input.native_context, 'graph_execution_id': input.graph_execution_id,
+                 'graph_version_id': input.graph_version_id, 'input_payload': input.input_payload},
+                start_to_close_timeout=timedelta(hours=12), heartbeat_timeout=timedelta(minutes=5),
+                retry_policy=NODE_EXECUTION_RETRY_POLICY)
+            return ExecuteGraphOutput(**result)
 
         # Phase 1: Analyze graph topology
         analyze_result = await workflow.execute_activity(

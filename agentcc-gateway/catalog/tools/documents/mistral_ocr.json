@@ -1,0 +1,32 @@
+{
+  "vendor": "mistral_ocr",
+  "capability": "documents",
+  "skus": [
+    {
+      "sku": "mistral_ocr.page",
+      "unit": "page",
+      "usd_per_unit": 0.004,
+      "free_on_failure": false
+    },
+    {
+      "sku": "mistral_ocr.page_batch",
+      "unit": "page",
+      "usd_per_unit": 0.002,
+      "free_on_failure": false
+    }
+  ],
+  "resale_status": "unconfirmed",
+  "resale_terms_ref": "",
+  "terms_url": "https://legal.mistral.ai/terms/commercial-terms-of-service",
+  "terms_checked_at": "2026-10-15",
+  "zdr_capable": false,
+  "trains_on_input": "no",
+  "improvement_license": false,
+  "regions": [],
+  "results_retention": "full",
+  "cacheable": "none",
+  "eval_export": "allowed",
+  "no_divert": false,
+  "no_perf_disclosure": false,
+  "no_benchmark": false
+}

@@ -1,0 +1,9 @@
+A Future AGI maintainer took this action on {{ ref }}: {{ action }}.
+{% if reason %}
+Reason: {{ reason }}
+{% endif %}{% if note %}
+Note from the maintainer:
+{{ note }}
+{% endif %}
+To appeal, reply to {{ security }} within 30 days, quoting {{ ref }}.
+Until that address exists, reply to this email. Another maintainer handles appeals.

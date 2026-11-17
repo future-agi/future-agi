@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: checkly
+version: 1.0.0
+name: Checkly
+description: "Inspect monitoring checks and results, run deployed checks, and manage status page incidents."
+vendor:
+  name: Checkly
+  domains: [checklyhq.com]
+eeCategory: developer
+group: other
+categories: [developer, observability]
+tags: [monitors, alerts, automation]
+docsUrl: https://www.checklyhq.com/docs/ai/mcp-server/
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://www.checklyhq.com/docs/ai/mcp-server/
+    fetchedAt: 2026-11-09

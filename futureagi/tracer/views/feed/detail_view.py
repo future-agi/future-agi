@@ -27,6 +27,7 @@ from tracer.views.feed._permissions import (
     ErrorFeedLicenseRequired,
     resolve_requested_project_ids,
 )
+from tracer.views.feed._schema import WORKSPACE_QUERY_PARAMETER
 
 logger = structlog.get_logger(__name__)
 
@@ -46,6 +47,7 @@ class FeedDetailView(ErrorFeedLicenseRequired, APIView):
 
     @validated_request(
         query_serializer=FeedDetailQuerySerializer,
+        manual_parameters=[WORKSPACE_QUERY_PARAMETER],
         responses={200: FeedDetailApiResponseSerializer, **ERROR_RESPONSES},
     )
     def get(self, request, cluster_id: str):

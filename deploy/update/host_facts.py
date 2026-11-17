@@ -24,7 +24,8 @@ from types import SimpleNamespace
 
 from .compatibility import Observations, RuntimeImage, decode_document, topology_profile
 from .contracts import InstallationBinding, ReasonCode, VerificationSnapshot
-from .install import Installation, DISTRIBUTED_FILE, PRODUCTION_ENV, PRODUCTION_OVERLAY
+from .install import (Installation, DISTRIBUTED_FILE, PRODUCTION_ENV, PRODUCTION_HUB_OVERLAY,
+                      PRODUCTION_OVERLAY)
 from .manifest import ManifestError, hash_path, manifest_hash, parse_image_ref, read_deployment_file_list, validate_manifest
 from .orchestrator import GuardRefused, check_binding, check_deployment, fingerprints, profiles, require
 from .runner_state import RunnerStateStore, StoreError
@@ -98,14 +99,22 @@ def _binding_fingerprint(binding):
 
 
 def binding_status_overlay(binding):
-    """Decode only the two fixed production identities; COMPOSE_FILE is unchanged."""
+    """Decode only the fixed production identities; COMPOSE_FILE is unchanged.
+
+    The distributed file and the production overlay, then the Hub's production
+    file when the Hub is on, then the status overlay when it is registered: in
+    that order only.
+    """
     if not binding.production:
         return None
     base = (binding.checkout / DISTRIBUTED_FILE, binding.checkout / PRODUCTION_OVERLAY)
+    hub = (*base, binding.checkout / PRODUCTION_HUB_OVERLAY)
     overlay = binding.checkout / STATUS_OVERLAY
-    require(binding.compose_files in (base, (*base, overlay))
+    require(binding.compose_files in (base, (*base, overlay), hub, (*hub, overlay))
             and binding.installation_fingerprint == _binding_fingerprint(binding), ReasonCode.CONFIGURATION_CHANGED)
-    return production_status_overlay(binding.checkout) if len(binding.compose_files) == 3 else None
+    if binding.compose_files[-1] != overlay:
+        return None
+    return production_status_overlay(binding.checkout)
 
 
 def registered_status_overlay(store):

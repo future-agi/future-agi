@@ -41,6 +41,7 @@ from tracer.views.feed._permissions import (
     ErrorFeedLicenseRequired,
     resolve_requested_project_ids,
 )
+from tracer.views.feed._schema import WORKSPACE_QUERY_PARAMETER
 
 logger = structlog.get_logger(__name__)
 
@@ -69,6 +70,7 @@ class FeedOverviewView(ErrorFeedLicenseRequired, APIView):
 
     @validated_request(
         query_serializer=OverviewQuerySerializer,
+        manual_parameters=[WORKSPACE_QUERY_PARAMETER],
         responses={200: OverviewApiResponseSerializer, **ERROR_RESPONSES},
     )
     def get(self, request, cluster_id: str):
@@ -101,6 +103,7 @@ class FeedTracesView(ErrorFeedLicenseRequired, APIView):
 
     @validated_request(
         query_serializer=TracesTabQuerySerializer,
+        manual_parameters=[WORKSPACE_QUERY_PARAMETER],
         responses={200: TracesTabApiResponseSerializer, **ERROR_RESPONSES},
     )
     def get(self, request, cluster_id: str):
@@ -238,8 +241,9 @@ class FeedDeepAnalysisView(ErrorFeedLicenseRequired, APIView):
     Body: ``{trace_id, force?}``. On first click (``force=False``),
     returns the cached result if one exists without re-running; on an
     explicit Re-run click (``force=True``), deletes the cached
-    analysis and dispatches a fresh Temporal run. Always returns 202
-    with a status the frontend can switch on.
+    analysis and dispatches a fresh Temporal run. Successful requests return
+    HTTP 200 with the dispatch status. When background analysis is disabled,
+    uncached or forced requests return the standard HTTP 400 message envelope.
     """
 
     permission_classes = [IsAuthenticated]
@@ -272,6 +276,13 @@ class FeedDeepAnalysisView(ErrorFeedLicenseRequired, APIView):
             return self._gm.not_found(
                 f"Trace {trace_id} is not part of cluster {cluster_id}"
             )
+
+        if result.status == "temporarily_unavailable":
+            from tfc.capabilities.background_analysis import (
+                BACKGROUND_ANALYSIS_UNAVAILABLE_MESSAGE,
+            )
+
+            return self._gm.bad_request(BACKGROUND_ANALYSIS_UNAVAILABLE_MESSAGE)
 
         return self._gm.success_response(
             DeepAnalysisDispatchResponseSerializer(result).data

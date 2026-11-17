@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: brevo
+version: 1.0.0
+name: Brevo
+description: "Manage contacts, email campaigns, transactional messaging, and CRM records."
+vendor:
+  name: Brevo
+  domains: [brevo.com]
+eeCategory: communication
+group: other
+categories: [communication, email]
+tags: [email, messages]
+docsUrl: https://developers.brevo.com/docs/integration-guide
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://developers.brevo.com/docs/integration-guide
+    fetchedAt: 2026-11-09

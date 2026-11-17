@@ -13,14 +13,16 @@ import (
 // Config controls the auth extension. Auth is always active when PGWrite
 // is set — without it, spans land with empty project_id (unusable).
 type Config struct {
-	PGWrite     string        `yaml:"pg_write"`
-	PGRead      string        `yaml:"pg_read"`
-	RedisAddr   string        `yaml:"redis_addr"`
-	RedisPass   string        `yaml:"redis_password"`
-	CacheTTL    time.Duration `yaml:"cache_ttl"`
-	WarmTTL     time.Duration `yaml:"warm_ttl"`
-	PGPoolRead  int           `yaml:"pg_pool_read"`
-	PGPoolWrite int           `yaml:"pg_pool_write"`
+	PGWrite            string        `yaml:"pg_write"`
+	PGRead             string        `yaml:"pg_read"`
+	RedisAddr          string        `yaml:"redis_addr"`
+	RedisPass          string        `yaml:"redis_password"`
+	RedisTLS           bool          `yaml:"redis_tls"`
+	RedisTLSServerName string        `yaml:"redis_tls_server_name"`
+	CacheTTL           time.Duration `yaml:"cache_ttl"`
+	WarmTTL            time.Duration `yaml:"warm_ttl"`
+	PGPoolRead         int           `yaml:"pg_pool_read"`
+	PGPoolWrite        int           `yaml:"pg_pool_write"`
 	// UsageEvents controls billing events on the usage:events Redis stream
 	// (USAGE_EVENTS_ENABLED). Unset means on, as before this setting existed.
 	// Only Future AGI Cloud runs their consumer, so self-hosted installs set
@@ -29,6 +31,12 @@ type Config struct {
 	UsageEvents *bool `yaml:"usage_events"`
 	// UsageEventsMaxLen caps that stream (USAGE_EVENTS_MAX_LEN); 0 → default.
 	UsageEventsMaxLen int64 `yaml:"usage_events_max_len"`
+	// Peppers verifies stored API secrets (FI_API_SECRET_PEPPER and
+	// FI_API_SECRET_PEPPERS_RETIRED, resolved by ResolveSecretPeppers). Required:
+	// New refuses to start without it.
+	Peppers *SecretPeppers `yaml:"-"`
+	// EnvelopeKids are operator-assigned labels, never secret fingerprints.
+	EnvelopeKids []string `yaml:"envelope_kids"`
 }
 
 // UsageEventsOn reports whether the collector writes usage events: unless
@@ -90,11 +98,12 @@ func (c *Config) IsEnabled() bool {
 }
 
 func (c *Config) defaults() {
-	if c.CacheTTL == 0 {
-		c.CacheTTL = 5 * time.Minute
+	if c.CacheTTL <= 0 || c.CacheTTL > 30*time.Second {
+		c.CacheTTL = 30 * time.Second
 	}
-	if c.WarmTTL == 0 {
-		c.WarmTTL = 1 * time.Hour
+	c.WarmTTL = 0
+	if len(c.EnvelopeKids) == 0 {
+		c.EnvelopeKids = []string{"k1"}
 	}
 	if c.PGPoolRead == 0 {
 		c.PGPoolRead = 5

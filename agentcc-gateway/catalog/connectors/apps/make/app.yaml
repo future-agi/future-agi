@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: make
+version: 1.0.0
+name: Make
+description: "Run Make scenarios and manage automations for organizations hosted in the EU2 zone."
+vendor:
+  name: Make
+  domains: [make.com]
+eeCategory: productivity
+group: other
+categories: [productivity]
+tags: [tasks]
+docsUrl: https://developers.make.com/mcp-server
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://developers.make.com/mcp-server
+    fetchedAt: 2026-11-09

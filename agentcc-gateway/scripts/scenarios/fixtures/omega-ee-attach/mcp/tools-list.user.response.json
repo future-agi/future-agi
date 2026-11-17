@@ -1,0 +1,53 @@
+{
+  "http": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    }
+  },
+  "body": {
+    "jsonrpc": "2.0",
+    "id": 2,
+    "result": {
+      "tools": [
+        {
+          "name": "linear__create_issue",
+          "title": "Create issue",
+          "description": "Create an issue in a team.",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "team": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              }
+            },
+            "required": ["team", "title"]
+          },
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": false
+          }
+        },
+        {
+          "name": "linear__list_issues",
+          "title": "List issues",
+          "description": "List the issues assigned to you.",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "state": {
+                "type": "string"
+              }
+            }
+          },
+          "annotations": {
+            "readOnlyHint": true
+          }
+        }
+      ]
+    }
+  }
+}

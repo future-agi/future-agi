@@ -1,0 +1,46 @@
+# Buildkite's /direct endpoint accepts an existing API token for headless agents.
+# The separate /mcp endpoint uses OAuth; API-token scopes govern /direct calls.
+schema: "connector-manifest/v1#provider"
+app: buildkite
+id: api-key
+version: 1.1.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.buildkite.com/direct
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: API access token
+      help: "Create a Buildkite API access token in your user settings with the minimum scopes needed. The hosted server passes it to the Buildkite REST API; scopes control which tools succeed. Starting builds can incur compute charges. Supply the token without the Bearer prefix."
+      helpUrl: https://buildkite.com/docs/apis/managing-api-tokens
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_metered
+  source: https://buildkite.com/pricing
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://buildkite.com/docs/apis/mcp-server/remote/configuring-ai-tools
+    fetchedAt: 2026-11-09
+  - fact: transport.variant
+    url: https://buildkite.com/docs/apis/mcp-server/remote/configuring-ai-tools
+    fetchedAt: 2026-11-09
+  - fact: auth.kind
+    url: https://buildkite.com/docs/apis/mcp-server/remote/configuring-ai-tools
+    fetchedAt: 2026-11-09
+  - fact: auth.credentialParts
+    url: https://buildkite.com/docs/apis/mcp-server/remote/configuring-ai-tools
+    fetchedAt: 2026-11-09

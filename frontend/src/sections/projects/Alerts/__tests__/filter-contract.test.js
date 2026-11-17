@@ -164,6 +164,7 @@ describe("saved alert config hydration", () => {
       emails: [],
       slack: { webhookUrl: "", notes: "" },
       webhook: { url },
+      pagerduty: { routingKey: "" },
     });
   });
 
@@ -196,6 +197,7 @@ describe("saved alert config hydration", () => {
         notes: savedAlert.slack_notes,
       },
       webhook: { url: "" },
+      pagerduty: { routingKey: "" },
     });
 
     expect(values.alert_frequency).not.toBe(

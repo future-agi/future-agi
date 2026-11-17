@@ -1,24 +1,39 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/async"
+	"github.com/futureagi/agentcc-gateway/internal/config"
+	"github.com/futureagi/agentcc-gateway/internal/credentials"
 	"github.com/futureagi/agentcc-gateway/internal/middleware"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	authplugin "github.com/futureagi/agentcc-gateway/internal/plugins/auth"
 	ipaclplugin "github.com/futureagi/agentcc-gateway/internal/plugins/ipacl"
+	"github.com/futureagi/agentcc-gateway/internal/providers"
+	"github.com/futureagi/agentcc-gateway/internal/routing"
 	"github.com/futureagi/agentcc-gateway/internal/tenant"
 )
 
 // AsyncMiddleware checks for x-agentcc-async header and routes to async processing.
 // If the header is not set, returns false and the caller should proceed normally.
 // If the header is set, queues the job and writes the response, returning true.
-func (h *Handlers) AsyncMiddleware(w http.ResponseWriter, r *http.Request, rc *models.RequestContext) bool {
+//
+// provider and orgCfg are what routing resolved for rc. The job runs on them,
+// through the same pipeline as the synchronous request (runNonStream), so it
+// reaches only the providers that request could reach and is gated and
+// billed the same way.
+//
+// jobTimeout is the timeout ChatCompletion resolved for the request before
+// the request ceiling (requestTimeout, or requestTimeoutFor under a rollout
+// candidate's config), on the model the request named before routing
+// (call-order step 11): the same rule, and the same model, as the
+// synchronous request's timeout, even when routing then renamed the model.
+func (h *Handlers) AsyncMiddleware(w http.ResponseWriter, r *http.Request, rc *models.RequestContext, provider providers.Provider, orgCfg *tenant.OrgConfig, jobTimeout time.Duration) bool {
 	if h.asyncWorker == nil {
 		return false
 	}
@@ -31,9 +46,24 @@ func (h *Handlers) AsyncMiddleware(w http.ResponseWriter, r *http.Request, rc *m
 		return false
 	}
 
-	caller, ok := h.asyncCaller(r)
-	if !ok {
-		models.WriteError(w, models.ErrUnauthorized("Invalid or missing API key"))
+	// Refused to a key limited to its org's providers, which is every org key,
+	// as before this port. The job now runs on the provider routing admitted
+	// (asyncExecutor), but outside the handler's call-order hooks
+	// (idempotency, run budget), which settle when the handler returns,
+	// before the job runs. Opening async to org keys is feature work, not
+	// part of the org-scope port (release/gateway-launch).
+	if h.orgProvidersOnly(r.Context(), rc) {
+		models.WriteError(w, errDeferredRunUnavailable("async inference"))
+		return true
+	}
+
+	// A managed-service (license) token may call only POST
+	// /v1/chat/completions, so it could never read or delete its job, and
+	// the job would sit in the no-org tenant that every no-org key reads.
+	// Refuse it here, before any provider is called or the request metered.
+	if middleware.IsLicenseAuthorized(r.Context()) {
+		models.WriteError(w, models.ErrBadRequest("async_not_supported",
+			"Async inference (x-agentcc-async) is not available to a managed service token, which cannot read job results; send the request without x-agentcc-async."))
 		return true
 	}
 
@@ -45,12 +75,22 @@ func (h *Handlers) AsyncMiddleware(w http.ResponseWriter, r *http.Request, rc *m
 		}
 	}
 
-	// Determine org ID for scoping: the authenticated key's organization when
-	// keys are in use, otherwise the request's resolved organization.
-	orgID := caller.orgID
-	if caller.rawKey == "" {
-		orgID = rc.Metadata["org_id"]
+	// The job belongs to the org of the key KeyAuth authenticated, the same
+	// org GetAsyncJob and DeleteAsyncJob check, and to that key's principal:
+	// its org for an org key, the key itself for a key without an org.
+	caller, ok := h.asyncCaller(w, r)
+	if !ok {
+		return true
 	}
+	orgID := caller.orgID
+
+	// The job's own timeout. ChatCompletion held rc's timeout_ms at
+	// server.max_request_timeout, the ceiling on a synchronous response; a
+	// job writes none, so it runs to the timeout its request asked for
+	// (jobTimeout), held only at async.max_job_timeout
+	// (async.Worker.jobTimeout). The job and its executor copy rc below, and
+	// this 202 carries no x-agentcc-timeout-ms.
+	rc.Metadata["timeout_ms"] = strconv.FormatInt(jobTimeout.Milliseconds(), 10)
 
 	now := time.Now()
 	job := &async.Job{
@@ -60,26 +100,80 @@ func (h *Handlers) AsyncMiddleware(w http.ResponseWriter, r *http.Request, rc *m
 		Principal:    caller.principal,
 		EndpointType: rc.EndpointType,
 		Request:      rc.Request,
-		Metadata:     copyMetadata(rc.Metadata),
+		Metadata:     jobMetadata(rc.Metadata),
+		Exec:         h.asyncExecutor(r.Context(), r.Header, rc, provider, orgCfg),
 		CreatedAt:    now,
 		TTL:          ttl,
 		ExpiresAt:    now.Add(ttl + 24*time.Hour), // extra buffer before GC
 	}
 
-	// Capture the admission response before a worker can mutate the live job.
-	response := map[string]interface{}{
-		"job_id":     job.ID,
-		"status":     job.Status,
-		"created_at": job.CreatedAt,
-		"expires_at": job.ExpiresAt,
+	// Once submitted, the job belongs to the store and a worker may already be
+	// updating it, so read its state back through a locked snapshot. A job
+	// the queue refuses is not stored: the request gets the reason.
+	jobID, createdAt := job.ID, job.CreatedAt
+	status, expiresAt := job.Status, job.ExpiresAt
+	if apiErr := h.asyncWorker.Submit(job); apiErr != nil {
+		models.WriteError(w, apiErr)
+		return true
 	}
-	h.asyncWorker.Submit(job)
+	if h.asyncStore != nil {
+		if snap := h.asyncStore.Get(jobID); snap != nil {
+			status, expiresAt = snap.Status, snap.ExpiresAt
+		}
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
-	json.NewEncoder(w).Encode(response)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"job_id":     jobID,
+		"status":     status,
+		"created_at": createdAt,
+		"expires_at": expiresAt,
+	})
 
 	return true
+}
+
+// asyncExecutor returns the job executor for an async request: it runs a copy
+// of rc, taken now because the handler releases rc when it returns, on
+// provider through runNonStream, under the key or license authorization that
+// admitted the request. It never resolves a provider itself.
+func (h *Handlers) asyncExecutor(reqCtx context.Context, header http.Header, rc *models.RequestContext, provider providers.Provider, orgCfg *tenant.OrgConfig) async.Executor {
+	jobRC := rc.CloneRequest()
+	// Async results are JSON, and only a non-stream request runs the
+	// post-plugins (cost, credits, logging) inside the pipeline.
+	jobRC.IsStream = false
+	admitted := middleware.WithAuthorizationOf(context.Background(), reqCtx)
+	// The request's retry headers were validated before routing; the job
+	// retries as the request would have.
+	retries, _ := routing.ParseRetryOverrides(header)
+
+	return func(ctx context.Context) (*async.Execution, error) {
+		jobRC.StartTime = time.Now()
+		jobCtx := routing.WithRetryOverrides(middleware.WithAuthorizationOf(ctx, admitted), retries)
+		// A key rotation promoted since the job was queued: run on the
+		// instance serving now (an org's own provider stays as captured).
+		_, err := h.runNonStream(jobCtx, jobRC, h.registry.CurrentInstance(provider), orgCfg)
+		// A job whose answer an output check withheld fails with that
+		// guardrail's error, as its synchronous request would.
+		err = pipelineErr(jobRC, err)
+		if err == nil && jobRC.Response != nil {
+			// The response checks writeChatResponse makes for a sync request.
+			presentUsageCost(jobRC)
+			if apiErr := h.checkToolCalls(jobRC, jobRC.Response); apiErr != nil {
+				err = apiErr
+				jobRC.Response = nil
+			}
+		}
+		result := &async.Execution{
+			Response:         jobRC.Response,
+			Provider:         jobRC.Provider,
+			CredentialSource: jobRC.CredentialSource,
+			Metadata:         jobMetadata(jobRC.Metadata),
+		}
+		jobRC.Release() // runs the finalizers the job's pre-plugins registered
+		return result, err
+	}
 }
 
 // GetAsyncJob handles GET /v1/async/{job_id}.
@@ -100,17 +194,17 @@ func (h *Handlers) GetAsyncJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	caller, ok := h.asyncCaller(r)
+	caller, ok := h.asyncCaller(w, r)
 	if !ok {
-		models.WriteError(w, models.ErrUnauthorized("Invalid or missing API key"))
 		return
 	}
 	if err := h.resultNetworkAdmission(r, &caller); err != nil {
 		models.WriteError(w, err)
 		return
 	}
-	job := h.asyncStore.GetForPrincipal(jobID, caller.principal)
-
+	// Another org's job, or another key's job, answers 404, the same as a
+	// missing one.
+	job := h.asyncStore.GetForOwner(jobID, caller.orgID, caller.principal)
 	if job == nil {
 		models.WriteError(w, models.ErrNotFound("job_not_found", "Async job not found"))
 		return
@@ -139,18 +233,18 @@ func (h *Handlers) DeleteAsyncJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	caller, ok := h.asyncCaller(r)
+	caller, ok := h.asyncCaller(w, r)
 	if !ok {
-		models.WriteError(w, models.ErrUnauthorized("Invalid or missing API key"))
 		return
 	}
 	if err := h.resultNetworkAdmission(r, &caller); err != nil {
 		models.WriteError(w, err)
 		return
 	}
-
-	// Authorize and cancel atomically; never authorize a snapshot then delete by ID.
-	if !h.asyncStore.CancelForPrincipal(jobID, caller.principal) {
+	// Check ownership and delete in one step and, if the job is running,
+	// cancel its provider call. Another org's or another key's job answers
+	// 404, the same as a missing one, and is left untouched.
+	if !h.asyncStore.DeleteForOwner(jobID, caller.orgID, caller.principal) {
 		models.WriteError(w, models.ErrNotFound("job_not_found", "Async job not found"))
 		return
 	}
@@ -164,60 +258,86 @@ func (h *Handlers) DeleteAsyncJob(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// asyncCallerInfo identifies who submits or accesses an async job.
+// asyncWorkerConfig reads the async: section of cfg. A job's org chooses
+// the provider instance it runs on, and the caller its timeout header, so
+// only the operator's config may bound how long a job holds a worker that
+// every org shares. An unset max_job_timeout is the longest timeout cfg gives
+// a request or a provider: server.default_request_timeout, any
+// routing.model_timeouts entry, any providers.*.default_timeout. A job that
+// ran on the gateway's providers before jobs ran on their org's (when the
+// provider's timeout bounded it) is not cut shorter than it was.
+func asyncWorkerConfig(cfg *config.Config) async.WorkerConfig {
+	maxJobTimeout := cfg.Async.MaxJobTimeout
+	if maxJobTimeout <= 0 {
+		maxJobTimeout = cfg.Server.DefaultRequestTimeout
+		for _, d := range cfg.Routing.ModelTimeouts {
+			maxJobTimeout = max(maxJobTimeout, d)
+		}
+		for _, p := range cfg.Providers {
+			maxJobTimeout = max(maxJobTimeout, p.DefaultTimeout)
+		}
+	}
+	return async.WorkerConfig{
+		MaxWorkers:       cfg.Async.MaxWorkers,
+		MaxWorkersPerOrg: cfg.Async.MaxWorkersPerOrg,
+		MaxJobTimeout:    maxJobTimeout,
+	}
+}
+
+// asyncCallerInfo identifies who submits or reads an async job.
 type asyncCallerInfo struct {
-	// principal owns the job. It is empty only when key auth is disabled.
+	// principal owns the job: "org:<id>" for a key with an org, so the org's
+	// keys share its jobs, and "key:<id>" for a key without one, so it owns
+	// only its own. Empty only when key auth is off.
 	principal string
-	// orgID is the authenticated key's organization ("" for keys without one).
+	// orgID is the authenticated key's org ("" for a key without one).
 	orgID string
-	// rawKey is the key the caller authenticated with ("" without key auth).
+	// rawKey is the key the caller sent ("" without key auth).
 	rawKey string
 }
 
-// asyncCaller uses the same credential precedence as KeyAuth. Org-scoped
-// keys share their organization's jobs; keys without an org own only their jobs.
-func (h *Handlers) asyncCaller(r *http.Request) (asyncCallerInfo, bool) {
-	// A license token authorizes synchronous requests only; it is not an owner
-	// for stored async jobs.
-	if middleware.IsLicenseAuthorized(r.Context()) {
+// asyncCaller is the caller of an async route, from the key KeyAuth
+// authenticated for this request (callerIdentity), never a client org
+// header. A license token authorizes synchronous requests only, so it owns
+// no stored job; nor does a request with no key where only license auth is
+// on. On refusal it writes 401 and returns false.
+func (h *Handlers) asyncCaller(w http.ResponseWriter, r *http.Request) (asyncCallerInfo, bool) {
+	unauthorized := func() (asyncCallerInfo, bool) {
+		models.WriteError(w, middleware.ErrUnauthorizedKey(middleware.RequestAPIKey(r)))
 		return asyncCallerInfo{}, false
 	}
-	if h.keyStore == nil {
-		if h.asyncKeyRequired {
-			return asyncCallerInfo{}, false
-		}
-		return asyncCallerInfo{}, true // auth explicitly disabled
+	if middleware.IsLicenseAuthorized(r.Context()) || (h.keyStore == nil && h.asyncKeyRequired) {
+		return unauthorized()
 	}
-	rawKey := r.Header.Get("x-api-key")
-	if header := r.Header.Get("Authorization"); strings.HasPrefix(header, "Bearer ") {
-		rawKey = strings.TrimPrefix(header, "Bearer ")
+	id, ok := h.callerIdentity(r)
+	if !ok {
+		return unauthorized()
 	}
-	key := h.keyStore.Authenticate(rawKey)
-	if key == nil {
-		return asyncCallerInfo{}, false
+	caller := asyncCallerInfo{orgID: id.OrgID}
+	if id.KeyID == "" {
+		return caller, true // key auth off: the single tenant
 	}
-	caller := asyncCallerInfo{orgID: key.Metadata["org_id"], rawKey: rawKey}
-	if caller.orgID != "" {
-		caller.principal = "org:" + caller.orgID
+	caller.rawKey = middleware.RequestAPIKey(r)
+	if id.OrgID != "" {
+		caller.principal = "org:" + id.OrgID
 	} else {
-		caller.principal = "key:" + key.ID
+		caller.principal = "key:" + id.KeyID
 	}
 	return caller, true
 }
 
 // resultNetworkAdmission applies the network rules that guard inference to a
 // read or cancellation of a stored result, without calling a provider or
-// charging for it. A nil caller (administrator routes) is checked against the
-// global rules only. With a key, the key's own IP allowlist and its
-// organization's rules apply too; the organization comes from the
-// authenticated key, never from request metadata. Rules are read on every call
-// so a changed organization configuration takes effect immediately.
+// charging for it. With a key, the key's own IP allowlist and its org's rules
+// apply too; the org comes from the authenticated key, never from request
+// metadata. Rules are read on every call so a changed org config takes
+// effect at once.
 func (h *Handlers) resultNetworkAdmission(r *http.Request, caller *asyncCallerInfo) *models.APIError {
 	rc := models.AcquireRequestContext()
 	defer rc.Release()
-	// Only the configured number of trusted proxy hops is read from
-	// X-Forwarded-For, as for video routes.
-	rc.Metadata["client_ip"] = trustedClientIP(r, h.resultIPACL.TrustedProxies)
+	// The client address as the server's one rule resolved it for this
+	// request (middleware.ClientIP), as on every other route.
+	rc.Metadata["client_ip"] = middleware.ClientIP(r)
 	if caller != nil && caller.rawKey != "" {
 		rc.Metadata["authorization"] = "Bearer " + caller.rawKey
 		if result := authplugin.New(h.keyStore, true).ProcessRequest(r.Context(), rc); result.Error != nil {
@@ -228,13 +348,14 @@ func (h *Handlers) resultNetworkAdmission(r *http.Request, caller *asyncCallerIn
 	return ipaclplugin.New(h.resultIPACL, h.tenantStore).ProcessRequest(r.Context(), rc).Error
 }
 
-func copyMetadata(m map[string]string) map[string]string {
-	if m == nil {
-		return nil
-	}
-	cp := make(map[string]string, len(m))
-	for k, v := range m {
-		cp[k] = v
-	}
-	return cp
+// jobMetadata is the copy of a request's metadata an async job keeps, and
+// the copy of its run's metadata it adds when the job finishes: without the
+// caller's credentials (credentials.WithoutCredentials), so the job, which
+// lives for its TTL and a day after, never holds the caller's key or an
+// entry whose name reads as a credential. The worker reads timeout_ms from
+// it. The executor's own copy of the request (asyncExecutor) keeps the
+// Authorization header until the job runs: the job's pipeline authenticates
+// the key again.
+func jobMetadata(m map[string]string) map[string]string {
+	return credentials.WithoutCredentials(m)
 }

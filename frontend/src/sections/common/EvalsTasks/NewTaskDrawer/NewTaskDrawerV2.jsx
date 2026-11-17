@@ -26,6 +26,7 @@ import PropTypes from "prop-types";
 import Iconify from "src/components/iconify";
 import TaskFilterBar from "src/sections/tasks/components/TaskFilterBar";
 import ScheduledRuns from "./ScheduledRuns";
+import TaskWebhookFields from "../TaskWebhookFields";
 import _ from "lodash";
 import axios, { endpoints } from "src/utils/axios";
 import { useMutation, useQuery } from "@tanstack/react-query";
@@ -471,6 +472,7 @@ const NewTaskDrawerV2 = ({
                   <AccordionSummary>Scheduled Run</AccordionSummary>
                   <AccordionDetails>
                     <ScheduledRuns control={control} dayLimit="Custom" />
+                    <TaskWebhookFields control={control} />
                   </AccordionDetails>
                 </Accordion>
 

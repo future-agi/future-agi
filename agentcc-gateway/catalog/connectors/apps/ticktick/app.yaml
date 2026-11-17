@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: ticktick
+version: 1.0.0
+name: TickTick
+description: "Manage tasks and review your work in TickTick."
+vendor:
+  name: TickTick
+  domains: [ticktick.com]
+eeCategory: productivity
+group: other
+categories: [productivity, project-management]
+tags: [tasks]
+docsUrl: https://help.ticktick.com/articles/7438129581631995904
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://help.ticktick.com/articles/7438129581631995904
+    fetchedAt: 2026-11-09

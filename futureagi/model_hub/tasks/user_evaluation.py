@@ -4,9 +4,6 @@ import uuid
 from typing import TYPE_CHECKING, Any
 
 import structlog
-from accounts.models import workspace
-from accounts.models.workspace import Workspace
-from agentic_eval.core.utils.functions import detect_input_type
 from django.db import (
     InterfaceError,
     OperationalError,
@@ -15,7 +12,51 @@ from django.db import (
 )
 from django.db.models import Q
 
+from accounts.models.workspace import Workspace
+from agentic_eval.core.utils.functions import detect_input_type
+from analytics.utils import (
+    MixpanelEvents,
+    MixpanelSources,
+    get_mixpanel_properties,
+    track_mixpanel_event,
+)
+from evaluations.engine.instance import (
+    charged_model_for_metric,
+    resolve_pass_threshold,
+)
+from model_hub.models.choices import CellStatus, ModelChoices, SourceChoices, StatusType
+from model_hub.models.develop_dataset import Cell, Column, Row
+from model_hub.models.error_localizer_model import (
+    ErrorLocalizerSource,
+    ErrorLocalizerStatus,
+    ErrorLocalizerTask,
+)
+from model_hub.models.evals_metric import (
+    EXTERNAL_EVAL_TYPE,
+    EvalTemplate,
+    EvalTemplateVersion,
+    UserEvalMetric,
+)
+from model_hub.models.evaluation import Evaluation
+from model_hub.models.run_prompt import RunPrompter
+from model_hub.services.error_localizer_service import should_run_error_localizer
 from model_hub.services.localization_errors import LocalizationFailure
+from model_hub.utils.api_log_config import parse_api_log_config
+from model_hub.views.develop_optimiser import DevelopOptimizer
+from model_hub.views.eval_runner import EvaluationRunner
+from model_hub.views.experiment_runner import ExperimentRunner
+from sdk.utils.helpers import _get_api_call_type
+from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
+from tfc.temporal import temporal_activity
+
+# Not used in this module, but imported from it (test_user_evaluation_tasks.py
+# TestDistributedTrackerUsage); kept as part of the module's surface.
+from tfc.utils.distributed_locks import distributed_lock_manager  # noqa: F401
+
+# Distributed state management for tracking running evaluations across instances
+from tfc.utils.distributed_state import evaluation_tracker
+from tfc.utils.error_codes import get_error_for_api_status
+from tracer.models.observation_span import EvalLogger
 
 logger = structlog.get_logger(__name__)
 try:
@@ -25,41 +66,6 @@ except ImportError:
     from tfc.ee_stub import _ee_activity_stub
 
     ErrorLocalizer = _ee_activity_stub("ErrorLocalizer")
-from analytics.utils import (
-    MixpanelEvents,
-    MixpanelSources,
-    get_mixpanel_properties,
-    track_mixpanel_event,
-)
-from evaluations.engine.instance import resolve_pass_threshold
-from model_hub.models.choices import CellStatus, ModelChoices, SourceChoices, StatusType
-from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
-from model_hub.models.error_localizer_model import (
-    ErrorLocalizerSource,
-    ErrorLocalizerStatus,
-    ErrorLocalizerTask,
-)
-from model_hub.models.evals_metric import (
-    EvalTemplate,
-    EvalTemplateVersion,
-    UserEvalMetric,
-)
-from model_hub.models.evaluation import Evaluation
-from model_hub.models.run_prompt import RunPrompter
-from model_hub.services.error_localizer_service import should_run_error_localizer
-from model_hub.utils.api_log_config import parse_api_log_config
-from model_hub.views.develop_optimiser import DevelopOptimizer
-from model_hub.views.eval_runner import EvaluationRunner
-from model_hub.views.experiment_runner import ExperimentRunner
-from sdk.utils.helpers import _get_api_call_type
-from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
-from tfc.temporal import temporal_activity
-from tfc.utils.distributed_locks import distributed_lock_manager
-
-# Distributed state management for tracking running evaluations across instances
-from tfc.utils.distributed_state import evaluation_tracker
-from tfc.utils.error_codes import get_error_for_api_status
-from tracer.models.observation_span import EvalLogger
 
 if TYPE_CHECKING:
     from simulate.models.eval_config import SimulateEvalConfig
@@ -81,12 +87,23 @@ except ImportError:
     refund_cost_for_api_call = None
 
 
-def _mark_cells_usage_limit_error(user_eval_metric, usage_check):
+def _mark_cells_usage_limit_error(
+    user_eval_metric,
+    usage_check,
+    row_ids=None,
+    *,
+    prepare_result_columns=False,
+    result_column_ids=None,
+):
     """Write ERROR cells for this eval when a pre-check fails.
 
     Used for credit/usage denials and OSS agent-eval entitlement blocks.
     Pre-checks often fail *before* EvaluationRunner creates RUNNING cells, so
-    we must upsert ERROR cells for every dataset row — not only flip RUNNING.
+    we must upsert ERROR cells, not only flip RUNNING. An explicit row scope
+    limits the write; omitted row_ids retains the dataset-wide behavior.
+    Only ordinary selected dataset runs opt into preparing result columns.
+    Explicit result_column_ids retain the caller's identities (including
+    optimization feedback), without creating columns or changing grid order.
     Otherwise the UI shows empty columns instead of the same error treatment
     as other eval failures.
 
@@ -98,20 +115,103 @@ def _mark_cells_usage_limit_error(user_eval_metric, usage_check):
 
         from model_hub.views.eval_runner import bulk_update_or_create_cells
 
+        dataset_id = user_eval_metric.dataset_id
+        if not dataset_id:
+            return
+        preserve_completed = row_ids is None
+        rows = Row.objects.filter(dataset_id=dataset_id, deleted=False)
+        if row_ids is not None:
+            rows = rows.filter(id__in=row_ids)
+        row_ids = list(rows.values_list("id", flat=True))
+        if not row_ids:
+            return
+
+        if (
+            prepare_result_columns
+            and not preserve_completed
+            and result_column_ids is None
+        ):
+            # A selected first run can be refused before any result columns exist.
+            # Prepare identities only; never reset another row's evidence.
+            from model_hub.models.develop_dataset import Dataset
+            from model_hub.utils.eval_result_columns import (
+                infer_eval_result_column_data_type,
+            )
+
+            with transaction.atomic():
+                dataset = Dataset.no_workspace_objects.select_for_update().get(
+                    id=dataset_id,
+                    organization_id=user_eval_metric.organization_id,
+                    deleted=False,
+                )
+                score = (
+                    Column.objects.filter(
+                        dataset=dataset,
+                        source=SourceChoices.EVALUATION.value,
+                        source_id=str(user_eval_metric.id),
+                        deleted=False,
+                    )
+                    .order_by("created_at", "id")
+                    .first()
+                )
+                if score is None:
+                    score = Column.objects.create(
+                        dataset=dataset,
+                        source=SourceChoices.EVALUATION.value,
+                        source_id=str(user_eval_metric.id),
+                        name=user_eval_metric.name,
+                        data_type=infer_eval_result_column_data_type(
+                            user_eval_metric.template
+                        ),
+                    )
+                result_columns = [score]
+                if (user_eval_metric.config or {}).get("reason_column"):
+                    reasons = Column.objects.filter(
+                        dataset=dataset,
+                        source=SourceChoices.EVALUATION_REASON.value,
+                        source_id=f"{score.id}-sourceid-{user_eval_metric.id}",
+                        deleted=False,
+                    )
+                    reason = reasons.order_by("created_at", "id").first()
+                    if reason is None:
+                        reason = Column.objects.create(
+                            dataset=dataset,
+                            source=SourceChoices.EVALUATION_REASON.value,
+                            source_id=f"{score.id}-sourceid-{user_eval_metric.id}",
+                            name=f"{score.name}-reason",
+                            data_type="text",
+                        )
+                    result_columns.append(reason)
+                order = list(dataset.column_order or [])
+                for column in result_columns:
+                    if str(column.id) not in order:
+                        order.append(str(column.id))
+                dataset.column_order = order
+                dataset.save(update_fields=["column_order"])
+
         # Dataset evals: Column.source_id == uem.id, source = 'evaluation'.
         # Experiment evals: one column per (prompt_config, dataset snapshot,
         # uem) with source = 'experiment_evaluation' and
         # source_id like '{...}-sourceid-{uem.id}'. We need to catch both.
-        eval_columns = Column.objects.filter(
-            Q(source=SourceChoices.EVALUATION.value, source_id=str(user_eval_metric.id))
-            | Q(
-                source=SourceChoices.EXPERIMENT_EVALUATION.value,
+        column_scope = Q(
+            source=SourceChoices.EVALUATION.value, source_id=str(user_eval_metric.id)
+        ) | Q(
+            source=SourceChoices.EXPERIMENT_EVALUATION.value,
+            source_id__endswith=f"-sourceid-{user_eval_metric.id}",
+        )
+        if result_column_ids is not None:
+            column_scope |= Q(
+                source=SourceChoices.OPTIMISATION_EVALUATION.value,
                 source_id__endswith=f"-sourceid-{user_eval_metric.id}",
-            ),
+            )
+        eval_columns = Column.objects.filter(
+            column_scope,
             dataset_id=user_eval_metric.dataset_id,
             dataset__organization_id=user_eval_metric.organization_id,
             deleted=False,
         )
+        if result_column_ids is not None:
+            eval_columns = eval_columns.filter(id__in=result_column_ids)
         eval_column_ids = list(eval_columns.values_list("id", flat=True))
         if not eval_column_ids:
             return
@@ -119,27 +219,21 @@ def _mark_cells_usage_limit_error(user_eval_metric, usage_check):
         # Reason columns only exist for dataset evals. Experiments render
         # reason inline inside the eval cell's value_infos, so there is no
         # separate experiment_evaluation_reason column source.
-        reason_column_ids = list(
-            Column.objects.filter(
-                source=SourceChoices.EVALUATION_REASON.value,
-                source_id__endswith=f"-sourceid-{user_eval_metric.id}",
-                dataset_id=user_eval_metric.dataset_id,
-                dataset__organization_id=user_eval_metric.organization_id,
-                deleted=False,
-            ).values_list("id", flat=True)
+        reason_columns = Column.objects.filter(
+            source=SourceChoices.EVALUATION_REASON.value,
+            source_id__endswith=f"-sourceid-{user_eval_metric.id}",
+            dataset_id=user_eval_metric.dataset_id,
+            dataset__organization_id=user_eval_metric.organization_id,
+            deleted=False,
         )
-
-        dataset_id = user_eval_metric.dataset_id
-        if not dataset_id:
-            return
-
-        row_ids = list(
-            Row.objects.filter(dataset_id=dataset_id, deleted=False).values_list(
-                "id", flat=True
+        if result_column_ids is not None:
+            reason_columns = reason_columns.filter(
+                source_id__in=[
+                    f"{column_id}-sourceid-{user_eval_metric.id}"
+                    for column_id in eval_column_ids
+                ]
             )
-        )
-        if not row_ids:
-            return
+        reason_column_ids = list(reason_columns.values_list("id", flat=True))
 
         upgrade_cta = None
         cta = getattr(usage_check, "upgrade_cta", None)
@@ -170,7 +264,7 @@ def _mark_cells_usage_limit_error(user_eval_metric, usage_check):
                 dataset_id,
                 new_values,
                 user_eval_metric_id=str(user_eval_metric.id),
-                skip_completed=True,
+                skip_completed=preserve_completed,
             )
             updated += u
             created += c
@@ -283,8 +377,10 @@ def process_single_evaluation(user_eval_metric):
     except ImportError:
         check_usage = None
 
+    # Limit-checked as the model that runs (a live pin's model, else the
+    # metric's own model as before).
     api_call_type = _get_api_call_type(
-        user_eval_metric.model or ModelChoices.TURING_LARGE.value
+        charged_model_for_metric(user_eval_metric) or ModelChoices.TURING_LARGE.value
     )
     if check_usage is not None:
         usage_check = check_usage(str(user_eval_metric.organization.id), api_call_type)
@@ -438,8 +534,10 @@ def process_experiment_evaluation(user_eval_metric):
     except ImportError:
         check_usage = None
 
+    # Limit-checked as the model that runs (a live pin's model, else the
+    # metric's own model as before).
     api_call_type = _get_api_call_type(
-        user_eval_metric.model or ModelChoices.TURING_LARGE.value
+        charged_model_for_metric(user_eval_metric) or ModelChoices.TURING_LARGE.value
     )
     if check_usage is not None:
         usage_check = check_usage(str(user_eval_metric.organization.id), api_call_type)
@@ -512,14 +610,24 @@ def process_experiment_evaluation(user_eval_metric):
 def execute_evaluation():
     close_old_connections()
     try:
-        # Get evaluations that need to be processed - single ORM call
+        # Get evaluations that need to be processed - single ORM call.
+        # External metrics are scored by the caller and never run here,
+        # even if some bulk .update() set an executing status on one.
+        # Experiment evaluations are left to their experiment's run; only an
+        # experiment without a snapshot (which has no such run) is run here.
         all_evaluations = list(
             UserEvalMetric.objects.filter(
-                status__in=[
-                    StatusType.NOT_STARTED.value,
-                    StatusType.EXPERIMENT_EVALUATION.value,
-                    StatusType.OPTIMIZATION_EVALUATION.value,
-                ]
+                ~Q(template__eval_type=EXTERNAL_EVAL_TYPE),
+                Q(
+                    status__in=[
+                        StatusType.NOT_STARTED.value,
+                        StatusType.OPTIMIZATION_EVALUATION.value,
+                    ]
+                )
+                | (
+                    Q(status=StatusType.EXPERIMENT_EVALUATION.value)
+                    & ~Q(experiments_evaluation_ids__snapshot_dataset__isnull=False)
+                ),
             ).all()[:30]
         )
 
@@ -527,11 +635,15 @@ def execute_evaluation():
             logger.info("No evaluations to process")
             return
 
-        # Update status for all evaluations
-        all_eval_ids = [eval.id for eval in all_evaluations]
-        UserEvalMetric.objects.filter(id__in=all_eval_ids).update(
-            status=StatusType.RUNNING.value
-        )
+        # Claim each evaluation only while it still has the status it was read
+        # with: a stop that lands between the read and the claim keeps it.
+        all_evaluations = [
+            eval
+            for eval in all_evaluations
+            if UserEvalMetric.objects.filter(id=eval.id, status=eval.status).update(
+                status=StatusType.RUNNING.value
+            )
+        ]
 
         # Prepare data for processing - check status directly
         evaluations_to_process = []
@@ -560,6 +672,24 @@ def execute_evaluation():
 @temporal_activity(time_limit=3600, queue="tasks_l")
 def process_evaluation_single_task(evaluation):
     close_old_connections()
+
+    if evaluation.get("type") == "summary_run":
+        from model_hub.services.experiment_summary import process_summary_result
+
+        try:
+            return process_summary_result(evaluation["result_id"])
+        finally:
+            close_old_connections()
+
+    if evaluation.get("type") == "stored_run":
+        from model_hub.services.external_run_evaluations import (
+            process_stored_run_evaluation,
+        )
+
+        try:
+            return process_stored_run_evaluation(evaluation["run_id"])
+        finally:
+            close_old_connections()
 
     # select_related avoids an N+1 when resolve_for_metric touches
     # pinned_version/template during version stamping.
@@ -1187,9 +1317,17 @@ def trigger_error_localization_for_standalone(evaluation: Evaluation):
             or evaluation.eval_template.description
         )
 
+        # A Choices result's resolved value ({"score", "choice"}) carries the
+        # score the binding's choice score override gave the label; the raw
+        # data holds only the label, which the worker's gate would re-score
+        # with the template's map. The other triggers store the value too.
+        eval_result = (
+            evaluation.value if isinstance(evaluation.value, dict) else evaluation.data
+        )
+
         # Validate required fields before creating task
         initial_status, error_message = _validate_error_localizer_fields(
-            rule_prompt, evaluation.input_data, evaluation.data
+            rule_prompt, evaluation.input_data, eval_result
         )
 
         error_localizer_task = ErrorLocalizerTask.objects.create(
@@ -1199,7 +1337,7 @@ def trigger_error_localization_for_standalone(evaluation: Evaluation):
             input_data=evaluation.input_data,
             input_keys=input_keys,
             input_types=input_types,
-            eval_result=evaluation.data,
+            eval_result=eval_result,
             eval_explanation=evaluation.reason,
             rule_prompt=rule_prompt,
             organization=evaluation.organization,
@@ -1223,6 +1361,29 @@ def trigger_error_localization_for_standalone(evaluation: Evaluation):
         )
 
 
+# The task metadata key that holds the usage event id of the task's
+# localization.
+_USAGE_EVENT_ID = "usage_event_id"
+
+
+def _usage_event_metadata(usage_event_id: str | None) -> dict:
+    """The task's metadata entry for ``usage_event_id``, the id the evaluation
+    step that made the task keyed its localization to; nothing when it has
+    none, so the localization gets a fresh event id and is billed."""
+    return {_USAGE_EVENT_ID: usage_event_id} if usage_event_id else {}
+
+
+def _stored_usage_event_id(task: ErrorLocalizerTask) -> str | None:
+    """The usage event id the task's localization emits under: the one stored
+    when the task was made. A localization of the task that runs again in the
+    same evaluation run (a retry of the evaluation or of the localization)
+    emits the same id and is billed once. None when the task holds none; the
+    localization then gets a fresh event id and is billed."""
+    metadata = task.metadata if isinstance(task.metadata, dict) else {}
+    value = metadata.get(_USAGE_EVENT_ID)
+    return value if isinstance(value, str) and value else None
+
+
 def trigger_error_localization_for_playground(
     eval_template: EvalTemplate,
     log: "APICallLog",
@@ -1230,6 +1391,7 @@ def trigger_error_localization_for_playground(
     mapping: dict,
     eval_explanation: str,
     eval_config: dict | None = None,
+    usage_event_id: str | None = None,
 ) -> None:
     try:
         """
@@ -1270,6 +1432,8 @@ def trigger_error_localization_for_playground(
             task.error_message = error_message
             metadata = task.metadata or {}
             metadata.update({"pass_threshold": pass_threshold})
+            metadata.pop(_USAGE_EVENT_ID, None)
+            metadata.update(_usage_event_metadata(usage_event_id))
             task.metadata = metadata
         except ErrorLocalizerTask.DoesNotExist:
             task = ErrorLocalizerTask(
@@ -1286,7 +1450,10 @@ def trigger_error_localization_for_playground(
                 workspace=workspace,
                 status=initial_status,
                 error_message=error_message,
-                metadata={"pass_threshold": pass_threshold},
+                metadata={
+                    "pass_threshold": pass_threshold,
+                    **_usage_event_metadata(usage_event_id),
+                },
             )
 
         task.save()
@@ -1303,6 +1470,7 @@ def trigger_error_localization_for_simulate(
     mapping: dict,
     eval_explanation: str,
     log_id: str | None = None,
+    usage_event_id: str | None = None,
 ) -> None:
     try:
         """
@@ -1382,6 +1550,9 @@ def trigger_error_localization_for_simulate(
                     "eval_config_id": str(eval_config.id),
                     "simulation_audio": simulation_audio,
                     "pass_threshold": resolve_pass_threshold(eval_template, config),
+                    # Each evaluation replaces the metadata: a rerun stores
+                    # its own run's key, and an unknown run stores none.
+                    **_usage_event_metadata(usage_event_id),
                 },
                 "status": initial_status,
                 "error_message": error_message,
@@ -1568,7 +1739,9 @@ def process_single_error_localization(task_id):
             try:
                 from ee.usage.utils.event_properties import llm_usage_properties
             except ImportError:
-                llm_usage_properties = lambda obj: {}
+
+                def llm_usage_properties(obj):
+                    return {}
 
             actual_cost = getattr(localizer, "cost", {}).get("total_cost", 0)
             if not actual_cost and hasattr(localizer, "llm"):
@@ -1585,8 +1758,10 @@ def process_single_error_localization(task_id):
                 and UsageEvent is not None
                 and BillingEventType is not None
             ):
+                usage_event_id = _stored_usage_event_id(task)
                 emit(
                     UsageEvent(
+                        **({"event_id": usage_event_id} if usage_event_id else {}),
                         org_id=str(task.organization.id),
                         event_type=BillingEventType.ERROR_LOCALIZER,
                         amount=credits,

@@ -7,7 +7,7 @@ Old endpoints remain untouched until Phase 4 cutover.
 
 import structlog
 from django.db import IntegrityError, transaction
-from django.utils import timezone
+from django.db.models import Q
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
@@ -35,6 +35,8 @@ from accounts.serializers.rbac import (
     WorkspaceMemberRoleUpdateSerializer,
 )
 from accounts.services import member_role_service
+from accounts.services.hard_erase_issuance_entry import request_issuance_entry
+from accounts.services.identity_issuance import issue_membership
 from accounts.services.workspace_members import list_workspace_members
 from accounts.utils import (
     build_invite_links,
@@ -101,6 +103,7 @@ class InviteCreateAPIView(APIView):
         responses={200: InviteCreateResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
         reject_unknown_fields=True,
     )
+    @request_issuance_entry
     def post(self, request):
         gm = GeneralMethods()
 
@@ -156,6 +159,7 @@ class InviteCreateAPIView(APIView):
 
         created_invites = []
         already_members = []
+        delivery_failed = []
 
         for email in emails:
             try:
@@ -184,7 +188,8 @@ class InviteCreateAPIView(APIView):
                                 workspace_access,
                             )
                         if access_will_change:
-                            send_invite_email(email, organization, user)
+                            if send_invite_email(email, organization, user) is False:
+                                delivery_failed.append(email)
                         already_members.append(email)
                         continue
 
@@ -214,7 +219,8 @@ class InviteCreateAPIView(APIView):
                         invite.status = InviteStatus.ACCEPTED
                         invite.save(update_fields=["status"])
 
-                    send_invite_email(email, organization, user)
+                    if send_invite_email(email, organization, user) is False:
+                        delivery_failed.append(email)
 
                     log_audit(
                         organization=organization,
@@ -236,11 +242,13 @@ class InviteCreateAPIView(APIView):
                 logger.exception("invite_unexpected_error", email=email)
 
         result = {"invited": created_invites}
+        if delivery_failed:
+            result["delivery_failed"] = delivery_failed
         if already_members:
             result["already_members"] = already_members
         # Saves the admin a round trip to the members list, which is the only
         # other place the link is exposed.
-        links = build_invite_links(created_invites)
+        links = build_invite_links(created_invites, organization=organization)
         if links:
             result["invites"] = [
                 {"email": email, "invite_link": links[email.lower()]}
@@ -282,6 +290,7 @@ class InviteCreateAPIView(APIView):
                     "invited_by": inviter,
                     "deleted": False,
                     "deleted_at": None,
+                    "removed_at": None,
                 }
                 if org_level > existing_membership.level_or_legacy:
                     update_fields["role"] = org_role_string
@@ -298,7 +307,9 @@ class InviteCreateAPIView(APIView):
                 membership_active = (
                     True if existing_membership is not None else existing_user.is_active
                 )
-                OrganizationMembership.all_objects.update_or_create(
+                issue_membership(
+                    OrganizationMembership.all_objects,
+                    "update_or_create",
                     user=existing_user,
                     organization=organization,
                     defaults={
@@ -308,6 +319,7 @@ class InviteCreateAPIView(APIView):
                         "is_active": membership_active,
                         "deleted": False,
                         "deleted_at": None,
+                        "removed_at": None,
                     },
                 )
 
@@ -322,8 +334,10 @@ class InviteCreateAPIView(APIView):
                 is_active=False,
                 organization=organization,
             )
-            target_user.invited_organizations.add(organization)
-            OrganizationMembership.all_objects.update_or_create(
+            # The through-row below is the invited_organizations membership.
+            issue_membership(
+                OrganizationMembership.all_objects,
+                "update_or_create",
                 user=target_user,
                 organization=organization,
                 defaults={
@@ -333,6 +347,7 @@ class InviteCreateAPIView(APIView):
                     "is_active": False,  # Stays False until invite is accepted
                     "deleted": False,
                     "deleted_at": None,
+                    "removed_at": None,
                 },
             )
 
@@ -384,53 +399,63 @@ class InviteResendAPIView(APIView):
         responses={200: RBACMessageResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
         reject_unknown_fields=True,
     )
+    @transaction.atomic
+    @request_issuance_entry
     def post(self, request):
         gm = GeneralMethods()
-
         organization = resolve_org(request)
+        data = request.validated_data
         try:
-            invite = OrganizationInvite.objects.get(
-                id=request.validated_data["invite_id"],
-                organization=organization,
-                status=InviteStatus.PENDING,
+            invite = OrganizationInvite.objects.select_for_update().get(
+                id=data["invite_id"], organization=organization, status=InviteStatus.PENDING,
             )
         except OrganizationInvite.DoesNotExist:
             return gm.bad_request(get_error_message("INVITE_NOT_FOUND"))
-
-        # R2: WS Admins can only resend invites for workspaces they manage
         actor_membership = get_org_membership(request.user)
-        if actor_membership and actor_membership.level_or_legacy < Level.ADMIN:
-            if not _actor_manages_invite_workspaces(request.user, invite):
-                return gm.forbidden_response(
-                    get_error_message("INVITE_RESEND_WS_FORBIDDEN")
-                )
-
-        # Optionally update org level if provided — with escalation guard
-        new_org_level = request.validated_data.get("org_level")
-        if new_org_level is not None:
-            actor_membership = get_org_membership(request.user)
-            if not actor_membership:
-                return gm.forbidden_response(get_error_message("NOT_ORG_MEMBER"))
-            actor_level = actor_membership.level_or_legacy
-            if not can_invite_at_level(actor_level, new_org_level):
-                return gm.forbidden_response(
-                    get_error_message("INVITE_LEVEL_SET_FORBIDDEN")
-                )
-            invite.level = new_org_level
-            invite.save(update_fields=["level"])
-
+        if not actor_membership:
+            return gm.forbidden_response(get_error_message("NOT_ORG_MEMBER"))
+        actor_level = actor_membership.level_or_legacy
+        if actor_level < Level.ADMIN and not _actor_manages_invite_workspaces(request.user, invite):
+            return gm.forbidden_response(get_error_message("INVITE_RESEND_WS_FORBIDDEN"))
+        new_level = data.get("org_level")
+        new_level = invite.level if new_level is None else new_level
+        if data.get("org_level") is not None and not can_invite_at_level(actor_level, new_level):
+            return gm.forbidden_response(get_error_message("INVITE_LEVEL_SET_FORBIDDEN"))
+        grants = data.get("workspace_access", invite.workspace_access)
+        if invite.level >= Level.ADMIN and new_level < Level.ADMIN and not grants:
+            return gm.bad_request("Select at least one active workspace for this role.")
+        # Retain ordinary resend semantics; validate newly supplied grants and
+        # every Admin/Owner-to-Member/Viewer transition before any mutation.
+        validate_grants = "workspace_access" in data or (invite.level >= Level.ADMIN and new_level < Level.ADMIN)
+        for grant in grants if validate_grants else []:
+            ws_id = grant["workspace_id"]
+            if not Workspace.objects.filter(id=ws_id, organization=organization, is_active=True).exists():
+                return gm.bad_request(get_error_message("WS_NOT_IN_ORG"))
+            if actor_level < Level.ADMIN:
+                actor_ws_level = get_effective_workspace_level(request.user, ws_id)
+                if actor_ws_level is None or actor_ws_level < Level.WORKSPACE_ADMIN:
+                    return gm.forbidden_response(get_error_message("INVITE_WS_ACCESS_FORBIDDEN"))
+        send_email = data.get("send_email", True)
+        if not send_email:
+            from tfc.ee_gating import is_oss
+            if not is_oss():
+                return gm.bad_request("Link-only renewal is available on self-hosted deployments.")
+            recipient = User.objects.filter(email__iexact=invite.target_email).first()
+            if recipient is None or (not recipient.is_active and recipient.organization_id != organization.id):
+                return gm.bad_request("This recipient requires email delivery or sign-in; a shared activation link is unavailable.")
+        invite.level = new_level
+        invite.workspace_access = grants
+        invite.save(update_fields=["level", "workspace_access"])
         invite.refresh_expiration()
-
-        send_invite_email(invite.target_email, organization, request.user)
-
+        if send_email and send_invite_email(invite.target_email, organization, request.user) is False:
+            return gm.bad_request("Invitation saved, but the email could not be sent. Retry delivery from Members.")
         log_audit(
-            organization=organization,
-            action="invite.resent",
-            scope="organization",
-            target_id=invite.id,
+            organization=organization, action="invite.resent" if send_email else "invite.renewed",
+            scope="organization", target_id=invite.id,
         )
-
-        return gm.success_response({"message": "Invite resent successfully."})
+        return gm.success_response({
+            "message": "Invite resent successfully." if send_email else "Invitation renewed. Copy the new link from Members.",
+        })
 
 
 class InviteCancelAPIView(APIView):
@@ -478,16 +503,9 @@ class InviteCancelAPIView(APIView):
         try:
             user = User.objects.get(email__iexact=invite.target_email)
             if not user.is_active:
-                now = timezone.now()
-                # Use _base_manager to bypass soft-delete and workspace filtering
-                OrganizationMembership._base_manager.filter(
-                    user=user,
-                    organization=organization,
-                ).update(is_active=False, deleted=True, deleted_at=now)
-                WorkspaceMembership._base_manager.filter(
-                    user=user,
-                    workspace__organization=organization,
-                ).update(is_active=False, deleted=True, deleted_at=now)
+                from accounts.services.offboarding import offboard_organization_member
+
+                offboard_organization_member(user, organization, actor=request.user)
         except User.DoesNotExist:
             pass
 
@@ -534,9 +552,7 @@ class MemberListAPIView(APIView):
         # workspace_id is NOT used here (it's only for workspace-scoped endpoints).
 
         viewer_membership = get_org_membership(request.user)
-        viewer_org_level = (
-            viewer_membership.level_or_legacy if viewer_membership else 0
-        )
+        viewer_org_level = viewer_membership.level_or_legacy if viewer_membership else 0
 
         # Build pending/expired invites
         invites = self._get_invites(organization, viewer_org_level)
@@ -639,12 +655,22 @@ class MemberListAPIView(APIView):
             exclude_emails: set of emails to skip (e.g. those with pending invites
                             created by dual-write, to avoid duplicate rows).
         """
-        memberships = OrganizationMembership.objects.filter(
-            organization=organization,
-        ).select_related("user")
+        memberships = (
+            OrganizationMembership.all_objects.filter(organization=organization)
+            .filter(Q(deleted=False) | Q(removed_at__isnull=False))
+            .select_related("user")
+            .order_by("user_id", "deleted", "-created_at", "-pk")
+        )
 
         if exclude_emails:
             memberships = memberships.exclude(user__email__in=exclude_emails)
+
+        # Historical tombstones can coexist with a live membership. Prefer
+        # that live row, otherwise the newest retained removal, once per user.
+        members_by_user = {}
+        for membership in memberships:
+            members_by_user.setdefault(membership.user_id, membership)
+        memberships = list(members_by_user.values())
 
         # Prefetch workspace memberships to avoid N+1 queries
         user_ids = [m.user_id for m in memberships]
@@ -664,8 +690,12 @@ class MemberListAPIView(APIView):
         for mem in memberships:
             user = mem.user
 
-            # Derive status from membership active flag
-            member_status = "Deactivated" if not mem.is_active else "Active"
+            # A retained removal is never an active grant.
+            member_status = (
+                "Deactivated"
+                if mem.removed_at is not None or not mem.is_active
+                else "Active"
+            )
 
             row = {
                 "id": str(user.id),
@@ -679,7 +709,7 @@ class MemberListAPIView(APIView):
             }
 
             # Deactivated members get no workspace role
-            if not mem.is_active:
+            if member_status == "Deactivated":
                 row["ws_level"] = None
                 row["ws_role"] = None
                 row["workspaces"] = []
@@ -769,7 +799,7 @@ class MemberListAPIView(APIView):
             )
         }
 
-        invite_links = build_invite_links([inv.target_email for inv in invites])
+        invite_links = build_invite_links([inv.target_email for inv in invites], organization=organization)
 
         results = []
         for inv in invites:
@@ -895,13 +925,13 @@ class MemberRemoveAPIView(APIView):
     """
     DELETE /accounts/organization/members/remove/
 
-    Soft-deactivates OrganizationMembership and cascades to workspace
-    memberships.  Signals handle Redis clear + audit log.
+    Soft-deactivates this organization's grants. The shared offboarding
+    service handles scoped credentials, session cache eviction and audit.
     """
 
     permission_classes = [
         IsAuthenticated,
-        IsOrganizationAdminOrWorkspaceAdmin,
+        IsOrganizationAdmin,
         CanManageTargetUser,
     ]
 
@@ -932,68 +962,23 @@ class MemberRemoveAPIView(APIView):
             return gm.bad_request(get_error_message("MEMBER_NOT_IN_ORG"))
 
         with transaction.atomic():
-            # Last owner guard (B4 fix: race-safe with select_for_update)
+            from accounts.services.offboarding import offboard_organization_member
+            from accounts.services.team_members import active_owner_count
+
+            # Lock an actual row: SELECT COUNT does not acquire row locks.
+            # This also serializes with the sibling deactivation route.
+            type(organization).objects.select_for_update().get(pk=organization.pk)
+            target_membership.refresh_from_db()
             if target_membership.level_or_legacy >= Level.OWNER:
-                owner_count = (
-                    OrganizationMembership.objects.select_for_update()
-                    .filter(
-                        organization=organization,
-                        is_active=True,
-                        level__gte=Level.OWNER,
-                    )
-                    .count()
-                )
-                # Also count legacy owners without level set
-                legacy_owner_count = (
-                    OrganizationMembership.objects.select_for_update()
-                    .filter(
-                        organization=organization,
-                        is_active=True,
-                        level__isnull=True,
-                        role="Owner",
-                    )
-                    .count()
-                )
-                if (owner_count + legacy_owner_count) <= 1:
+                if active_owner_count(organization) <= 1:
                     return gm.bad_request(get_error_message("LAST_OWNER_REMOVE"))
 
-            # Soft-deactivate org membership (row preserved for audit trail
-            # and future re-invite via update_or_create).
-            target_membership.is_active = False
-            target_membership.save(update_fields=["is_active"])
-
-            # Soft-deactivate workspace memberships linked via org_membership FK
-            WorkspaceMembership.objects.filter(
-                organization_membership=target_membership,
-                is_active=True,
-            ).update(is_active=False)
-
-            # Also deactivate ws memberships not linked via org_membership FK
-            # (covers legacy rows where organization_membership was never set)
-            target_user = User.objects.filter(id=user_id).first()
-            if target_user:
-                WorkspaceMembership.objects.filter(
-                    user=target_user,
-                    workspace__organization=organization,
-                    is_active=True,
-                ).update(is_active=False)
-
-                # Invalidate session cache
-                from accounts.views.workspace_management import clear_user_redis_cache
-
-                clear_user_redis_cache(target_user.id)
-
-        # Audit log (inline, since delete signals won't fire for soft-deactivate)
-        log_audit(
-            organization=organization,
-            action="member.removed",
-            scope="organization",
-            target_id=user_id,
-            changes={
-                "role": target_membership.role,
-                "level": target_membership.level,
-            },
-        )
+            offboard_organization_member(
+                target_membership.user,
+                organization,
+                actor=request.user,
+                mark_removed=True,
+            )
 
         return gm.success_response(
             {
@@ -1057,61 +1042,10 @@ class MemberReactivateAPIView(APIView):
                 get_error_message("REACTIVATE_LEVEL_FORBIDDEN")
             )
 
-        # D1: Wrap DB operations in transaction.atomic()
-        with transaction.atomic():
-            # Re-activate org membership
-            target_membership.is_active = True
-            target_membership.save(update_fields=["is_active"])
+        from accounts.services.offboarding import reactivate_organization_member
 
-            # Re-activate workspace memberships that were soft-deactivated during removal.
-            ws_restored = WorkspaceMembership._base_manager.filter(
-                user_id=user_id,
-                workspace__organization=organization,
-                is_active=False,
-            ).update(is_active=True)
-
-            if ws_restored == 0:
-                default_ws = Workspace.objects.filter(
-                    organization=organization, is_default=True
-                ).first()
-                if default_ws:
-                    ws_level = Level.get_default_ws_level(
-                        target_membership.level_or_legacy
-                    )
-                    WorkspaceMembership._base_manager.update_or_create(
-                        workspace=default_ws,
-                        user_id=user_id,
-                        defaults={
-                            "role": Level.to_ws_role(ws_level),
-                            "level": ws_level,
-                            "organization_membership": target_membership,
-                            "is_active": True,
-                            "deleted": False,
-                            "deleted_at": None,
-                        },
-                    )
-
-            # Reactivate user if they were globally deactivated
-            target_user = User.objects.filter(id=user_id).first()
-            if target_user:
-                if not target_user.is_active:
-                    target_user.is_active = True
-                    target_user.save(update_fields=["is_active"])
-
-                # Invalidate session cache
-                from accounts.views.workspace_management import clear_user_redis_cache
-
-                clear_user_redis_cache(target_user.id)
-
-        log_audit(
-            organization=organization,
-            action="member.reactivated",
-            scope="organization",
-            target_id=user_id,
-            changes={
-                "role": target_membership.role,
-                "level": target_membership.level,
-            },
+        reactivate_organization_member(
+            target_membership.user, organization, actor=request.user
         )
 
         return gm.success_response(

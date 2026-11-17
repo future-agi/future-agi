@@ -8,8 +8,8 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/config"
 )
 
-// multipartAudio is a transcription or translation form with a small file.
-func multipartAudio(t *testing.T, model string) (string, string) {
+// clientIPMultipartAudio is a transcription or translation form with a small file.
+func clientIPMultipartAudio(t *testing.T, model string) (string, string) {
 	t.Helper()
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
@@ -34,18 +34,20 @@ func multipartAudio(t *testing.T, model string) (string, string) {
 // as client_ip, or an enabled list could only refuse them.
 func TestPipelineRoutesRecordClientIP(t *testing.T) {
 	upstream, _ := accessUpstream(t, `{}`)
-	rec := &clientIPRecorder{}
+	rec := &routeClientIPRecorder{}
+	// gpt-image-2, not dev's dall-e-3: the line's model catalogue answers a
+	// retired model 410 before the pipeline runs.
 	s := accessServer(t, map[string]config.ProviderConfig{
 		"openai": {BaseURL: upstream.URL, APIFormat: "openai",
-			Models: []string{"text-embedding-3-small", "dall-e-3", "tts-1", "whisper-1", "ocr-test"}},
+			Models: []string{"text-embedding-3-small", "gpt-image-2", "tts-1", "whisper-1", "ocr-test"}},
 		"cohere": {BaseURL: upstream.URL, APIKey: "test-key", APIFormat: "cohere", Models: []string{"rerank-test"}},
 	}, accessRules{}, rec)
 
-	transcription, transcriptionType := multipartAudio(t, "whisper-1")
-	translation, translationType := multipartAudio(t, "whisper-1")
+	transcription, transcriptionType := clientIPMultipartAudio(t, "whisper-1")
+	translation, translationType := clientIPMultipartAudio(t, "whisper-1")
 	reqs := []accessRequest{
 		{method: "POST", path: "/v1/embeddings", body: `{"model":"text-embedding-3-small","input":"hi"}`},
-		{method: "POST", path: "/v1/images/generations", body: `{"model":"dall-e-3","prompt":"a cat"}`},
+		{method: "POST", path: "/v1/images/generations", body: `{"model":"gpt-image-2","prompt":"a cat"}`},
 		{method: "POST", path: "/v1/audio/speech", body: `{"model":"tts-1","input":"hi","voice":"alloy"}`},
 		{method: "POST", path: "/v1/audio/speech/stream", body: `{"model":"tts-1","input":"hi","voice":"alloy"}`},
 		{method: "POST", path: "/v1/audio/transcriptions", body: transcription, contentType: transcriptionType},

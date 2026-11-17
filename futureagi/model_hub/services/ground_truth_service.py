@@ -88,6 +88,17 @@ class GroundTruthService:
         enabled: bool = True,
     ) -> dict[str, Any] | ServiceError:
         """Persist mappings and runtime knobs as the active GT for the tenant."""
+        from model_hub.utils.jev_templates import JEV_GROUND_TRUTH_MESSAGE
+        from tfc.ee_gates import is_jev_model
+
+        model = (eval_template.config or {}).get("model") or getattr(
+            eval_template, "model", None
+        )
+        if enabled and is_jev_model(model):
+            return ServiceError(
+                JEV_GROUND_TRUTH_MESSAGE, code="JEV_FEW_SHOT_UNSUPPORTED"
+            )
+
         if is_empty_value(role_mapping.get("output")) and is_empty_value(
             role_mapping.get("expected_output")
         ):
@@ -136,8 +147,12 @@ class GroundTruthService:
         variable_mapping_changed = (gt.variable_mapping or {}) != (
             variable_mapping or {}
         )
+        # The vector set is shared by all GT datasets for this eval/tenant.
+        # Even a legacy completed row cannot reuse it after reactivation.
+        dataset_reactivated = not gt.is_active
+        embeddings_invalidated = variable_mapping_changed or dataset_reactivated
         has_prior_vectors = (gt.embedded_row_count or 0) > 0
-        embeddings_stale = variable_mapping_changed and has_prior_vectors
+        embeddings_stale = embeddings_invalidated and has_prior_vectors
 
         with transaction.atomic():
             EvalGroundTruth.objects.filter(
@@ -162,7 +177,7 @@ class GroundTruthService:
                 "updated_at",
             ]
             if (
-                variable_mapping_changed
+                embeddings_invalidated
                 and gt.embedding_status == EvalGroundTruth.EmbeddingStatus.COMPLETED
             ):
                 gt.embedding_status = EvalGroundTruth.EmbeddingStatus.PENDING
@@ -426,6 +441,18 @@ class GroundTruthService:
         )
 
         manager = EmbeddingManager()
+        # Invalidate prior owners before replacing their shared vectors, even
+        # if this pass later fails. Keep row counts so the UI reports stale
+        # embeddings and offers re-embedding when a dataset is restored.
+        EvalGroundTruth.objects.filter(
+            eval_template_id=gt.eval_template_id,
+            organization_id=organization_id,
+            workspace_id=workspace_id,
+            deleted=False,
+            embedding_status=EvalGroundTruth.EmbeddingStatus.COMPLETED,
+        ).exclude(id=gt.id).update(
+            embedding_status=EvalGroundTruth.EmbeddingStatus.PENDING,
+        )
         manager.soft_delete_vectors(
             table_name=GROUND_TRUTH_TABLE_NAME,
             eval_id=eval_id,

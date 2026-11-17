@@ -31,7 +31,10 @@ export default function SelectionBar({
       alignItems="center"
       spacing={0.5}
       sx={{
-        height: 32,
+        minHeight: 32,
+        flexWrap: "wrap",
+        maxWidth: "100%",
+        rowGap: 0.5,
         pl: 1.5,
         pr: 0.5,
         borderRadius: "6px",
@@ -44,8 +47,7 @@ export default function SelectionBar({
     >
       <Typography
         sx={{
-          fontSize: 12,
-          fontWeight: 500,
+          typography: "label_md",
           color: "text.primary",
           whiteSpace: "nowrap",
           pr: 0.5,

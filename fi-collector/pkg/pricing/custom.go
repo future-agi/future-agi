@@ -27,9 +27,9 @@ WHERE organization_id = $1 AND user_model_id = $2 AND deleted = false
 LIMIT 1`
 
 type customEntry struct {
-	inPer1K, outPer1K float64
-	found             bool
-	expires           time.Time
+	inPerM, outPerM float64
+	found          bool
+	expires        time.Time
 }
 
 // errTTL bounds how long a transient DB failure is cached, distinct from the
@@ -69,8 +69,9 @@ func NewCustomPricing(db rowQuerier, ttl time.Duration, log *slog.Logger) *Custo
 	return &CustomPricing{db: db, ttl: ttl, log: log, cache: map[string]customEntry{}}
 }
 
-// Cost prices with per-1K-token rates: prompt*(in/1000) + completion*(out/1000)
-// — Django otel.py:1771-1780. ok=false when the org has no such model.
+// Cost uses stored prices entered as dollars per million tokens:
+// prompt*(in/1_000_000) + completion*(out/1_000_000).
+// ok=false when the org has no such model.
 func (c *CustomPricing) Cost(
 	ctx context.Context, orgID, model string, promptTokens, completionTokens int32,
 ) (float64, bool) {
@@ -93,7 +94,7 @@ func (c *CustomPricing) Cost(
 		cancel()
 		switch {
 		case err == nil:
-			e = customEntry{inPer1K: in, outPer1K: out, found: true, expires: time.Now().Add(c.ttl)}
+			e = customEntry{inPerM: in, outPerM: out, found: true, expires: time.Now().Add(c.ttl)}
 		case errors.Is(err, pgx.ErrNoRows):
 			e = customEntry{found: false, expires: time.Now().Add(c.ttl)}
 		default:
@@ -122,6 +123,6 @@ func (c *CustomPricing) Cost(
 	if !e.found {
 		return 0, false
 	}
-	return float64(promptTokens)*(e.inPer1K/1000) +
-		float64(completionTokens)*(e.outPer1K/1000), true
+	return float64(promptTokens)*(e.inPerM/1_000_000) +
+		float64(completionTokens)*(e.outPerM/1_000_000), true
 }

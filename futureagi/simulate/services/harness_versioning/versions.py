@@ -99,7 +99,7 @@ class Pieces:
 
 
 def versioning_enabled() -> bool:
-    return bool(getattr(settings, "HARNESS_VERSIONING_ENABLED", False))
+    return bool(getattr(settings, "HARNESS_VERSIONING_ENABLED", True))
 
 
 def environment_head(job: HostedHarnessJob) -> HostedHarnessJob | None:

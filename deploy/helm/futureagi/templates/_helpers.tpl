@@ -31,12 +31,14 @@ prefix is capped to leave room for the longest suffix. */}}
 {{- printf "%s-%s" (include "futureagi.fullname" .root) .component | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
+{{/* Quote every scalar in labels and selectors: names stay strings, and a
+value cannot become another YAML key (notably Omega's trusted sender label). */}}
 {{- define "futureagi.labels" -}}
-helm.sh/chart: {{ include "futureagi.chart" . }}
-app.kubernetes.io/name: {{ include "futureagi.name" . }}
-app.kubernetes.io/instance: {{ .Release.Name }}
+helm.sh/chart: {{ include "futureagi.chart" . | quote }}
+app.kubernetes.io/name: {{ include "futureagi.name" . | quote }}
+app.kubernetes.io/instance: {{ .Release.Name | quote }}
 app.kubernetes.io/version: {{ .Values.image.tag | default .Chart.AppVersion | quote }}
-app.kubernetes.io/managed-by: {{ .Release.Service }}
+app.kubernetes.io/managed-by: {{ .Release.Service | quote }}
 app.kubernetes.io/part-of: futureagi
 {{- with .Values.commonLabels }}
 {{ toYaml . }}
@@ -46,13 +48,13 @@ app.kubernetes.io/part-of: futureagi
 {{/* Labels of one component: dict "root" $ "component" "backend". */}}
 {{- define "futureagi.componentLabels" -}}
 {{ include "futureagi.labels" .root }}
-app.kubernetes.io/component: {{ .component }}
+app.kubernetes.io/component: {{ .component | quote }}
 {{- end -}}
 
 {{- define "futureagi.selectorLabels" -}}
-app.kubernetes.io/name: {{ include "futureagi.name" .root }}
-app.kubernetes.io/instance: {{ .root.Release.Name }}
-app.kubernetes.io/component: {{ .component }}
+app.kubernetes.io/name: {{ include "futureagi.name" .root | quote }}
+app.kubernetes.io/instance: {{ .root.Release.Name | quote }}
+app.kubernetes.io/component: {{ .component | quote }}
 {{- end -}}
 
 {{/* Pod labels of a bundled datastore: no chart or app version, so a chart
@@ -169,6 +171,20 @@ never mounts it: it runs untrusted code. */}}
 {{- if .Values.serviceAccount.automountServiceAccountToken }}true{{ else }}false{{ end -}}
 {{- end -}}
 
+{{/* The gateway's ServiceAccount: its own (agentccGateway.serviceAccount,
+created or existing), so a cloud identity binding for the provider
+credentials covers the gateway pod only; else the chart's. */}}
+{{- define "futureagi.gatewayServiceAccountName" -}}
+{{- $sa := .Values.agentccGateway.serviceAccount | default dict -}}
+{{- if $sa.create -}}
+{{- $sa.name | default (include "futureagi.component" (dict "root" . "component" "agentcc-gateway")) -}}
+{{- else if $sa.name -}}
+{{- $sa.name -}}
+{{- else -}}
+{{- include "futureagi.serviceAccountName" . -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "futureagi.bootstrapServiceAccountName" -}}
 {{- if .Values.bootstrap.serviceAccount.create -}}
 {{- .Values.bootstrap.serviceAccount.name | default (include "futureagi.component" (dict "root" . "component" "bootstrap")) -}}
@@ -198,13 +214,15 @@ inline, else with the application keys. */}}
 {{- end -}}
 {{- end -}}
 
-{{/* env entry reading a Secret key: dict "name" "secret" "key" ["optional"]. */}}
+{{/* env entry reading a Secret key: dict "name" "secret" "key" ["optional"].
+The variable name and the key are quoted: secrets.extra names reach
+Kubernetes exactly as written. */}}
 {{- define "futureagi.secretEnv" -}}
-- name: {{ .name }}
+- name: {{ .name | quote }}
   valueFrom:
     secretKeyRef:
       name: {{ .secret }}
-      key: {{ .key }}
+      key: {{ .key | quote }}
       {{- if .optional }}
       optional: true
       {{- end }}
@@ -414,6 +432,18 @@ app and api fall back to the ingress hosts, otlp to the API host. */}}
 {{- end -}}
 {{- end -}}
 
+{{/* AGENTCC_GATEWAY_PUBLIC_URL: the LLM gateway's public origin, from its
+Gateway API route (gatewayApi.llmGateway; https unless gatewayApi.tls is
+false). The backend builds Omega EE's virtual-server urls on it (CN22). Empty
+when the chart does not route the gateway: set it in config.extraEnv when the
+gateway is exposed another way. */}}
+{{- define "futureagi.url.llmGateway" -}}
+{{- $g := .Values.gatewayApi -}}
+{{- if and $g.enabled $g.llmGateway.enabled $g.llmGateway.host -}}
+{{- printf "%s://%s" (ternary "https" "http" (ne (toString $g.tls) "false")) $g.llmGateway.host -}}
+{{- end -}}
+{{- end -}}
+
 {{/* FI_COLLECTOR_PUBLIC_URL: the OTLP/HTTP base URL SDKs get as FI_BASE_URL.
 Without a public one, the port-forward to localhost:4318 the notes print. */}}
 {{- define "futureagi.url.collectorPublic" -}}
@@ -544,7 +574,7 @@ storageClassName: {{ if eq $class "-" }}""{{ else }}{{ $class | quote }}{{ end }
 {{/* env entries from a NAME: value map. */}}
 {{- define "futureagi.envMap" -}}
 {{- range $name, $value := . }}
-- name: {{ $name }}
+- name: {{ $name | quote }}
   value: {{ $value | toString | quote }}
 {{- end }}
 {{- end -}}

@@ -1,8 +1,7 @@
 /* @import "src/components/annotate/build/main.css"; */
 /* scrollbar */
 @import "simplebar-react/dist/simplebar.min.css";
-@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;1,100;1,200;1,300;1,400;1,500;1,600;1,700&display=swap");
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap");
+/* Inter is self-hosted by main.jsx; no external font request is needed. */
 
 /* ============================================================
    CSS Variable Bridge — Light / Dark mode tokens
@@ -403,12 +402,11 @@ body {
   line-height: 22px;
 }
 
-.ag-cell:focus,
-.ag-cell-focus,
-.ag-cell-focus:focus-within {
-  outline: none !important;
-  border-color: var(--border-light) !important;
-  box-shadow: none !important;
+.dataset-table .ag-cell:focus,
+.dataset-table .ag-cell-focus,
+.dataset-table .ag-cell-focus:focus-within {
+  outline: 2px solid var(--ds-border-focus) !important;
+  outline-offset: -2px;
 }
 
 .develop-view .ag-pinned-left-header,
@@ -495,9 +493,7 @@ body {
 .ql-mention-list-container {
   max-height: 200px !important;
   padding: 12px 0 !important;
-  font-family:
-    IBM Plex Sans,
-    sans-serif !important;
+  font-family: Inter, sans-serif !important;
   background-color: var(--bg-paper) !important;
   border-color: var(--border-default) !important;
   color: var(--text-primary) !important;

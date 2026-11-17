@@ -102,7 +102,8 @@ test('SET-E2E-003: optional-expiry keys stop access and remain distinguishable f
       }
       const createdResponse = page.waitForResponse(r => r.url().endsWith(CREATE)
         && r.request().method() === 'POST', { timeout: UI_READY });
-      await dialog.getByRole('button', { name: 'Next', exact: true }).click();
+      // The personal-key dialog (dev 6c6b88b4) creates with "Create a key" and closes with "I saved it".
+      await dialog.getByRole('button', { name: 'Create a key', exact: true }).click();
       const response = await createdResponse;
       expect(response.status()).toBe(200);
       const body = await response.json() as Created;
@@ -113,7 +114,7 @@ test('SET-E2E-003: optional-expiry keys stop access and remain distinguishable f
         body: JSON.stringify({ id: key.key_id, name: key.key_name, expires_at: key.expires_at }),
         contentType: 'application/json',
       });
-      await dialog.getByRole('button', { name: 'Done', exact: true }).click();
+      await dialog.getByRole('button', { name: 'I saved it', exact: true }).click();
       // DataTable.jsx uses MUI DataGrid; dev-keys-view pins getRowId and expires_at field.
       const row = page.locator(`[role="row"][data-id="${key.key_id}"]`);
       await expect(row.locator('[data-field="expires_at"]'))
@@ -155,8 +156,10 @@ test('SET-E2E-003: optional-expiry keys stop access and remain distinguishable f
             });
           } else if (key === disabled) {
             expect(response.status()).toBe(401);
+            // accounts/api_key_policy.admit_api_key answers a disabled key exactly as a wrong
+            // one; only an expired key gets its own code.
             expect({ code: body.code, detail: body.detail }).toEqual({
-              code: 'authentication_failed', detail: 'API key is disabled',
+              code: 'authentication_failed', detail: 'Invalid API key or secret key',
             });
           } else {
             expect(response.status()).toBe(200);

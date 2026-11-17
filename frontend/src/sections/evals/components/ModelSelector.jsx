@@ -1,3 +1,4 @@
+import { localProviderLogo } from "src/utils/localProviderLogo";
 /* eslint-disable react/prop-types */
 import {
   Checkbox,
@@ -32,6 +33,10 @@ import React, {
 } from "react";
 import Iconify from "src/components/iconify";
 import KeysDrawer from "src/components/custom-model-dropdown/KeysDrawer";
+import NoUsableModelNotice from "src/components/custom-model-dropdown/NoUsableModelNotice";
+import { useFutureAgiCreditsRoute } from "src/components/custom-model-dropdown/noUsableModel";
+import { getModelEligibility } from "src/sections/develop-detail/Common/modelAccess";
+
 import { useApiKeysStatus } from "src/api/model/api-keys";
 import { useDebounce } from "src/hooks/use-debounce";
 import {
@@ -46,6 +51,8 @@ import { getProviderLogoFilterSx } from "./modelLogo";
 import DecisionModelSection from "./DecisionModelSection";
 import { FagiMark, PickerRow, PickerSectionLabel } from "./ModelPickerParts";
 import useDecisionModels from "src/api/evaluations/decision-models";
+import { useDecisionJudgesEnabled } from "src/sections/common/DecisionJudges/DecisionJudgesContext";
+import { isSurfaceShown } from "src/launch/launchSwitch";
 import {
   decisionModelLabel,
   filterDecisionGroups,
@@ -54,9 +61,30 @@ import {
   isJevDecisionModel,
   isNativeJevModel,
   legacyDecisionGroups,
-  NATIVE_JEV_LABELS,
 } from "../utils/decisionModels";
+import {
+  evaluatorModelLabel,
+  FAGI_MODELS,
+  FAGI_MODEL_VALUES,
+} from "./evaluatorModels";
+import { isPrototypeMode } from "src/utils/prototype";
+import { providerDisplayName } from "src/utils/providerDisplayName";
 import { paths } from "src/routes/paths";
+
+// A Your Models row the workspace cannot call yet (models_list
+// is_available false) names the key it needs; clicking it opens the Keys
+// drawer, as the decision-model rows do. A provider is named as its key card
+// names it (src/utils/providerDisplayName.js); Google models are Gemini.
+const PROVIDER_NAMES = {
+  google: "Google Gemini",
+  custom: "custom model",
+};
+const addKeyHint = (provider) => {
+  const id = String(provider ?? "").toLowerCase();
+  if (id === "custom") return "Add the custom model's base URL";
+  const name = PROVIDER_NAMES[id] ?? providerDisplayName(id);
+  return name ? `Add your ${name} key` : "Add a provider key";
+};
 
 // ---------------------------------------------------------------------------
 // Modes — how the evaluator runs
@@ -183,33 +211,22 @@ const SUMMARY_OPTIONS = [
   },
 ];
 
-// ---------------------------------------------------------------------------
-// FAGI built-in models — shown in a featured section at the top
-// ---------------------------------------------------------------------------
-const FAGI_MODELS = [
-  {
-    value: "turing_large",
-    label: "Turing Large",
-    description: "Best accuracy for complex evaluations",
-  },
-  {
-    value: "turing_small",
-    label: "Turing Small",
-    description: "Balanced accuracy, lower cost",
-  },
-  {
-    value: "turing_flash",
-    label: "Turing Flash",
-    description: "Fast, low-latency evaluations",
-  },
-];
-
-export const FAGI_MODEL_VALUES = new Set(FAGI_MODELS.map((m) => m.value));
-
-export const JEV_MODEL_VALUES = new Set(Object.keys(NATIVE_JEV_LABELS));
+// Future AGI's Turing models (a featured section at the top) and Jev: the
+// lists and their names live in evaluatorModels.js.
+export {
+  FAGI_MODEL_VALUES,
+  JEV_MODELS,
+  JEV_MODEL_VALUES,
+} from "./evaluatorModels";
 
 const FAGI_MODEL_LOCKED_TOOLTIP =
   "Turing models aren't enabled for this workspace. Select your own model.";
+
+// A decision group that one of the native Jev models connects to.
+const isNativeJevGroup = (group) =>
+  group.connections?.some((connection) =>
+    isNativeJevModel(connection.model_name),
+  );
 
 // Turing rows: the Future AGI mark, the name and what the model is for.
 const EvaluatorModelRow = ({
@@ -419,7 +436,7 @@ function SummarySubmenu({ activeSummary, onSelect }) {
             size="small"
             onClick={handleSave}
             disabled={
-              !editName.trim() || !editCriteria.trim() || saveMutation.isLoading
+              !editName.trim() || !editCriteria.trim() || saveMutation.isPending
             }
             sx={{ color: "primary.main" }}
           >
@@ -806,6 +823,12 @@ const ModelSelector = ({
   // Jev runs on the org's own TypeSafe key (Settings -> AI Providers).
   const { data: providerStatuses } = useApiKeysStatus();
   const decisionCatalog = useDecisionModels(Boolean(modelAnchor) || isJevModel);
+  // The native Jev models are listed on every screen. The rest of the
+  // decision catalog is listed only where the launch switch shows decision
+  // models and the screen lists them (DecisionJudgesContext).
+  const decisionJudges = useDecisionJudgesEnabled();
+  const decisionCatalogShown =
+    decisionJudges && isSurfaceShown("models.decision");
   const decisionGroups = useMemo(() => {
     // Catalog readiness uses the backend's exact workspace key resolver.
     // The older provider-status list is only a fallback for legacy Jev rows.
@@ -826,7 +849,12 @@ const ModelSelector = ({
     }));
   }, [decisionCatalog.data, providerStatuses]);
   const fagiModelsDenied = fagiModelsLocked && !capabilitiesLoading;
-  const { allowed: falconAllowed } = useFeatureAllowed(CAPABILITY.FALCON_AI);
+  const {
+    allowed: falconAllowed,
+    isLoading: falconLoading,
+    isError: falconError,
+  } = useFeatureAllowed(CAPABILITY.FALCON_AI);
+  const connectorsAvailable = falconAllowed && !falconLoading && !falconError;
 
   const effectiveMode = isJevModel ? "quick" : mode;
   const currentMode = MODES.find((m) => m.value === effectiveMode) || MODES[1];
@@ -840,7 +868,7 @@ const ModelSelector = ({
     getNextPageParam: () => null,
     initialPageParam: 1,
     staleTime: 60000,
-    enabled: falconAllowed,
+    enabled: connectorsAvailable,
   });
 
   const connectors = useMemo(() => {
@@ -926,11 +954,25 @@ const ModelSelector = ({
     );
   }, [modelPages, modelSearch]);
 
-  // Determine display name for the current model. Match on the full
-  // canonical value first (e.g. "turing_small"); fall back to a suffix
-  // match so a stray bare value ("small", "large", "flash") — which the
-  // backend's eval-list endpoint sometimes returns for built-in templates
-  // — still resolves to its FAGI label instead of rendering as "small".
+  // Every Your Models row is unusable here (for example Future AGI credits
+  // on and no provider key): one line under the header says what works.
+  const noApiModelUsable = useMemo(
+    () =>
+      !modelsLoading &&
+      apiModels.length > 0 &&
+      apiModels.every(
+        (m) => !getModelEligibility(m, m.is_available !== false).selectable,
+      ),
+    [apiModels, modelsLoading],
+  );
+  const creditsRoute = useFutureAgiCreditsRoute({
+    enabled: Boolean(modelAnchor) && noApiModelUsable,
+  });
+
+  // Determine display name for the current model: a decision model by its
+  // catalog label (with its connection), any other model by its label
+  // (evaluatorModelLabel, which other screens name models by, also resolves
+  // a stray bare value such as "small" to its FAGI label).
   const modelDisplayName = useMemo(() => {
     if (!model) return "Select model";
     if (isDecisionModel(model)) {
@@ -943,11 +985,7 @@ const ModelSelector = ({
         ? label
         : `${label} · ${connection.label}`;
     }
-    const exact = FAGI_MODELS.find((m) => m.value === model);
-    if (exact) return exact.label;
-    const suffix = FAGI_MODELS.find((m) => m.value.endsWith(`_${model}`));
-    if (suffix) return suffix.label;
-    return model;
+    return evaluatorModelLabel(model) ?? model;
   }, [model, decisionGroups]);
 
   const handleToggleConnector = useCallback((id) => {
@@ -971,8 +1009,14 @@ const ModelSelector = ({
   }, [modelSearch]);
 
   const filteredDecisionModels = useMemo(
-    () => filterDecisionGroups(decisionGroups, modelSearch),
-    [decisionGroups, modelSearch],
+    () =>
+      filterDecisionGroups(
+        decisionCatalogShown
+          ? decisionGroups
+          : decisionGroups.filter(isNativeJevGroup),
+        modelSearch,
+      ),
+    [decisionCatalogShown, decisionGroups, modelSearch],
   );
 
   // When Turing models aren't enabled, callers still seed `model` with
@@ -1430,12 +1474,29 @@ const ModelSelector = ({
           {(apiModels.length > 0 || modelsLoading) && (
             <>
               <PickerSectionLabel>Your models</PickerSectionLabel>
+              {noApiModelUsable && (
+                <NoUsableModelNotice
+                  creditsRoute={creditsRoute}
+                  onLinkClick={() => setModelAnchor(null)}
+                  sx={{ px: 1.5, pb: 0.5 }}
+                />
+              )}
               {apiModels.map((m) => {
-                const available = m.is_available !== false;
-                const logoUrl = m.logo_url;
-                const meta = [m.providers, !available && "Add API key"]
-                  .filter(Boolean)
-                  .join(" · ");
+                // Rows funded by Future AGI credits need no provider key; BYOK
+                // and pre-contract rows keep the is_available !== false gate.
+                const {
+                  selectable: available,
+                  payerLabel,
+                  needsProviderSetup,
+                } = getModelEligibility(m, m.is_available !== false);
+                const caption = !available
+                  ? needsProviderSetup
+                    ? addKeyHint(m.providers)
+                    : "Model access unavailable. Refresh or choose another model."
+                  : payerLabel
+                    ? [m.providers, payerLabel].filter(Boolean).join(" · ")
+                    : m.providers;
+                const logoUrl = localProviderLogo(m);
                 return (
                   <PickerRow
                     key={m.model_name}
@@ -1458,7 +1519,7 @@ const ModelSelector = ({
                       )
                     }
                     label={m.model_name}
-                    meta={meta}
+                    meta={caption}
                     selected={m.model_name === model}
                     trailing={
                       !available
@@ -1471,7 +1532,7 @@ const ModelSelector = ({
                       if (!available) {
                         // Open keys drawer for this model; close the picker
                         // so its backdrop doesn't cover the drawer.
-                        openKeysDrawer(m);
+                        if (needsProviderSetup) openKeysDrawer(m);
                         return;
                       }
                       selectModel(m.model_name);
@@ -1587,12 +1648,20 @@ const ModelSelector = ({
           <Divider sx={{ my: 0.5 }} />
 
           {[
-            {
-              key: "connectors",
-              icon: "solar:widget-linear",
-              label: "Connectors",
-              desc: "Connect external tools to enhance evaluations.",
-            },
+            // Connectors are Falcon AI's MCP connectors, managed on its
+            // falcon-ai-connectors settings page: the menu offers them, and
+            // Manage connectors with them, only where the capabilities answer
+            // says Falcon AI is allowed.
+            ...(falconAllowed && !isPrototypeMode()
+              ? [
+                  {
+                    key: "connectors",
+                    icon: "solar:widget-linear",
+                    label: "Connectors",
+                    desc: "Connect external tools to enhance evaluations.",
+                  },
+                ]
+              : []),
             {
               key: "knowledge",
               icon: "solar:book-linear",
@@ -1612,7 +1681,11 @@ const ModelSelector = ({
               desc: "Control how detailed or brief the evaluation output should be",
             },
           ]
-            .filter((item) => !isJevModel || item.key !== "summary")
+            .filter(
+              (item) =>
+                (item.key !== "connectors" || connectorsAvailable) &&
+                (!isJevModel || item.key !== "summary"),
+            )
             .map((item) => (
               <MenuItem
                 key={item.key}
@@ -1664,7 +1737,7 @@ const ModelSelector = ({
               pl: 0.5,
             }}
           >
-            {plusSubmenu === "connectors" && (
+            {plusSubmenu === "connectors" && connectorsAvailable && (
               <>
                 {connectors.length > 3 && (
                   <Box sx={{ p: 1 }}>
@@ -2045,7 +2118,7 @@ const ModelSelector = ({
             (isJevDecisionModel(pending.model_name) && jevModelsLocked)
           )
             return;
-          selectModel(pending.model_name);
+          selectModel(pending.selectionId || pending.model_name);
         }}
       />
     </Box>
@@ -2058,6 +2131,18 @@ ModelSelector.propTypes = {
   disabled: PropTypes.bool,
   showMode: PropTypes.bool,
   showPlus: PropTypes.bool,
+  mode: PropTypes.string,
+  onModeChange: PropTypes.func,
+  useInternet: PropTypes.bool,
+  onUseInternetChange: PropTypes.func,
+  activeSummary: PropTypes.string,
+  onActiveSummaryChange: PropTypes.func,
+  activeConnectorIds: PropTypes.arrayOf(PropTypes.string),
+  onActiveConnectorIdsChange: PropTypes.func,
+  selectedKBs: PropTypes.array,
+  onSelectedKBsChange: PropTypes.func,
+  activeContextOptions: PropTypes.arrayOf(PropTypes.string),
+  onActiveContextOptionsChange: PropTypes.func,
   hideDatasetContextToggle: PropTypes.bool,
   openModelMenuSignal: PropTypes.number,
   outputType: PropTypes.string,

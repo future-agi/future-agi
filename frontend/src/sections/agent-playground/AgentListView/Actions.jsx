@@ -17,6 +17,12 @@ import {
   useDeleteGraphs,
 } from "../../../api/agent-playground/agent-playground";
 
+import { isPrototypeMode } from "src/utils/prototype";
+
+// L7c merge (walk sv2-run-cd d02): Create Agent posts an unmocked
+// /agent-playground/graphs/ and opens a builder with no version, so the
+// prototype build offers no Create Agent (the seeded Support Agent stays).
+
 function SelectionActions({
   selectedCount,
   onDelete,
@@ -169,16 +175,20 @@ export default function Actions({ searchQuery, setSearchQuery, gridApi }) {
             View Docs
           </Button>
 
-          <LoadingButton
-            variant="contained"
-            color="primary"
-            size="small"
-            loading={isCreatingAgent}
-            onClick={handleCreateAgent}
-            startIcon={<SvgColor src="/assets/icons/ic_add.svg" width="20px" />}
-          >
-            Create Agent
-          </LoadingButton>
+          {isPrototypeMode() ? null : (
+            <LoadingButton
+              variant="contained"
+              color="primary"
+              size="small"
+              loading={isCreatingAgent}
+              onClick={handleCreateAgent}
+              startIcon={
+                <SvgColor src="/assets/icons/ic_add.svg" width="20px" />
+              }
+            >
+              Create Agent
+            </LoadingButton>
+          )}
         </Stack>
       )}
       <DeleteAgentsDialog

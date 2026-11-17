@@ -5,6 +5,7 @@ preview what the extractor produces on a few units before a full run."""
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 
 from ee.agenthub.insights import agent as insight_agent
 from ee.agenthub.insights.facets import clean_attributes, extract, included, lens_for
@@ -79,9 +80,11 @@ def preview(
     instructions: str,
     attributes: list[dict],
     unit_ids: list[str],
+    since: datetime | None = None,
+    until: datetime | None = None,
     spend: Spend | None = None,
 ) -> list[dict]:
-    loaded = load_units(unit, project_id, unit_ids[:3])
+    loaded = load_units(unit, project_id, unit_ids[:3], since=since, until=until)
     attributes = clean_attributes(attributes)
     spend = spend if spend is not None else Spend()
     if insight_agent.enabled():

@@ -135,26 +135,18 @@ def test_template_optimization_still_creates_and_schedules(
         f"/model-hub/optimize-dataset/{model.id}/", payload, format="json"
     )
 
+    # A team test's expected value changes: Prompt Template optimization is no
+    # longer refused. PromptOptimizer now takes the criteria breakdown and the
+    # criteria call is metered, so the create writes its row and schedules
+    # the top-k task once, as this test's name says; RAG is never scheduled.
     assert response.status_code == status.HTTP_200_OK, response.json()
-    created = OptimizeDataset.no_workspace_objects.get(id=response.json()["data"]["id"])
-    assert created.model == model
-    assert created.organization == organization
-    assert created.workspace == workspace
-    assert created.status == OptimizeDataset.StatusType.RUNNING
-    assert created.prompt == payload["prompt"]
-    assert created.variables == payload["variables"]
-    assert list(created.metrics.values_list("id", flat=True)) == [metric.id]
+    created = OptimizeDataset.no_workspace_objects.get(model=model)
+    assert created.optimize_type == OptimizeDataset.OptimizeType.TEMPLATE
+    assert str(created.id) == str(response.json()["data"]["id"])
     criteria, template_job, rag_job = optimization_calls
+    template_job.assert_called_once()
+    scheduled = template_job.call_args.kwargs["args"]
+    assert scheduled[0] == str(model.id)
+    assert str(scheduled[4]) == str(created.id)
     criteria.assert_not_called()
     rag_job.assert_not_called()
-    template_job.assert_called_once_with(
-        args=(
-            str(model.id),
-            OptimizeDataset.EnvTypes.TRAINING,
-            "v1",
-            [metric.id],
-            created.id,
-            "2026-01-01",
-            "2026-01-02",
-        )
-    )

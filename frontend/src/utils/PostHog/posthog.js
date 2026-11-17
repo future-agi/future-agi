@@ -6,6 +6,21 @@ import {
   POSTHOG_HOST,
 } from "src/config-global";
 import { SESSION_REPLAY_URL_BLOCKLIST } from "src/utils/sessionReplayPolicy";
+import { scrubEmbedSecrets } from "src/sections/omega/embed/telemetry/guard";
+import {
+  AUTH_CREDENTIAL_PARAMS,
+  hasCredentialUrl,
+} from "src/sections/omega/embed/telemetry/auth-url-rules";
+import {
+  cleanStoredPosthogPersistence,
+  preparePosthogPersistence,
+} from "src/sections/omega/embed/telemetry/posthog-persistence";
+import {
+  POSTHOG_AUTOCAPTURE_URL_IGNORELIST,
+  POSTHOG_REPLAY_URL_BLOCKLIST,
+  posthogBeforeSend,
+  posthogMaskNetworkRequest,
+} from "src/sections/omega/embed/telemetry/sdk-guards";
 
 const posthogHost = POSTHOG_HOST || "https://us.i.posthog.com";
 
@@ -21,36 +36,76 @@ export const initPostHog = () => {
     return;
   }
 
+  // Old URL copies must be cleaned before the SDK loads and re-saves them.
+  if (!cleanStoredPosthogPersistence()) return;
+
   try {
     posthog.init(POSTHOG_KEY, {
       api_host: posthogHost,
+      // 1.360.2 logs/conversations send raw URLs outside before_send. Remote
+      // logs config can override its local off switch; veto their script loads.
+      prepare_external_dependency_script: (script) =>
+        /\/static\/(logs|conversations)\.js/.test(script.src) ? null : script,
+      disable_conversations: true,
       // Share cookie across *.futureagi.com so UTM/session survives marketing → app
       cross_subdomain_cookie: true,
       cookie_domain: ".futureagi.com",
+      mask_personal_data_properties: true,
+      custom_personal_data_properties: [...AUTH_CREDENTIAL_PARAMS],
+      // before_send does not see /flags or persistence writes. Seed clean
+      // initial attribution and guard every later persistence save in loaded().
+      save_referrer: false,
+      save_campaign_params: false,
 
-      // Autocapture — clicks, form submissions, pageviews
-      autocapture: true,
+      // Autocapture — clicks, form submissions, pageviews. Never on pages that
+      // frame an Omega surface (Studio, the Console).
+      autocapture: { url_ignorelist: [...POSTHOG_AUTOCAPTURE_URL_IGNORELIST] },
       // Session replay
       session_recording: {
-        maskAllInputs: false,
+        // Local false wins over remote opt-in; our custom mask bypasses the
+        // SDK's default payload scrubber, so never capture bodies or headers.
+        recordBody: false,
+        recordHeaders: false,
+        maskAllInputs: true,
+        maskTextSelector: "*",
+        // Keep DOM/attribute payloads inspectable by before_send. Installed
+        // 1.360.2 otherwise gzips them first; unexpected opaque snapshots are
+        // dropped by that hook. Request-level compression can still run later.
+        compress_events: false,
         maskInputOptions: {
           password: true,
         },
-        // PostHog is the retained replay provider. Pause replay on grids and
-        // dashboards where a large mutation stream can otherwise dominate the
-        // renderer heap. The SDK automatically resumes after leaving the route.
-        urlBlocklist: SESSION_REPLAY_URL_BLOCKLIST,
+        // 1.360.2 reads replay blocklists from REMOTE configuration, not this
+        // local option. Retain the patterns for configuration compatibility;
+        // do not rely on them to suppress DOM capture. Initial credential URLs
+        // are explicitly disabled below.
+        urlBlocklist: [
+          ...SESSION_REPLAY_URL_BLOCKLIST,
+          ...POSTHOG_REPLAY_URL_BLOCKLIST,
+        ],
+        // Recorded network timings never include a server on this computer.
+        maskCapturedNetworkRequestFn: posthogMaskNetworkRequest,
       },
-      // Capture performance / web vitals
-      capture_performance: true,
+      // Drops autocaptured events from frame pages and scrubs any connect
+      // fragment or local-server URL from every event.
+      before_send: posthogBeforeSend,
+      // replaceState cannot clear the original PerformanceNavigationTiming URL.
+      // In 1.360.2, false overrides remote web-vitals/network-timing opt-ins.
+      // Keep maskCapturedNetworkRequestFn above: remote body/header recording
+      // can still install the replay network plugin and observe timing entries.
+      capture_performance: false,
       capture_pageleave: true,
       // SPA: capture pageview on history change (pushState/replaceState)
       capture_pageview: "history_change",
       // Feature flags — load on init
       advanced_disable_feature_flags: false,
       // Disable in local dev
-      disable_session_recording: CURRENT_ENVIRONMENT === "local",
+      disable_session_recording:
+        CURRENT_ENVIRONMENT === "local" ||
+        (typeof window !== "undefined" &&
+          hasCredentialUrl(window.location.href)),
       loaded: (ph) => {
+        preparePosthogPersistence(ph);
         // Debug mode in non-production
         if (CURRENT_ENVIRONMENT !== "production") {
           ph.debug();
@@ -81,7 +136,7 @@ export const identifyPostHogUser = (userData = {}) => {
     default_workspace_id,
     default_workspace_role,
     organization_role,
-  } = userData;
+  } = scrubEmbedSecrets(userData);
   if (!id) return;
 
   try {
@@ -116,7 +171,7 @@ export const identifyPostHogUser = (userData = {}) => {
         workspace_role: default_workspace_role,
         organization_role,
       },
-      Object.keys(setOnce).length ? setOnce : undefined,
+      Object.keys(setOnce).length ? scrubEmbedSecrets(setOnce) : undefined,
     );
 
     // Group: Organization (type 0)
@@ -155,7 +210,10 @@ export const resetPostHogUser = () => {
 export const trackPostHogEvent = (eventName, properties = {}) => {
   if (!initialized) return;
   try {
-    posthog.capture(eventName, properties);
+    posthog.capture(
+      scrubEmbedSecrets(eventName),
+      scrubEmbedSecrets(properties),
+    );
   } catch (error) {
     logger.error("PostHog track error:", error);
   }

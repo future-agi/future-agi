@@ -40,8 +40,11 @@ class CommitBoundaryTests(UpdaterCase):
         return mock.patch.object(envcommit, 'exchange', side_effect=exchange)
 
     def race(self, *, recovering, rename):
+        # An operator pepper, so the update's only env commit is the version commit the race targets.
         self.build(env_text='\ufeffFUTURE_AGI_VERSION=v0.9.0\r\nMIDDLE=${FUTURE_AGI_VERSION}\r\n'
-                            'FUTURE_AGI_VERSION=v1.0.0\r\nODD="\\$X"\r\nLAST=no-newline')
+                            'FUTURE_AGI_VERSION=v1.0.0\r\nODD="\\$X"\r\n'
+                            'FI_API_SECRET_PEPPER=operator-test-pepper-0123456789abcdef0123456789\r\n'
+                            'LAST=no-newline')
         if recovering:
             self.interrupt_apply()
         before = self.env_bytes()

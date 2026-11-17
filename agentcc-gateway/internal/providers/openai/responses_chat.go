@@ -227,7 +227,7 @@ func toResponsesRequest(req *models.ChatCompletionRequest, stream bool) *respons
 		out.Input = append(out.Input, responsesInput(m)...)
 	}
 	for _, t := range req.Tools {
-		out.Tools = append(out.Tools, responsesTool(t))
+		out.Tools = append(out.Tools, responsesChatTool(t))
 	}
 	out.ToolChoice = responsesToolChoice(req.ToolChoice)
 	return out
@@ -326,9 +326,9 @@ func contentText(raw json.RawMessage) string {
 	return sb.String()
 }
 
-// responsesTool translates a chat tool. A tool that is not a plain function
+// responsesChatTool translates a chat tool. A tool that is not a plain function
 // keeps the caller's bytes, as on chat completions, so the upstream answers it.
-func responsesTool(t models.Tool) json.RawMessage {
+func responsesChatTool(t models.Tool) json.RawMessage {
 	if len(t.Raw) > 0 {
 		return t.Raw
 	}

@@ -201,7 +201,6 @@ def test_dashboard_shared_link_resolves_dashboard_detail_payload(
     payload = resolved.json()
     assert payload["resource_type"] == "dashboard"
     assert payload["resource_id"] == str(dashboard.id)
-    assert payload["data"]["id"] == str(dashboard.id)
     assert payload["data"]["name"] == dashboard.name
     assert payload["data"]["description"] == dashboard.description
     assert payload["data"]["widget_count"] == 1

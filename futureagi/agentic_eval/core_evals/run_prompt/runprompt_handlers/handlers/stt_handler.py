@@ -6,10 +6,13 @@ Supports:
 2. Standard transcription via litellm.transcription() API
 """
 
+# Pre-existing lint debt, exempted file-wide so a security fix can touch this
+# module behaviour-neutrally (typing rewrites).
+# ruff: noqa: UP006, UP035
+
 import time
 from typing import Any, Dict
 
-import litellm
 import structlog
 from asgiref.sync import sync_to_async
 
@@ -24,6 +27,15 @@ from agentic_eval.core_evals.run_prompt.runprompt_handlers.utils.adapters import
 from agentic_eval.core_evals.run_prompt.runprompt_handlers.utils.audio_processor import (
     AudioProcessor,
 )
+from model_hub.utils.model_endpoints import (
+    ModelConfigurationRefused,
+    _capture_llm_messages,
+    audio_model_kwargs,
+    guarded_transcription,
+    is_endpoint_error,
+    refuse_vertex_call_without_a_service_account_key,
+)
+from model_hub.utils.model_key import ModelKeyMissing
 
 logger = structlog.get_logger(__name__)
 
@@ -38,7 +50,7 @@ class StandardSTTHandler(BaseModelHandler):
     - Response formatting with usage metadata
     """
 
-    def _execute_transcription(self, api_key: str) -> tuple[str, Dict[str, Any]]:
+    def _execute_transcription(self, api_key: Any) -> tuple[str, Dict[str, Any]]:
         """
         Execute STT transcription via litellm.transcription().
 
@@ -49,6 +61,12 @@ class StandardSTTHandler(BaseModelHandler):
             Tuple of (transcription_text, value_info dict)
         """
         start_time = time.time()
+
+        # This call carries no service-account key of the customer's own: a
+        # Vertex model is refused before it.
+        refuse_vertex_call_without_a_service_account_key(
+            self.context.provider, {"model": self.context.model, "api_key": api_key}
+        )
 
         # Extract audio input
         audio_input = self._adapter._get_input_audio_from_messages()
@@ -75,8 +93,11 @@ class StandardSTTHandler(BaseModelHandler):
         buf = AudioProcessor.create_audio_buffer(audio_bytes, file_ext)
 
         # Call litellm.transcription with drop_params=True
-        response = litellm.transcription(
-            model=self.context.model, file=buf, api_key=api_key, drop_params=True
+        response = guarded_transcription(
+            model=self.context.model,
+            file=buf,
+            **audio_model_kwargs(self.context.provider, api_key),
+            drop_params=True,
         )
 
         # Validate response is not None
@@ -135,6 +156,10 @@ class StandardSTTHandler(BaseModelHandler):
             )
 
         except Exception as e:
+            if is_endpoint_error(e) or isinstance(
+                e, (ModelConfigurationRefused, ModelKeyMissing)
+            ):
+                raise
             # Expected user misconfiguration (text-only input to an STT eval)
             # is handled gracefully as a failed HandlerResponse; downgrade only
             # that case to warning so real STT failures stay as errors.
@@ -183,6 +208,10 @@ class StandardSTTHandler(BaseModelHandler):
             )
 
         except Exception as e:
+            if is_endpoint_error(e) or isinstance(
+                e, (ModelConfigurationRefused, ModelKeyMissing)
+            ):
+                raise
             # Expected user misconfiguration (text-only input to an STT eval)
             # is handled gracefully as a failed HandlerResponse; downgrade only
             # that case to warning so real STT failures stay as errors.
@@ -254,6 +283,7 @@ class CustomSTTHandler(BaseModelHandler):
             )
 
             # Execute with retry on timeout
+            _capture_llm_messages({})
             transcription_text, value_info = self._retry_on_timeout(
                 transcription_handler,
                 adapter,
@@ -313,6 +343,7 @@ class CustomSTTHandler(BaseModelHandler):
             )
 
             # Execute with async retry (uses asyncio.sleep instead of blocking time.sleep)
+            _capture_llm_messages({})
             transcription_text, value_info = await self._retry_on_timeout_async(
                 transcription_handler,
                 adapter,

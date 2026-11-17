@@ -8,8 +8,10 @@ import {
   DEFAULT_CONFIG,
   isCustomColumnId,
   moveColumn,
+  orderColumns,
   removeColumn,
   resolveColumns,
+  resolveGatewayColumns,
   toggleColumn,
 } from "./columnModel";
 import {
@@ -36,7 +38,10 @@ function identitySegment(value) {
  *   the query error; an initial failure never exposes saved custom names.
  * - persistence: browser localStorage, ids only.
  */
-export default function useRequestColumns({ enabled = true } = {}) {
+export default function useRequestColumns({
+  enabled = true,
+  managed = true,
+} = {}) {
   const { user } = useAuthContext();
   const { currentOrganizationId, isReady } = useOrganization();
   const declarationsQuery = useCustomProperties(
@@ -105,6 +110,22 @@ export default function useRequestColumns({ enabled = true } = {}) {
       }),
     [config, declarations, declarationsAvailable],
   );
+  const gateway = useMemo(
+    () => resolveGatewayColumns(config, { managed }),
+    [config, managed],
+  );
+  const columns = useMemo(
+    () => orderColumns(config, [...resolved.columns, ...gateway.columns]),
+    [config, resolved.columns, gateway.columns],
+  );
+  const movableIds = useMemo(
+    () => new Set([...resolved.movableIds, ...gateway.movableIds]),
+    [resolved.movableIds, gateway.movableIds],
+  );
+  const pickerEntries = useMemo(
+    () => ({ ...resolved.entries, gateway: gateway.entries }),
+    [resolved.entries, gateway.entries],
+  );
 
   const unavailableCustomCount = useMemo(
     () =>
@@ -131,8 +152,8 @@ export default function useRequestColumns({ enabled = true } = {}) {
   );
 
   const move = useCallback(
-    (id, delta) => commit(moveColumn(config, id, delta, resolved.movableIds)),
-    [commit, config, resolved.movableIds],
+    (id, delta) => commit(moveColumn(config, id, delta, movableIds)),
+    [commit, config, movableIds],
   );
 
   const remove = useCallback(
@@ -154,11 +175,11 @@ export default function useRequestColumns({ enabled = true } = {}) {
   );
 
   return {
-    columns: resolved.columns,
-    pickerEntries: resolved.entries,
+    columns,
+    pickerEntries,
     stale: resolved.stale,
-    visibleCount: resolved.visibleCount,
-    totalCount: resolved.totalCount,
+    visibleCount: resolved.visibleCount + gateway.visibleCount,
+    totalCount: resolved.totalCount + gateway.totalCount,
     atCap: resolved.atCap,
     config,
     storageKey,

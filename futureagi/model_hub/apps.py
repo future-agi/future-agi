@@ -13,6 +13,15 @@ STARTUP_SAFE_MANAGEMENT_COMMANDS = frozenset(
     {
         "check",
         "collectstatic",
+        # Counts evaluations whose organization does not fit their owner (reads only).
+        "count_eval_version_org_stamps",
+        # Counts the phone agents configured with the partner phone target:
+        # reads only, writes nothing, prints counts only.
+        "count_partner_phone_target_agents",
+        # Counts stored model configurations that hold a reference value, like
+        # api_secrets status: reads only, writes nothing.
+        "count_platform_value_configs",
+        "deployment_status",
         # First-account bootstrap and account recovery that self-hosted
         # installs tell an operator to run ("Forgot password" without email
         # names reset_password); each writes only the account it is given,
@@ -21,6 +30,14 @@ STARTUP_SAFE_MANAGEMENT_COMMANDS = frozenset(
         "create_user",
         "createsuperuser",
         "reset_password",
+        # The Omega Hub's and the Omega products' operator commands, which
+        # their runbooks name for production: a named person grants or
+        # revokes a Hub maintainer (omega_hub_maintainer, audited, --by an
+        # existing user), and a staff operator holding operate_rollout reads
+        # or changes a product's rollout (omega_rollout, audited, --actor).
+        # Each writes only the grant or rollout row it is given.
+        "omega_hub_maintainer",
+        "omega_rollout",
         "generate_swagger",
         "provision_sql_reader",
         "provision_sql_service",
@@ -40,24 +57,83 @@ HOSTED_ENV_TYPES = frozenset({"prod", "production", "staging"})
 # mutation hooks during AppConfig initialization.
 OPERATOR_STARTUP_MUTATION_COMMANDS = frozenset(
     {
+        # API secrets at rest (READINESS L03): `api_secrets backfill` seals the
+        # plaintext a rolling deploy left behind; `api_secrets status` (counts
+        # only) is admitted anywhere by guarded_management_command.
+        "api_secrets",
+        # Reversible retirement is a dedicated bootstrap/operator action.
+        "retire_org_keys_733",
+        # Gateway (agentcc) repair and report commands. The deploy runs
+        # agentcc_check_key_org (a dry-run report; --fix repairs the keys it
+        # lists). The managed-credit operations run the ledger, upstream-key
+        # and ledger-export commands; agentcc_managed_upstream_keys reaches the
+        # live OpenRouter API only with its own three switches (--live among
+        # them). agentcc_scrub_request_log_credentials runs once after the
+        # release that masks credential headers (a dry-run report of the keys
+        # to rotate; --apply masks the stored rows).
+        "agentcc_check_key_org",
+        "hosted_gateway_migrate",
+        "agentcc_export_ledger",
+        # Read-only inventory; only --repair --apply repairs policy scope.
+        "agentcc_find_scoped_guardrail_policies",
+        "agentcc_managed_credits",
+        "agentcc_managed_upstream_keys",
+        "agentcc_scrub_request_log_credentials",
+        # Read only: the update's stop check that every request-log index
+        # agentcc 0031 adds is present and valid.
+        "agentcc_check_request_log_indexes",
+        # RF19: reports (--check), finishes (--encrypt) or, only with
+        # --to-legacy --confirm, reverses the encryption of model-hub keys at
+        # rest that migration 0125 does.
+        "model_hub_keys_at_rest",
         "ch25_apply_schema",
         "ch25_remove_pg",
         "backfill_harness_agent_prompts",
         "backfill_legacy_scans",
         "backfill_score_tracer_project",
+        # Stamps the project of trace session queue items that migration 0140
+        # left empty because a ClickHouse lookup failed; safe to run again.
+        "rebackfill_queueitem_session_project",
+        # Re-mirror from Postgres what the analytics database missed: traces
+        # (ch25_backfill_traces, idempotent) and spans (ch25_backfill,
+        # resumable; it skips the windows it has already copied). ch25_validate
+        # then compares the two databases and writes nothing to either.
+        "ch25_backfill",
+        "ch25_backfill_traces",
+        "ch25_validate",
         # Helm bootstrap Job: migrate, seeds, ClickHouse schema, CDC, schedules.
         "bootstrap_install",
         "createcachetable",
         "drop_legacy_observation_span",
         "harness_versions_backfill",
         "migrate",
+        # Omega Hub operations (READINESS 3.19-3.20a, omega_hub/ops/RUNBOOK.md): bucket status,
+        # provisioning and restore; dead-letter email replay; retention and rules-notice runs by
+        # hand; the Official import. Each is an explicit operator action, so it runs only as an
+        # operator job or in the explicit local mode, like the backfills. Maintainer grants
+        # (omega_hub_maintainer) are startup-safe above: they run on any production install.
+        "omega_hub_import_official",
+        # Audited, staff-owned Official publisher bootstrap; creates no users or keys.
+        "omega_hub_ensure_official_publisher",
+        "omega_hub_outbox",
+        "omega_hub_retention",
+        "omega_hub_rules_notify",
+        "omega_hub_storage",
         "provision_grouping_features",
         "enable_sampled_grouping",
         "requeue_budget_grouping",
         "requeue_failed_grouping",
         "requeue_investigations",
+        # Clears the stop on demo seeds that stopped after a lasting failure.
+        "restart_demo_seeding",
+        # Operator repair of seeded demo rows nobody changed, run by hand only.
+        "replace_unedited_demo_rows",
         "register_temporal_schedules",
         "seed_system_evals",
+        # The one-shot MCP secret migration: --apply writes credentials and
+        # config versions, the bare form is a dry run. The deploy step runs
+        # --apply, then --check.
+        "agentcc_mcp_migrate_secrets",
         "purge_sql_results",
     }
 )
@@ -173,6 +249,9 @@ def explicit_management_mutation_authorized(argv: list[str]) -> bool:
     """
 
     command = _management_command(argv)
+    if command == "retire_org_keys_733":
+        # Unlike developer commands, retirement never uses the local-mode bypass.
+        return operator_startup_mutation_authorized(argv)
     explicit_local_mode = (
         os.getenv("NO_STARTUP_DB_MUTATIONS") == "false"
         and not hosted_startup_environment()
@@ -230,6 +309,15 @@ def guarded_management_command(argv: list[str]) -> str | None:
         argv[argv.index(command) + 1 :]
     ):
         return None
+    if command == "retire_org_keys_733":
+        options = set(argv[argv.index(command) + 1 :])
+        if "--dry-run" in options and options <= {"--dry-run", "--reverse"}:
+            return None
+    if command == "replace_unedited_demo_rows":
+        # The bare dry run prints the counts only: it locks no row and writes
+        # nothing. Only this closed form, like the dry run above.
+        if argv[argv.index(command) + 1 :] == ["--dry-run"]:
+            return None
     if command == "migrate":
         # Django 5.1 runs --prune before the --check exit. Permit only this
         # closed check-only form, not arbitrary options containing --check.
@@ -246,6 +334,15 @@ def guarded_management_command(argv: list[str]) -> str | None:
         options = set(argv[argv.index(command) + 1 :])
         required = {"--check", "--dry-run"}
         if required <= options <= required | {"--noinput", "--no-input"}:
+            return None
+    if command == "api_secrets" and argv[argv.index(command) + 1 :] == ["status"]:
+        # Counts storage forms and writes nothing; the runbook's post-deploy check.
+        return None
+    if command == "agentcc_mcp_migrate_secrets":
+        # The secret-migration check in the deploy step reads config versions
+        # and writes nothing: only this closed form, as for the two checks
+        # above. The migration itself is an operator command.
+        if argv[argv.index(command) + 1 :] == ["--check"]:
             return None
     return command
 
@@ -302,6 +399,13 @@ class ModelHubConfig(AppConfig):
                     sender=self,
                     dispatch_uid="model_hub_seed_default_prompt_labels",
                 )
+        # RF19: every Django process (backend, Celery and Temporal workers,
+        # management commands) names a malformed INTEGRATION_ENCRYPTION_KEY
+        # once at startup; model-hub keys stay in the old encoding until it is
+        # fixed. Reads settings only.
+        from model_hub.services import key_at_rest
+
+        key_at_rest.warn_at_startup()
         logger.info("Mutation-free startup; no implicit seed or schema setup")
 
 

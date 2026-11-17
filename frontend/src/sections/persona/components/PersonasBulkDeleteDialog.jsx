@@ -1,4 +1,5 @@
 import {
+  Box,
   Button,
   Dialog,
   DialogActions,
@@ -11,6 +12,7 @@ import PropTypes from "prop-types";
 const PersonasBulkDeleteDialog = ({
   open,
   count,
+  personas = [],
   skippedCount,
   onConfirm,
   onCancel,
@@ -37,6 +39,15 @@ const PersonasBulkDeleteDialog = ({
           </>
         )}
       </DialogContentText>
+      <Box
+        component="ul"
+        aria-label="Personas to delete"
+        sx={{ pl: 3, mb: 0, overflowWrap: "anywhere" }}
+      >
+        {personas.map((persona) => (
+          <li key={persona.id}>{persona.name}</li>
+        ))}
+      </Box>
     </DialogContent>
     <DialogActions>
       <Button onClick={onCancel} disabled={isLoading}>
@@ -57,6 +68,12 @@ const PersonasBulkDeleteDialog = ({
 PersonasBulkDeleteDialog.propTypes = {
   open: PropTypes.bool.isRequired,
   count: PropTypes.number.isRequired,
+  personas: PropTypes.arrayOf(
+    PropTypes.shape({
+      id: PropTypes.oneOfType([PropTypes.string, PropTypes.number]).isRequired,
+      name: PropTypes.string,
+    }),
+  ),
   skippedCount: PropTypes.number,
   onConfirm: PropTypes.func.isRequired,
   onCancel: PropTypes.func.isRequired,

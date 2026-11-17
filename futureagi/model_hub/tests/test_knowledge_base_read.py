@@ -218,11 +218,7 @@ class TestKnowledgeBaseTableView:
 
         response = auth_client.get(
             TABLE_URL,
-            {
-                "sort": json.dumps(
-                    [{"column_id": blank_column_id, "type": "ascending"}]
-                )
-            },
+            {"sort": json.dumps([{"column_id": blank_column_id, "type": "ascending"}])},
         )
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
@@ -272,9 +268,7 @@ class TestKnowledgeBaseDropdownList:
         names = [row["name"] for row in response.json()["result"]["table_data"]]
         assert names == ["ready-kb"]
 
-    def test_soft_deleted_kbs_are_excluded(
-        self, auth_client, organization, workspace
-    ):
+    def test_soft_deleted_kbs_are_excluded(self, auth_client, organization, workspace):
         kb = _kb(organization, workspace, "archived-kb")
         kb.deleted = True
         kb.save()
@@ -282,6 +276,39 @@ class TestKnowledgeBaseDropdownList:
         response = auth_client.get(LIST_URL)
 
         assert response.json()["result"]["table_data"] == []
+
+    def test_status_flag_answers_200_with_every_completed_kb(
+        self, auth_client, organization, workspace
+    ):
+        made = [_kb(organization, workspace, f"ready-kb-{n:02d}") for n in range(12)]
+        _kb(
+            organization,
+            workspace,
+            "still-indexing-kb",
+            status=StatusType.PROCESSING.value,
+        )
+
+        response = auth_client.get(LIST_URL, {"status": "true"})
+
+        assert response.status_code == status.HTTP_200_OK
+        rows = response.json()["result"]["table_data"]
+        assert sorted(row["name"] for row in rows) == [kb.name for kb in made]
+        assert {row["id"] for row in rows} == {str(kb.id) for kb in made}
+
+    def test_lists_every_kb_of_an_organization_with_more_than_ten(
+        self, auth_client, organization, workspace
+    ):
+        made = [_kb(organization, workspace, f"kb-{n:02d}") for n in range(12)]
+
+        response = auth_client.get(LIST_URL)
+
+        assert response.status_code == status.HTTP_200_OK
+        rows = response.json()["result"]["table_data"]
+        assert len(rows) == 12
+        listed = {row["id"] for row in rows}
+        assert listed == {str(kb.id) for kb in made}
+        # The two made first are listed too, not only the ten newest.
+        assert {str(made[0].id), str(made[1].id)} <= listed
 
 
 @pytest.mark.integration
@@ -317,9 +344,7 @@ class TestKnowledgeBaseFilesList:
         going = _file("going.txt", status_value=StatusType.DELETING.value)
         kb = _kb(organization, workspace, "mixed-files-kb", files=[keep, going])
 
-        response = auth_client.post(
-            FILES_URL, {"kb_id": str(kb.id)}, format="json"
-        )
+        response = auth_client.post(FILES_URL, {"kb_id": str(kb.id)}, format="json")
 
         names = [row["name"] for row in response.json()["result"]["table_data"]]
         assert names == ["keep.txt"]
@@ -337,9 +362,7 @@ class TestKnowledgeBaseFilesList:
             ],
         )
 
-        response = auth_client.post(
-            FILES_URL, {"kb_id": str(kb.id)}, format="json"
-        )
+        response = auth_client.post(FILES_URL, {"kb_id": str(kb.id)}, format="json")
 
         result = response.json()["result"]
         assert result["status"] == StatusType.PROCESSING.value
@@ -501,9 +524,7 @@ class TestKnowledgeBaseFileDelete:
         kb = _kb(organization, workspace, "no-selector-kb", files=[kb_file])
         remove_kb_files = mocker.patch(REMOVE_KB_FILES)
 
-        response = auth_client.delete(
-            FILES_URL, {"kb_id": str(kb.id)}, format="json"
-        )
+        response = auth_client.delete(FILES_URL, {"kb_id": str(kb.id)}, format="json")
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         remove_kb_files.assert_not_called()

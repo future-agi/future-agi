@@ -1,0 +1,47 @@
+# Brex's hosted MCP server accepts an admin-provisioned API token as a bearer.
+# An admin must enable MCP in the dashboard and accept the Developer API agreement.
+# API access is included in Brex Essentials; this does not describe banking fees.
+schema: "connector-manifest/v1#provider"
+app: brex
+id: api-key
+version: 1.1.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://api.brex.com/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: API token
+      help: "An account or card admin creates a scoped token in Settings > Developer > API after accepting the Developer API agreement. Enable Brex in AI assistants under Beta features. Token scopes limit the available tools; permitted tools can update expenses."
+      helpUrl: https://developer.brex.com/docs/mcp
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: free
+  source: https://www.brex.com/pricing
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://developer.brex.com/docs/mcp
+    fetchedAt: 2026-11-09
+  - fact: transport.variant
+    url: https://developer.brex.com/docs/mcp
+    fetchedAt: 2026-11-09
+  - fact: auth.kind
+    url: https://developer.brex.com/docs/mcp
+    fetchedAt: 2026-11-09
+  - fact: auth.credentialParts
+    url: https://developer.brex.com/docs/mcp
+    fetchedAt: 2026-11-09

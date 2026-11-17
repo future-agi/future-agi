@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: you-com
+version: 1.0.0
+name: You.com
+description: "Search the live web, retrieve page content, and check API account balance."
+vendor:
+  name: You.com
+  domains: [you.com]
+eeCategory: research
+group: other
+categories: [research, web-search]
+tags: [search, extraction]
+docsUrl: https://you.com/docs/agents/mcp-server
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://you.com/docs/agents/mcp-server
+    fetchedAt: 2026-11-09

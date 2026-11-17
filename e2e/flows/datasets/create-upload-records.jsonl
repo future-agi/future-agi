@@ -1,0 +1,5 @@
+{"ticket": "0012", "summary": "Refund not received", "urgent": true, "score": 0.5, "replies": 3, "labels": ["billing", "refund"]}
+{"ticket": "0013", "summary": "Läuft nicht", "urgent": false, "score": 1.0, "replies": 0, "labels": []}
+not a record
+
+{"ticket": "0014", "summary": "Password reset", "urgent": false, "score": 0.25, "replies": null, "labels": ["account"]}
