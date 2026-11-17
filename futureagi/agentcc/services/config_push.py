@@ -4,6 +4,7 @@ Called when org configs are created, activated, or deleted.
 """
 
 import copy
+import functools
 import math
 import uuid
 from typing import Any
@@ -930,6 +931,14 @@ def _build_key_policy(org_id, policy, gateway_ids):
     return entry
 
 
+@functools.lru_cache(maxsize=1)
+def _preflight_client():
+    """One shared client, used only for build_request: it never sends, so its
+    connection pool is never touched and sharing it across threads is safe.
+    Reusing it avoids loading the SSL context for every serialized payload."""
+    return httpx.Client()
+
+
 def _serialize_org_payload(org_id, payload):
     """Exercise the actual outbound encoders without sending or retaining bytes.
 
@@ -945,8 +954,10 @@ def _serialize_org_payload(org_id, payload):
         by_alias=True, exclude_none=True
     )
     # Use the client's request construction, not a shallower Request-only probe.
-    with httpx.Client() as client:
-        client.build_request("PUT", "http://gateway.invalid/", json=client_body)
+    # The request is built and discarded; it is never sent.
+    _preflight_client().build_request(
+        "PUT", "http://gateway.invalid/", json=client_body
+    )
     bulk = GeneralMethods().success_response({str(org_id): body}).data
     bulk["unbuilt_org_ids"] = []
     JSONRenderer().render(bulk)
