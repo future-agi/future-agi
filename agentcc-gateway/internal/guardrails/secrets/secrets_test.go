@@ -88,6 +88,24 @@ func TestDetect_PrivateKey(t *testing.T) {
 	}
 }
 
+func TestDetect_PrivateKeyHeaders(t *testing.T) {
+	g := New(map[string]interface{}{"types": []interface{}{"private_key"}})
+	for _, header := range []string{
+		"-----BEGIN PRIVATE KEY-----",
+		"-----BEGIN EC PRIVATE KEY-----",
+		"-----BEGIN OPENSSH PRIVATE KEY-----",
+		"-----BEGIN PGP PRIVATE KEY BLOCK-----",
+		"-----BEGIN ENCRYPTED PRIVATE KEY-----",
+	} {
+		if r := g.Check(context.Background(), makeInput(header+"\nMIIE...")); r.Pass {
+			t.Errorf("expected private key detection for %q", header)
+		}
+	}
+	if r := g.Check(context.Background(), makeInput("-----BEGIN PUBLIC KEY-----\nMIIB...")); !r.Pass {
+		t.Error("public key should not be flagged")
+	}
+}
+
 func TestDetect_ConnectionString(t *testing.T) {
 	g := New(map[string]interface{}{"types": []interface{}{"connection_string"}})
 	r := g.Check(context.Background(), makeInput("Connect to postgres://admin:secretpass@db.example.com:5432/mydb"))
