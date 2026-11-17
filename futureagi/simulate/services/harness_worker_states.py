@@ -97,13 +97,9 @@ def worker_states(
         ]
         # A hand-off with no return of its own is still out, whatever another hand-off to the same worker returned.
         out = any(one is None for one in back)
-        if delegations and not out:
-            state = (
-                "failed"
-                if any(one.get("status") == "error" for one in back if one)
-                else "completed"
-            )
-        elif worker["id"] in late:
+        if worker["id"] in late:
+            # Refused past its deadline, whether or not it then returned: its later calls never reached the world,
+            # so it never finished as asked.
             # The world refused its calls, so the world saw it: observed, whatever the trace recorded.
             ended["observed"] = True
             ended["state"] = "deadline_passed"
@@ -111,6 +107,12 @@ def worker_states(
                 ended["stopped_at"] = stopped[worker["id"]]
             workers.append(ended)
             continue
+        if delegations and not out:
+            state = (
+                "failed"
+                if any(one.get("status") == "error" for one in back if one)
+                else "completed"
+            )
         elif not worker["observed"]:
             state = "not_observed"
         elif out:
@@ -127,7 +129,15 @@ def worker_states(
 
 def deadline_refused(call: CallExecution) -> set[str]:
     """The workers the world refused past their deadline in this call's trial, by id, from its world changes."""
-    trial = (call.call_metadata or {}).get(TRIAL_STATE_KEY) or {}
+    return refused_past_deadline(call.call_metadata)
+
+
+def refused_past_deadline(metadata: Mapping[str, Any] | None) -> set[str]:
+    """The workers a trial's world changes (`metadata`, a call's or an earlier attempt's) show refused past their
+    deadline, by id."""
+    trial = (metadata or {}).get(TRIAL_STATE_KEY) or {}
+    if not isinstance(trial, Mapping):
+        return set()
     return {
         str(worker_subject_id(entry.get("who")))
         for entry in trial.get("state_changes") or []
@@ -292,8 +302,18 @@ def served_workers(
     worker carries its cleanup, and a worker the trial (`metadata`, the call's or an earlier attempt's) says bypassed
     its channel says so. The stored record is never rewritten."""
     bypassed = _bypassed(metadata)
+    late = refused_past_deadline(metadata)
     workers = [
-        {**one, "channel_bypassed": str(one.get("id")) in bypassed}
+        {
+            **one,
+            "channel_bypassed": str(one.get("id")) in bypassed,
+            # A record read before door refusals counted still says how its worker ended: past its deadline.
+            **(
+                {"state": "deadline_passed", "observed": True}
+                if str(one.get("id")) in late and one.get("state") != "deadline_passed"
+                else {}
+            ),
+        }
         for one in timeline["workers"]
     ]
     if not any(one.get("state") in CUT_SHORT_STATES for one in workers):

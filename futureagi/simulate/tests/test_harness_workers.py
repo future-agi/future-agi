@@ -2894,15 +2894,15 @@ def test_each_worker_ends_in_one_state_and_a_worker_still_out_takes_the_trial_s_
         )
 
 
-def test_a_worker_refused_past_its_deadline_that_still_returned_ends_by_its_return_not_by_the_deadline():
+def test_a_worker_refused_past_its_deadline_reads_past_it_even_when_it_still_returned():
     from types import SimpleNamespace
 
     from simulate.services.harness_workers import deadline_refused
     from simulate.services.hosted_harness_ingestion import TRIAL_STATE_KEY
 
-    # The deadline only refused its later world calls; it did not stop the worker, which went on and returned.
+    # The deadline refused its later world calls; it went on and returned, but never finished as asked.
     states, _ = _ended("ended", past_deadline={"order_lookup"})
-    assert (states["order_lookup"], states["refund"]) == ("completed", "failed")
+    assert (states["order_lookup"], states["refund"]) == ("deadline_passed", "failed")
     # One that did not come back ends past its deadline, never cut short by the trial's own ending.
     states, _ = _ended("ended", past_deadline={"audit"})
     assert states["audit"] == "deadline_passed"
@@ -4332,7 +4332,9 @@ def test_a_worker_the_trial_says_bypassed_its_channel_says_so_on_the_worker_reco
     timeline = worker_timeline(SPANS, DECLARED, run_key=RUN)
     served = {
         one["id"]: one["channel_bypassed"]
-        for one in harness_worker_states.served_workers(None, timeline, metadata)["workers"]
+        for one in harness_worker_states.served_workers(None, timeline, metadata)[
+            "workers"
+        ]
     }
     assert served["refund"] is True
     assert served["order_lookup"] is False and served["audit"] is False
@@ -4351,3 +4353,85 @@ def test_a_worker_the_trial_says_bypassed_its_channel_says_so_on_the_worker_reco
     )
     data = CallWorkerSerializer(record["workers"], many=True).data
     assert {one["id"]: one["channel_bypassed"] for one in data}["refund"] is True
+
+
+# The trial's world changes as a live trial sealed them: the Refund worker had a 3 s deadline, returned, and the door
+# refused each of its three later calls past it.
+_REFUND_PAST_DEADLINE = {
+    "harness_trial_state": {
+        "state_changes": [
+            {
+                "who": "worker:refund",
+                "attempted": 3,
+                "refused": 3,
+                "committed": 0,
+                "refused_actions": [
+                    {
+                        "code": "deadline_passed",
+                        "action": "list_refunds",
+                        "reason": "the deadline for refund has passed",
+                    }
+                ]
+                * 3,
+            },
+            {
+                "who": "worker:order_lookup",
+                "attempted": 7,
+                "refused": 1,
+                "committed": 0,
+                "refused_actions": [
+                    {
+                        "code": "not_permitted",
+                        "action": "update_order_status",
+                        "reason": "orders.update_status is not permitted for order_lookup",
+                    }
+                ],
+            },
+        ]
+    }
+}
+
+
+def test_a_worker_the_door_refused_past_its_deadline_never_reads_finished_though_it_returned(
+    monkeypatch,
+):
+    from datetime import UTC, datetime
+
+    from simulate.services.harness_worker_steps import served_record
+
+    timeline = worker_timeline(SPANS, DECLARED, run_key=RUN)
+    assert any(
+        one["type"] == "returned" and one["worker_id"] == "run-1/refund"
+        for one in timeline["events"]
+    )
+    ended = harness_worker_states.worker_states(
+        timeline,
+        trial="completed",
+        past_deadline=harness_worker_states.refused_past_deadline(
+            _REFUND_PAST_DEADLINE
+        ),
+    )
+    states = {one["id"]: one.get("state") for one in ended["workers"]}
+    assert states["refund"] == "deadline_passed"
+    # Refused for its permissions, not its deadline: still as it ended.
+    assert states["order_lookup"] == "completed"
+
+    # A record kept before the door's refusals counted is served past its deadline too.
+    kept = {
+        **timeline,
+        "workers": [
+            {**one, "state": "completed"} if one["id"] == "refund" else one
+            for one in ended["workers"]
+        ],
+    }
+    # A worker cut short is served with its cleanup, read from the call's job: none here.
+    monkeypatch.setattr(harness_worker_states, "_execution", lambda _call: None)
+    monkeypatch.setattr(
+        harness_worker_states, "_job_of", lambda _call, _execution: None
+    )
+    record = served_record(
+        harness_worker_states.served_workers(None, kept, _REFUND_PAST_DEADLINE),
+        datetime(2026, 11, 17, 12, tzinfo=UTC),
+    )
+    refund = next(one for one in record["workers"] if one["id"] == "refund")
+    assert (refund["state"], refund["past_deadline"]) == ("deadline_passed", True)
