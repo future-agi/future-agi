@@ -273,6 +273,8 @@ import type {
   CapabilitiesResponseApi,
   CellErrorLocalizerResponseApi,
   CellUpdateApi,
+  CertificationCampaignCreateApi,
+  CertificationCampaignReadApi,
   ChatSDKCodeResponseApi,
   ChatSendMessageResponseApi,
   CheckoutSessionRequestApi,
@@ -59942,6 +59944,198 @@ export const simulateApiCallExecutionsList = async (
     {
       ...options,
       method: "GET",
+    },
+  );
+};
+
+export type simulateApiCertificationCampaignsListResponse200 = {
+  data: void;
+  status: 200;
+};
+
+export type simulateApiCertificationCampaignsListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiCertificationCampaignsListResponseSuccess =
+  simulateApiCertificationCampaignsListResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiCertificationCampaignsListResponseError =
+  simulateApiCertificationCampaignsListResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiCertificationCampaignsListResponse =
+  | simulateApiCertificationCampaignsListResponseSuccess
+  | simulateApiCertificationCampaignsListResponseError;
+
+export const getSimulateApiCertificationCampaignsListUrl = () => {
+  return `/simulate/api/certification-campaigns/`;
+};
+
+/**
+ * A campaign orchestrates ordinary hosted harness jobs against deployed
+production agents; creation is idempotent on
+(organization, deployment_id, suite_digest) and returns the existing
+campaign on retries.
+ * @summary Production certification campaign admission/read/cancel.
+ */
+export const simulateApiCertificationCampaignsList = async (
+  options?: RequestInit,
+): Promise<simulateApiCertificationCampaignsListResponse> => {
+  return apiMutator<simulateApiCertificationCampaignsListResponse>(
+    getSimulateApiCertificationCampaignsListUrl(),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiCertificationCampaignsCreateResponse201 = {
+  data: CertificationCampaignReadApi;
+  status: 201;
+};
+
+export type simulateApiCertificationCampaignsCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 201>;
+};
+
+export type simulateApiCertificationCampaignsCreateResponseSuccess =
+  simulateApiCertificationCampaignsCreateResponse201 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiCertificationCampaignsCreateResponseError =
+  simulateApiCertificationCampaignsCreateResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiCertificationCampaignsCreateResponse =
+  | simulateApiCertificationCampaignsCreateResponseSuccess
+  | simulateApiCertificationCampaignsCreateResponseError;
+
+export const getSimulateApiCertificationCampaignsCreateUrl = () => {
+  return `/simulate/api/certification-campaigns/`;
+};
+
+/**
+ * A campaign orchestrates ordinary hosted harness jobs against deployed
+production agents; creation is idempotent on
+(organization, deployment_id, suite_digest) and returns the existing
+campaign on retries.
+ * @summary Production certification campaign admission/read/cancel.
+ */
+export const simulateApiCertificationCampaignsCreate = async (
+  certificationCampaignCreateApi: CertificationCampaignCreateApi,
+  options?: RequestInit,
+): Promise<simulateApiCertificationCampaignsCreateResponse> => {
+  return apiMutator<simulateApiCertificationCampaignsCreateResponse>(
+    getSimulateApiCertificationCampaignsCreateUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(certificationCampaignCreateApi),
+    },
+  );
+};
+
+export type simulateApiCertificationCampaignsReadResponse200 = {
+  data: void;
+  status: 200;
+};
+
+export type simulateApiCertificationCampaignsReadResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiCertificationCampaignsReadResponseSuccess =
+  simulateApiCertificationCampaignsReadResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiCertificationCampaignsReadResponseError =
+  simulateApiCertificationCampaignsReadResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiCertificationCampaignsReadResponse =
+  | simulateApiCertificationCampaignsReadResponseSuccess
+  | simulateApiCertificationCampaignsReadResponseError;
+
+export const getSimulateApiCertificationCampaignsReadUrl = (id: string) => {
+  return `/simulate/api/certification-campaigns/${id}/`;
+};
+
+/**
+ * A campaign orchestrates ordinary hosted harness jobs against deployed
+production agents; creation is idempotent on
+(organization, deployment_id, suite_digest) and returns the existing
+campaign on retries.
+ * @summary Production certification campaign admission/read/cancel.
+ */
+export const simulateApiCertificationCampaignsRead = async (
+  id: string,
+  options?: RequestInit,
+): Promise<simulateApiCertificationCampaignsReadResponse> => {
+  return apiMutator<simulateApiCertificationCampaignsReadResponse>(
+    getSimulateApiCertificationCampaignsReadUrl(id),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiCertificationCampaignsCancelResponse200 = {
+  data: CertificationCampaignReadApi;
+  status: 200;
+};
+
+export type simulateApiCertificationCampaignsCancelResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiCertificationCampaignsCancelResponseSuccess =
+  simulateApiCertificationCampaignsCancelResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiCertificationCampaignsCancelResponseError =
+  simulateApiCertificationCampaignsCancelResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiCertificationCampaignsCancelResponse =
+  | simulateApiCertificationCampaignsCancelResponseSuccess
+  | simulateApiCertificationCampaignsCancelResponseError;
+
+export const getSimulateApiCertificationCampaignsCancelUrl = (id: string) => {
+  return `/simulate/api/certification-campaigns/${id}/cancel/`;
+};
+
+/**
+ * A campaign orchestrates ordinary hosted harness jobs against deployed
+production agents; creation is idempotent on
+(organization, deployment_id, suite_digest) and returns the existing
+campaign on retries.
+ * @summary Production certification campaign admission/read/cancel.
+ */
+export const simulateApiCertificationCampaignsCancel = async (
+  id: string,
+  emptyRequestApi: EmptyRequestApi,
+  options?: RequestInit,
+): Promise<simulateApiCertificationCampaignsCancelResponse> => {
+  return apiMutator<simulateApiCertificationCampaignsCancelResponse>(
+    getSimulateApiCertificationCampaignsCancelUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(emptyRequestApi),
     },
   );
 };

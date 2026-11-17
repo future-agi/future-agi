@@ -392,6 +392,11 @@ def test_cancel_signals_workflow_and_sets_state(auth_client, organization):
         assert cancel.json()["state"] in ("canceling", "canceled")
         cancel_wf.assert_called_once()
 
+        rejected = auth_client.post(
+            f"{BASE}{campaign_id}/cancel/", {"reason": "unsupported"}, format="json"
+        )
+        assert rejected.status_code == 400
+
         # Second cancel on a finished campaign conflicts.
         campaign = CertificationCampaign.no_workspace_objects.get(id=campaign_id)
         campaign.state = CertificationCampaign.State.CANCELED

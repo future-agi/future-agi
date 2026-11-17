@@ -51779,10 +51779,22 @@
                 "operationId": "simulate_api_certification-campaigns_cancel",
                 "summary": "Production certification campaign admission/read/cancel.",
                 "description": "A campaign orchestrates ordinary hosted harness jobs against deployed\nproduction agents; creation is idempotent on\n(organization, deployment_id, suite_digest) and returns the existing\ncampaign on retries.",
-                "parameters": [],
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/EmptyRequest"
+                        }
+                    }
+                ],
                 "responses": {
-                    "201": {
-                        "description": ""
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/CertificationCampaignRead"
+                        }
                     },
                     "default": {
                         "description": "Default error response",
@@ -51793,7 +51805,9 @@
                 },
                 "tags": [
                     "simulate"
-                ]
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
             },
             "parameters": [
                 {

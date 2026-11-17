@@ -17,6 +17,7 @@ from simulate.services.certification import (
 )
 from simulate.services.harness_credentials import request_scope
 from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_serializers import EmptyRequestSerializer
 
 
 def _allowlisted(organization) -> bool:
@@ -117,6 +118,11 @@ class CertificationCampaignViewSet(viewsets.ViewSet):
             return campaign
         return self._campaign_response(campaign, status.HTTP_200_OK)
 
+    @validated_request(
+        request_serializer=EmptyRequestSerializer,
+        responses={200: CertificationCampaignReadSerializer},
+        reject_unknown_fields=True,
+    )
     @action(detail=True, methods=["post"], url_path="cancel")
     def cancel(self, request, pk=None):
         campaign = self._get_scoped(request, pk)
