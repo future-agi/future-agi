@@ -231,7 +231,9 @@ export default function CompareSequence({ seqA, seqB, a, b, onStop, onPick }) {
      later — so the word never contradicts the picture. */
   const missingText = (r) => {
     if (!r.partner) return "not asked";
-    const here = all.indexOf(r);
+    /* Drawn rows are copies of the aligned ones: find this row by the
+       trial steps it holds, not by identity. */
+    const here = all.findIndex((x) => x.a === r.a && x.b === r.b);
     const there = all.findIndex((x) => x.a === r.partner || x.b === r.partner);
     if (here < 0 || there < 0) return "moved";
     return there < here ? "earlier" : "later";
