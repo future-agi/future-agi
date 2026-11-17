@@ -4,15 +4,33 @@ from __future__ import annotations
 
 import math
 from collections import defaultdict
-from typing import Any
+from collections.abc import Mapping, Sequence
+from typing import Any, TypedDict
 
-from django.db.models import QuerySet
+from django.db.models import Q, QuerySet, TextField, Value
+from django.db.models.fields.json import KT
+from django.db.models.functions import Coalesce
+from django.db.models.lookups import In
 
+from simulate.services.hosted_harness_ingestion import TRIAL_STATE_KEY
 from simulate.services.run_results_v3 import OUTCOME_LABELS
 
 # Fewer scenarios than this give a range too wide to act on; show counts only.
 MIN_INTERVAL_SCENARIOS = 10
 _Z = 1.96
+# A trial that did not start from the seeded records, or whose start could not be read, says nothing about whether
+# its scenario repeats. Coalesced so a trial with no recorded start reads as clean: excluding a bare key lookup would
+# drop it as NULL.
+NOT_COMPARABLE = Q(
+    In(
+        Coalesce(
+            KT(f"call_metadata__{TRIAL_STATE_KEY}__start__state"),
+            Value(""),
+            output_field=TextField(),
+        ),
+        ["differs", "unknown"],
+    )
+)
 
 
 def wilson(passed: float, n: float, z: float = _Z) -> tuple[float, float] | None:
@@ -60,8 +78,97 @@ def scenario_interval(clusters: list[tuple[int, int]]) -> dict[str, Any] | None:
     }
 
 
-def build_reliability(queryset: QuerySet, trials: int) -> dict[str, Any]:
-    """Group trial verdicts by the scenario they repeated."""
+def comparable_trials(queryset: QuerySet) -> tuple[QuerySet, int]:
+    """The trials that started from the seeded records, and how many others were left out."""
+    return queryset.exclude(NOT_COMPARABLE), queryset.filter(NOT_COMPARABLE).count()
+
+
+class TrialPass(TypedDict):
+    """A run's trials as its header reads them: passed over passed and failed. Errored and inconclusive trials say
+    nothing about the agent and are counted apart; trials that did not start from the seed are left out."""
+
+    trials_passed: int
+    trials_evaluated: int
+    trials_inconclusive: int
+    trials_excluded_not_comparable: int
+    # Percent, two places; None when no trial was evaluated.
+    trial_pass_rate: float | None
+
+
+def trial_pass_from(
+    outcomes: Mapping[str, int], excluded_not_comparable: int
+) -> TrialPass:
+    """The run's trial pass from its comparable trials' outcomes, by the one rule every surface reads."""
+    passed, failed = outcomes.get("passed", 0), outcomes.get("failed", 0)
+    evaluated = passed + failed
+    return {
+        "trials_passed": passed,
+        "trials_evaluated": evaluated,
+        "trials_inconclusive": outcomes.get("error", 0)
+        + outcomes.get("inconclusive", 0),
+        "trials_excluded_not_comparable": excluded_not_comparable,
+        "trial_pass_rate": round(passed * 100 / evaluated, 2) if evaluated else None,
+    }
+
+
+def trial_outcomes(queryset: QuerySet) -> tuple[dict[str, int], int]:
+    """The comparable trials of a run's calls by outcome, and how many trials were left out as not comparable."""
+    from django.db.models import Count
+
+    comparable, excluded = comparable_trials(queryset)
+    counts = dict(
+        comparable.order_by()
+        .values_list("result_outcome")
+        .annotate(count=Count("id"))
+        .values_list("result_outcome", "count")
+    )
+    return counts, excluded
+
+
+def trial_passes(executions: Sequence[Any]) -> dict[Any, TrialPass]:
+    """Each listed run's trial pass, read from its calls as the run's own page reads them: one grouped count per
+    run test the runs belong to, however many runs are listed."""
+    from django.db.models import Count
+
+    from simulate.services.run_results_v3_queries import run_calls_queryset
+
+    by_run_test: dict[Any, list[Any]] = defaultdict(list)
+    for execution in executions:
+        by_run_test[execution.run_test_id].append(execution)
+    outcomes: dict[Any, dict[str, int]] = defaultdict(dict)
+    excluded: dict[Any, int] = defaultdict(int)
+    for runs in by_run_test.values():
+        # Read by its annotations (result_outcome), as every reader in this module reads a run's calls.
+        calls: QuerySet = run_calls_queryset(runs[0], [run.id for run in runs])
+        rows = (
+            calls.order_by()
+            .values_list("test_execution_id", "result_outcome")
+            .annotate(
+                comparable=Count("id", filter=~NOT_COMPARABLE),
+                left_out=Count("id", filter=NOT_COMPARABLE),
+            )
+            .values_list(
+                "test_execution_id", "result_outcome", "comparable", "left_out"
+            )
+        )
+        for run_id, outcome, comparable, left_out in rows:
+            outcomes[run_id][outcome] = outcomes[run_id].get(outcome, 0) + comparable
+            excluded[run_id] += left_out
+    return {
+        execution.id: trial_pass_from(outcomes[execution.id], excluded[execution.id])
+        for execution in executions
+    }
+
+
+def trial_pass(execution: Any) -> TrialPass:
+    """One run's trial pass, read from its calls as the run's own page reads them."""
+    return trial_passes([execution])[execution.id]
+
+
+def build_reliability(
+    queryset: QuerySet, trials: int, excluded_not_comparable: int = 0
+) -> dict[str, Any]:
+    """Group trial verdicts by the scenario they repeated; ``queryset`` holds comparable trials only."""
     counts: dict[str, dict[str, int]] = defaultdict(
         lambda: dict.fromkeys(OUTCOME_LABELS, 0)
     )
@@ -112,6 +219,13 @@ def build_reliability(queryset: QuerySet, trials: int) -> dict[str, Any]:
     # A scenario with an inconclusive trial cannot show k of k passing.
     complete = [row for row in rows if pass_hat_k_shown and row["evaluated"] == k]
     all_passed = sum(row["passed"] == k for row in complete)
+    pooled = trial_pass_from(
+        {
+            outcome: sum(scenario[outcome] for scenario in counts.values())
+            for outcome in OUTCOME_LABELS
+        },
+        excluded_not_comparable,
+    )
     return {
         "trials": trials,
         "scenarios": len(rows),
@@ -126,7 +240,7 @@ def build_reliability(queryset: QuerySet, trials: int) -> dict[str, Any]:
         "k": k,
         # Infra, simulator and evidence failures say nothing about the agent, so
         # they sit outside every denominator below.
-        "inconclusive": sum(row["error"] + row["inconclusive"] for row in rows),
+        "inconclusive": pooled["trials_inconclusive"],
         "pass_hat_1": (
             round(
                 sum(row["passed"] / row["evaluated"] for row in conclusive)
@@ -144,9 +258,10 @@ def build_reliability(queryset: QuerySet, trials: int) -> dict[str, Any]:
         "pass_hat_k_passed": all_passed,
         # Scenarios pass^k could not judge, so the header can say what it covers.
         "pass_hat_k_excluded": len(rows) - len(complete) if pass_hat_k_shown else 0,
-        # Pooled counts for runs too small for rates, so the header need not sum rows.
-        "trials_passed": sum(row["passed"] for row in conclusive),
-        "trials_evaluated": sum(row["evaluated"] for row in conclusive),
+        # Pooled counts for runs too small for rates, so the header need not sum rows: the run's one trial pass.
+        "trials_passed": pooled["trials_passed"],
+        "trials_evaluated": pooled["trials_evaluated"],
+        "excluded_not_comparable": excluded_not_comparable,
         "pass_rate_interval": scenario_interval(
             [(row["passed"], row["evaluated"]) for row in rows]
         ),
