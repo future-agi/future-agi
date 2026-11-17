@@ -36,6 +36,21 @@ const (
 // at the cached rate for.
 const cachedTokensKey = "cost_cached_tokens"
 
+// Where a chat request priced with Vertex AI's regional uplift records the
+// location it was sent to and the factor applied.
+const (
+	vertexLocationKey = "cost_vertex_location"
+	regionalUpliftKey = "cost_region_uplift"
+)
+
+// servedVertexLocationKey is where the server records the Vertex AI location
+// of the provider instance that served a chat request.
+const servedVertexLocationKey = "served_vertex_location"
+
+// maxRegionalUplift bounds the table's regional multiplier. Google's is 1.1;
+// a larger one is a bad row, not a price.
+const maxRegionalUplift = 1.5
+
 // Where an operator sets a missing price, by the unit the endpoint is billed
 // in. The budget plugin does not read the model database: it prices chat
 // tokens from cost_tracking.custom_pricing, so every hint names that key too,
@@ -254,14 +269,25 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 		providerType := p.providerType(rc)
 		ownKey, keep := resellerPrice(db, model, rc.Provider, table, providerType, opts.At)
 		opts.TablePrice = keep
-		cost, ok = db.CalculateCost(cmp.Or(ownKey, model), usage.PromptTokens, usage.CompletionTokens, opts)
+		priced := cmp.Or(ownKey, model)
+		cost, ok = db.CalculateCost(priced, usage.PromptTokens, usage.CompletionTokens, opts)
 		if !ok && rc.ResolvedModel != "" && rc.Model != "" {
 			fallback := priceKey(db, rc.Model, rc.Provider, table)
 			ownKey, opts.TablePrice = resellerPrice(db, fallback, rc.Provider, table, providerType, opts.At)
-			cost, ok = db.CalculateCost(cmp.Or(ownKey, fallback), usage.PromptTokens, usage.CompletionTokens, opts)
+			priced = cmp.Or(ownKey, fallback)
+			cost, ok = db.CalculateCost(priced, usage.PromptTokens, usage.CompletionTokens, opts)
 		}
 		if ok && opts.CachedTokens > 0 {
 			rc.Metadata[cachedTokensKey] = strconv.Itoa(opts.CachedTokens)
+		}
+		// Chat completions only: the GenAI routes, /v1/messages and the other
+		// endpoints that fall into this branch keep their price.
+		if ok && (rc.EndpointType == "chat" || rc.EndpointType == "") {
+			if factor, location := p.regionalUplift(db, rc, table, priced); factor > 1 {
+				cost *= factor
+				rc.Metadata[vertexLocationKey] = location
+				rc.Metadata[regionalUpliftKey] = strconv.FormatFloat(factor, 'f', -1, 64)
+			}
 		}
 	}
 
@@ -491,6 +517,40 @@ func (p *Plugin) warnOnce(key, msg string, args ...any) {
 	}
 	p.usageWarnedCount.Add(1)
 	slog.Warn(msg, args...)
+}
+
+// regionalUplift is the factor Google adds to a Vertex AI chat request's
+// token prices away from the global endpoint, and the location the request
+// was sent to; 1 and "" when none applies. The location is the one the
+// server recorded from the provider instance that served the request. A
+// location it could not tell counts as global, so nobody is charged an
+// uplift they may not owe. The factor is read from the model's "vertex_ai/"
+// entry, since the request may have been priced from another key.
+func (p *Plugin) regionalUplift(db *modeldb.ModelDB, rc *models.RequestContext, table, priced string) (float64, string) {
+	if table != "vertex_ai" {
+		return 1, ""
+	}
+	location := rc.Metadata[servedVertexLocationKey]
+	if location == "" || location == "global" {
+		return 1, ""
+	}
+	m, ok := db.Get(priced)
+	if !ok {
+		return 1, ""
+	}
+	key := "vertex_ai/" + m.ID[strings.LastIndexByte(m.ID, '/')+1:]
+	entry, ok := db.Get(key)
+	if !ok || entry.ID != key || entry.RegionalUplift == 0 {
+		return 1, ""
+	}
+	if f := entry.RegionalUplift; !(f > 1 && f <= maxRegionalUplift) {
+		p.warnOnce("uplift\x00"+key, "cost: ignoring a regional price multiplier outside (1, 1.5]",
+			"model", key,
+			"multiplier", f,
+		)
+		return 1, ""
+	}
+	return entry.RegionalUplift, location
 }
 
 // imageCost prices an image call: by tokens when the upstream reported them,

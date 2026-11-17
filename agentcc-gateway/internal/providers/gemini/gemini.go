@@ -10,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -110,6 +111,32 @@ func (p *Provider) PriceTableName() string {
 // CachedTokensInPrompt is true: promptTokenCount includes
 // cachedContentTokenCount, on the Gemini API and on Vertex AI.
 func (p *Provider) CachedTokensInPrompt() bool { return true }
+
+// VertexLocation is the Vertex AI location requests are sent to, in lower
+// case: the base URL's locations/<name> path segment, else its
+// <name>-aiplatform.googleapis.com host; "" off Vertex AI or when the URL
+// names neither. Only the URL counts: a location header the URL does not
+// carry does not change where requests go.
+func (p *Provider) VertexLocation() string {
+	if !p.vertexAI {
+		return ""
+	}
+	u, err := url.Parse(p.baseURL)
+	if err != nil {
+		return ""
+	}
+	segments := strings.Split(u.Path, "/")
+	for i := 0; i+1 < len(segments); i++ {
+		if strings.EqualFold(segments[i], "locations") && segments[i+1] != "" {
+			return strings.ToLower(segments[i+1])
+		}
+	}
+	host := strings.ToLower(u.Hostname())
+	if location, ok := strings.CutSuffix(host, "-aiplatform.googleapis.com"); ok && location != "" && !strings.Contains(location, ".") {
+		return location
+	}
+	return ""
+}
 
 // ClientTimeout reports the timeout on this provider's HTTP client. It bounds
 // the whole exchange, a streamed body included, so it is a hard ceiling on any

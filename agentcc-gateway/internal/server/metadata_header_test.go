@@ -272,6 +272,7 @@ func TestModernOpenAIParamsLandInExtra(t *testing.T) {
 func TestIsBlockedMetadataKeyCostFamily(t *testing.T) {
 	blocked := []string{
 		"cost", "cost_source", "cost_SOURCE", "cost_cached_tokens",
+		"cost_vertex_location", "cost_region_uplift", "served_vertex_location",
 		"credits_used", "credits_remaining", "credit_balance",
 		"budget_remaining", "ratelimit_limit", "org_id", "authorization",
 	}
