@@ -596,6 +596,14 @@ def test_a_call_whose_first_read_has_not_run_says_its_record_is_still_coming(
         status=CallExecution.CallStatus.COMPLETED, completed_at=timezone.now()
     )
     just_ended = auth_client.get(url)
+    # A call the user stopped is due its read too: never "no workers" before it has run.
+    CallExecution.objects.filter(id=call.id).update(
+        status=CallExecution.CallStatus.CANCELLED
+    )
+    just_stopped = auth_client.get(url)
+    CallExecution.objects.filter(id=call.id).update(
+        status=CallExecution.CallStatus.COMPLETED
+    )
     # Past the first read and its grace, which found nothing and left no note: the later read is still to run.
     CallExecution.objects.filter(id=call.id).update(
         completed_at=timezone.now() - timedelta(seconds=400)
@@ -609,6 +617,8 @@ def test_a_call_whose_first_read_has_not_run_says_its_record_is_still_coming(
     # Just ended: the read is still to run, so the client checks again instead of reading "no workers".
     assert just_ended.status_code == 202, just_ended.content
     assert just_ended.json()["pending"] is True
+    assert just_stopped.status_code == 202, just_stopped.content
+    assert just_stopped.json()["next_read_at"]
     assert between_reads.status_code == 202, between_reads.content
     assert between_reads.json()["pending"] is True
     assert long_ended.status_code == 204
@@ -3641,8 +3651,45 @@ def test_only_a_cancel_the_user_asked_for_reads_stopped_by_the_user(
         )
         # Cancelled either way; only the user's own Stop says the user stopped it.
         assert harness_worker_states.stopped_by_user(call, None) is by_user
-    # An earlier attempt's own status is not kept, so it never says.
-    assert harness_worker_states.stopped_by_user(call, call.id) is False
+
+
+@pytest.mark.django_db
+def test_an_earlier_attempt_the_user_stopped_still_says_so_after_a_rerun(
+    user, workspace, storage, settings, auth_client
+):
+    """Stop, then rerun: the earlier attempt keeps being the one the user stopped; the current attempt says its own."""
+    from simulate.models import CallExecution, HostedHarnessJob
+    from simulate.services.call_rerun import call_snapshot, clear_call_for_rerun
+    from simulate.services.harness_workers import WORKERS_KEY
+
+    job, _attempt, call = _cut_short_run(user, workspace, storage, settings, "sbr")
+    CallExecution.objects.filter(id=call.id).update(
+        status=CallExecution.CallStatus.CANCELLED
+    )
+    HostedHarnessJob.no_workspace_objects.filter(id=job.id).update(
+        state=HostedHarnessJob.State.CANCELED, cancel_reason="user_canceled"
+    )
+    CallExecution.objects.filter(id=call.id).update(
+        call_metadata={
+            **(call.call_metadata or {}),
+            WORKERS_KEY: {
+                **worker_timeline(SPANS, DECLARED, run_key=RUN),
+                "collected_at": "2026-11-17T10:00:00+00:00",
+            },
+        }
+    )
+    call.refresh_from_db()
+    stopped = call_snapshot(call)
+    stopped.save()
+    clear_call_for_rerun(call)
+    call.refresh_from_db()
+    url = f"/simulate/v3/call-executions/{call.id}/workers/"
+
+    earlier = auth_client.get(url, {"attempt": str(stopped.id)})
+    assert earlier.status_code == 200, earlier.content
+    assert earlier.json()["stopped_by_user"] is True
+    # The rerun's own attempt has not been stopped.
+    assert harness_worker_states.stopped_by_user(call) is False
 
 
 @pytest.mark.django_db
@@ -4521,8 +4568,20 @@ def test_a_request_with_no_organization_reads_no_call_s_workers():
 @pytest.mark.parametrize(
     ("world", "held"),
     [
-        ({"door": True, "worker_channels": True, "state_changes": []}, "held_at_world"),
-        ({"door": True, "state_changes": []}, "unknown"),
+        (
+            {
+                "door": True,
+                "worker_channels": True,
+                "state_changes": [{"who": "worker:refund", "attempted": 2}],
+            },
+            "held_at_world",
+        ),
+        # Held for the others, but the refund worker never reached the door in this trial.
+        ({"door": True, "worker_channels": True, "state_changes": []}, "unknown"),
+        (
+            {"door": True, "state_changes": [{"who": "worker:refund", "attempted": 2}]},
+            "unknown",
+        ),
         ({"recorded": False, "why": "tools_inside_agent"}, "not_enforced"),
     ],
 )
@@ -4562,6 +4621,12 @@ def test_each_worker_says_how_the_world_held_it_in_the_trial_and_in_the_contract
         # The trial as ingestion keeps it from the world record ALK seals.
         trial = {
             **_world_change_fields(world),
+            # Ingestion keeps the world's state changes as sealed beside the fields above.
+            **(
+                {"state_changes": world["state_changes"]}
+                if world.get("state_changes")
+                else {}
+            ),
             **({"notices": list(notices)} if notices else {}),
         }
         workers = harness_worker_states.served_workers(
@@ -4569,10 +4634,21 @@ def test_each_worker_says_how_the_world_held_it_in_the_trial_and_in_the_contract
         )["workers"]
         return {one["id"]: one["enforcement"] for one in workers}
 
-    proxied = {"door": True, "worker_channels": True, "state_changes": []}
+    ran = [
+        {"who": "worker:order_lookup", "attempted": 1},
+        {"who": "worker:refund", "attempted": 2},
+    ]
+    proxied = {"door": True, "worker_channels": True, "state_changes": ran}
     assert served(proxied) == {
         "order_lookup": "held_at_world",
         "refund": "held_at_world",
+        "audit": "not_enforced",
+    }
+    # A worker that made no call at the door in this trial is not known to have been held, as in voice call 66bd3ae2.
+    only_lookup = {"door": True, "worker_channels": True, "state_changes": ran[:1]}
+    assert served(only_lookup) == {
+        "order_lookup": "held_at_world",
+        "refund": "unknown",
         "audit": "not_enforced",
     }
     # A door that stood but held no worker on its own channel (the door inside the agent, or a proxy sealed before

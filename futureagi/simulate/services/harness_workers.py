@@ -365,9 +365,17 @@ def check_again_at(due: str, now: datetime) -> str:
     return max(at if at.tzinfo else at.replace(tzinfo=UTC), soon).isoformat()
 
 
+_ENDED = (
+    CallExecution.CallStatus.COMPLETED,
+    CallExecution.CallStatus.FAILED,
+    CallExecution.CallStatus.CANCELLED,
+)
+
+
 def first_read_due(call: CallExecution) -> str | None:
-    """When a completed hosted call's first worker read runs; None when none is scheduled."""
-    if call.status != CallExecution.CallStatus.COMPLETED or call.completed_at is None:
+    """When an ended hosted call's first worker read runs, however it ended (a read is scheduled for every ended trial,
+    a stopped one too); None when none is scheduled."""
+    if call.status not in _ENDED or call.completed_at is None:
         return None
     if not HostedHarnessJob.no_workspace_objects.filter(
         test_execution_id=call.test_execution_id
