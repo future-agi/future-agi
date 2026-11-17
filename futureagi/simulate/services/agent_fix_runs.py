@@ -252,8 +252,13 @@ def _require_variation_room(source_run: HostedHarnessJob, failing_cases: int) ->
     """Refuse variations that would not fit: the builder saves the environment's suite with
     them, the fix's suite holds the run's suite with them, and one run plays every failing
     case and its variations once."""
+    environment = source_run.environment
+    if environment is None:
+        raise HostedHarnessError(
+            "fix_source_not_a_run", "Epoch starts from a run", status_code=422
+        )
     added = VARIATIONS_PER_CASE * failing_cases
-    suites = (source_run.suite_version_id, source_run.environment.suite_version_id)
+    suites = (source_run.suite_version_id, environment.suite_version_id)
     largest = max(
         HarnessSuiteMember.no_workspace_objects.filter(suite_version_id=one).count()
         for one in suites
@@ -513,16 +518,21 @@ def drop_variation_rows(fix_run: AgentFixRun) -> bool:
             Scenarios.all_objects.filter(id__in=[one.id for one in legacy]).update(
                 deleted=True, deleted_at=now
             )
-            if legacy and fix_run.environment.run_test_id:
-                fix_run.environment.run_test.scenarios.remove(*legacy)
+            if legacy and (run_test := fix_run.environment.run_test) is not None:
+                run_test.scenarios.remove(*legacy)
             for scenario in Scenarios.all_objects.filter(
                 id__in={one.scenario_id for one in bound if one.dataset_row_id}
             ).select_related("dataset"):
+                dataset = scenario.dataset
+                if dataset is None:
+                    # A row is only ever bound with the dataset-backed scenario it is in.
+                    raise HostedHarnessError(
+                        "fix_variation_scenario_unbacked",
+                        "a variation's scenario has no dataset",
+                    )
                 scenario.metadata = {
                     **(scenario.metadata or {}),
-                    "persona_count": scenario.dataset.row_set.filter(
-                        deleted=False
-                    ).count(),
+                    "persona_count": dataset.row_set.filter(deleted=False).count(),
                 }
                 scenario.save(update_fields=["metadata", "updated_at"])
             HostedHarnessScenario._base_manager.filter(

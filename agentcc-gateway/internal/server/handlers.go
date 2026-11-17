@@ -1225,6 +1225,11 @@ func (h *Handlers) ChatCompletion(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Keep the caller's model provenance before gateway retargeting (routing,
+	// failover, fallback, mirror). Responses omissions no longer depend on
+	// whether the caller or the gateway chose the target model.
+	req.CallerModel = req.Model
+
 	// 3. Complexity-based routing (only if not provider-locked).
 	if !providerLocked && h.complexityAnalyzer.IsEnabled() && !strings.Contains(rc.Model, "/") {
 		if override := r.Header.Get("x-agentcc-complexity-override"); override != "" {
@@ -1496,6 +1501,7 @@ func (h *Handlers) handleNonStream(ctx context.Context, w http.ResponseWriter, r
 	servingProvider := provider
 
 	providerCall := func(ctx context.Context, rc *models.RequestContext) error {
+		noteChatResponsesRouteDrops(w, rc, provider, rc.Request)
 		resp, err := h.callChatProvider(ctx, provider, rc.Request)
 		if err == nil {
 			pinPriceTable(rc, provider)
@@ -1518,6 +1524,7 @@ func (h *Handlers) handleNonStream(ctx context.Context, w http.ResponseWriter, r
 			rc.Provider = fbProviderID
 			rc.Request.Model = resolvedModel
 
+			noteChatResponsesRouteDrops(w, rc, fbProvider, rc.Request)
 			fbResp, fbCallErr := h.callChatProvider(ctx, fbProvider, rc.Request)
 			if fbCallErr == nil {
 				servingProvider = fbProvider
@@ -1570,6 +1577,7 @@ func (h *Handlers) handleNonStreamWithFailover(ctx context.Context, w http.Respo
 				rc.Request.Model = originalModel
 			}
 
+			noteChatResponsesRouteDrops(w, rc, p, rc.Request)
 			resp, err := h.callChatProvider(ctx, p, rc.Request)
 			if err != nil {
 				return err
@@ -1606,6 +1614,7 @@ func (h *Handlers) handleNonStreamWithFailover(ctx context.Context, w http.Respo
 				rc.Provider = fbProviderID
 				rc.Request.Model = resolvedModel
 
+				noteChatResponsesRouteDrops(w, rc, fbProvider, rc.Request)
 				fbResp, fbCallErr := h.callChatProvider(ctx, fbProvider, rc.Request)
 				if fbCallErr == nil {
 					servingProvider = fbProvider
@@ -1666,6 +1675,18 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 	// Time to the serving attempt's first chunk: the routing latency signal,
 	// as before per-attempt sampling, rather than the whole stream's length.
 	var firstChunkLatency time.Duration
+	// When the serving attempt's first chunk is only an acknowledgement, the
+	// routing latency is taken at the next chunk, counted from servingStart.
+	var servingStart time.Time
+	var awaitingOutput bool
+	// routingLatency is the latency an outcome is recorded with: to the first
+	// output, or, for a stream that ends before any, the time it ran.
+	routingLatency := func() time.Duration {
+		if awaitingOutput {
+			return time.Since(servingStart)
+		}
+		return firstChunkLatency
+	}
 	defer func() {
 		if upstreamStreamCancel != nil {
 			upstreamStreamCancel()
@@ -1679,6 +1700,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 	openStream := func(callCtx context.Context, callProvider providers.Provider) error {
 		attemptCtx, attemptCancel := context.WithCancel(ctx)
 		start := time.Now()
+		noteChatResponsesRouteDrops(w, rc, callProvider, rc.Request)
 		candidateChunks, candidateErrCh := callProvider.StreamChatCompletion(attemptCtx, rc.Request)
 		if candidateChunks == nil {
 			attemptCancel()
@@ -1694,6 +1716,8 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 			return err
 		}
 		firstChunkLatency = time.Since(start)
+		servingStart = start
+		awaitingOutput = chunk.Acknowledgement
 
 		if upstreamStreamCancel != nil {
 			cancelAndDrainStream(upstreamStreamCancel, chunks)
@@ -1912,14 +1936,14 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 			if !ok {
 				if apiErr, finished := closedStreamError(ctx, errCh); !finished {
 					if apiErr != nil {
-						h.recordProviderOutcome(ctx, servingProvider, firstChunkLatency, apiErr)
+						h.recordProviderOutcome(ctx, servingProvider, routingLatency(), apiErr)
 						rc.AddError(apiErr)
 						sseWriter.WriteError(apiErr)
 					}
 					finalizeStream(ctx.Err() != nil)
 					return
 				}
-				h.recordProviderOutcome(ctx, servingProvider, firstChunkLatency, nil)
+				h.recordProviderOutcome(ctx, servingProvider, routingLatency(), nil)
 				// Stream complete — run final guardrail check.
 				if streamChecker != nil {
 					if res := streamChecker.Finish(streamCtx); res.Blocked {
@@ -1945,6 +1969,14 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 				}
 				sseWriter.WriteDone()
 				return
+			}
+			if awaitingOutput && !chunk.Acknowledgement {
+				if chunk.ReceivedAt.IsZero() {
+					firstChunkLatency = time.Since(servingStart)
+				} else {
+					firstChunkLatency = chunk.ReceivedAt.Sub(servingStart)
+				}
+				awaitingOutput = false
 			}
 			if streamID == "" && chunk.ID != "" {
 				streamID = chunk.ID
@@ -1982,7 +2014,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 
 		case err, ok := <-errCh:
 			if ok && err != nil {
-				h.recordProviderOutcome(ctx, servingProvider, firstChunkLatency, err)
+				h.recordProviderOutcome(ctx, servingProvider, routingLatency(), err)
 				apiErr, isAPI := err.(*models.APIError)
 				if !isAPI {
 					apiErr = models.ErrInternal(err.Error())
@@ -1999,7 +2031,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 			// guardrail goroutines. Drain remaining chunks to unblock the
 			// provider goroutine.
 			if apiErr := streamEndError(ctx, ctx.Err()); apiErr != nil {
-				h.recordProviderOutcome(ctx, servingProvider, firstChunkLatency, ctx.Err())
+				h.recordProviderOutcome(ctx, servingProvider, routingLatency(), ctx.Err())
 				rc.AddError(apiErr)
 				sseWriter.WriteError(apiErr)
 			}
@@ -2108,6 +2140,14 @@ func (h *Handlers) setAgentccHeadersForProvider(w http.ResponseWriter, rc *model
 		w.Header().Set("x-agentcc-cache", status)
 	} else if rc.Flags.CacheHit {
 		w.Header().Set("x-agentcc-cache", "hit")
+	}
+	// A cache hit makes no provider attempt, so nothing above set the notes
+	// header. Report the notes the cache restored with the cached response;
+	// callers cannot write translation_drops metadata (see the denylist).
+	if rc.Flags.CacheHit {
+		if drops := rc.Metadata["translation_drops"]; drops != "" {
+			w.Header().Set("x-agentcc-translation-drops", drops)
+		}
 	}
 	if rc.Flags.GuardrailTriggered {
 		w.Header().Set("x-agentcc-guardrail-triggered", "true")
@@ -2373,7 +2413,7 @@ func isBlockedMetadataKey(key string) bool {
 	switch lower {
 	case "authorization", "client_ip", "timeout_ms", "cost", "cost_source",
 		"cost_reported_unit", "cost_is_byok", "cost_catalogue", "cost_reported_zero",
-		usageEstimatedKey, metadataErrorKey:
+		"translation_drops", usageEstimatedKey, metadataErrorKey:
 		return true
 	}
 	return false

@@ -1499,8 +1499,9 @@ def move_default(
             job=locked, id=version_id, status=VersionStatus.ACTIVE
         )
         if piece == "suite":
-            # A suite version private to a fix never becomes the default.
-            versions = versions.filter(fix_run__isnull=True)
+            # A suite version private to a fix never becomes the default. The model is
+            # HarnessSuiteVersion here; mypy checks the lookup on both models.
+            versions = versions.filter(fix_run__isnull=True)  # type: ignore[misc]
         version = versions.first()
         if version is None:
             raise _not_pickable(piece)

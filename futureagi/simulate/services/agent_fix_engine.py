@@ -442,12 +442,13 @@ def _grade_winner(fix_run: AgentFixRun, winner_id: Any) -> None:
     winner = AgentFixCandidate.no_workspace_objects.get(fix_run=fix_run, id=winner_id)
     base, final = graded_check_runs(fix_run, winner)
     for run in (*base, *final):
-        if run.test_execution_id is None:
+        execution = run.test_execution
+        if execution is None:
             continue
         # Every config in one pass: queueing one reopens a call's eval side, so a
         # call per config would leave all but the first config ungraded.
         try:
-            queue_evals_for_finished_calls(run.test_execution, configs)
+            queue_evals_for_finished_calls(execution, configs)
         except ValueError:
             # A cancelled run is never graded; its evals read as not finished.
             logger.warning(
