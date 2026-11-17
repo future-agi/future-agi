@@ -2608,7 +2608,7 @@ class HostedHarnessGateway:
         harness_builds = fresh_build and getattr(
             settings, "ALK_HOSTED_BUILDER_SESSION", True
         )
-        if fresh_build:
+        if not simulation_only:
             allowed_domains = _normalize_egress_domains(
                 [
                     *allowed_domains,

@@ -2007,6 +2007,33 @@ def test_a_fresh_build_runs_the_staged_pipeline_when_the_builder_session_is_off(
     ).exists()
 
 
+@pytest.mark.django_db
+def test_an_authored_run_keeps_package_egress(organization, settings, monkeypatch):
+    payload = _payload()
+    payload["source"] = {
+        "kind": "remote",
+        "endpoint": "https://agent.example.com",
+        "visibility": "public",
+    }
+    job, _ = create_hosted_job(
+        organization, payload, idempotency_key="launch-authored-package-egress"
+    )
+    client = _Daytona()
+    gateway = object.__new__(HostedHarnessGateway)
+    gateway.client = client
+    gateway.snapshot = "alk-hosted-v1"
+    gateway.snapshot_digest = "sha256:" + "b" * 64
+    settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = []
+    monkeypatch.setattr(
+        "simulate.services.hosted_harness_gateway._authoring_archive_for",
+        lambda _job: _authoring_archive(),
+    )
+
+    gateway.launch(job, endpoint_base_url="https://platform.example.com")
+
+    assert {"pypi.org", "files.pythonhosted.org"} <= set(client.params.allowed_domains)
+
+
 def _launch_and_read_job_json(
     organization, settings, *, requested_parallelism, provider_name="daytona"
 ):
