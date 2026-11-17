@@ -37,6 +37,8 @@ SUITE_ROOTS = ("scenarios/", "scenario/")
 SUITE_FILES = frozenset({"scenarios.json", "coverage.json", "proofs.json"})
 
 SEALED_ROOTS = ("environment-bundle/", "generic-harness/certified-bundle/")
+# The contract a bundle was sealed and certified with: a build can amend the authored one while it builds.
+SEALED_CONTRACT = "environment-bundle/contract.json"
 SEALED_FILES = frozenset(
     {
         "runtime-validation.json",

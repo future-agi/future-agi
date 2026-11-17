@@ -30,7 +30,9 @@ export default function WorldInternalsSection({ env }) {
       {tables?.length > 0 && (
         <SchemaCard schema={tables} totalRows={env.worldTotalRows} />
       )}
-      {tools.length > 0 && <ToolsCard tools={tools} />}
+      {tools.length > 0 && (
+        <ToolsCard tools={tools} fromDraft={Boolean(env.contractFromDraft)} />
+      )}
       {workers.length > 0 && <WorkersCard workers={workers} />}
     </Stack>
   );
@@ -232,12 +234,12 @@ const STATUS_CHIP = {
   },
 };
 
-function ToolsCard({ tools }) {
+function ToolsCard({ tools, fromDraft }) {
   const [openTool, setOpenTool] = useState(null);
   return (
     <SectionCard
       title="Tools"
-      subtitle={T.subtitle}
+      subtitle={fromDraft ? `${T.subtitle} · ${T.draft}` : T.subtitle}
       action={
         <Typography
           sx={{
@@ -500,6 +502,7 @@ ToolDetail.propTypes = {
 };
 ToolsCard.propTypes = {
   tools: PropTypes.arrayOf(TOOL_SHAPE).isRequired,
+  fromDraft: PropTypes.bool,
 };
 
 /* ── workers ────────────────────────────────────────────────────────── */

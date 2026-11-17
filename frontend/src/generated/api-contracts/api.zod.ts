@@ -39205,6 +39205,12 @@ export const SimulateApiHarnessEnvironmentsReadResponse = zod.object({
         }),
       }),
     ),
+    from_draft: zod
+      .boolean()
+      .optional()
+      .describe(
+        "Whether this is an open draft's contract, which no run uses until the draft is saved.",
+      ),
     fault_targets: zod.array(
       zod.object({
         tool: zod.string().min(1),
@@ -39792,6 +39798,12 @@ export const SimulateApiHarnessEnvironmentsPartialUpdateResponse = zod.object({
         }),
       }),
     ),
+    from_draft: zod
+      .boolean()
+      .optional()
+      .describe(
+        "Whether this is an open draft's contract, which no run uses until the draft is saved.",
+      ),
     fault_targets: zod.array(
       zod.object({
         tool: zod.string().min(1),
@@ -45458,6 +45470,12 @@ export const SimulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationRespo
           }),
         }),
       ),
+      from_draft: zod
+        .boolean()
+        .optional()
+        .describe(
+          "Whether this is an open draft's contract, which no run uses until the draft is saved.",
+        ),
       fault_targets: zod.array(
         zod.object({
           tool: zod.string().min(1),

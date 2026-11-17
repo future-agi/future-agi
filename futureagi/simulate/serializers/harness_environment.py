@@ -728,6 +728,10 @@ class HarnessEnvironmentContractSerializer(serializers.Serializer):
         help_text="Tools that reach a system the environment has no copy of: Unsupported for this controlled test.",
     )
     tool_status = HarnessEnvironmentToolStatusSerializer(many=True)
+    from_draft = serializers.BooleanField(
+        required=False,
+        help_text="Whether this is an open draft's contract, which no run uses until the draft is saved.",
+    )
     fault_targets = HarnessEnvironmentFaultTargetSerializer(many=True)
     end_conditions = HarnessEnvironmentEndConditionsSerializer()
     notes = serializers.CharField(required=False, allow_null=True, allow_blank=True)

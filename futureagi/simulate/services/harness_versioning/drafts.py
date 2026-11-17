@@ -624,15 +624,17 @@ def _discard(draft: Any, *, user: Any = None, **documents: Any) -> None:
 def _targets_before(environment: HostedHarnessJob) -> list[Any] | None:
     """The fault targets of the environment's files before this write; None when they cannot be read or the contract
     says nothing about the door, so every scenario's faults are checked."""
+    from simulate.selectors.environment_documents import version_contract
     from simulate.services.harness_actor_rules import actor_rules, cast_records
     from simulate.services.harness_tool_reach import door_targets
 
     try:
         files = edit_sides(environment)["environment"]
-        contract = json.loads(files.get("contract.json") or b"{}")
     except (S3Error, HTTPError, HostedHarnessError, ValueError):
         # Unreadable earlier files: every fault is checked, never one waved through.
         return None
+    # The contract those files run with, as a build sealed it.
+    contract = version_contract(environment, fresh_draft(environment, "environment"))
     return door_targets(contract, actor_rules(files), cast_records(files))
 
 
