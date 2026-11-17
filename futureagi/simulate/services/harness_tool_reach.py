@@ -156,10 +156,17 @@ class BlockedTool(TypedDict):
 
 
 class PinnedEnvironment(Protocol):
-    """A run's pins as far as the production-only rule reads them: the environment version, if any."""
+    """A run's pins as far as the production-only rule reads them: the environment version, if any, and the agent
+    and suite pair whose bundle the run replays."""
 
     @property
     def environment_version(self) -> HarnessEnvironmentVersion | None: ...
+
+    @property
+    def agent_version_id(self) -> Any: ...
+
+    @property
+    def suite_version(self) -> Any: ...
 
 
 def _version_documents(
@@ -185,8 +192,15 @@ def blocked_tools(
     """Each production-only tool of the run's environment version, with the scenarios that need it."""
     documents = _version_documents(environment, pins)
     # The run's version's contract, the one its bundle is sealed with; a run with no pin runs the default version.
-    contract = version_contract(
-        environment, pins.environment_version if pins is not None else None
+    contract = (
+        version_contract(
+            environment,
+            pins.environment_version,
+            agent_version_id=pins.agent_version_id,
+            suite_version_id=getattr(pins.suite_version, "id", None),
+        )
+        if pins is not None
+        else version_contract(environment)
     )
     blocked = production_only(contract)
     if not blocked:

@@ -50,7 +50,6 @@ REMOVED_REASONS = {
 }
 SUITE_OUTPUT_KINDS = frozenset({"scenarios", "coverage"})
 SEALED_MANIFEST = "environment-bundle/manifest.json"
-SEALED_CONTRACT = "environment-bundle/contract.json"
 # The pairs an environment was last defaulted to, so a roll back reuses their archive.
 DEFAULT_PAIRS_KEPT = 20
 # Not busy, but with nothing ready to move a default on.
@@ -200,24 +199,26 @@ def _stage_outputs(pair_body: bytes) -> list[dict[str, Any]]:
 def run_contract(
     job: HostedHarnessJob, split: archives.SplitArchive, *, built: bool
 ) -> dict[str, Any]:
-    """The contract a version runs with, as every reader shows it.
+    """The contract a version runs with, as its readers show it; recorded beside the authored one, which diffs
+    compare.
 
     A build can amend the authored contract while it builds (a tool served from the agent's tools service instead
     of imported, say) and seals the amended one, so a version ``built`` from this tree has the sealed contract. A
     version whose authored contract is the default version's, unchanged, runs with the default's; any other has
     its own authored contract until a build seals it.
     """
-    sealed = _json(split.sealed, SEALED_CONTRACT) if built else None
+    from simulate.selectors.environment_documents import recorded_contract
+
+    sealed = _json(split.sealed, archives.SEALED_CONTRACT) if built else None
     if isinstance(sealed, dict) and sealed:
         return sealed
     default = job.environment_version
-    inherited = (default.documents or {}).get("contract") if default else None
-    if (
-        isinstance(inherited, dict)
-        and inherited
-        and default.contract_hash_raw == hashing.contract_hash_raw(split.environment)
+    if default is not None and default.contract_hash_raw == hashing.contract_hash_raw(
+        split.environment
     ):
-        return inherited
+        inherited = recorded_contract(default.documents)
+        if inherited:
+            return inherited
     authored = _json(split.environment, "contract.json")
     return authored if isinstance(authored, dict) else {}
 
@@ -240,11 +241,14 @@ def prepare_pieces(
         job.organization_id, job.id, environment_body
     )
     suite_key = archives.suite_key(job.organization_id, job.id, suite_body)
-    contract = run_contract(job, split, built=built)
+    contract = _json(split.environment, "contract.json") or {}
+    runs_with = run_contract(job, split, built=built)
     sub_goals = _sub_goals(split.environment)
     scenarios = suite_documents(split.suite)
     environment_documents = {
         "contract": contract,
+        # Only where it differs from the authored contract, so a version's diff still compares authored ones.
+        **({"run_contract": runs_with} if runs_with != contract else {}),
         "sub_goals": sub_goals,
         "sub_goal_digests": hashing.sub_goal_digests(sub_goals),
         "actor_digests": hashing.actor_digests(split.environment),
