@@ -1,6 +1,6 @@
 import { useState } from "react";
 import PropTypes from "prop-types";
-import { Box, Stack, Tooltip, Typography } from "@mui/material";
+import { Box, Stack, Typography } from "@mui/material";
 import { alpha } from "@mui/material/styles";
 
 /*
@@ -109,29 +109,9 @@ export default function TrialRoutes({
         flexWrap="wrap"
         sx={{ px: 2, py: 0.75 }}
       >
-        {/* Not in the plan yet (Nosang, 17 Nov): marked as a proposal. Trials
-            are switched only in the drawer header, so no second picker here. */}
-        <Tooltip
-          arrow
-          title="A proposal for review, not in the plan yet. Switch trials in the header above."
-        >
-          <Box
-            component="span"
-            sx={{
-              px: 0.75,
-              py: 0.125,
-              borderRadius: "4px",
-              border: "1px dashed",
-              borderColor: "divider",
-              typography: "s3",
-              fontWeight: 500,
-              color: "text.secondary",
-              cursor: "default",
-            }}
-          >
-            Proposal
-          </Box>
-        </Tooltip>
+        {/* Trials are switched only in the drawer header (Nosang, 17 Nov), so
+            no second picker here. Proposal status lives on the review page,
+            never in the product UI. */}
         <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
           {`${rows.length} trials`}
         </Typography>
