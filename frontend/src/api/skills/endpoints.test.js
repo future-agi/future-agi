@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { paths } from 'src/routes/paths';
-import { getContractedApiMethods } from 'src/api/contracts/api-surface';
-import { endpoints } from './endpoints';
+import { getContractedApiMethods, isContractedApiPath } from 'src/api/contracts/api-surface';
+import { RUNTIME_ROUTES, RUNTIME_ROUTE_PENDING, endpoints, runtimeEndpoint } from './endpoints';
 
 // Exercise the real generated registry, not the path-only stub used by transport tests.
 const routes = [
@@ -41,5 +41,24 @@ describe('integrated Skills routes', () => {
     expect(paths.dashboard.skills.edit('skill-id')).toBe('/dashboard/skills/skill-id/edit');
     expect(paths.dashboard.skills.compare('skill-id')).toBe('/dashboard/skills/skill-id/compare');
     expect(paths.dashboard.settings.apiKeys).toBe('/dashboard/settings/api_keys');
+  });
+});
+
+// Skill-trace runtime reads: provisional templates until the lean API map lands
+// (SKILLS-API-REVIEW.md). Both states are checked against the real registry.
+describe('skill-trace runtime routes', () => {
+  const params = { skill_id: 'skill-id', context_id: 'context-id' };
+  it.each(Object.entries(RUNTIME_ROUTES))('%s resolves only when the generated contract has it', (name, template) => {
+    if (isContractedApiPath(template)) {
+      expect(getContractedApiMethods(template).map((method) => method.toLowerCase())).toContain('get');
+      expect(runtimeEndpoint(name, params)).toBe(template.replace('{skill_id}', 'skill-id').replace('{context_id}', 'context-id'));
+    } else {
+      expect(() => runtimeEndpoint(name, params)).toThrow(expect.objectContaining({ code: RUNTIME_ROUTE_PENDING }));
+    }
+  });
+
+  it('every template is a GET read under the Skills group', () => {
+    Object.values(RUNTIME_ROUTES).forEach((template) => expect(template).toMatch(/^\/model-hub\/skills\/.+\/$/));
+    expect(() => runtimeEndpoint('unknown')).toThrow('Unknown Skills runtime route');
   });
 });

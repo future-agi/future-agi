@@ -59,11 +59,12 @@ import UsageTab from "./UsageTab";
 import UseSkillPanel from "./UseSkillPanel";
 import { resolveViewedVersion } from "./detail-state";
 
+// URL values stay stable ("dependents", "usage"); only the labels change (UX-18).
 const TABS = ["files", "tests", "dependents", "versions", "usage", "use"];
 const TAB_LABELS = {
   files: "Files",
   tests: "Tests",
-  dependents: "Used by",
+  dependents: "Linked contexts",
   versions: "Versions",
   usage: "Activity",
   use: "Install",
