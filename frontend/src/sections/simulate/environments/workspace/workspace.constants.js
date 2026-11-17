@@ -298,9 +298,11 @@ export const AGENT_VERSIONS_COPY = {
     source_archive_too_large:
       "The upload is too large. Remove dependencies and build output, then upload again.",
   },
+  // Own keys only: "constructor" or "__proto__" must not find a function or object.
   checkError: (code) =>
-    AGENT_VERSIONS_COPY.checkErrors[code] ??
-    `The check couldn't finish (${code}).`,
+    Object.hasOwn(AGENT_VERSIONS_COPY.checkErrors, code)
+      ? AGENT_VERSIONS_COPY.checkErrors[code]
+      : `The check couldn't finish (${code}).`,
   preflightNoDetail: "The check failed without saying why.",
   // Why a version whose check passed is not this environment's default.
   activation: {

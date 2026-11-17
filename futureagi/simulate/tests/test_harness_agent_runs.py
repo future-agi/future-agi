@@ -919,6 +919,12 @@ class TestRerunWithCredentials:
         )
         body = refused.value.as_dict()
         assert body["preflight_report"]["invalid"] == ["OPENAI_API_KEY"]
+        assert set(body["preflight_report"]) == {
+            "checks",
+            "missing",
+            "invalid",
+            "error",
+        }
         _no_values(json.dumps(body) + refused.value.message)
         assert (
             HostedHarnessJob.no_workspace_objects.filter(

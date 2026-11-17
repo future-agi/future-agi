@@ -880,7 +880,7 @@ export type ${jsonAlias} = JsonValueApi;`,
         ["source", `${typeName}Source`],
         ["prompt", "string"],
         ["preflight_status", "string"],
-        ["preflight_report", `${typeName}PreflightReport`],
+        ["preflight_report", "AgentVersionPreflightReportApi"],
         ["preflighted_at", "string"],
         ["check_started_at", "string"],
         ["credential_names", "string[]"],
@@ -1316,13 +1316,17 @@ export type ${jsonAlias} = JsonValueApi;`,
         );
       }
     }
-    // Only agent versions are checked, hold credentials or can be picked.
+    // Only agent versions are checked, hold credentials or can be picked. The
+    // report is a $ref, so orval drops its x-nullable and its error's.
     for (const response of VERSIONS_RESPONSES) {
+      zod = assertReplaceRegexInNamedBlock(
+        zod,
+        `export const ${response} =`,
+        /("preflight_report": zod\.object\(\{[\s\S]*?"error": zod\.string\(\)\.min\(1\))(\s*\}\)(?:\.describe\([^)]*\))?)/g,
+        "$1.nullable()$2.nullable()",
+        `${response}.preflight_report nullable`,
+      );
       for (const [pattern, label] of [
-        [
-          /("preflight_report": zod\.object\(\{\s*\}\)\.passthrough\(\)(?:\.describe\([^)]*\))?)/g,
-          "preflight_report",
-        ],
         [
           /("preflighted_at": zod\.string\(\)\.datetime\(\{[^}]*\}\))/g,
           "preflighted_at",

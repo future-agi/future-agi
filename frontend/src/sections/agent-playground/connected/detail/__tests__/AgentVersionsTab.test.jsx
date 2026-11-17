@@ -170,6 +170,18 @@ describe("AgentVersionsTab check", () => {
     expect(screen.queryByText(/preflight_error/)).not.toBeInTheDocument();
   });
 
+  it.each(["constructor", "__proto__", "toString"])(
+    "keeps the generic line for the inherited name %s",
+    async (code) => {
+      servePages([[withCheck(V2, "failed", { error: code }), V1]]);
+      renderTab();
+      await screen.findAllByTestId("version-entry");
+      expect(
+        screen.getByText(`The check couldn't finish (${code}).`),
+      ).toBeInTheDocument();
+    },
+  );
+
   it("keeps the generic line, with the code, for an error code it doesn't know", async () => {
     servePages([[withCheck(V2, "failed", { error: "something_new" }), V1]]);
     renderTab();

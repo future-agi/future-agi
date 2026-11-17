@@ -133,3 +133,19 @@ def test_backfill_does_not_move_the_agent_in_the_list(organization, workspace):
     after = AgentDefinition.no_workspace_objects.get(pk=agent.pk)
     assert after.description == FULL_PROMPT.strip()
     assert after.updated_at == before
+
+
+@pytest.mark.django_db
+def test_a_soft_deleted_agent_is_still_backfilled_and_counted_once(
+    organization, workspace
+):
+    from simulate.models import AgentDefinition
+
+    _, agent, _, _ = _excerpt_era_harness_run(organization, workspace)
+    AgentDefinition.all_objects.filter(pk=agent.pk).update(deleted=True)
+
+    output = _run()
+
+    stored = AgentDefinition.all_objects.get(pk=agent.pk)
+    assert stored.description == FULL_PROMPT.strip()
+    assert "1 agents," in output

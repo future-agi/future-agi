@@ -713,6 +713,13 @@ class TestRefusals:
         body = response.json()
         assert body["error"] == "agent_preflight_failed"
         assert body["preflight_report"]["invalid"] == ["VAPI_API_KEY"]
+        # Only what the page shows: not the source scan's file paths.
+        assert set(body["preflight_report"]) == {
+            "checks",
+            "missing",
+            "invalid",
+            "error",
+        }
         _no_values(json.dumps(body))
         assert not HostedHarnessJob.no_workspace_objects.exists()
         assert not _definitions(user.organization).exists()

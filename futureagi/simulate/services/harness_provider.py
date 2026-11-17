@@ -1156,6 +1156,7 @@ def _rerun_credentials_agent(
         changed_set_runnable,
         own_credential_set,
         preflight_agent_version,
+        public_preflight_report,
     )
     from simulate.services.harness_versioning.versions import pins_runs
     from simulate.services.hosted_harness import HostedHarnessError
@@ -1210,7 +1211,7 @@ def _rerun_credentials_agent(
             status_code=422,
             details={
                 "agent_version_id": str(version.id),
-                "preflight_report": result.report,
+                "preflight_report": public_preflight_report(result.report),
             },
         )
     return version

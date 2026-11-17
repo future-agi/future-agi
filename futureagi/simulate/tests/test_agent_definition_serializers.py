@@ -869,3 +869,38 @@ class TestPublicPreflightReport:
             "invalid": [],
             "error": "7",
         }
+
+    def test_names_that_are_empty_or_none_are_dropped(self):
+        from simulate.services.harness_agent_versions import public_preflight_report
+
+        report = public_preflight_report(
+            {
+                "checks": [
+                    {
+                        "id": "a",
+                        "label": "A",
+                        "status": "failed",
+                        "missing": [None, "", "X"],
+                    }
+                ],
+                "missing": [None, "", "Y"],
+                "invalid": ["", None],
+            }
+        )
+
+        assert report["checks"][0]["missing"] == ["X"]
+        assert report["missing"] == ["Y"]
+        assert report["invalid"] == []
+
+
+@pytest.mark.unit
+def test_the_environment_list_types_its_check_report():
+    from simulate.serializers.harness_environment import HarnessVersionSerializer
+    from simulate.serializers.response.agent_version import (
+        AgentVersionPreflightReportSerializer,
+    )
+
+    field = HarnessVersionSerializer().fields["preflight_report"]
+
+    assert isinstance(field, AgentVersionPreflightReportSerializer)
+    assert field.allow_null

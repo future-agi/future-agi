@@ -359,7 +359,10 @@ def preflight_by_version(version_ids: Iterable[Any]) -> dict[Any, tuple[Any, Any
 
 
 def _names(value: Any) -> list[str]:
-    return [str(name) for name in value] if isinstance(value, (list, tuple)) else []
+    if not isinstance(value, (list, tuple)):
+        return []
+    # A name is a non-empty string; None and "" carry nothing to show.
+    return [str(name) for name in value if name not in (None, "")]
 
 
 def public_preflight_report(report: Any) -> dict[str, Any] | None:
@@ -2362,7 +2365,7 @@ def check_creation_credentials(
             "agent_preflight_failed",
             "The agent's credentials didn't pass their check",
             status_code=422,
-            details={"preflight_report": report},
+            details={"preflight_report": public_preflight_report(report)},
         )
     readiness = _connector_credential_readiness(
         payload,

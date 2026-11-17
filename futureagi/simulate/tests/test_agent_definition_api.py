@@ -562,10 +562,18 @@ class TestCreateAgentDefinition:
 
 @pytest.mark.unit
 def test_the_list_order_has_an_index_on_its_filter_and_sort():
-    """The list filters one organization and sorts by ``updated_at``."""
-    indexed = [tuple(index.fields) for index in AgentDefinition._meta.indexes]
+    """The list filters one organization's live agents and sorts newest first."""
+    from django.db.models import Q
 
-    assert ("organization", "updated_at") in indexed
+    (index,) = [
+        i
+        for i in AgentDefinition._meta.indexes
+        if i.name == "idx_agent_def_org_updated"
+    ]
+
+    assert index.fields == ["organization", "-updated_at", "-created_at", "-id"]
+    # The default manager hides soft-deleted rows, so the index leaves them out.
+    assert index.condition == Q(deleted=False)
 
 
 @pytest.mark.integration

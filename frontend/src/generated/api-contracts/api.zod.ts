@@ -39191,11 +39191,19 @@ export const SimulateApiHarnessEnvironmentsDraftsResponse = zod.object({
         .nullable(),
       preflight_status: zod.string().min(1).nullable(),
       preflight_report: zod
-        .object({})
-        .passthrough()
-        .describe(
-          "An agent version's last check: check statuses and names only.",
-        )
+        .object({
+          checks: zod.array(
+            zod.object({
+              id: zod.string(),
+              label: zod.string(),
+              status: zod.string(),
+              missing: zod.array(zod.string().min(1)),
+            }),
+          ),
+          missing: zod.array(zod.string().min(1)),
+          invalid: zod.array(zod.string().min(1)),
+          error: zod.string().min(1).nullable(),
+        })
         .nullable(),
       preflighted_at: zod.string().datetime({ offset: true }).nullable(),
       check_started_at: zod
@@ -39296,11 +39304,19 @@ export const SimulateApiHarnessEnvironmentsDraftsResponse = zod.object({
         .nullable(),
       preflight_status: zod.string().min(1).nullable(),
       preflight_report: zod
-        .object({})
-        .passthrough()
-        .describe(
-          "An agent version's last check: check statuses and names only.",
-        )
+        .object({
+          checks: zod.array(
+            zod.object({
+              id: zod.string(),
+              label: zod.string(),
+              status: zod.string(),
+              missing: zod.array(zod.string().min(1)),
+            }),
+          ),
+          missing: zod.array(zod.string().min(1)),
+          invalid: zod.array(zod.string().min(1)),
+          error: zod.string().min(1).nullable(),
+        })
         .nullable(),
       preflighted_at: zod.string().datetime({ offset: true }).nullable(),
       check_started_at: zod
@@ -39401,11 +39417,19 @@ export const SimulateApiHarnessEnvironmentsDraftsResponse = zod.object({
         .nullable(),
       preflight_status: zod.string().min(1).nullable(),
       preflight_report: zod
-        .object({})
-        .passthrough()
-        .describe(
-          "An agent version's last check: check statuses and names only.",
-        )
+        .object({
+          checks: zod.array(
+            zod.object({
+              id: zod.string(),
+              label: zod.string(),
+              status: zod.string(),
+              missing: zod.array(zod.string().min(1)),
+            }),
+          ),
+          missing: zod.array(zod.string().min(1)),
+          invalid: zod.array(zod.string().min(1)),
+          error: zod.string().min(1).nullable(),
+        })
         .nullable(),
       preflighted_at: zod.string().datetime({ offset: true }).nullable(),
       check_started_at: zod
@@ -39555,11 +39579,19 @@ export const SimulateApiHarnessEnvironmentsDraftsSaveDraftsResponse =
             .nullable(),
           preflight_status: zod.string().min(1).nullable(),
           preflight_report: zod
-            .object({})
-            .passthrough()
-            .describe(
-              "An agent version's last check: check statuses and names only.",
-            )
+            .object({
+              checks: zod.array(
+                zod.object({
+                  id: zod.string(),
+                  label: zod.string(),
+                  status: zod.string(),
+                  missing: zod.array(zod.string().min(1)),
+                }),
+              ),
+              missing: zod.array(zod.string().min(1)),
+              invalid: zod.array(zod.string().min(1)),
+              error: zod.string().min(1).nullable(),
+            })
             .nullable(),
           preflighted_at: zod.string().datetime({ offset: true }).nullable(),
           check_started_at: zod
@@ -39636,11 +39668,19 @@ export const SimulateApiHarnessEnvironmentsDraftsSaveDraftsResponse =
             .nullable(),
           preflight_status: zod.string().min(1).nullable(),
           preflight_report: zod
-            .object({})
-            .passthrough()
-            .describe(
-              "An agent version's last check: check statuses and names only.",
-            )
+            .object({
+              checks: zod.array(
+                zod.object({
+                  id: zod.string(),
+                  label: zod.string(),
+                  status: zod.string(),
+                  missing: zod.array(zod.string().min(1)),
+                }),
+              ),
+              missing: zod.array(zod.string().min(1)),
+              invalid: zod.array(zod.string().min(1)),
+              error: zod.string().min(1).nullable(),
+            })
             .nullable(),
           preflighted_at: zod.string().datetime({ offset: true }).nullable(),
           check_started_at: zod
@@ -39715,11 +39755,19 @@ export const SimulateApiHarnessEnvironmentsDraftsSaveDraftsResponse =
             .nullable(),
           preflight_status: zod.string().min(1).nullable(),
           preflight_report: zod
-            .object({})
-            .passthrough()
-            .describe(
-              "An agent version's last check: check statuses and names only.",
-            )
+            .object({
+              checks: zod.array(
+                zod.object({
+                  id: zod.string(),
+                  label: zod.string(),
+                  status: zod.string(),
+                  missing: zod.array(zod.string().min(1)),
+                }),
+              ),
+              missing: zod.array(zod.string().min(1)),
+              invalid: zod.array(zod.string().min(1)),
+              error: zod.string().min(1).nullable(),
+            })
             .nullable(),
           preflighted_at: zod.string().datetime({ offset: true }).nullable(),
           check_started_at: zod
@@ -39794,11 +39842,19 @@ export const SimulateApiHarnessEnvironmentsDraftsSaveDraftsResponse =
             .nullable(),
           preflight_status: zod.string().min(1).nullable(),
           preflight_report: zod
-            .object({})
-            .passthrough()
-            .describe(
-              "An agent version's last check: check statuses and names only.",
-            )
+            .object({
+              checks: zod.array(
+                zod.object({
+                  id: zod.string(),
+                  label: zod.string(),
+                  status: zod.string(),
+                  missing: zod.array(zod.string().min(1)),
+                }),
+              ),
+              missing: zod.array(zod.string().min(1)),
+              invalid: zod.array(zod.string().min(1)),
+              error: zod.string().min(1).nullable(),
+            })
             .nullable(),
           preflighted_at: zod.string().datetime({ offset: true }).nullable(),
           check_started_at: zod
@@ -41108,11 +41164,19 @@ export const SimulateApiHarnessEnvironmentsVersionsResponse = zod.object({
         .nullable(),
       preflight_status: zod.string().min(1).nullable(),
       preflight_report: zod
-        .object({})
-        .passthrough()
-        .describe(
-          "An agent version's last check: check statuses and names only.",
-        )
+        .object({
+          checks: zod.array(
+            zod.object({
+              id: zod.string(),
+              label: zod.string(),
+              status: zod.string(),
+              missing: zod.array(zod.string().min(1)),
+            }),
+          ),
+          missing: zod.array(zod.string().min(1)),
+          invalid: zod.array(zod.string().min(1)),
+          error: zod.string().min(1).nullable(),
+        })
         .nullable(),
       preflighted_at: zod.string().datetime({ offset: true }).nullable(),
       check_started_at: zod
@@ -41185,11 +41249,19 @@ export const SimulateApiHarnessEnvironmentsVersionsResponse = zod.object({
         .nullable(),
       preflight_status: zod.string().min(1).nullable(),
       preflight_report: zod
-        .object({})
-        .passthrough()
-        .describe(
-          "An agent version's last check: check statuses and names only.",
-        )
+        .object({
+          checks: zod.array(
+            zod.object({
+              id: zod.string(),
+              label: zod.string(),
+              status: zod.string(),
+              missing: zod.array(zod.string().min(1)),
+            }),
+          ),
+          missing: zod.array(zod.string().min(1)),
+          invalid: zod.array(zod.string().min(1)),
+          error: zod.string().min(1).nullable(),
+        })
         .nullable(),
       preflighted_at: zod.string().datetime({ offset: true }).nullable(),
       check_started_at: zod
@@ -41262,11 +41334,19 @@ export const SimulateApiHarnessEnvironmentsVersionsResponse = zod.object({
         .nullable(),
       preflight_status: zod.string().min(1).nullable(),
       preflight_report: zod
-        .object({})
-        .passthrough()
-        .describe(
-          "An agent version's last check: check statuses and names only.",
-        )
+        .object({
+          checks: zod.array(
+            zod.object({
+              id: zod.string(),
+              label: zod.string(),
+              status: zod.string(),
+              missing: zod.array(zod.string().min(1)),
+            }),
+          ),
+          missing: zod.array(zod.string().min(1)),
+          invalid: zod.array(zod.string().min(1)),
+          error: zod.string().min(1).nullable(),
+        })
         .nullable(),
       preflighted_at: zod.string().datetime({ offset: true }).nullable(),
       check_started_at: zod
@@ -41414,11 +41494,19 @@ export const SimulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionRespo
           .nullable(),
         preflight_status: zod.string().min(1).nullable(),
         preflight_report: zod
-          .object({})
-          .passthrough()
-          .describe(
-            "An agent version's last check: check statuses and names only.",
-          )
+          .object({
+            checks: zod.array(
+              zod.object({
+                id: zod.string(),
+                label: zod.string(),
+                status: zod.string(),
+                missing: zod.array(zod.string().min(1)),
+              }),
+            ),
+            missing: zod.array(zod.string().min(1)),
+            invalid: zod.array(zod.string().min(1)),
+            error: zod.string().min(1).nullable(),
+          })
           .nullable(),
         preflighted_at: zod.string().datetime({ offset: true }).nullable(),
         check_started_at: zod
@@ -41493,11 +41581,19 @@ export const SimulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionRespo
           .nullable(),
         preflight_status: zod.string().min(1).nullable(),
         preflight_report: zod
-          .object({})
-          .passthrough()
-          .describe(
-            "An agent version's last check: check statuses and names only.",
-          )
+          .object({
+            checks: zod.array(
+              zod.object({
+                id: zod.string(),
+                label: zod.string(),
+                status: zod.string(),
+                missing: zod.array(zod.string().min(1)),
+              }),
+            ),
+            missing: zod.array(zod.string().min(1)),
+            invalid: zod.array(zod.string().min(1)),
+            error: zod.string().min(1).nullable(),
+          })
           .nullable(),
         preflighted_at: zod.string().datetime({ offset: true }).nullable(),
         check_started_at: zod
@@ -41572,11 +41668,19 @@ export const SimulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionRespo
           .nullable(),
         preflight_status: zod.string().min(1).nullable(),
         preflight_report: zod
-          .object({})
-          .passthrough()
-          .describe(
-            "An agent version's last check: check statuses and names only.",
-          )
+          .object({
+            checks: zod.array(
+              zod.object({
+                id: zod.string(),
+                label: zod.string(),
+                status: zod.string(),
+                missing: zod.array(zod.string().min(1)),
+              }),
+            ),
+            missing: zod.array(zod.string().min(1)),
+            invalid: zod.array(zod.string().min(1)),
+            error: zod.string().min(1).nullable(),
+          })
           .nullable(),
         preflighted_at: zod.string().datetime({ offset: true }).nullable(),
         check_started_at: zod
@@ -41712,11 +41816,19 @@ export const SimulateApiHarnessEnvironmentsVersionsMoveDefaultResponse =
           .nullable(),
         preflight_status: zod.string().min(1).nullable(),
         preflight_report: zod
-          .object({})
-          .passthrough()
-          .describe(
-            "An agent version's last check: check statuses and names only.",
-          )
+          .object({
+            checks: zod.array(
+              zod.object({
+                id: zod.string(),
+                label: zod.string(),
+                status: zod.string(),
+                missing: zod.array(zod.string().min(1)),
+              }),
+            ),
+            missing: zod.array(zod.string().min(1)),
+            invalid: zod.array(zod.string().min(1)),
+            error: zod.string().min(1).nullable(),
+          })
           .nullable(),
         preflighted_at: zod.string().datetime({ offset: true }).nullable(),
         check_started_at: zod
@@ -41791,11 +41903,19 @@ export const SimulateApiHarnessEnvironmentsVersionsMoveDefaultResponse =
           .nullable(),
         preflight_status: zod.string().min(1).nullable(),
         preflight_report: zod
-          .object({})
-          .passthrough()
-          .describe(
-            "An agent version's last check: check statuses and names only.",
-          )
+          .object({
+            checks: zod.array(
+              zod.object({
+                id: zod.string(),
+                label: zod.string(),
+                status: zod.string(),
+                missing: zod.array(zod.string().min(1)),
+              }),
+            ),
+            missing: zod.array(zod.string().min(1)),
+            invalid: zod.array(zod.string().min(1)),
+            error: zod.string().min(1).nullable(),
+          })
           .nullable(),
         preflighted_at: zod.string().datetime({ offset: true }).nullable(),
         check_started_at: zod
@@ -41870,11 +41990,19 @@ export const SimulateApiHarnessEnvironmentsVersionsMoveDefaultResponse =
           .nullable(),
         preflight_status: zod.string().min(1).nullable(),
         preflight_report: zod
-          .object({})
-          .passthrough()
-          .describe(
-            "An agent version's last check: check statuses and names only.",
-          )
+          .object({
+            checks: zod.array(
+              zod.object({
+                id: zod.string(),
+                label: zod.string(),
+                status: zod.string(),
+                missing: zod.array(zod.string().min(1)),
+              }),
+            ),
+            missing: zod.array(zod.string().min(1)),
+            invalid: zod.array(zod.string().min(1)),
+            error: zod.string().min(1).nullable(),
+          })
           .nullable(),
         preflighted_at: zod.string().datetime({ offset: true }).nullable(),
         check_started_at: zod

@@ -126,11 +126,13 @@ class Command(BaseCommand):
         if _is_shortened(agent.description, full, excerpts):
             # An update, not a save: ``updated_at`` orders the Agents list, and
             # a data fix is not use of the agent.
-            AgentDefinition.no_workspace_objects.filter(pk=agent.pk).update(
+            # Through the base manager, as the save it replaces did, so an agent
+            # that was soft-deleted still gets its prompt back.
+            changed = AgentDefinition._base_manager.filter(pk=agent.pk).update(
                 description=full
             )
             agent.description = full
-            totals["agents"] += 1
+            totals["agents"] += changed
 
         for version in AgentVersion.no_workspace_objects.filter(agent_definition=agent):
             snapshot = dict(version.configuration_snapshot or {})

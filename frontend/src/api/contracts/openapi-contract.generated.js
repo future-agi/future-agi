@@ -102141,11 +102141,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "x-nullable": true,
         },
         preflight_report: {
-          title: "Preflight report",
-          description:
-            "An agent version's last check: check statuses and names only.",
-          type: "object",
-          "x-nullable": true,
+          $ref: "#/definitions/AgentVersionPreflightReport",
         },
         preflighted_at: {
           title: "Preflighted at",
@@ -102765,11 +102761,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "x-nullable": true,
         },
         preflight_report: {
-          title: "Preflight report",
-          description:
-            "An agent version's last check: check statuses and names only.",
-          type: "object",
-          "x-nullable": true,
+          $ref: "#/definitions/AgentVersionPreflightReport",
         },
         preflighted_at: {
           title: "Preflighted at",
