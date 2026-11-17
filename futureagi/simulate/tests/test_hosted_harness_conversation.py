@@ -1510,7 +1510,7 @@ def test_abandon_survives_a_failed_stop(
 
     command.refresh_from_db()
     assert command.state == HostedHarnessConversationMessage.State.FAILED
-    assert "Error calling" in caplog.text
+    assert "stop_chat_sandboxes_failed" in caplog.text
 
 
 @pytest.mark.django_db

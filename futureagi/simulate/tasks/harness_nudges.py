@@ -101,22 +101,24 @@ def _unique(
 ):
     from temporalio.common import WorkflowIDConflictPolicy
 
-    options: dict[str, Any] = {}
-    if dispatch_timeout_seconds is not None:
-        options["dispatch_timeout_seconds"] = dispatch_timeout_seconds
     return task.apply_async(
         args=args,
         task_id=task_id,
         id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
-        **options,
+        dispatch_timeout_seconds=dispatch_timeout_seconds,
     )
 
 
-# A sandbox stop is scheduled from request-path on-commit hooks (draft save,
-# discard, suite amend). A slow Temporal frontend must not hold a request whose
-# write has already committed: a schedule that misses this deadline raises, the
-# caller logs it, and the sandbox falls back to its idle limit.
-SANDBOX_STOP_DISPATCH_TIMEOUT_SECONDS = 5.0
+# A sandbox stop, a nudge check and a turn finish are scheduled from request-path
+# on-commit hooks (draft save, discard, suite amend, turn events). A slow Temporal
+# frontend must not hold a request whose write has already committed, so these
+# schedules give up after this deadline, as the accounts request paths do. A missed
+# deadline raises and the caller logs it; the workflow may still have started on the
+# server, which is harmless: the id is fixed and the conflict policy is USE_EXISTING,
+# so a later schedule reuses it. A sandbox whose stop never started falls back to its
+# idle limit.
+REQUEST_PATH_DISPATCH_TIMEOUT_SECONDS = 2.0
+SANDBOX_STOP_DISPATCH_TIMEOUT_SECONDS = REQUEST_PATH_DISPATCH_TIMEOUT_SECONDS
 
 
 @temporal_activity(time_limit=60, max_retries=0, queue="default")
@@ -205,6 +207,7 @@ def schedule_nudge_check_task(environment_id: Any):
         check_harness_nudges,
         [str(environment_id)],
         f"harness-nudge-check-{environment_id}",
+        dispatch_timeout_seconds=REQUEST_PATH_DISPATCH_TIMEOUT_SECONDS,
     )
 
 
@@ -213,6 +216,7 @@ def schedule_finish_turn(conversation_id: Any, turn_sequence: int):
         finish_harness_nudge_turn,
         [str(conversation_id), int(turn_sequence)],
         f"harness-nudge-finish-{conversation_id}-{turn_sequence}",
+        dispatch_timeout_seconds=REQUEST_PATH_DISPATCH_TIMEOUT_SECONDS,
     )
 
 

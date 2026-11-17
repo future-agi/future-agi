@@ -883,8 +883,44 @@ class TestRetireStopsSandbox:
 
         lease.refresh_from_db()
         assert lease.state == "expired"
-        assert "Error calling" in caplog.text
-        assert "stop_chat_sandbox" in caplog.text
+        assert "stop_chat_sandboxes_failed" in caplog.text
+
+    def test_the_first_failed_stop_ends_the_loop_and_the_save_still_succeeds(
+        self,
+        user,
+        workspace,
+        storage,
+        monkeypatch,
+        caplog,
+        django_capture_on_commit_callbacks,
+    ):
+        from simulate.tasks import harness_nudges
+
+        environment = _built(user, workspace, "d-stop-three")
+        first = _conversation(environment)
+        second = ensure_conversation(_run_of(environment, "stop-three-run-a"))
+        third = ensure_conversation(_run_of(environment, "stop-three-run-b"))
+        leases = [_lease(one) for one in (first, second, third)]
+        attempts = []
+
+        def slow(conversation_id, provider_ref):
+            attempts.append(conversation_id)
+            raise TimeoutError("temporal frontend is slow")
+
+        monkeypatch.setattr(harness_nudges, "schedule_sandbox_stop", slow)
+
+        with django_capture_on_commit_callbacks(execute=True):
+            assert drafts.retire_chat_runtime(environment) == 3
+
+        assert len(attempts) == 1
+        for lease in leases:
+            lease.refresh_from_db()
+            assert lease.state == "expired"
+        failures = [
+            r for r in caplog.records if "stop_chat_sandboxes_failed" in r.message
+        ]
+        assert len(failures) == 1
+        assert "skipped=2" in failures[0].message
 
 
 class TestSave:

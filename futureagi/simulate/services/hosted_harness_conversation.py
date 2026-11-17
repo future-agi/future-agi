@@ -567,14 +567,35 @@ def _abandon_outstanding(conversation_id) -> int:
 def stop_chat_sandbox_after_commit(conversation_id, provider_ref: str) -> None:
     """Delete a chat's own sandbox once this transaction commits; at once in autocommit.
     A failure to schedule is logged and dropped, so it never fails the caller."""
-    conversation_id = str(conversation_id)
+    stop_chat_sandboxes_after_commit([(conversation_id, provider_ref)])
 
-    def stop_chat_sandbox() -> None:
+
+def stop_chat_sandboxes_after_commit(stops) -> None:
+    """Delete several chat sandboxes once this transaction commits, in one hook.
+
+    The first schedule that fails ends the hook: Temporal is slow or down, and each
+    further attempt would hold the request for its dispatch deadline again. The
+    sandboxes not scheduled fall back to their idle limit; the failure is logged
+    once, with how many were skipped."""
+    pending = [(str(conversation_id), ref) for conversation_id, ref in stops]
+    if not pending:
+        return
+
+    def stop_chat_sandboxes() -> None:
         from simulate.tasks import harness_nudges as nudge_tasks
 
-        nudge_tasks.schedule_sandbox_stop(conversation_id, provider_ref)
+        for index, (conversation_id, provider_ref) in enumerate(pending):
+            try:
+                nudge_tasks.schedule_sandbox_stop(conversation_id, provider_ref)
+            except Exception:  # noqa: BLE001 - the sandbox still dies at its idle limit
+                logger.exception(
+                    "stop_chat_sandboxes_failed conversation=%s skipped=%d",
+                    conversation_id,
+                    len(pending) - index - 1,
+                )
+                return
 
-    transaction.on_commit(stop_chat_sandbox, robust=True)
+    transaction.on_commit(stop_chat_sandboxes, robust=True)
 
 
 def _fail_outstanding(
