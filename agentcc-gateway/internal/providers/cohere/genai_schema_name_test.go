@@ -25,4 +25,3 @@ func TestGenAISchemaNameIsNotSentToCohere(t *testing.T) {
 		t.Errorf("the schema name was sent: %s", body)
 	}
 }
-
