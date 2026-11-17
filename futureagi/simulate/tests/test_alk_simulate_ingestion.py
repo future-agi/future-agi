@@ -7165,3 +7165,59 @@ class TestSilentAgentMarkFollowsTheTranscript:
         assert call.call_metadata["processing_skip_reason"] == (
             "Call too short to process."
         )
+
+
+@pytest.mark.integration
+@pytest.mark.api
+@pytest.mark.django_db
+class TestSilentAgentSkipsTheErrorLocalizer:
+    @pytest.mark.parametrize("fixture_name", ["text_run_test", "run_test"])
+    @pytest.mark.parametrize(
+        ("transcript", "localized"),
+        [(_customer_only_transcript, False), (_answered_transcript, True)],
+    )
+    @patch("model_hub.tasks.user_evaluation.trigger_error_localization_for_simulate")
+    def test_localizer_runs_only_on_a_verdict_that_is_kept(
+        self,
+        trigger_localizer,
+        auth_client,
+        request,
+        fixture_name,
+        transcript,
+        localized,
+    ):
+        run_test = request.getfixturevalue(fixture_name)
+        template = EvalTemplate.objects.create(
+            name=f"alk-platform-check-{fixture_name}",
+            organization=run_test.organization,
+            workspace=run_test.workspace,
+            owner="user",
+            eval_type="llm",
+            output_type_normalized="pass_fail",
+        )
+        _, call_ids = _start_and_batch(auth_client, run_test)
+
+        resp = auth_client.patch(
+            f"{ALK_BASE}/call-executions/{call_ids[0]}/result/",
+            {
+                "status": "completed",
+                "transcript": transcript(),
+                "call_metadata": {
+                    "harness_evaluations": [
+                        {
+                            "name": "response_wording",
+                            "kind": "eval",
+                            "passed": True,
+                            "platform_template": template.name,
+                        }
+                    ]
+                },
+            },
+            format="json",
+        )
+
+        assert resp.status_code == 200, resp.content
+        call = CallExecution.objects.get(id=call_ids[0])
+        (output,) = call.eval_outputs.values()
+        assert (output["status"] == "completed") is localized
+        assert trigger_localizer.called is localized

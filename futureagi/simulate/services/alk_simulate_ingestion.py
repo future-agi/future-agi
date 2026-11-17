@@ -1466,7 +1466,6 @@ def _apply_payload(call_execution: CallExecution, payload: dict[str, Any]) -> No
         call_execution.call_metadata = merged
 
     segments = payload.get("transcript") or []
-    _apply_harness_evaluation_outputs(call_execution, transcript_segments=segments)
     is_text = (
         call_execution.simulation_call_type == CallExecution.SimulationCallType.TEXT
     )
@@ -1484,7 +1483,7 @@ def _apply_payload(call_execution: CallExecution, payload: dict[str, Any]) -> No
             _store_alk_chat_messages(call_execution, segments)
             call_execution.transcript_available = True
             call_execution.message_count = len(segments)
-        _skip_harness_evals_without_agent(call_execution)
+        _apply_harness_verdicts(call_execution, segments)
         call_execution.save()
         from simulate.utils.chat_simulation import _aggregate_chat_metrics
 
@@ -1526,7 +1525,7 @@ def _apply_payload(call_execution: CallExecution, payload: dict[str, Any]) -> No
             )
             call_execution.transcript_available = True
 
-        _skip_harness_evals_without_agent(call_execution)
+        _apply_harness_verdicts(call_execution, segments)
         _apply_conversation_metrics(call_execution)
         call_execution.save()
     _deduct_alk_sim_cost_once(call_execution)
@@ -1903,10 +1902,31 @@ def _skip_harness_evals_without_agent(call_execution: CallExecution) -> bool:
     return True
 
 
+def _apply_harness_verdicts(
+    call_execution: CallExecution, segments: list[dict[str, Any]]
+) -> None:
+    """Store the harness verdicts, and withhold them from a call nobody answered.
+
+    Run it once the transcript rows are stored: whether the agent spoke is read
+    from them, and decides before any verdict is stored whether the error
+    localizer runs on it.
+    """
+    from simulate.services.test_executor import conversation_presence_signals
+
+    _, has_agent_message, _ = conversation_presence_signals(call_execution)
+    _apply_harness_evaluation_outputs(
+        call_execution,
+        transcript_segments=segments,
+        localize_errors=has_agent_message,
+    )
+    _skip_harness_evals_without_agent(call_execution)
+
+
 def _apply_harness_evaluation_outputs(
     call_execution: CallExecution,
     *,
     transcript_segments: list[dict[str, Any]] | None = None,
+    localize_errors: bool = True,
 ) -> None:
     """Normalize execution-backed harness checks into the platform eval shape.
 
@@ -1915,7 +1935,8 @@ def _apply_harness_evaluation_outputs(
     Platform-backed judgements are attached to their existing EvalTemplate via a
     run-scoped SimulateEvalConfig. Deterministic code checks have no template by
     design, so they receive a stable external-result ID and remain explicitly
-    marked ``source=harness``.
+    marked ``source=harness``. ``localize_errors=False`` keeps the localizer off
+    verdicts that are about to be withheld.
     """
     metadata = call_execution.call_metadata or {}
     evaluations = metadata.get("harness_evaluations")
@@ -1969,7 +1990,7 @@ def _apply_harness_evaluation_outputs(
         # that the native evaluator would create; merely setting
         # SimulateEvalConfig.error_localizer does not dispatch one. The task's
         # deterministic (call, config) source ID keeps result retries idempotent.
-        if config is not None and config.error_localizer:
+        if localize_errors and config is not None and config.error_localizer:
             transcript = _render_harness_transcript(transcript_segments or [])
             if transcript:
                 from model_hub.tasks.user_evaluation import (
