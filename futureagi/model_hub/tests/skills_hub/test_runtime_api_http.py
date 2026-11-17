@@ -279,3 +279,163 @@ def test_context_usage_and_closure_comparison(user, organization, workspace, hub
     traces = next(row for row in compared.data["result"]["all_agents"]["metrics"] if row["metric"] == "traces")
     assert traces["after"] == 2  # context.load without any leaf load is a cohort member
     assert compared.data["result"]["changed_skills"] == [{"skill_id": str(hub_skill.pk), "name": hub_skill.name, "from_version": None, "to_version": 1, "change": "added"}]
+
+
+def landing_ids(client, link, candidates):
+    """Exercise the same serializer and bounded trace-list query as Observe."""
+    from tracer.serializers.filters import FilterListField
+    from tracer.services.clickhouse.v2.query_builders.trace_list import (
+        TraceListQueryBuilderV2,
+    )
+
+    filters = FilterListField().run_validation([*link["filters"], {
+        "column_id": "created_at", "filter_config": {
+            "filter_type": "datetime", "filter_op": "between",
+            "filter_value": [link["from"].isoformat(), link["to"].isoformat()],
+        },
+    }])
+    sql, query = TraceListQueryBuilderV2(project_id=link["project_id"], filters=filters).build_filter_match_query(candidates)
+    return {str(row["trace_id"]) for row in client.query(sql, parameters=query).named_results()}
+
+
+def test_large_same_agent_and_eval_links_land_exactly(user, organization, workspace, hub_skill, publish_skill, make_skill_files, project, live_service):
+    import json
+
+    from model_hub.models.evals_metric import EvalTemplate
+    from tracer.models.custom_eval_config import CustomEvalConfig
+
+    v1 = publish_skill(hub_skill).version
+    v2 = publish_skill(hub_skill, files=make_skill_files(hub_skill.name, body="Next instructions.")).version
+    event = HubSkillLabelEvent.objects.create(skill=hub_skill, label="production", from_version=1, to_version=2)
+    HubSkillLabelEvent.objects.filter(pk=event.pk).update(created_at=START)
+    template = EvalTemplate.objects.create(name="large-runtime", organization=organization, workspace=workspace, config={})
+    config = CustomEvalConfig.objects.create(name="Quality", project=project, eval_template=template)
+    old = load(project, v1, start_time=START - timedelta(minutes=5))
+    selected = [load(project, v2) for _ in range(205)]
+    other = load(project, v2)
+    other["span_attributes"]["gen_ai.agent.name"] = "another-agent"
+    roots = [span(str(project.pk), row["trace_id"], name="request", parent_span_id="", span_attributes={}, status="ERROR" if index < 31 else "OK") for index, row in enumerate([*selected, other])]
+    old_root = span(str(project.pk), old["trace_id"], name="request", parent_span_id="", span_attributes={}, start_time=START - timedelta(minutes=6))
+    seed_ch_spans([old, old_root, other, *selected, *roots], client=live_service, version_from_created_at=True)
+    live_service.insert("tracer_eval_logger_v2", [[uuid4(), row["trace_id"], row["id"], config.pk, 0., START, START] for row in selected],
+                        column_names=["id", "trace_id", "observation_span_id", "custom_eval_config_id", "output_float", "created_at", "updated_at"])
+    response = get(user, organization, workspace, {"resource_id": str(hub_skill.pk), "event_id": str(event.pk), "window": "1h", "as_of": END.isoformat()}, "comparison")
+    assert response.status_code == 200, response.data
+    links = response.data["result"]["same_agents"]["links"]["after"]
+    candidates = [row["trace_id"] for row in [*selected, other]]
+    expected = {row["trace_id"] for row in selected}
+    for metric in ("traces", "latency_p95", "cost_per_trace", f"eval:{config.pk}"):
+        assert len(json.dumps(links[metric], default=str)) < 3500
+        assert landing_ids(live_service, links[metric], candidates) == expected
+        if metric == "traces":
+            snapshot = links[metric]["source"]["snapshot"]
+            assert landing_ids(live_service, snapshot["links"]["before"][metric], [old["trace_id"], *candidates]) == {old["trace_id"]}
+            assert "snapshot" not in snapshot["links"]["after"][metric]["source"]
+    assert landing_ids(live_service, links["failed_requests"], candidates) == {row["trace_id"] for row in selected[:31]}
+
+
+def test_mismatch_links_preserve_project_and_exact_membership(user, organization, workspace, hub_skill, publish_skill, project, live_service):
+    version = publish_skill(hub_skill).version
+    good, bad = load(project, version), load(project, version)
+    bad["span_attributes"]["fi.skill.digest"] = "sha256:" + "e" * 64
+    roots = [span(str(project.pk), row["trace_id"], name="request", parent_span_id="", span_attributes={}) for row in (good, bad)]
+    seed_ch_spans([good, bad, *roots], client=live_service, version_from_created_at=True)
+    response = get(user, organization, workspace, params(hub_skill))
+    assert response.status_code == 200, response.data
+    link = response.data["result"]["mismatch"]["links"]["all"]
+    assert landing_ids(live_service, link, [good["trace_id"], bad["trace_id"]]) == {bad["trace_id"]}
+
+
+def test_agent_and_adoption_navigation_is_authoritative(user, organization, workspace, hub_skill, publish_skill, make_skill_files, project, live_service):
+    from model_hub.models.skills_hub import HubSkill, HubSkillVersion
+    from model_hub.models.skills_hub_v12 import (
+        HubSkillContextBinding,
+        HubSkillContextDependency,
+    )
+
+    leaf = publish_skill(hub_skill).version
+    publish_skill(hub_skill, files=make_skill_files(hub_skill.name, body="Next instructions."))
+    context = HubSkill.objects.create(organization=organization, workspace=workspace, name="support-context", kind="agent_context")
+    version = HubSkillVersion.objects.create(skill=context, number=1, digest="sha256:" + "1" * 64, file_count=1, total_bytes=1, frontmatter={}, checks={})
+    HubSkillContextDependency.objects.create(organization=organization, workspace=workspace, parent_version=version, child_skill=hub_skill,
+                                            child_version=leaf, mount="skills/support", requested_selector={"label": "production"})
+    binding = HubSkillContextBinding.objects.create(organization=organization, workspace=workspace, context=context, name="Runtime app",
+        kind="runtime", selector={"label": "production"}, update_mode="manual", profile="qa", profile_version="1", expected_report_interval_seconds=60)
+    row = load(project, leaf)
+    row["span_attributes"].update({"fi.context.id": str(context.pk), "fi.context.version_id": str(version.pk),
+                                   "fi.skill.via_context.version_id": str(version.pk), "fi.context.binding_id": str(binding.pk)})
+    seed_ch_spans([row], client=live_service, version_from_created_at=True)
+    response = get(user, organization, workspace, params(hub_skill, project_id=str(project.pk), service="support", agent="worker"))
+    assert response.status_code == 200, response.data
+    agent = response.data["result"]["agent"]
+    assert agent["context"] == {"id": str(context.pk), "name": context.name, "version_id": str(version.pk), "version": 1}
+    assert agent["binding_id"] == str(binding.pk)
+    event = HubSkillLabelEvent.objects.create(skill=hub_skill, label="production", from_version=1, to_version=2)
+    HubSkillLabelEvent.objects.filter(pk=event.pk).update(created_at=START)
+    compared = get(user, organization, workspace, {"resource_id": str(hub_skill.pk), "event_id": str(event.pk), "window": "1h"}, "comparison")
+    assert compared.status_code == 200, compared.data
+    adoption = compared.data["result"]["adoption"][0]
+    assert adoption["not_moved_reason"] == "waiting_for_context_release"
+    assert adoption["context"]["id"] == str(context.pk)
+    assert adoption["binding_id"] == str(binding.pk)
+
+
+def test_comparison_cursor_pins_as_of(user, organization, workspace, hub_skill, publish_skill, project, live_service):
+    version = publish_skill(hub_skill).version
+    first, second = load(project, version), load(project, version)
+    second["span_attributes"]["gen_ai.agent.name"] = "second-agent"
+    seed_ch_spans([first, second], client=live_service, version_from_created_at=True)
+    event = HubSkillLabelEvent.objects.create(skill=hub_skill, label="production", from_version=None, to_version=1)
+    HubSkillLabelEvent.objects.filter(pk=event.pk).update(created_at=START)
+    query = {"resource_id": str(hub_skill.pk), "event_id": str(event.pk), "as_of": END.isoformat(), "window": "1h", "limit": 1}
+    first_page = get(user, organization, workspace, query, "comparison")
+    assert first_page.status_code == 200, first_page.data
+    cursor = first_page.data["result"]["next_cursor"]
+    assert cursor
+    second_page = get(user, organization, workspace, {**query, "cursor": cursor}, "comparison")
+    assert second_page.status_code == 200, second_page.data
+    assert second_page.data["result"]["next_cursor"] is None
+    assert first_page.data["result"]["adoption"][0]["agent"]["key"] != second_page.data["result"]["adoption"][0]["agent"]["key"]
+    changed = get(user, organization, workspace, {**query, "cursor": cursor, "as_of": (END - timedelta(seconds=1)).isoformat()}, "comparison")
+    assert changed.status_code == 400 and changed.data["code"] == "invalid_runtime_query"
+
+
+def test_mult_project_usage_links_keep_verified_sets(user, organization, workspace, hub_skill, publish_skill, project, live_service):
+    second = Project.objects.create(organization=organization, workspace=workspace, name="Second project", trace_type="observe", model_type="GenerativeLLM")
+    version = publish_skill(hub_skill).version
+    shared = str(uuid4())
+    good = load(project, version, shared)
+    other = load(second, version)
+    mismatch = load(second, version, shared)
+    mismatch["span_attributes"]["fi.skill.digest"] = "sha256:" + "e" * 64
+    rows = [good, other, mismatch]
+    roots = [span(row["project_id"], row["trace_id"], name="request", parent_span_id="", span_attributes={}) for row in rows]
+    seed_ch_spans([*rows, *roots], client=live_service, version_from_created_at=True)
+    response = get(user, organization, workspace, params(hub_skill))
+    assert response.status_code == 200, response.data
+    links = response.data["result"]["rows"][0]["links"]["all"]
+    assert links["project_id"] is None
+    by_project = {item["projectId"]: item["link"] for item in links["projects"]}
+    assert landing_ids(live_service, by_project[str(project.pk)], [shared, other["trace_id"]]) == {shared}
+    assert landing_ids(live_service, by_project[str(second.pk)], [shared, other["trace_id"]]) == {other["trace_id"]}
+
+
+def test_unavailable_cohort_store_is_typed(user, organization, workspace, hub_skill, publish_skill, project, live_service, monkeypatch):
+    version = publish_skill(hub_skill).version
+    seed_ch_spans([load(project, version)], client=live_service, version_from_created_at=True)
+    def unavailable(*args, **kwargs):
+        raise OSError("internal connection details")
+    monkeypatch.setattr(runtime_api.runtime_cohorts, "cohort_filter", unavailable)
+    response = get(user, organization, workspace, params(hub_skill))
+    assert response.status_code == 503 and response.data["code"] == "runtime_read_unavailable"
+    assert "internal connection details" not in str(response.data)
+
+
+def test_version_selection_does_not_call_other_published_contents_mismatched(user, organization, workspace, hub_skill, publish_skill, make_skill_files, project, live_service):
+    one = publish_skill(hub_skill).version
+    two = publish_skill(hub_skill, files=make_skill_files(hub_skill.name, body="Second published contents.")).version
+    seed_ch_spans([load(project, one), load(project, two)], client=live_service, version_from_created_at=True)
+    response = get(user, organization, workspace, params(hub_skill, version_ids=str(one.pk)))
+    assert response.status_code == 200, response.data
+    assert response.data["result"]["summary"]["loads"] == 1
+    assert response.data["result"]["mismatch"] is None

@@ -61,11 +61,12 @@ SKILL_FILTER_COLUMNS = {
     "skill.in_scope": (None, "text", {"equals", "in"}),
     "skill.load_result": (None, "text", {"equals"}),
     "skill.root_status": (None, "text", {"equals"}),
+    "skill.trace_cohort": (None, "text", {"equals"}),
 }
 _SKILL_FAILED_COLUMNS = frozenset({
     "skill.id", "skill.name", "skill.requested_label", "skill.agent",
     "skill.service", "skill.context_id", "skill.context_version_id",
-    "skill.load_result", "skill.root_status",
+    "skill.load_result", "skill.root_status", "skill.trace_cohort",
 })
 
 
@@ -101,7 +102,7 @@ def validate_skill_filter_item(item: dict) -> None:
                 raise ValueError("skill.version must be a positive UInt32 integer")
         elif not isinstance(member, str) or len(member.encode("utf-8")) > 16384:
             raise ValueError("SKILL text values must be bounded strings")
-        elif not member and key != "skill.agent":
+        elif not member and key not in {"skill.agent", "skill.service"}:
             raise ValueError(f"{key} requires a non-empty value")
     choices = {
         "skill.load_result": {"loaded", "failed"},
@@ -1851,7 +1852,21 @@ class ClickHouseFilterBuilder:
             for item in members:
                 key = item["column_id"]
                 config = item["filter_config"]
-                if key == "skill.root_status":
+                if key == "skill.trace_cohort":
+                    from tracer.services.clickhouse.runtime_cohorts import (
+                        resolve_cohort,
+                    )
+                    try:
+                        project, ids = resolve_cohort(config["filter_value"], self.project_ids)
+                    except ValueError as exc:
+                        raise _unsupported_filter_shape(str(exc)) from exc
+                    if not ids:
+                        conditions.append("0 = 1")
+                    else:
+                        param = self._next_param("runtime_cohort")
+                        self._params[param] = tuple((project, trace_id) for trace_id in ids)
+                        conditions.append(f"(toString({outer_project}), trace_id) IN %({param})s")
+                elif key == "skill.root_status":
                     root_statuses.add(config["filter_value"])
                 elif key == "skill.load_result":
                     explicit_result = True

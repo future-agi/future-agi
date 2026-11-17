@@ -100,6 +100,7 @@ class RuntimeComparisonQuery(serializers.Serializer):
     label = serializers.CharField(default="production", max_length=40)
     window = serializers.RegexField(r"^(?:[1-9][0-9]*)(?:h|d)$", default="24h", max_length=5)
     project_ids = serializers.CharField(required=False, max_length=1900)
+    as_of = serializers.DateTimeField(required=False)
     before_from = serializers.DateTimeField(required=False)
     before_to = serializers.DateTimeField(required=False)
     after_from = serializers.DateTimeField(required=False)
@@ -110,6 +111,8 @@ class RuntimeComparisonQuery(serializers.Serializer):
     def validate(self, attrs):
         from uuid import UUID
 
+        if attrs.get("as_of", timezone.now()) > timezone.now():
+            raise serializers.ValidationError("The comparison must end now or earlier.")
         window = attrs["window"]
         hours = int(window[:-1]) * (24 if window[-1] == "d" else 1)
         if not 1 <= hours <= 168:

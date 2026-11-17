@@ -9,11 +9,15 @@ import json
 from collections import Counter, defaultdict
 from datetime import UTC, timedelta
 from math import isfinite
+from uuid import UUID
 
 from django.utils import timezone
 
 from model_hub.models.skills_hub import HubSkillUsageDaily, HubSkillVersion
-from model_hub.models.skills_hub_v12 import HubSkillContextDependency
+from model_hub.models.skills_hub_v12 import (
+    HubSkillContextBinding,
+    HubSkillContextDependency,
+)
 from model_hub.selectors.skills_hub_v12 import get_resource, resources_for_scope
 from model_hub.services.skills_hub.errors import SkillsHubError
 from model_hub.services.skills_hub.runtime_reads import (
@@ -38,6 +42,7 @@ from model_hub.services.skills_hub.runtime_usage import (
 )
 from model_hub.services.skills_hub.usage import can_record
 from tracer.models.custom_eval_config import CustomEvalConfig
+from tracer.services.clickhouse import runtime_cohorts
 from tracer.services.clickhouse.read_budget import ReadDeadline
 from tracer.services.clickhouse.v2.query_builders.skill_runtime import (
     RuntimeReadSession,
@@ -46,6 +51,23 @@ from tracer.services.clickhouse.v2.query_builders.skill_runtime import (
 from tracer.services.clickhouse.v2.query_service import V2AnalyticsQueryService
 
 FACT_LIMIT = 20000
+
+
+def cohort_filter(project_id, trace_ids):
+    try:
+        return runtime_cohorts.cohort_filter(project_id, trace_ids)
+    except Exception as exc:
+        raise SkillsHubError("runtime_read_unavailable", "Runtime trace links are temporarily unavailable. Try again.", status=503) from exc
+
+
+def uuid_values(values):
+    result = set()
+    for value in values:
+        try:
+            result.add(str(UUID(str(value))))
+        except (ValueError, TypeError):
+            continue
+    return result
 
 
 def utc_row(row):
@@ -138,7 +160,10 @@ class RuntimeFacts:
         if not self.query.get("_context_comparison"):
             self.loads = read_runtime_statement(self.session, builder.build_usage_loads(**options), max_rows=FACT_LIMIT)
             self.failed = read_runtime_statement(self.session, builder.build_usage_loads(**options, failed=True), max_rows=FACT_LIMIT)
-            self.mismatches = read_runtime_statement(self.session, builder.build_usage_loads(**options, mismatch=True), max_rows=FACT_LIMIT)
+            mismatch_options = {**options, "identities": [(str(v.skill_id), str(v.pk), v.digest) for v in self.versions.values()]}
+            self.mismatches = read_runtime_statement(self.session, builder.build_usage_loads(**mismatch_options, mismatch=True), max_rows=FACT_LIMIT)
+            if self.query.get("version_ids"):
+                self.mismatches = [row for row in self.mismatches if str(row["skill_version_id"]) in self.query["version_ids"]]
         if self.query.get("context_version_id"):
             self.mismatches = [row for row in self.mismatches if str(row["context_version_id"]) == str(self.query["context_version_id"])]
             self.loads = [row for row in self.loads if str(row["context_version_id"]) == str(self.query["context_version_id"])]
@@ -160,8 +185,34 @@ class RuntimeFacts:
                 self.evals = read_runtime_statement(self.session, builder.build_usage_evals(config_ids=self.configs, members=members), max_rows=FACT_LIMIT)
         return self
 
+    def navigation(self, loads):
+        if not hasattr(self, "navigation_versions"):
+            ids = {str(row.get(field, "")) for row in self.loads for field in ("context_version_id", "via_context_version_id")}
+            self.navigation_versions = {str(v.pk): v for v in HubSkillVersion.objects.filter(skill_id__in=self.contexts, pk__in=uuid_values(ids))}
+            binding_ids = {str(row.get("binding_id", "")) for row in self.loads} - {""}
+            self.navigation_bindings = {str(b.pk): b for b in HubSkillContextBinding.objects.filter(
+                organization_id=self.principal.scope.organization_id, workspace_id=self.principal.scope.workspace_id,
+                context_id__in=self.contexts, pk__in=uuid_values(binding_ids), retired_at__isnull=True,
+            )}
+        contexts, bindings = {}, {}
+        for row in loads:
+            version_id = str(row.get("via_context_version_id") or row.get("context_version_id") or "")
+            version = self.navigation_versions.get(version_id)
+            if version is None or (row.get("context_id") and str(row["context_id"]) != str(version.skill_id)):
+                continue
+            context_id = str(version.skill_id)
+            contexts[version_id] = {"id": context_id, "name": self.contexts[context_id].name, "version_id": version_id, "version": version.number}
+            binding_id = str(row.get("binding_id", ""))
+            binding = self.navigation_bindings.get(binding_id)
+            if binding and str(binding.context_id) == context_id:
+                bindings[binding_id] = {"id": binding_id, "name": binding.name, "context_id": context_id}
+        values = [contexts[key] for key in sorted(contexts)]
+        return {"contexts": values, "context": values[0] if len(values) == 1 else None,
+                "bindings": [bindings[key] for key in sorted(bindings)], "binding_id": next(iter(bindings)) if len(bindings) == 1 else None}
+
     def agent(self, key):
-        return agent_identity(project_id=key[0], project_name=self.projects[key[0]], service_name=key[1], agent_name=key[2])
+        return {**agent_identity(project_id=key[0], project_name=self.projects[key[0]], service_name=key[1], agent_name=key[2]),
+                **self.navigation([row for row in self.loads if agent_key(row) == key])}
 
     def metrics(self, loads):
         if self.session.deadline.elapsed_ms() >= self.session.deadline.total_ms:
@@ -244,7 +295,7 @@ class RuntimeFacts:
             return {"column_id": column, "filter_config": {"col_type": "SKILL", "filter_type": "text", "filter_op": "equals", "filter_value": value}}
         filters = []
         if version_id:
-            filters.extend([item("skill.version_id", version_id), item("skill.digest", self.versions[version_id].digest)])
+            filters.extend([item("skill.id", str(self.versions[version_id].skill_id)), item("skill.version_id", version_id), item("skill.digest", self.versions[version_id].digest)])
         elif skill_id:
             filters.append(item("skill.id", skill_id))
         if self.resource and self.resource.kind == "agent_context":
@@ -262,7 +313,8 @@ class RuntimeFacts:
         projects = {str(row["project_id"]) for row in loads}
         project = next(iter(projects)) if len(projects) == 1 else None
         base = {"project_id": project, "from": self.start, "to": self.end,
-                "source": {"skill_id": skill_id, "version_id": version_id, "agent_key": agent, "event_id": event_id, "side": side, "metric": "all"}}
+                "source": {"skill_id": skill_id, "context_id": str(self.resource.pk) if self.resource and self.resource.kind == "agent_context" else None,
+                           "version_id": version_id, "agent_key": agent, "event_id": event_id, "side": side, "metric": "all"}}
         all_link = {**base, "filters": filters}
         eval_links = {}
         from tracer.services.clickhouse.eval_expressions import EVAL_TRUTHY_OUTPUTS
@@ -277,45 +329,48 @@ class RuntimeFacts:
                     continue
                 score = row["output_float"] if row["output_float"] is not None else row["output_bool"]
                 text = (row["output_str"] or "").lower()
+                if score is not None and not isfinite(float(score)):
+                    continue
                 if (score is not None or text) and not ((score is not None and float(score) >= 1) or text in EVAL_TRUTHY_OUTPUTS):
                     failed_ids.add(row["trace_id"])
-            if len(failed_ids) <= 200:
-                eval_links[config_id] = {**base, "project_id": str(config.project_id), "filters": [*filters, {"column_id": "trace_id", "filter_config": {"col_type": "NORMAL", "filter_type": "text", "filter_op": "in", "filter_value": sorted(failed_ids)}}], "source": {**base["source"], "metric": f"eval:{config_id}"}}
-        return {"project_id": project, "all": all_link,
-                "failed": {**base, "filters": filters if self.query.get("_context_comparison") else [*filters, item("skill.root_status", "error")], "source": {**base["source"], "metric": "failed_requests"}},
-                "slowest": {**base, "filters": filters, "sort": {"column_id": "latency", "direction": "desc"}, "source": {**base["source"], "metric": "latency_p95"}}, "eval_failed": eval_links}
+            eval_links[config_id] = {**base, "project_id": str(config.project_id), "filters": [cohort_filter(config.project_id, failed_ids)], "source": {**base["source"], "metric": f"eval:{config_id}"}}
+        result = {"project_id": project, "all": all_link,
+                  "failed": {**base, "filters": filters, "source": {**base["source"], "metric": "failed_requests"}},
+                  "slowest": {**base, "filters": filters, "sort": {"column_id": "latency", "direction": "desc"}, "source": {**base["source"], "metric": "latency_p95"}}, "eval_failed": eval_links}
+        for kind in ("all", "failed", "slowest"):
+            options = []
+            for project_id in sorted(projects):
+                selected = [row for row in loads if str(row["project_id"]) == project_id]
+                ids = {row["trace_id"] for row in selected}
+                if kind == "failed":
+                    ids = {trace_id for trace_id in ids if self.root_failed(project_id, trace_id)}
+                link = {**result[kind], "project_id": project_id, "filters": [cohort_filter(project_id, ids)]}
+                metrics = self.metrics(selected)
+                options.append({"projectId": project_id, "projectName": self.projects[project_id], "traces": metrics["traces"], "failedRequests": metrics["failed_requests"], "link": link})
+            if options:
+                result[kind] = options[0]["link"] if len(options) == 1 else {**result[kind], "projects": options}
+        return result
 
-    def metric_links(self, loads, *, event_id=None, side=None, version_id=None, agent=None, exact=False):
+    def root_failed(self, project, trace_id):
+        roots = sorted((row for row in self.spans_by_trace[(project, trace_id)] if not row["parent_span_id"]), key=lambda row: (row["start_time"], row["id"]))
+        return bool(roots and roots[0]["status"] == "ERROR")
+
+    def metric_links(self, loads, *, event_id=None, side=None, version_id=None, agent=None):
         skill_id = str(self.resource.pk) if self.resource and self.resource.kind == "skill" else None
         links = self.links(loads, version_id=version_id, skill_id=skill_id, agent=agent, event_id=event_id, side=side)
         projects = sorted({str(row["project_id"]) for row in loads})
-        def project_link(link, project, kind):
-            selected = [row for row in loads if str(row["project_id"]) == project]
-            ids = sorted({row["trace_id"] for row in selected})
-            if self.query.get("_context_comparison") and kind == "failed":
-                failed = []
-                for trace_id in ids:
-                    roots = sorted((row for row in self.spans_by_trace[(project, trace_id)] if not row["parent_span_id"]), key=lambda row: (row["start_time"], row["id"]))
-                    if roots and roots[0]["status"] == "ERROR":
-                        failed.append(trace_id)
-                ids = failed
-            # Exact snapshot links are never silently shortened. Natural version
-            # links remain available for larger pooled cohorts.
-            if exact and len(ids) > 200:
-                return None
-            result = {**link, "project_id": project}
-            if exact:
-                result["filters"] = [*link["filters"], {"column_id": "trace_id", "filter_config": {"col_type": "NORMAL", "filter_type": "text", "filter_op": "in", "filter_value": ids}}]
-            return result
+        def project_link(link, project):
+            # Every link is already exact, including large/multi-project sets.
+            return next((option["link"] for option in link.get("projects", []) if option["projectId"] == project), link)
         result = {}
         for metric, kind in (("traces", "all"), ("failed_requests", "failed"), ("latency_p95", "slowest"), ("cost_per_trace", "all")):
             options = []
             for project in projects:
-                link = project_link(links[kind], project, kind)
-                if link is not None:
-                    metrics = self.metrics([row for row in loads if str(row["project_id"]) == project])
-                    options.append({"projectId": project, "projectName": self.projects[project], "traces": metrics["traces"], "failedRequests": metrics["failed_requests"], "link": link})
-            if len(options) == len(projects) and options:
+                link = project_link(links[kind], project)
+                link = {**link, "source": {**link["source"], "metric": metric}}
+                metrics = self.metrics([row for row in loads if str(row["project_id"]) == project])
+                options.append({"projectId": project, "projectName": self.projects[project], "traces": metrics["traces"], "failedRequests": metrics["failed_requests"], "link": link})
+            if options:
                 result[metric] = options[0]["link"] if len(options) == 1 else {**links[kind], "projects": options}
         result.update({f"eval:{config_id}": link for config_id, link in links["eval_failed"].items()})
         return result
@@ -422,15 +477,39 @@ def usage(*, principal, workspace, query):
     rows.sort(key=lambda row: row["page_key"])
     rows, cursor = page_rows(rows, principal=principal, query=query, projection="usage")
     summary = {**facts.metrics(facts.loads), "agents": len({agent_key(row) for row in facts.loads}), "projects": len({str(row["project_id"]) for row in facts.loads}), "same_agent_compare": None}
+    if facts.resource and facts.resource.kind == "skill":
+        loaded_versions = sorted({str(row["skill_version_id"]) for row in facts.loads}, key=lambda key: facts.versions[key].number, reverse=True)
+        if len(loaded_versions) >= 2:
+            a_id, b_id = loaded_versions[:2]
+            cohorts = [[row for row in facts.loads if str(row["skill_version_id"]) == key] for key in (a_id, b_id)]
+            common = {agent_key(row) for row in cohorts[0]} & {agent_key(row) for row in cohorts[1]}
+            a, b = [facts.metrics([row for row in values if agent_key(row) in common]) for values in cohorts]
+            if common and not a["low_sample"] and not b["low_sample"] and a["failed_requests"]["rate"] is not None and b["failed_requests"]["rate"] is not None:
+                summary["same_agent_compare"] = {"version_a": facts.versions[a_id].number, "version_b": facts.versions[b_id].number,
+                                                  "agents": len(common), "metric": "failed_requests", "a": a["failed_requests"]["rate"], "b": b["failed_requests"]["rate"]}
     consumers = facts.consumers()
     diagnosis = runtime_diagnosis(has_projects=bool(facts.projects), readable_projects=len(facts.projects), consumers=consumers, loads=len(facts.loads))
     result = {"rows": rows, "summary": summary,
               "coverage": {"projects_scanned": len(facts.projects), "projects_with_loads": summary["projects"], "unreadable_projects": 0, "instrumented": bool(facts.loads) or diagnosis["can_record"]},
               "diagnosis": diagnosis, "failed_loads": {"total": len(facts.failed), "by_error_type": dict(Counter(row["error_type"] for row in facts.failed)), "links": {}},
               "mismatch": {"loads": len(facts.mismatches), "traces": len({trace_key(row) for row in facts.mismatches}), "links": {}} if facts.mismatches else None, "move": None, "next_cursor": cursor, "totals_note": TOTALS_NOTE, "truncated": facts.truncated}
+    if facts.mismatches:
+        options = []
+        for project_id in sorted({str(row["project_id"]) for row in facts.mismatches}):
+            members = {row["trace_id"] for row in facts.mismatches if str(row["project_id"]) == project_id}
+            link = {"project_id": project_id, "from": facts.start, "to": facts.end,
+                    "filters": [cohort_filter(project_id, members)], "source": {
+                        "skill_id": str(facts.resource.pk) if facts.resource and facts.resource.kind == "skill" else None,
+                        "context_id": str(facts.resource.pk) if facts.resource and facts.resource.kind == "agent_context" else None, "metric": "contents_mismatch"}}
+            options.append({"project_id": project_id, "project_name": facts.projects[project_id], "traces": len(members), "link": link})
+        result["mismatch"]["projects"] = options
+        result["mismatch"]["links"] = {"all": options[0]["link"] if len(options) == 1 else {**options[0]["link"], "project_id": None}}
     for project_id in sorted({str(row["project_id"]) for row in facts.failed}):
         failed_rows = [row for row in facts.failed if str(row["project_id"]) == project_id]
-        base = facts.links(failed_rows)["all"]
+        base = {"project_id": project_id, "from": facts.start, "to": facts.end,
+                "filters": [cohort_filter(project_id, {row["trace_id"] for row in failed_rows})],
+                "source": {"skill_id": str(facts.resource.pk) if facts.resource and facts.resource.kind == "skill" else None,
+                           "context_id": str(facts.resource.pk) if facts.resource and facts.resource.kind == "agent_context" else None, "metric": "failed_loads"}}
         names = sorted({row["skill_name"] for row in failed_rows})
         base["filters"] = [*base["filters"],
                            {"column_id": "skill.name", "filter_config": {"col_type": "SKILL", "filter_type": "text", "filter_op": "in", "filter_value": names}},
@@ -442,7 +521,7 @@ def usage(*, principal, workspace, query):
             result["move"] = {"event_id": str(event.pk), "label": event.label, "from_version": event.from_version, "to_version": event.to_version}
     if "service" in query or "agent" in query:
         result["agent"] = facts.agent((str(query["project_id"]), query.get("service", ""), query.get("agent", "")))
-        result["contexts"] = [{"id": key, "name": facts.contexts[key].name} for key in sorted({str(row["context_id"]) for row in facts.loads} & facts.contexts.keys())]
+        result["contexts"] = result["agent"]["contexts"]
     if facts.resource and facts.resource.kind == "agent_context":
         dependencies = scoped_dependencies(principal, [facts.context_version] if facts.context_version else [])
         linked = {str(row.child_skill_id): row for row in dependencies}
@@ -519,6 +598,29 @@ def compare_metrics(before, after):
     return result
 
 
+def comparison_snapshots(links, *, event, window):
+    """Keep the switch on this cohort/window, not a fresh pooled comparison.
+
+    Each URL carries two bounded handles, not trace IDs or nested snapshots.
+    Project menus receive a pair for their selected project only.
+    """
+    if event is None:
+        return
+    for metric in links["before"].keys() & links["after"].keys():
+        sides = {}
+        for side in ("before", "after"):
+            link = links[side][metric]
+            sides[side] = {option["projectId"]: option["link"] for option in link.get("projects", [])} if link.get("projects") else {link["project_id"]: link}
+        for project in sides["before"].keys() & sides["after"].keys():
+            pair = {}
+            for side in ("before", "after"):
+                link = sides[side][project]
+                pair[side] = {metric: {**link, "source": {**{key: value for key, value in link["source"].items() if key != "snapshot"}, "metric": metric, "window": window}}}
+            snapshot = {"label": event.label, "from_version": event.from_version, "to_version": event.to_version, "links": pair}
+            for side in ("before", "after"):
+                sides[side][project]["source"] = {**pair[side][metric]["source"], "snapshot": snapshot}
+
+
 def comparison(*, principal, workspace, query):
     cursor_after(query=query, identity=query_identity(principal=principal, query=query, projection="comparison"))
     resource = get_resource(principal=principal, resource_id=query["resource_id"], kind=query["kind"])
@@ -527,11 +629,11 @@ def comparison(*, principal, workspace, query):
         windows = {"before": {"from": query["before_from"], "to": query["before_to"]}, "after": {"from": query["after_from"], "to": query["after_to"]},
                    "complete": True, "ends_at": query["after_to"], "before_cut_at": None, "hours_elapsed": 0, "hours_total": 0}
     else:
-        events = resource.label_events.filter(label=query["label"])
+        now = query.get("as_of") or timezone.now()
+        events = resource.label_events.filter(label=query["label"], created_at__lte=now)
         event = events.filter(pk=query["event_id"]).first() if query.get("event_id") else events.order_by("-created_at", "-id").first()
         if event is None and query.get("event_id"):
             raise SkillsHubError("runtime_event_not_found", "This label move cannot be opened.", status=404)
-        now = timezone.now()
         hours = int(query["window"][:-1]) * (24 if query["window"][-1] == "d" else 1)
         previous = events.filter(created_at__lt=event.created_at).order_by("-created_at").first() if event else None
         windows = move_windows(moved_at=event.created_at if event else now, now=now, window=timedelta(hours=hours), previous_move_at=previous.created_at if previous else None)
@@ -567,6 +669,9 @@ def comparison(*, principal, workspace, query):
     dependencies = list(scoped_dependencies(principal, HubSkillVersion.objects.filter(skill_id__in=before.contexts)))
     rules = {str(row.parent_version_id): "pinned" if "version" in row.requested_selector else "following" for row in dependencies if row.child_skill_id == resource.pk}
     adoption = [{"agent": after.agent(key), **adoption_state([{**row, "skill_version_id": row[version_field]} for row in after_agents.get(key, [])], to_version_id=new_id, context_rules=rules)} for key in sorted(visible)] if event else []
+    for row in adoption:
+        old = [load for load in after_agents.get(tuple(row["agent"]["key"]), []) if str(load[version_field]) != new_id]
+        row.update(after.navigation(old))
     changed = []
     if event and resource.kind == "agent_context":
         def closure(identity):
@@ -578,16 +683,18 @@ def comparison(*, principal, workspace, query):
     event_id = str(event.pk) if event else None
     old_version = old_id if resource.kind == "skill" else None
     new_version = new_id if resource.kind == "skill" else None
-    all_links = {"before": before.metric_links(old_loads, event_id=event_id, side="before", version_id=old_version, exact=old_version is None),
-                 "after": after.metric_links(new_loads, event_id=event_id, side="after", version_id=new_version, exact=new_version is None)}
-    same_links = {"before": before.metric_links([row for row in old_loads if agent_key(row) in common], event_id=event_id, side="before", version_id=old_version, exact=True),
-                  "after": after.metric_links([row for row in after.loads if agent_key(row) in common], event_id=event_id, side="after", exact=True)}
+    all_links = {"before": before.metric_links(old_loads, event_id=event_id, side="before", version_id=old_version),
+                 "after": after.metric_links(new_loads, event_id=event_id, side="after", version_id=new_version)}
+    same_links = {"before": before.metric_links([row for row in old_loads if agent_key(row) in common], event_id=event_id, side="before", version_id=old_version),
+                  "after": after.metric_links([row for row in after.loads if agent_key(row) in common], event_id=event_id, side="after")}
     for row in rows:
         key = tuple(row["agent"]["key"])
-        row["links"] = {"before": before.metric_links(before_agents.get(key, []), event_id=event_id, side="before", version_id=old_version, agent=key, exact=True),
-                        "after": after.metric_links(after_agents.get(key, []), event_id=event_id, side="after", agent=key, exact=True)}
+        row["links"] = {"before": before.metric_links(before_agents.get(key, []), event_id=event_id, side="before", version_id=old_version, agent=key),
+                        "after": after.metric_links(after_agents.get(key, []), event_id=event_id, side="after", agent=key)}
     if control:
-        control["links"] = {"after": after.metric_links(control_loads, event_id=event_id, side="after", version_id=old_version, exact=old_version is None)}
+        control["links"] = {"after": after.metric_links(control_loads, event_id=event_id, side="after", version_id=old_version)}
+    for links in [all_links, same_links, *(row["links"] for row in rows)]:
+        comparison_snapshots(links, event=event, window=query["window"])
     return {"event_id": str(event.pk) if event else None, "label": query["label"], "from_version": event.from_version if event else None, "to_version": event.to_version if event else None,
             "from_version_id": old_id, "to_version_id": new_id, "moved_at": event.created_at if event else None, "window": query["window"],
             "before_cut_at": windows["before_cut_at"], "ends_at": windows["ends_at"], "complete": windows["complete"],
