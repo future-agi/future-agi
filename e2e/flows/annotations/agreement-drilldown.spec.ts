@@ -61,13 +61,13 @@ test('ANNOT-E2E-005: queue members drill into disagreements and recover from una
       'use keyboard open, traversal, Escape and Enter to inspect the exact item in each role',
       'read a long label in light and dark without horizontal overflow',
       'open an unassigned and a deleted item, read a persistent explanation and return to the queue',
-      'resolve and remove an open label, reconnect after the real stale interval and see the popup close',
+      'resolve disagreements, then remove a label and delete its synthetic scores; reconnect after each real stale interval and see the popup close',
     ],
     backendChecks: [
       'four non-admin viewer_roles and real agreement responses match the seeded 0/3/25 conflicts and capped item sets',
       'each role opens the exact source row and permitted score authors in review or annotate mode',
       'unassigned and deleted item navigation returns real 403 and 404 while the UI offers persistent queue recovery',
-      'public score corrections and label removal change agreement results and close the already-open popup on refetch',
+      'score corrections resolve disagreements; label removal retains historical agreement until all 54 synthetic label scores are deleted, then refetch closes the already-open popup',
     ],
   }),
 }, async ({ browser, scopeActors: scopes }, testInfo) => {
@@ -331,7 +331,7 @@ test('ANNOT-E2E-005: queue members drill into disagreements and recover from una
     await expect(page.getByRole('region', { name: 'Agreement results' })).toBeFocused();
     await screenshot(page, 'resolved-popup-closed');
   }, { timeout: AGREEMENT_STALE + 2 * UI_READY });
-  await test.step('remove the selected label while the popup remains open', async () => {
+  await test.step('remove the selected label and its 54 synthetic scores while the popup remains open', async () => {
     await trigger(page, labels[2]).click();
     // calculate_agreement groups live Scores, not queue-label bindings. Removing
     // the binding alone retains historical agreement. Delete only this synthetic
@@ -343,7 +343,11 @@ test('ANNOT-E2E-005: queue members drill into disagreements and recover from una
       scoreIds.push(...scores.result.filter(score => score.label_id === labels[2].id).map(score => score.id));
     }
     expect(scoreIds).toHaveLength(54);
+    const beforeRemoval = (await agreement(actors.annotator)).labels[labels[2].id];
     await owner.api.post(`${QUEUES}${queue.id}/remove-label/`, { label_id: labels[2].id });
+    const afterRemoval = (await agreement(actors.annotator)).labels[labels[2].id];
+    expect(afterRemoval.disagreement_count).toBe(beforeRemoval.disagreement_count);
+    expect(afterRemoval.disagreement_items).toEqual(beforeRemoval.disagreement_items);
     // model_hub/views/scores.py:destroy permits the creating annotator or org owner.
     for (const id of scoreIds) await owner.api.delete(`/model-hub/scores/${id}/`);
     expect((await agreement(actors.annotator)).labels[labels[2].id]).toBeUndefined();

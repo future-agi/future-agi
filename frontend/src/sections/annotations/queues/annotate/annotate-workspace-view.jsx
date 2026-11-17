@@ -1465,10 +1465,17 @@ export default function AnnotateWorkspaceView() {
     );
   }
 
-  if (detailError) {
+  const detailErrorStatus =
+    detailError?.statusCode ?? detailError?.response?.status;
+  const hasTransientRefetchError =
+    !!detailError &&
+    detail?.item?.id === currentItemId &&
+    (detailErrorStatus == null || detailErrorStatus >= 500);
+
+  if (detailError && !hasTransientRefetchError) {
     return (
       <AnnotateItemError
-        statusCode={detailError.statusCode}
+        statusCode={detailErrorStatus}
         onBack={handleBack}
         onRetry={refetchAnnotateDetail}
       />
@@ -1583,6 +1590,23 @@ export default function AnnotateWorkspaceView() {
         minHeight: 0,
       }}
     >
+      {hasTransientRefetchError && (
+        <Alert
+          severity="warning"
+          action={
+            <Button
+              color="inherit"
+              size="small"
+              disabled={detailFetching}
+              onClick={() => refetchAnnotateDetail()}
+            >
+              Try Again
+            </Button>
+          }
+        >
+          Could not refresh this item. Your unsaved changes are still here.
+        </Alert>
+      )}
       <AnnotateHeader
         queueName={detail?.queue?.name}
         progress={detail?.progress}
