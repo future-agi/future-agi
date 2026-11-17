@@ -82,8 +82,16 @@ def _get_sync_bridge_loop() -> asyncio.AbstractEventLoop:
     return loop
 
 
+# How long past its own deadline a dispatch may take to hand back its result: the
+# deadline is enforced inside the coroutine, on the bridge loop; this margin covers
+# the hop back to the caller's thread.
+_DISPATCH_DEADLINE_MARGIN_SECONDS = 2.0
+
+
 def _run_async_in_sync_context(
     async_coro_fn: Callable[[], Coroutine[Any, Any, T]],
+    *,
+    dispatch_timeout_seconds: float | None = None,
 ) -> T:
     """
     Run an async coroutine on the process-wide synchronous bridge loop.
@@ -96,6 +104,11 @@ def _run_async_in_sync_context(
 
     Args:
         async_coro_fn: A zero-argument function that returns a coroutine
+        dispatch_timeout_seconds: When set, the caller waits at most this long plus
+            a small margin, and then gets a ``TimeoutError`` even if the bridge loop
+            never answers (a wedged loop must not hang a request). The coroutine is
+            expected to enforce the deadline itself; this is the backstop. When
+            ``None`` the caller waits for as long as the coroutine runs.
 
     Returns:
         The result of the coroutine
@@ -119,8 +132,14 @@ def _run_async_in_sync_context(
         coroutine.close()
         raise
 
+    wait = (
+        None
+        if dispatch_timeout_seconds is None
+        else max(float(dispatch_timeout_seconds), 0.001)
+        + _DISPATCH_DEADLINE_MARGIN_SECONDS
+    )
     try:
-        return future.result()
+        return future.result(timeout=wait)
     except BaseException:
         # Propagate caller cancellation/interruption to work queued on the
         # bridge rather than leaving an orphaned Temporal operation behind.

@@ -56,7 +56,9 @@ def promote_hosted_harness_conversation_checkpoint(
     from simulate.services.hosted_harness import HostedHarnessError
     from simulate.services.hosted_harness_conversation import (
         promote_turn_checkpoint,
+        record_platform_landing_refused,
         report_checkpoint_rejection,
+        start_chat_after_platform_landing,
     )
 
     try:
@@ -79,7 +81,10 @@ def promote_hosted_harness_conversation_checkpoint(
         }:
             # The person has to act (rename, or ask again), so they need to see why.
             report_checkpoint_rejection(conversation_id, exc.message)
+        record_platform_landing_refused(conversation_id, turn_sequence)
+        start_chat_after_platform_landing(conversation_id, turn_sequence)
         return ""
+    start_chat_after_platform_landing(conversation_id, turn_sequence)
     return str(environment.id) if environment is not None else ""
 
 

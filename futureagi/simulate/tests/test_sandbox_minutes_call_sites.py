@@ -2909,6 +2909,7 @@ def test_every_chat_runtime_start_is_known():
         "services/harness_provider.py::_extend_in_chat",
         "services/harness_versioning/rebuild.py::_start_runtime",
         "services/hosted_harness_conversation.py::send_to_harness",
+        "services/hosted_harness_conversation.py::start_chat_after_platform_landing",
         "tasks/hosted_harness_conversation.py::recover_hosted_harness_conversations",
     }
     assert _callers("send_to_harness") == {
