@@ -92,7 +92,12 @@ describe("toRun", () => {
       errored: 0,
       noScore: 0,
       skipped: 0,
-      passRate: 30,
+      // The trial pass the environment's runs list shows, never the older call-based rate.
+      passRate: 33.33,
+      trialsPassed: 3,
+      trialsEvaluated: 9,
+      trialsInconclusive: 1,
+      trialsExcluded: 0,
       scored: 10,
       startedAt: "2026-10-14T11:58:53.368130+00:00",
       completedAt: "2026-10-14T12:27:36.569945+00:00",

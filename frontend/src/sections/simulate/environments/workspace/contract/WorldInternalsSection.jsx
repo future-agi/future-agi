@@ -1,6 +1,7 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
 import { Box, Stack, Typography, Collapse, Tooltip } from "@mui/material";
+import CustomTooltip from "src/components/tooltip";
 import { ROW_HEIGHT } from "src/theme/sizes";
 import Iconify from "src/components/iconify";
 import SectionCard from "../../components/SectionCard";
@@ -301,11 +302,11 @@ function ToolsCard({ tools }) {
                   {tool.description}
                 </Typography>
                 {chip && (
-                  <Tooltip
+                  <CustomTooltip
+                    show={tool.status === "unsupported"}
+                    size="small"
                     arrow
-                    title={
-                      tool.status === "unsupported" ? T.unsupportedWhy : ""
-                    }
+                    title={T.unsupportedWhy}
                   >
                     <Box
                       component="span"
@@ -323,7 +324,7 @@ function ToolsCard({ tools }) {
                     >
                       {chip.label}
                     </Box>
-                  </Tooltip>
+                  </CustomTooltip>
                 )}
                 {runsAt && (
                   <Tooltip arrow title={runsAt}>

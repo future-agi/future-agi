@@ -48,6 +48,8 @@ function normalizeQuestion(message, blocking) {
     prompt: source.prompt || message.content || "",
     options,
     multiSelect: Boolean(source.multiSelect ?? source.multi_select),
+    // Answered only with one of its options, as the server serves the question: no free-text answer.
+    optionsOnly: Boolean(source.options_only),
     step: source.step || 1,
     total: source.total || 1,
   };

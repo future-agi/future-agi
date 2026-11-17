@@ -7,10 +7,10 @@ import {
   MenuItem,
   Stack,
   TextField,
-  Tooltip,
   Typography,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
+import CustomTooltip from "src/components/tooltip";
 import TestConditionField from "./TestConditionField";
 import {
   NUMBER_FIELDS,
@@ -102,7 +102,9 @@ export default function TestConditionsEditor({
             )}
             {/* The server's problems with this fault, each by the field it names. */}
             {problems
-              .filter((one) => one.index === index)
+              .filter((one) =>
+                one.fault ? one.fault === fault : one.index === index,
+              )
               .map((one) => (
                 <Typography
                   key={`${one.field}-${one.message}`}
@@ -171,9 +173,23 @@ export default function TestConditionsEditor({
                 {one.reachable ? (
                   one.tool
                 ) : (
-                  <Tooltip title={TEST_CONDITIONS_COPY.inProcess} describeChild>
-                    <span>{one.tool}</span>
-                  </Tooltip>
+                  <CustomTooltip
+                    show
+                    size="small"
+                    arrow
+                    title={TEST_CONDITIONS_COPY.inProcess}
+                    describeChild
+                  >
+                    {/* The disabled item takes no pointer events, so its label takes them back to show why; a click on
+                        it never reaches the list, so the tool stays unpicked. */}
+                    <Box
+                      component="span"
+                      sx={{ pointerEvents: "auto" }}
+                      onClick={(event) => event.stopPropagation()}
+                    >
+                      {one.tool}
+                    </Box>
+                  </CustomTooltip>
                 )}
               </MenuItem>
             ))}
@@ -250,10 +266,12 @@ TestConditionsEditor.propTypes = {
   }),
   disabled: PropTypes.bool,
   error: PropTypes.string,
-  // The server's problems: `{index, field, message}` each, `index` the fault in `faults`.
+  // The server's problems: `{index, field, message}` each, `index` the fault in the faults that were saved, and
+  // `fault` that condition itself, so a problem stays with it when another is removed.
   problems: PropTypes.arrayOf(
     PropTypes.shape({
       index: PropTypes.number,
+      fault: PropTypes.object,
       field: PropTypes.string,
       message: PropTypes.string,
     }),

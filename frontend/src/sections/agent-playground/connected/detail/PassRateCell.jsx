@@ -54,7 +54,7 @@ export default function PassRateCell({ run }) {
             component="span"
             sx={{ color: "text.subtitle", fontWeight: 400 }}
           >
-            {` ${run.passed}/${run.scored}`}
+            {` ${run.trialsPassed}/${run.trialsEvaluated}`}
           </Box>
         )}
         {unrated && (

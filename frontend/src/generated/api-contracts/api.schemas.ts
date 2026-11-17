@@ -22456,6 +22456,24 @@ export interface HarnessParallelismApi {
   degrade_reasons: string[];
 }
 
+export type HarnessConversationBlockingInputApiOptionsItem = {
+  [key: string]: unknown;
+};
+
+export interface HarnessConversationBlockingInputApi {
+  /** @minLength 1 */
+  message_id: string;
+  /**
+   * question_requested or confirmation_requested.
+   * @minLength 1
+   */
+  kind: string;
+  prompt?: string;
+  options?: HarnessConversationBlockingInputApiOptionsItem[];
+  /** True when only one of its options answers it: free text is not an answer. */
+  options_only?: boolean;
+}
+
 export type HarnessConversationMessageApiRole =
   (typeof HarnessConversationMessageApiRole)[keyof typeof HarnessConversationMessageApiRole];
 
@@ -22533,10 +22551,6 @@ export interface HarnessConversationRuntimeApi {
   available: boolean;
 }
 
-export type HarnessConversationReadApiBlockingInput = {
-  [key: string]: unknown;
-};
-
 export interface HarnessConversationReadApi {
   conversation_id: string;
   job_id: string;
@@ -22546,7 +22560,7 @@ export interface HarnessConversationReadApi {
   stage: string;
   /** @minLength 1 */
   active_invocation_id: string;
-  blocking_input: HarnessConversationReadApiBlockingInput;
+  blocking_input: HarnessConversationBlockingInputApi;
   messages: HarnessConversationMessageApi[];
   events: HarnessConversationEventReadApi[];
   /** @minimum 0 */

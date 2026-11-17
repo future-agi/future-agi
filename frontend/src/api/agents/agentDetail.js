@@ -25,8 +25,13 @@ export const toRun = (raw) => ({
   errored: raw.outcome_errored ?? null,
   noScore: raw.outcome_no_score ?? null,
   skipped: raw.outcome_skipped ?? null,
-  // Null when nothing was scored.
-  passRate: raw.pass_rate,
+  // The run's trial pass, as its header and the environment's runs list read it; null when no trial passed or failed.
+  passRate: raw.trial_pass_rate,
+  // The trials behind that rate, and those left out of it.
+  trialsPassed: raw.trials_passed,
+  trialsEvaluated: raw.trials_evaluated,
+  trialsInconclusive: raw.trials_inconclusive,
+  trialsExcluded: raw.trials_excluded_not_comparable,
   scored: raw.scored,
   startedAt: raw.started_at ?? null,
   completedAt: raw.completed_at ?? null,

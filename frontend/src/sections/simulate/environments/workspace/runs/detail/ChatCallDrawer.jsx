@@ -114,7 +114,7 @@ export default function ChatCallDrawer({
   }, [hasNext, hasPrev, onNext, onPrev, shareOpen, traceOpen]);
   const [side, setSide] = useState("analytics");
   const [artifact, setArtifact] = useState("transcript");
-  const { callDetail, isLoading } = useCallDetail(task.id);
+  const { callDetail, isLoading, error: detailError } = useCallDetail(task.id);
   const callTraces = useCallTraces(executionId, task.id);
   const showTraces = artifact === "traces";
   const showChanges = artifact === "world_changes";
@@ -273,6 +273,14 @@ export default function ChatCallDrawer({
               <Stack alignItems="center" sx={{ py: 6 }}>
                 <CircularProgress size={20} />
               </Stack>
+            ) : showChanges && detailError && !callDetail ? (
+              // The call's detail could not be read: said so, never "not recorded", which is a claim about the trial.
+              <Typography
+                role="alert"
+                sx={{ typography: "s2", color: "error.main", p: 2 }}
+              >
+                {TRIAL_CHANGES_COPY.loadFailed}
+              </Typography>
             ) : showChanges ? (
               <TrialChangesPanel trialState={callDetail?.trial_state ?? null} />
             ) : showTraces ? (

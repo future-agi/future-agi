@@ -30,7 +30,7 @@ const OUTLINED = {
 
 // Edits go to the draft; a version changes only when the draft is saved.
 export default function WorldActorsPanel({ envId, locked = false }) {
-  const { data, isLoading, isError, refetch } = useActors(envId);
+  const { data, isPending, isError, refetch } = useActors(envId);
   const edit = useEditActor(envId);
   const limits = useSetActorLimits(envId);
   const accept = useAcceptUnresolved(envId);
@@ -97,7 +97,9 @@ export default function WorldActorsPanel({ envId, locked = false }) {
               kind: "knowledge",
               revision: form.revision,
             });
-            setEditing((open) => open && { actor: form.actor, revision: next.revision });
+            setEditing(
+              (open) => open && { actor: form.actor, revision: next.revision },
+            );
             setUploadMoved(false);
             return next.uploaded_path;
           } catch (failure) {
@@ -155,7 +157,8 @@ export default function WorldActorsPanel({ envId, locked = false }) {
         </SectionCard>
       </Box>
     );
-  if (isLoading) return <ActorsSkeleton locked={locked} />;
+  // A first read that has not come back, or is paused offline (pending with no data, not loading), shows the skeleton.
+  if (isPending || !data) return <ActorsSkeleton locked={locked} />;
 
   return (
     <Box sx={{ p: 2 }}>

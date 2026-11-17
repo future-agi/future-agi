@@ -178,6 +178,33 @@ describe("projectConversation", () => {
     ]);
   });
 
+  it("carries a question's options-only rule from the server", () => {
+    const turns = projectConversation({
+      messages: [
+        msg({
+          message_id: "q1",
+          kind: "question",
+          content: "Confirm this change",
+          payload: { options: ["Yes", "No"], options_only: true },
+          created_at: "2026-09-22T10:00:00Z",
+        }),
+        msg({
+          message_id: "q2",
+          kind: "question",
+          content: "How strict?",
+          payload: { options: ["Strict"] },
+          created_at: "2026-09-22T10:00:05Z",
+        }),
+      ],
+      events: [],
+    });
+    const [confirm, open] = turns
+      .flatMap((t) => t.steps)
+      .filter((s) => s.kind === "ask");
+    expect(confirm.question.optionsOnly).toBe(true);
+    expect(open.question.optionsOnly).toBe(false);
+  });
+
   it("marks a question resolved once a user message replies to it", () => {
     const turns = projectConversation({
       messages: [

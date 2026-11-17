@@ -750,8 +750,9 @@ class TestCast:
         environment = self._uncast(user, workspace, storage, settings, "asm-cast-race")
         seen_by_one, seen_by_other = _row(environment), _row(environment)
 
-        assert assembly._recertify(seen_by_one, "sha256:cast") is True
-        assert assembly._recertify(seen_by_other, "sha256:cast") is False
+        one, other = _run(environment, key="r1"), _run(environment, key="r2")
+        assert assembly._recertify(seen_by_one, "sha256:cast", one) is True
+        assert assembly._recertify(seen_by_other, "sha256:cast", other) is False
 
     def test_with_certifying_off_a_bundle_sealed_before_the_cast_is_replayed_and_kept(
         self, user, workspace, storage
@@ -979,9 +980,10 @@ class TestLaunchMiss:
         environment = self._castless(
             user, workspace, storage, settings, "asm-cast-lost"
         )
-        cast = assembly._cast(_run(environment, key="r0").environment_version)
+        certifying = _run(environment, key="r0")
+        cast = assembly._cast(certifying.environment_version)
         # Another launch is certifying this row for the cast: this one replays the build it has.
-        assert assembly._claim_cast(_row(environment), cast)
+        assert assembly._claim_cast(_row(environment), cast, certifying)
         run = _run(environment, key="r1")
 
         assert assembly.prepare_launch(run) is None
@@ -1041,9 +1043,32 @@ class TestLaunchMiss:
         )
         _uncache(environment)
         seen_by_one, seen_by_other = _row(environment), _row(environment)
+        one, other = _run(environment, key="r1"), _run(environment, key="r2")
 
-        assert assembly._claim_cast(seen_by_one, "sha256:cast") is True
-        assert assembly._claim_cast(seen_by_other, "sha256:cast") is False
+        assert assembly._claim_cast(seen_by_one, "sha256:cast", one) is True
+        assert assembly._claim_cast(seen_by_other, "sha256:cast", other) is False
+
+    @pytest.mark.parametrize("ended", ["failed", "canceled"])
+    def test_a_certify_for_the_cast_whose_run_ended_without_marking_the_row_is_claimed_again(
+        self, ended, user, workspace, storage, settings
+    ):
+        """The certifying run failed on the platform's side (or was canceled), so nothing marked the row failed: its
+        claim lapses with it, and the next default launch certifies again instead of replaying the build without the
+        environment's actors."""
+        environment = self._castless(
+            user, workspace, storage, settings, f"asm-cast-ended-{ended}"
+        )
+        first = _run(environment, key="r1")
+        assert assembly.prepare_launch(first).outcome == "miss"
+        assert _row(environment).certificate["claimed_by"] == str(first.id)
+        HostedHarnessJob.no_workspace_objects.filter(id=first.id).update(state=ended)
+
+        later = _run(environment, key="r2")
+
+        assert assembly.prepare_launch(later).outcome == "miss"
+        assert _row(environment).certificate["claimed_by"] == str(later.id)
+        later.refresh_from_db()
+        assert "notice" not in later.payload["metadata"]["assembly"]
 
     def test_certifying_is_off_so_other_pins_cannot_run(self, user, workspace, storage):
         environment = _environment(user, workspace, "asm-fallback-pinned", storage)

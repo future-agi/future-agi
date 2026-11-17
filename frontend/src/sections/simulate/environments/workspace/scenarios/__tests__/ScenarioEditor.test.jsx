@@ -292,6 +292,27 @@ describe("ScenarioEditor test conditions", () => {
     ).not.toHaveAttribute("aria-disabled", "true");
   });
 
+  it("says on hover why a tool inside the agent cannot be picked, and a click on it picks nothing", async () => {
+    openEditor();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Add a test condition" }),
+    );
+    const list = within(screen.getByTestId("test-conditions")).getAllByRole(
+      "combobox",
+    )[0];
+    fireEvent.mouseDown(list);
+    const label = within(
+      screen.getByRole("option", { name: "local_tool" }),
+    ).getByText("local_tool");
+
+    fireEvent.mouseOver(label);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "This tool runs inside the agent, so it cannot be held",
+    );
+    fireEvent.click(label);
+    expect(list).not.toHaveTextContent("local_tool");
+  });
+
   it("shows the server's reason when a fault is refused", async () => {
     const onSave = vi.fn(async () => ({
       refused: [
@@ -316,6 +337,27 @@ describe("ScenarioEditor test conditions", () => {
       "on_call must be a whole number from 1",
     );
     expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("stays open with its edits on any refused receipt, saying why, not only a refused fault", async () => {
+    const why = "the scenario's instruction must name the caller";
+    const onSave = vi.fn(async () => ({
+      refused: [{ field: "instruction", why, problems: [] }],
+      failed: false,
+    }));
+    const { onClose } = openEditor(onSave);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Add a test condition" }),
+    );
+    pickTool("apply_discount");
+    fireEvent.click(
+      screen.getAllByRole("button", { name: "Add a test condition" }).at(-1),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /save/i }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(why);
+    expect(onClose).not.toHaveBeenCalled();
+    // The edit is still there to correct.
+    expect(screen.getByRole("button", { name: /save/i })).toBeEnabled();
   });
 
   it("fills a picked tool's numbers from its own defaults and bounds the inputs by them", () => {
@@ -560,5 +602,12 @@ describe("ScenarioEditor test conditions", () => {
     expect(
       screen.queryByText("Two test conditions cannot be applied"),
     ).toBeNull();
+
+    // Removing the first condition never moves the second's problem onto another condition.
+    fireEvent.click(screen.getAllByRole("button", { name: "Remove" })[0]);
+    expect(screen.queryByText("first: Times out")).toBeNull();
+    const still = screen.getByText("Delay in seconds: At most 30");
+    expect(still.parentElement).toHaveTextContent("second: Times out");
+    expect(screen.queryByText("This tool cannot be held")).toBeNull();
   });
 });

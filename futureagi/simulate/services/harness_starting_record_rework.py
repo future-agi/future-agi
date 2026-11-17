@@ -8,6 +8,7 @@ import json
 import uuid
 from collections.abc import Mapping
 from datetime import UTC, datetime
+from decimal import Decimal, InvalidOperation
 from typing import Literal
 
 import structlog
@@ -192,15 +193,19 @@ def _reply(
 
 
 def _same(value: JsonValue, seeded: JsonValue) -> bool:
+    """Whether a fact is the seeded value: integers exactly, a number written as text by its exact decimal value, and
+    anything else as the same text. Never through a float, which takes 9007199254740993 for 9007199254740992."""
     numbers = [
         one
         for one in (value, seeded)
         if isinstance(one, (int, float, str)) and not isinstance(one, bool)
     ]
     if len(numbers) == 2:
+        if isinstance(value, int) and isinstance(seeded, int):
+            return value == seeded
         try:
-            return float(str(value)) == float(str(seeded))
-        except ValueError:
+            return Decimal(str(value).strip()) == Decimal(str(seeded).strip())
+        except InvalidOperation:
             pass
     return str(value).strip() == str(seeded).strip()
 
@@ -214,15 +219,26 @@ def _not_as_seeded(
         (
             one
             for one in records
-            if one["table"] == wanted["table"]
-            and one["key"] == wanted["key"]
-            and one["status"] == "seeded"
+            if one["table"] == wanted["table"] and one["key"] == wanted["key"]
         ),
         None,
     )
-    row = record["fields"] if record is not None else None
-    if record is None or row is None:
+    if record is None:
         return None
+    named = f"{record['table']} {record['key']}"
+    # The record as it was seeded when the rework was asked for, never the seed the save itself carries: a save
+    # that rewrites the seed to match what it wrote is refused, not taken for the record.
+    asked = wanted.get("fields")
+    row = asked if isinstance(asked, dict) else record["fields"]
+    if row is None:
+        return None
+    submitted = record["fields"] if record["status"] == "seeded" else None
+    if submitted is None:
+        return f"{named} is no longer seeded, so the scenario cannot start from it as seeded."
+    for name, value in row.items():
+        if name not in submitted or not _same(submitted[name], value):
+            changed = submitted.get(name, "removed")
+            return f"{named} is seeded with {name} {value}, but the save changes it to {changed}; a rework keeps it."
     block: JsonValue = files.document.get("fixture")
     for segment in record["path"][:-1]:
         block = (
@@ -236,7 +252,6 @@ def _not_as_seeded(
         )
     if not isinstance(block, dict):
         return None
-    named = f"{record['table']} {record['key']}"
     for name, value in block.items():
         if name in ("origin", record["path"][-1]) or isinstance(value, (dict, list)):
             continue

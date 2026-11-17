@@ -621,11 +621,38 @@ def note_without_actors(job: HostedHarnessJob) -> None:
     job.payload = locked.payload
 
 
-def _claim_cast(bundle: HarnessAssembledBundle, cast: str) -> bool:
+# A run that can no longer certify the row it claimed: its claim lapses, so the next launch claims it again.
+_ENDED = (
+    HostedHarnessJob.State.COMPLETED,
+    HostedHarnessJob.State.FAILED,
+    HostedHarnessJob.State.CANCELED,
+)
+
+
+def _claim_live(certificate: Mapping[str, Any], job: HostedHarnessJob) -> bool:
+    """Whether another run still holds this row's claim for its cast. A claim whose run ended, however it ended
+    (a refused certify, the platform failing it, a cancel), lapses: the row is never left claimed by no one."""
+    claimant = str(certificate.get("claimed_by") or "")
+    if not claimant or claimant == str(job.id):
+        return False
+    return (
+        HostedHarnessJob.no_workspace_objects.filter(id=claimant)
+        .exclude(state__in=_ENDED)
+        .exists()
+    )
+
+
+def _claim_cast(
+    bundle: HarnessAssembledBundle, cast: str, job: HostedHarnessJob
+) -> bool:
     """Take a pending row to be certified for ``cast``, once: of launches racing on it, only the one whose update
-    lands certifies it; the cast stays on the row through its fill."""
+    lands certifies it; the cast stays on the row through its fill. A claim whose run has ended is taken again."""
     certificate = bundle.certificate
-    if isinstance(certificate, dict) and certificate.get("recast") == cast:
+    if (
+        isinstance(certificate, dict)
+        and certificate.get("recast") == cast
+        and _claim_live(certificate, job)
+    ):
         return False
     rows = HarnessAssembledBundle._base_manager.filter(
         id=bundle.id, state=HarnessAssembledBundle.State.PENDING
@@ -635,9 +662,10 @@ def _claim_cast(bundle: HarnessAssembledBundle, cast: str) -> bool:
         if certificate is None
         else rows.filter(certificate=certificate)
     )
-    claimed = rows.update(certificate={"recast": cast}, updated_at=timezone.now()) == 1
+    stamp = {"recast": cast, "claimed_by": str(job.id)}
+    claimed = rows.update(certificate=stamp, updated_at=timezone.now()) == 1
     if claimed:
-        bundle.certificate = {"recast": cast}
+        bundle.certificate = stamp
         logger.info(
             "harness_bundle_cache",
             outcome="certify_for_cast",
@@ -647,7 +675,9 @@ def _claim_cast(bundle: HarnessAssembledBundle, cast: str) -> bool:
     return claimed
 
 
-def _recertify(bundle: HarnessAssembledBundle, cast: str) -> bool:
+def _recertify(
+    bundle: HarnessAssembledBundle, cast: str, job: HostedHarnessJob
+) -> bool:
     """Send a ready row back to be certified for ``cast``, once: of launches racing on one row, only the one whose
     update lands certifies it. The cast stays on the row through its fill, so it is never certified again for it."""
     sent = (
@@ -656,7 +686,8 @@ def _recertify(bundle: HarnessAssembledBundle, cast: str) -> bool:
             object_key=bundle.object_key,
             state=HarnessAssembledBundle.State.READY,
         ).update(
-            **{**_RESET, "certificate": {"recast": cast}}, updated_at=timezone.now()
+            **{**_RESET, "certificate": {"recast": cast, "claimed_by": str(job.id)}},
+            updated_at=timezone.now(),
         )
         == 1
     )
@@ -881,7 +912,7 @@ def prepare_launch(job: HostedHarnessJob) -> LaunchAssembly | None:
         )
         if cast is None:
             return False
-        if certify_enabled() and _claim_cast(bundle, cast):
+        if certify_enabled() and _claim_cast(bundle, cast, job):
             return True
         note_without_actors(job)
         return False
@@ -894,7 +925,7 @@ def prepare_launch(job: HostedHarnessJob) -> LaunchAssembly | None:
     # Sealed before its environment's actors: certified again once, so later runs replay a bundle that has them.
     without_actors = False
     if hit and (cast := _predates_cast(bundle, environment_version)):
-        if certify_enabled() and _recertify(bundle, cast):
+        if certify_enabled() and _recertify(bundle, cast, job):
             hit, certifies = False, True
         else:
             # Replayed as sealed, without the environment's actors: said on the run.

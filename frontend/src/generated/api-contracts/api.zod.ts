@@ -49296,7 +49296,21 @@ export const SimulateApiHarnessJobsListResponseItem = zod.object({
       state: zod.string().min(1),
       stage: zod.string().min(1),
       active_invocation_id: zod.string().min(1),
-      blocking_input: zod.object({}).passthrough(),
+      blocking_input: zod.object({
+        message_id: zod.string().min(1),
+        kind: zod
+          .string()
+          .min(1)
+          .describe("question_requested or confirmation_requested."),
+        prompt: zod.string().optional(),
+        options: zod.array(zod.object({}).passthrough()).optional(),
+        options_only: zod
+          .boolean()
+          .optional()
+          .describe(
+            "True when only one of its options answers it: free text is not an answer.",
+          ),
+      }),
       messages: zod.array(
         zod.object({
           message_id: zod.string().uuid(),
@@ -50301,7 +50315,21 @@ export const SimulateApiHarnessJobsReadResponse = zod.object({
       state: zod.string().min(1),
       stage: zod.string().min(1),
       active_invocation_id: zod.string().min(1),
-      blocking_input: zod.object({}).passthrough(),
+      blocking_input: zod.object({
+        message_id: zod.string().min(1),
+        kind: zod
+          .string()
+          .min(1)
+          .describe("question_requested or confirmation_requested."),
+        prompt: zod.string().optional(),
+        options: zod.array(zod.object({}).passthrough()).optional(),
+        options_only: zod
+          .boolean()
+          .optional()
+          .describe(
+            "True when only one of its options answers it: free text is not an answer.",
+          ),
+      }),
       messages: zod.array(
         zod.object({
           message_id: zod.string().uuid(),
@@ -50524,7 +50552,21 @@ export const SimulateApiHarnessJobsCancelResponse = zod.object({
       state: zod.string().min(1),
       stage: zod.string().min(1),
       active_invocation_id: zod.string().min(1),
-      blocking_input: zod.object({}).passthrough(),
+      blocking_input: zod.object({
+        message_id: zod.string().min(1),
+        kind: zod
+          .string()
+          .min(1)
+          .describe("question_requested or confirmation_requested."),
+        prompt: zod.string().optional(),
+        options: zod.array(zod.object({}).passthrough()).optional(),
+        options_only: zod
+          .boolean()
+          .optional()
+          .describe(
+            "True when only one of its options answers it: free text is not an answer.",
+          ),
+      }),
       messages: zod.array(
         zod.object({
           message_id: zod.string().uuid(),

@@ -139,7 +139,8 @@ export default function AskUserQuestionCard({
         question={question}
         answer={resolved || { external: true }}
         text={resolved ? undefined : answerText}
-        failed={resolved ? undefined : answerFailed}
+        // What the server made of the answer, given just now or before a reload: a failed one never keeps the check.
+        failed={answerFailed}
       />
     );
   }
@@ -192,34 +193,36 @@ export default function AskUserQuestionCard({
             onSelect={() => pick(i)}
           />
         ))}
-        <AskOptionRow
-          label="Other"
-          selected={otherActive}
-          multi={question.multiSelect}
-          index={otherIndex + 1}
-          onSelect={() => {
-            /* focused when the user types */
-          }}
-          bottomChildren={
-            <TextField
-              size="small"
-              fullWidth
-              variant="outlined"
-              value={answer.other}
-              onChange={(e) =>
-                setAnswer((a) => ({ ...a, other: e.target.value }))
-              }
-              placeholder="Type your own answer here"
-              InputProps={{
-                sx: {
-                  typography: "m3",
-                  bgcolor: "background.paper",
-                },
-              }}
-              sx={{ mt: 0.75 }}
-            />
-          }
-        />
+        {!question.optionsOnly && (
+          <AskOptionRow
+            label="Other"
+            selected={otherActive}
+            multi={question.multiSelect}
+            index={otherIndex + 1}
+            onSelect={() => {
+              /* focused when the user types */
+            }}
+            bottomChildren={
+              <TextField
+                size="small"
+                fullWidth
+                variant="outlined"
+                value={answer.other}
+                onChange={(e) =>
+                  setAnswer((a) => ({ ...a, other: e.target.value }))
+                }
+                placeholder="Type your own answer here"
+                InputProps={{
+                  sx: {
+                    typography: "m3",
+                    bgcolor: "background.paper",
+                  },
+                }}
+                sx={{ mt: 0.75 }}
+              />
+            }
+          />
+        )}
       </Stack>
 
       {/* bottom bar */}

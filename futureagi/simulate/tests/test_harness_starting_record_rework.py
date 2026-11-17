@@ -302,10 +302,12 @@ def test_a_rework_outside_the_caller_s_workspace_is_not_found_and_never_sent(
 
 
 @pytest.mark.parametrize(
-    "first_name", ["Priyanka", None], ids=["invented", "not a field"]
+    "first_name, seeded_as",
+    [("Priyanka", None), (None, None), ("Invented", "Invented")],
+    ids=["invented", "not a field", "seed row rewritten to match"],
 )
 def test_a_builder_save_with_the_record_not_as_seeded_never_reaches_the_scenario(
-    user, workspace, storage, auth_client, first_name
+    user, workspace, storage, auth_client, first_name, seeded_as
 ):
     from simulate.services.harness_starting_records import scenario_files
     from simulate.services.hosted_harness import HostedHarnessError
@@ -332,13 +334,20 @@ def test_a_builder_save_with_the_record_not_as_seeded_never_reaches_the_scenario
     else:
         identity["days_since_signup"] = 5
     document = _scenario(SCENARIO, fixture={**FIXTURE, "identity": identity})
+    # The builder may also rewrite the seeded row to match what it wrote: the record it was asked for is the one
+    # captured with the request, never the seed it submits.
+    store = json.loads(json.dumps(STORE))
+    if seeded_as is not None:
+        for row in store["rows"]["users"]:
+            if row["rider_id"] == "rdr_priya":
+                row["first_name"] = seeded_as
     body = _authoring(
         names=NAMES[:1],
         contract=CONTRACT,
         **{
             "scenarios.json": json.dumps([document]),
             f"scenarios/{SCENARIO}/scenario.json": json.dumps(document),
-            "store.json": json.dumps(STORE),
+            "store.json": json.dumps(store),
         },
     )
     key, digest = _put_conversation_checkpoint(message.conversation, storage, body)
@@ -491,3 +500,32 @@ def test_a_row_another_scenario_starts_from_is_offered_with_a_note_and_left_to_t
     assert OTHER in priya["note"]
     assert asked.status_code == 202, asked.content
     assert _requests(environment).count() == 1
+
+
+@pytest.mark.parametrize(
+    "fact, seeded, same",
+    [
+        (9007199254740993, 9007199254740992, False),
+        ("9007199254740993", 9007199254740992, False),
+        (9007199254740993, 9007199254740993, True),
+        ("10.00", 10, True),
+        (10, "10", True),
+        ("0.1", 0.1, True),
+        ("Priya", "Priyanka", False),
+    ],
+    ids=[
+        "large ints",
+        "large int as text",
+        "same large int",
+        "money text",
+        "int text",
+        "decimal",
+        "text",
+    ],
+)
+def test_a_fact_is_the_seeded_value_only_when_it_is_exactly_that_value(
+    fact, seeded, same
+):
+    from simulate.services.harness_starting_record_rework import _same
+
+    assert _same(fact, seeded) is same

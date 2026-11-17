@@ -232,16 +232,26 @@ export default function ScenarioEditor({
     setFaultProblems([]);
     setSaving(true);
     // A refusal or failed save keeps the editor open with the edits in it.
+    const sent = draft.faults || [];
     const answer = await onSave({ changes, rework });
     setSaving(false);
-    const refused = answer.refused.find((one) => one.field === "faults");
-    if (refused) {
-      // Placed under the fault and field each names; the receipt's one sentence only when it names none.
-      if (refused.problems.length) setFaultProblems(refused.problems);
-      else setSaveError(refused.why);
+    if (answer.failed) return;
+    if (answer.refused.length) {
+      // Any refused receipt keeps the editor open with the edits. A fault's problems sit under the fault and
+      // field each names; anything else is said in the receipt's own words.
+      const faults = answer.refused.find((one) => one.field === "faults");
+      // Each problem tied to the condition it was about, so removing another one never moves it.
+      if (faults?.problems?.length)
+        setFaultProblems(
+          faults.problems.map((one) => ({ ...one, fault: sent[one.index] })),
+        );
+      const said = answer.refused
+        .filter((one) => !(one === faults && one.problems?.length))
+        .map((one) => one.why)
+        .filter(Boolean);
+      if (said.length) setSaveError(said.join(" "));
       return;
     }
-    if (answer.failed) return;
     onClose();
   };
 

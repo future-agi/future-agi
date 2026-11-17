@@ -66,7 +66,11 @@ vi.mock("src/api/simulate-environments/versions", async (importOriginal) => {
       viewState ?? {
         data: {
           sees: [
-            { input: "actor.goal", value: "Approve fast", text: "Approve fast" },
+            {
+              input: "actor.goal",
+              value: "Approve fast",
+              text: "Approve fast",
+            },
             {
               input: "actor.constraints",
               value: {
@@ -449,6 +453,20 @@ describe("WorldActorsPanel", () => {
     expect(screen.getByRole("status")).toHaveTextContent("Loading the actors…");
     expect(screen.queryByRole("progressbar")).toBeNull();
     expect(screen.getByText("Actors")).toBeInTheDocument();
+    expect(screen.queryByText("Add actor")).toBeNull();
+  });
+
+  it("shows the skeleton, never a crash, when its first read is paused offline", () => {
+    // React Query's paused first fetch: pending, not loading, and no data yet.
+    actorsData = undefined;
+    actorsState = {
+      isPending: true,
+      isLoading: false,
+      isError: false,
+      fetchStatus: "paused",
+    };
+    render(<WorldActorsPanel envId="env-1" />);
+    expect(screen.getByRole("status")).toHaveTextContent("Loading the actors…");
     expect(screen.queryByText("Add actor")).toBeNull();
   });
 

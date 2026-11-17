@@ -152,6 +152,73 @@ describe("ConsoleTurn new step kinds", () => {
     expect(screen.getAllByText("Strict").length).toBeGreaterThan(0);
   });
 
+  it("offers no free-text answer for a question that takes only its options, and one otherwise", () => {
+    const options = [{ label: "Yes, make this change" }, { label: "No" }];
+    const ask = (optionsOnly) => ({
+      id: "a1",
+      kind: "ask",
+      question: {
+        prompt: "Confirm this change",
+        options,
+        multiSelect: false,
+        step: 1,
+        total: 1,
+        optionsOnly,
+      },
+      onSubmit: vi.fn(),
+    });
+    const { rerender } = render(<Turn turn={builder([ask(true)])} />);
+    expect(
+      screen.queryByPlaceholderText("Type your own answer here"),
+    ).toBeNull();
+    expect(screen.queryByText("Other")).toBeNull();
+
+    rerender(<Turn turn={builder([ask(false)])} />);
+    expect(
+      screen.getByPlaceholderText("Type your own answer here"),
+    ).toBeInTheDocument();
+  });
+
+  it("turns a just-given answer to failed when the server fails it, without a reload", () => {
+    const question = {
+      prompt: "Confirm this change",
+      options: [{ label: "Yes, make this change" }],
+      multiSelect: false,
+      step: 1,
+      total: 1,
+    };
+    const reason =
+      "Not taken as the answer: the builder asked again. Answer with one of the options.";
+    const onSubmit = vi.fn();
+    const { rerender } = render(
+      <Turn turn={builder([{ id: "a1", kind: "ask", question, onSubmit }])} />,
+    );
+    fireEvent.click(screen.getByText("Yes, make this change"));
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+    expect(screen.getByTestId("answer-taken")).toBeInTheDocument();
+
+    // The next poll: the server stored that answer as failed.
+    rerender(
+      <Turn
+        turn={builder([
+          {
+            id: "a1",
+            kind: "ask",
+            question,
+            onSubmit,
+            resolved: true,
+            answerText: "Yes, make this change",
+            answerFailed: { reason },
+          },
+        ])}
+      />,
+    );
+
+    expect(screen.getByTestId("answer-not-taken")).toBeInTheDocument();
+    expect(screen.queryByTestId("answer-taken")).toBeNull();
+    expect(screen.getByText(reason)).toBeInTheDocument();
+  });
+
   it("shows an answer the server did not take as failed with its reason, never with the accepted check", () => {
     const question = {
       prompt: "Confirm this change",
