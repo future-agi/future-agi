@@ -119,10 +119,9 @@ def worker_states(
         elif out:
             state = _STILL_OUT[trial]
         else:
-            # Seen only through its tool calls: no recorded end, so no end state rather than an invented one, even when
-            # the trial was cut short (it may have finished long before).
-            workers.append(ended)
-            continue
+            # Seen only through its tool calls, or handed control that never returns: no end is claimed, even when the
+            # trial was cut short (it may have finished long before).
+            state = "observed_no_end"
         ended["state"] = state
         workers.append(ended)
     return {**timeline, "workers": workers}
@@ -322,6 +321,16 @@ def served_workers(
     unheld = _unheld(metadata)
     late = refused_past_deadline(metadata)
     trial = (metadata or {}).get(TRIAL_STATE_KEY)
+    # A record read before every worker kept a state is served with the state its own events give each one.
+    derived = (
+        {
+            one["worker_id"]: one["state"]
+            for one in worker_states(timeline, trial="ended")["workers"]
+            if "state" in one
+        }
+        if any("state" not in one for one in timeline["workers"])
+        else {}
+    )
     workers: list[HarnessWorker] = []
     for one in timeline["workers"]:
         enforcement = worker_enforcement(
@@ -336,6 +345,8 @@ def served_workers(
             "enforcement": enforcement,
             "enforcement_label": WORKER_ENFORCEMENT_LABELS[enforcement],
         }
+        if "state" not in served and one["worker_id"] in derived:
+            served["state"] = derived[one["worker_id"]]
         if str(one.get("id")) in late:
             # A record read before door refusals counted still says how its worker ended: past its deadline.
             served["state"] = "deadline_passed"

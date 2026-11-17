@@ -163023,6 +163023,7 @@
                 "observed",
                 "undeclared",
                 "instance_ids",
+                "state",
                 "cut_short",
                 "past_deadline",
                 "checks"
@@ -163079,7 +163080,8 @@
                         "cancel_requested",
                         "cancelled",
                         "infrastructure",
-                        "not_observed"
+                        "not_observed",
+                        "observed_no_end"
                     ]
                 },
                 "cut_short": {
@@ -163547,7 +163549,8 @@
                         "cancel_requested",
                         "cancelled",
                         "infrastructure",
-                        "not_observed"
+                        "not_observed",
+                        "observed_no_end"
                     ]
                 },
                 "did_not_finish": {

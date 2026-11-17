@@ -62349,18 +62349,17 @@ export const SimulateV3CallExecutionWorkersResponse = zod.object({
       instance_ids: zod.array(zod.string().min(1)),
       model: zod.string().min(1).optional(),
       tokens: zod.number().optional(),
-      state: zod
-        .enum([
-          "completed",
-          "failed",
-          "no_return",
-          "deadline_passed",
-          "cancel_requested",
-          "cancelled",
-          "infrastructure",
-          "not_observed",
-        ])
-        .optional(),
+      state: zod.enum([
+        "completed",
+        "failed",
+        "no_return",
+        "deadline_passed",
+        "cancel_requested",
+        "cancelled",
+        "infrastructure",
+        "not_observed",
+        "observed_no_end",
+      ]),
       cut_short: zod.boolean(),
       past_deadline: zod.boolean(),
       stopped_at: zod.number().optional(),
@@ -62605,6 +62604,7 @@ export const SimulateV3CallExecutionWorkersResponse = zod.object({
           "cancelled",
           "infrastructure",
           "not_observed",
+          "observed_no_end",
         ])
         .optional(),
       did_not_finish: zod.boolean().optional(),

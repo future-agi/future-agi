@@ -99269,6 +99269,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "observed",
         "undeclared",
         "instance_ids",
+        "state",
         "cut_short",
         "past_deadline",
         "checks",
@@ -99326,6 +99327,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "cancelled",
             "infrastructure",
             "not_observed",
+            "observed_no_end",
           ],
         },
         cut_short: {
@@ -99633,6 +99635,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "cancelled",
             "infrastructure",
             "not_observed",
+            "observed_no_end",
           ],
         },
         did_not_finish: {

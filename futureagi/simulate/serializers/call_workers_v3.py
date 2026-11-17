@@ -49,8 +49,8 @@ class CallWorkerSerializer(serializers.Serializer):
     instance_ids = serializers.ListField(child=serializers.CharField())
     model = serializers.CharField(required=False)
     tokens = serializers.IntegerField(required=False)
-    # Absent on a record read before end states were kept.
-    state = serializers.ChoiceField(choices=get_args(WorkerState), required=False)
+    # Every worker has one: `observed_no_end` when it took part but no return or end was recorded.
+    state = serializers.ChoiceField(choices=get_args(WorkerState))
     cut_short = serializers.BooleanField()
     # The world refused its later calls past its action deadline; its execution was not stopped.
     past_deadline = serializers.BooleanField()

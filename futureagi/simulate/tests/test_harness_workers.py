@@ -3098,7 +3098,10 @@ def test_a_worker_seen_only_through_its_tool_calls_gets_no_invented_end_state():
     timeline = worker_timeline([], DECLARED, run_key=RUN, traced_calls=traced)
     workers = worker_states(timeline, trial="ended")["workers"]
     # No hand-off was recorded, so nothing says the worker was still out when the trial ended.
-    assert [one.get("state") for one in workers if one["observed"]] == [None, None]
+    assert [one.get("state") for one in workers if one["observed"]] == [
+        "observed_no_end",
+        "observed_no_end",
+    ]
     # The world refusing one past its deadline is still a recorded end.
     late = worker_states(timeline, trial="ended", past_deadline={"refund"})["workers"]
     assert {one["id"]: one.get("state") for one in late}["refund"] == "deadline_passed"
@@ -3127,7 +3130,10 @@ def test_a_worker_refused_past_its_deadline_by_its_own_calls_ends_past_its_deadl
         for one in worker_states(timeline, trial="ended")["workers"]
     }
     # The world's own refusal is the record; a worker with no such call gets no invented end.
-    assert (states["order_lookup"], states["refund"]) == ("deadline_passed", None)
+    assert (states["order_lookup"], states["refund"]) == (
+        "deadline_passed",
+        "observed_no_end",
+    )
 
 
 def test_a_worker_handed_control_gets_no_end_state_since_a_control_pass_never_returns():
@@ -3148,7 +3154,7 @@ def test_a_worker_handed_control_gets_no_end_state_since_a_control_pass_never_re
         one["id"]: one.get("state")
         for one in worker_states(timeline, trial="ended")["workers"]
     }
-    assert states["inspiration_agent"] is None
+    assert states["inspiration_agent"] == "observed_no_end"
 
 
 # An early read can lack the top-level agent span (it ends last); the sealed rows the harness wrote while the call ran
@@ -3755,7 +3761,7 @@ def test_old_record_without_cleanup_serves_as_is(
             assert "cleanup" not in worker
 
 
-def test_a_worker_seen_only_through_tool_calls_has_no_end_state_in_a_cut_short_trial():
+def test_a_worker_seen_only_through_tool_calls_claims_no_end_in_a_cut_short_trial():
     from simulate.services.harness_workers import worker_states
 
     timeline = worker_timeline([], DECLARED, run_key=RUN, traced_calls=_TOOL_CALLS_ONLY)
@@ -3764,19 +3770,34 @@ def test_a_worker_seen_only_through_tool_calls_has_no_end_state_in_a_cut_short_t
             one["id"]: one for one in worker_states(timeline, trial=trial)["workers"]
         }
         # It may have finished long before the stop: never read cancelled or as a hand-off still open.
-        assert "state" not in workers["refund"]
+        assert workers["refund"]["state"] == "observed_no_end"
         # A declared worker that never acted is still not observed, never cut short.
         assert workers["audit"]["state"] == "not_observed"
 
 
-def test_worker_seen_only_through_tool_calls_has_no_state_when_the_trial_ended():
+def test_every_worker_is_served_with_a_state_even_one_seen_only_through_tool_calls():
+    from simulate.serializers.call_workers_v3 import CallWorkerSerializer
     from simulate.services.harness_workers import worker_states
 
     timeline = worker_timeline([], DECLARED, run_key=RUN, traced_calls=_TOOL_CALLS_ONLY)
     workers = {
         one["id"]: one for one in worker_states(timeline, trial="ended")["workers"]
     }
-    assert "state" not in workers["refund"]
+    assert workers["refund"]["state"] == "observed_no_end"
+    # A record kept before every worker had a state is served with one.
+    kept = {
+        **timeline,
+        "workers": [
+            {key: value for key, value in one.items() if key != "state"}
+            for one in worker_states(timeline, trial="ended")["workers"]
+        ],
+    }
+    served = harness_worker_states.served_workers(None, kept)["workers"]
+    assert {one["id"]: one["state"] for one in served} == {
+        one["id"]: one["state"] for one in workers.values()
+    }
+    # The contract requires it.
+    assert CallWorkerSerializer().fields["state"].required
 
 
 @pytest.mark.django_db
