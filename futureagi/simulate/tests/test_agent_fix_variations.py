@@ -854,6 +854,10 @@ class TestWhatAFixLeavesBehind:
         HostedHarnessConversationMessage.no_workspace_objects.filter(
             id=command.id
         ).update(state=HostedHarnessConversationMessage.State.DELIVERED)
+        # The builder runs the turn, as its turn_started event records it.
+        type(command.conversation).no_workspace_objects.filter(
+            id=command.conversation_id
+        ).update(active_invocation_id="invocation-1")
         lease = _lease(command.conversation)
 
         # The patch outlives the commit callbacks, which run as the capture ends.
