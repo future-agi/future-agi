@@ -19615,6 +19615,11 @@ export interface HarnessEnvironmentToolStatusApi {
    * @minLength 1
    */
   status_label: string;
+  /**
+   * Why a test cannot run an unsupported tool, as the run's own refusal says it; null otherwise.
+   * @minLength 1
+   */
+  status_reason: string;
   /** Restored to the seeded records before each trial; null when not known. */
   reset_between_trials: boolean;
   /**

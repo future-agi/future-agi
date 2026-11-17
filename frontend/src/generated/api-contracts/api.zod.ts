@@ -39132,6 +39132,12 @@ export const SimulateApiHarnessEnvironmentsReadResponse = zod.object({
           .string()
           .min(1)
           .describe("What a test does with it, in words."),
+        status_reason: zod
+          .string()
+          .min(1)
+          .describe(
+            "Why a test cannot run an unsupported tool, as the run's own refusal says it; null otherwise.",
+          ),
         reset_between_trials: zod
           .boolean()
           .describe(
@@ -39713,6 +39719,12 @@ export const SimulateApiHarnessEnvironmentsPartialUpdateResponse = zod.object({
           .string()
           .min(1)
           .describe("What a test does with it, in words."),
+        status_reason: zod
+          .string()
+          .min(1)
+          .describe(
+            "Why a test cannot run an unsupported tool, as the run's own refusal says it; null otherwise.",
+          ),
         reset_between_trials: zod
           .boolean()
           .describe(
@@ -45369,6 +45381,12 @@ export const SimulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationRespo
             .string()
             .min(1)
             .describe("What a test does with it, in words."),
+          status_reason: zod
+            .string()
+            .min(1)
+            .describe(
+              "Why a test cannot run an unsupported tool, as the run's own refusal says it; null otherwise.",
+            ),
           reset_between_trials: zod
             .boolean()
             .describe(

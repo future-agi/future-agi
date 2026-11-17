@@ -494,6 +494,10 @@ class HarnessEnvironmentToolStatusSerializer(serializers.Serializer):
     status_label = serializers.CharField(
         help_text="What a test does with it, in words."
     )
+    status_reason = serializers.CharField(
+        allow_null=True,
+        help_text="Why a test cannot run an unsupported tool, as the run's own refusal says it; null otherwise.",
+    )
     reset_between_trials = serializers.BooleanField(
         allow_null=True,
         help_text="Restored to the seeded records before each trial; null when not known.",

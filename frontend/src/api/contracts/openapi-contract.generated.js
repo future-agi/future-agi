@@ -131034,6 +131034,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "tool",
         "status",
         "status_label",
+        "status_reason",
         "reset_between_trials",
         "runs_at",
         "writes",
@@ -131065,6 +131066,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
           description: "What a test does with it, in words.",
           type: "string",
           minLength: 1,
+        },
+        status_reason: {
+          title: "Status reason",
+          description:
+            "Why a test cannot run an unsupported tool, as the run's own refusal says it; null otherwise.",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
         },
         reset_between_trials: {
           title: "Reset between trials",
