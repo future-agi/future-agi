@@ -122,6 +122,8 @@ def _not_saved(message: HostedHarnessConversationMessage) -> str | None:
             conversation_id=message.conversation_id,
             role=_Message.Role.USER,
             sequence__gt=message.sequence,
+            # The person's answer to the builder's question is this request's turn running on, not a new request.
+            reply_to__isnull=True,
         )
         .order_by("sequence")
         .values_list("sequence", flat=True)
@@ -181,6 +183,8 @@ def _reply(
             conversation_id=message.conversation_id,
             role=_Message.Role.USER,
             sequence__gt=message.sequence,
+            # The person's answer to the builder's question is this request's turn running on, not a new request.
+            reply_to__isnull=True,
         )
         .order_by("sequence")
         .values_list("sequence", flat=True)
@@ -193,21 +197,79 @@ def _reply(
 
 
 def _same(value: JsonValue, seeded: JsonValue) -> bool:
-    """Whether a fact is the seeded value: integers exactly, a number written as text by its exact decimal value, and
-    anything else as the same text. Never through a float, which takes 9007199254740993 for 9007199254740992."""
-    numbers = [
-        one
-        for one in (value, seeded)
-        if isinstance(one, (int, float, str)) and not isinstance(one, bool)
-    ]
-    if len(numbers) == 2:
-        if isinstance(value, int) and isinstance(seeded, int):
-            return value == seeded
+    """Whether a fact is the seeded value. A number and a number, or a number and its text, by exact decimal value
+    (never through a float, which takes 9007199254740993 for 9007199254740992); text and text exactly, so "02134" is
+    not 2134's ZIP and "+15551234567" not "15551234567"; None, true and false only as themselves."""
+
+    def number(one: JsonValue) -> bool:
+        return isinstance(one, (int, float)) and not isinstance(one, bool)
+
+    if (
+        value is None
+        or seeded is None
+        or isinstance(value, bool)
+        or isinstance(seeded, bool)
+    ):
+        return type(value) is type(seeded) and value == seeded
+    if (
+        number(value)
+        and number(seeded)
+        and isinstance(value, int)
+        and isinstance(seeded, int)
+    ):
+        return value == seeded
+    if number(value) or number(seeded):
+        if not isinstance(value, (int, float, str)) or not isinstance(
+            seeded, (int, float, str)
+        ):
+            return False
         try:
             return Decimal(str(value).strip()) == Decimal(str(seeded).strip())
         except InvalidOperation:
-            pass
-    return str(value).strip() == str(seeded).strip()
+            return False
+    return value == seeded
+
+
+def _at_asked_path(record: StartingRecord, wanted: Mapping[str, object]) -> bool:
+    """Whether the record is the fact the rework asked about: at the path it named, not the same row named by
+    another fact. A request filed without a path is matched by its table and key alone."""
+    asked = wanted.get("path")
+    return not isinstance(asked, list) or list(record["path"]) == [
+        str(one) for one in asked
+    ]
+
+
+def _changed_field(
+    named: str, row: Mapping[str, JsonValue], submitted: Mapping[str, JsonValue]
+) -> str | None:
+    """The first field of the record as asked for that the save seeds with another value, or drops."""
+    for name, value in row.items():
+        if name not in submitted or not _same(submitted[name], value):
+            changed = submitted.get(name, "removed")
+            return f"{named} is seeded with {name} {value}, but the save changes it to {changed}; a rework keeps it."
+    return None
+
+
+def _seed_not_as_asked(
+    files: ScenarioFiles, before: ScenarioFiles, wanted: Mapping[str, object]
+) -> str | None:
+    """Why a save that leaves the scenario as it is still changes the record its rework asked for: that record's
+    seeded row, rewritten or removed by this save. None when the save leaves that row as it was."""
+    lookup = {
+        "table": str(wanted["table"]),
+        "key_field": str(wanted.get("key_field") or ""),
+        "key": str(wanted["key"]),
+    }
+    row, _ = seeded_row(files, **lookup)
+    if row == seeded_row(before, **lookup)[0]:
+        return None
+    named = f"{lookup['table']} {lookup['key']}"
+    if row is None:
+        return f"{named} is no longer seeded, so the scenario cannot start from it as seeded."
+    # A request filed without the record's fields holds the row as it is seeded now.
+    asked = wanted.get("fields")
+    held = asked if isinstance(asked, dict) else seeded_row(before, **lookup)[0]
+    return _changed_field(named, held, row) if held is not None else None
 
 
 def _not_as_seeded(
@@ -219,12 +281,14 @@ def _not_as_seeded(
         (
             one
             for one in records
-            if one["table"] == wanted["table"] and one["key"] == wanted["key"]
+            if one["table"] == wanted["table"]
+            and one["key"] == wanted["key"]
+            and _at_asked_path(one, wanted)
         ),
         None,
     )
     if record is None:
-        return None
+        return f"it does not start from {wanted['table']} {wanted['key']}, the record its rework asked for."
     named = f"{record['table']} {record['key']}"
     # The record as it was seeded when the rework was asked for, never the seed the save itself carries: a save
     # that rewrites the seed to match what it wrote is refused, not taken for the record.
@@ -235,10 +299,9 @@ def _not_as_seeded(
     submitted = record["fields"] if record["status"] == "seeded" else None
     if submitted is None:
         return f"{named} is no longer seeded, so the scenario cannot start from it as seeded."
-    for name, value in row.items():
-        if name not in submitted or not _same(submitted[name], value):
-            changed = submitted.get(name, "removed")
-            return f"{named} is seeded with {name} {value}, but the save changes it to {changed}; a rework keeps it."
+    changed = _changed_field(named, row, submitted)
+    if changed:
+        return changed
     block: JsonValue = files.document.get("fixture")
     for segment in record["path"][:-1]:
         block = (
@@ -306,6 +369,7 @@ def _outcome(
         one["table"] == wanted["table"]
         and one["key"] == wanted["key"]
         and one["status"] == "seeded"
+        and _at_asked_path(one, wanted)
         for one in records
     )
     if not starts:
@@ -378,40 +442,85 @@ def latest_rework(
     return _request(message, files, records) if message is not None else None
 
 
-def _current_document(environment: HostedHarnessJob, scenario_key: str) -> object:
+def _current_files(
+    environment: HostedHarnessJob, scenario_key: str
+) -> ScenarioFiles | None:
     """The scenario as its unsaved changes, else its saved version, hold it now; None when it has none."""
     try:
-        return scenario_files(environment, scenario_key).document
+        return scenario_files(environment, scenario_key)
     except HostedHarnessError:
         return None
 
 
-def refuse_invented(environment: HostedHarnessJob, archive: bytes) -> None:
-    """Refuse a builder's save that starts a scenario from a record it was asked to, with facts about that record
-    that are not the record as seeded. Checked on every save, for the scenarios it changes, so an invented record never
-    reaches the scenario and a mismatch made outside the builder never holds up another scenario's save."""
-    latest: dict[str, HostedHarnessConversationMessage] = {}
-    for message in _Message.no_workspace_objects.filter(
-        conversation__job=environment,
-        role=_Message.Role.USER,
-        payload___origin=REWORK_ORIGIN,
-    ).order_by("sequence"):
-        latest[str(message.payload.get("_scenario_key") or "")] = message
-    for scenario_key, message in latest.items():
-        files = archive_scenario_files(archive, scenario_key) if scenario_key else None
-        if files is None or files.document == _current_document(
-            environment, scenario_key
-        ):
-            continue
-        why = _not_as_seeded(
-            files, scenario_records(files)[0], message.payload["_record"]
+def _rework_of_turn(
+    environment: HostedHarnessJob, command: HostedHarnessConversationMessage | None
+) -> HostedHarnessConversationMessage | None:
+    """The rework whose turn ``command`` drives: the request itself, or the person's answer to its builder's question
+    before any new request. None for any other turn, whose saves are ordinary edits."""
+    if command is None or command.role != _Message.Role.USER:
+        return None
+    if (command.payload or {}).get("_origin") == REWORK_ORIGIN:
+        return command
+    if command.reply_to is None:
+        return None
+    rework = (
+        _Message.no_workspace_objects.filter(
+            conversation_id=command.conversation_id,
+            conversation__job=environment,
+            role=_Message.Role.USER,
+            payload___origin=REWORK_ORIGIN,
+            sequence__lt=command.sequence,
         )
-        if why:
-            raise HostedHarnessError(
-                "starting_record_not_as_seeded",
-                f"scenario {scenario_key} does not start from the record as seeded: {why}",
-                status_code=409,
-            )
+        .order_by("-sequence")
+        .first()
+    )
+    if rework is None:
+        return None
+    request_between = _Message.no_workspace_objects.filter(
+        conversation_id=command.conversation_id,
+        role=_Message.Role.USER,
+        sequence__gt=rework.sequence,
+        sequence__lt=command.sequence,
+        reply_to__isnull=True,
+    ).exists()
+    return None if request_between else rework
+
+
+def refuse_invented(
+    environment: HostedHarnessJob,
+    archive: bytes,
+    command: HostedHarnessConversationMessage | None = None,
+) -> None:
+    """Refuse a rework's own save that starts its scenario from the record it was asked for with facts that are not
+    the record as seeded, that rewrites or removes that record's seeded row, or that leaves the scenario not starting
+    from it. Only the rework's turn is checked: a later edit made in its own chat turn is an ordinary edit, and a
+    mismatch made outside the builder never holds up another save."""
+    message = _rework_of_turn(environment, command)
+    if message is None:
+        return
+    scenario_key = str(message.payload.get("_scenario_key") or "")
+    if not scenario_key:
+        return
+    files = archive_scenario_files(archive, scenario_key)
+    if files is None:
+        raise HostedHarnessError(
+            "starting_record_not_as_seeded",
+            f"scenario {scenario_key} is gone from the save; a rework keeps the scenario and its key.",
+            status_code=409,
+        )
+    wanted = message.payload["_record"]
+    before = _current_files(environment, scenario_key)
+    if before is not None and files.document == before.document:
+        # The scenario is left as it is, but the save may still rewrite the record it was asked to start from.
+        why = _seed_not_as_asked(files, before, wanted)
+    else:
+        why = _not_as_seeded(files, scenario_records(files)[0], wanted)
+    if why:
+        raise HostedHarnessError(
+            "starting_record_not_as_seeded",
+            f"scenario {scenario_key} does not start from the record as seeded: {why}",
+            status_code=409,
+        )
 
 
 def _refuse_unready(job: HostedHarnessJob) -> None:

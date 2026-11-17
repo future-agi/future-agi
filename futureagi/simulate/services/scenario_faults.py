@@ -514,8 +514,10 @@ def require_valid_faults(
     cast: Sequence[ActorRecord],
     before: object = None,
 ) -> None:
-    """Refuse a fault the test world cannot apply, checking only scenarios whose faults changed from ``before``.
-    ``cast`` is the environment's actors, who alone can record an approval.
+    """Refuse a fault the test world cannot apply, checking only scenarios whose faults changed from ``before``; an
+    approval no actor of the scenario may record is refused whatever changed, since dropping the approver from the
+    scenario or the cast leaves a fault that refuses every write. ``cast`` is the environment's actors, who alone can
+    record an approval.
 
     Raises ``HostedHarnessError`` ``fault_invalid`` (422)."""
     kept = _faults_by_scenario(before) if isinstance(before, list) else {}
@@ -524,8 +526,7 @@ def require_valid_faults(
         if not isinstance(scenario, dict) or not scenario.get("faults"):
             continue
         key = scenario_key(scenario)
-        if key in kept and kept[key] == scenario.get("faults"):
-            continue
+        unchanged = key in kept and kept[key] == scenario.get("faults")
         name = str(scenario.get("name") or scenario.get("scenario_key") or "a scenario")
         found.extend(
             {
@@ -539,6 +540,7 @@ def require_valid_faults(
                 targets,
                 approvers=scenario_approvers(scenario, cast),
             )
+            if not unchanged or problem["field"] == "approval"
         )
     if found:
         first = found[0]

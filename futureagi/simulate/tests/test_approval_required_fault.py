@@ -146,6 +146,35 @@ def test_a_write_refuses_an_approval_no_actor_of_the_scenario_can_record():
     )
 
 
+@pytest.mark.parametrize("dropped", ["from the scenario", "from the cast"])
+def test_a_write_that_drops_the_approver_of_an_unchanged_fault_is_refused(dropped):
+    played = {
+        "name": "refund",
+        "scenario_key": "refund",
+        "actors": [{"id": "manager"}],
+        "faults": [NEEDS_APPROVAL],
+    }
+    after = (
+        {**played, "actors": [{"id": "clerk"}]}
+        if dropped == "from the scenario"
+        else played
+    )
+    cast = CAST if dropped == "from the scenario" else [CLERK]
+
+    with pytest.raises(HostedHarnessError) as raised:
+        require_valid_faults(
+            [after],
+            targets=door_targets(READING, RULES, cast),
+            cast=cast,
+            before=[played],
+        )
+    assert raised.value.details["problems"][0]["field"] == "approval"
+    # The approver still there: the unchanged fault passes.
+    require_valid_faults(
+        [played], targets=door_targets(READING, RULES, CAST), cast=CAST, before=[played]
+    )
+
+
 def test_the_resolved_fault_names_the_action_that_records_the_approval():
     [resolved] = resolved_faults(
         [{**NEEDS_APPROVAL, "approved_when": {"status": "approved"}, "on_call": 2}],

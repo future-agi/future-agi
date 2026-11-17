@@ -174,6 +174,8 @@ def _turn_ends(environment, message, *, outcome="success", published=True):
         ({}, {"starts_from": "rdr_arjun"}, "refused"),
         # A later, unrelated request whose turn fails never reaches back to this rework.
         ({"later_failure": True}, {"starts_from": "rdr_priya"}, "proven"),
+        # The person answers the builder's question, then the rework's save is refused: still this rework's turn.
+        ({"answered_failure": True}, {"starts_from": "rdr_priya"}, "refused"),
         # A fact about the record that is not its seeded value: invented, never the record.
         ({}, {"starts_from": "rdr_priya", "first_name": "Priyanka"}, "refused"),
         # The builder found the scenario cannot hold with that record and changed nothing: its reason is served.
@@ -194,6 +196,7 @@ def _turn_ends(environment, message, *, outcome="success", published=True):
         "unproven",
         "unchanged",
         "later unrelated failure",
+        "answered then save refused",
         "invented",
         "cannot hold",
     ],
@@ -214,6 +217,7 @@ def test_the_served_state_follows_the_builder_s_turn(
     reply = turn.pop("reply", None) if turn is not None else None
     if turn is not None:
         later_failure = turn.pop("later_failure", False)
+        answered_failure = turn.pop("answered_failure", False)
         _turn_ends(environment, message, **turn)
         if reply is not None:
             Message.no_workspace_objects.create(
@@ -223,6 +227,33 @@ def test_the_served_state_follows_the_builder_s_turn(
                 sequence=message.sequence + 5,
                 content=reply,
             )
+        if answered_failure:
+            asked = Message.no_workspace_objects.create(
+                conversation_id=message.conversation_id,
+                role=Message.Role.ASSISTANT,
+                kind=Message.Kind.CONFIRMATION,
+                state=Message.State.COMPLETED,
+                sequence=message.sequence + 2,
+                content="Confirm this change: edit_scenario",
+            )
+            for offset, role, state, content, reply_to in (
+                (3, Message.Role.USER, Message.State.COMPLETED, "Yes", asked.id),
+                (
+                    4,
+                    Message.Role.ASSISTANT,
+                    Message.State.FAILED,
+                    "These changes were not saved: no.",
+                    None,
+                ),
+            ):
+                Message.no_workspace_objects.create(
+                    conversation_id=message.conversation_id,
+                    role=role,
+                    state=state,
+                    sequence=message.sequence + offset,
+                    content=content,
+                    reply_to=reply_to,
+                )
         if later_failure:
             for offset, role, state in (
                 (10, Message.Role.USER, Message.State.COMPLETED),
@@ -252,6 +283,31 @@ def test_the_served_state_follows_the_builder_s_turn(
             == "The builder didn't rework this scenario to start from users rdr_priya. See its reply."
         )
         assert rework["builder_reply"] == reply and rework["reply_message_id"]
+
+
+def test_a_rework_is_proven_only_by_the_record_at_the_path_it_asked_about(
+    user, workspace, storage, auth_client
+):
+    # The asked rider is named by another fact, while the fact the rework asked about still names the old rider.
+    environment = _rides(user, workspace, storage, "rework-path")
+    assert _rework(auth_client, environment).status_code == 202
+    message = _requests(environment).get()
+    made = (message.created_at + timedelta(seconds=1)).isoformat()
+    _author(
+        environment,
+        user,
+        fixture={**FIXTURE, "caller": {"rider_id": "rdr_priya", "first_name": "Priya"}},
+        extra={
+            "proofs.json": json.dumps(
+                {KEY: {"holds": True, "why": "", "proved_at": made}}
+            )
+        },
+    )
+    _turn_ends(environment, message)
+
+    rework = auth_client.get(_url(environment)).json()["rework"]
+
+    assert rework["state"] == "refused"
 
 
 def test_a_second_request_waits_for_the_first(user, workspace, storage, auth_client):
@@ -400,7 +456,222 @@ def test_a_save_that_leaves_a_scenario_as_it_is_is_never_held_up_by_its_record(
         },
     )
 
-    refuse_invented(environment, unchanged)
+    refuse_invented(environment, unchanged, _requests(environment).get())
+
+
+@pytest.mark.parametrize(
+    "change, refused",
+    [
+        ("rewritten", True),
+        ("removed", True),
+        ("another row", False),
+    ],
+)
+def test_a_save_that_leaves_the_scenario_as_it_is_still_keeps_the_asked_record_as_seeded(
+    user, workspace, storage, auth_client, change, refused
+):
+    from simulate.services.harness_starting_record_rework import refuse_invented
+    from simulate.services.harness_starting_records import scenario_files
+    from simulate.services.hosted_harness import HostedHarnessError
+    from simulate.tests.test_harness_amend_archive import NAMES
+    from simulate.tests.test_harness_starting_records import CONTRACT, SCENARIO, STORE
+    from simulate.tests.test_harness_versioning_record import _authoring
+
+    environment = _rides(user, workspace, storage, f"rework-seed-only-{change}")
+    assert _rework(auth_client, environment).status_code == 202
+    document = scenario_files(environment, KEY).document
+    store = json.loads(json.dumps(STORE))
+    users = store["rows"]["users"]
+    if change == "rewritten":
+        next(one for one in users if one["rider_id"] == "rdr_priya")["first_name"] = (
+            "Priyanka"
+        )
+    elif change == "removed":
+        store["rows"]["users"] = [
+            one for one in users if one["rider_id"] != "rdr_priya"
+        ]
+        store["rows"]["wallets"] = [
+            one for one in store["rows"]["wallets"] if one["rider_id"] != "rdr_priya"
+        ]
+    else:
+        store["rows"]["otp_codes"][0]["code"] = "111111"
+    body = _authoring(
+        names=NAMES[:1],
+        contract=CONTRACT,
+        **{
+            "scenarios.json": json.dumps([document]),
+            f"scenarios/{SCENARIO}/scenario.json": json.dumps(document),
+            "store.json": json.dumps(store),
+        },
+    )
+
+    command = _requests(environment).get()
+    if not refused:
+        refuse_invented(environment, body, command)
+        return
+    with pytest.raises(HostedHarnessError) as error:
+        refuse_invented(environment, body, command)
+    assert error.value.code == "starting_record_not_as_seeded"
+    assert "users rdr_priya" in error.value.message
+
+
+def test_a_save_that_changes_the_scenario_without_starting_it_from_the_asked_record_is_refused(
+    user, workspace, storage, auth_client
+):
+    from simulate.services.harness_starting_record_rework import refuse_invented
+    from simulate.services.hosted_harness import HostedHarnessError
+    from simulate.tests.test_harness_amend_archive import NAMES
+    from simulate.tests.test_harness_starting_records import CONTRACT, SCENARIO, STORE
+    from simulate.tests.test_harness_versioning_record import _authoring, _scenario
+
+    environment = _rides(user, workspace, storage, "rework-record-absent")
+    assert _rework(auth_client, environment).status_code == 202
+    # The scenario changes, but still starts from the rider it started from, not the one the rework asked for.
+    document = _scenario(
+        SCENARIO, fixture={**FIXTURE, "pickup": "Indiranagar, Bengaluru"}
+    )
+    body = _authoring(
+        names=NAMES[:1],
+        contract=CONTRACT,
+        **{
+            "scenarios.json": json.dumps([document]),
+            f"scenarios/{SCENARIO}/scenario.json": json.dumps(document),
+            "store.json": json.dumps(STORE),
+        },
+    )
+
+    with pytest.raises(HostedHarnessError) as error:
+        refuse_invented(environment, body, _requests(environment).get())
+    assert error.value.code == "starting_record_not_as_seeded"
+    assert "users rdr_priya" in error.value.message
+
+
+def test_a_rework_s_save_that_drops_its_scenario_is_refused(
+    user, workspace, storage, auth_client
+):
+    from simulate.services.harness_starting_record_rework import refuse_invented
+    from simulate.services.hosted_harness import HostedHarnessError
+    from simulate.tests.test_harness_amend_archive import NAMES
+    from simulate.tests.test_harness_starting_records import CONTRACT, SCENARIO, STORE
+    from simulate.tests.test_harness_versioning_record import _authoring, _scenario
+
+    environment = _rides(user, workspace, storage, "rework-dropped")
+    assert _rework(auth_client, environment).status_code == 202
+    # The rework's save renames the scenario, so the scenario it was asked about is gone.
+    renamed = {
+        **_scenario(SCENARIO, fixture=FIXTURE),
+        "scenario_key": "renamed",
+        "name": "renamed",
+    }
+    body = _authoring(
+        names=NAMES[:1],
+        contract=CONTRACT,
+        **{
+            "scenarios.json": json.dumps([renamed]),
+            f"scenarios/{SCENARIO}/scenario.json": json.dumps(renamed),
+            "store.json": json.dumps(STORE),
+        },
+    )
+
+    with pytest.raises(HostedHarnessError) as error:
+        refuse_invented(environment, body, _requests(environment).get())
+    assert error.value.code == "starting_record_not_as_seeded"
+
+
+def _later_command(rework, *, offset, reply_to=None):
+    return Message.no_workspace_objects.create(
+        conversation_id=rework.conversation_id,
+        role=Message.Role.USER,
+        state=Message.State.COMPLETED,
+        sequence=rework.sequence + offset,
+        content="Start it from Arjun again, and his name is Arjun K.",
+        reply_to=reply_to,
+    )
+
+
+@pytest.mark.parametrize(
+    "turn, refused",
+    [("later request", False), ("answer to the rework's question", True)],
+)
+def test_only_the_rework_s_own_turn_is_held_to_the_asked_record(
+    user, workspace, storage, auth_client, turn, refused
+):
+    # After the rework, an ordinary chat edit may start the scenario from another record and change that row; the
+    # person's answer to the rework's own question is still the rework's turn.
+    from simulate.services.harness_starting_record_rework import refuse_invented
+    from simulate.services.hosted_harness import HostedHarnessError
+    from simulate.tests.test_harness_amend_archive import NAMES
+    from simulate.tests.test_harness_starting_records import CONTRACT, SCENARIO, STORE
+    from simulate.tests.test_harness_versioning_record import _authoring, _scenario
+
+    environment = _rides(user, workspace, storage, f"rework-turn-{turn[:6]}")
+    assert _rework(auth_client, environment).status_code == 202
+    rework = _requests(environment).get()
+    command = (
+        _later_command(rework, offset=10)
+        if turn == "later request"
+        else _later_command(rework, offset=10, reply_to=rework.id)
+    )
+    document = _scenario(
+        SCENARIO, fixture={**FIXTURE, "pickup": "Indiranagar, Bengaluru"}
+    )
+    store = json.loads(json.dumps(STORE))
+    next(one for one in store["rows"]["users"] if one["rider_id"] == "rdr_priya")[
+        "first_name"
+    ] = "Priyanka"
+    body = _authoring(
+        names=NAMES[:1],
+        contract=CONTRACT,
+        **{
+            "scenarios.json": json.dumps([document]),
+            f"scenarios/{SCENARIO}/scenario.json": json.dumps(document),
+            "store.json": json.dumps(store),
+        },
+    )
+
+    if not refused:
+        refuse_invented(environment, body, command)
+        return
+    with pytest.raises(HostedHarnessError) as error:
+        refuse_invented(environment, body, command)
+    assert error.value.code == "starting_record_not_as_seeded"
+
+
+def test_a_request_filed_without_the_record_s_fields_holds_the_row_as_seeded_before_the_save(
+    user, workspace, storage, auth_client
+):
+    from simulate.services.harness_starting_record_rework import refuse_invented
+    from simulate.services.harness_starting_records import scenario_files
+    from simulate.services.hosted_harness import HostedHarnessError
+    from simulate.tests.test_harness_amend_archive import NAMES
+    from simulate.tests.test_harness_starting_records import CONTRACT, SCENARIO, STORE
+    from simulate.tests.test_harness_versioning_record import _authoring
+
+    environment = _rides(user, workspace, storage, "rework-no-fields")
+    assert _rework(auth_client, environment).status_code == 202
+    rework = _requests(environment).get()
+    payload = dict(rework.payload)
+    payload["_record"] = {k: v for k, v in payload["_record"].items() if k != "fields"}
+    Message.no_workspace_objects.filter(id=rework.id).update(payload=payload)
+    rework.refresh_from_db()
+    document = scenario_files(environment, KEY).document
+    store = json.loads(json.dumps(STORE))
+    next(one for one in store["rows"]["users"] if one["rider_id"] == "rdr_priya")[
+        "first_name"
+    ] = "Priyanka"
+    body = _authoring(
+        names=NAMES[:1],
+        contract=CONTRACT,
+        **{
+            "scenarios.json": json.dumps([document]),
+            f"scenarios/{SCENARIO}/scenario.json": json.dumps(document),
+            "store.json": json.dumps(store),
+        },
+    )
+
+    with pytest.raises(HostedHarnessError) as error:
+        refuse_invented(environment, body, rework)
+    assert "first_name Priya" in error.value.message
 
 
 def test_a_rework_waiting_on_the_person_says_so_with_the_chat_message_that_asks(
@@ -512,6 +783,13 @@ def test_a_row_another_scenario_starts_from_is_offered_with_a_note_and_left_to_t
         (10, "10", True),
         ("0.1", 0.1, True),
         ("Priya", "Priyanka", False),
+        ("02134", "2134", False),
+        ("+15551234567", "15551234567", False),
+        ("Priya ", "Priya", False),
+        ("None", None, False),
+        (None, None, True),
+        (True, 1, False),
+        ("10.00", "10.00", True),
     ],
     ids=[
         "large ints",
@@ -521,6 +799,13 @@ def test_a_row_another_scenario_starts_from_is_offered_with_a_note_and_left_to_t
         "int text",
         "decimal",
         "text",
+        "zip leading zero",
+        "phone plus",
+        "trailing space",
+        "None as text",
+        "None",
+        "true is not 1",
+        "same text",
     ],
 )
 def test_a_fact_is_the_seeded_value_only_when_it_is_exactly_that_value(
