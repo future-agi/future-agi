@@ -19,7 +19,10 @@ Usage:
 
 import os
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from sentry_sdk.types import Event
 
 # Environment detection
 ENV_TYPE = os.getenv("ENV_TYPE", "local")
@@ -318,17 +321,20 @@ def _strip_raw_span_frame_vars(event: dict) -> dict | None:
 
     Exceptions, logged errors (attach_stacktrace) and a top-level stacktrace
     each carry frames, and ``iter_event_frames`` walks all three. The other
-    frames go too: callers and library frames hold the same batch. Returns
-    None, which drops the event, when the stacks cannot be walked, because
-    they may hold a batch that cannot be removed.
+    frames go too: callers and library frames hold the same batch. Changes the
+    event in place and returns it. Returns None, which drops the event, when
+    the stacks cannot be walked, because they may hold a batch that cannot be
+    removed.
     """
     # Inline, like every sentry_sdk import here: settings imports this module in
     # every process, and the SDK (~75 ms) loads only when Sentry is on.
     from sentry_sdk.utils import iter_event_frames
 
     try:
-        frames = list(iter_event_frames(event))
-    except Exception:
+        frames = list(iter_event_frames(cast("Event", event)))
+    except (AttributeError, TypeError):
+        # What the walker raises on a malformed stack: .get on a non-mapping,
+        # or iterating a value that is not a list.
         return None
     if any(_is_raw_span_frame(frame) for frame in frames):
         for frame in frames:
@@ -384,8 +390,7 @@ def _get_before_send() -> Callable:
 
         # 4. Scrub secrets/PII from the surviving event. Raw span content goes
         # first, outside the try below: it fails closed, not open.
-        event = _strip_raw_span_frame_vars(event)
-        if event is None:
+        if _strip_raw_span_frame_vars(event) is None:
             return None
         try:
             _scrub_event(event)
