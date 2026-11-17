@@ -281,6 +281,7 @@ def test_runs_list_environment_and_simulate_runs_newest_first(
         "outcome_failed": None,
         "outcome_errored": None,
         "outcome_skipped": None,
+        "outcome_cancelled": None,
         "outcome_no_score": None,
         # A run without receipts has no counts here: no verdict and no rate.
         "outcome_status": None,

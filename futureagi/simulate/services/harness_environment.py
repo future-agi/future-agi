@@ -41,11 +41,13 @@ from simulate.constants.harness_environment import (
 )
 from simulate.models import (
     AgentVersion,
+    HarnessEnvironmentVersion,
     HostedHarnessJob,
     HostedHarnessReceipt,
     HostedHarnessStageOutput,
     TestExecution,
 )
+from simulate.models.harness_versioning import VersionStatus
 from simulate.selectors.environment_documents import (
     contract_data,
     registration_key,
@@ -59,7 +61,7 @@ from simulate.services.harness_scenarios import (
 )
 from simulate.services.run_outcome import outcome_fields, receipt_outcome_counts
 from simulate.services.run_reliability_v3 import trial_passes
-from simulate.types import ContractCallActor
+from simulate.types import ContractCallActor, ContractWorker
 
 if TYPE_CHECKING:
     from simulate.services.harness_actor_rules import ActorRecord, ActorRules
@@ -393,6 +395,8 @@ _CONTRACT_FIELDS = (
     "runtime_dependencies",
     "implementation",
     "tool_entrypoints",
+    # The workers the app's source declares (id, name, tools, allowed tools, binding, address variable, process).
+    "workers",
     "data_store",
     "open_questions",
     "amendments",
@@ -889,6 +893,12 @@ def _contract_section(
     if not contract:
         return None
     section = {field: contract.get(field) for field in _CONTRACT_FIELDS}
+    declared = contract.get("workers")
+    section["workers"] = [
+        _contract_worker(one)
+        for one in (declared if isinstance(declared, list) else [])
+        if isinstance(one, dict) and one.get("id")
+    ]
     section["amendments"] = _amendments(contract.get("amendments"))
     section["sub_goals"] = _catalogue_entries(catalogue)
     section["call_actors"] = _call_actor_list(call_actors, scenario_docs)
@@ -1017,6 +1027,53 @@ def _max_turns(docs: Any) -> int | None:
         if isinstance(doc, dict) and isinstance(doc.get("max_turns"), int)
     ]
     return max(budgets) if budgets else None
+
+
+def _contract_worker(worker: dict[str, Any]) -> ContractWorker:
+    """A declared worker, its allowed tools kept only when narrower than the tools its code holds."""
+    tools = [str(one) for one in worker.get("tools") or [] if isinstance(one, str)]
+    allowed = worker.get("allowed_tools")
+    allowed = [str(one) for one in allowed] if isinstance(allowed, list) else []
+    narrower = bool(allowed) and any(tool not in allowed for tool in tools)
+    binding = worker.get("binding")
+    name = worker.get("name") if isinstance(worker.get("name"), str) else ""
+    out: ContractWorker = {
+        "id": str(worker["id"]),
+        "display_name": name.strip() or str(worker["id"]),
+        "tools": tools,
+        "allowed_tools": allowed if narrower else [],
+        "tools_shown": allowed if narrower else tools,
+        "binding": binding if binding in ("separate", "shared") else "not_declared",
+    }
+    if isinstance(worker.get("name"), str):
+        out["name"] = worker["name"]
+    if isinstance(worker.get("address_env"), str):
+        out["address_env"] = worker["address_env"]
+    if isinstance(worker.get("process"), str):
+        out["process"] = worker["process"]
+    return out
+
+
+def version_participants(version: AgentVersion) -> list[ContractWorker]:
+    """The workers the newest environment built for this agent version declares, as its Workers card shows them;
+    empty when no environment was built for it or its app declares none."""
+    built = (
+        HarnessEnvironmentVersion.no_workspace_objects.filter(
+            agent_version=version,
+            organization_id=version.organization_id,
+            status=VersionStatus.ACTIVE,
+        )
+        .order_by("-created_at")
+        .only("documents")
+        .first()
+    )
+    contract = (built.documents or {}).get("contract") if built is not None else None
+    declared = contract.get("workers") if isinstance(contract, dict) else None
+    return [
+        _contract_worker(one)
+        for one in (declared if isinstance(declared, list) else [])
+        if isinstance(one, dict) and one.get("id")
+    ]
 
 
 def _amendments(value: Any) -> list[dict[str, str]]:
