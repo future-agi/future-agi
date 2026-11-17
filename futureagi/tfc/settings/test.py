@@ -23,6 +23,11 @@ os.environ.setdefault("EE_LICENSE_KEY", "test-license-key")
 os.environ.setdefault("REDIS_URL", "redis://localhost:16379/0")
 os.environ.setdefault("REDIS_LOCK_URL", "redis://localhost:16379/2")
 os.environ.setdefault("FUTURE_AGI_TELEMETRY_URL", "http://127.0.0.1:9")
+# The placeholder EE_LICENSE_KEY above makes licensed code paths reachable,
+# and the license activation client and enterprise heartbeat default to Future
+# AGI's hosted license service. Keep them on a closed loopback port, like
+# telemetry, unless the run chooses a license server explicitly.
+os.environ.setdefault("FUTURE_AGI_LICENSE_URL", "http://127.0.0.1:9")
 
 from .settings import *  # noqa: F403,E402
 from .settings import INSTALLED_APPS  # noqa: E402
