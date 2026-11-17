@@ -3278,10 +3278,21 @@ class HostedHarnessGateway:
                 lease.conversation_id,
             )
             return
-        HostedHarnessConversationLease.no_workspace_objects.filter(id=lease.id).update(
-            expires_at=timezone.now() + timedelta(seconds=ttl_seconds),
-            updated_at=timezone.now(),
+        gone = HostedHarnessConversationLease.State
+        renewed = (
+            HostedHarnessConversationLease.no_workspace_objects.filter(id=lease.id)
+            .exclude(state__in=(gone.EXPIRED, gone.RELEASED))
+            .update(
+                expires_at=timezone.now() + timedelta(seconds=ttl_seconds),
+                updated_at=timezone.now(),
+            )
         )
+        if not renewed:
+            # A close or a release ended the lease first; it is not revived.
+            logger.info(
+                "conversation sandbox renewal refused conversation=%s",
+                lease.conversation_id,
+            )
 
     def _start_chat_sandbox(
         self,
