@@ -679,12 +679,14 @@ def test_seal_caps_at_the_lifetime(organization, billed, after_the_cap, minutes)
 
 
 @pytest.mark.django_db
-@pytest.mark.parametrize("provider", ["daytona-byo", "daytona"])
+@pytest.mark.parametrize("provider", ["e2b", "daytona"])
 @pytest.mark.parametrize(
     "domain",
     ["", "infrastructure", "connectivity", "platform_sync", "environment", "agent"],
 )
-def test_seal_is_free_for_byo_and_our_failures(organization, billed, provider, domain):
+def test_seal_is_free_for_our_failures_on_every_provider(
+    organization, billed, provider, domain
+):
     start = _now() - timedelta(hours=1)
     row = _row(
         organization,
@@ -697,11 +699,7 @@ def test_seal_is_free_for_byo_and_our_failures(organization, billed, provider, d
 
     row = _seal(row)
 
-    free = provider == "daytona-byo" or domain in (
-        "infrastructure",
-        "connectivity",
-        "platform_sync",
-    )
+    free = domain in ("infrastructure", "connectivity", "platform_sync")
     assert _amounts(billed) == ([] if free else [10.0])
     assert row.billed_minutes == (0 if free else Decimal("10.0000"))
 
@@ -1014,7 +1012,8 @@ def test_sweep_retries_a_row_whose_event_did_not_reach_the_stream(
 
     row.refresh_from_db()
     assert first["errors"] == 1
-    assert (row.settled_at, row.billed_minutes) == (None, None)
+    # The charge was decided and kept; only its sending is retried.
+    assert (row.settled_at, row.billed_minutes) == (None, Decimal("10.0000"))
     assert stream.entries == []
 
     second = sandbox_usage.sweep_sandbox_lifetimes()
@@ -1770,3 +1769,194 @@ def test_rebuild_turn_to_seal_end_to_end(
     assert row.end_reason == "deleted"
     assert abs(row.billed_minutes - expected) <= Decimal("0.0001")
     assert row.billed_minutes < Decimal("16")
+
+
+# --- a delete the platform failed to complete ------------------------------------------
+
+
+def _retire_chat_at_minute_two(organization, clock, delete, *, t0):
+    """A chat sandbox armed for 30 minutes at ``t0``, retired for ``agent_changed`` two
+    minutes later through ``delete``; the real clock then reads 41 minutes after ``t0``."""
+    _job, conversation = _environment(organization)
+    clock(t0)
+    sandbox_usage.open_sandbox_lifetime(
+        kind=HostedSandboxLifetime.Kind.CHAT,
+        provider_name="e2b",
+        provider_ref="sandbox-retired",
+        organization_id=organization.id,
+        workspace_id=None,
+        owner_id=conversation.id,
+        lifetime_seconds=1800,
+        armed_at=t0,
+    )
+    gateway = _gateway()
+    gateway.client.delete = delete
+    clock(t0 + 2 * MINUTE)
+    gateway._delete_chat_sandbox(
+        "sandbox-retired", conversation.id, reason="agent_changed"
+    )
+    clock(None)
+
+
+def _raises(target, **_kwargs):
+    raise RuntimeError("the provider refused the delete")
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "case", ["raises", "not_confirmed", "succeeds_later"], ids=lambda case: case
+)
+def test_a_delete_bills_up_to_the_moment_it_was_asked_for(
+    organization, billed, seals, clock, case
+):
+    t0 = _now() - 41 * MINUTE
+
+    def not_confirmed(target, **_kwargs):
+        return False
+
+    def succeeds_later(target, **_kwargs):
+        # The provider takes three minutes to finish what was asked for at minute two.
+        clock(t0 + 5 * MINUTE)
+        return True
+
+    delete = {
+        "raises": _raises,
+        "not_confirmed": not_confirmed,
+        "succeeds_later": succeeds_later,
+    }[case]
+    _retire_chat_at_minute_two(organization, clock, delete, t0=t0)
+
+    sandbox_usage.sweep_sandbox_lifetimes()
+
+    row = HostedSandboxLifetime.no_workspace_objects.get(provider_ref="sandbox-retired")
+    assert row.billed_minutes == Decimal("2.0000")
+    assert _amounts(billed) == [2.0]
+    assert billed[0].timestamp == t0 + 2 * MINUTE
+    assert row.end_reason == "agent_changed"
+    assert row.delete_requested_at == t0 + 2 * MINUTE
+
+
+@pytest.mark.django_db
+def test_the_first_delete_request_is_the_one_billing_stops_at(
+    organization, billed, clock
+):
+    start = _now() - 41 * MINUTE
+    row = _row(organization, start=start)
+    for minute in (2, 9):
+        clock(start + minute * MINUTE)
+        assert sandbox_usage.record_sandbox_end_reason(
+            provider_ref=row.provider_ref, reason="agent_changed", delete_requested=True
+        )
+    clock(start + 12 * MINUTE)
+    sandbox_usage.close_sandbox_lifetime(
+        provider_ref=row.provider_ref, reason="agent_changed", delete_requested=True
+    )
+    clock(None)
+
+    row = _seal(row)
+
+    assert row.delete_requested_at == start + 2 * MINUTE
+    assert row.billed_minutes == Decimal("2.0000")
+
+
+@pytest.mark.django_db
+def test_an_ending_that_asks_for_no_delete_is_billed_to_its_close(
+    organization, billed, clock
+):
+    start = _now() - 41 * MINUTE
+    row = _row(organization, start=start)
+    clock(start + 2 * MINUTE)
+    sandbox_usage.record_sandbox_end_reason(
+        provider_ref=row.provider_ref, reason="chat_stopped_responding"
+    )
+    clock(start + 6 * MINUTE)
+    sandbox_usage.close_sandbox_lifetime(provider_ref=row.provider_ref)
+    clock(None)
+
+    row = _seal(row)
+
+    assert row.delete_requested_at is None
+    assert row.billed_minutes == Decimal("6.0000")
+
+
+# --- errors in the lifecycle's own code are not swallowed ------------------------------
+
+
+@pytest.mark.django_db
+def test_open_does_not_swallow_a_programming_error(organization, cloud):
+    with pytest.raises(TypeError):
+        sandbox_usage.open_sandbox_lifetime(
+            kind=HostedSandboxLifetime.Kind.CHAT,
+            provider_name="e2b",
+            provider_ref="sandbox-bad-call",
+            organization_id=organization.id,
+            workspace_id=None,
+            owner_id=uuid4(),
+            lifetime_seconds=None,
+            armed_at=_now(),
+        )
+
+    assert not HostedSandboxLifetime.no_workspace_objects.exists()
+
+
+# --- the charge is sent outside the row's transaction ----------------------------------
+
+
+@pytest.mark.django_db
+def test_the_charge_is_sent_with_no_transaction_open(organization, cloud, monkeypatch):
+    emitter = pytest.importorskip("ee.usage.services.emitter")
+    open_savepoints = []
+
+    def emit(event, *, raise_on_failure=False):
+        # The test's own transaction is the only one; a seal that emits inside its own
+        # ``atomic`` would add a savepoint, and hold the row's lock, while it sends.
+        open_savepoints.append(list(connection.savepoint_ids))
+
+    monkeypatch.setattr(emitter, "emit", emit)
+    start = _now() - 41 * MINUTE
+    row = _row(organization, start=start, ended=start + 10 * MINUTE)
+
+    row = _seal(row)
+
+    assert open_savepoints == [[]]
+    assert (row.billed_minutes, row.settled_at is not None) == (
+        Decimal("10.0000"),
+        True,
+    )
+
+
+@pytest.mark.django_db
+def test_a_failed_send_leaves_the_charge_saved_and_the_row_unsettled(
+    organization, cloud, monkeypatch
+):
+    emitter = pytest.importorskip("ee.usage.services.emitter")
+    sent = []
+    failures = [RuntimeError("the stream is unavailable")]
+
+    def emit(event, *, raise_on_failure=False):
+        if failures:
+            raise failures.pop()
+        sent.append(event)
+
+    monkeypatch.setattr(emitter, "emit", emit)
+    now = _now()
+    row = _row(organization, start=now - 21 * MINUTE, ended=now - 11 * MINUTE)
+
+    first = sandbox_usage.sweep_sandbox_lifetimes()
+
+    row.refresh_from_db()
+    assert first["errors"] == 1
+    assert row.settled_at is None
+    # The charge was decided and kept; only its sending is retried.
+    assert row.billed_minutes == Decimal("10.0000")
+    assert sent == []
+
+    second = sandbox_usage.sweep_sandbox_lifetimes()
+    third = sandbox_usage.sweep_sandbox_lifetimes()
+
+    row.refresh_from_db()
+    assert (second["settled"], third["settled"]) == (1, 0)
+    assert row.settled_at is not None
+    assert [(event.event_id, event.amount) for event in sent] == [
+        (str(uuid5(UUID(str(row.id)), "sandbox_runtime")), 10.0)
+    ]

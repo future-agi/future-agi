@@ -272,7 +272,10 @@ def release(fix_run_id: str) -> None:
                 "failure_domain": "infrastructure",
                 "last_seen": fix_run.heartbeat_at,
             }
-        record_sandbox_end_reason(provider_ref=sandbox_ref, **ending)
+        # The delete is asked for next: billing stops at this moment even if it fails.
+        record_sandbox_end_reason(
+            provider_ref=sandbox_ref, delete_requested=True, **ending
+        )
         provider = _provider()
         try:
             deleted = provider.delete(
@@ -286,7 +289,9 @@ def release(fix_run_id: str) -> None:
             provider, sandbox_ref, deleted, request_timeout=_PROVIDER_TIMEOUT_SECONDS
         ):
             # The ending again: it holds if the write before the delete was lost.
-            close_sandbox_lifetime(provider_ref=sandbox_ref, **ending)
+            close_sandbox_lifetime(
+                provider_ref=sandbox_ref, delete_requested=True, **ending
+            )
         AgentFixRun.no_workspace_objects.filter(
             id=fix_run_id, sandbox_ref=sandbox_ref
         ).update(sandbox_ref="", updated_at=timezone.now())

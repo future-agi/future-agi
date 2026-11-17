@@ -404,13 +404,11 @@ def test_only_a_provider_whose_renewal_restarts_the_lifetime_says_so():
 @pytest.mark.parametrize(
     ("provider", "expected"),
     [
-        ("daytona-byo", []),
         ("daytona", [2.5]),
         ("e2b", [2.5]),
-        ("Daytona-BYO", [2.5]),
     ],
 )
-def test_bring_your_own_sandbox_is_free(metered_attempt, provider, expected):
+def test_a_real_provider_sandbox_is_billed(metered_attempt, provider, expected):
     capability, events = metered_attempt
     t0 = _t0()
     attempt = _finish(
@@ -940,25 +938,17 @@ def test_require_sandbox_create_refusal_is_persisted_and_raises_402(
 
 @pytest.mark.django_db
 @pytest.mark.requires_ee
-@pytest.mark.parametrize(
-    ("error", "level"),
-    [("BillingConfigError", "info"), ("RuntimeError", "warning")],
-    ids=["no_billing_config", "anything_else"],
-)
 def test_require_sandbox_create_allows_when_billing_cannot_load(
-    metered_attempt, monkeypatch, error, level
+    metered_attempt, monkeypatch
 ):
     from ee.usage.services import metering
     from ee.usage.services.config import BillingConfigError
 
     capability, _ = metered_attempt
     attempt = capability.attempt
-    raised = {"BillingConfigError": BillingConfigError, "RuntimeError": RuntimeError}[
-        error
-    ]
 
     def check_usage(*args, **kwargs):
-        raise raised("billing is not available here")
+        raise BillingConfigError("billing is not available here")
 
     monkeypatch.setattr(metering, "check_usage", check_usage)
     log = MagicMock()
@@ -970,9 +960,31 @@ def test_require_sandbox_create_allows_when_billing_cannot_load(
 
     attempt.job.refresh_from_db()
     assert "usage_limit" not in (attempt.job.payload.get("metadata") or {})
-    getattr(log, level).assert_called_once()
-    other = "warning" if level == "info" else "info"
-    getattr(log, other).assert_not_called()
+    log.info.assert_called_once()
+    log.warning.assert_not_called()
+
+
+@pytest.mark.django_db
+@pytest.mark.requires_ee
+def test_require_sandbox_create_fails_when_the_usage_store_is_unreachable(
+    metered_attempt, monkeypatch
+):
+    import redis
+
+    from ee.usage.services import metering
+
+    capability, _ = metered_attempt
+    attempt = capability.attempt
+
+    def check_usage(*args, **kwargs):
+        raise redis.ConnectionError("the usage store is unreachable")
+
+    monkeypatch.setattr(metering, "check_usage", check_usage)
+
+    with pytest.raises(redis.ConnectionError):
+        harness_usage.require_sandbox_create(
+            str(attempt.job.organization_id), attempt=attempt
+        )
 
 
 @pytest.mark.django_db
@@ -1089,8 +1101,8 @@ def test_delete_confirmed(deleted, outcome, expected, asked):
 @pytest.mark.requires_ee
 @pytest.mark.parametrize(
     ("provider", "expected"),
-    [("daytona", [12.0]), ("daytona-byo", [])],
-    ids=["daytona", "daytona-byo"],
+    [("daytona", [12.0]), ("e2b", [12.0])],
+    ids=["daytona", "e2b"],
 )
 def test_twelve_minute_run_meters_twelve(metered_attempt, clock, provider, expected):
     capability, events = metered_attempt
@@ -1115,8 +1127,8 @@ def test_twelve_minute_run_meters_twelve(metered_attempt, clock, provider, expec
     assert _amounts(events) == expected
     assert attempt.sandbox_runtime["provider"] == provider
     attempt.job.refresh_from_db()
-    assert harness_usage.harness_consumption(attempt.job)["sandbox_minutes"] == (
-        expected[0] if expected else 0
+    assert (
+        harness_usage.harness_consumption(attempt.job)["sandbox_minutes"] == expected[0]
     )
 
 

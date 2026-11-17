@@ -783,6 +783,10 @@ class HostedSandboxLifetime(BaseModel):
     armed_at = models.DateTimeField()
     lifetime_ends_at = models.DateTimeField()
     ended_at = models.DateTimeField(null=True)
+    # When the platform first asked the provider to delete the sandbox. Billing stops
+    # there, whether or not the delete went through: time after a delete that did not
+    # complete is not the customer's.
+    delete_requested_at = models.DateTimeField(null=True, blank=True)
     end_reason = models.CharField(max_length=64, blank=True, default="")
     failure_domain = models.CharField(max_length=32, blank=True, default="")
     billed_minutes = models.DecimalField(max_digits=12, decimal_places=4, null=True)

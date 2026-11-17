@@ -46,6 +46,10 @@ class Migration(migrations.Migration):
                 ("armed_at", models.DateTimeField()),
                 ("lifetime_ends_at", models.DateTimeField()),
                 ("ended_at", models.DateTimeField(null=True)),
+                (
+                    "delete_requested_at",
+                    models.DateTimeField(blank=True, null=True),
+                ),
                 ("end_reason", models.CharField(blank=True, default="", max_length=64)),
                 (
                     "failure_domain",

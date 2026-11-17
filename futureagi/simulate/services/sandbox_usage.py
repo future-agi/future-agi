@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import logging
 from datetime import timedelta
 from uuid import UUID, uuid5
 
+import structlog
 from django.conf import settings
-from django.db import transaction
+from django.db import DatabaseError, transaction
 from django.utils import timezone
 
 from simulate.models import (
@@ -22,7 +22,7 @@ from simulate.services.harness_usage import (
 )
 from tfc.ee_gating import is_oss
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 # A sandbox nobody confirmed deleted is closed this long after its lifetime limit.
 SWEEP_GRACE = timedelta(minutes=10)
@@ -62,8 +62,9 @@ def open_sandbox_lifetime(
                     + timedelta(seconds=int(lifetime_seconds)),
                 },
             )
-    except Exception:  # noqa: BLE001 - metering never fails a create
-        logger.exception("sandbox lifetime not opened kind=%s owner=%s", kind, owner_id)
+    except DatabaseError:
+        # Metering never fails a create; a programming error still does.
+        logger.exception("sandbox_lifetime_not_opened", kind=kind, owner=str(owner_id))
 
 
 def _open_row(provider_ref: str):
@@ -96,8 +97,9 @@ def rearm_sandbox_lifetime(
                     "updated_at",
                 ]
             )
-    except Exception:  # noqa: BLE001 - metering never fails a renewal
-        logger.exception("sandbox lifetime not updated")
+    except DatabaseError:
+        # Metering never fails a renewal; a programming error still does.
+        logger.exception("sandbox_lifetime_not_rearmed", provider_ref=provider_ref)
 
 
 def fix_engine_died_unseen(*, state, heartbeat_at, ended_at) -> bool:
@@ -128,11 +130,27 @@ def _note_reason(row, *, reason: str, failure_domain: str, last_seen, now) -> No
         row.failure_domain = failure_domain
 
 
+def _note_delete_request(row, now) -> list[str]:
+    """The first ask to delete the sandbox is the moment billing stops at, whether or not
+    the delete goes through. Returns the fields it changed."""
+    if row.delete_requested_at is not None:
+        return []
+    row.delete_requested_at = now
+    return ["delete_requested_at"]
+
+
 def record_sandbox_end_reason(
-    *, provider_ref: str, reason: str, failure_domain: str = "", last_seen=None
+    *,
+    provider_ref: str,
+    reason: str,
+    failure_domain: str = "",
+    last_seen=None,
+    delete_requested: bool = False,
 ) -> bool:
     """Why a sandbox is ending, recorded before its deletion. ``last_seen``, the last
-    moment the platform saw it alive, is read only for an ending of ours. Returns False
+    moment the platform saw it alive, is read only for an ending of ours.
+    ``delete_requested`` is set by a caller that deletes the sandbox right after: that
+    moment is kept, so a delete that never completes is not billed past it. Returns False
     only when the write failed; True when it was written, or no open row was there to
     write to."""
     try:
@@ -140,16 +158,21 @@ def record_sandbox_end_reason(
             row = _open_row(provider_ref)
             if row is None:
                 return True
+            now = timezone.now()
             _note_reason(
                 row,
                 reason=reason,
                 failure_domain=failure_domain,
                 last_seen=last_seen,
-                now=timezone.now(),
+                now=now,
             )
-            row.save(update_fields=["end_reason", "failure_domain", "updated_at"])
-    except Exception:  # noqa: BLE001 - metering never fails a delete
-        logger.exception("sandbox lifetime not updated")
+            fields = ["end_reason", "failure_domain", "updated_at"]
+            if delete_requested:
+                fields += _note_delete_request(row, now)
+            row.save(update_fields=fields)
+    except DatabaseError:
+        # Metering never fails a delete; a programming error still does.
+        logger.exception("sandbox_lifetime_not_updated", provider_ref=provider_ref)
         return False
     return True
 
@@ -160,13 +183,15 @@ def close_sandbox_lifetime(
     reason: str = "deleted",
     failure_domain: str = "",
     last_seen=None,
+    delete_requested: bool = False,
 ) -> None:
     """Stop timing a sandbox whose deletion is confirmed, and bill it after commit. The
     ending is applied as ``record_sandbox_end_reason`` does, so it holds even when the
-    write before the deletion was lost."""
-    try:
-        from simulate.tasks.hosted_harness_usage import schedule_sandbox_lifetime_seal
+    write before the deletion was lost; the delete request too, when this close follows
+    a delete (it is then this moment only if the earlier write was lost)."""
+    from simulate.tasks.hosted_harness_usage import schedule_sandbox_lifetime_seal
 
+    try:
         with transaction.atomic():
             row = _open_row(provider_ref)
             if row is None:
@@ -180,13 +205,15 @@ def close_sandbox_lifetime(
                 now=now,
             )
             row.ended_at = now
-            row.save(
-                update_fields=["ended_at", "end_reason", "failure_domain", "updated_at"]
-            )
+            fields = ["ended_at", "end_reason", "failure_domain", "updated_at"]
+            if delete_requested:
+                fields += _note_delete_request(row, now)
+            row.save(update_fields=fields)
             row_id = str(row.id)
             transaction.on_commit(lambda: schedule_sandbox_lifetime_seal(row_id))
-    except Exception:  # noqa: BLE001 - metering never fails a delete
-        logger.exception("sandbox lifetime not closed")
+    except DatabaseError:
+        # Metering never fails a delete; a programming error still does.
+        logger.exception("sandbox_lifetime_not_closed", provider_ref=provider_ref)
 
 
 def _lease_of(provider_ref: str):
@@ -198,8 +225,21 @@ def _lease_of(provider_ref: str):
     )
 
 
+def _billed_end(row: HostedSandboxLifetime):
+    """Where a sandbox's time stops being the customer's: its confirmed end, or the moment
+    the platform asked for its deletion when that came first."""
+    if row.delete_requested_at is None:
+        return row.ended_at
+    return min(row.ended_at, row.delete_requested_at)
+
+
 def seal_sandbox_lifetime(lifetime_id: str) -> str:
-    """Bill one ended sandbox, once. Returns "settled", "waiting" or "skipped"."""
+    """Bill one ended sandbox, once. Returns "settled", "waiting" or "skipped".
+
+    Three steps, none holding the row's lock while the charge is sent: decide and save
+    the minutes; send the charge; mark the row settled. A charge that could not be sent
+    leaves the row unsettled, and the sweep decides and sends it again under the same
+    event id."""
     from simulate.services.harness_versioning import rebuild
 
     with transaction.atomic():
@@ -211,6 +251,7 @@ def seal_sandbox_lifetime(lifetime_id: str) -> str:
         if row is None or row.ended_at is None or row.settled_at is not None:
             return "skipped"
         now = timezone.now()
+        billed_end = _billed_end(row)
         domains, excluded = [row.failure_domain or None], ()
         if row.kind == HostedSandboxLifetime.Kind.PLATFORM_CHECK:
             # Started by the platform to check its own build, not asked for by the customer.
@@ -221,9 +262,7 @@ def seal_sandbox_lifetime(lifetime_id: str) -> str:
                 provider_ref=row.provider_ref,
                 # It ran to its lifetime limit: a rebuild turn running then was cut off.
                 cut_off_at=(
-                    row.lifetime_ends_at
-                    if row.ended_at >= row.lifetime_ends_at
-                    else None
+                    row.lifetime_ends_at if billed_end >= row.lifetime_ends_at else None
                 ),
             )
             if turns.pending and row.ended_at > now - TURN_WAIT:
@@ -245,13 +284,15 @@ def seal_sandbox_lifetime(lifetime_id: str) -> str:
             provider=row.provider,
             failure_domains=domains,
             started_at=row.started_at,
-            ended_at=row.ended_at,
+            ended_at=billed_end,
             armed_at=row.armed_at,
             lifetime_seconds=row.lifetime_seconds,
             excluded=excluded,
         )
         row.billed_minutes = minutes
-        row.settled_at = now
+        needs_send = bool(minutes) and not is_oss()
+        # With nothing to send, the charge and the settling land together.
+        row.settled_at = None if needs_send else now
         row.save(
             update_fields=[
                 "billed_minutes",
@@ -261,8 +302,15 @@ def seal_sandbox_lifetime(lifetime_id: str) -> str:
                 "updated_at",
             ]
         )
-        if minutes and not is_oss():
-            _emit_lifetime(row, minutes)
+    if needs_send:
+        # After the commit above: a slow or failing stream never holds the row's lock.
+        # Raises when the event did not reach the stream; the row then stays unsettled.
+        _emit_lifetime(row, minutes)
+        settled_at = timezone.now()
+        with transaction.atomic():
+            HostedSandboxLifetime.no_workspace_objects.filter(
+                id=row.id, settled_at__isnull=True
+            ).update(settled_at=settled_at, updated_at=settled_at)
     return "settled"
 
 
@@ -271,14 +319,14 @@ def _emit_lifetime(row: HostedSandboxLifetime, minutes) -> None:
     from ee.usage.schemas.events import UsageEvent
     from ee.usage.services.emitter import emit
 
-    # Raises when the event did not reach the stream: settled_at rolls back with it.
+    # The id comes from the row alone: a send repeated after a lost settling is one event.
     emit(
         UsageEvent(
             event_id=str(uuid5(UUID(str(row.id)), "sandbox_runtime")),
             org_id=str(row.organization_id),
             event_type=BillingEventType.SANDBOX_RUNTIME,
             amount=float(minutes),
-            timestamp=min(row.ended_at, row.lifetime_ends_at),
+            timestamp=min(_billed_end(row), row.lifetime_ends_at),
             properties={
                 "source": "hosted_sandbox",
                 "source_id": str(row.id),
@@ -391,8 +439,8 @@ def sweep_sandbox_lifetimes(*, limit: int = 200) -> dict[str, int]:
                     ]
                 )
             counts["expired"] += 1
-        except Exception:  # noqa: BLE001 - one bad row never stops the others
-            logger.exception("sandbox lifetime not expired lifetime=%s", row_id)
+        except Exception:  # noqa: BLE001 - a batch job: one bad row, whatever its error, must not stop the rest
+            logger.exception("sandbox_lifetime_not_expired", lifetime=str(row_id))
             counts["errors"] += 1
     unsettled = list(
         HostedSandboxLifetime.no_workspace_objects.filter(
@@ -406,8 +454,8 @@ def sweep_sandbox_lifetimes(*, limit: int = 200) -> dict[str, int]:
     for row_id in unsettled:
         try:
             outcome = seal_sandbox_lifetime(str(row_id))
-        except Exception:  # noqa: BLE001 - one bad row never stops the others
-            logger.exception("sandbox lifetime seal failed lifetime=%s", row_id)
+        except Exception:  # noqa: BLE001 - a batch job: one bad row, whatever its error (the stream's included), must not stop the rest
+            logger.exception("sandbox_lifetime_seal_failed", lifetime=str(row_id))
             counts["errors"] += 1
             # Behind the rows not yet tried, so it cannot hold the head of the queue.
             HostedSandboxLifetime.no_workspace_objects.filter(id=row_id).update(

@@ -26,8 +26,6 @@ _AUTHORING_REPORT_KEY = "authoring_usage_reports"
 _NON_BILLABLE_FAILURE_DOMAINS = frozenset(
     {"infrastructure", "connectivity", "platform_sync"}
 )
-# The provider name a bring-your-own sandbox is recorded under; its time is the customer's.
-BYO_SANDBOX_PROVIDER = "daytona-byo"
 _MINUTE_PRECISION = Decimal("0.0001")
 # A sandbox last seen alive this close to its lifetime limit, and found gone after it, reached
 # that limit: it expired, and its time up to the limit is charged. Longer than every cadence at
@@ -143,6 +141,16 @@ def require_sandbox_start(organization_id: str) -> None:
         raise refusal from exc
 
 
+def _billing_unavailable() -> tuple[type[Exception], ...]:
+    """The errors that mean billing is not present here (the sandbox runner), not that a
+    check failed: the EE package is missing, or it has no billing config."""
+    try:
+        from ee.usage.services.config import BillingConfigError
+    except ImportError:
+        return (ImportError,)
+    return (ImportError, BillingConfigError)
+
+
 def require_sandbox_create(
     organization_id: str, *, attempt: HostedHarnessAttempt | None = None
 ) -> None:
@@ -153,13 +161,11 @@ def require_sandbox_create(
         return
     try:
         decision = check_harness_action(organization_id, "sandbox_runtime")
-    except Exception as exc:  # noqa: BLE001 - a check that cannot run never blocks
-        # Expected on the sandbox runner, which has no billing config: not worth a warning
-        # on every create there. Anything else is.
-        expected = (
-            isinstance(exc, ImportError) or type(exc).__name__ == "BillingConfigError"
-        )
-        (logger.info if expected else logger.warning)(
+    except _billing_unavailable() as exc:
+        # The sandbox runner has no billing config: not worth a warning on every create
+        # there. Any other error (the usage store down, a bug) fails the create, which
+        # is retried.
+        logger.info(
             "sandbox usage check unavailable, create allowed organization=%s error=%s",
             organization_id,
             type(exc).__name__,
@@ -817,12 +823,10 @@ def billable_sandbox_minutes(
     lifetime_seconds,
     excluded=(),
 ) -> Decimal:
-    """What a finished sandbox bills: nothing on a bring-your-own sandbox or one our own
-    failure ended; otherwise start to confirmed end, never past its last lifetime limit,
-    less the parts of ``excluded`` (start, end) spans inside that time, each moment once.
+    """What a finished sandbox bills: nothing on one our own failure ended; otherwise start
+    to confirmed end, never past its last lifetime limit, less the parts of ``excluded``
+    (start, end) spans inside that time, each moment once.
     """
-    if provider == BYO_SANDBOX_PROVIDER:
-        return Decimal(0)
     if any(domain in _NON_BILLABLE_FAILURE_DOMAINS for domain in failure_domains):
         return Decimal(0)
     end = sandbox_metered_end(ended_at, armed_at, lifetime_seconds)

@@ -13,7 +13,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
-from django.db import transaction
+from django.db import OperationalError, transaction
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from rest_framework import status
@@ -695,7 +695,7 @@ def _lose_the_first_lifetime_write(monkeypatch):
     def flaky(provider_ref):
         calls.append(provider_ref)
         if len(calls) == 1:
-            raise RuntimeError("the connection was lost")
+            raise OperationalError("the connection was lost")
         return open_row(provider_ref)
 
     monkeypatch.setattr(sandbox_usage, "_open_row", flaky)
@@ -2693,6 +2693,46 @@ def _calls_of(path, function):
         for owner, node in _owners(tree)
         if owner == function
     ]
+
+
+def test_every_ending_recorded_before_a_delete_notes_the_delete_request():
+    """A function that records a sandbox's ending and then deletes the sandbox says so in
+    the record and in the close that follows, so a delete that never completes is not
+    billed past the moment it was asked for."""
+    checked = set()
+    for path, tree in _sources():
+        for owner, node in _owners(tree):
+            calls = [sub for sub in ast.walk(node) if isinstance(sub, ast.Call)]
+            deletes = any(
+                isinstance(call.func, ast.Attribute)
+                and call.func.attr == "delete"
+                and ast.unparse(call.func.value) in {"self.client", "provider"}
+                for call in calls
+            )
+            ending = [
+                call
+                for call in calls
+                if getattr(call.func, "id", None)
+                in {"record_sandbox_end_reason", "close_sandbox_lifetime"}
+            ]
+            if not (deletes and ending):
+                continue
+            checked.add(f"{path}::{owner}")
+            for call in ending:
+                asked = {keyword.arg: keyword.value for keyword in call.keywords}.get(
+                    "delete_requested"
+                )
+                # Present, and never a literal False (one path decides it by whether the
+                # sandbox was found gone before any delete was asked for).
+                assert asked is not None and not (
+                    isinstance(asked, ast.Constant) and asked.value is False
+                ), f"{path}::{owner} line {call.lineno}"
+    assert checked == {
+        "services/hosted_harness_gateway.py::_cleanup_conversation_runtime",
+        "services/hosted_harness_gateway.py::_delete_chat_sandbox",
+        "services/hosted_harness_gateway.py::_start_chat_sandbox",
+        "services/agent_fix_sandbox.py::release",
+    }
 
 
 def test_only_four_functions_create_a_sandbox():

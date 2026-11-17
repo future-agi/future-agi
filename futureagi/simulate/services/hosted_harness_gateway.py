@@ -3310,7 +3310,10 @@ class HostedHarnessGateway:
             "failure_domain": failure_domain,
             "last_seen": last_seen,
         }
-        record_sandbox_end_reason(provider_ref=provider_ref, **ending)
+        # The delete is asked for next: billing stops at this moment even if it fails.
+        record_sandbox_end_reason(
+            provider_ref=provider_ref, delete_requested=True, **ending
+        )
         try:
             deleted = self.client.delete(
                 self.client.get(
@@ -3367,7 +3370,9 @@ class HostedHarnessGateway:
             request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS,
         ):
             # The ending again: it holds if the write before the delete was lost.
-            close_sandbox_lifetime(provider_ref=provider_ref, **ending)
+            close_sandbox_lifetime(
+                provider_ref=provider_ref, delete_requested=True, **ending
+            )
 
     def _renew_chat_idle_window(self, lease: HostedHarnessConversationLease) -> None:
         """Keep a chat sandbox for the idle window after the user's latest message."""
@@ -3620,7 +3625,9 @@ class HostedHarnessGateway:
         except Exception:
             if sandbox is not None:
                 ending = {"reason": "start_failed", "failure_domain": "infrastructure"}
-                record_sandbox_end_reason(provider_ref=str(sandbox.id), **ending)
+                record_sandbox_end_reason(
+                    provider_ref=str(sandbox.id), delete_requested=True, **ending
+                )
                 try:
                     deleted = self.client.delete(sandbox, timeout=120, wait=True)
                 except Exception:
@@ -3636,7 +3643,11 @@ class HostedHarnessGateway:
                         request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS,
                     ):
                         # The ending again: it holds if the write before was lost.
-                        close_sandbox_lifetime(provider_ref=str(sandbox.id), **ending)
+                        close_sandbox_lifetime(
+                            provider_ref=str(sandbox.id),
+                            delete_requested=True,
+                            **ending,
+                        )
             raise
 
     @staticmethod
@@ -4971,6 +4982,15 @@ class HostedHarnessGateway:
                 )
                 return
             else:
+                from simulate.services.sandbox_usage import record_sandbox_end_reason
+
+                # The delete is asked for next: billing stops at this moment even if it
+                # fails.
+                record_sandbox_end_reason(
+                    provider_ref=provider_ref,
+                    reason="deleted",
+                    delete_requested=True,
+                )
                 try:
                     absent = delete_confirmed(
                         self.client,
@@ -4990,7 +5010,12 @@ class HostedHarnessGateway:
             if provider_ref and not provider_ref.startswith("pending:"):
                 from simulate.services.sandbox_usage import close_sandbox_lifetime
 
-                close_sandbox_lifetime(provider_ref=provider_ref, **ending)
+                close_sandbox_lifetime(
+                    provider_ref=provider_ref,
+                    # A sandbox found gone was never asked to be deleted.
+                    delete_requested=not ending,
+                    **ending,
+                )
 
     def _delete_and_record(
         self,
