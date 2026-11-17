@@ -82,7 +82,8 @@ def fit_trace_to_context(
     }
     trace_meta_str = _format_dict(
         {k: v for k, v in trace_meta.items() if v},
-        max_total=2000, max_field=500,
+        max_total=2000,
+        max_field=500,
     )
     parts.append(f"## Trace\n{trace_meta_str}")
     used += len(parts[-1])
@@ -93,7 +94,9 @@ def fit_trace_to_context(
         if val:
             field_budget = min((budget - used) // 2, 8000)
             if field_budget > 100:
-                formatted = fit_to_context(val, max_total_chars=field_budget, label=field)
+                formatted = fit_to_context(
+                    val, max_total_chars=field_budget, label=field
+                )
                 parts.append(f"### Trace {field.title()}\n{formatted}")
                 used += len(parts[-1])
 
@@ -155,7 +158,9 @@ def fit_span_to_context(
     attrs = span_data.get("span_attributes") or span_data.get("eval_attributes")
     if attrs and used < budget - 1000:
         attr_budget = min(budget - used - 500, 5000)
-        formatted = fit_to_context(attrs, max_total_chars=attr_budget, label="attributes")
+        formatted = fit_to_context(
+            attrs, max_total_chars=attr_budget, label="attributes"
+        )
         parts.append(f"### Attributes\n{formatted}")
         used += len(parts[-1])
 
@@ -163,7 +168,9 @@ def fit_span_to_context(
     metadata = span_data.get("metadata")
     if metadata and used < budget - 500:
         meta_budget = min(budget - used - 200, 2000)
-        formatted = fit_to_context(metadata, max_total_chars=meta_budget, label="metadata")
+        formatted = fit_to_context(
+            metadata, max_total_chars=meta_budget, label="metadata"
+        )
         parts.append(f"### Metadata\n{formatted}")
 
     result = "\n\n".join(parts)
@@ -220,7 +227,9 @@ def chunk_large_text(
         chunk = text[start:end]
         chunk_num = len(chunks) + 1
         total_chunks = (len(text) + chunk_size - 1) // chunk_size
-        header = f"[Chunk {chunk_num}/{total_chunks}, chars {start}-{end} of {len(text)}]\n"
+        header = (
+            f"[Chunk {chunk_num}/{total_chunks}, chars {start}-{end} of {len(text)}]\n"
+        )
 
         chunks.append(header + chunk)
         start = end - overlap  # Overlap for context continuity
@@ -230,13 +239,21 @@ def chunk_large_text(
 
 # ─── Private helpers ───
 
+
 def _truncate_string(s: str, max_chars: int) -> str:
     """Truncate a string with a marker, guaranteeing output length <= max_chars."""
+    if max_chars < 0:
+        raise ValueError("max_chars must be non-negative")
     if len(s) <= max_chars:
         return s
-    logger.debug("context_window_field_truncated", original_length=len(s), limit=max_chars)
+    logger.debug(
+        "context_window_field_truncated", original_length=len(s), limit=max_chars
+    )
     marker = f"\n... [truncated, {len(s)} total chars]"
-    prefix_len = max(0, max_chars - len(marker))
+    if max_chars < len(marker):
+        # Keep a useful prefix when even the marker cannot fit.
+        return s[:max_chars]
+    prefix_len = max_chars - len(marker)
     return s[:prefix_len] + marker
 
 
@@ -271,11 +288,18 @@ def _format_dict(
             val_str = _truncate_string(value, field_budget)
         elif isinstance(value, dict):
             if depth < 2 and len(json.dumps(value, default=str)) < field_budget:
-                val_str = _format_dict(value, max_total=field_budget, max_field=field_budget // 2, depth=depth + 1)
+                val_str = _format_dict(
+                    value,
+                    max_total=field_budget,
+                    max_field=field_budget // 2,
+                    depth=depth + 1,
+                )
             else:
                 val_str = f"{{...}} ({len(value)} keys)"
         elif isinstance(value, list):
-            if len(value) <= 3 and all(isinstance(v, (str, int, float, bool)) for v in value):
+            if len(value) <= 3 and all(
+                isinstance(v, (str, int, float, bool)) for v in value
+            ):
                 val_str = str(value)
             else:
                 val_str = f"[...] ({len(value)} items)"
@@ -310,7 +334,9 @@ def _format_list(
             break
 
         if isinstance(item, dict):
-            item_str = _format_dict(item, max_total=item_budget, max_field=item_budget // 3)
+            item_str = _format_dict(
+                item, max_total=item_budget, max_field=item_budget // 3
+            )
         elif isinstance(item, str):
             item_str = _truncate_string(item, item_budget)
         else:
@@ -366,7 +392,11 @@ def _format_spans(spans: list, max_chars: int = 20000) -> str:
             for field in ["input", "output"]:
                 val = span.get(field)
                 if val:
-                    val_str = json.dumps(val, default=str) if isinstance(val, (dict, list)) else str(val)
+                    val_str = (
+                        json.dumps(val, default=str)
+                        if isinstance(val, (dict, list))
+                        else str(val)
+                    )
                     if len(val_str) > 200:
                         val_str = val_str[:200] + "..."
                     parts.append(f"     {field}: {val_str}")
