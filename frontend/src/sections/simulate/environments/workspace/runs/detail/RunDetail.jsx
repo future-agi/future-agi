@@ -61,6 +61,7 @@ import { useSelfImprovementOpen } from "./fixmyagent/selfImprovement";
 import RunAnalytics from "./RunAnalytics";
 import ReliabilityHeadline from "./ReliabilityHeadline";
 import useCallListNavigation from "./useCallListNavigation";
+import { trialsOf } from "./trialsOf";
 import useOpenCallParam from "./useOpenCallParam";
 
 /**
@@ -124,6 +125,7 @@ export default function RunDetail({
     live: identity?.status === "running",
     onStep: showCall,
   });
+  const openTask = callNav.openRow ?? openCall?.task ?? null;
   // The All Evaluations drawer and the table's eval column menus share one
   // edit form, one confirm and one re-run request, so a re-run sent from
   // either holds both.
@@ -604,7 +606,17 @@ export default function RunDetail({
       )}
 
       <CallDrawer
-        task={callNav.openRow ?? openCall?.task ?? null}
+        task={openTask}
+        trials={trialsOf(callNav.rows, openTask)}
+        onPickTrial={(id) => {
+          const row = callNav.rows.find((one) => one.id === id);
+          if (row)
+            showCall({
+              task: row,
+              source: openCall?.source ?? "table",
+              page: openCall?.page ?? null,
+            });
+        }}
         executionId={backed ? executionId : null}
         agentType={stats.agentType}
         onClose={() => showCall(null)}

@@ -21,6 +21,7 @@ import useVoiceAudioStore from "src/components/VoiceDetailDrawerV2/voiceAudioSto
 import CallTracesPanel from "./CallTracesPanel";
 import AttemptSelect from "./AttemptSelect";
 import CallWorkersPanel from "./CallWorkersPanel";
+import TrialPicker from "./TrialPicker";
 import { OutcomeReason } from "./chatDrawerCells";
 import {
   CALL_TRACES_COPY,
@@ -81,6 +82,8 @@ export default function VoiceCallDrawer({
   hasNext = false,
   traceOpen = false,
   onTracePanelMountedChange,
+  trials = null,
+  onPickTrial,
 }) {
   const { data, isPending, isError } = useCallExecutionV3Detail(
     task.id,
@@ -258,6 +261,13 @@ export default function VoiceCallDrawer({
         <VoiceDetailDrawerV2
           data={voiceData}
           onClose={onClose}
+          headerLeading={
+            <TrialPicker
+              trials={trials}
+              currentId={task.id}
+              onPick={onPickTrial}
+            />
+          }
           scenarioId={data?.scenario_id}
           isLoading={isPending}
           hiddenActionIds={HIDDEN_VOICE_ACTIONS}
@@ -286,6 +296,9 @@ export default function VoiceCallDrawer({
   );
 }
 VoiceCallDrawer.propTypes = {
+  // Trials of this call's scenario, for the picker in the header.
+  trials: PropTypes.arrayOf(PropTypes.object),
+  onPickTrial: PropTypes.func,
   task: PropTypes.shape({
     id: PropTypes.string,
     status: PropTypes.string,

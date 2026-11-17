@@ -122,3 +122,8 @@ export const CALL_WORKERS_COPY = {
   stoppedByUserNoEvidence:
     "Stopped by the user before any participant's work was recorded.",
 };
+
+export const TRIAL_PICKER_COPY = {
+  label: "Trial",
+  tooltip: (n, verdict) => `Trial ${n}, ${verdict}`,
+};

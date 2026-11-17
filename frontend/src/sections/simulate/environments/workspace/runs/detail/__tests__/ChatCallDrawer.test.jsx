@@ -363,3 +363,23 @@ describe("ChatCallDrawer Participants", () => {
     mocks.callDetail = null;
   });
 });
+
+describe("ChatCallDrawer trial picker", () => {
+  it("shows the scenario's trials in the header and opens the one picked", async () => {
+    const user = userEvent.setup();
+    const onPickTrial = vi.fn();
+    render(
+      <ChatCallDrawer
+        task={{ id: "c2", status: "failed" }}
+        trials={[
+          { id: "c1", trialIndex: 1, status: "passed" },
+          { id: "c2", trialIndex: 2, status: "failed" },
+        ]}
+        onPickTrial={onPickTrial}
+        onClose={vi.fn()}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Trial 1, Passed" }));
+    expect(onPickTrial).toHaveBeenCalledWith("c1");
+  });
+});

@@ -60,6 +60,7 @@ const VOICE_IMAGINE_PROMPTS = [
  */
 const VoiceDetailDrawerV2 = ({
   data,
+  headerLeading = null,
   onClose,
   onPrev,
   onNext,
@@ -345,6 +346,7 @@ const VoiceDetailDrawerV2 = ({
           (e.g. annotation workspace) owns its close/nav chrome. */}
       {!embedded && (
         <VoiceDrawerHeader
+          leading={headerLeading}
           callId={data?.provider_call_id || data?.id || data?.trace_id}
           onClose={handleClose}
           onPrev={onPrev}
@@ -632,6 +634,8 @@ const VoiceDetailDrawerV2 = ({
 
 VoiceDetailDrawerV2.propTypes = {
   data: PropTypes.object,
+  // Shown in the header before the call ID, e.g. a trial picker.
+  headerLeading: PropTypes.node,
   onClose: PropTypes.func.isRequired,
   onPrev: PropTypes.func,
   onNext: PropTypes.func,

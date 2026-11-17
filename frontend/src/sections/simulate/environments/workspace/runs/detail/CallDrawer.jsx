@@ -23,6 +23,8 @@ export default function CallDrawer({
   onNext,
   hasPrev = false,
   hasNext = false,
+  trials = null,
+  onPickTrial,
 }) {
   const open = !!task;
   const voice = isVoiceCall(task, agentType);
@@ -66,6 +68,8 @@ export default function CallDrawer({
             hasNext={hasNext}
             traceOpen={traceOpen}
             onTracePanelMountedChange={onTracePanelMountedChange}
+            trials={trials}
+            onPickTrial={onPickTrial}
           />
         ) : (
           <ChatCallDrawer
@@ -78,6 +82,8 @@ export default function CallDrawer({
             hasNext={hasNext}
             traceOpen={traceOpen}
             onTracePanelMountedChange={onTracePanelMountedChange}
+            trials={trials}
+            onPickTrial={onPickTrial}
           />
         ))}
     </Drawer>
@@ -95,4 +101,7 @@ CallDrawer.propTypes = {
   onNext: PropTypes.func,
   hasPrev: PropTypes.bool,
   hasNext: PropTypes.bool,
+  // Trials of this call's scenario, for the picker in the drawer header.
+  trials: PropTypes.arrayOf(PropTypes.object),
+  onPickTrial: PropTypes.func,
 };

@@ -24,6 +24,7 @@ import {
 import { SCORING_STATUS } from "../runs.constants";
 import { runOutcome } from "./trace/traceTable.constants";
 import ChatTranscriptPane from "./ChatTranscriptPane";
+import TrialPicker from "./TrialPicker";
 import CallTracesPanel from "./CallTracesPanel";
 import AttemptSelect from "./AttemptSelect";
 import { ATTEMPT_COPY } from "./attempts.constants";
@@ -90,6 +91,8 @@ export default function ChatCallDrawer({
   hasNext = false,
   traceOpen = false,
   onTracePanelMountedChange,
+  trials = null,
+  onPickTrial,
 }) {
   const [shareOpen, setShareOpen] = useState(false);
   useEffect(() => {
@@ -197,6 +200,7 @@ export default function ChatCallDrawer({
           flexShrink: 0,
         }}
       >
+        <TrialPicker trials={trials} currentId={task.id} onPick={onPickTrial} />
         <Typography noWrap sx={{ typography: "s2", color: "text.secondary" }}>
           Conversation ID :{" "}
           <Box component="span" sx={{ color: "text.primary" }}>
@@ -549,6 +553,9 @@ export default function ChatCallDrawer({
   );
 }
 ChatCallDrawer.propTypes = {
+  // Trials of this call's scenario, for the picker in the header.
+  trials: PropTypes.arrayOf(PropTypes.object),
+  onPickTrial: PropTypes.func,
   task: PropTypes.shape({
     id: PropTypes.string,
     scenario: PropTypes.string,
