@@ -350,6 +350,58 @@ def test_a_failed_grpc_export_through_the_framework_sends_no_raw_request(
     assert "key-not-sent" not in sent and "secret-not-sent" not in sent
 
 
+class _ApiKeyLookupDown:
+    """The API-key lookup with its database unreachable."""
+
+    def authenticate(self, request):
+        raise RuntimeError("database unavailable")
+
+
+def test_a_rejected_grpc_call_leaves_a_breadcrumb_without_the_request(django_sentry):
+    """A call that fails before Export logs at WARNING: no event, only a
+    breadcrumb. The gRPC server's calls share one scope, so that crumb rides on
+    later events, unrelated ones too."""
+    _client, events = django_sentry
+    with (
+        mock.patch.object(grpc_settings, "GRPC_ASYNC", True),
+        mock.patch.object(
+            ObservationSpanService, "authentication_classes", [_ApiKeyLookupDown]
+        ),
+    ):
+        servicer = ObservationSpanService.as_servicer()
+        with pytest.raises(grpc.aio.AbortError):
+            asyncio.run(servicer.Export(_export_request(), _GrpcServerContext()))
+    assert events == []  # a WARNING: a breadcrumb only
+
+    logging.getLogger("accounts.views").error("unrelated_failure_later")
+
+    [event] = events
+    crumbs = event["breadcrumbs"]["values"]
+    [crumb] = [c for c in crumbs if c.get("category") == "django_socio_grpc.request"]
+    assert crumb["level"] == "warning"
+    assert crumb["message"].startswith("Unauthenticated")
+    assert "status_code" in crumb["data"]
+    assert "request" not in crumb["data"]
+    assert SPAN_TEXT not in json.dumps(events, default=str)
+
+
+def test_a_grpc_framework_breadcrumb_it_cannot_read_is_dropped(initialized_sentry):
+    """Fail closed: a crumb from that logger whose data is not a mapping cannot
+    be cleaned, so it is not kept. Other crumbs are untouched."""
+    _client, events = initialized_sentry
+    sentry_sdk.add_breadcrumb(
+        category="django_socio_grpc.request", message="x", data=f"[{SPAN_TEXT}]"
+    )
+    sentry_sdk.add_breadcrumb(category="accounts.views", message="kept", data={"a": 1})
+    sentry_sdk.capture_message("later")
+
+    [event] = events
+    categories = [c.get("category") for c in event["breadcrumbs"]["values"]]
+    assert "django_socio_grpc.request" not in categories
+    assert "accounts.views" in categories
+    assert SPAN_TEXT not in json.dumps(events, default=str)
+
+
 class _ResolvedApiKey:
     """What the API-key authenticator resolves, without a database."""
 

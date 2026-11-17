@@ -355,6 +355,34 @@ def _strip_raw_span_content(event: dict) -> dict | None:
     return event
 
 
+# The logger django_socio_grpc reports each finished call on. A failed call's
+# record carries extra={"request": GRPCRequestContainer}, whose repr holds the
+# whole protobuf request, spans included.
+_GRPC_REQUEST_LOGGER = "django_socio_grpc.request"
+
+
+def _before_breadcrumb(
+    crumb: dict[str, Any], hint: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Keep the gRPC framework's call records as breadcrumbs, without the request.
+
+    The logging integration copies a record's extras into the crumb's ``data``,
+    and a crumb rides on every later event in its isolation scope, unrelated
+    ones too: the gRPC server's calls all share one. The SDK builds ``crumb``
+    as a dict. A crumb from that logger whose ``data`` is not a mapping cannot
+    be cleaned, so it is dropped.
+    """
+    if crumb.get("category") != _GRPC_REQUEST_LOGGER:
+        return crumb
+    data = crumb.get("data")
+    if data is None:
+        return crumb
+    if not isinstance(data, dict):
+        return None
+    data.pop("request", None)
+    return crumb
+
+
 def _get_before_send() -> Callable:
     """
     Create the before_send hook that runs on every error event.
@@ -584,6 +612,7 @@ def init_sentry(
             in_app_exclude=["celery", "kombu", "temporalio", "django"],
             # Hooks
             before_send=_get_before_send(),
+            before_breadcrumb=_before_breadcrumb,
             before_send_transaction=lambda event, hint: (
                 _scrub_deployment_telemetry_event(event)
             ),
