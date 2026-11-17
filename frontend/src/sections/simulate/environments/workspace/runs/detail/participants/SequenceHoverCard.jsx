@@ -2,7 +2,9 @@ import PropTypes from "prop-types";
 import { Box, Typography } from "@mui/material";
 import { KIND_WORDS, SLOW_SEC, kindOf, took } from "./sequenceLayout";
 
-// The hover card for a row: the full words and what they are, never cut.
+const MAX_LINES = 8;
+
+// The hover card for a row: its words (up to MAX_LINES) and what they are.
 export default function HoverCard({ seq, row: r, step: s }) {
   const k = kindOf(r, s);
   const reply = r.type === "back" || r.type === "none" || r.type === "took";
@@ -62,6 +64,12 @@ export default function HoverCard({ seq, row: r, step: s }) {
             color: "inherit",
             mt: 0.5,
             whiteSpace: "pre-wrap",
+            wordBreak: "break-word",
+            // A long message is cut here; the step panel shows it in full.
+            display: "-webkit-box",
+            WebkitLineClamp: MAX_LINES,
+            WebkitBoxOrient: "vertical",
+            overflow: "hidden",
           }}
         >
           {/* One quote for one turn's words; several turns read as a list. */}
