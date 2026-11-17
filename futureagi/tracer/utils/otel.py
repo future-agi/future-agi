@@ -1,7 +1,7 @@
 import json
 import re
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any, Optional
 
@@ -902,12 +902,14 @@ def convert_otel_span_to_observation_span(
 
         # Use AttributeRegistry for model name (supports multiple conventions)
         model = get_attribute(attributes, "model_name")
+        started_at = _span_started_at(otel_span)
         cost = calculate_cost(
             attributes=attributes,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             model=model,
             organization_id=organization_id,
+            at=started_at,
         )
         user_cost_input = attributes.get("gen_ai.cost.input") or attributes.get(
             "llm.cost.prompt"
@@ -931,6 +933,7 @@ def convert_otel_span_to_observation_span(
                 completion_tokens=completion_tokens,
                 model=model,
                 organization_id=organization_id,
+                at=started_at,
             )
 
         # Use AttributeRegistry for provider (supports multiple conventions)
@@ -1585,12 +1588,14 @@ def _convert_single_span(otel_span, projects, project_versions, organization_id)
 
     # Use AttributeRegistry for model name (supports multiple conventions)
     model = get_attribute(attributes, "model_name")
+    started_at = _span_started_at(otel_span)
     cost = calculate_cost(
         attributes=attributes,
         prompt_tokens=prompt_tokens,
         completion_tokens=completion_tokens,
         model=model,
         organization_id=organization_id,
+        at=started_at,
     )
     user_cost_input = attributes.get("gen_ai.cost.input") or attributes.get(
         "llm.cost.prompt"
@@ -1614,6 +1619,7 @@ def _convert_single_span(otel_span, projects, project_versions, organization_id)
             completion_tokens=completion_tokens,
             model=model,
             organization_id=organization_id,
+            at=started_at,
         )
 
     # Use AttributeRegistry for provider (supports multiple conventions)
@@ -1727,17 +1733,33 @@ def bulk_convert_otel_spans_to_observation_spans(
         )
 
 
+def _span_started_at(otel_span: dict) -> Optional[datetime]:
+    """The instant the span started, in UTC, or None when it carries no start.
+
+    A span is priced at its start, as the gateway prices a request at its start.
+    """
+    start_ns = otel_span.get("start_time")
+    if not start_ns:
+        return None
+    try:
+        return datetime.fromtimestamp(int(start_ns) / 1e9, tz=UTC)
+    except (TypeError, ValueError, OverflowError, OSError):
+        return None
+
+
 def calculate_cost(
     attributes: dict,
     prompt_tokens: Optional[int],
     completion_tokens: Optional[int],
     model: Optional[str],
     organization_id: Optional[str] = None,
+    at: Optional[datetime] = None,
 ):
     """
     Calculates cost for a span. Checks user-provided cost attributes first
     (gen_ai.cost.total, gen_ai.cost.input, gen_ai.cost.output and their
-    OpenInference equivalents), then falls back to token-based calculation.
+    OpenInference equivalents), then falls back to token-based calculation,
+    priced at ``at`` (the span's start).
     """
     if attributes.get("fi.usage.contribution") == "none":
         attributes["fi.cost.kind"] = "unknown"
@@ -1793,10 +1815,30 @@ def calculate_cost(
         completion_tokens=completion_tokens,
         model=model,
         organization_id=organization_id,
+        at=at,
     )
     if track_cost:
         attributes.setdefault("fi.cost.kind", "estimated" if value else "unknown")
     return value
+
+
+def _dated_token_cost(
+    model: str, prompt_tokens: int, completion_tokens: int, at: Optional[datetime]
+) -> Optional[float]:
+    """The cost at ``at`` for a model whose price the dated schedule changes, else None."""
+    from agentic_eval.core_evals.fi_utils.token_count_helper import (
+        calculate_total_cost,
+    )
+    from agentic_eval.core_evals.run_prompt.model_pricing import price_change_dates
+
+    if not price_change_dates(model):
+        return None
+    priced = calculate_total_cost(
+        model,
+        {"prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens},
+        at=at,
+    )
+    return priced["total_cost"]
 
 
 def calculate_cost_from_tokens(
@@ -1804,14 +1846,22 @@ def calculate_cost_from_tokens(
     completion_tokens: Optional[int],
     model: Optional[str],
     organization_id: Optional[str] = None,
+    at: Optional[datetime] = None,
 ):
     """
     Calculates the cost of a model call based on the number of prompt and completion tokens.
+
+    A model with dated prices in the schedule is priced at ``at`` (timezone-aware;
+    the span's start, as the gateway prices a request at its start; None means now).
+    Any other model keeps the litellm price, then the organisation's custom price.
     """
     prompt_tokens = int(prompt_tokens) if prompt_tokens is not None else 0
     completion_tokens = int(completion_tokens) if completion_tokens is not None else 0
     cost = 0
     if model and (prompt_tokens > 0 or completion_tokens > 0):
+        dated = _dated_token_cost(model, prompt_tokens, completion_tokens, at)
+        if dated is not None:
+            return dated
         model_cost_obj = model_cost.get(model)
         if model_cost_obj:
             prompt_tokens_cost_usd_dollar, completion_tokens_cost_usd_dollar = (

@@ -943,10 +943,11 @@ def get_choices_stats(
 def cell_token_cost(cells, model_name):
     """Sum a set of run-prompt cells and price their tokens, each cell at its date.
 
-    A cell is priced at the rate in force when it was last written (``updated_at``;
-    a run writes it with the tokens). A model whose price never changes is priced
-    once, as before. Otherwise the cells are split at each date the price changes,
-    summed in one query, and each part is priced at its own rate.
+    A cell is priced at the rate in force when it was created (``created_at``). It
+    is not ``updated_at``, which any later save of the cell moves, whatever it
+    changes (an edit of the value, a re-save), and which would re-price the cell.
+    A model whose price never changes is priced once, as before. Otherwise the
+    cells are split at each date the price changes, summed in one query, and each part is priced at its own rate.
 
     Returns ``cell_count``, ``prompt_tokens``, ``completion_tokens``,
     ``response_time`` and ``cost``.
@@ -969,9 +970,9 @@ def cell_token_cost(cells, model_name):
         for index in range(len(dates) + 1):
             window = Q()
             if index > 0:
-                window &= Q(updated_at__gte=dates[index - 1])
+                window &= Q(created_at__gte=dates[index - 1])
             if index < len(dates):
-                window &= Q(updated_at__lt=dates[index])
+                window &= Q(created_at__lt=dates[index])
             aggregates[f"prompt_{index}"] = Sum(
                 "prompt_tokens", filter=window, default=0
             )

@@ -1292,6 +1292,14 @@ func TestSpanCost_PricedAtTheSpansOwnInstant(t *testing.T) {
 	}
 
 	p = &stubPricer{cost: 1, ok: true}
+	if _, _, err := ConvertWithIdentities(context.Background(), pricedAtSpan(started, time.Time{}), p); err != nil {
+		t.Fatal(err)
+	}
+	if !p.lastAt.Equal(started) {
+		t.Errorf("a span with a start and no end was priced at %s, want its start %s", p.lastAt, started)
+	}
+
+	p = &stubPricer{cost: 1, ok: true}
 	endOnly := time.Date(2027, 1, 2, 0, 0, 0, 0, time.UTC)
 	if _, _, err := ConvertWithIdentities(context.Background(), pricedAtSpan(time.Time{}, endOnly), p); err != nil {
 		t.Fatal(err)

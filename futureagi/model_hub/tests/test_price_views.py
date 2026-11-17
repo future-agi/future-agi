@@ -2,7 +2,7 @@
 
 ``listed_pricing`` gives a model-list row the price billed now. ``cell_token_cost``
 prices a run-prompt column's cells each at the price in force on the date the cell
-was last written, so a column run before and after a price change costs the sum of
+was created (not last saved), so a column run before and after a price change costs the sum of
 both. The tests that need the database build a small dataset; the rest read the
 price tables.
 """
@@ -148,7 +148,7 @@ def prompt_column(organization, workspace):
     return dataset, run_prompter, column
 
 
-def _cell(dataset, column, order, updated_at):
+def _cell(dataset, column, order, created_at, updated_at=None):
     row = Row.objects.create(dataset=dataset, order=order)
     cell = Cell.objects.create(
         dataset=dataset,
@@ -160,8 +160,10 @@ def _cell(dataset, column, order, updated_at):
         completion_tokens=1_000_000,
         response_time=2.0,
     )
-    # A queryset update leaves updated_at as given (the model sets it on save).
-    Cell.objects.filter(id=cell.id).update(updated_at=updated_at)
+    # A queryset update leaves both stamps as given (the model sets them on save).
+    Cell.objects.filter(id=cell.id).update(
+        created_at=created_at, updated_at=updated_at or created_at
+    )
     return cell
 
 
@@ -176,7 +178,7 @@ def dated_cells(prompt_column):
 
 
 @pytest.mark.django_db
-def test_each_cell_is_priced_on_the_date_it_was_written(dated_cells):
+def test_each_cell_is_priced_on_the_date_it_was_created(dated_cells):
     _, run_prompter, column = dated_cells
 
     stats = cell_token_cost(Cell.objects.filter(column=column), run_prompter.model)
@@ -187,6 +189,19 @@ def test_each_cell_is_priced_on_the_date_it_was_written(dated_cells):
     assert stats["prompt_tokens"] == 3_000_000
     assert stats["completion_tokens"] == 3_000_000
     assert stats["response_time"] == 6.0
+
+
+@pytest.mark.django_db
+def test_a_cell_saved_again_after_a_price_change_keeps_its_old_price(prompt_column):
+    dataset, run_prompter, column = prompt_column
+    # Run before the change, then saved again after it (an edit, a re-save of any
+    # kind): updated_at moves, the run's date does not.
+    _cell(dataset, column, 0, BEFORE_2027, updated_at=AFTER_2027)
+
+    stats = cell_token_cost(Cell.objects.filter(column=column), run_prompter.model)
+
+    # 1M in at 0.75 and 1M out at 3.75; at the 2027 rates it would be 9.0.
+    assert stats["cost"] == 4.5
 
 
 @pytest.mark.django_db

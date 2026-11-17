@@ -39,7 +39,7 @@ def llm_instance():
         instance.api_key = None
         instance.token_usage = {}
         instance.cost = {}
-        instance._update_token_usage = lambda r: None
+        instance._update_token_usage = lambda r, **kw: None
         instance._update_cost = lambda r: None
         return instance
 
