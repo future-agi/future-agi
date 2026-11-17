@@ -324,11 +324,11 @@ def _settle(
         drafted=sum(c.status == EvidenceImportCase.Status.DRAFTED for c in cases),
         blocked=sum(c.status == EvidenceImportCase.Status.BLOCKED for c in cases),
     )
-    unmatched = _unmatched(environment, documents, taken)
+    unmatched = _unmatched(environment, split.suite, documents, taken)
     if unmatched:
-        # A builder that drafts under names of its own blocks its cases while its
-        # reply says it drafted them; these keys tell that from a turn that wrote
-        # nothing.
+        # A builder that drafts under names of its own, or leaves what it wrote out
+        # of the index, blocks its cases while its reply says it drafted them;
+        # these keys tell that from a turn that wrote nothing.
         logger.warning(
             "evidence_draft_unmatched",
             environment=str(environment.id),
@@ -349,14 +349,19 @@ def _tokens(document: dict) -> set[str]:
 
 
 def _unmatched(
-    environment: HostedHarnessJob, documents: list[dict], taken: list[dict]
+    environment: HostedHarnessJob,
+    suite: dict[str, bytes],
+    documents: list[dict],
+    taken: list[dict],
 ) -> list[str]:
     """The keys of the scenarios the turn added to the suite it started from
-    that no case took."""
+    that no case took. Cases are matched against the suite's index alone, so a
+    scenario folder the index leaves out counts too, under its folder name."""
     basis = drafts.fresh_draft(environment, "suite") or environment.suite_version
     started = ((basis.documents or {}).get("scenarios") or []) if basis else []
     known = {token for document in started for token in _tokens(document)}
-    return sorted(
+    listed = {token for document in documents for token in _tokens(document)}
+    indexed = [
         str(
             document.get("scenario_key")
             or document.get("name")
@@ -364,7 +369,14 @@ def _unmatched(
         )
         for document in documents
         if not any(document is one for one in taken) and not _tokens(document) & known
-    )
+    ]
+    folders = {
+        parts[1]
+        for parts in (path.split("/") for path in suite)
+        if len(parts) == 3 and parts[0] == "scenarios" and parts[2] == "scenario.json"
+    }
+    seen = listed | known
+    return sorted([*indexed, *(one for one in folders if _token(one) not in seen)])
 
 
 def _added_checks(environment, basis, files, prepared) -> list[dict] | None:

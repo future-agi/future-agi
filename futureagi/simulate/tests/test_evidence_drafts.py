@@ -247,13 +247,23 @@ def test_the_last_save_keeps_each_case_as_a_proposal_and_nothing_else(
 def test_a_scenario_drafted_under_another_name_takes_no_case_and_is_logged(
     environment, cases, storage
 ):
-    """The builder drafted the second case under a name of its own: that case is
-    blocked, and the log names the scenario no case took. The suite the turn
-    started from is never reported."""
+    """The builder drafted the second case under a name of its own, and wrote one
+    more scenario folder its index leaves out: that case is blocked, and the log
+    names both scenarios no case took. The suite the turn started from and the
+    drafted case are never reported."""
     conversation, command = _command(environment, cases, 13)
     key_one = evidence_drafts.scenario_key_for(cases[0])
+    unindexed = {
+        "scenarios/written_not_indexed/scenario.json": json.dumps(
+            {"name": "written_not_indexed", "instruction": "call about it"}
+        )
+    }
     key, digest = _save(
-        conversation, command, storage, [key_one, "cancel_far_ahead_fee"]
+        conversation,
+        command,
+        storage,
+        [key_one, "cancel_far_ahead_fee"],
+        **unindexed,
     )
     _end_turn(conversation, command, said="Drafted regression scenarios for both.")
 
@@ -263,7 +273,7 @@ def test_a_scenario_drafted_under_another_name_takes_no_case_and_is_logged(
     assert [c.status for c in _refreshed(cases)] == ["drafted", "blocked"]
     assert [
         one["scenarios"] for one in logs if one["event"] == "evidence_draft_unmatched"
-    ] == [["cancel-far-ahead-fee"]]
+    ] == [["cancel-far-ahead-fee", "written_not_indexed"]]
 
 
 def test_an_injected_environment_change_keeps_nothing(environment, cases, storage):
