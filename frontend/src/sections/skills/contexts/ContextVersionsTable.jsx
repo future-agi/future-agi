@@ -1,22 +1,26 @@
 import { useState } from 'react';
 import PropTypes from 'prop-types';
 import { useSearchParams } from 'react-router-dom';
-import { Box, Button, Checkbox, IconButton, ListItemIcon, Menu, MenuItem, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Typography } from '@mui/material';
+import { Box, Button, Checkbox, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Typography } from '@mui/material';
 import ContentSkeleton from 'src/components/content-skeleton';
 import { DataTablePagination } from 'src/components/data-table';
 import ErrorState from 'src/components/error-state';
 import EmptyState from 'src/components/empty-state';
-import Iconify from 'src/components/iconify';
 import StatusBadge from 'src/components/status-badge';
 import { fDateTime, relativeTime } from 'src/utils/format-time';
 import { ROW_HEIGHT, TABLE_HEADER_HEIGHT } from 'src/theme/sizes';
 import VersionLabel from '../components/VersionLabel';
+import RowActions from '../components/RowActions';
+import { rowLinkProps } from '../components/responsiveTable';
 import ContextLabelRequestPanel from './ContextLabelRequestPanel';
 import ContextVersionCompare from './ContextVersionCompare';
 
 // Intent: inspect publication history and request only a forward production move.
 // Hierarchy: same table as skill Versions: version chip (with a "Viewing" tag on the current row),
-// note, author, time, labels, files, then the row's release control (a text button) and the row menu.
+// note, author, time, labels, files, then the row's release control (a ghost button) and the row's ⋯ menu.
+// Row actions follow the shared pattern (SKILL-TRACES §16 UXF-12): the whole row opens the version (View),
+// and View and Compare sit in the trailing ⋯; the release request is the one inline action. On a phone the
+// ⋯ becomes a chevron (Compare stays reachable through the row's checkbox).
 // A compare checkbox column picks two versions; "Compare vA and vB" opens the in-tab comparison (?compare=A,B).
 // Palette/depth/surfaces: flat table, neutral text and shared semantic status badges.
 // Typography/spacing: m3/s1/s3 and shared row heights; 12px related groups.
@@ -57,7 +61,6 @@ const labelName = (label) => (typeof label === 'string' ? label : label.name);
 
 export default function ContextVersionsTable({ contextId, query, productionVersion, latestVersion, viewedNumber, page, onPageChange, onSelectVersion }) {
   const [params, setParams] = useSearchParams();
-  const [menu, setMenu] = useState(null);
   const open = parseCompare(params.get('compare'));
   const [selected, setSelected] = useState(() => open || []);
   if (!query.data && query.isLoading) return <ContentSkeleton variant="rows" />;
@@ -80,7 +83,9 @@ export default function ContextVersionsTable({ contextId, query, productionVersi
         const names = (version.labels || []).map(labelName);
         const release = releasable(version);
         const files = version.fileCount;
-        return <TableRow key={version.id} hover sx={{ height: ROW_HEIGHT.twoLine, verticalAlign: 'middle', cursor: 'pointer' }} onClick={() => onSelectVersion(version.number)}>
+        const view = { label: 'View', onClick: () => onSelectVersion(version.number) };
+        const link = rowLinkProps(view);
+        return <TableRow key={version.id} {...link} sx={[{ height: ROW_HEIGHT.twoLine, verticalAlign: 'middle' }, link.sx || {}]}>
           <TableCell padding="checkbox" data-column="select" onClick={(event) => event.stopPropagation()}><Checkbox size="small" checked={selected.includes(version.number)} disabled={selected.length === 2 && !selected.includes(version.number)} inputProps={{ 'aria-label': `Select v${version.number} to compare` }} onChange={(_, checked) => setSelected((current) => (checked ? [...current, version.number] : current.filter((number) => number !== version.number)))} /></TableCell>
           <TableCell data-column="number"><Stack direction="row" spacing={1} alignItems="center" onClick={(event) => event.stopPropagation()}><VersionLabel number={version.number} digest={version.digest} />{version.number === viewedNumber && <StatusBadge status="current_only" role="neutral" variant="badge" dot={false} label="Viewing" />}</Stack></TableCell>
           <TableCell data-column="note"><Typography variant="s1" noWrap title={version.note || ''}>{version.note || '—'}</Typography></TableCell>
@@ -91,15 +96,11 @@ export default function ContextVersionsTable({ contextId, query, productionVersi
           <TableCell data-column="meta">{[version.createdBy?.name || 'Not reported', version.createdAt ? relativeTime(version.createdAt) : 'Not reported', files == null ? null : `${files} ${files === 1 ? 'file' : 'files'}`].filter(Boolean).join(' · ')}</TableCell>
           <TableCell data-column="actions" onClick={(event) => event.stopPropagation()}><Stack direction="row" spacing={0.5} alignItems="center" justifyContent="flex-end" sx={{ display: { xs: 'contents', sm: 'flex' } }}>
             {release && <Box data-slot="release"><ContextLabelRequestPanel contextId={contextId} version={version} /></Box>}
-            <Box data-slot="menu"><IconButton size="small" aria-label={`Actions for v${version.number}`} onClick={(event) => { event.stopPropagation(); setMenu({ anchor: event.currentTarget, version }); }}><Iconify icon="solar:menu-dots-bold" width={20} sx={{ pointerEvents: 'none' }} /></IconButton></Box>
+            <Box data-slot="menu"><RowActions name={`v${version.number}`} primary={view} actions={[{ label: 'Compare', onClick: () => preselect(version.number) }]} /></Box>
           </Stack></TableCell>
         </TableRow>;
       })}</TableBody></Table></TableContainer>
     <DataTablePagination page={page - 1} pageSize={pageSize} pageSizeOptions={[pageSize]} total={query.data.count || 0} onPageChange={(value) => onPageChange(value + 1)} loading={Boolean(query.isFetching)} disabled={Boolean(query.isFetching)} />
-    <Menu anchorEl={menu?.anchor} open={Boolean(menu)} onClose={() => setMenu(null)}>
-      <MenuItem onClick={() => { const { number } = menu.version; setMenu(null); onSelectVersion(number); }}><ListItemIcon><Iconify icon="solar:document-text-linear" width={16} /></ListItemIcon>View</MenuItem>
-      <MenuItem onClick={() => { const { number } = menu.version; setMenu(null); preselect(number); }}><ListItemIcon><Iconify icon="solar:transfer-horizontal-linear" width={16} /></ListItemIcon>Compare</MenuItem>
-    </Menu>
     {open && <Box sx={{ pt: 2, minWidth: 0 }}><ContextVersionCompare contextId={contextId} from={open[0]} to={open[1]} onClose={() => compareParam(null)} /></Box>}
   </Stack>;
 }

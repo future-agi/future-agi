@@ -39,8 +39,8 @@ const timestamp = (value) =>
       })
     : "Ordering unavailable";
 // A consumer reads as the person's key or the integration's name, never "email · api" (UX iterations 3 and 4).
-const KINDS = { api: "API key", mcp: "MCP", download: "Download" };
-const KIND_PREFIX = /^(api key|mcp|download)\s*[·:\-–]\s*/i;
+const KINDS = { api: "API key", mcp: "MCP", download: "Download", sdk: "SDK" };
+const KIND_PREFIX = /^(api key|mcp|download|sdk)\s*[·:\-–]\s*/i;
 const personName = (label) => /^[^@\s]+@[^@\s]+$/.test(label)
   ? label.split("@")[0].split(/[._-]+/).filter(Boolean).map((word) => `${word[0].toUpperCase()}${word.slice(1)}`).join(" ")
   : label;
@@ -87,6 +87,104 @@ const adoptionLead = ({ skill, target, data, days }) => {
 };
 const dateInput = (value) => formatDate(value).replace(" ", "T");
 
+// The authorized project picker (SKILL-TRACES §7.3 "Projects"): the Observe
+// projects this person can open, read through the Skills scoped key with
+// explicit tenant headers (the older project-list key is not tenant-specific).
+// Exported for the skill and context Runtime tabs (lane ST10).
+export function useAuthorizedProjects() {
+  return useSkillV11Query({
+    parts: ["traceProjects"],
+    url: () => endpoints.project.listProjects(),
+    params: { project_type: "observe" },
+    mapper: (result) => result.projects,
+  });
+}
+
+/** True when `projectId` is one of the authorized projects the query returned. */
+export const isAuthorizedProject = (query, projectId) =>
+  !query?.isError && Boolean(query?.data?.some((item) => String(item.id) === String(projectId)));
+
+const ALL_PROJECTS = "All projects you can open";
+
+/**
+ * Project select over `useAuthorizedProjects()`, with its loading, error and
+ * empty states. Only authorized ids are ever shown as selected or passed on.
+ *
+ *   single:   value: string ("" = none chosen), onChange(id)
+ *   multiple: value: string[] ([] = every project the person can open), onChange(ids)
+ *
+ * Props: value, onChange, multiple = false, label = "Project", size = "small",
+ * disabled, fullWidth, sx.
+ */
+export function AuthorizedProjectPicker({ value, onChange, multiple = false, label = "Project", size = "small", disabled = false, fullWidth = false, sx }) {
+  const projects = useAuthorizedProjects();
+  const known = (id) => isAuthorizedProject(projects, id);
+  const nameOf = (id) => projects.data?.find((item) => String(item.id) === String(id))?.name || "";
+  const selected = multiple
+    ? (Array.isArray(value) ? value : []).map(String).filter(known)
+    : (known(value) ? String(value) : "");
+  return (
+    <Stack spacing={2} sx={{ minWidth: 0 }}>
+      {projects.isPending && (
+        <ContentSkeleton
+          variant="rows"
+          rows={2}
+          label="Loading authorized projects"
+        />
+      )}
+      {projects.isError && (
+        <ErrorState
+          title="Could not load authorized projects"
+          onRetry={projects.refetch}
+        />
+      )}
+      {projects.data?.length === 0 && (
+        <EmptyState
+          title="No accessible Observe projects"
+          description="Choose a workspace with an Observe project to inspect runtime traces."
+        />
+      )}
+      <TextField
+        select
+        label={label}
+        size={size}
+        fullWidth={fullWidth}
+        sx={sx}
+        value={selected}
+        onChange={(event) => {
+          const next = event.target.value;
+          if (multiple) onChange((Array.isArray(next) ? next : String(next).split(",")).filter(known));
+          else onChange(known(next) ? String(next) : "");
+        }}
+        disabled={disabled || projects.isPending || projects.isError}
+        InputLabelProps={multiple ? { shrink: true } : undefined}
+        SelectProps={multiple ? {
+          multiple: true,
+          displayEmpty: true,
+          renderValue: (ids) => (ids.length ? ids.map(nameOf).join(", ") : ALL_PROJECTS),
+        } : undefined}
+      >
+        {!multiple && <MenuItem value="">Choose a project</MenuItem>}
+        {projects.data?.map((item) => (
+          <MenuItem key={item.id} value={String(item.id)}>
+            {item.name}
+          </MenuItem>
+        ))}
+      </TextField>
+    </Stack>
+  );
+}
+AuthorizedProjectPicker.propTypes = {
+  value: PropTypes.oneOfType([PropTypes.string, PropTypes.arrayOf(PropTypes.string)]),
+  onChange: PropTypes.func.isRequired,
+  multiple: PropTypes.bool,
+  label: PropTypes.string,
+  size: PropTypes.oneOf(["small", "medium"]),
+  disabled: PropTypes.bool,
+  fullWidth: PropTypes.bool,
+  sx: PropTypes.object,
+};
+
 function TraceDialog({ versions, initialVersionId, onClose }) {
   const [projectId, setProjectId] = useState("");
   const [versionId, setVersionId] = useState(initialVersionId);
@@ -97,17 +195,8 @@ function TraceDialog({ versions, initialVersionId, onClose }) {
       end: dateInput(end),
     };
   });
-  // Reuse the authorized project-picker endpoint with the Skills scoped key and
-  // explicit tenant headers; the older project-list key is not tenant-specific.
-  const projects = useSkillV11Query({
-    parts: ["traceProjects"],
-    url: () => endpoints.project.listProjects(),
-    params: { project_type: "observe" },
-    mapper: (result) => result.projects,
-  });
-  const authorized =
-    !projects.isError &&
-    projects.data?.some((item) => String(item.id) === projectId);
+  const projects = useAuthorizedProjects();
+  const authorized = isAuthorizedProject(projects, projectId);
   const link =
     authorized && versions.some((item) => item.versionId === versionId)
       ? buildSkillTraceLink({
@@ -130,40 +219,7 @@ function TraceDialog({ versions, initialVersionId, onClose }) {
       isValid={Boolean(link)}
     >
       <Stack spacing={2}>
-        {projects.isPending && (
-          <ContentSkeleton
-            variant="rows"
-            rows={2}
-            label="Loading authorized projects"
-          />
-        )}
-        {projects.isError && (
-          <ErrorState
-            title="Could not load authorized projects"
-            onRetry={projects.refetch}
-          />
-        )}
-        {projects.data?.length === 0 && (
-          <EmptyState
-            title="No accessible Observe projects"
-            description="Choose a workspace with an Observe project to inspect runtime traces."
-          />
-        )}
-        <TextField
-          select
-          label="Project"
-          size="small"
-          value={authorized ? projectId : ""}
-          onChange={(event) => setProjectId(event.target.value)}
-          disabled={projects.isPending || projects.isError}
-        >
-          <MenuItem value="">Choose a project</MenuItem>
-          {projects.data?.map((item) => (
-            <MenuItem key={item.id} value={String(item.id)}>
-              {item.name}
-            </MenuItem>
-          ))}
-        </TextField>
+        <AuthorizedProjectPicker value={projectId} onChange={setProjectId} />
         <TextField
           select
           label="Immutable skill version"
@@ -266,11 +322,8 @@ function AdoptionContent({ skill, days: externalDays, summary, about, details, a
   ];
   return (
     <Section
-      title={
-        target
-          ? `Who is using v${target.version}`
-          : "Production fetches"
-      }
+      // Fetch data only: it shows who retrieved which version, never who loaded or used it (SKILL-TRACES §2).
+      title="Fetch adoption after a label move"
       actions={
         <Stack
           direction="row"
