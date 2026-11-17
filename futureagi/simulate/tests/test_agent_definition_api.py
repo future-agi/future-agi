@@ -185,6 +185,58 @@ class TestListAgentDefinitions:
             str(newest.id),
         ]
 
+    @pytest.mark.parametrize("page_size", [2, 3])
+    @pytest.mark.parametrize("required_position", [0, 1, 2, 3, 6])
+    def test_the_required_agent_pages_through_every_agent_exactly_once(
+        self, auth_client, organization, workspace, page_size, required_position
+    ):
+        from datetime import timedelta
+
+        now = timezone.now()
+        agents = []
+        for i in range(7):
+            agent = AgentDefinition.objects.create(
+                agent_name=f"Paged Agent {i}",
+                agent_type=AgentDefinition.AgentTypeChoices.TEXT,
+                inbound=True,
+                description="paging",
+                organization=organization,
+                workspace=workspace,
+                languages=["en"],
+            )
+            # Index 0 is the most recently updated, so the list order is 0..6.
+            AgentDefinition.no_workspace_objects.filter(id=agent.id).update(
+                updated_at=now - timedelta(minutes=i)
+            )
+            agents.append(agent)
+        required = agents[required_position]
+        others = [str(a.id) for a in agents if a.id != required.id]
+
+        seen = []
+        pages = []
+        page = 1
+        while True:
+            response = auth_client.get(
+                "/simulate/agent-definitions/"
+                f"?agent_definition_id={required.id}&page={page}&limit={page_size}"
+            )
+            assert response.status_code == status.HTTP_200_OK
+            data = response.json()
+            assert data["count"] == 7
+            ids = [r["id"] for r in data["results"]]
+            pages.append(ids)
+            seen.extend(ids)
+            if not data["next"]:
+                break
+            page += 1
+
+        assert len(pages) == -(-7 // page_size)
+        assert sorted(seen) == sorted(str(a.id) for a in agents)
+        assert pages[0][0] == str(required.id)
+        assert str(required.id) not in seen[1:]
+        assert seen[1:] == others
+        assert all(len(p) == page_size for p in pages[:-1])
+
     def test_pagination(self, auth_client, agent_definition, agent_definition_text):
         response = auth_client.get("/simulate/agent-definitions/?page=1&limit=1")
         assert response.status_code == status.HTTP_200_OK

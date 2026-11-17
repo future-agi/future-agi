@@ -606,10 +606,15 @@ class TestAgentVersionResponseSerializer:
             "is_latest",
             "agent_kind",
             "api_key",
+            "preflight_status",
+            "preflight_report",
             "created_at",
             "updated_at",
         }
         assert set(data.keys()) == expected_fields
+        # With no check rows passed in the context, the check fields are null, not a query.
+        assert data["preflight_status"] is None
+        assert data["preflight_report"] is None
 
     def test_configuration_snapshot_uuid_safe(self, db, organization, workspace):
         from simulate.models import AgentDefinition

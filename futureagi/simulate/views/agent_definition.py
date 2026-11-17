@@ -95,6 +95,30 @@ def soft_delete_agent_definition_and_versions(agent):
     agent.save(update_fields=["deleted", "deleted_at", "updated_at"])
 
 
+class _RequiredFirst:
+    """The required agent followed by the ordered rest, as one sliceable list.
+
+    Paginating this, not the rest alone, keeps every agent on exactly one page, the
+    required one on page 1, and the count the same on every page.
+    """
+
+    def __init__(self, required, rest):
+        self._required = required
+        self._rest = rest
+        self._rest_count = None
+
+    def __len__(self):
+        if self._rest_count is None:
+            self._rest_count = self._rest.count()
+        return self._rest_count + 1
+
+    def __getitem__(self, key):
+        start, stop, _ = key.indices(len(self))
+        if start == 0:
+            return [self._required, *self._rest[: max(stop - 1, 0)]]
+        return list(self._rest[start - 1 : stop - 1])
+
+
 class AgentDefinitionView(APIView):
     """
     API View to list agent definitions for an organization with pagination and search,
@@ -177,23 +201,13 @@ class AgentDefinitionView(APIView):
                 except AgentDefinition.DoesNotExist:
                     pass
 
-            page = int(request.query_params.get("page", 1))
-            if required_agent and page == 1:
-                agents = agents.exclude(id=required_agent.id).order_by(
-                    "-updated_at", "-created_at"
+            agents = agents.order_by("-updated_at", "-created_at")
+            if required_agent:
+                agents = _RequiredFirst(
+                    required_agent, agents.exclude(id=required_agent.id)
                 )
-                paginator = ExtendedPageNumberPagination()
-                result_page = paginator.paginate_queryset(agents, request)
-                paginator.page.paginator.count += 1
-                result_page = [required_agent] + result_page[
-                    : paginator.get_page_size(request) - 1
-                ]
-            else:
-                if required_agent:
-                    agents = agents.exclude(id=required_agent.id)
-                agents = agents.order_by("-updated_at", "-created_at")
-                paginator = ExtendedPageNumberPagination()
-                result_page = paginator.paginate_queryset(agents, request)
+            paginator = ExtendedPageNumberPagination()
+            result_page = paginator.paginate_queryset(agents, request)
 
             serializer = AgentDefinitionListResponseSerializer(
                 result_page,

@@ -635,10 +635,11 @@ def _preflight_credential_probe(secret_payload) -> list[dict[str, Any]]:
     if secret_payload["source"]["kind"] == "remote":
         return []
     submitted_secrets = secret_payload.get("credential_values") or {}
-    secret_values = {
-        str(alias).upper(): str(secret_value)
-        for alias, secret_value in submitted_secrets.items()
-    }
+    # A loop, not a comprehension, so the value is a local of this frame (see
+    # _mint_sandbox_values).
+    secret_values = {}
+    for alias, secret_value in submitted_secrets.items():
+        secret_values[str(alias).upper()] = str(secret_value)
     config = secret_payload["agent"].get("config") or {}
     livekit_url = config.get("livekit_url") or config.get("LIVEKIT_URL")
     if livekit_url and not secret_values.get("LIVEKIT_URL"):
@@ -1268,11 +1269,12 @@ def _mint_sandbox_values(request) -> Response | None:
     from simulate.services.harness_credentials import mint_secret_refs
 
     data = request.validated_data
-    secret_values = {
-        alias: secret_value
-        for alias, secret_value in (data.pop("credential_values", None) or {}).items()
-        if secret_value
-    }
+    # A loop, not a comprehension: before Python 3.12 a comprehension's variables live
+    # in a nested frame, so the value would be a local the scrubber does not see here.
+    secret_values = {}
+    for alias, secret_value in (data.pop("credential_values", None) or {}).items():
+        if secret_value:
+            secret_values[alias] = secret_value
     if not secret_values:
         return None
     organization = request_organization(request)
