@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1273,
+  endpointCount: 1274,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -31228,6 +31228,75 @@ export const OPENAPI_CONTRACT = Object.freeze({
         responses: {
           200: {
             $ref: "#/definitions/SkillsMigrationReviewResponse",
+          },
+          400: {
+            $ref: "#/definitions/SkillsError",
+          },
+          401: {
+            $ref: "#/definitions/SkillsError",
+          },
+          403: {
+            $ref: "#/definitions/SkillsError",
+          },
+          404: {
+            $ref: "#/definitions/SkillsError",
+          },
+          409: {
+            $ref: "#/definitions/SkillsConflictError",
+          },
+          410: {
+            $ref: "#/definitions/SkillsError",
+          },
+          413: {
+            $ref: "#/definitions/SkillsError",
+          },
+          422: {
+            $ref: "#/definitions/SkillsChecksError",
+          },
+          428: {
+            $ref: "#/definitions/SkillsError",
+          },
+          503: {
+            $ref: "#/definitions/SkillsError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/model-hub/skills/loads/": {
+      get: {
+        operationId: "model-hub_skills_loads_list",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          resource_id: {
+            required: true,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+          kind: {
+            required: true,
+            schema: {
+              type: "string",
+              enum: ["skill", "agent_context"],
+            },
+          },
+          since: {
+            required: true,
+            schema: {
+              type: "string",
+              format: "date-time",
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/SkillsLatestLoadResultResponse",
           },
           400: {
             $ref: "#/definitions/SkillsError",
@@ -97845,6 +97914,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    SkillsLatestLoadResultResponse: {
+      required: ["status", "result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+        },
+        result: {
+          $ref: "#/definitions/LatestLoadResult",
+        },
+      },
+    },
     SkillsManifestResponse: {
       required: ["status", "result"],
       type: "object",
@@ -131808,6 +131890,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    LatestLoadResult: {
+      required: ["load", "fetch"],
+      type: "object",
+      properties: {
+        load: {
+          $ref: "#/definitions/LatestLoad",
+        },
+        fetch: {
+          $ref: "#/definitions/LatestFetch",
+        },
+      },
+    },
     SkillsHubManifest: {
       required: [
         "skill_id",
@@ -151082,6 +151176,56 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    LatestFetch: {
+      required: ["sdk_version", "tracing_mode", "can_record", "client"],
+      type: "object",
+      properties: {
+        sdk_version: {
+          title: "Sdk version",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        tracing_mode: {
+          title: "Tracing mode",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        can_record: {
+          title: "Can record",
+          type: "boolean",
+        },
+        client: {
+          title: "Client",
+          type: "string",
+        },
+      },
+      "x-nullable": true,
+    },
+    LatestLoad: {
+      required: ["version", "agent", "project", "received_at"],
+      type: "object",
+      properties: {
+        version: {
+          title: "Version",
+          type: "integer",
+          minimum: 1,
+        },
+        agent: {
+          $ref: "#/definitions/LoadAgent",
+        },
+        project: {
+          $ref: "#/definitions/LoadProject",
+        },
+        received_at: {
+          title: "Received at",
+          type: "string",
+          format: "date-time",
+        },
+      },
+      "x-nullable": true,
+    },
     SkillsHubManifestFile: {
       required: ["path", "size_bytes", "sha256"],
       type: "object",
@@ -157698,6 +157842,65 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         source: {
           title: "Source",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
+    LoadAgent: {
+      required: [
+        "key",
+        "name",
+        "service",
+        "project_id",
+        "project_name",
+        "name_source",
+      ],
+      type: "object",
+      properties: {
+        key: {
+          type: "array",
+          items: {
+            type: "string",
+          },
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        service: {
+          title: "Service",
+          type: "string",
+        },
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+        },
+        project_name: {
+          title: "Project name",
+          type: "string",
+          minLength: 1,
+        },
+        name_source: {
+          title: "Name source",
+          type: "string",
+          enum: ["agent", "service", "project"],
+        },
+      },
+    },
+    LoadProject: {
+      required: ["id", "name"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        name: {
+          title: "Name",
           type: "string",
           minLength: 1,
         },

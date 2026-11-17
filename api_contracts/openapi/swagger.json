@@ -58003,6 +58003,119 @@
                 }
             ]
         },
+        "/model-hub/skills/loads/": {
+            "get": {
+                "operationId": "model-hub_skills_loads_list",
+                "summary": "Read the newest load for Check tracing, with fetch diagnosis separately.",
+                "description": "A recorded load is client-reported delivery, never proof of skill use.\nBoth resource kinds share this read and the caller's workspace scope.",
+                "parameters": [
+                    {
+                        "name": "resource_id",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    {
+                        "name": "kind",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "enum": [
+                            "skill",
+                            "agent_context"
+                        ]
+                    },
+                    {
+                        "name": "since",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "format": "date-time"
+                    }
+                ],
+                "responses": {
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "401": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "410": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "413": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "428": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsConflictError"
+                        }
+                    },
+                    "422": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsChecksError"
+                        }
+                    },
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsLatestLoadResultResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "Skills"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
         "/model-hub/skills/native/attempts/{attempt_id}/failure/": {
             "post": {
                 "operationId": "model-hub_skills_native_attempts_failure_create",
@@ -164390,6 +164503,163 @@
                 },
                 "result": {
                     "$ref": "#/definitions/SkillsContextMigrationReview"
+                }
+            }
+        },
+        "LoadAgent": {
+            "required": [
+                "key",
+                "name",
+                "service",
+                "project_id",
+                "project_name",
+                "name_source"
+            ],
+            "type": "object",
+            "properties": {
+                "key": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "service": {
+                    "title": "Service",
+                    "type": "string"
+                },
+                "project_id": {
+                    "title": "Project id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "project_name": {
+                    "title": "Project name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "name_source": {
+                    "title": "Name source",
+                    "type": "string",
+                    "enum": [
+                        "agent",
+                        "service",
+                        "project"
+                    ]
+                }
+            }
+        },
+        "LoadProject": {
+            "required": [
+                "id",
+                "name"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "LatestLoad": {
+            "required": [
+                "version",
+                "agent",
+                "project",
+                "received_at"
+            ],
+            "type": "object",
+            "properties": {
+                "version": {
+                    "title": "Version",
+                    "type": "integer",
+                    "minimum": 1
+                },
+                "agent": {
+                    "$ref": "#/definitions/LoadAgent"
+                },
+                "project": {
+                    "$ref": "#/definitions/LoadProject"
+                },
+                "received_at": {
+                    "title": "Received at",
+                    "type": "string",
+                    "format": "date-time"
+                }
+            },
+            "x-nullable": true
+        },
+        "LatestFetch": {
+            "required": [
+                "sdk_version",
+                "tracing_mode",
+                "can_record",
+                "client"
+            ],
+            "type": "object",
+            "properties": {
+                "sdk_version": {
+                    "title": "Sdk version",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "tracing_mode": {
+                    "title": "Tracing mode",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "can_record": {
+                    "title": "Can record",
+                    "type": "boolean"
+                },
+                "client": {
+                    "title": "Client",
+                    "type": "string"
+                }
+            },
+            "x-nullable": true
+        },
+        "LatestLoadResult": {
+            "required": [
+                "load",
+                "fetch"
+            ],
+            "type": "object",
+            "properties": {
+                "load": {
+                    "$ref": "#/definitions/LatestLoad"
+                },
+                "fetch": {
+                    "$ref": "#/definitions/LatestFetch"
+                }
+            }
+        },
+        "SkillsLatestLoadResultResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/LatestLoadResult"
                 }
             }
         },

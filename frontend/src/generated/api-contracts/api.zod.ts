@@ -44395,6 +44395,51 @@ export const ModelHubSkillsIntakeReviewCreateResponse = zod.object({
   }),
 });
 
+/**
+ * A recorded load is client-reported delivery, never proof of skill use.
+Both resource kinds share this read and the caller's workspace scope.
+ * @summary Read the newest load for Check tracing, with fetch diagnosis separately.
+ */
+export const ModelHubSkillsLoadsListQueryParams = zod.object({
+  resource_id: zod.string().uuid(),
+  kind: zod.enum(["skill", "agent_context"]),
+  since: zod.string().datetime({ offset: true }),
+});
+
+export const ModelHubSkillsLoadsListResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    load: zod.union([
+      zod.object({
+        version: zod.number().min(1),
+        agent: zod.object({
+          key: zod.array(zod.string()),
+          name: zod.string().min(1),
+          service: zod.string(),
+          project_id: zod.string().uuid(),
+          project_name: zod.string().min(1),
+          name_source: zod.enum(["agent", "service", "project"]),
+        }),
+        project: zod.object({
+          id: zod.string().uuid(),
+          name: zod.string().min(1),
+        }),
+        received_at: zod.string().datetime({ offset: true }),
+      }),
+      zod.null(),
+    ]),
+    fetch: zod.union([
+      zod.object({
+        sdk_version: zod.string().min(1).nullable(),
+        tracing_mode: zod.string().min(1).nullable(),
+        can_record: zod.boolean(),
+        client: zod.string(),
+      }),
+      zod.null(),
+    ]),
+  }),
+});
+
 export const ModelHubSkillsNativeAttemptsFailureCreateParams = zod.object({
   attempt_id: zod.string(),
 });

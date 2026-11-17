@@ -52,11 +52,11 @@ export const endpoints = {
 };
 
 // Skill-trace runtime reads (SKILL-TRACES §6.6 endpoints 1–5 and 8–10, lane
-// ST10). PROVISIONAL: SKILLS-API-REVIEW.md replaces the proposed /runtime/
-// routes with the shared usage, comparison and load projections, and its
-// migration map is not written yet. These templates are the §6.6 paths as
-// placeholders, named by what they read. When the lean map lands, only this
-// table changes; hooks in runtime.js call `runtimeEndpoint(name, params)`.
+// ST10). The load projection is mounted at the shared /loads/ resource.
+// Usage, comparison and picker routes remain provisional until their shared
+// API projections are mounted (SKILLS-API-REVIEW.md); do not enable the feature
+// or replace these guards with uncontracted network calls. Hooks in runtime.js
+// call `runtimeEndpoint(name, params)`.
 //
 // A template is used only once the generated contract has it. Until then the
 // read fails with the typed code `runtime_route_pending` (the screens show

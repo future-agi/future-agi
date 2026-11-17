@@ -20886,6 +20886,59 @@ export interface SkillsMigrationReviewResponseApi {
   result: SkillsContextMigrationReviewApi;
 }
 
+export type LoadAgentApiNameSource =
+  (typeof LoadAgentApiNameSource)[keyof typeof LoadAgentApiNameSource];
+
+export const LoadAgentApiNameSource = {
+  agent: "agent",
+  service: "service",
+  project: "project",
+} as const;
+
+export interface LoadAgentApi {
+  key: string[];
+  /** @minLength 1 */
+  name: string;
+  service: string;
+  project_id: string;
+  /** @minLength 1 */
+  project_name: string;
+  name_source: LoadAgentApiNameSource;
+}
+
+export interface LoadProjectApi {
+  id: string;
+  /** @minLength 1 */
+  name: string;
+}
+
+export type LatestLoadApi = {
+  /** @minimum 1 */
+  version: number;
+  agent: LoadAgentApi;
+  project: LoadProjectApi;
+  received_at: string;
+} | null;
+
+export type LatestFetchApi = {
+  /** @minLength 1 */
+  sdk_version: string | null;
+  /** @minLength 1 */
+  tracing_mode: string | null;
+  can_record: boolean;
+  client: string;
+} | null;
+
+export interface LatestLoadResultApi {
+  load: LatestLoadApi | null;
+  fetch: LatestFetchApi | null;
+}
+
+export interface SkillsLatestLoadResultResponseApi {
+  status: boolean;
+  result: LatestLoadResultApi;
+}
+
 export interface SkillsContextGuestFailureInputApi {
   reason?: string | null;
 }
@@ -47111,6 +47164,20 @@ export type ModelHubSkillsIntakeReceiptsListParams = {
    */
   page_size?: number;
 };
+
+export type ModelHubSkillsLoadsListParams = {
+  resource_id: string;
+  kind: ModelHubSkillsLoadsListKind;
+  since: string;
+};
+
+export type ModelHubSkillsLoadsListKind =
+  (typeof ModelHubSkillsLoadsListKind)[keyof typeof ModelHubSkillsLoadsListKind];
+
+export const ModelHubSkillsLoadsListKind = {
+  skill: "skill",
+  agent_context: "agent_context",
+} as const;
 
 export type ModelHubSkillsReleaseRequestsListParams = {
   /**

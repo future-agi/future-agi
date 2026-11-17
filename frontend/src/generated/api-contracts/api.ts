@@ -937,6 +937,7 @@ import type {
   ModelHubSkillsLabelProtectionHistoryListParams,
   ModelHubSkillsLabelsHistoryListParams,
   ModelHubSkillsListParams,
+  ModelHubSkillsLoadsListParams,
   ModelHubSkillsReleaseRequestsListParams,
   ModelHubSkillsReleaseRequestsOptionsListParams,
   ModelHubSkillsResolveListParams,
@@ -1461,6 +1462,7 @@ import type {
   SkillsJobAckResponseApi,
   SkillsLabelOutListResponseApi,
   SkillsLabelOutResponseApi,
+  SkillsLatestLoadResultResponseApi,
   SkillsManifestResponseApi,
   SkillsMigrationExportResponseApi,
   SkillsMigrationReviewResponseApi,
@@ -65482,6 +65484,133 @@ export const modelHubSkillsIntakeReviewCreate = async (
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
       body: JSON.stringify(skillsContextMigrationReviewInputApi),
+    },
+  );
+};
+
+export type modelHubSkillsLoadsListResponse200 = {
+  data: SkillsLatestLoadResultResponseApi;
+  status: 200;
+};
+
+export type modelHubSkillsLoadsListResponse400 = {
+  data: SkillsErrorApi;
+  status: 400;
+};
+
+export type modelHubSkillsLoadsListResponse401 = {
+  data: SkillsErrorApi;
+  status: 401;
+};
+
+export type modelHubSkillsLoadsListResponse403 = {
+  data: SkillsErrorApi;
+  status: 403;
+};
+
+export type modelHubSkillsLoadsListResponse404 = {
+  data: SkillsErrorApi;
+  status: 404;
+};
+
+export type modelHubSkillsLoadsListResponse409 = {
+  data: SkillsConflictErrorApi;
+  status: 409;
+};
+
+export type modelHubSkillsLoadsListResponse410 = {
+  data: SkillsErrorApi;
+  status: 410;
+};
+
+export type modelHubSkillsLoadsListResponse413 = {
+  data: SkillsErrorApi;
+  status: 413;
+};
+
+export type modelHubSkillsLoadsListResponse422 = {
+  data: SkillsChecksErrorApi;
+  status: 422;
+};
+
+export type modelHubSkillsLoadsListResponse428 = {
+  data: SkillsErrorApi;
+  status: 428;
+};
+
+export type modelHubSkillsLoadsListResponse503 = {
+  data: SkillsErrorApi;
+  status: 503;
+};
+
+export type modelHubSkillsLoadsListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<
+    HTTPStatusCodes,
+    200 | 400 | 401 | 403 | 404 | 409 | 410 | 413 | 422 | 428 | 503
+  >;
+};
+
+export type modelHubSkillsLoadsListResponseSuccess =
+  modelHubSkillsLoadsListResponse200 & {
+    headers: Headers;
+  };
+export type modelHubSkillsLoadsListResponseError = (
+  | modelHubSkillsLoadsListResponse400
+  | modelHubSkillsLoadsListResponse401
+  | modelHubSkillsLoadsListResponse403
+  | modelHubSkillsLoadsListResponse404
+  | modelHubSkillsLoadsListResponse409
+  | modelHubSkillsLoadsListResponse410
+  | modelHubSkillsLoadsListResponse413
+  | modelHubSkillsLoadsListResponse422
+  | modelHubSkillsLoadsListResponse428
+  | modelHubSkillsLoadsListResponse503
+  | modelHubSkillsLoadsListResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type modelHubSkillsLoadsListResponse =
+  | modelHubSkillsLoadsListResponseSuccess
+  | modelHubSkillsLoadsListResponseError;
+
+export const getModelHubSkillsLoadsListUrl = (
+  params: ModelHubSkillsLoadsListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/model-hub/skills/loads/?${stringifiedParams}`
+    : `/model-hub/skills/loads/`;
+};
+
+/**
+ * A recorded load is client-reported delivery, never proof of skill use.
+Both resource kinds share this read and the caller's workspace scope.
+ * @summary Read the newest load for Check tracing, with fetch diagnosis separately.
+ */
+export const modelHubSkillsLoadsList = async (
+  params: ModelHubSkillsLoadsListParams,
+  options?: RequestInit,
+): Promise<modelHubSkillsLoadsListResponse> => {
+  return apiMutator<modelHubSkillsLoadsListResponse>(
+    getModelHubSkillsLoadsListUrl(params),
+    {
+      ...options,
+      method: "GET",
     },
   );
 };

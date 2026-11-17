@@ -5,7 +5,7 @@
 export const API_SURFACE_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1273,
+  endpointCount: 1274,
   groups: {
     accounts: {
       "/accounts/2fa/recovery-codes/": ["get"],
@@ -891,6 +891,7 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/model-hub/skills/intake/{plan_id}/receipts/": ["get"],
       "/model-hub/skills/intake/{plan_id}/reconcile/": ["post"],
       "/model-hub/skills/intake/{plan_id}/review/": ["post"],
+      "/model-hub/skills/loads/": ["get"],
       "/model-hub/skills/native/attempts/{attempt_id}/failure/": ["post"],
       "/model-hub/skills/native/attempts/{attempt_id}/health/": ["post"],
       "/model-hub/skills/native/attempts/{attempt_id}/observations/": ["post"],
@@ -2451,6 +2452,7 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/model-hub/skills/intake/{plan_id}/receipts/": ["get"],
   "/model-hub/skills/intake/{plan_id}/reconcile/": ["post"],
   "/model-hub/skills/intake/{plan_id}/review/": ["post"],
+  "/model-hub/skills/loads/": ["get"],
   "/model-hub/skills/native/attempts/{attempt_id}/failure/": ["post"],
   "/model-hub/skills/native/attempts/{attempt_id}/health/": ["post"],
   "/model-hub/skills/native/attempts/{attempt_id}/observations/": ["post"],
