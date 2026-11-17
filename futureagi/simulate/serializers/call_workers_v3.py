@@ -16,6 +16,7 @@ from simulate.types import (
     WorkerAttribution,
     WorkerCleanupStatus,
     WorkerCollection,
+    WorkerEnforcement,
     WorkerEventType,
     WorkerRelationship,
     WorkersState,
@@ -59,6 +60,12 @@ class CallWorkerSerializer(serializers.Serializer):
     cleanup = CleanupSerializer(required=False)
     # Its own checks in this call, beside the call's verdict and never deciding it.
     checks = WorkerCheckSerializer(many=True)
+    enforcement = serializers.ChoiceField(
+        choices=get_args(WorkerEnforcement),
+        required=False,
+        help_text="How the world held it to its limits in this trial: on its own channel, not at all, or bypassed.",
+    )
+    enforcement_label = serializers.CharField(required=False)
     channel_bypassed = serializers.BooleanField(
         default=False,
         help_text="It reached the world on the shared address instead of its own channel in this trial, so its "
@@ -272,7 +279,9 @@ class RouteColumnSerializer(serializers.Serializer):
         allow_null=True, help_text="Null when the record does not name it."
     )
     to_kind = serializers.ChoiceField(
-        choices=get_args(RouteParty), allow_null=True, help_text="Null on a tool-call column."
+        choices=get_args(RouteParty),
+        allow_null=True,
+        help_text="Null on a tool-call column.",
     )
     to_id = serializers.CharField(allow_null=True)
     to_name = serializers.CharField(allow_null=True)

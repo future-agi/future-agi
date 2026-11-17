@@ -137,6 +137,24 @@ class SealedToolCall(TypedDict, total=False):
 WorkerBinding = Literal["separate", "shared", "not_declared"]
 
 
+# How the world holds a worker to its limits: on its own channel, not at all, or bypassed in a trial.
+WorkerEnforcement = Literal["held_at_world", "not_enforced", "bypassed"]
+
+
+def worker_enforcement(
+    binding: object, *, door: object = None, bypassed: bool = False
+) -> WorkerEnforcement:
+    """How the world holds a worker: bypassed when a trial says so; held at the world on its own (`separate`) channel
+    unless the trial ran with no door; otherwise not enforced."""
+    if bypassed:
+        return "bypassed"
+    return (
+        "held_at_world"
+        if binding == "separate" and door is not False
+        else "not_enforced"
+    )
+
+
 class ContractWorker(TypedDict):
     """A worker the app's contract declares, as the Workers and Participants cards show it."""
 
@@ -150,6 +168,8 @@ class ContractWorker(TypedDict):
     # The tools the cards list: its allowed tools when narrower, else every tool its code holds.
     tools_shown: list[str]
     binding: WorkerBinding
+    enforcement: WorkerEnforcement
+    enforcement_label: str
     address_env: NotRequired[str]
     # The process that runs it alone, when the app serves it as its own service.
     process: NotRequired[str]
@@ -275,6 +295,9 @@ class HarnessWorker(TypedDict):
     past_deadline: NotRequired[bool]
     # Served only: it reached the world on the shared address instead of its own channel in this trial.
     channel_bypassed: NotRequired[bool]
+    # Served only: how the world held it to its limits in this trial, and the words for it.
+    enforcement: NotRequired[WorkerEnforcement]
+    enforcement_label: NotRequired[str]
     # Served only: its own checks in this call.
     checks: NotRequired[list[WorkerCheck]]
 
@@ -425,13 +448,10 @@ class CallWorkersRecord(WorkerTimeline, WorkerSteps):
     placements: list[FailurePlacement]
     stopped_by_user: bool
     state: WorkersState
-    # Null when no trace project was read for the call.
-    project_id: str | None
 
 
-# A trial's route: a whole record, or a read that ran and found no hand-off (both compared); a record cut short or
-# still due a later read (`partial`), a read not yet run (`pending`), a call that did not complete (`not_finished`),
-# or a read that failed or never ran (`unreadable`), none compared.
+# A trial's route: compared when `recorded` (a whole record) or `no_hand_off` (a read that found none); never when the
+# record is cut short or due a later read, the read is due, the call did not complete, or the read failed or never ran.
 TrialRoute = Literal[
     "recorded", "no_hand_off", "partial", "pending", "not_finished", "unreadable"
 ]
@@ -593,5 +613,3 @@ class CallCallActors(TypedDict, total=False):
     resolved: list[CallActor]
     summary: list[CallActorTookPart]
     events: list[CallActorEvent]
-
-

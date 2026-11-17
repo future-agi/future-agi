@@ -152,8 +152,8 @@ class Roster:
             }:
                 return worker_id
         match = self.match(name)
-        worker_id = f"{self.run_key}/{match['id']}" if match is not None else None
-        return worker_id if worker_id in self.workers else None
+        declared = f"{self.run_key}/{match['id']}" if match is not None else None
+        return declared if declared in self.workers else None
 
     def worker_id(self, by: str, label: str) -> str:
         """The id `add` gives, without adding the worker."""

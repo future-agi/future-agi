@@ -233,9 +233,7 @@ def test_tool_calls_are_columns_only_when_asked_for_and_a_failed_call_reads_fail
     assert routes["split"]["column"] == 1
 
 
-@pytest.mark.parametrize(
-    "route", ["partial", "pending", "not_finished", "unreadable"]
-)
+@pytest.mark.parametrize("route", ["partial", "pending", "not_finished", "unreadable"])
 def test_a_trial_without_a_whole_record_is_listed_but_never_compared(route):
     other = Trial(call_execution_id="call-2", result="error", record=None, route=route)
     routes = trial_routes("s", [_trial(1, _usual()), other])
@@ -274,7 +272,10 @@ def test_an_unplaced_hand_off_has_an_unknown_maker_and_an_unlisted_worker_no_nam
         "Refunds specialist",
     )
     # A worker the record does not list keeps its id and is never named by it.
-    assert (unlisted["from_kind"], unlisted["from_name"]) == ("coordinator", "Front desk")
+    assert (unlisted["from_kind"], unlisted["from_name"]) == (
+        "coordinator",
+        "Front desk",
+    )
     assert (unlisted["to_kind"], unlisted["to_id"], unlisted["to_name"]) == (
         "worker",
         "run/ghost",
@@ -333,6 +334,11 @@ def test_the_run_serves_one_scenario_s_trials_lined_up_and_only_in_its_workspace
     settings.HARNESS_BUNDLE_CERTIFY_ENABLED = False
     run = _create(_environment(user, workspace, "trial-routes", storage), key="r")
     call = CallExecution.objects.filter(test_execution_id=run.test_execution_id).first()
+    # A trial that completed; one that did not is never compared.
+    CallExecution.objects.filter(id=call.id).update(
+        status=CallExecution.CallStatus.COMPLETED,
+        completed_at=timezone.now() - timedelta(days=1),
+    )
     kept = {**_usual(False).record(), "collected_at": "2026-10-31T12:00:00Z"}
     locked_call_metadata_update(
         call.id,
@@ -399,10 +405,14 @@ def test_the_run_serves_one_scenario_s_trials_lined_up_and_only_in_its_workspace
     locked_call_metadata_update(
         second.id,
         lambda metadata: (
-            metadata.pop(WORKERS_KEY)
-            and metadata.update({READ_KEY: {"at": "2026-10-31T12:00:00Z", "failed": False}})
-        )
-        or True,
+            (
+                metadata.pop(WORKERS_KEY)
+                and metadata.update(
+                    {READ_KEY: {"at": "2026-10-31T12:00:00Z", "failed": False}}
+                )
+            )
+            or True
+        ),
     )
     assert routes() == (["recorded", "no_hand_off"], False)
 
@@ -462,16 +472,65 @@ HOTELS_EVENT = {
         ("completed", {"harness_workers": _stored()}, True, "recorded"),
         # Cut short, or still due a later read: its missing steps are not steps it did not take.
         ("completed", {"harness_workers": _stored(events_omitted=3)}, True, "partial"),
-        ("completed", {"harness_workers": _stored(collection="partial")}, True, "partial"),
+        (
+            "completed",
+            {"harness_workers": _stored(collection="partial")},
+            True,
+            "partial",
+        ),
         (
             "completed",
             {"harness_workers": _stored(next_read_at="2026-11-01T11:05:00+00:00")},
             True,
             "partial",
         ),
-        ("completed", {"harness_workers_read": {"at": at(9), "failed": False}}, True, "no_hand_off"),
-        ("completed", {"harness_workers_read": {"at": at(9), "failed": True}}, True, "unreadable"),
+        (
+            "completed",
+            {"harness_workers_read": {"at": at(9), "failed": False}},
+            True,
+            "no_hand_off",
+        ),
+        (
+            "completed",
+            {"harness_workers_read": {"at": at(9), "failed": True}},
+            True,
+            "unreadable",
+        ),
         ("ongoing", {}, True, "not_finished"),
+        # A call that failed or was stopped is not compared, whatever record or read note it kept.
+        ("failed", {"harness_workers": _stored()}, True, "not_finished"),
+        ("cancelled", {"harness_workers": _stored()}, True, "not_finished"),
+        (
+            "failed",
+            {"harness_workers_read": {"at": at(9), "failed": False}},
+            True,
+            "not_finished",
+        ),
+        (
+            "cancelled",
+            {"harness_workers_read": {"at": at(9), "failed": False}},
+            True,
+            "not_finished",
+        ),
+        # The harness said some hand-offs could not be recorded: what was kept is not the whole route.
+        (
+            "completed",
+            {
+                "harness_workers": _stored(),
+                "harness_trial_state": {"notices": [{"code": "hand_offs_incomplete"}]},
+            },
+            True,
+            "partial",
+        ),
+        (
+            "completed",
+            {
+                "harness_workers_read": {"at": at(9), "failed": False},
+                "harness_trial_state": {"notices": [{"code": "hand_offs_incomplete"}]},
+            },
+            True,
+            "partial",
+        ),
         ("failed", {}, True, "not_finished"),
         ("cancelled", {}, True, "not_finished"),
         # Completed a moment ago: its first read is still due.

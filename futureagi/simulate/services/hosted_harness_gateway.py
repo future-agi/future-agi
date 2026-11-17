@@ -4538,8 +4538,8 @@ class HostedHarnessGateway:
                 if cache.get(key):
                     return
                 cache.set(key, True, timeout=3600)
-            except Exception:
-                # Without the cache a retry may wait again; the seal still gets its wait.
+            except Exception:  # noqa: BLE001 - any cache backend's failure; the seal still gets its wait
+                # Without the cache a retry may wait again.
                 logger.warning(
                     "hosted_cancel_seal_cache_unavailable attempt=%s", attempt.id
                 )

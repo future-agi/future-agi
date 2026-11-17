@@ -17387,6 +17387,15 @@ export const HarnessEnvironmentWorkerApiBinding = {
   not_declared: "not_declared",
 } as const;
 
+export type HarnessEnvironmentWorkerApiEnforcement =
+  (typeof HarnessEnvironmentWorkerApiEnforcement)[keyof typeof HarnessEnvironmentWorkerApiEnforcement];
+
+export const HarnessEnvironmentWorkerApiEnforcement = {
+  held_at_world: "held_at_world",
+  not_enforced: "not_enforced",
+  bypassed: "bypassed",
+} as const;
+
 export interface HarnessEnvironmentWorkerApi {
   /** @minLength 1 */
   id: string;
@@ -17400,6 +17409,9 @@ export interface HarnessEnvironmentWorkerApi {
   allowed_tools: string[];
   tools_shown: string[];
   binding: HarnessEnvironmentWorkerApiBinding;
+  enforcement: HarnessEnvironmentWorkerApiEnforcement;
+  /** @minLength 1 */
+  enforcement_label: string;
   address_env?: string;
   process?: string;
 }
@@ -28537,6 +28549,18 @@ export interface WorkerCheckApi {
   result?: WorkerCheckApiResult;
 }
 
+/**
+ * How the world held it to its limits in this trial: on its own channel, not at all, or bypassed.
+ */
+export type CallWorkerApiEnforcement =
+  (typeof CallWorkerApiEnforcement)[keyof typeof CallWorkerApiEnforcement];
+
+export const CallWorkerApiEnforcement = {
+  held_at_world: "held_at_world",
+  not_enforced: "not_enforced",
+  bypassed: "bypassed",
+} as const;
+
 export interface CallWorkerApi {
   /** @minLength 1 */
   worker_id: string;
@@ -28556,6 +28580,10 @@ export interface CallWorkerApi {
   stopped_at?: number;
   cleanup?: CleanupApi;
   checks: WorkerCheckApi[];
+  /** How the world held it to its limits in this trial: on its own channel, not at all, or bypassed. */
+  enforcement?: CallWorkerApiEnforcement;
+  /** @minLength 1 */
+  enforcement_label?: string;
   /** It reached the world on the shared address instead of its own channel in this trial, so its limits were not held there and its own checks were not graded. */
   channel_bypassed?: boolean;
 }

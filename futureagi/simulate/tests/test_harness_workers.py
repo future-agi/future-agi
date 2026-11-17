@@ -728,6 +728,13 @@ def test_an_attempt_kept_before_records_reads_not_kept_and_another_call_s_attemp
     # Another call's attempt, in the same workspace, is not this call's to read.
     assert auth_client.get(url, {"attempt": str(others.id)}).status_code == 404
     assert auth_client.get(url, {"attempt": str(call.id)}).status_code == 404
+    # An evals-only rerun kept no attempt of the call: not one to read.
+    evals_only = CallExecutionSnapshot.objects.create(
+        call_execution=call,
+        rerun_type=CallExecutionSnapshot.RerunType.EVAL_ONLY,
+        call_metadata={},
+    )
+    assert auth_client.get(url, {"attempt": str(evals_only.id)}).status_code == 404
 
 
 @pytest.mark.django_db
@@ -783,6 +790,39 @@ def test_a_worker_read_out_of_retries_marks_the_call_unreadable(monkeypatch):
         alk_sim.record_call_workers(asdict(CallWorkersRead("c1")))
 
     assert marked == [("c1", True)]
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("second_read", "found", "read_again"),
+    [
+        # The app's spans may land after the first read: one that found nothing reads once more.
+        (False, None, True),
+        (True, None, False),
+        (False, {"workers": []}, False),
+        (False, {"workers": [], "next_read_at": "2026-11-17T09:10:00+00:00"}, True),
+    ],
+)
+def test_a_first_read_that_found_nothing_reads_again_later_and_the_later_one_ends_it(
+    monkeypatch, second_read, found, read_again
+):
+    from dataclasses import asdict
+
+    from simulate.tasks import alk_sim
+    from simulate.types import CallWorkersRead
+
+    scheduled = []
+    monkeypatch.setattr(alk_sim, "attempt_reset", lambda _call: None)
+    monkeypatch.setattr(alk_sim, "record_worker_timeline", lambda *_a, **_k: found)
+    monkeypatch.setattr(
+        alk_sim.record_call_workers,
+        "apply_async",
+        lambda args, **_k: scheduled.append(args[0]),
+    )
+
+    alk_sim.record_call_workers(asdict(CallWorkersRead("c1", second_read=second_read)))
+
+    assert [one["second_read"] for one in scheduled] == ([True] if read_again else [])
 
 
 def test_the_first_read_is_tied_to_the_attempt_it_was_scheduled_for(monkeypatch):
@@ -4435,3 +4475,56 @@ def test_a_worker_the_door_refused_past_its_deadline_never_reads_finished_though
     )
     refund = next(one for one in record["workers"] if one["id"] == "refund")
     assert (refund["state"], refund["past_deadline"]) == ("deadline_passed", True)
+
+
+def test_a_request_with_no_organization_reads_no_call_s_workers():
+    from types import SimpleNamespace
+
+    from django.http import Http404
+
+    from simulate.views.run_results_v3 import _call_for_request
+
+    nobody = SimpleNamespace(organization=None, user=SimpleNamespace(organization=None))
+    with pytest.raises(Http404):
+        _call_for_request(nobody, "00000000-0000-0000-0000-000000000001")
+
+
+def test_each_worker_says_how_the_world_held_it_in_the_trial_and_in_the_contract():
+    from simulate.services.harness_environment import _contract_worker
+
+    timeline = worker_timeline(SPANS, DECLARED, run_key=RUN)
+    bindings = {"order_lookup": "separate", "refund": "separate", "audit": "shared"}
+
+    def served(metadata):
+        workers = harness_worker_states.served_workers(
+            None, timeline, metadata, bindings
+        )["workers"]
+        return {one["id"]: one["enforcement"] for one in workers}
+
+    fronted = {"harness_trial_state": {"door": True}}
+    assert served(fronted) == {
+        "order_lookup": "held_at_world",
+        "refund": "held_at_world",
+        "audit": "not_enforced",
+    }
+    # With no door in front of the tools this trial, no worker's limits were held.
+    assert set(served({"harness_trial_state": {"door": False}}).values()) == {
+        "not_enforced"
+    }
+    bypass = {
+        "harness_trial_state": {
+            "door": True,
+            "notices": [{"code": "worker_channel_bypassed", "workers": ["refund"]}],
+        }
+    }
+    assert served(bypass)["refund"] == "bypassed"
+    # The contract's cards read it from the binding, with the server's words.
+    separate = _contract_worker(
+        {"id": "refund", "binding": "separate", "tools": ["issue_refund"]}
+    )
+    shared = _contract_worker({"id": "audit", "binding": "shared"})
+    assert (separate["enforcement"], shared["enforcement"]) == (
+        "held_at_world",
+        "not_enforced",
+    )
+    assert separate["enforcement_label"].startswith("Held at the world")
