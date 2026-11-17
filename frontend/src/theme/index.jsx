@@ -13,6 +13,7 @@ import { useSystemThemeMode } from "src/hooks/use-system-theme-mode";
 import { palette } from "./palette";
 import { shadows } from "./shadows";
 import { typography } from "./typography";
+import { dsShape } from "./ds-tokens";
 // options
 import RTL from "./options/right-to-left";
 import { customShadows } from "./custom-shadows";
@@ -45,13 +46,10 @@ export default function ThemeProvider({ children }) {
       palette: {
         ...palette(effectiveMode),
       },
-      customShadows: {
-        ...customShadows(effectiveMode),
-        ...presets.customShadows,
-      },
+      customShadows: customShadows(effectiveMode),
       direction: settings.themeDirection,
       shadows: shadows(effectiveMode),
-      shape: { borderRadius: 8 },
+      shape: dsShape,
       typography,
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -77,7 +75,9 @@ export default function ThemeProvider({ children }) {
     s.setProperty("--bg-paper", p.background.paper);
     s.setProperty("--bg-neutral", p.background.neutral);
     s.setProperty("--bg-subtle", p.background.subtle);
-    s.setProperty("--bg-elevated", p.background.neutral);
+    s.setProperty("--bg-elevated", p.background.overlay);
+    s.setProperty("--bg-overlay", p.background.overlay);
+    s.setProperty("--border-subtle", p.border?.subtle || p.divider);
     s.setProperty("--input-surface", p.background.paper);
     s.setProperty("--text-primary", p.text.primary);
     s.setProperty("--text-secondary", p.text.secondary);

@@ -86,6 +86,7 @@ const transformFilterValue = (filterValue, filterType) => {
 export const transformFilter = (filter) =>
   buildApiFilterFromPanelRow({
     field: filter.columnId,
+    registryId: filter.registryId || filter.propertyId || filter.property_id,
     fieldType: filter.filterConfig.filterType,
     operator: filter.filterConfig.filterOp,
     value: transformFilterValue(

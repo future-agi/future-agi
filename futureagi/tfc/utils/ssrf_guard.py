@@ -4,6 +4,7 @@ The IP that gets validated is the exact IP that gets connected to (no
 DNS-rebinding TOCTOU gap), and every redirect hop is re-validated.
 """
 
+import enum
 import ipaddress
 import socket
 from urllib.parse import urljoin, urlparse
@@ -24,9 +25,46 @@ class SsrfBlocked(ValueError):
     burning the exponential-backoff budget on a URL that will never succeed.
     """
 
+
+class IPClass(enum.Enum):
+    """What an address is to a request made on someone else's say-so."""
+
+    PUBLIC = "public"
+    # Private, LAN and reserved ranges: refused unless a caller lets the
+    # operator opt in (a local model server, say).
+    PRIVATE = "private"
+    # Loopback, link-local (cloud metadata answers on 169.254.169.254),
+    # multicast, broadcast, "this network", and the metadata services outside
+    # link-local: never reachable.
+    NEVER = "never"
+
+
+# Never reachable, beyond what ipaddress flags: "this network", broadcast,
+# and the metadata services outside link-local (Alibaba's inside CGNAT, AWS
+# IMDS over IPv6 inside fc00::/7, Azure's WireServer in public space).
+_NEVER_ALLOWED_NETWORKS = tuple(
+    ipaddress.ip_network(n)
+    for n in (
+        "0.0.0.0/8",
+        "255.255.255.255/32",
+        "100.100.100.200/32",
+        "fd00:ec2::254/128",
+        "168.63.129.16/32",
+    )
+)
 # 100.64.0.0/10 is RFC 6598 carrier-grade NAT (used by some cloud providers,
 # Tailscale). Not covered by ipaddress.is_private/is_reserved.
-_EXTRA_BLOCKED_NETWORKS = (ipaddress.ip_network("100.64.0.0/10"),)
+_CGNAT_NETWORK = ipaddress.ip_network("100.64.0.0/10")
+# Metadata endpoints by name, for callers that refuse them before any lookup.
+METADATA_HOSTNAMES = frozenset(
+    {
+        "metadata",
+        "metadata.google.internal",
+        "metadata.goog",
+        "instance-data",
+        "instance-data.ec2.internal",
+    }
+)
 
 
 class SsrfResponse:
@@ -72,20 +110,28 @@ def is_valid_url(url_string: str) -> bool:
     return parsed.scheme in ("http", "https") and bool(parsed.hostname)
 
 
-def _reject_unsafe_ip(ip_str: str, host: str) -> None:
-    ip = ipaddress.ip_address(ip_str)
+def classify_ip(ip: str | ipaddress.IPv4Address | ipaddress.IPv6Address) -> IPClass:
+    """Classify an address. IPv4-mapped IPv6 addresses count as their IPv4
+    address."""
+    ip = ipaddress.ip_address(ip)
+    if ip.version == 6 and ip.ipv4_mapped:
+        ip = ip.ipv4_mapped
     if (
-        ip.is_private
-        or ip.is_loopback
+        ip.is_loopback
         or ip.is_link_local  # covers 169.254.169.254 metadata endpoint
         or ip.is_multicast
-        or ip.is_reserved
         or ip.is_unspecified
-        or any(ip in net for net in _EXTRA_BLOCKED_NETWORKS)
+        or any(ip in net for net in _NEVER_ALLOWED_NETWORKS)
     ):
-        raise SsrfBlocked(
-            f"URL host '{host}' resolves to a private/internal address."
-        )
+        return IPClass.NEVER
+    if ip.is_private or ip.is_reserved or ip in _CGNAT_NETWORK:
+        return IPClass.PRIVATE
+    return IPClass.PUBLIC
+
+
+def _reject_unsafe_ip(ip_str: str, host: str) -> None:
+    if classify_ip(ip_str) is not IPClass.PUBLIC:
+        raise SsrfBlocked(f"URL host '{host}' resolves to a private/internal address.")
 
 
 def _resolve_pinned_ip(host: str) -> str:

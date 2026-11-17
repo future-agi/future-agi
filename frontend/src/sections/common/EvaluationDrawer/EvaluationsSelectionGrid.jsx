@@ -117,14 +117,12 @@ const EvaluationsSelectionGrid = ({
               sx={{
                 border: "1px solid",
                 borderColor: theme.palette.divider,
-                borderRadius: 0.5,
                 p: theme.spacing(0.2),
-                px: theme.spacing(1.5),
               }}
             >
-              <Icon icon="formkit:left" />
+              <Icon icon="solar:arrow-left-linear" />
             </IconButton>
-            <Typography fontSize={18} fontWeight={600}>
+            <Typography fontSize={16} fontWeight={600}>
               Evaluations
             </Typography>
           </Box>
@@ -138,7 +136,7 @@ const EvaluationsSelectionGrid = ({
             }}
             sx={{ p: 0 }}
           >
-            <Icon icon="mdi:close" />
+            <Icon icon="solar:close-linear" />
           </IconButton>
         </Box>
 
@@ -152,7 +150,7 @@ const EvaluationsSelectionGrid = ({
         >
           <Typography
             color={theme.palette.text.primary}
-            fontSize={14}
+            fontSize={13}
             fontWeight={400}
           >
             Choose from our evaluations that best match your goals, or you can
@@ -164,8 +162,6 @@ const EvaluationsSelectionGrid = ({
             sx={{
               color: "text.primary",
               borderColor: "text.disabled",
-              padding: 1.5,
-              fontSize: "12px",
             }}
             startIcon={<SvgColor src="/assets/icons/ic_docs_single.svg" />}
             component="a"

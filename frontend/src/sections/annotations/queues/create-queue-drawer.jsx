@@ -17,6 +17,7 @@ import {
   Stack,
   TextField,
   Typography,
+  ButtonBase,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { Controller, useForm } from "react-hook-form";
@@ -34,6 +35,7 @@ import {
   isQueueAnnotatorRole,
   queueRoleList,
 } from "./constants";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const STATUS_OPTIONS = [
   { value: "draft", label: "Draft" },
@@ -78,7 +80,7 @@ function Section({ title, subtitle, children }) {
       sx={{
         border: "1px solid",
         borderColor: "divider",
-        borderRadius: 0.5,
+        borderRadius: "4px",
         overflow: "hidden",
       }}
     >
@@ -260,15 +262,18 @@ export default function CreateQueueDrawer({
     }
   };
 
+  const covered = useDrawerCovered(open);
+
   return (
     <Drawer
+      sx={coveredDrawerSx(covered)}
       anchor="right"
       open={open}
       onClose={onClose}
       PaperProps={{
         sx: {
           width: { xs: "100%", sm: "45vw" },
-          minWidth: 520,
+          minWidth: 640,
           borderRadius: "0 !important",
         },
       }}
@@ -302,7 +307,7 @@ export default function CreateQueueDrawer({
               </Typography>
             </Box>
             <IconButton onClick={onClose} size="small" sx={{ mt: 0.5 }}>
-              <Iconify icon="mingcute:close-line" />
+              <Iconify icon="solar:close-linear" />
             </IconButton>
           </Stack>
         </Box>
@@ -334,7 +339,9 @@ export default function CreateQueueDrawer({
                       FormHelperTextProps={{
                         sx: { ml: 0, color: "text.disabled" },
                       }}
-                      sx={{ "& .MuiOutlinedInput-root": { borderRadius: 0.5 } }}
+                      sx={{
+                        "& .MuiOutlinedInput-root": { borderRadius: "4px" },
+                      }}
                     />
                   )}
                 />
@@ -351,7 +358,9 @@ export default function CreateQueueDrawer({
                       multiline
                       rows={2}
                       placeholder="Brief description of this queue's purpose"
-                      sx={{ "& .MuiOutlinedInput-root": { borderRadius: 0.5 } }}
+                      sx={{
+                        "& .MuiOutlinedInput-root": { borderRadius: "4px" },
+                      }}
                     />
                   )}
                 />
@@ -368,7 +377,7 @@ export default function CreateQueueDrawer({
                         size="small"
                         fullWidth
                         sx={{
-                          "& .MuiOutlinedInput-root": { borderRadius: 0.5 },
+                          "& .MuiOutlinedInput-root": { borderRadius: "4px" },
                         }}
                       >
                         {statusOptions.map((opt) => (
@@ -499,7 +508,9 @@ export default function CreateQueueDrawer({
                       FormHelperTextProps={{
                         sx: { ml: 0, color: "text.disabled" },
                       }}
-                      sx={{ "& .MuiOutlinedInput-root": { borderRadius: 0.5 } }}
+                      sx={{
+                        "& .MuiOutlinedInput-root": { borderRadius: "4px" },
+                      }}
                     />
                   )}
                 />
@@ -524,7 +535,7 @@ export default function CreateQueueDrawer({
                     FormHelperTextProps={{
                       sx: { ml: 0, color: "text.disabled" },
                     }}
-                    sx={{ "& .MuiOutlinedInput-root": { borderRadius: 0.5 } }}
+                    sx={{ "& .MuiOutlinedInput-root": { borderRadius: "4px" } }}
                   />
                 )}
               />
@@ -532,9 +543,12 @@ export default function CreateQueueDrawer({
 
             {/* ── Advanced Settings (collapsible) ──────────── */}
             <Box>
-              <Box
+              <ButtonBase
+                component="div"
                 onClick={() => setAdvancedOpen((v) => !v)}
                 sx={{
+                  justifyContent: "flex-start",
+                  textAlign: "left",
                   display: "flex",
                   alignItems: "center",
                   gap: 0.5,
@@ -546,8 +560,8 @@ export default function CreateQueueDrawer({
                 <Iconify
                   icon={
                     advancedOpen
-                      ? "eva:chevron-down-fill"
-                      : "eva:chevron-right-fill"
+                      ? "solar:alt-arrow-down-linear"
+                      : "solar:alt-arrow-right-linear"
                   }
                   width={20}
                   sx={{ color: "text.secondary" }}
@@ -568,7 +582,7 @@ export default function CreateQueueDrawer({
                     Assignment strategy, reservation timeout, review
                   </Typography>
                 )}
-              </Box>
+              </ButtonBase>
 
               <Collapse in={advancedOpen}>
                 <Box
@@ -576,7 +590,7 @@ export default function CreateQueueDrawer({
                     mt: 1,
                     border: "1px solid",
                     borderColor: "divider",
-                    borderRadius: 0.5,
+                    borderRadius: "4px",
                     p: 1.5,
                   }}
                 >
@@ -676,7 +690,7 @@ export default function CreateQueueDrawer({
                             sx: { ml: 0, color: "text.disabled" },
                           }}
                           sx={{
-                            "& .MuiOutlinedInput-root": { borderRadius: 0.5 },
+                            "& .MuiOutlinedInput-root": { borderRadius: "4px" },
                           }}
                         >
                           {RESERVATION_TIMEOUT_OPTIONS.map((opt) => (

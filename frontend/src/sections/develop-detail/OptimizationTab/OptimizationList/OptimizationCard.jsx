@@ -1,35 +1,13 @@
-import { Box, Typography, alpha, useTheme } from "@mui/material";
+import { Box, Typography } from "@mui/material";
+import StatusBadge from "src/components/status-badge/StatusBadge";
 import { format } from "date-fns";
 import PropTypes from "prop-types";
 import React from "react";
 
 const OptimizationCard = ({ optimization, selected, onClick }) => {
-  const theme = useTheme();
-
-  const getStatusColor = (status) => {
-    switch (status) {
-      case "Completed":
-        return {
-          color: "success.main",
-          bgcolor: alpha(theme.palette.success.main, 0.08),
-          border: `1px solid ${alpha(theme.palette.success.main, 0.16)}`,
-        };
-      case "Running":
-        return {
-          color: "error.main",
-          bgcolor: alpha(theme.palette.warning.main, 0.08),
-          border: `1px solid ${alpha(theme.palette.warning.main, 0.16)}`,
-        };
-      default:
-        return {
-          color: "text.secondary",
-          bgcolor: "background.neutral",
-          border: `1px solid ${theme.palette.divider}`,
-        };
-    }
-  };
-
-  const statusStyle = getStatusColor(optimization.status);
+  const statusRole =
+    { Completed: "success", Running: "warning" }[optimization.status] ??
+    "neutral";
 
   return (
     <Box
@@ -49,7 +27,7 @@ const OptimizationCard = ({ optimization, selected, onClick }) => {
       <Box sx={{ width: "50%", overflow: "hidden" }}>
         <Typography
           fontWeight={500}
-          fontSize="14px"
+          fontSize="13px"
           variant="subtitle2"
           noWrap
           sx={{
@@ -71,20 +49,11 @@ const OptimizationCard = ({ optimization, selected, onClick }) => {
           justifyContent: "flex-end",
         }}
       >
-        <Typography
-          fontWeight={400}
-          fontSize="14px"
-          variant="subtitle2"
-          sx={{
-            bgcolor: statusStyle.bgcolor,
-            padding: "4px 8px",
-            borderRadius: "12px",
-            ...(statusStyle.border && { border: statusStyle.border }),
-            whiteSpace: "nowrap",
-          }}
-        >
-          {optimization.status}
-        </Typography>
+        <StatusBadge
+          status={optimization.status}
+          label={optimization.status}
+          role={statusRole}
+        />
         <Typography
           fontWeight={400}
           fontSize="13px"

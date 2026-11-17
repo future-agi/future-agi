@@ -1,10 +1,12 @@
 import React from "react";
+import ObservedUsageValue from "./ObservedUsageValue";
 import PropTypes from "prop-types";
 import { Box, Tooltip, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
+import { formatCost } from "../formatters";
 
 function fmt(v) {
-  if (v == null || v === 0) return "$0";
+  if (v == null || Math.abs(v) < 0.0001) return formatCost(v);
   const abs = Math.abs(v);
   if (abs >= 1) return `$${v.toFixed(2)}`;
   if (abs >= 0.01) return `$${v.toFixed(4)}`;
@@ -70,7 +72,15 @@ BreakdownTooltip.propTypes = {
 };
 
 const CostCell = ({ value, data }) => {
-  const totalCost = value ?? data?.cost ?? 0;
+  const totalCost = value ?? data?.cost;
+  if (data?._captureCoverage?.coverage_unknown) {
+    return (
+      <ObservedUsageValue
+        coverage={data._captureCoverage}
+        value={Number.isFinite(totalCost) ? fmt(totalCost) : "Unknown"}
+      />
+    );
+  }
   const promptTokens = data?.prompt_tokens ?? 0;
   const completionTokens = data?.completion_tokens ?? 0;
   const total = promptTokens + completionTokens || 1;
@@ -78,7 +88,7 @@ const CostCell = ({ value, data }) => {
   const outputCost =
     data?.output_cost ?? totalCost * (completionTokens / total);
 
-  if (!totalCost) {
+  if (totalCost == null || !Number.isFinite(totalCost)) {
     return (
       <Typography
         variant="body2"
@@ -118,6 +128,7 @@ const CostCell = ({ value, data }) => {
         {fmt(totalCost)}
       </Typography>
       <Tooltip
+        classes={{ tooltip: "ds-hovercard" }}
         title={
           <BreakdownTooltip
             inputCost={inputCost}
@@ -128,7 +139,7 @@ const CostCell = ({ value, data }) => {
         arrow
         placement="bottom"
         slotProps={{
-          tooltip: { sx: { maxWidth: 280, bgcolor: "grey.900", p: 1 } },
+          tooltip: { sx: { maxWidth: 280 } },
         }}
       >
         <Box
@@ -142,7 +153,7 @@ const CostCell = ({ value, data }) => {
           }}
         >
           <Iconify
-            icon="mdi:information-outline"
+            icon="solar:info-circle-linear"
             width={14}
             color="text.secondary"
           />

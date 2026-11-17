@@ -7,6 +7,7 @@ import {
   Typography,
   useTheme,
   Divider,
+  ButtonBase,
 } from "@mui/material";
 import { useController } from "react-hook-form";
 import SvgColor from "src/components/svg-color";
@@ -53,16 +54,19 @@ export default function ResponseFormatDropdown({
 
   return (
     <>
-      <Box
+      <ButtonBase
+        component="div"
         ref={anchorRef}
         onClick={handleOpen}
         sx={{
           display: "flex",
+          justifyContent: "flex-start",
+          textAlign: "left",
           alignItems: "center",
           gap: 1,
           border: "1px solid",
           borderColor: "divider",
-          borderRadius: 0.5,
+          borderRadius: "4px",
           padding: theme.spacing(0.75, 1.5),
           cursor: disabled ? "not-allowed" : "pointer",
           opacity: disabled ? 0.5 : 1,
@@ -75,7 +79,7 @@ export default function ResponseFormatDropdown({
         }}
       >
         <Iconify
-          icon="lucide:text-cursor-input"
+          icon="solar:text-field-linear"
           width={20}
           height={20}
           sx={{ color: "text.primary" }}
@@ -98,7 +102,7 @@ export default function ResponseFormatDropdown({
             transition: "all 0.2s ease-in-out",
           }}
         />
-      </Box>
+      </ButtonBase>
 
       <Menu
         anchorEl={anchorRef.current}
@@ -118,7 +122,6 @@ export default function ResponseFormatDropdown({
             minWidth: anchorRef.current?.offsetWidth || 150,
             border: "1px solid",
             borderColor: "divider",
-            boxShadow: "0px 4px 12px rgba(0, 0, 0, 0.1)",
             mt: 0.5,
           },
         }}
@@ -132,23 +135,13 @@ export default function ResponseFormatDropdown({
                 onClick={() => handleSelect(option.value)}
                 sx={{
                   typography: "s1",
-                  fontWeight:
-                    field.value === option.value
-                      ? "fontWeightMedium"
-                      : "fontWeightRegular",
                   py: 1,
                   px: 1.5,
                   "&.Mui-selected": {
-                    backgroundColor:
-                      theme.palette.mode === "dark"
-                        ? "black.800"
-                        : "whiteScale.200",
+                    backgroundColor: "action.selected",
                   },
                   "&:hover": {
-                    backgroundColor:
-                      theme.palette.mode === "dark"
-                        ? "black.900"
-                        : "whiteScale.100",
+                    backgroundColor: "action.hover",
                   },
                 }}
               >
@@ -163,10 +156,8 @@ export default function ResponseFormatDropdown({
                 onClick={handleCreateSchema}
                 sx={{
                   typography: "s1",
-                  fontWeight: "fontWeightRegular",
                   py: 1,
                   px: 1.5,
-                  color: "primary.main",
                   "&:hover": {
                     backgroundColor: "divider",
                   },

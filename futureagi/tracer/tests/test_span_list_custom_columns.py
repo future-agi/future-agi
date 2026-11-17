@@ -4,6 +4,7 @@ Regression: `build_content_query` fetched only `attributes_extra`, so custom
 columns backed by the typed maps (string/number/bool) rendered as "-". These are
 pure unit tests — no DB / no ClickHouse.
 """
+
 from __future__ import annotations
 
 import json
@@ -17,6 +18,7 @@ from tracer.services.clickhouse.v2.query_builders.trace_list import (
     TraceListQueryBuilderV2,
 )
 from tracer.services.clickhouse.v2.span_selectors import (
+    bound_observe_list_value,
     flatten_span_attributes_into_entry,
 )
 
@@ -93,6 +95,26 @@ class TestFlattenSpanAttributes:
         entry = _flatten(attrs_string={"s": "v"}, attributes_extra="{not json")
         assert entry == {"s": "v"}
 
+    def test_large_structured_value_becomes_a_bounded_preview(self, settings):
+        settings.OBSERVABILITY_LIST_CELL_PREVIEW_MAX_BYTES = 1_024
+
+        entry = _flatten(
+            attributes_extra=json.dumps({"payload": {"items": ["x" * 50] * 100}})
+        )
+
+        assert isinstance(entry["payload"], str)
+        assert len(entry["payload"].encode("utf-8")) <= 1_024
+        assert entry["payload"].endswith("…")
+
+
+def test_observe_list_preview_truncates_utf8_without_splitting_codepoints(settings):
+    settings.OBSERVABILITY_LIST_CELL_PREVIEW_MAX_BYTES = 1_024
+
+    preview = bound_observe_list_value("é" * 1_000)
+
+    assert len(preview.encode("utf-8")) <= 1_024
+    assert preview.endswith("…")
+
 
 # --------------------------------------------------------------------------- #
 # Content query — must SELECT the typed maps in both schemas
@@ -102,16 +124,26 @@ _MAP_ALIASES = ("attrs_string", "attrs_number", "attrs_bool")
 
 def _v1_content_sql():
     b = SpanListQueryBuilder(
-        project_id=PROJECT_ID, page_number=0, page_size=10,
-        filters=[], sort_params=[], eval_config_ids=[], annotation_label_ids=[],
+        project_id=PROJECT_ID,
+        page_number=0,
+        page_size=10,
+        filters=[],
+        sort_params=[],
+        eval_config_ids=[],
+        annotation_label_ids=[],
     )
     return b.build_content_query(span_ids=["sp1"])[0]
 
 
 def _v2_content_sql():
     b = SpanListQueryBuilderV2(
-        project_id=PROJECT_ID, page_number=0, page_size=10,
-        filters=[], sort_params=[], eval_config_ids=[], annotation_label_ids=[],
+        project_id=PROJECT_ID,
+        page_number=0,
+        page_size=10,
+        filters=[],
+        sort_params=[],
+        eval_config_ids=[],
+        annotation_label_ids=[],
     )
     return b.build_content_query(span_ids=["sp1"])[0]
 
@@ -140,18 +172,42 @@ class TestContentQuerySelectsTypedMaps:
 # --------------------------------------------------------------------------- #
 def _v1_trace_content_sql():
     b = TraceListQueryBuilder(
-        project_id=PROJECT_ID, page_number=0, page_size=10,
-        filters=[], sort_params=[], eval_config_ids=[], annotation_label_ids=[],
+        project_id=PROJECT_ID,
+        page_number=0,
+        page_size=10,
+        filters=[],
+        sort_params=[],
+        eval_config_ids=[],
+        annotation_label_ids=[],
     )
     return b.build_content_query(trace_ids=["t1"])[0]
 
 
 def _v2_trace_content_sql():
     b = TraceListQueryBuilderV2(
-        project_id=PROJECT_ID, page_number=0, page_size=10,
-        filters=[], sort_params=[], eval_config_ids=[], annotation_label_ids=[],
+        project_id=PROJECT_ID,
+        page_number=0,
+        page_size=10,
+        filters=[],
+        sort_params=[],
+        eval_config_ids=[],
+        annotation_label_ids=[],
     )
-    return b.build_content_query(trace_ids=["t1"])[0]
+    return b.build_content_query(
+        trace_ids=["t1"],
+        root_identities=[
+            (
+                PROJECT_ID,
+                "t1",
+                "sp1",
+                1785542400000000,
+                "span",
+                "fixture",
+                1785542400000000,
+                1,
+            )
+        ],
+    )[0]
 
 
 class TestTraceContentQuerySelectsAttrs:

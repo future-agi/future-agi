@@ -27,23 +27,25 @@ import {
   useTemplateLoadingStoreShallow,
   useAgentPlaygroundStore,
 } from "../store";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const TemplateCard = ({ name, description, createdBy, onClick }) => {
   return (
     <Box
       sx={{
-        boxShadow: "2px 0px 16px 4px rgba(0, 0, 0, 0.05)",
-        borderRadius: "4px",
-        minHeight: "156px",
+        border: "1px solid",
+        borderColor: "border.default",
+        borderRadius: "8px",
+        minHeight: "120px",
         padding: "12px",
         display: "flex",
         flexDirection: "column",
-        gap: "6px",
+        gap: "8px",
         cursor: "pointer",
         height: "100%",
-        transition: "box-shadow 0.2s ease-in-out",
+        transition: "border-color 150ms ease-in-out",
         "&:hover": {
-          boxShadow: "2px 0px 20px 6px rgba(0, 0, 0, 0.1)",
+          borderColor: "text.disabled",
         },
       }}
       component={"div"}
@@ -51,30 +53,32 @@ const TemplateCard = ({ name, description, createdBy, onClick }) => {
     >
       <Box
         sx={{
-          border: "2px solid",
-          borderColor: "purple.o10",
-          backgroundColor: "purple.o10",
+          border: "1px solid",
+          borderColor: "status.discovery.border",
+          backgroundColor: "status.discovery.bg",
           display: "flex",
           justifyContent: "center",
           alignItems: "center",
-          height: 44,
-          width: 44,
-          borderRadius: "8px",
+          height: 28,
+          width: 28,
+          flexShrink: 0,
+          borderRadius: "6px",
         }}
       >
         <SvgColor
           src="/assets/icons/navbar/ic_agents.svg"
           sx={{
-            bgcolor: "purple.500",
-            height: 20,
-            width: 20,
+            bgcolor: "status.discovery.solid",
+            height: 16,
+            width: 16,
           }}
         />
       </Box>
       <Stack>
         <Typography
-          typography={"s1"}
-          fontWeight={"fontWeightMedium"}
+          fontSize={13}
+          lineHeight="20px"
+          fontWeight={"fontWeightSemiBold"}
           color={"text.primary"}
           sx={{
             whiteSpace: "nowrap",
@@ -87,7 +91,7 @@ const TemplateCard = ({ name, description, createdBy, onClick }) => {
         <Typography
           typography={"s2"}
           fontWeight={"fontWeightRegular"}
-          color={"text.secondary"}
+          color={"text.tertiary"}
           sx={{
             overflowWrap: "break-word",
             wordBreak: "break-word",
@@ -118,24 +122,25 @@ const TemplateCard = ({ name, description, createdBy, onClick }) => {
 const SkeletonCard = () => (
   <Box
     sx={{
-      boxShadow: "4px -4px 16px 0px rgba(0, 0, 0, 0.05)",
-      borderRadius: "4px",
-      minHeight: "156px",
+      border: "1px solid",
+      borderColor: "border.default",
+      borderRadius: "8px",
+      minHeight: "120px",
       padding: "12px",
       display: "flex",
       flexDirection: "column",
-      gap: "6px",
+      gap: "8px",
       height: "100%",
     }}
   >
     <Skeleton
       variant="rectangular"
-      width={44}
-      height={44}
-      sx={{ borderRadius: "8px" }}
+      width={28}
+      height={28}
+      sx={{ borderRadius: "6px" }}
     />
     <Stack gap={1}>
-      <Skeleton variant="text" width="80%" height={24} />
+      <Skeleton variant="text" width="80%" height={20} />
       <Skeleton variant="text" width="100%" height={20} />
       <Skeleton variant="text" width="60%" height={20} />
     </Stack>
@@ -145,14 +150,16 @@ const SkeletonCard = () => (
 
 const CategoriesSkeleton = () => (
   <Box>
-    <Box sx={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+    <Box sx={{ display: "flex", flexDirection: "column", gap: "4px" }}>
       {Array.from({ length: 6 }).map((_, index) => (
         <Box
           key={index}
           sx={{
-            px: 0.5,
-            py: 0.5,
-            borderRadius: 0.5,
+            px: 1,
+            minHeight: 28,
+            display: "flex",
+            alignItems: "center",
+            borderRadius: "6px",
           }}
         >
           <Skeleton variant="text" width="80%" height={20} />
@@ -320,6 +327,7 @@ export const ChooseAgentTemplateDrawer = ({
     }
   };
 
+  const covered = useDrawerCovered(open);
   return (
     <Drawer
       anchor="right"
@@ -340,6 +348,7 @@ export const ChooseAgentTemplateDrawer = ({
         },
       }}
       open={open}
+      sx={coveredDrawerSx(covered)}
       onClose={handleClose}
     >
       <Box
@@ -389,7 +398,7 @@ export const ChooseAgentTemplateDrawer = ({
 
               <Box>
                 <IconButton onClick={handleClose}>
-                  <Iconify color="text.primary" icon="mingcute:close-line" />
+                  <Iconify color="text.primary" icon="solar:close-linear" />
                 </IconButton>
               </Box>
             </Box>
@@ -402,10 +411,9 @@ export const ChooseAgentTemplateDrawer = ({
               {/* Left Sidebar - Categories */}
               <Box
                 sx={{
-                  width: "250px",
+                  width: "224px",
                   padding: "12px",
                   paddingLeft: "6px",
-                  backgroundColor: "background.default",
                   flexShrink: 0,
                 }}
               >
@@ -417,31 +425,36 @@ export const ChooseAgentTemplateDrawer = ({
                       sx={{
                         display: "flex",
                         flexDirection: "column",
-                        gap: "8px",
+                        gap: "4px",
                       }}
                     >
                       {categories?.map((cat) => (
                         <Box
                           onClick={() => handleCategoryChange(cat.name)}
                           sx={{
-                            px: 0.5,
-                            py: 0.5,
+                            px: 1,
+                            minHeight: 28,
+                            display: "flex",
+                            alignItems: "center",
                             bgcolor:
-                              cat?.name === category ? "purple.o10" : undefined,
-                            borderRadius: 0.5,
+                              cat?.name === category
+                                ? "action.selected"
+                                : undefined,
+                            borderRadius: "6px",
                             "&:hover": {
                               cursor: "pointer",
                               bgcolor:
                                 cat?.name === category
-                                  ? "purple.o10"
+                                  ? "action.selected"
                                   : "action.hover",
                             },
                           }}
                           key={cat?.name}
                         >
                           <Typography
-                            variant="s1"
-                            fontWeight={"fontWeightMedium"}
+                            fontSize={13}
+                            lineHeight="20px"
+                            fontWeight={cat?.name === category ? 500 : 400}
                             color={"text.primary"}
                           >
                             {cat?.display_name}
@@ -490,7 +503,7 @@ export const ChooseAgentTemplateDrawer = ({
                     padding: 2,
                   }}
                 >
-                  <Grid container spacing={2}>
+                  <Grid container spacing={1.5}>
                     {/* Render actual templates */}
                     {data?.allTemplates?.map((template, index) => (
                       <Grid item key={`${template.id}-${index}`} xs={6}>

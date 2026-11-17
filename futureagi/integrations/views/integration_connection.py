@@ -17,6 +17,7 @@ from integrations.models import (
     ACTION_ONLY_PLATFORMS,
     ConnectionStatus,
     IntegrationConnection,
+    IntegrationPlatform,
 )
 from integrations.serializers.contracts import (
     INTEGRATION_ERROR_RESPONSES,
@@ -216,6 +217,20 @@ class IntegrationConnectionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
                     validation.get("error", "Invalid credentials.")
                 )
 
+            organization = (
+                getattr(request, "organization", None) or request.user.organization
+            )
+            is_action_only = data["platform"] in ACTION_ONLY_PLATFORMS
+            if is_action_only and IntegrationConnection.objects.filter(
+                organization=organization,
+                workspace=workspace,
+                platform=data["platform"],
+            ).exists():
+                return _error_response(
+                    f"{data['platform'].title()} is already connected for this workspace. "
+                    "Edit the existing connection in Settings > Integrations to rotate keys."
+                )
+
             # Resolve external project name from request or validation
             ext_project_name = data.get("external_project_name") or ""
             if not ext_project_name:
@@ -229,7 +244,9 @@ class IntegrationConnectionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
             # 3. Resolve FutureAGI project
             project = None
             project_id = data.get("project_id")
-            if project_id:
+            if is_action_only:
+                project = None
+            elif project_id:
                 try:
                     project = Project.objects.get(
                         id=project_id,
@@ -260,34 +277,13 @@ class IntegrationConnectionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
             backfill_from = None
             backfill_completed = True
 
-            if backfill_option == "all":
+            if not is_action_only and backfill_option == "all":
                 initial_status = ConnectionStatus.BACKFILLING
                 backfill_completed = False
-            elif backfill_option == "from_date":
+            elif not is_action_only and backfill_option == "from_date":
                 initial_status = ConnectionStatus.BACKFILLING
                 backfill_from = data.get("backfill_from_date")
                 backfill_completed = False
-
-            organization = (
-                getattr(request, "organization", None) or request.user.organization
-            )
-
-            # Action-only platforms (Linear, etc.) use org-wide credentials
-            # with no per-project mapping. The partial unique constraint
-            # restricts them to one live row per (org, workspace, platform).
-            if data["platform"] in ACTION_ONLY_PLATFORMS:
-                try:
-                    IntegrationConnection.objects.get(
-                        organization=organization,
-                        workspace=workspace,
-                        platform=data["platform"],
-                    )
-                    return _error_response(
-                        f"{data['platform'].title()} is already connected for this workspace. "
-                        "Edit the existing connection in Settings > Integrations to rotate keys."
-                    )
-                except IntegrationConnection.DoesNotExist:
-                    pass
 
             # 5. Create connection
             connection = IntegrationConnection.objects.create(
@@ -371,6 +367,8 @@ class IntegrationConnectionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
     def _update_connection(self, request):
         try:
             instance = self.get_object()
+            if instance.platform == IntegrationPlatform.SLACK:
+                return _error_response("Reconnect Slack through OAuth to change this connection.")
             data = request.validated_data
 
             # Update display_name if provided
@@ -440,6 +438,9 @@ class IntegrationConnectionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
     def destroy(self, request, *args, **kwargs):
         try:
             instance = self.get_object()
+            if instance.platform == IntegrationPlatform.SLACK:
+                instance.encrypted_credentials = CredentialManager.encrypt({})
+                instance.save(update_fields=["encrypted_credentials"])
             instance.delete()  # BaseModel soft delete
             return _success_response({"deleted": True})
         except Http404:
@@ -518,6 +519,9 @@ class IntegrationConnectionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
         """Trigger an immediate sync for this connection."""
         try:
             instance = self.get_object()
+
+            if instance.platform in ACTION_ONLY_PLATFORMS:
+                return _error_response("Action-only integrations do not support sync.")
 
             if instance.status in (
                 ConnectionStatus.SYNCING,

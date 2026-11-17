@@ -9,7 +9,7 @@ import {
   EdgeLabelRenderer,
   useReactFlow,
 } from "@xyflow/react";
-import { Box, Stack, useTheme } from "@mui/material";
+import { Box, Stack, useTheme, ButtonBase } from "@mui/material";
 import PropTypes from "prop-types";
 import { enqueueSnackbar } from "notistack";
 import { useQueryClient } from "@tanstack/react-query";
@@ -201,14 +201,22 @@ export default function AnimatedEdge({
       if (isWorkflowRunning || isReadOnly) return;
 
       const sourceNode = getNode(source);
+      if (!sourceNode) {
+        // Only reachable from a *deferred* Agent insert (TH-4549 setup dialog):
+        // the source node was deleted while the dialog was open. Never attach
+        // a new node to a source that no longer exists (PRD R-13).
+        enqueueSnackbar(
+          "The node this Agent node was going to attach to no longer exists. Choose a new target.",
+          { variant: "warning" },
+        );
+        return;
+      }
 
       // Position the new node branching from the source
-      const position = sourceNode
-        ? {
-            x: sourceNode.position.x + NODE_X_OFFSET,
-            y: sourceNode.position.y,
-          }
-        : undefined;
+      const position = {
+        x: sourceNode.position.x + NODE_X_OFFSET,
+        y: sourceNode.position.y,
+      };
 
       // One-to-many: add new node with edge from source, keep existing edge intact
       addNode({
@@ -316,7 +324,8 @@ export default function AnimatedEdge({
           >
             <Stack direction="row" spacing={0.5}>
               {/* Add node button */}
-              <Box
+              <ButtonBase
+                component="div"
                 ref={addButtonRef}
                 sx={{
                   display: "flex",
@@ -327,11 +336,9 @@ export default function AnimatedEdge({
                   borderRadius: "4px",
                   bgcolor: "background.paper",
                   border: "1px solid",
-                  borderColor: "blue.500",
-                  cursor: "pointer",
+                  borderColor: "status.info.solid",
                   "&:hover": {
-                    bgcolor: (t) =>
-                      t.palette.mode === "dark" ? "black.800" : "blue.50",
+                    bgcolor: "action.hover",
                   },
                 }}
                 onClick={handleAddClick}
@@ -341,13 +348,14 @@ export default function AnimatedEdge({
                   sx={{
                     width: 14,
                     height: 14,
-                    bgcolor: "blue.500",
+                    bgcolor: "status.info.solid",
                   }}
                 />
-              </Box>
+              </ButtonBase>
 
               {/* Delete edge button */}
-              <Box
+              <ButtonBase
+                component="div"
                 sx={{
                   display: "flex",
                   alignItems: "center",
@@ -357,11 +365,9 @@ export default function AnimatedEdge({
                   borderRadius: "4px",
                   bgcolor: "background.paper",
                   border: "1px solid",
-                  borderColor: "red.500",
-                  cursor: "pointer",
+                  borderColor: "status.danger.solid",
                   "&:hover": {
-                    bgcolor: (t) =>
-                      t.palette.mode === "dark" ? "black.800" : "red.50",
+                    bgcolor: "status.danger.bg",
                   },
                 }}
                 onClick={handleDelete}
@@ -371,10 +377,10 @@ export default function AnimatedEdge({
                   sx={{
                     width: 14,
                     height: 14,
-                    color: "red.500",
+                    color: "status.danger.fg",
                   }}
                 />
-              </Box>
+              </ButtonBase>
             </Stack>
           </Box>
         </EdgeLabelRenderer>

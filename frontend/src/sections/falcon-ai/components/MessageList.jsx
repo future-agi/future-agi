@@ -2,7 +2,6 @@ import React, { useRef, useEffect } from "react";
 import PropTypes from "prop-types";
 import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
-import { alpha, useTheme } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
 import useFalconStore from "../store/useFalconStore";
 import UserMessage from "./UserMessage";
@@ -10,8 +9,6 @@ import AssistantMessage from "./AssistantMessage";
 import QuickActions from "./QuickActions";
 
 export default function MessageList({ onQuickAction, onFeedback }) {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
   const messages = useFalconStore((s) => s.messages);
   const isStreaming = useFalconStore((s) => s.isStreaming);
   const scrollRef = useRef(null);
@@ -54,21 +51,19 @@ export default function MessageList({ onQuickAction, onFeedback }) {
           sx={{
             width: 56,
             height: 56,
-            borderRadius: "16px",
+            borderRadius: "12px",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
             mb: 3,
-            bgcolor: isDark
-              ? alpha(theme.palette.common.white, 0.06)
-              : alpha(theme.palette.primary.main, 0.08),
+            bgcolor: "background.neutral",
           }}
         >
           <Iconify
-            icon="mdi:creation"
+            icon="solar:stars-minimalistic-linear"
             width={28}
             sx={{
-              color: isDark ? "text.secondary" : "primary.main",
+              color: "text.secondary",
             }}
           />
         </Box>
@@ -91,7 +86,7 @@ export default function MessageList({ onQuickAction, onFeedback }) {
             mb: 4,
             textAlign: "center",
             color: "text.disabled",
-            fontSize: 14,
+            fontSize: 13,
             maxWidth: 360,
             lineHeight: 1.6,
           }}

@@ -295,7 +295,12 @@ class TestExecuteCompositeChildrenSync:
 
         assert outcome.aggregate_score is None
         assert outcome.aggregate_pass is None
-        assert outcome.summary is None
+        # With no aggregate, the per-child summary is the composite's result:
+        # every surface stores it in the aggregate's place.
+        assert "[child-a]" in outcome.summary
+        assert "child-a reason" in outcome.summary
+        assert "[child-b]" in outcome.summary
+        assert "child-b reason" in outcome.summary
         assert len(outcome.child_results) == 2
 
     def test_choices_children_score_via_shared_helper(

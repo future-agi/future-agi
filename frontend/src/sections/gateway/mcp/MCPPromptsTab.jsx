@@ -2,8 +2,6 @@
 import React, { useState, useMemo } from "react";
 import {
   Box,
-  Card,
-  CardContent,
   Chip,
   Collapse,
   IconButton,
@@ -19,6 +17,7 @@ import {
   Typography,
   Skeleton,
 } from "@mui/material";
+import Section from "src/components/section";
 import Iconify from "src/components/iconify";
 
 const MCPPromptsTab = ({ mcpPrompts, isLoading }) => {
@@ -39,7 +38,7 @@ const MCPPromptsTab = ({ mcpPrompts, isLoading }) => {
 
   if (isLoading) {
     return (
-      <Card>
+      <Section variant="panel">
         {[...Array(3)].map((_, i) => (
           <Stack
             key={i}
@@ -57,7 +56,7 @@ const MCPPromptsTab = ({ mcpPrompts, isLoading }) => {
             <Skeleton width="15%" height={20} />
           </Stack>
         ))}
-      </Card>
+      </Section>
     );
   }
 
@@ -72,29 +71,27 @@ const MCPPromptsTab = ({ mcpPrompts, isLoading }) => {
         InputProps={{
           startAdornment: (
             <InputAdornment position="start">
-              <Iconify icon="mdi:magnify" width={20} />
+              <Iconify icon="solar:magnifier-linear" width={16} />
             </InputAdornment>
           ),
         }}
       />
 
       {filtered.length === 0 ? (
-        <Card>
-          <CardContent>
-            <Typography
-              variant="body2"
-              color="text.secondary"
-              align="center"
-              sx={{ py: 3 }}
-            >
-              {prompts.length === 0
-                ? "No MCP prompts registered. Upstream servers may not expose prompts."
-                : "No prompts match the current filter."}
-            </Typography>
-          </CardContent>
-        </Card>
+        <Section variant="panel">
+          <Typography
+            variant="body2"
+            color="text.secondary"
+            align="center"
+            sx={{ py: 3 }}
+          >
+            {prompts.length === 0
+              ? "No MCP prompts registered. Upstream servers may not expose prompts."
+              : "No prompts match the current filter."}
+          </Typography>
+        </Section>
       ) : (
-        <Card>
+        <Section variant="panel" sx={{ p: 0, overflow: "hidden" }}>
           <TableContainer>
             <Table size="small">
               <TableHead>
@@ -102,7 +99,12 @@ const MCPPromptsTab = ({ mcpPrompts, isLoading }) => {
                   <TableCell padding="checkbox" />
                   <TableCell>Name</TableCell>
                   <TableCell>Description</TableCell>
-                  <TableCell align="right">Arguments</TableCell>
+                  <TableCell
+                    sx={{ fontVariantNumeric: "tabular-nums" }}
+                    align="right"
+                  >
+                    Arguments
+                  </TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
@@ -125,10 +127,10 @@ const MCPPromptsTab = ({ mcpPrompts, isLoading }) => {
                               <Iconify
                                 icon={
                                   isExpanded
-                                    ? "mdi:chevron-up"
-                                    : "mdi:chevron-down"
+                                    ? "solar:alt-arrow-up-linear"
+                                    : "solar:alt-arrow-down-linear"
                                 }
-                                width={18}
+                                width={20}
                               />
                             </IconButton>
                           )}
@@ -157,7 +159,12 @@ const MCPPromptsTab = ({ mcpPrompts, isLoading }) => {
                             {prompt.description || "—"}
                           </Typography>
                         </TableCell>
-                        <TableCell align="right">{args.length}</TableCell>
+                        <TableCell
+                          sx={{ fontVariantNumeric: "tabular-nums" }}
+                          align="right"
+                        >
+                          {args.length}
+                        </TableCell>
                       </TableRow>
                       {args.length > 0 && (
                         <TableRow>
@@ -190,7 +197,6 @@ const MCPPromptsTab = ({ mcpPrompts, isLoading }) => {
                                         variant="outlined"
                                         sx={{
                                           fontFamily: "monospace",
-                                          fontSize: 12,
                                         }}
                                       />
                                       {arg.required && (
@@ -199,7 +205,6 @@ const MCPPromptsTab = ({ mcpPrompts, isLoading }) => {
                                           size="small"
                                           color="error"
                                           variant="outlined"
-                                          sx={{ fontSize: 10, height: 18 }}
                                         />
                                       )}
                                       {arg.description && (
@@ -224,7 +229,7 @@ const MCPPromptsTab = ({ mcpPrompts, isLoading }) => {
               </TableBody>
             </Table>
           </TableContainer>
-        </Card>
+        </Section>
       )}
     </Box>
   );

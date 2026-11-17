@@ -13,7 +13,12 @@ import Iconify from "src/components/iconify";
 
 const DevelopDataNotificationModal = ({ open, onClose, onClick, data }) => {
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="sm">
+    <Dialog
+      open={open}
+      onClose={onClose}
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 720 } }}
+    >
       <Box sx={{ padding: "16px", width: "480px" }}>
         <DialogTitle sx={{ padding: 0, margin: 0 }}>
           <Box
@@ -24,7 +29,7 @@ const DevelopDataNotificationModal = ({ open, onClose, onClick, data }) => {
             }}
           >
             <Typography
-              fontWeight={700}
+              fontWeight={600}
               color="text.primary"
               fontSize="16px"
               lineHeight={"24px"}
@@ -33,7 +38,7 @@ const DevelopDataNotificationModal = ({ open, onClose, onClick, data }) => {
               Reasons for Unable to Process File
             </Typography>
             <IconButton onClick={onClose}>
-              <Iconify icon="akar-icons:cross" color="text.primary" />
+              <Iconify icon="solar:close-linear" color="text.primary" />
             </IconButton>
           </Box>
 
@@ -64,7 +69,7 @@ const DevelopDataNotificationModal = ({ open, onClose, onClick, data }) => {
                   key={index}
                   variant="body2"
                   color="text.secondary"
-                  fontSize={"14px"}
+                  fontSize={"13px"}
                   sx={{
                     margin: 0,
                     padding: 0,
@@ -82,6 +87,7 @@ const DevelopDataNotificationModal = ({ open, onClose, onClick, data }) => {
         <Box>
           <DialogActions sx={{ padding: 0, marginTop: "28px" }}>
             <LoadingButton
+              size="small"
               variant="contained"
               //   loading={isPending}
               color="primary"
@@ -89,8 +95,6 @@ const DevelopDataNotificationModal = ({ open, onClose, onClick, data }) => {
               sx={{
                 minWidth: "90px",
                 mx: "auto",
-                height: "30px",
-                borderRadius: "8px",
                 p: "6px 24px",
               }}
             >

@@ -84,7 +84,6 @@ HEARTBEAT_FIELDS = frozenset(
 
 USER_FIELDS = frozenset({"email", "domain"})
 
-
 def derive_domain(email: str) -> str:
     """Return the lowercased domain part of an email address.
 

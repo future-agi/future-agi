@@ -10,6 +10,8 @@ and consolidates the "distinct eval-config IDs that have data" lookup into the
 * A ClickHouse read failure propagates instead of being masked as "no eval scores".
 """
 
+import re
+from pathlib import Path
 from unittest import mock
 
 import pytest
@@ -38,6 +40,7 @@ def _capturing_service(rows):
         captured["query"] = query
         captured["params"] = params
         captured["timeout_ms"] = timeout_ms
+        captured["settings"] = settings
         return _Result(rows)
 
     svc.execute_ch_query = _recorder
@@ -154,7 +157,9 @@ class TestEvalConfigIdSelectors:
     @override_settings(CH25_EVAL_LOGGER_TABLE="tracer_eval_logger_v2")
     def test_traces_selector_v2_predicate_and_scope(self):
         svc, captured = _capturing_service([{"config_id": "x"}])
-        ids = svc.get_eval_config_ids_for_traces_ch(["t1", "t2"])
+        ids = svc.get_eval_config_ids_for_traces_ch(
+            ["t1", "t2"], ["project-config-1", "project-config-2"]
+        )
 
         assert ids == ["x"]
         query = captured["query"]
@@ -163,12 +168,23 @@ class TestEvalConfigIdSelectors:
         assert "is_deleted = 0" in query
         assert "_peerdb_is_deleted" not in query
         assert "trace_id IN %(trace_ids)s" in query
-        assert captured["params"] == {"trace_ids": ["t1", "t2"]}
+        assert "custom_eval_config_id IN %(candidate_config_ids)s" in query
+        assert captured["params"] == {
+            "trace_ids": ["t1", "t2"],
+            "candidate_config_ids": ("project-config-1", "project-config-2"),
+        }
 
-    def test_traces_selector_empty_short_circuits(self):
+    @pytest.mark.parametrize(
+        ("trace_ids", "candidate_config_ids"),
+        (([], ["project-config-1"]), (["t1"], [])),
+        ids=("no-traces", "no-project-configs"),
+    )
+    def test_traces_selector_empty_scope_short_circuits(
+        self, trace_ids, candidate_config_ids
+    ):
         svc, captured = _capturing_service([{"config_id": "x"}])
-        ids = svc.get_eval_config_ids_for_traces_ch([])
-        # No CH round-trip for an empty trace set.
+        ids = svc.get_eval_config_ids_for_traces_ch(trace_ids, candidate_config_ids)
+        # No CH round-trip unless both tenant dimensions are non-empty.
         assert ids == []
         assert captured == {}
 
@@ -207,12 +223,30 @@ class TestEvalReadFailurePropagates:
                 # Session aggregate (and anything else) — empty is fine.
                 return _Result([])
 
-            def get_eval_config_ids_for_traces_ch(self, trace_ids, timeout_ms=3000):
+            def get_eval_config_ids_for_traces_ch(
+                self,
+                trace_ids,
+                candidate_config_ids,
+                timeout_ms=3000,
+            ):
+                assert trace_ids == ["t1"]
+                assert candidate_config_ids == ["project-config-1"]
                 raise CHError("clickhouse unavailable")
 
-        with mock.patch(
-            "tracer.views.trace_session._resolve_session_ids_to_canonical",
-            return_value={"s1": "s1"},
+        candidate_qs = mock.Mock()
+        candidate_qs.values_list.return_value = ["project-config-1"]
+        config_manager = mock.Mock()
+        config_manager.filter.return_value = candidate_qs
+
+        with (
+            mock.patch(
+                "tracer.views.trace_session._resolve_session_ids_to_canonical",
+                return_value={"s1": "s1"},
+            ),
+            mock.patch(
+                "tracer.views.trace_session.CustomEvalConfig.objects",
+                config_manager,
+            ),
         ):
             with pytest.raises(CHError):
                 view._retrieve_clickhouse(
@@ -222,6 +256,140 @@ class TestEvalReadFailurePropagates:
                     analytics=_FakeAnalytics(),
                     query_data={"page_number": 0, "page_size": 30},
                 )
+
+
+@pytest.mark.unit
+def test_session_detail_same_trace_across_projects_hydrates_only_owned_eval():
+    """A shared customer trace ID cannot import another project's eval config."""
+    from tracer.views.trace_session import TraceSessionView
+
+    project_id = "00000000-0000-4000-8000-000000000001"
+    trace_id = "customer-supplied-shared-trace"
+    own_config_id = "00000000-0000-4000-8000-000000000002"
+    foreign_config_id = "00000000-0000-4000-8000-000000000003"
+
+    own_config = mock.Mock()
+    own_config.id = own_config_id
+    own_config.name = "Owned eval"
+    own_config.model = "owned-model"
+    own_config.eval_template.output_type_normalized = "score"
+
+    candidate_qs = mock.Mock()
+    candidate_qs.values_list.return_value = [own_config_id]
+    metadata_qs = mock.Mock()
+    metadata_qs.select_related.return_value = [own_config]
+    config_manager = mock.Mock()
+
+    def scoped_configs(**filters):
+        assert filters["project_id"] == project_id
+        assert filters["deleted"] is False
+        if "id__in" in filters:
+            assert filters["id__in"] == [own_config_id]
+            return metadata_qs
+        return candidate_qs
+
+    config_manager.filter.side_effect = scoped_configs
+
+    class _FakeAnalytics:
+        discovery_args = None
+        score_args = None
+
+        def execute_ch_query(self, query, params=None, timeout_ms=None, settings=None):
+            if "count(DISTINCT trace_id)" in query:
+                return _Result(
+                    [
+                        {
+                            "session_start": None,
+                            "session_end": None,
+                            "total_cost": 0,
+                            "total_tokens": 0,
+                            "total_traces": 1,
+                            "end_user_id": "",
+                        }
+                    ]
+                )
+            if "GROUP BY trace_id" in query:
+                return _Result(
+                    [
+                        {
+                            "trace_id": trace_id,
+                            "input": None,
+                            "output": None,
+                            "root_latency_ms": 0,
+                            "total_cost": 0,
+                            "trace_min_start_time": None,
+                            "total_tokens": 0,
+                            "input_tokens": 0,
+                            "output_tokens": 0,
+                        }
+                    ]
+                )
+            raise AssertionError(f"unexpected ClickHouse query: {query}")
+
+        def get_eval_config_ids_for_traces_ch(
+            self,
+            trace_ids,
+            candidate_config_ids,
+            timeout_ms=3000,
+        ):
+            self.discovery_args = (trace_ids, candidate_config_ids)
+            # CH contains both projects' rows under the same trace ID, but the
+            # project-owned candidate predicate makes only this ID discoverable.
+            return [own_config_id]
+
+        def get_trace_eval_scores_ch(self, trace_ids, config_ids, timeout_ms=5000):
+            self.score_args = (trace_ids, config_ids)
+            return [
+                {
+                    "trace_id": trace_id,
+                    "config_id": own_config_id,
+                    "float_count": 1,
+                    "float_score": 90.0,
+                },
+                # Defense in depth: even a malformed service response cannot
+                # create a metadata-backed foreign eval column.
+                {
+                    "trace_id": trace_id,
+                    "config_id": foreign_config_id,
+                    "float_count": 1,
+                    "float_score": 10.0,
+                },
+            ]
+
+    analytics = _FakeAnalytics()
+    with (
+        mock.patch(
+            "tracer.views.trace_session._resolve_session_ids_to_canonical",
+            return_value={"session-1": "session-1"},
+        ),
+        mock.patch(
+            "tracer.views.trace_session._expand_session_group",
+            return_value=("session-1",),
+        ),
+        mock.patch(
+            "tracer.views.trace_session.CustomEvalConfig.objects",
+            config_manager,
+        ),
+        mock.patch(
+            "tracer.views.trace_session.get_session_navigation",
+            return_value=(None, None),
+        ),
+    ):
+        response = TraceSessionView()._retrieve_clickhouse(
+            request=mock.Mock(),
+            trace_session_id="session-1",
+            project_id=project_id,
+            analytics=analytics,
+            query_data={"page_number": 0, "page_size": 25},
+        )
+
+    assert response.status_code == 200
+    assert analytics.discovery_args == ([trace_id], [own_config_id])
+    assert analytics.score_args == ([trace_id], [own_config_id])
+    metrics = response.data["result"]["response"][0]["evals_metrics"]
+    assert set(metrics) == {own_config_id}
+    assert metrics[own_config_id]["name"] == "Owned eval"
+    assert foreign_config_id not in metrics
 
 
 @pytest.mark.unit
@@ -235,8 +403,11 @@ class TestEvalReadSelectors:
 
         assert rows == [{"span_id": "s", "config_id": "c"}]
         query = captured["query"]
-        assert "tracer_eval_logger_v2 FINAL" in query
-        assert "is_deleted = 0" in query
+        assert "tracer_eval_logger_v2 FINAL" not in query
+        assert "FROM tracer_eval_logger_v2 AS eval_scan" in query
+        assert "ORDER BY eval_scan._version DESC" in query
+        assert "LIMIT 1 BY eval_scan.id" in query
+        assert "latest_eval.is_deleted = 0" in query
         assert "_peerdb_is_deleted" not in query
         assert "observation_span_id IN %(span_ids)s" in query
         assert captured["params"] == {"span_ids": ["s1", "s2"]}
@@ -248,20 +419,86 @@ class TestEvalReadSelectors:
 
     @override_settings(CH25_EVAL_LOGGER_TABLE="tracer_eval_logger_v2")
     def test_eval_detail_v2_predicate_and_returns_first_row(self):
-        svc, captured = _capturing_service([{"output_float": 1.0}])
-        row = svc.get_eval_detail_ch("span-1", "cfg-1")
+        from tracer.services.clickhouse.query_service import AnalyticsQueryService
+
+        svc = AnalyticsQueryService()
+        calls = []
+
+        def recorder(query, params=None, timeout_ms=None, settings=None):
+            calls.append((query, params, timeout_ms, settings))
+            if "FROM spans" in query:
+                return _Result([{"trace_id": "00000000-0000-0000-0000-000000000001"}])
+            return _Result([{"output_float": 1.0}])
+
+        svc.execute_ch_query = recorder
+        row = svc.get_eval_detail_ch("span-1", "cfg-1", project_id="project-1")
 
         assert row == {"output_float": 1.0}
-        query = captured["query"]
-        assert "tracer_eval_logger_v2 FINAL" in query
-        assert "is_deleted = 0" in query
+        assert len(calls) == 2
+        anchor_query, anchor_params, *_ = calls[0]
+        assert "FROM spans" in anchor_query
+        assert "project_id = toUUID(%(project_id)s)" in anchor_query
+        assert "HAVING argMax(is_deleted, _version) = 0" in anchor_query
+        assert "LIMIT 2" in anchor_query
+        assert anchor_params == {"project_id": "project-1", "span_id": "span-1"}
+
+        query, params, *_ = calls[1]
+        assert "tracer_eval_logger_v2 FINAL" not in query
+        assert "FROM tracer_eval_logger_v2 AS eval_scan" in query
+        assert "ORDER BY eval_scan._version DESC" in query
+        assert "LIMIT 1 BY eval_scan.id" in query
+        assert "latest_eval.is_deleted = 0" in query
+        assert "eval_scan.trace_id = toUUID(%(trace_id)s)" in query
         assert "target_type IN ('span', 'trace')" in query
         assert "LIMIT 1" in query
-        assert captured["params"] == {"span_id": "span-1", "config_id": "cfg-1"}
+        assert params == {
+            "span_id": "span-1",
+            "config_id": "cfg-1",
+            "trace_id": "00000000-0000-0000-0000-000000000001",
+        }
 
     def test_eval_detail_returns_none_when_absent(self):
         svc, _ = _capturing_service([])
-        assert svc.get_eval_detail_ch("span-1", "cfg-1") is None
+        assert svc.get_eval_detail_ch("span-1", "cfg-1", project_id="project-1") is None
+
+    def test_eval_detail_fails_closed_on_same_project_span_id_collision(self):
+        svc, captured = _capturing_service(
+            [
+                {"trace_id": "00000000-0000-0000-0000-000000000001"},
+                {"trace_id": "00000000-0000-0000-0000-000000000002"},
+            ]
+        )
+
+        assert svc.get_eval_detail_ch("span-1", "cfg-1", project_id="project-1") is None
+        assert "FROM spans" in captured["query"]
+
+    @override_settings(CH25_EVAL_LOGGER_TABLE="tracer_eval_logger")
+    def test_v2_eval_detail_uses_configured_table_on_ch25_connection(self):
+        from tracer.services.clickhouse.query_service import AnalyticsQueryService
+        from tracer.services.clickhouse.v2.query_service import (
+            V2AnalyticsQueryService,
+        )
+
+        service = object.__new__(V2AnalyticsQueryService)
+        with mock.patch.object(
+            AnalyticsQueryService,
+            "get_eval_detail_ch",
+            return_value={"output_bool": True},
+        ) as base_read:
+            row = service.get_eval_detail_ch(
+                "span-1",
+                "cfg-1",
+                project_id="project-1",
+            )
+
+        assert row == {"output_bool": True}
+        base_read.assert_called_once_with(
+            "span-1",
+            "cfg-1",
+            project_id="project-1",
+            timeout_ms=5000,
+            eval_logger_table="tracer_eval_logger",
+        )
 
     @override_settings(CH25_EVAL_LOGGER_TABLE="tracer_eval_logger_v2")
     def test_trace_eval_scores_v2_predicate_and_scope(self):
@@ -270,8 +507,11 @@ class TestEvalReadSelectors:
 
         assert rows == [{"trace_id": "t", "config_id": "c"}]
         query = captured["query"]
-        assert "tracer_eval_logger_v2 FINAL" in query
-        assert "is_deleted = 0" in query
+        assert "tracer_eval_logger_v2 FINAL" not in query
+        assert "FROM tracer_eval_logger_v2 AS eval_scan" in query
+        assert "ORDER BY eval_scan._version DESC" in query
+        assert "LIMIT 1 BY eval_scan.id" in query
+        assert "latest_eval.is_deleted = 0" in query
         assert "_peerdb_is_deleted" not in query
         assert "trace_id IN %(trace_ids)s" in query
         assert "custom_eval_config_id IN %(config_ids)s" in query
@@ -293,6 +533,163 @@ class TestEvalReadSelectors:
         assert svc.get_trace_eval_scores_ch([], ["c1"]) == []
         assert svc.get_trace_eval_scores_ch(["t1"], []) == []
         assert captured == {}
+
+
+_V2_EVAL_METHOD_CALLS = (
+    (
+        "get_eval_config_ids_with_data_ch",
+        ("project-1",),
+        {"candidate_config_ids": ["00000000-0000-0000-0000-000000000001"]},
+    ),
+    (
+        "get_eval_config_ids_for_candidates_ch",
+        (["00000000-0000-0000-0000-000000000001"],),
+        {},
+    ),
+    (
+        "get_eval_config_ids_for_traces_ch",
+        (
+            ["00000000-0000-0000-0000-000000000002"],
+            ["00000000-0000-0000-0000-000000000001"],
+        ),
+        {},
+    ),
+    ("get_children_eval_metrics_ch", (["span-1"],), {}),
+    (
+        "get_eval_detail_ch",
+        ("span-1", "00000000-0000-0000-0000-000000000001"),
+        {"project_id": "00000000-0000-0000-0000-000000000003"},
+    ),
+    (
+        "get_trace_eval_scores_ch",
+        (
+            ["00000000-0000-0000-0000-000000000002"],
+            ["00000000-0000-0000-0000-000000000001"],
+        ),
+        {},
+    ),
+)
+
+
+def _invoke_v2_eval_method(method_name, args, kwargs, *, failure=None):
+    """Invoke one inherited v2 eval method and retain every generated query."""
+    from tracer.services.clickhouse.v2.query_service import V2AnalyticsQueryService
+
+    service = object.__new__(V2AnalyticsQueryService)
+    calls = []
+
+    def recorder(query, params=None, timeout_ms=None, settings=None):
+        calls.append((query, params, timeout_ms, settings))
+        if failure is not None:
+            raise failure
+        # Eval detail performs a tenant anchor read before its eval-table read.
+        if "FROM spans" in query and "eval_logger" not in query:
+            return _Result([{"trace_id": "00000000-0000-0000-0000-000000000002"}])
+        return _Result([])
+
+    service.execute_ch_query = recorder
+    result = getattr(service, method_name)(*args, **kwargs)
+    return result, calls
+
+
+@pytest.mark.unit
+class TestV2InheritedEvalReads:
+    """V2 service keeps its CH25 connection and honors eval-table topology."""
+
+    def test_v2_overrides_every_public_eval_read_on_base_service(self):
+        from tracer.services.clickhouse.query_service import AnalyticsQueryService
+        from tracer.services.clickhouse.v2.query_service import (
+            V2AnalyticsQueryService,
+        )
+
+        expected = {case[0] for case in _V2_EVAL_METHOD_CALLS}
+        base_eval_reads = {
+            name
+            for name, member in vars(AnalyticsQueryService).items()
+            if name.startswith("get_") and "eval" in name and callable(member)
+        }
+
+        assert base_eval_reads == expected
+        assert expected <= vars(V2AnalyticsQueryService).keys()
+
+    @pytest.mark.parametrize("configured_table", ["legacy", "unset"])
+    @pytest.mark.parametrize(
+        ("method_name", "args", "kwargs"),
+        _V2_EVAL_METHOD_CALLS,
+        ids=[case[0] for case in _V2_EVAL_METHOD_CALLS],
+    )
+    def test_v2_read_uses_default_authoritative_eval_table(
+        self,
+        settings,
+        configured_table,
+        method_name,
+        args,
+        kwargs,
+    ):
+        if configured_table == "legacy":
+            settings.CH25_EVAL_LOGGER_TABLE = "tracer_eval_logger"
+        else:
+            del settings.CH25_EVAL_LOGGER_TABLE
+
+        _, calls = _invoke_v2_eval_method(method_name, args, kwargs)
+        eval_queries = [query for query, *_ in calls if "eval_logger" in query]
+
+        assert eval_queries, f"{method_name} did not execute an eval-table query"
+        for query in eval_queries:
+            assert re.search(r"FROM\s+tracer_eval_logger(?:\s|$)", query)
+            assert "tracer_eval_logger_v2" not in query
+            assert "eval_scan.config_hash" not in query
+            assert "eval_scan.attempts" not in query
+
+        if method_name in {
+            "get_children_eval_metrics_ch",
+            "get_trace_eval_scores_ch",
+        }:
+            query = eval_queries[-1]
+            assert "eval_scan.status" in query
+            assert "eval_scan.skipped_reason" in query
+            assert "eval_scan._peerdb_version" in query
+            assert "latest_eval._peerdb_is_deleted = 0" in query
+
+    @pytest.mark.parametrize(
+        ("method_name", "args", "kwargs"),
+        _V2_EVAL_METHOD_CALLS,
+        ids=[case[0] for case in _V2_EVAL_METHOD_CALLS],
+    )
+    def test_v2_read_propagates_clickhouse_failure(
+        self,
+        method_name,
+        args,
+        kwargs,
+    ):
+        failure = RuntimeError("private ClickHouse eval read failure")
+
+        with pytest.raises(RuntimeError) as raised:
+            _invoke_v2_eval_method(
+                method_name,
+                args,
+                kwargs,
+                failure=failure,
+            )
+
+        assert raised.value is failure
+
+    def test_checked_in_v2_schema_has_no_optional_lifecycle_columns(self):
+        schema_path = (
+            Path(__file__).parents[1]
+            / "services"
+            / "clickhouse"
+            / "v2"
+            / "schema"
+            / "011_eval_logger_v2.sql"
+        )
+        ddl = schema_path.read_text()
+        create_body = ddl.split("CREATE TABLE IF NOT EXISTS tracer_eval_logger_v2", 1)[
+            1
+        ].split("ENGINE =", 1)[0]
+
+        for column in ("status", "skipped_reason", "config_hash", "attempts"):
+            assert re.search(rf"(?m)^\s*{column}\s+", create_body) is None
 
 
 @pytest.mark.unit

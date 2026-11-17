@@ -563,6 +563,53 @@ class TestLocalFallback:
                 pass
 
 
+class TestRedisPasswordNotLogged:
+    """The generated Redis password must never reach the logs."""
+
+    PASSWORD = "jOmhS3cretRedisPassw0rd"
+
+    def test_startup_log_masks_password(self, caplog, monkeypatch):
+        """The import-time manager (REDIS_LOCK_URL from the env) logs where it
+        connected without the password; the client still gets the real URL."""
+        from tfc.utils import distributed_locks
+
+        url = f"redis://:{self.PASSWORD}@futureagi-redis:6379/2"
+        monkeypatch.setenv("REDIS_LOCK_URL", url)
+        monkeypatch.setattr(distributed_locks, "_lock_manager", None)
+        from_url = MagicMock()
+        caplog.set_level("INFO", logger=distributed_locks.__name__)
+
+        with patch.object(distributed_locks.redis, "from_url", from_url):
+            manager = distributed_locks.get_distributed_lock_manager()
+
+        assert manager.is_distributed
+        assert from_url.call_args.args[0] == url
+        assert self.PASSWORD not in caplog.text
+        assert "redis://:***@futureagi-redis:6379/2" in caplog.text
+
+    def test_connection_failure_log_masks_password(self, caplog):
+        """Regression guard: the failure path logs the error, not the URL.
+
+        It passes without the redaction fix too; it keeps a future change to
+        the fallback warning from adding the raw URL.
+        """
+        from tfc.utils import distributed_locks
+
+        caplog.set_level("INFO", logger=distributed_locks.__name__)
+        refused = distributed_locks.redis.ConnectionError(
+            "Error 111 connecting to futureagi-redis:6379. Connection refused."
+        )
+        with patch.object(distributed_locks.redis, "from_url", side_effect=refused):
+            manager = distributed_locks.DistributedLockManager(
+                redis_url=f"redis://:{self.PASSWORD}@futureagi-redis:6379/2",
+                fallback_to_local=True,
+            )
+
+        assert not manager.is_distributed
+        assert "Falling back to local locks" in caplog.text
+        assert self.PASSWORD not in caplog.text
+
+
 # Run with: pytest tfc/utils/tests/test_distributed_locks.py -v
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

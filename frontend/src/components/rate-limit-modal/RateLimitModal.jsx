@@ -2,11 +2,11 @@ import React, { useEffect, useState, useRef, useCallback } from "react";
 import {
   Alert,
   AlertTitle,
-  IconButton,
   Box,
-  Typography,
-  useTheme,
+  Button,
+  IconButton,
   Slide,
+  Typography,
 } from "@mui/material";
 import PropTypes from "prop-types";
 import { closeSnackbar } from "notistack";
@@ -21,7 +21,6 @@ const UploadLimitNotification = () => {
   const [showRateLimiter, setShowRateLimiter] = useState(false);
   const [alertData, setAlertData] = useState(null);
   const [dialogOpen, setDialogOpen] = useState(false);
-  const theme = useTheme();
 
   // Store message handler in a ref for proper cleanup
   const messageHandler = useRef((event) => {
@@ -102,19 +101,8 @@ const UploadLimitNotification = () => {
         >
           <Alert
             severity="error"
-            icon={
-              <Iconify
-                icon="fluent:warning-24-regular"
-                sx={{ color: theme.palette.red[500] }}
-              />
-            }
+            icon={<Iconify icon="solar:danger-triangle-linear" />}
             sx={{
-              backgroundColor: theme.palette.background.paper,
-              border: `1px solid ${theme.palette.red[500]}`,
-              color: "text.primary",
-              "& .MuiAlert-icon": {
-                color: "#ff4d4f",
-              },
               "& .MuiAlert-message": {
                 width: "100%",
               },
@@ -122,14 +110,12 @@ const UploadLimitNotification = () => {
               height: "fit-content",
               minHeight: "100px",
               maxWidth: 510,
-              boxShadow: "0 2px 8px rgba(0, 0, 0, 0.15)",
               padding: "16px",
-              borderRadius: "8px",
               position: "fixed",
               bottom: "24px",
               right: "24px",
               zIndex: 9999,
-              transition: "all 0.3s ease-in-out",
+              transition: "all 0.2s ease-in-out",
             }}
           >
             <AlertTitle sx={{ m: 0 }}>
@@ -158,13 +144,12 @@ const UploadLimitNotification = () => {
                   }}
                   sx={{
                     color: "text.primary",
-                    padding: "4px",
                     "&:hover": {
                       backgroundColor: "action.hover",
                     },
                   }}
                 >
-                  <Iconify icon="oui:cross" />
+                  <Iconify icon="solar:close-linear" />
                 </IconButton>
               </Box>
             </AlertTitle>
@@ -173,7 +158,7 @@ const UploadLimitNotification = () => {
               <Typography
                 variant="body2"
                 sx={{
-                  fontSize: "14px",
+                  fontSize: "13px",
                   fontWeight: "400",
                   color: "text.primary",
                 }}
@@ -181,18 +166,9 @@ const UploadLimitNotification = () => {
                 {alertData?.alert_description}
               </Typography>
               <Box sx={{ display: "flex", justifyContent: "flex-start" }}>
-                <Typography
-                  onClick={handleOpenDialog}
-                  sx={{
-                    textDecoration: "underline",
-                    fontSize: "14px",
-                    color: "primary.main",
-                    fontWeight: "600",
-                    cursor: "pointer",
-                  }}
-                >
+                <Button size="small" variant="text" onClick={handleOpenDialog}>
                   Upgrade now
-                </Typography>
+                </Button>
               </Box>
             </Box>
           </Alert>

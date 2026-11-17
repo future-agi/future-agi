@@ -23,6 +23,12 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from model_hub.serializers.decision_models import (
+    DecisionModelGroupSerializer,
+    ModelListQuerySerializer,
+    ModelListResponseSerializer,
+)
+
 logger = structlog.get_logger(__name__)
 from agentic_eval.core_evals.run_prompt.available_models import AVAILABLE_MODELS
 
@@ -50,7 +56,6 @@ from model_hub.serializers.contracts import (
     MODEL_HUB_ERROR_RESPONSES,
     DatasetRunPromptStatsResponseSerializer,
     LiteLLMModelVoicesResponseSerializer,
-    ModelHubPaginatedResponseSerializer,
     ModelHubStringResultResponseSerializer,
     ModelHubSuccessMessageResponseSerializer,
     ModelParametersResponseSerializer,
@@ -1174,7 +1179,7 @@ class RunPrompts:
                 self.run_prompt_model.tools.all()
             )  # This will give you the related Tools instances
             for tool in tools:
-                self.tools_config.append(tool.config)
+                self.tools_config.append(tool.as_openai_tool())
             logger.info(
                 "RunPrompts_load_run_prompt_id_tools_loaded",
                 run_prompt_id=str(self.run_prompt_id),
@@ -1904,7 +1909,7 @@ class PreviewRunPromptColumnView(APIView):
                 tool_ids = [tool.get("id") for tool in config["tools"] if "id" in tool]
                 if tool_ids:
                     tools = Tools.objects.filter(id__in=tool_ids)
-                    tools_config = [tool.config for tool in tools]
+                    tools_config = [tool.as_openai_tool() for tool in tools]
 
             rf = config.get("response_format")
             if rf and not isinstance(rf, dict):
@@ -2467,9 +2472,10 @@ class DatasetRunPromptStatsView(APIView):
 class LiteLLMModelListView(APIView):
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
+    @validated_request(
+        query_serializer=ModelListQuerySerializer,
         responses={
-            200: ModelHubPaginatedResponseSerializer,
+            200: ModelListResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
         }
     )
@@ -2478,8 +2484,26 @@ class LiteLLMModelListView(APIView):
         organization = (
             getattr(request, "organization", None) or request.user.organization
         )
+        query = request.validated_query_data
+        if query.get("model_type") == "decision":
+            from model_hub.selectors.decision_models import get_decision_catalog
+
+            checked_organization = getattr(request, "organization", None)
+            workspace = getattr(request, "workspace", None)
+            paginator = ExtendedPageNumberPagination()
+            page = paginator.paginate_queryset(
+                get_decision_catalog(
+                    organization_id=getattr(checked_organization, "id", None),
+                    workspace_id=getattr(workspace, "id", None),
+                    search=query.get("search", ""),
+                ),
+                request,
+            )
+            return paginator.get_paginated_response(
+                DecisionModelGroupSerializer(page, many=True).data
+            )
         one_time_model_providers_update()
-        exclude_providers = request.GET.getlist("exclude_providers", [])
+        exclude_providers = query.get("exclude_providers", [])
 
         # Optimization: Fetch all ApiKeys for the org and build a set of providers with valid keys/configs
         # Do this early to avoid unnecessary model processing if we need to filter by availability
@@ -2499,7 +2523,7 @@ class LiteLLMModelListView(APIView):
         )
 
         # Single Model Details - if requesting a specific model, skip fetching all models
-        model_name = request.query_params.get("name", None)
+        model_name = query.get("name")
         if model_name:
             model_manager = LiteLLMModelManager(
                 model_name=model_name,
@@ -2518,8 +2542,8 @@ class LiteLLMModelListView(APIView):
             ]
         else:
             # Search functionality - only fetch all models if needed
-            search_query = request.query_params.get("search", None)
-            model_type = request.query_params.get("model_type")
+            search_query = query.get("search")
+            model_type = query.get("model_type")
             model_manager = LiteLLMModelManager(
                 model_name="",
                 organization_id=organization.id,

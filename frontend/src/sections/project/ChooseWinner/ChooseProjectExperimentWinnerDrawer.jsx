@@ -18,6 +18,7 @@ import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 
 import WeightSliderSection from "./WeightSliderSection";
 import WeightSlider from "./WeightSlider";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const getDefaultValues = (columns) => {
   const values = {};
@@ -90,7 +91,7 @@ const ChooseProjectExperimentWinnerDrawerChild = ({
         </Typography>
         <IconButton size="small" onClick={onClose}>
           <Iconify
-            icon="mdi:close"
+            icon="solar:close-linear"
             color="text.primary"
             width="12"
             height="12"
@@ -111,7 +112,7 @@ const ChooseProjectExperimentWinnerDrawerChild = ({
       <Typography
         sx={{
           fontWeight: 400,
-          fontSize: "14px",
+          fontSize: "13px",
           color: "text.disabled",
           padding: theme.spacing(0, 2, 0),
         }}
@@ -180,7 +181,7 @@ const ChooseProjectExperimentWinnerDrawerChild = ({
           size="small"
           fullWidth
           onClick={onClose}
-          sx={{ color: "text.disabled", fontSize: "12px", fontWight: 500 }}
+          sx={{ color: "text.disabled", fontWight: 500 }}
         >
           Cancel
         </Button>
@@ -191,7 +192,6 @@ const ChooseProjectExperimentWinnerDrawerChild = ({
           fullWidth
           loading={isPending}
           onClick={handleSubmit(chooseWinner)}
-          sx={{ fontSize: "12px", fontWeight: 600 }}
         >
           Choose Winner
         </LoadingButton>
@@ -212,8 +212,11 @@ const ChooseProjectExperimentWinnerDrawer = ({
   columns,
   refreshGrid,
 }) => {
+  const covered = useDrawerCovered(open);
+
   return (
     <Drawer
+      sx={coveredDrawerSx(covered)}
       anchor="right"
       open={open}
       // onClose={onClose}
@@ -222,7 +225,7 @@ const ChooseProjectExperimentWinnerDrawer = ({
           height: "100vh",
           position: "fixed",
           zIndex: 9999,
-          borderRadius: "10px",
+          borderRadius: "8px",
           backgroundColor: "background.paper",
         },
       }}

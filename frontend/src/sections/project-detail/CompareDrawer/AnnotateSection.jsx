@@ -77,7 +77,7 @@ const AnnotateSection = ({
           alignItems: "center",
         }}
       >
-        <Typography color="text.disabled" fontSize="13px" fontWeight={700}>
+        <Typography color="text.disabled" fontSize="13px" fontWeight={600}>
           Human Annotation
         </Typography>
         <OutlinedButton

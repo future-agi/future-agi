@@ -130,3 +130,41 @@ class TestListApiKeysTool:
         result = run_tool("list_api_keys", {}, tool_context)
 
         assert not result.is_error
+
+    def test_list_api_keys_leaves_out_sandbox_ingest_keys(self, tool_context):
+        from accounts.models.user import OrgApiKey
+
+        user_key = OrgApiKey.no_workspace_objects.create(
+            name="listed-user-key",
+            organization=tool_context.organization,
+            workspace=tool_context.workspace,
+            type="user",
+            user=tool_context.user,
+        )
+        # Created last, so it would head the newest-first list.
+        ingest_key = OrgApiKey.no_workspace_objects.create(
+            name=f"simulation_export_key {uuid.uuid4()}",
+            organization=tool_context.organization,
+            workspace=tool_context.workspace,
+            type="ingest",
+            user=None,
+            simulation_agent_id=uuid.uuid4(),
+        )
+
+        result = run_tool("list_api_keys", {}, tool_context)
+
+        assert not result.is_error
+        assert [key["id"] for key in result.data["api_keys"]] == [str(user_key.id)]
+        assert result.data["total"] == 1
+        assert str(ingest_key.id) not in result.content
+        assert ingest_key.name not in result.content
+
+        # A limit of one still returns the user key, not the newer ingest key.
+        limited = run_tool("list_api_keys", {"limit": 1}, tool_context)
+        assert [key["id"] for key in limited.data["api_keys"]] == [str(user_key.id)]
+
+        # Asking for the type by name finds nothing either.
+        by_type = run_tool("list_api_keys", {"key_type": "ingest"}, tool_context)
+        assert not by_type.is_error
+        assert by_type.data["api_keys"] == []
+        assert by_type.data["total"] == 0

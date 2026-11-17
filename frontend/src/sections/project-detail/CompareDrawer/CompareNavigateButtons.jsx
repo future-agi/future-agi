@@ -14,11 +14,15 @@ const CompareNavigateButtons = ({
       sx={{ display: "flex", my: 1, ml: 0.5, alignItems: "center", gap: "6px" }}
     >
       <IconButton
-        sx={{ padding: "0px" }}
+        size="small"
         disabled={currentCount === 1}
         onClick={onPrevious}
       >
-        <Iconify icon="mingcute:left-fill" color="text.primary" width={14} />
+        <Iconify
+          icon="solar:alt-arrow-left-linear"
+          color="text.primary"
+          width={14}
+        />
       </IconButton>
       <Typography fontSize="13px" color="text.primary">
         <Typography component="span" fontWeight={600} fontSize="13px">
@@ -32,11 +36,15 @@ const CompareNavigateButtons = ({
         {totalCount > 1 ? "s" : ""}
       </Typography>
       <IconButton
-        sx={{ padding: "0px" }}
+        size="small"
         disabled={currentCount === totalCount}
         onClick={onNext}
       >
-        <Iconify icon="mingcute:right-fill" color="text.primary" width={14} />
+        <Iconify
+          icon="solar:alt-arrow-right-linear"
+          color="text.primary"
+          width={14}
+        />
       </IconButton>
     </Box>
   );

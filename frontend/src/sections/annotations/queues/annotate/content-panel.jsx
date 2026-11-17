@@ -20,7 +20,6 @@ import {
   Tooltip,
   Typography,
 } from "@mui/material";
-import { alpha } from "@mui/material/styles";
 import { enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
 import {
@@ -72,13 +71,10 @@ const ANNOTATION_WORKSPACE_HIDDEN_VOICE_ACTION_IDS = ["queue", "tags"];
 function neutralChipSx(theme, height = 22) {
   return {
     height,
-    fontSize: height <= 18 ? 10 : 11,
-    fontWeight: 700,
-    borderColor: alpha(theme.palette.text.primary, 0.12),
-    bgcolor: alpha(
-      theme.palette.text.primary,
-      theme.palette.mode === "dark" ? 0.04 : 0.025,
-    ),
+    fontSize: 12,
+    fontWeight: 600,
+    borderColor: "divider",
+    bgcolor: "background.neutral",
     color: "text.secondary",
     "& .MuiChip-label": { px: 0.75 },
   };
@@ -101,26 +97,37 @@ export default function ContentPanel({ item }) {
   }
 
   // For trace / observation_span, show the full trace view inline
-  // Voice traces (from simulator projects) get the voice-specific UI
+  // Voice traces (conversation root span) get the voice-specific UI
   if (sourceType === "trace" || sourceType === "observation_span") {
     const traceId = content?.trace_id;
-    const isVoiceProject = content?.project_source === "simulator";
+    const isVoiceTrace =
+      content?.observation_type === "conversation" ||
+      content?.project_source === "simulator";
     const spanId =
       sourceType === "observation_span" ? content?.span_id : undefined;
+    // The same trace id can live in several projects; the content above was
+    // read from the queue item's copy, so pin the detail reads to it.
+    const projectId = content?.project_id || undefined;
 
-    if (traceId && sourceType === "trace" && isVoiceProject) {
+    if (traceId && sourceType === "trace" && isVoiceTrace) {
       // Voice calls mount the embedded drawer which manages its own
       // scroll; skip the padding/overflow wrapper the other sources use
       // so the drawer can fill the full content panel height.
       return (
         <Box sx={{ height: "100%", minHeight: 0, display: "flex" }}>
-          <VoiceCallContent traceId={traceId} />
+          <VoiceCallContent traceId={traceId} projectId={projectId} />
         </Box>
       );
     }
 
     if (traceId) {
-      return <InlineTraceView traceId={traceId} spanId={spanId} />;
+      return (
+        <InlineTraceView
+          traceId={traceId}
+          spanId={spanId}
+          projectId={projectId}
+        />
+      );
     }
     // Fallback to simple view if no trace_id
   }
@@ -172,10 +179,12 @@ function findEntryBySpanId(entries, spanId) {
 
 const READ_ONLY_TAB_TOOLTIP = "Open trace project to edit the view";
 
-function InlineTraceView({ traceId, spanId }) {
+function InlineTraceView({ traceId, spanId, projectId: pinnedProjectId }) {
   const queryClient = useQueryClient();
-  const { data, isLoading } = useGetTraceDetail(traceId);
-  const projectId = data?.trace?.project;
+  const { data, isLoading } = useGetTraceDetail(traceId, {
+    projectId: pinnedProjectId,
+  });
+  const projectId = data?.trace?.project || pinnedProjectId;
   const sessionId = data?.trace?.session;
   const [showSession, setShowSession] = useState(false);
 
@@ -202,7 +211,7 @@ function InlineTraceView({ traceId, spanId }) {
       {
         id: "trace",
         label: "Trace",
-        icon: "mdi:link-variant",
+        icon: "solar:link-linear",
         isDefault: true,
       },
     ];
@@ -212,7 +221,9 @@ function InlineTraceView({ traceId, spanId }) {
       tabs.push({
         id: v.id,
         label: v.name,
-        icon: isImagine ? "mdi:creation" : "mdi:link-variant",
+        icon: isImagine
+          ? "solar:stars-minimalistic-linear"
+          : "solar:link-linear",
         isDefault: false,
         config: v.config,
         visibility: v.visibility,
@@ -223,7 +234,7 @@ function InlineTraceView({ traceId, spanId }) {
       tabs.push({
         id: "__new_imagine__",
         label: "Imagine",
-        icon: "mdi:creation",
+        icon: "solar:stars-minimalistic-linear",
         isDefault: false,
         tabType: "imagine",
       });
@@ -379,14 +390,10 @@ function InlineTraceView({ traceId, spanId }) {
             size="small"
             variant="text"
             color="inherit"
-            startIcon={<Iconify icon="mdi:arrow-left" width={16} />}
+            startIcon={<Iconify icon="solar:arrow-left-linear" width={16} />}
             onClick={() => setShowSession(false)}
             sx={{
-              fontSize: 12,
-              fontWeight: 500,
-              textTransform: "none",
               minWidth: 0,
-              px: 0.75,
             }}
           >
             Back to trace
@@ -432,7 +439,7 @@ function InlineTraceView({ traceId, spanId }) {
         rightSlot={
           sessionId ? (
             <ToolbarPill
-              icon="mdi:forum-outline"
+              icon="solar:chat-round-line-linear"
               label="View session"
               onClick={() => setShowSession(true)}
             />
@@ -538,6 +545,7 @@ function InlineTraceView({ traceId, spanId }) {
                   }
                   isRootSpan={selectedSpanId === rootSpanId}
                   traceTags={data?.trace?.tags || []}
+                  projectId={projectId}
                   onSelectSpan={handleSelectSpan}
                 />
               </Box>
@@ -575,6 +583,7 @@ function InlineTraceView({ traceId, spanId }) {
                   }
                   isRootSpan={selectedSpanId === rootSpanId}
                   traceTags={data?.trace?.tags || []}
+                  projectId={projectId}
                   onSelectSpan={handleSelectSpan}
                 />
               ) : (
@@ -634,6 +643,7 @@ function InlineTraceView({ traceId, spanId }) {
 InlineTraceView.propTypes = {
   traceId: PropTypes.string,
   spanId: PropTypes.string,
+  projectId: PropTypes.string,
 };
 
 // ---------------------------------------------------------------------------
@@ -643,8 +653,11 @@ InlineTraceView.propTypes = {
 // time we shipped a feature. Mounting the drawer directly keeps the
 // annotate view and the main simulate/observe drawers in lockstep.
 // ---------------------------------------------------------------------------
-function VoiceCallContent({ traceId }) {
-  const { data: callData, isLoading } = useVoiceCallDetail(traceId, true);
+function VoiceCallContent({ traceId, projectId }) {
+  const { data: callData, isLoading } = useVoiceCallDetail(traceId, {
+    enabled: true,
+    projectId,
+  });
 
   if (isLoading) {
     return (
@@ -655,11 +668,7 @@ function VoiceCallContent({ traceId }) {
   }
 
   if (!callData) {
-    return (
-      <Typography color="text.secondary">
-        Voice call data not available.
-      </Typography>
-    );
+    return <InlineTraceView traceId={traceId} projectId={projectId} />;
   }
 
   const drawerData = {
@@ -762,6 +771,7 @@ function VoiceCallContent({ traceId }) {
 
 VoiceCallContent.propTypes = {
   traceId: PropTypes.string,
+  projectId: PropTypes.string,
 };
 
 // ---------------------------------------------------------------------------
@@ -893,7 +903,7 @@ function ImageValue({ value }) {
             sx={{
               maxWidth: "100%",
               maxHeight: 300,
-              borderRadius: 0.5,
+              borderRadius: "4px",
               cursor: "pointer",
               objectFit: "contain",
               border: 1,
@@ -906,7 +916,8 @@ function ImageValue({ value }) {
       <Dialog
         open={!!expanded}
         onClose={() => setExpanded(false)}
-        maxWidth="lg"
+        maxWidth={false}
+        PaperProps={{ sx: { maxWidth: 960 } }}
       >
         <Box sx={{ position: "relative" }}>
           <IconButton
@@ -919,7 +930,7 @@ function ImageValue({ value }) {
             }}
             size="small"
           >
-            <Iconify icon="mingcute:close-line" />
+            <Iconify icon="solar:close-linear" />
           </IconButton>
           <Box
             component="img"
@@ -988,7 +999,7 @@ function DocumentValue({ value }) {
           height: 500,
           border: 1,
           borderColor: "divider",
-          borderRadius: 0.5,
+          borderRadius: "4px",
         }}
       />
     );
@@ -997,7 +1008,7 @@ function DocumentValue({ value }) {
   // Other documents — download link
   return (
     <Stack direction="row" spacing={1} alignItems="center">
-      <Iconify icon="mingcute:file-line" width={20} />
+      <Iconify icon="solar:document-text-linear" width={20} />
       <Typography
         component="a"
         href={src}
@@ -1118,10 +1129,9 @@ function ContentSection({ title, children, dataType, copyValue }) {
               size="small"
               aria-label={`Copy ${title || "content"}`}
               onClick={handleCopy}
-              sx={{ p: 0.25 }}
             >
               <Iconify
-                icon={copied ? "eva:checkmark-fill" : "eva:copy-fill"}
+                icon={copied ? "solar:check-linear" : "solar:copy-linear"}
                 width={14}
                 sx={{ color: copied ? "success.main" : "text.disabled" }}
               />
@@ -1132,7 +1142,7 @@ function ContentSection({ title, children, dataType, copyValue }) {
       <Box
         sx={{
           bgcolor: "background.neutral",
-          borderRadius: 0.5,
+          borderRadius: "4px",
           p: 2,
           fontSize: 13,
           whiteSpace: "pre-wrap",
@@ -1521,7 +1531,7 @@ function SessionContent({ content }) {
           {sessionMetadata.duration != null && (
             <Chip
               size="small"
-              icon={<Iconify icon="radix-icons:clock" width={14} />}
+              icon={<Iconify icon="solar:clock-circle-linear" width={14} />}
               label={`Duration: ${formatMs(sessionMetadata.duration * 1000)}`}
               variant="outlined"
             />

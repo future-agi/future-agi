@@ -1,7 +1,6 @@
 import React from "react";
 import PropTypes from "prop-types";
 import { Box, Typography } from "@mui/material";
-import { alpha } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
 import { canonicalEntries } from "src/utils/utils";
 import { JsonValueTree } from "./DatasetTestMode";
@@ -86,21 +85,23 @@ const SpanRowList = ({
                 display: "flex",
                 alignItems: "center",
                 px: 1.5,
-                py: 0.75,
+                py: 0.25,
+                minHeight: 28,
                 pl: `${12 + indent}px`,
                 borderBottom: "1px solid",
-                borderColor: "divider",
+                borderColor: "border.subtle",
                 cursor: "pointer",
-                backgroundColor: (theme) =>
-                  theme.palette.mode === "dark"
-                    ? "rgba(124,77,255,0.04)"
-                    : "rgba(124,77,255,0.02)",
+                backgroundColor: "status.discovery.bg",
                 "&:hover": { backgroundColor: "action.hover" },
                 gap: 0.75,
               }}
             >
               <Iconify
-                icon={isExpanded ? "mdi:chevron-down" : "mdi:chevron-right"}
+                icon={
+                  isExpanded
+                    ? "solar:alt-arrow-down-linear"
+                    : "solar:alt-arrow-right-linear"
+                }
                 width={14}
                 sx={{ color: "text.disabled", flexShrink: 0 }}
               />
@@ -113,17 +114,14 @@ const SpanRowList = ({
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
-                  backgroundColor: (theme) =>
-                    theme.palette.mode === "dark"
-                      ? "rgba(255,255,255,0.08)"
-                      : "rgba(0,0,0,0.06)",
+                  backgroundColor: "border.default",
                   flexShrink: 0,
                 }}
               >
                 <Typography
                   sx={{
-                    fontSize: "10px",
-                    fontWeight: 700,
+                    fontSize: "12px",
+                    fontWeight: 600,
                     color: "text.secondary",
                   }}
                 >
@@ -134,12 +132,12 @@ const SpanRowList = ({
               <Iconify
                 icon={
                   spanType === "GENERATION"
-                    ? "mdi:creation"
+                    ? "solar:stars-minimalistic-linear"
                     : spanType === "TOOL"
-                      ? "mdi:wrench"
+                      ? "solar:toolbox-linear"
                       : spanType === "RETRIEVAL"
-                        ? "mdi:database-search"
-                        : "mdi:layers-outline"
+                        ? "solar:database-linear"
+                        : "solar:layers-linear"
                 }
                 width={14}
                 sx={{
@@ -147,7 +145,7 @@ const SpanRowList = ({
                     spanType === "GENERATION"
                       ? "primary.main"
                       : spanType === "TOOL"
-                        ? "warning.main"
+                        ? "status.warning.fg"
                         : spanType === "RETRIEVAL"
                           ? "info.main"
                           : "text.secondary",
@@ -156,8 +154,8 @@ const SpanRowList = ({
               />
               <Typography
                 variant="caption"
-                fontWeight={600}
-                sx={{ fontSize: "12px" }}
+                fontWeight={500}
+                sx={{ fontSize: "13px" }}
                 noWrap
               >
                 {nameLabel}
@@ -170,15 +168,12 @@ const SpanRowList = ({
                     py: 0.1,
                     borderRadius: "4px",
                     flexShrink: 0,
-                    backgroundColor: (theme) =>
-                      theme.palette.mode === "dark"
-                        ? "rgba(255,255,255,0.06)"
-                        : "rgba(0,0,0,0.04)",
+                    backgroundColor: "action.hover",
                   }}
                 >
                   <Typography
                     sx={{
-                      fontSize: "10px",
+                      fontSize: "12px",
                       color: "text.secondary",
                       fontFamily: "monospace",
                     }}
@@ -191,26 +186,23 @@ const SpanRowList = ({
                   everything's normal) */}
               {span.status && span.status !== "OK" && (
                 <Box
-                  sx={(t) => ({
+                  sx={{
                     px: 0.5,
                     py: 0.1,
                     borderRadius: "4px",
                     backgroundColor:
                       span.status === "ERROR"
-                        ? alpha(
-                            t.palette.error.main,
-                            t.palette.mode === "dark" ? 0.16 : 0.08,
-                          )
+                        ? "status.danger.bg"
                         : "transparent",
-                  })}
+                  }}
                 >
                   <Typography
                     sx={{
-                      fontSize: "9px",
+                      fontSize: "12px",
                       fontWeight: 600,
                       color:
                         span.status === "ERROR"
-                          ? "error.main"
+                          ? "status.danger.fg"
                           : "text.disabled",
                     }}
                   >
@@ -220,7 +212,13 @@ const SpanRowList = ({
               )}
               {/* Tokens */}
               {span.total_tokens > 0 && (
-                <Typography sx={{ fontSize: "10px", color: "text.disabled" }}>
+                <Typography
+                  sx={{
+                    fontSize: "12px",
+                    color: "text.tertiary",
+                    fontVariantNumeric: "tabular-nums",
+                  }}
+                >
                   {span.total_tokens}tok
                 </Typography>
               )}
@@ -228,8 +226,9 @@ const SpanRowList = ({
               {span.latency_ms != null && (
                 <Typography
                   sx={{
-                    fontSize: "10px",
-                    color: "text.disabled",
+                    fontSize: "12px",
+                    color: "text.tertiary",
+                    fontVariantNumeric: "tabular-nums",
                     ml: "auto",
                     flexShrink: 0,
                   }}
@@ -310,7 +309,7 @@ const SpanRowList = ({
                             width: 120,
                             flexShrink: 0,
                             pt: 0.15,
-                            fontSize: "11px",
+                            fontSize: "12px",
                           }}
                         >
                           {k}
@@ -326,7 +325,7 @@ const SpanRowList = ({
                             <Typography
                               variant="caption"
                               color="text.disabled"
-                              sx={{ fontSize: "11px" }}
+                              sx={{ fontSize: "12px" }}
                             >
                               —
                             </Typography>
@@ -346,7 +345,7 @@ const SpanRowList = ({
                               variant="caption"
                               color="primary.main"
                               sx={{
-                                fontSize: "11px",
+                                fontSize: "12px",
                                 wordBreak: "break-all",
                               }}
                             >

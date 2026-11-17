@@ -292,8 +292,8 @@ const Datasets = () => {
             Create dataset
           </Button>
           <Button
-            variant="contained"
-            color="error"
+            variant="outlined"
+            color="inherit"
             size="small"
             onClick={() => resetSelectionState()}
           >
@@ -306,8 +306,8 @@ const Datasets = () => {
       if (!selectedDataset.length) {
         return (
           <Button
-            variant="contained"
-            color="error"
+            variant="outlined"
+            color="inherit"
             size="small"
             onClick={() => resetSelectionState()}
           >

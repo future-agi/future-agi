@@ -15,9 +15,9 @@ Background — the bug this test guards against:
     contract end-to-end against a live CH 25.3 instance.
 
 When to run:
-    Integration test — requires the local CH 25.3 container at port 19001
-    (the migration test rig). Marked `integration` so unit-test runs skip
-    it. CI runs it as part of the migration validation suite.
+    Integration test — requires a test CH 25.3 over HTTP, resolved by the
+    root conftest's `_open_ch_test_http_client` (CI names its own sidecar).
+    Marked `integration` so unit-test runs skip it.
 
 What it does:
     1. Creates a temp `_test_roundtrip_<uuid>` table with one row whose
@@ -42,14 +42,14 @@ import uuid
 
 import pytest
 
+from conftest import _open_ch_test_http_client
+
 try:
     import clickhouse_connect
 except ImportError:  # pragma: no cover
     clickhouse_connect = None
 
 
-CH_HOST = os.environ.get("CH25_HOST", "127.0.0.1")
-CH_PORT = int(os.environ.get("CH25_HTTP_PORT", "19001"))
 CH_DATABASE = os.environ.get("CH25_DATABASE", "default")
 
 
@@ -71,16 +71,7 @@ def _require_ch25():
     """Fixture-time reachability gate (replaces collection-time skipif)."""
     if clickhouse_connect is None:
         pytest.skip("clickhouse-connect not installed")
-    try:
-        c = clickhouse_connect.get_client(
-            host=CH_HOST, port=CH_PORT, send_receive_timeout=5
-        )
-        c.command("SELECT 1")
-    except Exception as exc:
-        pytest.skip(
-            f"CH 25.3 not reachable on {CH_HOST}:{CH_PORT} ({exc!r}); "
-            f"integration test"
-        )
+    _open_ch_test_http_client(send_receive_timeout=5).close()
 
 
 # Fixture payloads. Each is a representative shape for a (observation_type,
@@ -198,9 +189,11 @@ _NESTED_FIXTURE = {
 
 @pytest.fixture(scope="module")
 def ch_client():
-    return clickhouse_connect.get_client(
-        host=CH_HOST, port=CH_PORT, send_receive_timeout=30
-    )
+    client = _open_ch_test_http_client(send_receive_timeout=30)
+    try:
+        yield client
+    finally:
+        client.close()
 
 
 @pytest.fixture()

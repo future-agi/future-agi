@@ -3,6 +3,7 @@ import PropTypes from "prop-types";
 import { Drawer, IconButton } from "@mui/material";
 import Iconify from "src/components/iconify";
 import HuggingDetailForm from "./HuggingDetailForm";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const HuggingFaceDetailDrawer = ({
   show,
@@ -39,8 +40,11 @@ const HuggingFaceDetailDrawer = ({
     subsetOptions,
     splitOptions,
   ]);
+  const covered = useDrawerCovered(show);
+
   return (
     <Drawer
+      sx={coveredDrawerSx(covered)}
       open={show}
       onClose={onClose}
       anchor="right"
@@ -48,14 +52,14 @@ const HuggingFaceDetailDrawer = ({
         backdrop: { invisible: true },
       }}
       PaperProps={{
-        sx: { width: 1, maxWidth: 525 },
+        sx: { width: 1, maxWidth: 640 },
       }}
     >
       <IconButton
         onClick={onClose}
         sx={{ position: "absolute", top: "12px", right: "12px" }}
       >
-        <Iconify icon="mingcute:close-line" />
+        <Iconify icon="solar:close-linear" />
       </IconButton>
       <HuggingDetailForm
         control={control}

@@ -42,7 +42,7 @@ export default function ModelParametersPopover({
 
   const sliderMarkStyles = {
     "& .MuiSlider-mark": {
-      backgroundColor: "black.o20",
+      backgroundColor: "action.selected",
       height: theme.spacing(0.5),
       width: theme.spacing(0.25),
     },
@@ -80,7 +80,6 @@ export default function ModelParametersPopover({
             borderRadius: 1,
             border: "1px solid",
             borderColor: "divider",
-            boxShadow: "0px 4px 16px rgba(0, 0, 0, 0.12)",
           },
         },
       }}

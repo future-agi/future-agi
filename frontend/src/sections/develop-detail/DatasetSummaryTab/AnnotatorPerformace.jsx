@@ -100,7 +100,7 @@ const AnnotatorPerformace = ({ annotatorList = [] }) => {
                   display: "flex",
                   gap: 1.25,
                   backgroundColor: "background.paper",
-                  borderRadius: 0.5,
+                  borderRadius: "4px",
                 }}
               >
                 <Box

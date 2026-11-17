@@ -1,6 +1,7 @@
 import {
   Box,
   Button,
+  ButtonBase,
   Divider,
   InputAdornment,
   List,
@@ -163,8 +164,8 @@ const CalculatePricing = ({ redirect, setMeetModalOpen, meetModalOpen }) => {
       sx={{
         borderRadius: 2,
         backgroundColor: "background.paper",
-        boxShadow:
-          "0px 12px 12px -4px rgba(147, 143, 163, 0.12), 0px 0px 2px 0px var(--border-default)",
+        border: "1px solid",
+        borderColor: "border.default",
       }}
     >
       <Button
@@ -225,24 +226,24 @@ const CalculatePricing = ({ redirect, setMeetModalOpen, meetModalOpen }) => {
                 Enterprise Plan
               </Typography>
               <Typography
-                sx={{ fontWeight: 400, fontSize: "14px", maxWidth: "401px" }}
+                sx={{ fontWeight: 400, fontSize: "13px", maxWidth: "401px" }}
               >
                 Work with our sales team to design the perfect plan for your
                 business. Ready to begin? Click on{" "}
-                <Typography
+                <ButtonBase
                   component="span"
                   onClick={() => {
                     setMeetModalOpen(true);
                   }}
                   sx={{
                     color: "primary.main",
+                    font: "inherit",
                     fontWeight: 500,
-                    cursor: "pointer",
-                    fontSize: "inherit",
+                    verticalAlign: "baseline",
                   }}
                 >
                   Talk to Sales
-                </Typography>{" "}
+                </ButtonBase>{" "}
                 to continue
               </Typography>
             </Box>
@@ -521,11 +522,11 @@ const CalculatePricing = ({ redirect, setMeetModalOpen, meetModalOpen }) => {
               }}
             >
               <Box>
-                <Typography sx={{ fontWeight: 600, fontSize: "18px", mb: 1 }}>
+                <Typography sx={{ fontWeight: 600, fontSize: "16px", mb: 1 }}>
                   Enterprise Plan
                 </Typography>
                 <Typography
-                  sx={{ fontWeight: 400, fontSize: "14px", maxWidth: "337px" }}
+                  sx={{ fontWeight: 400, fontSize: "13px", maxWidth: "337px" }}
                 >
                   Flexible, custom solutions for complex teams with the
                   security, performance, and support enterprises expect
@@ -540,7 +541,7 @@ const CalculatePricing = ({ redirect, setMeetModalOpen, meetModalOpen }) => {
                   pl: 2,
                   m: 0,
                   fontWeight: 400,
-                  fontSize: "11px",
+                  fontSize: "12px",
                 }}
               >
                 {enterPriseFeatures.map((item, index) => (
@@ -563,9 +564,6 @@ const CalculatePricing = ({ redirect, setMeetModalOpen, meetModalOpen }) => {
                   variant="contained"
                   color="primary"
                   sx={{
-                    px: "24px",
-                    borderRadius: "8px",
-                    height: "38px",
                     width: "100%",
                   }}
                   onClick={() => {
@@ -573,12 +571,9 @@ const CalculatePricing = ({ redirect, setMeetModalOpen, meetModalOpen }) => {
                   }}
                   startIcon={
                     <SvgColor
+                      width={20}
                       src={"/assets/icons/ic_phone_call.svg"}
                       color="primary.contrastText"
-                      sx={{
-                        width: "20px",
-                        height: "20px",
-                      }}
                     />
                   }
                 >
@@ -589,10 +584,7 @@ const CalculatePricing = ({ redirect, setMeetModalOpen, meetModalOpen }) => {
                     width: "100%",
                     px: 1.5,
                     py: 0.5,
-                    backgroundColor:
-                      theme.palette.mode === "light"
-                        ? "blue.o5"
-                        : "rgba(59, 130, 246, 0.1)",
+                    backgroundColor: "status.info.bg",
                     borderRadius: "12px",
                     display: "flex",
                     flexDirection: "row",
@@ -606,10 +598,7 @@ const CalculatePricing = ({ redirect, setMeetModalOpen, meetModalOpen }) => {
                     sx={{
                       height: 20,
                       width: 20,
-                      color:
-                        theme.palette.mode === "light"
-                          ? "blue.500"
-                          : "blue.300",
+                      color: "status.info.fg",
                     }}
                   />
                   <Typography sx={{ fontWeight: 400, fontSize: "12px" }}>

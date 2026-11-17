@@ -1,3 +1,4 @@
+import EmptyContent from "src/components/empty-content";
 import {
   Box,
   Chip,
@@ -324,21 +325,9 @@ export default function CompareDatasetDetailContent({
     setOpenfeedbackForm(false);
   };
 
-  const CustomNoRowsOverlay = () => {
-    return (
-      <Box
-        sx={{
-          padding: 2,
-          textAlign: "center",
-          color: "text.primary",
-          fontSize: 14,
-          fontWeight: 400,
-        }}
-      >
-        No output to apply evaluations
-      </Box>
-    );
-  };
+  const CustomNoRowsOverlay = () => (
+    <EmptyContent title="No output to apply evaluations" />
+  );
 
   const isTwoDataset = datasetCols?.length === 2;
   return (
@@ -360,7 +349,7 @@ export default function CompareDatasetDetailContent({
             justifyContent: "space-between",
           }}
         >
-          <Typography variant="m3" fontWeight={700} color="text.primary">
+          <Typography variant="m3" fontWeight={600} color="text.primary">
             Datapoint-compare
           </Typography>
           <Stack direction={"row"} gap={"12px"} alignItems={"center"}>
@@ -396,7 +385,7 @@ export default function CompareDatasetDetailContent({
               >
                 <Iconify
                   width={16}
-                  icon="material-symbols:info-outline-rounded"
+                  icon="solar:info-circle-linear"
                   sx={{ color: "text.secondary", marginLeft: 0.5 }}
                 />
               </CustomTooltip>
@@ -409,9 +398,6 @@ export default function CompareDatasetDetailContent({
               sx={{
                 border: "1px solid",
                 borderColor: "action.hover",
-                borderRadius: "4px",
-                py: "2px",
-                px: "16px",
                 "&.Mui-disabled": {
                   opacity: 0.4,
                 },
@@ -430,7 +416,7 @@ export default function CompareDatasetDetailContent({
                   color: "text.primary",
                   fontWeight: "fontWeightRegular",
                 }}
-                icon="material-symbols:expand-less-rounded"
+                icon="solar:alt-arrow-up-linear"
               />
             </LoadingButton>
             <LoadingButton
@@ -441,9 +427,6 @@ export default function CompareDatasetDetailContent({
               sx={{
                 border: "1px solid",
                 borderColor: "action.hover",
-                borderRadius: "4px",
-                py: "2px",
-                px: "16px",
                 "&.Mui-disabled": {
                   opacity: 0.4,
                 },
@@ -462,11 +445,11 @@ export default function CompareDatasetDetailContent({
                   color: "text.primary",
                   fontWeight: "fontWeightRegular",
                 }}
-                icon="material-symbols:expand-more-rounded"
+                icon="solar:alt-arrow-down-linear"
               />
             </LoadingButton>
             <IconButton onClick={onClose} size="small">
-              <Iconify icon="mingcute:close-line" />
+              <Iconify icon="solar:close-linear" />
             </IconButton>
           </Stack>
         </Box>

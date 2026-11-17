@@ -1,4 +1,5 @@
 import React from "react";
+import { Button } from "@mui/material";
 import axios, { endpoints } from "src/utils/axios";
 import { stripePromise } from "./stripeVariables";
 import logger from "src/utils/logger";
@@ -35,9 +36,9 @@ const StripeCheckoutButton = () => {
 
   return (
     <div>
-      <button role="link" onClick={handleCheckout}>
+      <Button variant="contained" onClick={handleCheckout}>
         Subscribe Now
-      </button>
+      </Button>
       {/* <button role="link" onClick={handleCancelSubscription}>
             Cancel Subscription
         </button> */}

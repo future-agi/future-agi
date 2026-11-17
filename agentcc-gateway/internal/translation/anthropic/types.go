@@ -4,19 +4,24 @@
 // Messages API spec is at https://platform.claude.com/docs/en/api/messages.
 package anthropic
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"sync"
+
+	"github.com/futureagi/agentcc-gateway/internal/models"
+)
 
 // ─── Request types ────────────────────────────────────────────────────────────
 
 // MessagesRequest is the top-level body for POST /v1/messages.
 type MessagesRequest struct {
-	Model     string           `json:"model"`
-	Messages  []AnthropicMsg   `json:"messages"`
-	MaxTokens int              `json:"max_tokens"`
-	System    json.RawMessage  `json:"system,omitempty"` // string or []TextBlockParam
-	Tools     []AnthropicTool  `json:"tools,omitempty"`
+	Model      string          `json:"model"`
+	Messages   []AnthropicMsg  `json:"messages"`
+	MaxTokens  int             `json:"max_tokens"`
+	System     json.RawMessage `json:"system,omitempty"` // string or []TextBlockParam
+	Tools      []AnthropicTool `json:"tools,omitempty"`
 	ToolChoice json.RawMessage `json:"tool_choice,omitempty"`
-	Stream    bool             `json:"stream,omitempty"`
+	Stream     bool            `json:"stream,omitempty"`
 
 	// Sampling params.
 	Temperature *float64 `json:"temperature,omitempty"`
@@ -154,36 +159,36 @@ type MessageStartMsg struct {
 
 // ContentBlockStartEvent announces a new content block.
 type ContentBlockStartEvent struct {
-	Type         string       `json:"type"`  // "content_block_start"
+	Type         string       `json:"type"` // "content_block_start"
 	Index        int          `json:"index"`
 	ContentBlock ContentBlock `json:"content_block"`
 }
 
 // ContentBlockDeltaEvent carries an incremental delta.
 type ContentBlockDeltaEvent struct {
-	Type  string        `json:"type"`  // "content_block_delta"
-	Index int           `json:"index"`
-	Delta ContentDelta  `json:"delta"`
+	Type  string       `json:"type"` // "content_block_delta"
+	Index int          `json:"index"`
+	Delta ContentDelta `json:"delta"`
 }
 
 // ContentBlockStopEvent closes a content block.
 type ContentBlockStopEvent struct {
-	Type  string `json:"type"`  // "content_block_stop"
+	Type  string `json:"type"` // "content_block_stop"
 	Index int    `json:"index"`
 }
 
 // ContentDelta holds the actual increment; type discriminates.
 type ContentDelta struct {
-	Type        string `json:"type"`                  // "text_delta" | "input_json_delta" | "thinking_delta"
-	Text        string `json:"text,omitempty"`        // text_delta
+	Type        string `json:"type"`                   // "text_delta" | "input_json_delta" | "thinking_delta"
+	Text        string `json:"text,omitempty"`         // text_delta
 	PartialJSON string `json:"partial_json,omitempty"` // input_json_delta
-	Thinking    string `json:"thinking,omitempty"`    // thinking_delta
+	Thinking    string `json:"thinking,omitempty"`     // thinking_delta
 }
 
 // MessageDeltaEvent carries final stop-reason and output usage.
 type MessageDeltaEvent struct {
-	Type  string       `json:"type"`  // "message_delta"
-	Delta MessageDelta `json:"delta"`
+	Type  string        `json:"type"` // "message_delta"
+	Delta MessageDelta  `json:"delta"`
 	Usage ResponseUsage `json:"usage"`
 }
 
@@ -223,3 +228,10 @@ type ErrorDetail struct {
 	Type    string `json:"type"`
 	Message string `json:"message"`
 }
+
+// KnownRequestFields returns the JSON keys POST /v1/messages defines, so a
+// caller's own additions to the body can be told apart from the spec's fields.
+// Derived from MessagesRequest, so it cannot drift from it.
+var KnownRequestFields = sync.OnceValue(func() map[string]struct{} {
+	return models.JSONFieldNames(MessagesRequest{})
+})

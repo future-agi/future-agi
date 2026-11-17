@@ -490,7 +490,7 @@ const LabelModal = ({
                 onClose();
               }}
             >
-              <Iconify icon="eva:close-fill" color="text.secondary" />
+              <Iconify icon="solar:close-linear" color="text.secondary" />
             </IconButton>
           </ModalHeader>
           <ModalBody>
@@ -593,7 +593,7 @@ const LabelModal = ({
                       border: "1px solid gray",
                       borderColor: "divider",
                       padding: "10px 0px",
-                      borderRadius: "5px",
+                      borderRadius: "6px",
                     }}
                   >
                     <Box
@@ -654,7 +654,7 @@ const LabelModal = ({
                                   sx={{
                                     fontWeight:
                                       theme.typography.fontWeightMedium,
-                                    fontSize: "14px",
+                                    fontSize: "13px",
                                   }}
                                 >
                                   Input*
@@ -689,7 +689,7 @@ const LabelModal = ({
                                     justifyContent={"space-between"}
                                   >
                                     <Typography
-                                      fontSize={14}
+                                      fontSize={13}
                                       color="text.primary"
                                     >
                                       Variable_{idx + 1}
@@ -724,7 +724,7 @@ const LabelModal = ({
                                         }
                                       >
                                         <Iconify
-                                          icon="hugeicons:delete-01"
+                                          icon="solar:trash-bin-trash-linear"
                                           color="text.secondary"
                                         />
                                       </IconButton>
@@ -739,15 +739,13 @@ const LabelModal = ({
                               variant="contained"
                               sx={{
                                 display: "flex",
-                                py: "4px",
-                                px: "10px",
                                 gap: 0.2,
                               }}
                               onClick={() =>
                                 formHandle.addLabelInputAppend({ label: "" })
                               }
                             >
-                              <Iconify icon="mdi:plus" />
+                              <Iconify icon="solar:add-linear" />
                               <Typography
                                 fontSize={12}
                                 sx={{
@@ -764,7 +762,7 @@ const LabelModal = ({
 
                             <Typography
                               fontSize={12}
-                              color="red.500"
+                              color="status.danger.fg"
                               marginLeft="7px"
                               marginTop="5px"
                             >
@@ -785,7 +783,7 @@ const LabelModal = ({
                             color="text.primary"
                             sx={{
                               fontWeight: theme.typography.fontWeightMedium,
-                              fontSize: "14px",
+                              fontSize: "13px",
                             }}
                           >
                             Choices*
@@ -832,16 +830,13 @@ const LabelModal = ({
                             color="primary"
                             variant="contained"
                             onClick={handleSaveLabel}
-                            sx={{
-                              fontWeight: theme.typography.fontWeightMedium,
-                            }}
                           >
                             Add
                           </Button>
                         </Stack>
                         <Typography
                           fontSize={12}
-                          color="red.500"
+                          color="status.danger.fg"
                           marginLeft="7px"
                           marginTop="5px"
                         >
@@ -862,7 +857,7 @@ const LabelModal = ({
                                     fontWeight:
                                       theme.typography.fontWeightRegular,
                                   }}
-                                  fontSize={14}
+                                  fontSize={13}
                                 >
                                   {field?.label}
                                 </Typography>
@@ -873,7 +868,7 @@ const LabelModal = ({
                                   }
                                 >
                                   <Iconify
-                                    icon="hugeicons:delete-01"
+                                    icon="solar:trash-bin-trash-linear"
                                     color="text.secondary"
                                   />
                                 </IconButton>
@@ -922,7 +917,7 @@ const LabelModal = ({
                               helperText={""}
                               label={
                                 <Typography
-                                  fontSize={14}
+                                  fontSize={13}
                                   sx={{
                                     fontWeight:
                                       theme.typography.fontWeightMedium,
@@ -1007,7 +1002,7 @@ const LabelModal = ({
                   <Typography
                     color="text.primary"
                     sx={{
-                      fontSize: "14px",
+                      fontSize: "13px",
                       fontWeight: theme.typography.fontWeightBold,
                     }}
                   >
@@ -1031,7 +1026,7 @@ const LabelModal = ({
                         <Typography
                           color="text.primary"
                           sx={{
-                            fontSize: "14px",
+                            fontSize: "13px",
                             fontWeight: theme.typography.fontWeightRegular,
                           }}
                         >
@@ -1052,7 +1047,7 @@ const LabelModal = ({
                           <Typography
                             color="text.primary"
                             sx={{
-                              fontSize: "14px",
+                              fontSize: "13px",
                               fontWeight: theme.typography.fontWeightRegular,
                             }}
                           >
@@ -1110,7 +1105,7 @@ const LabelModal = ({
                                       sx={{
                                         px: "16px",
                                         py: "6px",
-                                        fontSize: "14px",
+                                        fontSize: "13px",
                                       }}
                                       fontWeight={400}
                                     >
@@ -1192,7 +1187,7 @@ const style = {
   description: {
     backgroundColor: "action.hover",
     overflow: "hidden",
-    borderRadius: "5px",
+    borderRadius: "6px",
     width: "100%",
     // border: "1px solid gray",
     // borderColor: grey["300"],

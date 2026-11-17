@@ -77,7 +77,6 @@ export default function AnnotateFooter({
               onClick={onPrev}
               aria-label="Previous"
               sx={{
-                p: 0.5,
                 color: "text.primary",
                 "&:hover": {
                   bgcolor: (theme) => alpha(theme.palette.primary.main, 0.08),
@@ -92,7 +91,7 @@ export default function AnnotateFooter({
               {isLoadingPrev ? (
                 <CircularProgress size={14} thickness={5} />
               ) : (
-                <Iconify icon="eva:arrow-ios-back-fill" width={18} />
+                <Iconify icon="solar:alt-arrow-left-linear" width={20} />
               )}
             </IconButton>
           </span>
@@ -136,7 +135,6 @@ export default function AnnotateFooter({
               onClick={onNext}
               aria-label="Next"
               sx={{
-                p: 0.5,
                 color: "text.primary",
                 "&:hover": {
                   bgcolor: (theme) => alpha(theme.palette.primary.main, 0.08),
@@ -151,7 +149,7 @@ export default function AnnotateFooter({
               {isLoadingNext ? (
                 <CircularProgress size={14} thickness={5} />
               ) : (
-                <Iconify icon="eva:arrow-ios-forward-fill" width={18} />
+                <Iconify icon="solar:alt-arrow-right-linear" width={20} />
               )}
             </IconButton>
           </span>

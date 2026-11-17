@@ -105,7 +105,7 @@ export default function AssistantMessage({ message, onFeedback }) {
             sx={{
               mt: 0.5,
               color: "error.main",
-              fontSize: 14,
+              fontSize: 13,
             }}
           >
             {message.error}
@@ -174,13 +174,12 @@ export default function AssistantMessage({ message, onFeedback }) {
                 navigator.clipboard.writeText(message.content || "");
               }}
               sx={{
-                p: 0.4,
                 color: "text.disabled",
                 "&:hover": { color: "text.secondary" },
               }}
               title="Copy"
             >
-              <Iconify icon="mdi:content-copy" width={14} />
+              <Iconify icon="solar:copy-linear" width={14} />
             </IconButton>
 
             <IconButton
@@ -191,7 +190,6 @@ export default function AssistantMessage({ message, onFeedback }) {
                 onFeedback?.(message.id, val);
               }}
               sx={{
-                p: 0.4,
                 color: feedback === "up" ? "primary.main" : "text.disabled",
                 "&:hover": {
                   color: feedback === "up" ? "primary.main" : "text.secondary",
@@ -201,7 +199,7 @@ export default function AssistantMessage({ message, onFeedback }) {
             >
               <Iconify
                 icon={
-                  feedback === "up" ? "mdi:thumb-up" : "mdi:thumb-up-outline"
+                  feedback === "up" ? "solar:like-bold" : "solar:like-linear"
                 }
                 width={14}
               />
@@ -215,7 +213,6 @@ export default function AssistantMessage({ message, onFeedback }) {
                 onFeedback?.(message.id, val);
               }}
               sx={{
-                p: 0.4,
                 color: feedback === "down" ? "error.main" : "text.disabled",
                 "&:hover": {
                   color: feedback === "down" ? "error.main" : "text.secondary",
@@ -226,8 +223,8 @@ export default function AssistantMessage({ message, onFeedback }) {
               <Iconify
                 icon={
                   feedback === "down"
-                    ? "mdi:thumb-down"
-                    : "mdi:thumb-down-outline"
+                    ? "solar:dislike-bold"
+                    : "solar:dislike-linear"
                 }
                 width={14}
               />

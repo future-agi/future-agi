@@ -58,11 +58,11 @@ const DeleteRuns = ({ open, onClose, selectedRows, refreshGrid }) => {
       open={open}
       onClose={onClose}
       fullWidth
-      maxWidth="xs"
+      maxWidth={false}
       aria-labelledby="delete-dialog-title"
       PaperProps={{
         sx: {
-          width: 480,
+          width: 560,
           maxHeight: 329,
           display: "flex",
           flexDirection: "column",
@@ -82,13 +82,11 @@ const DeleteRuns = ({ open, onClose, selectedRows, refreshGrid }) => {
             Delete {runsToDelete.length} Run{runsToDelete.length !== 1 && "s"}
           </Box>
           <IconButton
+            size="small"
             aria-label="close-delete-run"
             onClick={onClose}
-            sx={{
-              p: 0,
-            }}
           >
-            <Iconify icon="line-md:close" color="text.primary" />
+            <Iconify icon="solar:close-linear" color="text.primary" />
           </IconButton>
         </Box>
       </DialogTitle>
@@ -105,7 +103,7 @@ const DeleteRuns = ({ open, onClose, selectedRows, refreshGrid }) => {
           mb={theme.spacing(1)}
           fontWeight={400}
           color="text.secondary"
-          fontSize={14}
+          fontSize={13}
         >
           Are you sure you want to delete the following run
           {runsToDelete.length !== 1 && "s"}?
@@ -141,10 +139,11 @@ const DeleteRuns = ({ open, onClose, selectedRows, refreshGrid }) => {
               p={theme.spacing(1.5)}
               borderRadius="8px"
             >
-              <Typography fontSize={14} fontWeight={500}>
+              <Typography fontSize={13} fontWeight={500}>
                 {run.runName}
               </Typography>
               <IconButton
+                size="small"
                 aria-label="remove-run"
                 onClick={() => {
                   if (runsToDelete.length === 1) {
@@ -153,10 +152,10 @@ const DeleteRuns = ({ open, onClose, selectedRows, refreshGrid }) => {
                     handleRemoveRun(run.id);
                   }
                 }}
-                sx={{ width: 16, height: 16, p: 0 }}
+                sx={{ width: 16 }}
               >
                 <Iconify
-                  icon="line-md:close"
+                  icon="solar:close-linear"
                   color="text.primary"
                   width={16}
                   height={16}
@@ -173,26 +172,24 @@ const DeleteRuns = ({ open, onClose, selectedRows, refreshGrid }) => {
         }}
       >
         <Button
+          size="small"
           aria-label="Cancel-run-deletion"
           variant="outlined"
           color="inherit"
           onClick={onClose}
           sx={{
             width: "90px",
-            height: "30px",
-            fontSize: "12px",
             color: "text.disabled",
           }}
         >
           Cancel
         </Button>
         <LoadingButton
+          size="small"
           aria-label="Confirm-delete-runs"
           type="submit"
           sx={{
             width: "90px",
-            height: "30px",
-            fontSize: "12px",
           }}
           loading={isPending}
           disabled={runsToDelete.length === 0}

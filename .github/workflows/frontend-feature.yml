@@ -47,6 +47,9 @@ jobs:
         working-directory: frontend
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The design-system check diffs against origin/dev or origin/main.
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -57,6 +60,12 @@ jobs:
 
       - name: Install dependencies
         run: yarn install --frozen-lockfile
+
+      - name: Design system lint (changed lines)
+        run: yarn lint:ds:changed
+
+      - name: Design system opt-outs
+        run: yarn ds:optouts
 
       - name: Type check
         run: yarn type-check

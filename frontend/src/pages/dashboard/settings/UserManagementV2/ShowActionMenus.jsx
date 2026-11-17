@@ -76,7 +76,6 @@ const ShowActionMenus = ({
             border: "1px solid",
             borderColor: "action.hover",
             p: "12px",
-            boxShadow: "0px 4px 8px rgba(0, 0, 0, 0.1)",
             maxHeight: `280px`,
             overflow: "hidden",
             display: "flex",
@@ -98,7 +97,7 @@ const ShowActionMenus = ({
                 }}
                 sx={{
                   cursor: "pointer",
-                  borderRadius: 0.75,
+                  borderRadius: "4px",
                   padding: 0.5,
                   "&:hover": {
                     backgroundColor: "action.hover",

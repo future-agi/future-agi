@@ -14,33 +14,29 @@ const GeneratePrompt = ({ onGenerate }) => {
       sx={{ paddingBottom: 1, gap: 1, display: "flex", alignItems: "center" }}
     >
       <Button
-        startIcon={<Iconify icon="mingcute:pencil-2-ai-line" />}
+        startIcon={<Iconify icon="solar:pen-linear" />}
         onClick={() => {
           onGenerate();
           trackEvent(Events.generatePromptClicked);
         }}
         sx={{
-          fontSize: 12,
-          fontWeight: 600,
           paddingLeft: 2,
           paddingRight: 2,
           fontFamily: "IBM Plex Sans, sans-serif",
-          color: "#A792FD",
-          backgroundColor: "rgba(120, 87, 252, 0.16)",
+          color: "primary.main",
+          backgroundColor: "action.selected",
           boxShadow: "none",
-          borderRadius: "10px",
           lineHeight: 1,
           "&:hover": {
-            backgroundColor: "rgba(120, 87, 252, 0.32)",
+            backgroundColor: "action.hover",
             boxShadow: "none",
           },
           "&:active": {
             boxShadow: "none",
           },
           "&.Mui-disabled": {
-            backgroundColor: "rgba(0, 0, 0, 0.12)",
+            backgroundColor: "action.disabledBackground",
           },
-          textTransform: "none",
         }}
       >
         Generate Prompt
@@ -48,7 +44,7 @@ const GeneratePrompt = ({ onGenerate }) => {
       <Typography
         color="text.secondary"
         fontFamily="IBM Plex Sans, sans-serif"
-        fontSize="14px"
+        fontSize="13px"
       >
         or enter instructions or prompt..
       </Typography>

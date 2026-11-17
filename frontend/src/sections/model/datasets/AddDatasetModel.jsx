@@ -65,7 +65,13 @@ const AddDatasetModel = ({ open, onClose, onAddDataset }) => {
   };
 
   return (
-    <Dialog open={open} onClose={onCloseClick} maxWidth="xs" fullWidth>
+    <Dialog
+      open={open}
+      onClose={onCloseClick}
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 560 } }}
+      fullWidth
+    >
       <DialogTitle
         sx={{
           display: "flex",
@@ -75,7 +81,7 @@ const AddDatasetModel = ({ open, onClose, onAddDataset }) => {
       >
         Add Dataset
         <IconButton onClick={onCloseClick}>
-          <Iconify icon="mingcute:close-line" />
+          <Iconify icon="solar:close-linear" />
         </IconButton>
       </DialogTitle>
       <DialogContent
@@ -176,7 +182,7 @@ const InfoBox = ({ title, text, externalLinkLabel, href }) => {
       sx={{ width: "100%", background: theme.palette.background.paper }}
       elevation={2}
     >
-      <Typography fontSize="14px" fontWeight={700} sx={{ padding: "18px" }}>
+      <Typography fontSize="13px" fontWeight={600} sx={{ padding: "18px" }}>
         {title}
       </Typography>
       <Divider />
@@ -197,7 +203,7 @@ const InfoBox = ({ title, text, externalLinkLabel, href }) => {
           sx={{ display: "flex", alignItems: "center", gap: 1 }}
         >
           {externalLinkLabel}{" "}
-          <Iconify icon="prime:external-link" sx={{ width: "16px" }} />
+          <Iconify icon="solar:arrow-right-up-linear" sx={{ width: "16px" }} />
         </Link>
       </Box>
     </Paper>

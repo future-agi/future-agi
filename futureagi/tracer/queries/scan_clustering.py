@@ -8,7 +8,7 @@ Online incremental approach: each issue embedded → nearest centroid → assign
 """
 
 import hashlib
-from typing import Callable, List, Optional, Tuple
+from collections.abc import Callable
 
 import structlog
 from django.db import IntegrityError, transaction
@@ -30,6 +30,7 @@ from tracer.services.clickhouse.clustering_tables import (
     ensure_trace_inputs_table,
 )
 from tracer.services.clickhouse.v2 import get_reader
+from tracer.services.grouping.human_edits import is_grouping_issue
 from tracer.types.scan_types import ClusterableIssue, TraceInputData
 from tracer.utils.semantic_conventions import get_attribute
 
@@ -96,9 +97,9 @@ PARTITION_BY_CATEGORY = True
 
 def _severity_to_impact(severity: str | None) -> str:
     """Map the scanner's 4-level severity to the cluster's 3-level impact."""
-    return {
-        "critical": "HIGH", "high": "HIGH", "medium": "MEDIUM", "low": "LOW"
-    }.get(severity or "medium", "MEDIUM")
+    return {"critical": "HIGH", "high": "HIGH", "medium": "MEDIUM", "low": "LOW"}.get(
+        severity or "medium", "MEDIUM"
+    )
 
 
 def _seed_severity(category: str, brief: str) -> str | None:
@@ -115,7 +116,7 @@ def _seed_severity(category: str, brief: str) -> str | None:
 # ---------------------------------------------------------------------------
 
 
-def get_unclustered_issues(project_id: str) -> List[ClusterableIssue]:
+def get_unclustered_issues(project_id: str) -> list[ClusterableIssue]:
     """Fetch TraceScanIssues that haven't been assigned to a cluster yet."""
     issues = (
         TraceScanIssue.objects.filter(
@@ -155,7 +156,7 @@ def get_unclustered_issues(project_id: str) -> List[ClusterableIssue]:
 # ---------------------------------------------------------------------------
 
 
-def embed_texts(texts: List[str]) -> List[List[float]]:
+def embed_texts(texts: list[str]) -> list[list[float]]:
     """Embed a batch of texts using the model serving client."""
     text_embed = model_manager.text_model
     embeddings = []
@@ -171,19 +172,21 @@ def embed_texts(texts: List[str]) -> List[List[float]]:
 
 
 def _update_centroid(
-    current: List[float], new_vector: List[float], count: int
-) -> List[float]:
+    current: list[float], new_vector: list[float], count: int
+) -> list[float]:
     """Incremental centroid update: (centroid * count + new) / (count + 1)."""
     if not current:
         return new_vector
-    return [(c * count + n) / (count + 1) for c, n in zip(current, new_vector)]
+    return [
+        (c * count + n) / (count + 1) for c, n in zip(current, new_vector, strict=False)
+    ]
 
 
 def find_nearest_centroid(
-    embedding: List[float],
+    embedding: list[float],
     project_id: str,
     category: str,
-) -> Optional[Tuple[str, float]]:
+) -> tuple[str, float] | None:
     """
     Find nearest cluster centroid for the given category within threshold.
 
@@ -208,7 +211,7 @@ def find_nearest_centroid(
         # breaks ties that last_updated cannot, because that column is
         # second-granularity and two updates to one cluster inside the same
         # second are otherwise unordered.
-        rows = db.client.execute(
+        rows = db.execute_read(
             f"""
             SELECT
                 cluster_id,
@@ -225,6 +228,7 @@ def find_nearest_centroid(
             LIMIT 1
             """,
             {"project_id": project_id, "family": category},
+            max_result_rows=1,
         )
 
         if rows and rows[0][1] < COSINE_THRESHOLD:
@@ -242,8 +246,8 @@ def find_nearest_centroid(
 def create_cluster(
     project_id: str,
     issue: ClusterableIssue,
-    embedding: List[float],
-    on_join: Optional[Callable[[], None]] = None,
+    embedding: list[float],
+    on_join: Callable[[], None] | None = None,
 ) -> str:
     """
     Create a new TraceErrorGroup cluster + ClickHouse centroid.
@@ -345,6 +349,13 @@ def create_cluster(
         trace_id=issue.trace_id,
         scan_issue_id=issue.issue_id,
     )
+    from tracer.services.feed_alerts.events import record_issue_event
+
+    record_issue_event(
+        cluster=cluster,
+        before=None,
+        source_key=f"scanner-create:{issue.issue_id}",
+    )
 
     # Store centroid in ClickHouse
     db = ClickHouseVectorDB()
@@ -409,9 +420,9 @@ def delete_centroid(cluster_id: str, project_id: str) -> None:
 _RETITLE_AT = (2, 5, 10, 25, 50, 100, 250)
 
 
-def _cosine_distance(a: List[float], b: List[float]) -> float:
+def _cosine_distance(a: list[float], b: list[float]) -> float:
     """1 - cosine similarity. Mirrors ClickHouse's cosineDistance."""
-    dot = sum(x * y for x, y in zip(a, b))
+    dot = sum(x * y for x, y in zip(a, b, strict=False))
     na = sum(x * x for x in a) ** 0.5
     nb = sum(y * y for y in b) ** 0.5
     if not na or not nb:
@@ -435,6 +446,8 @@ def _retitle_from_members(cluster) -> None:
     brief — which means the distance that selects it has to be computed among
     raw briefs too.
     """
+    if is_grouping_issue(cluster.pk):
+        return
     # Ordered, because two things downstream depend on it and neither is
     # allowed to vary between runs: ties in the medoid distance are broken by
     # position, and the title generator samples this list evenly to cover the
@@ -457,7 +470,7 @@ def _retitle_from_members(cluster) -> None:
     centroid = [sum(v[i] for v in vectors) / len(vectors) for i in range(dim)]
 
     best_brief, best_distance = None, None
-    for brief, vector in zip(briefs, vectors):
+    for brief, vector in zip(briefs, vectors, strict=False):
         distance = _cosine_distance(vector, centroid)
         if best_distance is None or distance < best_distance:
             best_brief, best_distance = brief, distance
@@ -511,6 +524,8 @@ def _refresh_severity(cluster) -> None:
     at least a medium regardless of how the text reads, because breadth is
     evidence the text alone cannot carry.
     """
+    if is_grouping_issue(cluster.pk):
+        return
     from tracer.queries.feed import severity_to_priority
 
     severity = _seed_severity(cluster.issue_category or "", cluster.title or "")
@@ -538,16 +553,19 @@ def _refresh_severity(cluster) -> None:
     )
 
 
-
-
 def assign_to_cluster(
     cluster_id: str,
     project_id: str,
     issue: ClusterableIssue,
-    embedding: List[float],
+    embedding: list[float],
 ) -> None:
     """Assign an issue to an existing cluster and update centroid incrementally."""
     cluster = TraceErrorGroup.objects.get(cluster_id=cluster_id, project_id=project_id)
+    if is_grouping_issue(cluster.pk):
+        raise ValueError("legacy scanner cannot assign to an Omega-owned issue")
+    from tracer.services.feed_alerts.events import issue_snapshot, record_issue_event
+
+    alert_before = issue_snapshot(cluster)
 
     # Link issue → cluster. Both membership writes are idempotent: re-running the
     # scan over a trace updates the issue row it already owns, and matches the
@@ -581,6 +599,12 @@ def assign_to_cluster(
             "updated_at",
         ]
     )
+    record_issue_event(
+        cluster=cluster,
+        before=alert_before,
+        source_key=f"scanner-assign:{issue.issue_id}:{cluster.pk}",
+    )
+    alert_after_count = issue_snapshot(cluster)
 
     # Incrementally update centroid in ClickHouse
     db = ClickHouseVectorDB()
@@ -598,7 +622,7 @@ def assign_to_cluster(
         # monotonically, so it orders them correctly. GROUP BY is load-bearing: an
         # aggregate without it always returns one row, so a cluster with no stored
         # centroid would come back as empty defaults instead of no rows.
-        rows = db.client.execute(
+        rows = db.execute_read(
             f"""
             SELECT
                 argMax(centroid, (last_updated, member_count)),
@@ -608,6 +632,7 @@ def assign_to_cluster(
             GROUP BY cluster_id
             """,
             {"project_id": project_id, "cluster_id": cluster_id},
+            max_result_rows=1,
         )
 
         if rows:
@@ -667,6 +692,11 @@ def assign_to_cluster(
         cluster_id=cluster_id,
         issue_id=issue.issue_id,
     )
+    record_issue_event(
+        cluster=cluster,
+        before=alert_after_count,
+        source_key=f"scanner-grade:{issue.issue_id}:{cluster.pk}",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -674,7 +704,7 @@ def assign_to_cluster(
 # ---------------------------------------------------------------------------
 
 
-def get_trace_input_data(trace_ids: List[str], project_id: str) -> List[TraceInputData]:
+def get_trace_input_data(trace_ids: list[str], project_id: str) -> list[TraceInputData]:
     """
     Fetch root span input text + has_issues flag for scanned traces.
 
@@ -751,8 +781,8 @@ def get_trace_input_data(trace_ids: List[str], project_id: str) -> List[TraceInp
 
 
 def store_trace_input_embeddings(
-    inputs: List[TraceInputData],
-    embeddings: List[List[float]],
+    inputs: list[TraceInputData],
+    embeddings: list[list[float]],
 ) -> int:
     """
     Store kevinified root input embeddings in ClickHouse.
@@ -773,7 +803,7 @@ def store_trace_input_embeddings(
                 "embedding": emb,
                 "has_issues": inp.has_issues,
             }
-            for inp, emb in zip(inputs, embeddings)
+            for inp, emb in zip(inputs, embeddings, strict=False)
         ]
 
         if rows:
@@ -792,11 +822,11 @@ def store_trace_input_embeddings(
 
 
 def find_success_trace_baseline(
-    query_embedding: List[float],
+    query_embedding: list[float],
     project_id: str,
     k: int = 120,
-    exclude_trace_ids: Optional[List[str]] = None,
-) -> List[Tuple[str, float]]:
+    exclude_trace_ids: list[str] | None = None,
+) -> list[tuple[str, float]]:
     """
     KNN: up to ``k`` nearest success traces (has_issues=False) to the query
     embedding, sorted nearest-first.
@@ -815,7 +845,7 @@ def find_success_trace_baseline(
             ids_str = ",".join(f"'{tid}'" for tid in exclude_trace_ids)
             exclude_clause = f"AND trace_id NOT IN ({ids_str})"
 
-        rows = db.client.execute(
+        rows = db.execute_read(
             f"""
             SELECT
                 trace_id,
@@ -828,6 +858,7 @@ def find_success_trace_baseline(
             LIMIT {int(k)}
             """,
             {"project_id": project_id},
+            max_result_rows=max(1, int(k)),
         )
         return [(str(tid), dist) for tid, dist in rows]
     finally:
@@ -835,10 +866,10 @@ def find_success_trace_baseline(
 
 
 def find_nearest_success_trace(
-    query_embedding: List[float],
+    query_embedding: list[float],
     project_id: str,
-    exclude_trace_ids: Optional[List[str]] = None,
-) -> Optional[Tuple[str, float]]:
+    exclude_trace_ids: list[str] | None = None,
+) -> tuple[str, float] | None:
     """
     KNN: find the nearest success trace (has_issues=False) to the query embedding.
 
@@ -853,7 +884,7 @@ def find_nearest_success_trace(
 def get_cluster_trace_embeddings(
     cluster_id: str,
     project_id: str,
-) -> Optional[Tuple[str, List[float]]]:
+) -> tuple[str, list[float]] | None:
     """
     Get the root input embedding for a representative trace in the cluster.
 
@@ -878,7 +909,7 @@ def get_cluster_trace_embeddings(
     try:
         ensure_trace_inputs_table(db)
         ids_str = ",".join(f"'{tid}'" for tid in trace_ids)
-        rows = db.client.execute(
+        rows = db.execute_read(
             f"""
             SELECT trace_id, embedding
             FROM {TRACE_INPUTS_TABLE}
@@ -887,6 +918,7 @@ def get_cluster_trace_embeddings(
             LIMIT 1
             """,
             {"project_id": project_id},
+            max_result_rows=1,
         )
 
         if rows:
@@ -949,18 +981,26 @@ def _merge_pg(keep_id: str, absorb_id: str, project_id: str):
     skipped because both sides are human-triaged."""
     keep = TraceErrorGroup.objects.get(cluster_id=keep_id, project_id=project_id)
     absorb = TraceErrorGroup.objects.get(cluster_id=absorb_id, project_id=project_id)
+    if is_grouping_issue(keep.pk) or is_grouping_issue(absorb.pk):
+        return None
     if absorb.status in _TRIAGED:
         if keep.status in _TRIAGED:
-            return None                 # both triaged: leave both alone
-        keep, absorb = absorb, keep     # survive the triaged one instead
+            return None  # both triaged: leave both alone
+        keep, absorb = absorb, keep  # survive the triaged one instead
         keep_id, absorb_id = absorb_id, keep_id
+
+    from tracer.services.feed_alerts.events import issue_snapshot, record_issue_event
+
+    alert_before = issue_snapshot(keep)
 
     TraceScanIssue.objects.filter(cluster=absorb).update(cluster=keep)
 
     # The junction is unique per (cluster, trace); a trace present in both clusters
     # would violate that on a blind update, so re-point only the rows keep lacks.
     existing = set(
-        ErrorClusterTraces.objects.filter(cluster=keep).values_list("trace_id", flat=True)
+        ErrorClusterTraces.objects.filter(cluster=keep).values_list(
+            "trace_id", flat=True
+        )
     )
     for row in ErrorClusterTraces.objects.filter(cluster=absorb):
         if row.trace_id in existing:
@@ -976,13 +1016,28 @@ def _merge_pg(keep_id: str, absorb_id: str, project_id: str):
     # retention, and the junction dedup below removes rows the count should keep.
     keep.error_count = (keep.error_count or 0) + (absorb.error_count or 0)
     keep.total_events = (keep.total_events or 0) + (absorb.total_events or 0)
-    if absorb.first_seen and (not keep.first_seen or absorb.first_seen < keep.first_seen):
+    if absorb.first_seen and (
+        not keep.first_seen or absorb.first_seen < keep.first_seen
+    ):
         keep.first_seen = absorb.first_seen
     if absorb.last_seen and (not keep.last_seen or absorb.last_seen > keep.last_seen):
         keep.last_seen = absorb.last_seen
     keep.unique_traces = keep.clusters.values("trace").distinct().count()
-    keep.save(update_fields=["error_count", "total_events", "first_seen", "last_seen",
-                             "unique_traces", "updated_at"])
+    keep.save(
+        update_fields=[
+            "error_count",
+            "total_events",
+            "first_seen",
+            "last_seen",
+            "unique_traces",
+            "updated_at",
+        ]
+    )
+    record_issue_event(
+        cluster=keep,
+        before=alert_before,
+        source_key=f"scanner-merge:{keep.pk}:{absorb.pk}",
+    )
 
     absorb.delete()
     return keep_id, absorb_id
@@ -999,7 +1054,7 @@ def _absorb_centroid(keep_id: str, absorb_id: str, project_id: str) -> None:
     """
     db = ClickHouseVectorDB()
     try:
-        rows = db.client.execute(
+        rows = db.execute_read(
             f"""
             SELECT cluster_id, argMax(centroid, last_updated), argMax(member_count, last_updated),
                    argMax(family, last_updated)
@@ -1008,21 +1063,29 @@ def _absorb_centroid(keep_id: str, absorb_id: str, project_id: str) -> None:
             GROUP BY cluster_id
             """,
             {"p": str(project_id), "a": keep_id, "b": absorb_id},
+            max_result_rows=2,
         )
         by = {str(r[0]): (r[1], r[2] or 1, r[3]) for r in rows}
         k, a = by.get(keep_id), by.get(absorb_id)
         if not k or not a:
             return
         nk, na = max(int(k[1]), 1), max(int(a[1]), 1)
-        merged = [(x * nk + y * na) / (nk + na) for x, y in zip(k[0], a[0])]
+        merged = [
+            (x * nk + y * na) / (nk + na) for x, y in zip(k[0], a[0], strict=False)
+        ]
         db.client.execute(
             f"""
             INSERT INTO {CENTROIDS_TABLE}
             (cluster_id, project_id, centroid, member_count, family, last_updated)
             VALUES (%(cluster_id)s, %(project_id)s, %(centroid)s, %(member_count)s, %(family)s, now())
             """,
-            {"cluster_id": keep_id, "project_id": str(project_id), "centroid": merged,
-             "member_count": nk + na, "family": k[2]},
+            {
+                "cluster_id": keep_id,
+                "project_id": str(project_id),
+                "centroid": merged,
+                "member_count": nk + na,
+                "family": k[2],
+            },
         )
     finally:
         db.close()
@@ -1071,7 +1134,7 @@ def merge_duplicate_clusters(
     db = ClickHouseVectorDB()
     try:
         ensure_centroid_table(db)
-        rows = db.client.execute(
+        rows = db.execute_read(
             f"""
             SELECT cluster_id, argMax(centroid, last_updated), argMax(member_count, last_updated),
                    argMax(family, last_updated)
@@ -1092,7 +1155,9 @@ def merge_duplicate_clusters(
         )
     )
     items = [
-        (str(cid), vec, cnt, fam) for cid, vec, cnt, fam in rows if str(cid) in live and vec
+        (str(cid), vec, cnt, fam)
+        for cid, vec, cnt, fam in rows
+        if str(cid) in live and vec
     ]
     if len(items) < 2:
         return 0
@@ -1137,7 +1202,9 @@ def merge_duplicate_clusters(
 
     if merged:
         logger.info(
-            "scan_clusters_merged", project_id=str(project_id), merged=merged,
+            "scan_clusters_merged",
+            project_id=str(project_id),
+            merged=merged,
             clusters_before=len(items),
         )
     return merged

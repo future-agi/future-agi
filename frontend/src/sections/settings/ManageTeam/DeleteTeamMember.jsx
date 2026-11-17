@@ -20,7 +20,8 @@ const DeleteTeamMember = ({
     <Dialog
       onClose={onClose}
       open={Boolean(selectedUser)}
-      maxWidth="xs"
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 400 } }}
       fullWidth
     >
       <DialogTitle>Delete User</DialogTitle>

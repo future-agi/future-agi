@@ -2,8 +2,7 @@ import React from "react";
 import PropTypes from "prop-types";
 
 import Box from "@mui/material/Box";
-import Paper from "@mui/material/Paper";
-import { alpha } from "@mui/material/styles";
+import Alert from "@mui/material/Alert";
 import Typography from "@mui/material/Typography";
 
 import { fData } from "src/utils/format-number";
@@ -18,16 +17,15 @@ export default function RejectionFiles({ fileRejections }) {
   }
 
   return (
-    <Paper
-      variant="outlined"
+    <Alert
+      severity="error"
+      icon={false}
       sx={{
         py: 1,
         px: 2,
         mt: 3,
         textAlign: "left",
-        borderStyle: "dashed",
-        borderColor: "error.main",
-        bgcolor: (theme) => alpha(theme.palette.error.main, 0.08),
+        "& .MuiAlert-message": { width: 1 },
       }}
     >
       {fileRejections.map(({ file, errors }) => {
@@ -51,7 +49,7 @@ export default function RejectionFiles({ fileRejections }) {
           </Box>
         );
       })}
-    </Paper>
+    </Alert>
   );
 }
 

@@ -24,5 +24,15 @@ if (( ${#files[@]} == 0 )); then
 fi
 
 cd "${BACKEND_DIR}"
-uv run ruff check --fix -- "${files[@]}"
-uv run ruff format -- "${files[@]}"
+
+# Prefer a project-local ruff (uv-managed venv or dev group). Fall back to
+# `uvx ruff` when the current env doesn't ship one — this happens on fresh
+# clones or when the developer hasn't run `uv sync --group dev`.
+if uv run --quiet --with ruff ruff --version >/dev/null 2>&1; then
+  ruff_cmd=(uv run --quiet --with ruff ruff)
+else
+  ruff_cmd=(uvx ruff)
+fi
+
+"${ruff_cmd[@]}" check --fix -- "${files[@]}"
+"${ruff_cmd[@]}" format -- "${files[@]}"

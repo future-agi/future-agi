@@ -37,6 +37,7 @@ class ProviderConfig(GatewayAdminContractModel):
     api_key: str | None = Field(None, validation_alias=AliasChoices('api_key', 'apiKey'))
     base_url: str | None = Field(None, validation_alias=AliasChoices('base_url', 'baseUrl', 'baseURL'))
     api_format: str | None = Field(None, validation_alias=AliasChoices('api_format', 'apiFormat'))
+    api_path_prefix: str | None = Field(None, validation_alias=AliasChoices('api_path_prefix', 'apiPathPrefix'))
     models: list[str] | None = None
     timeout: int | None = None
     weight: float | None = None
@@ -47,6 +48,7 @@ class ProviderConfig(GatewayAdminContractModel):
     aws_secret_access_key: str | None = Field(None, validation_alias=AliasChoices('aws_secret_access_key', 'awsSecretAccessKey'))
     aws_region: str | None = Field(None, validation_alias=AliasChoices('aws_region', 'awsRegion'))
     aws_session_token: str | None = Field(None, validation_alias=AliasChoices('aws_session_token', 'awsSessionToken'))
+    service_account_json: str | None = Field(None, validation_alias=AliasChoices('service_account_json', 'serviceAccountJson'))
 
 
 class GuardrailCheck(GatewayAdminContractModel):
@@ -538,6 +540,27 @@ class KeyResponse(GatewayAdminContractModel):
 class KeyListResponse(GatewayAdminContractModel):
     object: str | None = None
     data: list[KeyResponse] | None = None
+
+
+class SyncedKey(GatewayAdminContractModel):
+    id: str = ...
+    name: str | None = None
+    owner: str | None = None
+    key_hash: str = Field(..., validation_alias=AliasChoices('key_hash', 'keyHash'))
+    key_prefix: str | None = Field(None, validation_alias=AliasChoices('key_prefix', 'keyPrefix'))
+    models: list[str] | None = None
+    providers: list[str] | None = None
+    metadata: dict[str, str] | None = None
+    expires_at: str | None = Field(None, validation_alias=AliasChoices('expires_at', 'expiresAt'))
+
+
+class ImportKeysRequest(GatewayAdminContractModel):
+    keys: list[SyncedKey] = ...
+
+
+class ImportKeysResponse(GatewayAdminContractModel):
+    received: int = ...
+    loaded: int = ...
 
 
 class StatusResponse(GatewayAdminContractModel):

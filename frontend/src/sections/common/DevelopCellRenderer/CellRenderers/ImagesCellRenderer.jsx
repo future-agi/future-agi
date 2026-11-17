@@ -154,7 +154,7 @@ const ImagesCellRenderer = ({
                 },
                 "&::-webkit-scrollbar-thumb": {
                   backgroundColor: theme.palette.text.disabled,
-                  borderRadius: "2px",
+                  borderRadius: "4px",
                 },
               }}
             >

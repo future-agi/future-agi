@@ -15,7 +15,6 @@ import { useAnnotationLabelsList } from "src/api/annotation-labels/annotation-la
 import CreateLabelDrawer from "src/sections/annotations/labels/create-label-drawer";
 import LabelTypeChip from "src/components/label-type-chip/LabelTypeChip";
 
-
 function mergeLabelsById(...labelLists) {
   const labelsById = new Map();
   labelLists.flat().forEach((label) => {
@@ -107,12 +106,7 @@ export default function LabelPicker({
                 placement="top"
                 title="A queue must keep at least one label"
               >
-                <Chip
-                  label={label.name}
-                  size="small"
-                  color="primary"
-                  sx={{ borderRadius: 0.5, fontWeight: 500 }}
-                />
+                <Chip label={label.name} size="small" color="primary" />
               </CustomTooltip>
             ) : (
               <Chip
@@ -121,7 +115,6 @@ export default function LabelPicker({
                 size="small"
                 color="primary"
                 onDelete={() => handleToggle(label.id)}
-                sx={{ borderRadius: 0.5, fontWeight: 500 }}
               />
             ),
           )}
@@ -139,7 +132,7 @@ export default function LabelPicker({
           startAdornment: (
             <InputAdornment position="start">
               <Iconify
-                icon="eva:search-fill"
+                icon="solar:magnifier-linear"
                 sx={{ color: "text.disabled", width: 16, height: 16 }}
               />
             </InputAdornment>
@@ -153,8 +146,8 @@ export default function LabelPicker({
           maxHeight: 200,
           overflow: "auto",
           border: "1px solid",
-          borderColor: "divider",
-          borderRadius: 0.5,
+          borderColor: "border.default",
+          borderRadius: "8px",
         }}
       >
         {filteredLabels.map((label) => (
@@ -169,7 +162,7 @@ export default function LabelPicker({
               py: 0.5,
               cursor: "pointer",
               borderBottom: "1px solid",
-              borderColor: "divider",
+              borderColor: "border.subtle",
               "&:last-child": { borderBottom: 0 },
               "&:hover": { bgcolor: "action.hover" },
             }}
@@ -198,7 +191,7 @@ export default function LabelPicker({
                   />
                 </Box>
               </CustomTooltip>
-              <Typography variant="body2" noWrap>
+              <Typography noWrap sx={{ fontSize: 13, fontWeight: 500 }}>
                 {label.name}
               </Typography>
             </Box>
@@ -220,9 +213,9 @@ export default function LabelPicker({
       <Button
         variant="outlined"
         color="primary"
-        startIcon={<Iconify icon="mingcute:add-line" width={16} />}
+        startIcon={<Iconify icon="solar:add-linear" width={16} />}
         onClick={() => setCreateDrawerOpen(true)}
-        sx={{ alignSelf: "flex-start", fontSize: 12 }}
+        sx={{ alignSelf: "flex-start" }}
       >
         Create new label
       </Button>

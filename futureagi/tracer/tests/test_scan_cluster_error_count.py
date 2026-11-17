@@ -95,6 +95,7 @@ def _mock_ch():
     """Centroid store that accepts writes and reports no prior version."""
     db = MagicMock()
     db.return_value.client.execute.return_value = []
+    db.return_value.execute_read.return_value = []
     return db
 
 

@@ -63,7 +63,7 @@ const ColumnTypeDropDown = React.forwardRef(
                   <ListItemText
                     primary={label}
                     primaryTypographyProps={{
-                      sx: { fontSize: "14px", fontWeight: 400 },
+                      sx: { fontSize: "13px", fontWeight: 400 },
                     }}
                   />
                 </ListItemButton>
@@ -94,7 +94,7 @@ const ColumnTypeDropDown = React.forwardRef(
                     primary={label}
                     primaryTypographyProps={{
                       sx: {
-                        fontSize: "14px",
+                        fontSize: "13px",
                         fontWeight: 400,
                         color: color,
                       },

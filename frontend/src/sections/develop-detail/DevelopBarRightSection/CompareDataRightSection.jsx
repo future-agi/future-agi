@@ -177,7 +177,6 @@ const CompareDataRightSection = ({
         size="small"
         sx={{
           color: "text.secondary",
-          borderRadius: 1,
         }}
       >
         <img
@@ -217,7 +216,7 @@ const CompareDataRightSection = ({
         >
           <Iconify
             width={16}
-            icon="material-symbols:info-outline-rounded"
+            icon="solar:info-circle-linear"
             sx={{ color: "text.secondary", marginLeft: 0.5 }}
           />
         </CustomTooltip>
@@ -233,19 +232,9 @@ const CompareDataRightSection = ({
         color="primary"
         size="small"
         sx={{
-          px: "16px",
-          py: "6px",
           color: "common.white",
         }}
-        startIcon={
-          <Iconify
-            sx={{
-              height: "16px",
-              width: "16px",
-            }}
-            icon="material-symbols:check-circle-outline"
-          />
-        }
+        startIcon={<Iconify width={16} icon="solar:check-circle-linear" />}
         onClick={() =>
           onRunEvaluation({
             selectedColumns,
@@ -267,12 +256,10 @@ const CompareDataRightSection = ({
         size="small"
         sx={{
           color: "text.secondary",
-          borderRadius: 1,
-          paddingX: 1,
         }}
         onClick={handleDownloadCompareDataset}
       >
-        <Iconify icon="material-symbols:download" />
+        <Iconify icon="solar:download-minimalistic-linear" />
       </IconButton>
 
       {/* Column Selector Popover */}

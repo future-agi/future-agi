@@ -38,8 +38,8 @@ type crowdstrikeMessage struct {
 }
 
 type crowdstrikeResponse struct {
-	Status  string           `json:"status"`
-	Summary string           `json:"summary"`
+	Status  string            `json:"status"`
+	Summary string            `json:"summary"`
 	Result  crowdstrikeResult `json:"result"`
 }
 
@@ -94,6 +94,9 @@ func (a *crowdstrikeAdapter) getToken(ctx context.Context) (string, error) {
 	var tokenResp crowdstrikeTokenResponse
 	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
 		return "", fmt.Errorf("failed to decode token response: %v", err)
+	}
+	if tokenResp.AccessToken == "" {
+		return "", fmt.Errorf("crowdstrike oauth failed: no access_token in token response")
 	}
 
 	a.cachedToken = tokenResp.AccessToken

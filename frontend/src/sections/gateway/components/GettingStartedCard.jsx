@@ -1,44 +1,37 @@
 import React from "react";
 import PropTypes from "prop-types";
-import {
-  Card,
-  CardContent,
-  Typography,
-  Stack,
-  Button,
-  Link,
-  Box,
-} from "@mui/material";
+import { Typography, Stack, Button, Link } from "@mui/material";
 import { useNavigate } from "react-router-dom";
 import Iconify from "src/components/iconify";
+import Section from "src/components/section";
 
 const STORAGE_KEY = "agentcc_getting_started_dismissed";
 
 const STEPS = [
   {
-    label: "Gateway Connected",
+    label: "Gateway connected",
     key: "gatewayConnected",
-    icon: "mdi:check-network",
+    icon: "solar:shield-check-linear",
   },
   {
-    label: "Add a Provider",
+    label: "Add a provider",
     key: "hasProviders",
-    icon: "mdi:cloud-outline",
-    cta: "Configure Providers",
+    icon: "solar:cloud-linear",
+    cta: "Configure providers",
     path: "/dashboard/gateway/providers",
   },
   {
-    label: "Create an API Key",
+    label: "Create an API key",
     key: "hasKeys",
-    icon: "mdi:key-outline",
-    cta: "Create Key",
+    icon: "solar:key-linear",
+    cta: "Create key",
     path: "/dashboard/gateway/keys",
   },
   {
-    label: "Send Your First Request",
+    label: "Send your first request",
     key: "hasRequests",
-    icon: "mdi:send-outline",
-    cta: "View Docs",
+    icon: "solar:send-square-linear",
+    cta: "View docs",
     href: "https://docs.futureagi.com/docs/command-center",
   },
 ];
@@ -76,101 +69,77 @@ const GettingStartedCard = ({ completionState, onDismiss }) => {
   };
 
   return (
-    <Card sx={{ mb: 3, border: 1, borderColor: "primary.main" }}>
-      <CardContent sx={{ py: 2.5 }}>
-        <Stack
-          direction="row"
-          justifyContent="space-between"
-          alignItems="center"
-          mb={2}
-        >
-          <Stack direction="row" spacing={1} alignItems="center">
-            <Iconify
-              icon="mdi:rocket-launch-outline"
-              width={22}
-              sx={{ color: "primary.main" }}
-            />
-            <Typography variant="h6">
-              Get Started with Agent Command Center Gateway
-            </Typography>
-          </Stack>
-          <Stack direction="row" spacing={1.5} alignItems="center">
-            <Typography variant="caption" color="text.secondary">
-              {completedCount}/{STEPS.length}
-            </Typography>
-            <Link
-              component="button"
-              variant="caption"
-              underline="hover"
-              color="text.secondary"
-              onClick={handleDismiss}
+    <Section
+      title="Get started with Agent Command Center Gateway"
+      sx={{ mb: 3 }}
+      actions={
+        <>
+          <Typography sx={{ fontSize: 12, color: "text.tertiary" }}>
+            {completedCount}/{STEPS.length}
+          </Typography>
+          <Link
+            component="button"
+            variant="caption"
+            underline="hover"
+            color="text.secondary"
+            onClick={handleDismiss}
+          >
+            Dismiss
+          </Link>
+        </>
+      }
+    >
+      <Stack spacing={1.5}>
+        {STEPS.map((step) => {
+          const done = completionState[step.key];
+          return (
+            <Stack
+              key={step.key}
+              direction="row"
+              alignItems="center"
+              spacing={1.5}
             >
-              Dismiss
-            </Link>
-          </Stack>
-        </Stack>
-
-        <Stack spacing={1.5}>
-          {STEPS.map((step) => {
-            const done = completionState[step.key];
-            return (
-              <Stack
-                key={step.key}
-                direction="row"
-                alignItems="center"
-                spacing={1.5}
+              <Iconify
+                icon={done ? "solar:check-circle-linear" : step.icon}
+                width={16}
+                sx={{
+                  color: done ? "status.success.fg" : "text.secondary",
+                  flexShrink: 0,
+                }}
+              />
+              <Typography
+                sx={{
+                  flex: 1,
+                  fontSize: 13,
+                  color: done ? "text.disabled" : "text.primary",
+                }}
               >
-                <Box
-                  sx={{
-                    width: 28,
-                    height: 28,
-                    borderRadius: "50%",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    bgcolor: done ? "success.main" : "action.hover",
-                    flexShrink: 0,
+                {step.label}
+              </Typography>
+              {!done && step.cta && (
+                <Button
+                  size="small"
+                  variant="text"
+                  onClick={() => {
+                    if (step.href) {
+                      window.open(step.href, "_blank", "noopener");
+                    } else if (step.path) {
+                      navigate(step.path);
+                    }
                   }}
+                  endIcon={
+                    <Iconify icon="solar:arrow-right-linear" width={16} />
+                  }
+                  sx={{ whiteSpace: "nowrap" }}
                 >
-                  <Iconify
-                    icon={done ? "mdi:check" : step.icon}
-                    width={16}
-                    sx={{ color: done ? "common.white" : "text.secondary" }}
-                  />
-                </Box>
-                <Typography
-                  variant="body2"
-                  sx={{
-                    flex: 1,
-                    textDecoration: done ? "line-through" : "none",
-                    color: done ? "text.disabled" : "text.primary",
-                  }}
-                >
-                  {step.label}
-                </Typography>
-                {!done && step.cta && (
-                  <Button
-                    size="small"
-                    variant="text"
-                    onClick={() => {
-                      if (step.href) {
-                        window.open(step.href, "_blank", "noopener");
-                      } else if (step.path) {
-                        navigate(step.path);
-                      }
-                    }}
-                    endIcon={<Iconify icon="mdi:arrow-right" width={16} />}
-                    sx={{ textTransform: "none", whiteSpace: "nowrap" }}
-                  >
-                    {step.cta}
-                  </Button>
-                )}
-              </Stack>
-            );
-          })}
-        </Stack>
-      </CardContent>
-    </Card>
+                  {step.cta}
+                </Button>
+              )}
+            </Stack>
+          );
+        })}
+      </Stack>
+    </Section>
   );
 };
 

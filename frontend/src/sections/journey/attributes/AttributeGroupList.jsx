@@ -20,9 +20,9 @@ const AttributeGroupList = ({ groups, selectedGroup, onSelectGroup }) => {
   return (
     <Box
       sx={{
-        width: 220,
+        width: 224,
         borderRight: 1,
-        borderColor: "divider",
+        borderColor: "border.default",
         display: "flex",
         flexDirection: "column",
       }}
@@ -38,7 +38,7 @@ const AttributeGroupList = ({ groups, selectedGroup, onSelectGroup }) => {
             startAdornment: (
               <InputAdornment position="start">
                 <Iconify
-                  icon="eva:search-fill"
+                  icon="solar:magnifier-linear"
                   width={16}
                   sx={{ color: "text.disabled" }}
                 />
@@ -51,13 +51,13 @@ const AttributeGroupList = ({ groups, selectedGroup, onSelectGroup }) => {
         <ListItemButton
           selected={selectedGroup === null}
           onClick={() => onSelectGroup(null)}
-          sx={{ borderRadius: 1, py: 0.5 }}
+          sx={{ borderRadius: "6px", py: 0.5 }}
         >
           <ListItemText
             primary="All"
             primaryTypographyProps={{
-              variant: "body2",
-              fontWeight: selectedGroup === null ? 600 : 400,
+              fontSize: 13,
+              fontWeight: selectedGroup === null ? 500 : 400,
             }}
           />
         </ListItemButton>
@@ -68,17 +68,20 @@ const AttributeGroupList = ({ groups, selectedGroup, onSelectGroup }) => {
             key={group.prefix}
             selected={selectedGroup === group.prefix}
             onClick={() => onSelectGroup(group.prefix)}
-            sx={{ borderRadius: 1, py: 0.5 }}
+            sx={{ borderRadius: "6px", py: 0.5 }}
           >
             <ListItemText
               primary={`${group.prefix}.*`}
               secondary={`${group.keys.length} keys`}
               primaryTypographyProps={{
-                variant: "body2",
-                fontWeight: selectedGroup === group.prefix ? 600 : 400,
+                fontSize: 13,
+                fontWeight: selectedGroup === group.prefix ? 500 : 400,
                 noWrap: true,
               }}
-              secondaryTypographyProps={{ variant: "caption" }}
+              secondaryTypographyProps={{
+                fontSize: 12,
+                color: "text.tertiary",
+              }}
             />
           </ListItemButton>
         ))}

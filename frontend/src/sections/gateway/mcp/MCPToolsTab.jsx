@@ -2,8 +2,6 @@
 import React, { useState, useMemo } from "react";
 import {
   Box,
-  Card,
-  CardContent,
   Chip,
   Collapse,
   IconButton,
@@ -24,6 +22,7 @@ import {
   Typography,
   Skeleton,
 } from "@mui/material";
+import Section from "src/components/section";
 import Iconify from "src/components/iconify";
 
 function formatLatency(ms) {
@@ -168,7 +167,7 @@ const MCPToolsTab = ({ mcpTools, isLoading }) => {
 
   if (isLoading) {
     return (
-      <Card>
+      <Section variant="panel">
         {[...Array(5)].map((_, i) => (
           <Stack
             key={i}
@@ -187,7 +186,7 @@ const MCPToolsTab = ({ mcpTools, isLoading }) => {
             <Skeleton width="10%" height={20} />
           </Stack>
         ))}
-      </Card>
+      </Section>
     );
   }
 
@@ -203,7 +202,7 @@ const MCPToolsTab = ({ mcpTools, isLoading }) => {
           InputProps={{
             startAdornment: (
               <InputAdornment position="start">
-                <Iconify icon="mdi:magnify" width={20} />
+                <Iconify icon="solar:magnifier-linear" width={16} />
               </InputAdornment>
             ),
           }}
@@ -228,22 +227,20 @@ const MCPToolsTab = ({ mcpTools, isLoading }) => {
       </Stack>
 
       {filtered.length === 0 ? (
-        <Card>
-          <CardContent>
-            <Typography
-              variant="body2"
-              color="text.secondary"
-              align="center"
-              sx={{ py: 3 }}
-            >
-              {tools.length === 0
-                ? "No MCP tools registered. Connect an MCP server to discover tools."
-                : "No tools match the current filters."}
-            </Typography>
-          </CardContent>
-        </Card>
+        <Section variant="panel">
+          <Typography
+            variant="body2"
+            color="text.secondary"
+            align="center"
+            sx={{ py: 3 }}
+          >
+            {tools.length === 0
+              ? "No MCP tools registered. Connect an MCP server to discover tools."
+              : "No tools match the current filters."}
+          </Typography>
+        </Section>
       ) : (
-        <Card>
+        <Section variant="panel" sx={{ p: 0, overflow: "hidden" }}>
           <TableContainer>
             <Table size="small">
               <TableHead>
@@ -252,10 +249,30 @@ const MCPToolsTab = ({ mcpTools, isLoading }) => {
                   <TableCell>Name</TableCell>
                   <TableCell>Server</TableCell>
                   <TableCell>Description</TableCell>
-                  <TableCell align="right">Calls</TableCell>
-                  <TableCell align="right">Errors</TableCell>
-                  <TableCell align="right">Avg Latency</TableCell>
-                  <TableCell align="right">Error Rate</TableCell>
+                  <TableCell
+                    sx={{ fontVariantNumeric: "tabular-nums" }}
+                    align="right"
+                  >
+                    Calls
+                  </TableCell>
+                  <TableCell
+                    sx={{ fontVariantNumeric: "tabular-nums" }}
+                    align="right"
+                  >
+                    Errors
+                  </TableCell>
+                  <TableCell
+                    sx={{ fontVariantNumeric: "tabular-nums" }}
+                    align="right"
+                  >
+                    Avg Latency
+                  </TableCell>
+                  <TableCell
+                    sx={{ fontVariantNumeric: "tabular-nums" }}
+                    align="right"
+                  >
+                    Error Rate
+                  </TableCell>
                   <TableCell>Last Called</TableCell>
                 </TableRow>
               </TableHead>
@@ -277,10 +294,10 @@ const MCPToolsTab = ({ mcpTools, isLoading }) => {
                             <Iconify
                               icon={
                                 isExpanded
-                                  ? "mdi:chevron-up"
-                                  : "mdi:chevron-down"
+                                  ? "solar:alt-arrow-up-linear"
+                                  : "solar:alt-arrow-down-linear"
                               }
-                              width={18}
+                              width={20}
                             />
                           </IconButton>
                         </TableCell>
@@ -305,12 +322,12 @@ const MCPToolsTab = ({ mcpTools, isLoading }) => {
                               {tool.name}
                             </Typography>
                             {tool.version && (
-                              <Chip
-                                label={`v${tool.version}`}
-                                size="small"
-                                variant="outlined"
-                                sx={{ fontSize: 10, height: 18 }}
-                              />
+                              <Typography
+                                variant="caption"
+                                color="text.tertiary"
+                              >
+                                {`v${tool.version}`}
+                              </Typography>
                             )}
                             {tool.deprecated && (
                               <Tooltip
@@ -325,14 +342,15 @@ const MCPToolsTab = ({ mcpTools, isLoading }) => {
                                   label="Deprecated"
                                   size="small"
                                   color="warning"
-                                  sx={{ fontSize: 10, height: 18 }}
                                 />
                               </Tooltip>
                             )}
                           </Stack>
                         </TableCell>
                         <TableCell>
-                          <Chip label={tool.server} size="small" />
+                          <Typography variant="body2" color="text.secondary">
+                            {tool.server}
+                          </Typography>
                         </TableCell>
                         <TableCell>
                           <Typography
@@ -349,16 +367,28 @@ const MCPToolsTab = ({ mcpTools, isLoading }) => {
                             {tool.description || "—"}
                           </Typography>
                         </TableCell>
-                        <TableCell align="right">
+                        <TableCell
+                          sx={{ fontVariantNumeric: "tabular-nums" }}
+                          align="right"
+                        >
                           {Number(stats.callCount ?? stats.call_count ?? 0)}
                         </TableCell>
-                        <TableCell align="right">
+                        <TableCell
+                          sx={{ fontVariantNumeric: "tabular-nums" }}
+                          align="right"
+                        >
                           {Number(stats.errorCount ?? stats.error_count ?? 0)}
                         </TableCell>
-                        <TableCell align="right">
+                        <TableCell
+                          sx={{ fontVariantNumeric: "tabular-nums" }}
+                          align="right"
+                        >
                           {formatLatency(stats.avg_latency_ms)}
                         </TableCell>
-                        <TableCell align="right">
+                        <TableCell
+                          sx={{ fontVariantNumeric: "tabular-nums" }}
+                          align="right"
+                        >
                           {formatErrorRate(stats.error_rate)}
                         </TableCell>
                         <TableCell>
@@ -383,7 +413,7 @@ const MCPToolsTab = ({ mcpTools, isLoading }) => {
               </TableBody>
             </Table>
           </TableContainer>
-        </Card>
+        </Section>
       )}
     </Box>
   );

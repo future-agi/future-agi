@@ -1,4 +1,5 @@
-import { Box, Button, Card, Divider, Typography } from "@mui/material";
+import { Box, Button, Divider, Typography } from "@mui/material";
+import Section from "src/components/section";
 import React from "react";
 import PropTypes from "prop-types";
 
@@ -9,7 +10,7 @@ const SectionCard = ({
   actionButtonText,
 }) => {
   return (
-    <Card sx={{ display: "flex", flexDirection: "column" }}>
+    <Section variant="panel" sx={{ display: "flex", flexDirection: "column" }}>
       <Box
         sx={{
           padding: "20px",
@@ -18,7 +19,7 @@ const SectionCard = ({
           alignItems: "center",
         }}
       >
-        <Typography fontWeight={700} fontSize={14} color="text.primary">
+        <Typography fontWeight={600} fontSize={13} color="text.primary">
           {title}
         </Typography>
         {onActionButtonClick ? (
@@ -29,7 +30,7 @@ const SectionCard = ({
       </Box>
       <Divider />
       {children}
-    </Card>
+    </Section>
   );
 };
 

@@ -178,7 +178,7 @@ const CreateEditLabelChild = ({ projectId, onClose, onSuccess, editData }) => {
           />
           <Box sx={{ display: "flex", flexDirection: "column" }}>
             <Typography
-              fontSize={14}
+              fontSize={13}
               fontWeight={500}
               color={theme.palette.text.secondary}
             >
@@ -195,7 +195,7 @@ const CreateEditLabelChild = ({ projectId, onClose, onSuccess, editData }) => {
               rows={2}
               placeholder="Enter description here"
               sx={{
-                fontSize: "18px",
+                fontSize: "16px",
                 "& .MuiOutlinedInput-root": {
                   backgroundColor: theme.palette.background.neutral,
                   paddingX: theme.spacing(2),
@@ -218,8 +218,6 @@ const CreateEditLabelChild = ({ projectId, onClose, onSuccess, editData }) => {
             variant="outlined"
             sx={{
               color: theme.palette.text.secondary,
-              borderRadius: theme.spacing(1),
-              fontWeight: 500,
             }}
             onClick={onClose}
           >
@@ -234,9 +232,6 @@ const CreateEditLabelChild = ({ projectId, onClose, onSuccess, editData }) => {
             type="submit"
             disabled={!isValid || !isDirty}
             loading={isCreatingLabel}
-            sx={{
-              borderRadius: theme.spacing(1),
-            }}
           >
             {editData ? "Update" : "Save"}
           </LoadingButton>
@@ -256,7 +251,13 @@ CreateEditLabelChild.propTypes = {
 const CreateEditLabel = ({ open, onClose, projectId, onSuccess, editData }) => {
   const theme = useTheme();
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+    <Dialog
+      open={open}
+      onClose={onClose}
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 720 } }}
+      fullWidth
+    >
       <DialogTitle
         sx={{
           display: "flex",
@@ -267,7 +268,7 @@ const CreateEditLabel = ({ open, onClose, projectId, onSuccess, editData }) => {
           color: theme.palette.text.primary,
         }}
       >
-        <Typography fontWeight={700} variant="m3">
+        <Typography fontWeight={600} variant="m3">
           {editData ? "Edit Label" : "New Label"}
         </Typography>
         <IconButton
@@ -276,7 +277,7 @@ const CreateEditLabel = ({ open, onClose, projectId, onSuccess, editData }) => {
           sx={{ p: theme.spacing(0) }}
         >
           <Iconify
-            icon="mingcute:close-line"
+            icon="solar:close-linear"
             width={20}
             color={theme.palette.text.primary}
           />

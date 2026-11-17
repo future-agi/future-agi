@@ -1268,7 +1268,7 @@ def test_model_hub_ai_writer_and_custom_model_endpoints_have_response_contracts(
         ("POST", "/model-hub/ai-eval-writer/"): "AIEvalWriterResponse",
         ("GET", "/model-hub/api/model_parameters/"): "ModelParametersResponse",
         ("GET", "/model-hub/api/model_voices/"): "LiteLLMModelVoicesResponse",
-        ("GET", "/model-hub/api/models_list/"): "ModelHubPaginatedResponse",
+        ("GET", "/model-hub/api/models_list/"): "ModelListResponse",
         ("GET", "/model-hub/columns/{column_id}/operation-config/"): (
             "OperationConfigResponse"
         ),
@@ -1654,6 +1654,26 @@ def test_model_hub_ai_writer_and_custom_model_endpoints_have_response_contracts(
 
     for (method, path), definition_name in expected.items():
         assert _response_ref(_operation(path, method)) == definition_name
+
+
+def test_model_list_publishes_typed_decision_rows_without_narrowing_provider_metadata():
+    schema = _swagger()
+    operation = schema["paths"]["/model-hub/api/models_list/"]["get"]
+    assert operation["x-runtime-request-validation"] is True
+    definitions = schema["definitions"]
+    assert definitions["ModelListResponse"]["properties"]["results"]["items"] == {
+        "$ref": "#/definitions/ModelListEntry"
+    }
+    row = definitions["ModelListEntry"]["properties"]
+    assert row["connections"]["items"] == {"$ref": "#/definitions/DecisionConnection"}
+    assert row["question_types"]["items"]["type"] == "string"
+    assert row["max_state_bytes"]["minimum"] == 1
+    assert row["unavailable_reason"]["x-nullable"] is True
+    assert set(definitions["DecisionConnection"]["required"]) == {
+        "model_name", "provider", "label", "is_available"
+    }
+    for field in ("best_for", "use_case", "cutoff", "rate_limits", "latency", "pricing"):
+        assert row[field]["x-json-value"] is True
 
 
 def test_model_hub_performance_endpoints_with_dynamic_payloads_have_response_contracts():

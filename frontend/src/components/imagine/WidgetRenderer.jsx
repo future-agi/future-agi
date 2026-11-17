@@ -45,7 +45,7 @@ export default function WidgetRenderer({ widget, traceData, onRunAnalysis }) {
           gap: 1,
         }}
       >
-        <Iconify icon="mdi:alert-circle-outline" width={24} />
+        <Iconify icon="solar:danger-circle-linear" width={24} />
         <Typography fontSize={12}>
           Unknown widget type: {widget.type}
         </Typography>
@@ -114,7 +114,7 @@ export default function WidgetRenderer({ widget, traceData, onRunAnalysis }) {
                   }}
                 />
                 <Typography
-                  sx={{ fontSize: 11, color: "primary.main", fontWeight: 500 }}
+                  sx={{ fontSize: 12, color: "primary.main", fontWeight: 500 }}
                 >
                   Running...
                 </Typography>
@@ -129,14 +129,14 @@ export default function WidgetRenderer({ widget, traceData, onRunAnalysis }) {
                   px: 0.75,
                   py: 0.25,
                   borderRadius: "4px",
-                  fontSize: 11,
+                  fontSize: 12,
                   fontWeight: 500,
                   color: "text.secondary",
                   flexShrink: 0,
                   "&:hover": { bgcolor: "action.hover", color: "primary.main" },
                 }}
               >
-                <Iconify icon="mdi:refresh" width={13} />
+                <Iconify icon="solar:refresh-linear" width={14} />
                 Rerun
               </ButtonBase>
             ))}
@@ -156,7 +156,7 @@ export default function WidgetRenderer({ widget, traceData, onRunAnalysis }) {
                 sx={{
                   height: i === 0 ? 14 : 10,
                   width: `${w * 100}%`,
-                  borderRadius: "3px",
+                  borderRadius: "4px",
                   bgcolor: "action.hover",
                   animation: "pulse 1.5s ease-in-out infinite",
                   animationDelay: `${i * 0.1}s`,
@@ -169,7 +169,7 @@ export default function WidgetRenderer({ widget, traceData, onRunAnalysis }) {
             ))}
             <Typography
               sx={{
-                fontSize: 11,
+                fontSize: 12,
                 color: "text.disabled",
                 mt: 0.5,
                 fontStyle: "italic",

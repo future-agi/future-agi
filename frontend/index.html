@@ -56,17 +56,15 @@
       content="react,material,kit,application,dashboard,admin,template"
     />
 
-    <link rel="preconnect" href="https://www.google.com" crossorigin />
-    <link rel="dns-prefetch" href="https://www.google.com" />
-    <link rel="preconnect" href="https://www.gstatic.com" crossorigin />
-    <link rel="dns-prefetch" href="https://www.gstatic.com" />
+    <!-- No preconnect to the reCAPTCHA hosts: the app loads reCAPTCHA only
+         when the build has VITE_GOOGLE_SITE_KEY, and a self-hosted UI without
+         one must not contact Google. -->
   </head>
 
   <body>
-    <!-- Google Tag Manager (noscript) -->
-    <noscript><iframe src="https://www.googletagmanager.com/ns.html?id=GTM-PJVV29XF"
-      height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
-    <!-- End Google Tag Manager (noscript) -->
+    <!-- No Google Tag Manager <noscript> iframe: markup cannot be gated on
+         VITE_GTM_ID the way the script above is, and the app needs
+         JavaScript anyway. -->
 
     <!-- Appcues removed — no longer used -->
     

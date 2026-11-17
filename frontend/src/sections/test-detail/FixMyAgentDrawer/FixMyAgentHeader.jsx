@@ -27,10 +27,7 @@ const FixMyAgentHeader = ({ onClose }) => {
           variant="outlined"
           size="small"
           sx={{
-            borderRadius: "4px",
-            height: "30px",
-            px: "4px",
-            width: "105px",
+            flexShrink: 0,
           }}
           onClick={() => {
             window.open(
@@ -54,7 +51,7 @@ const FixMyAgentHeader = ({ onClose }) => {
             color: "text.primary",
           }}
         >
-          <Iconify icon="akar-icons:cross" />
+          <Iconify icon="solar:close-linear" />
         </IconButton>
       </Box>
     </Box>

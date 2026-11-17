@@ -32,7 +32,7 @@ import { SourceType, getIconForAgentDefinitions } from "./common";
 // ---------------------------------------------------------------------
 
 const CATEGORIES = [
-  { label: "All", value: "all", iconifyIcon: "eva:grid-fill" },
+  { label: "All", value: "all", iconifyIcon: "solar:widget-4-linear" },
   {
     label: "Voice agent definition",
     value: "voice_agent",
@@ -255,11 +255,11 @@ const CategorizedSourceDropdownInner = React.forwardRef(
               color: (t) => t.palette.error.main,
             },
             "& .MuiOutlinedInput-root:hover .MuiOutlinedInput-notchedOutline": {
-              borderColor: error ? "red.500" : "action.hover",
+              borderColor: error ? "status.danger.solid" : "action.hover",
             },
             "& .MuiOutlinedInput-root.Mui-focused .MuiOutlinedInput-notchedOutline":
               {
-                borderColor: error ? "red.500" : "action.hover",
+                borderColor: error ? "status.danger.solid" : "action.hover",
               },
             ...sx,
           }}
@@ -284,7 +284,7 @@ const CategorizedSourceDropdownInner = React.forwardRef(
               <InputAdornment position="end">
                 {!openDropdown && value && !disabled ? (
                   <Iconify
-                    icon="mdi:close"
+                    icon="solar:close-linear"
                     sx={{
                       cursor: "pointer",
                       color: "text.primary",
@@ -298,14 +298,14 @@ const CategorizedSourceDropdownInner = React.forwardRef(
                   />
                 ) : (
                   <Iconify
-                    icon="eva:arrow-ios-upward-fill"
+                    icon="solar:alt-arrow-up-linear"
                     sx={{
                       cursor: disabled ? "not-allowed" : "pointer",
                       color: "text.primary",
                       width: 20,
                       height: 20,
                       transform: `rotateX(${openDropdown ? 0 : -180}deg)`,
-                      transition: "transform 0.5s",
+                      transition: "transform 0.2s",
                     }}
                     onClick={handleDropdownIconClick}
                   />
@@ -342,7 +342,6 @@ const CategorizedSourceDropdownInner = React.forwardRef(
               p: 0,
               mt: position === "bottom" ? theme.spacing(0.5) : 0,
               mb: position === "top" ? -0.2 : 0,
-              boxShadow: "0px 4px 8px rgba(0, 0, 0, 0.1)",
             },
           }}
         >
@@ -431,8 +430,8 @@ const CategorizedSourceDropdownInner = React.forwardRef(
                     startAdornment: (
                       <InputAdornment position="start">
                         <Iconify
-                          icon="eva:search-fill"
-                          sx={{ color: "text.disabled", width: 18, height: 18 }}
+                          icon="solar:magnifier-linear"
+                          sx={{ color: "text.disabled", width: 16, height: 16 }}
                         />
                       </InputAdornment>
                     ),
@@ -457,7 +456,6 @@ const CategorizedSourceDropdownInner = React.forwardRef(
                           borderRadius: theme.spacing(0.5),
                           gap: 1,
                           py: 0.75,
-                          minHeight: "unset",
                           "&.Mui-selected": {
                             backgroundColor: "action.hover",
                             border: "1px solid",

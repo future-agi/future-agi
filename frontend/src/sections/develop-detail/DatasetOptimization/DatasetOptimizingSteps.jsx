@@ -35,22 +35,22 @@ const AgentPromptOptimizerRefetchStates = [
 // Custom step icon component
 const STEP_STATUS_CONFIG = {
   completed: {
-    bgColor: "green.o10",
+    bgColor: "status.success.bg",
     iconType: "svg",
-    iconColor: "green.500",
+    iconColor: "status.success.fg",
     src: "/assets/icons/ic_check_with_circle_tick.svg",
   },
   running: {
-    bgColor: "blue.o5",
+    bgColor: "status.info.bg",
     iconType: "svg",
-    iconColor: "blue.500",
+    iconColor: "status.info.fg",
     src: "/assets/icons/ic_check_with_circle_tick.svg",
   },
   failed: {
-    bgColor: "red.o10",
+    bgColor: "status.danger.bg",
     iconType: "iconify",
-    icon: "mdi:close",
-    iconColor: "red.500",
+    icon: "solar:close-linear",
+    iconColor: "status.danger.fg",
   },
   pending: {
     bgColor: "action.hover",
@@ -147,9 +147,9 @@ const DatasetOptimizingSteps = ({ status, optimizationId }) => {
       <AccordionSummary
         expandIcon={
           <Iconify
-            icon="line-md:chevron-up"
-            width={22}
-            height={22}
+            icon="solar:alt-arrow-up-linear"
+            width={20}
+            height={20}
             color="text.primary"
           />
         }
@@ -174,7 +174,7 @@ const DatasetOptimizingSteps = ({ status, optimizationId }) => {
             sx={{ width: 16 }}
             src="/assets/icons/navbar/ic_optimize.svg"
           />
-          <Typography variant="body1" fontWeight={500} fontSize="14px">
+          <Typography variant="body1" fontWeight={500} fontSize="13px">
             Optimization Steps
           </Typography>
         </Box>
@@ -258,11 +258,12 @@ const DatasetOptimizingSteps = ({ status, optimizationId }) => {
                       borderLeft:
                         index === stepsArray.length - 1
                           ? "none"
-                          : "1px solid #E5E7EB",
+                          : (theme) => `1px solid ${theme.palette.divider}`,
                       borderImage:
                         index === stepsArray.length - 1
                           ? "none"
-                          : "linear-gradient(to bottom, transparent 6px, #E5E7EB 6px) 1",
+                          : (theme) =>
+                              `linear-gradient(to bottom, transparent 6px, ${theme.palette.divider} 6px) 1`,
                       paddingBottom:
                         index === stepsArray.length - 1 ? 0 : "16px",
                       paddingTop: 0,
@@ -283,7 +284,7 @@ const DatasetOptimizingSteps = ({ status, optimizationId }) => {
                       <Typography
                         variant="body2"
                         color="text.secondary"
-                        fontSize="14px"
+                        fontSize="13px"
                       >
                         {step.description}
                       </Typography>

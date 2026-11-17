@@ -311,7 +311,13 @@ class OrgApiKey(BaseModel):
     type = models.CharField(
         max_length=50,
         default="system",
-        choices=[("system", "System"), ("user", "User"), ("mcp", "MCP")],
+        choices=[
+            ("system", "System"),
+            ("user", "User"),
+            ("mcp", "MCP"),
+            ("ingest", "Ingest"),
+            ("coding_agent", "Coding agent"),
+        ],
     )
     enabled = models.BooleanField(default=True)
     user = models.ForeignKey(
@@ -328,15 +334,53 @@ class OrgApiKey(BaseModel):
         null=True,
         blank=True,
     )
+    # A plain column: ``accounts`` cannot depend on ``simulate``, which depends on it.
+    simulation_agent_id = models.UUIDField(null=True, blank=True)
+    # The one simulation environment a ``coding_agent`` key may act on; plain for
+    # the same reason.
+    simulation_environment_id = models.UUIDField(null=True, blank=True)
+    # Who made a ``coding_agent`` key, which acts as them. Its ``user`` stays null,
+    # so a build that predates these keys cannot authenticate one as a person.
+    minted_by = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="minted_api_keys",
+        null=True,
+        blank=True,
+    )
 
     class Meta:
         constraints = [
+            models.CheckConstraint(
+                condition=~models.Q(type="coding_agent")
+                | models.Q(
+                    simulation_environment_id__isnull=False,
+                    user__isnull=True,
+                    minted_by__isnull=False,
+                ),
+                name="coding_agent_api_key_names_an_environment",
+                violation_error_message=(
+                    "A coding agent key must name its environment and its minter,"
+                    " and no user."
+                ),
+            ),
             models.UniqueConstraint(
                 fields=["organization", "type"],
                 condition=models.Q(type="system", deleted=False),
                 name="unique_system_api_key_per_org_not_deleted",
                 violation_error_message="Only one system API key is allowed per organization.",
-            )
+            ),
+            # Each agent's sandbox key names that agent, so concurrent first
+            # launches of one agent must converge on a single row.
+            models.UniqueConstraint(
+                fields=["organization", "workspace", "simulation_agent_id"],
+                condition=models.Q(type="ingest", deleted=False),
+                name="unique_ingest_api_key_per_org_workspace_agent_not_deleted",
+                violation_error_message=(
+                    "Only one ingest API key is allowed per organization, "
+                    "workspace and agent."
+                ),
+            ),
         ]
 
     def __str__(self):

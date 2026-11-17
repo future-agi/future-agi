@@ -20,6 +20,7 @@ import { AgGridReact } from "ag-grid-react";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { ShowComponent } from "src/components/show";
 import axiosInstance, { endpoints } from "../../../utils/axios";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const BREAKDOWN_DRAWER_THEME_PARAMS = {
   headerColumnBorder: {
@@ -99,6 +100,8 @@ export default function BreakDownDrawer({
     onClose();
   };
 
+  const covered = useDrawerCovered(open);
+
   return (
     <Drawer
       anchor="right"
@@ -107,11 +110,10 @@ export default function BreakDownDrawer({
       PaperProps={{
         sx: {
           height: "100vh",
-          minWidth: "649px",
+          minWidth: "640px",
           position: "fixed",
           zIndex: 2,
-          boxShadow: "-10px 0px 100px #00000035",
-          borderRadius: "10px",
+          borderRadius: "8px",
           backgroundColor: "background.paper",
           overflow: "visible",
           padding: theme.spacing(2),
@@ -124,6 +126,7 @@ export default function BreakDownDrawer({
       }}
       sx={{
         zIndex: 1099,
+        ...coveredDrawerSx(covered),
       }}
     >
       <Stack direction={"column"} gap={2}>
@@ -195,7 +198,7 @@ export default function BreakDownDrawer({
             sx={{
               height: 20,
               width: 20,
-              color: "blue.500",
+              color: "status.info.fg",
             }}
             src="/assets/icons/ic_info.svg"
           />

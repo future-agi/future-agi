@@ -97,7 +97,8 @@ func (r *Router) Select(model string) (*RoutingResult, error) {
 }
 
 // SelectExactModel picks a provider for the given model but only from targets
-// that preserve the requested model name.
+// that preserve the requested model name, when any target does. When every
+// target overrides it, the name is an alias and the overrides serve it.
 func (r *Router) SelectExactModel(model string) (*RoutingResult, error) {
 	return r.selectMatching(model, nil, true)
 }
@@ -106,6 +107,9 @@ func (r *Router) selectMatching(model string, exclude map[string]bool, requireEx
 	// Copy healthy targets under read lock to avoid racing with SetHealthy.
 	r.mu.RLock()
 	targets := r.modelTargets[model]
+	if requireExactModel && !anyTargetKeepsModel(targets, model) {
+		requireExactModel = false
+	}
 	healthy := make([]RoutingTarget, 0, len(targets))
 	for _, t := range targets {
 		if !t.Healthy {
@@ -147,6 +151,15 @@ func (r *Router) selectMatching(model string, exclude map[string]bool, requireEx
 		Target:       healthy[idx],
 		StrategyName: r.defaultStrategy.Name(),
 	}, nil
+}
+
+func anyTargetKeepsModel(targets []RoutingTarget, model string) bool {
+	for _, t := range targets {
+		if t.ModelOverride == "" || t.ModelOverride == model {
+			return true
+		}
+	}
+	return false
 }
 
 // RecordLatency records a provider's response latency for least-latency routing.

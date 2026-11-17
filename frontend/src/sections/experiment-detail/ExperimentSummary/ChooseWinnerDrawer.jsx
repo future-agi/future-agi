@@ -21,6 +21,7 @@ import { enqueueSnackbar } from "src/components/snackbar";
 import ChooseWinnerSkeleton from "./ChooseWinnerSkeleton";
 import { trackEvent, Events } from "src/utils/Mixpanel";
 import { weightSliderMarks } from "src/sections/project/ChooseWinner/common";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const getDefaultValue = (evalsList, oldData) => {
   const obj = { response_time: 1, total_tokens: 1, completion_tokens: 1 };
@@ -117,7 +118,7 @@ const ChooseWinnerDrawerChild = ({ onClose, evalsList, oldData }) => {
               Winner Settings
             </Typography>
             <IconButton onClick={onClose} size="small">
-              <Iconify icon="mingcute:close-line" />
+              <Iconify icon="solar:close-linear" />
             </IconButton>
           </Box>
           <HelperText
@@ -125,7 +126,7 @@ const ChooseWinnerDrawerChild = ({ onClose, evalsList, oldData }) => {
           determine which experiment performed the best"
           />
         </Stack>
-        <Typography fontWeight={600} fontSize="14px" color="text.primary">
+        <Typography fontWeight={600} fontSize="13px" color="text.primary">
           Variables
         </Typography>
         <Box
@@ -241,19 +242,21 @@ const ChooseWinnerDrawer = ({ open, onClose, evalsList }) => {
     return formattedOldData;
   }, [data]);
 
+  const covered = useDrawerCovered(open && oldData);
   return (
     <Drawer
       anchor="right"
       open={open && oldData}
+      sx={coveredDrawerSx(covered)}
       onClose={onClose}
       PaperProps={{
         sx: {
           height: "100vh",
           position: "fixed",
           zIndex: 9999,
-          borderRadius: "10px",
+          borderRadius: "8px",
           backgroundColor: "background.paper",
-          minWidth: "550px",
+          minWidth: "640px",
         },
       }}
       ModalProps={{

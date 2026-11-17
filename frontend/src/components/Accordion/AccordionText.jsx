@@ -41,23 +41,23 @@ export default function AccordionText({
                 size="large"
                 sx={{
                   transform: isExpanded ? "rotate(180deg)" : "rotate(0deg)",
-                  transition: "transform 0.3s ease",
+                  transition: "transform 0.2s ease",
                 }}
               >
-                <Iconify icon="material-symbols-light:keyboard-arrow-down" />
+                <Iconify icon="solar:alt-arrow-down-linear" />
               </IconButton>
 
               <Box
                 display={"flex"}
                 alignItems={"center"}
                 bgcolor={"background.default"}
-                borderRadius={0.5}
+                borderRadius="4px"
                 sx={{ marginRight: "5px" }}
               >
                 <IconButton size="small">
                   <Iconify
                     color="text.primary"
-                    icon="mdi:apple-keyboard-command"
+                    icon="solar:command-linear"
                     height={12}
                     width={12}
                   />
@@ -81,8 +81,8 @@ export default function AccordionText({
                 >
                   <Iconify
                     icon="solar:trash-bin-trash-bold"
-                    height={15}
-                    width={15}
+                    height={16}
+                    width={16}
                   />
                 </IconButton>
               )}
@@ -118,8 +118,8 @@ export default function AccordionText({
           >
             <Typography
               sx={{
-                fontSize: "14px",
-                fontWeight: theme.typography.fontWeightBold,
+                fontSize: "13px",
+                fontWeight: 600,
                 color: theme.palette.text.secondary,
               }}
             >
@@ -160,7 +160,7 @@ export default function AccordionText({
               <Typography
                 color="text.primary"
                 sx={{
-                  fontSize: "14px",
+                  fontSize: "13px",
                   fontWeight: theme.typography.fontWeightRegular,
                 }}
               >

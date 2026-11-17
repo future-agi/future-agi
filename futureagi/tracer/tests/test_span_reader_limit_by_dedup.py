@@ -165,11 +165,24 @@ def test_limit_by_matches_final_including_deleted_rows():
     Merges stopped, one part per row — otherwise the engine collapses the
     duplicates itself and every variant agrees, proving nothing.
     """
-    from tracer.services.clickhouse.v2 import get_reader
+    import clickhouse_connect
+
+    from conftest import _require_safe_ch25_test_target
+    from tracer.services.clickhouse.v2 import get_v2_config
 
     table = f"th7226_probe_{uuid.uuid4().hex[:8]}"
-    with get_reader() as reader:
-        ch = reader._client
+    config = get_v2_config()
+    _require_safe_ch25_test_target(
+        host=config["host"], database=config["database"]
+    )
+    ch = clickhouse_connect.get_client(
+        host=config["host"],
+        port=config["http_port"],
+        username=config["user"],
+        password=config["password"],
+        database=config["database"],
+    )
+    try:
         ch.command(
             f"CREATE TABLE {table} ("
             "  project_id UUID, observation_type LowCardinality(String),"
@@ -252,3 +265,5 @@ def test_limit_by_matches_final_including_deleted_rows():
         finally:
             ch.command(f"SYSTEM START MERGES {table}")
             ch.command(f"DROP TABLE IF EXISTS {table}")
+    finally:
+        ch.close()

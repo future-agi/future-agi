@@ -15,7 +15,7 @@ Usage:
 import asyncio
 import uuid
 from datetime import timedelta
-from typing import Any, Optional, Tuple
+from typing import Any
 
 from tfc.logging.temporal import get_logger
 
@@ -24,12 +24,13 @@ logger = get_logger(__name__)
 
 def start_activity(
     activity_name: str,
-    args: Tuple = (),
-    kwargs: Optional[dict] = None,
+    args: tuple = (),
+    kwargs: dict | None = None,
     queue: str = "default",
-    task_id: Optional[str] = None,
-    id_conflict_policy: Optional[Any] = None,
-    start_delay: Optional[Any] = None,
+    task_id: str | None = None,
+    id_conflict_policy: Any | None = None,
+    start_delay: Any | None = None,
+    dispatch_timeout_seconds: float | None = None,
 ) -> str:
     """
     Start a Temporal activity (drop-in replacement for Celery's apply_async).
@@ -42,6 +43,8 @@ def start_activity(
         kwargs: Keyword arguments to pass to the activity
         queue: Task queue to use
         task_id: Optional workflow ID (auto-generated if not provided)
+        dispatch_timeout_seconds: Optional client-side deadline for starting
+            the workflow. It does not change the activity execution timeout.
 
     Returns:
         The workflow ID
@@ -77,54 +80,33 @@ def start_activity(
     )
 
     try:
-        # Check if there's a running event loop
-        try:
-            loop = asyncio.get_running_loop()
-            # We're in an async context - need to run synchronously in a new thread
-            # to avoid blocking the event loop
-            import concurrent.futures
+        from tfc.temporal.common.client import _run_async_in_sync_context
 
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                future = executor.submit(
-                    asyncio.run,
-                    _start_activity_async(
-                        activity_name,
-                        args,
-                        kwargs,
-                        temporal_queue,
-                        task_id,
-                        id_conflict_policy,
-                        start_delay,
-                    ),
-                )
-                result = future.result(timeout=30)  # 30 second timeout
-                logger.info(
-                    "start_activity_completed",
-                    activity_name=activity_name,
-                    workflow_id=result,
-                    context="async",
-                )
-                return result
-        except RuntimeError:
-            # No running loop, create one - this is the normal case for sync Django views
-            result = asyncio.run(
-                _start_activity_async(
-                    activity_name,
-                    args,
-                    kwargs,
-                    temporal_queue,
-                    task_id,
-                    id_conflict_policy,
-                    start_delay,
-                )
+        async def dispatch() -> str:
+            coroutine = _start_activity_async(
+                activity_name,
+                args,
+                kwargs,
+                temporal_queue,
+                task_id,
+                id_conflict_policy,
+                start_delay,
             )
-            logger.info(
-                "start_activity_completed",
-                activity_name=activity_name,
-                workflow_id=result,
-                context="sync",
-            )
-            return result
+            if dispatch_timeout_seconds is not None:
+                return await asyncio.wait_for(
+                    coroutine,
+                    timeout=max(float(dispatch_timeout_seconds), 0.001),
+                )
+            return await coroutine
+
+        result = _run_async_in_sync_context(dispatch)
+        logger.info(
+            "start_activity_completed",
+            activity_name=activity_name,
+            workflow_id=result,
+            context="sync_bridge",
+        )
+        return result
     except Exception as e:
         logger.exception(
             "start_activity_failed", activity_name=activity_name, error=str(e)
@@ -134,16 +116,14 @@ def start_activity(
 
 async def _start_activity_async(
     activity_name: str,
-    args: Tuple,
+    args: tuple,
     kwargs: dict,
     queue: str,
     task_id: str,
-    id_conflict_policy: Optional[Any] = None,
-    start_delay: Optional[Any] = None,
+    id_conflict_policy: Any | None = None,
+    start_delay: Any | None = None,
 ) -> str:
     """Async implementation of start_activity."""
-    from temporalio.client import Client
-
     from tfc.temporal.common.client import get_client
     from tfc.temporal.drop_in.decorator import _ACTIVITY_REGISTRY
     from tfc.temporal.drop_in.workflow import TaskRunnerInput, TaskRunnerWorkflow
@@ -204,22 +184,31 @@ async def _start_activity_async(
             _extra_start_kwargs["id_conflict_policy"] = id_conflict_policy
         if start_delay is not None:
             _extra_start_kwargs["start_delay"] = start_delay
-        handle = await client.start_workflow(
+        await client.start_workflow(
             TaskRunnerWorkflow.run,
             TaskRunnerInput(
                 activity_name=activity_name,
                 args=safe_args,
                 kwargs=safe_kwargs,
                 queue=queue,
+                time_limit=activity_metadata.get("time_limit"),
                 max_retries=activity_metadata.get("max_retries"),
                 retry_delay=activity_metadata.get("retry_delay"),
+                schedule_to_start_timeout=activity_metadata.get(
+                    "schedule_to_start_timeout"
+                ),
             ),
             id=workflow_id,
             task_queue=queue,
-            # Prevent stuck workflows - auto-timeout after 24 hours
-            execution_timeout=timedelta(hours=24),
-            # Prevent single run from running forever - 13 hours max
-            run_timeout=timedelta(hours=13),
+            # Existing activities retain the historical 24h/13h defaults.
+            # Long-queued activities can opt into validated metadata overrides.
+            execution_timeout=timedelta(
+                seconds=activity_metadata.get("workflow_execution_timeout")
+                or 24 * 60 * 60
+            ),
+            run_timeout=timedelta(
+                seconds=activity_metadata.get("workflow_run_timeout") or 13 * 60 * 60
+            ),
             **_extra_start_kwargs,
         )
 
@@ -241,39 +230,30 @@ async def _start_activity_async(
 
 def start_activity_sync(
     activity_name: str,
-    args: Tuple = (),
-    kwargs: Optional[dict] = None,
+    args: tuple = (),
+    kwargs: dict | None = None,
     queue: str = "default",
-    task_id: Optional[str] = None,
+    task_id: str | None = None,
 ) -> str:
     """
     Synchronous version of start_activity.
-    Always creates a new event loop.
+    Uses the persistent synchronous Temporal bridge loop.
     """
-    kwargs = kwargs or {}
-    task_id = task_id or f"{activity_name}-{uuid.uuid4().hex[:8]}"
-
-    queue_mapping = {
-        "tasks_s": "tasks_s",
-        "tasks_l": "tasks_l",
-        "tasks_xl": "tasks_xl",
-        "default": "default",
-        "trace_ingestion": "trace_ingestion",
-        "agent_compass": "agent_compass",
-    }
-    temporal_queue = queue_mapping.get(queue, queue)
-
-    return asyncio.run(
-        _start_activity_async(activity_name, args, kwargs, temporal_queue, task_id)
+    return start_activity(
+        activity_name,
+        args=args,
+        kwargs=kwargs,
+        queue=queue,
+        task_id=task_id,
     )
 
 
 async def start_activity_async(
     activity_name: str,
-    args: Tuple = (),
-    kwargs: Optional[dict] = None,
+    args: tuple = (),
+    kwargs: dict | None = None,
     queue: str = "default",
-    task_id: Optional[str] = None,
+    task_id: str | None = None,
 ) -> str:
     """
     Async version of start_activity.

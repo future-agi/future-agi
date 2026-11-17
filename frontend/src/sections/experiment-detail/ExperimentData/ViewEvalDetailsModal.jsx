@@ -56,9 +56,9 @@ export default function ViewDetailsModal({
       }}
       PaperProps={{
         sx: {
-          width: "500px",
+          width: "560px",
           maxWidth: "none",
-          borderRadius: "16px !important",
+          borderRadius: "12px !important",
           padding: "20px !important",
         },
       }}
@@ -82,7 +82,7 @@ export default function ViewDetailsModal({
             {evalDetail?.headerName}
           </Typography>
           <IconButton onClick={onClose}>
-            <Iconify icon="material-symbols:close-rounded" />
+            <Iconify icon="solar:close-linear" />
           </IconButton>
         </Stack>
       </DialogTitle>
@@ -105,7 +105,7 @@ export default function ViewDetailsModal({
           </Typography>
           <Box>
             {evalDetail?.status === "error" ? (
-              <Box sx={{ color: theme.palette.error.main, fontSize: "14px" }}>
+              <Box sx={{ color: theme.palette.error.main, fontSize: "13px" }}>
                 Error
               </Box>
             ) : (
@@ -137,12 +137,12 @@ export default function ViewDetailsModal({
                         label={"None"}
                         size="small"
                         sx={{
-                          backgroundColor: theme.palette.red.o10,
-                          color: theme.palette.red[500],
+                          backgroundColor: theme.palette.status.danger.bg,
+                          color: theme.palette.status.danger.fg,
                           marginRight: "10px",
                           transition: "none",
                           "&:hover": {
-                            backgroundColor: theme.palette.red.o10, // Lock it to same color
+                            backgroundColor: theme.palette.status.danger.bg, // Lock it to same color
                             boxShadow: "none",
                           },
                         }}

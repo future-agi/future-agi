@@ -3653,3 +3653,169 @@ class TestColumnValuesAPIViewOrgIsolation:
             format="json",
         )
         assert response.status_code == status.HTTP_200_OK
+
+
+class TestRunPromptToolPayload:
+    """The tools list handed to litellm must carry the OpenAI function envelope."""
+
+    PARAMETERS = {
+        "type": "object",
+        "properties": {
+            "return_category": {"type": "string", "enum": ["defective", "other"]}
+        },
+        "required": ["return_category"],
+    }
+
+    def _tool(self, organization, workspace, config):
+        from model_hub.models.openai_tools import Tools
+
+        return Tools.objects.create(
+            name="classify_return",
+            description="Classify a customer return",
+            config=config,
+            organization=organization,
+            workspace=workspace,
+        )
+
+    def _runner_for(self, dataset, organization, workspace, tool):
+        from model_hub.views.run_prompt import RunPrompts
+
+        run_prompter = RunPrompter.objects.create(
+            dataset=dataset,
+            organization=organization,
+            workspace=workspace,
+            model="gpt-4o-mini",
+            name="tool-column",
+            messages=[{"role": "user", "content": "Classify {{input}}"}],
+        )
+        run_prompter.tools.set([tool])
+
+        runner = RunPrompts(run_prompter.id)
+        runner.load_run_prompt_id()
+        return runner
+
+    @pytest.mark.django_db
+    def test_loader_wraps_stored_schema_for_litellm(
+        self, dataset, organization, workspace
+    ):
+        tool = self._tool(organization, workspace, {"parameters": self.PARAMETERS})
+        runner = self._runner_for(dataset, organization, workspace, tool)
+
+        assert runner.tools_config == [
+            {
+                "type": "function",
+                "function": {
+                    "name": "classify_return",
+                    "description": "Classify a customer return",
+                    "parameters": self.PARAMETERS,
+                },
+            }
+        ]
+
+    @pytest.mark.django_db
+    def test_loader_preserves_an_already_wrapped_config(
+        self, dataset, organization, workspace
+    ):
+        wrapped = {
+            "type": "function",
+            "function": {
+                "name": "hand_wrapped",
+                "description": "Written straight into the JSON box",
+                "parameters": self.PARAMETERS,
+            },
+        }
+        tool = self._tool(organization, workspace, wrapped)
+        runner = self._runner_for(dataset, organization, workspace, tool)
+
+        assert runner.tools_config == [wrapped]
+
+    @pytest.mark.django_db
+    def test_loader_fills_a_blank_wrapped_name_from_the_saved_tool(
+        self, dataset, organization, workspace
+    ):
+        tool = self._tool(
+            organization,
+            workspace,
+            {
+                "type": "function",
+                "function": {
+                    "name": "",
+                    "description": "",
+                    "parameters": self.PARAMETERS,
+                },
+            },
+        )
+        runner = self._runner_for(dataset, organization, workspace, tool)
+
+        assert runner.tools_config[0]["function"]["name"] == "classify_return"
+        assert (
+            runner.tools_config[0]["function"]["description"]
+            == "Classify a customer return"
+        )
+
+    @pytest.mark.django_db
+    def test_loader_substitutes_an_empty_object_when_no_parameters_are_stored(
+        self, dataset, organization, workspace
+    ):
+        tool = self._tool(organization, workspace, {"parameters": {}})
+        runner = self._runner_for(dataset, organization, workspace, tool)
+
+        assert runner.tools_config[0]["type"] == "function"
+        assert runner.tools_config[0]["function"]["parameters"] == {
+            "type": "object",
+            "properties": {},
+        }
+
+    @pytest.mark.django_db
+    def test_loader_keeps_a_schema_that_declares_no_top_level_properties(
+        self, dataset, organization, workspace
+    ):
+        referenced = {"type": "object", "$ref": "#/$defs/ReturnRequest"}
+        tool = self._tool(organization, workspace, {"parameters": referenced})
+        runner = self._runner_for(dataset, organization, workspace, tool)
+
+        assert runner.tools_config[0]["function"]["parameters"] == referenced
+
+    @pytest.mark.django_db
+    def test_loader_maps_the_tool_name_onto_the_accepted_identifier_charset(
+        self, dataset, organization, workspace
+    ):
+        from model_hub.models.openai_tools import Tools
+
+        tool = Tools.objects.create(
+            name="Get weather (v2)",
+            description="Look up the forecast",
+            config={"parameters": self.PARAMETERS},
+            organization=organization,
+            workspace=workspace,
+        )
+        runner = self._runner_for(dataset, organization, workspace, tool)
+
+        assert runner.tools_config[0]["function"]["name"] == "Get_weather_v2"
+
+    @pytest.mark.django_db
+    def test_litellm_payload_carries_the_envelope(
+        self, dataset, organization, workspace
+    ):
+        from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
+
+        tool = self._tool(organization, workspace, {"parameters": self.PARAMETERS})
+        runner = self._runner_for(dataset, organization, workspace, tool)
+
+        payload = RunPrompt(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": "Classify a return"}],
+            organization_id=organization.id,
+            output_format="string",
+            temperature=None,
+            frequency_penalty=None,
+            presence_penalty=None,
+            max_tokens=None,
+            top_p=None,
+            response_format=None,
+            tool_choice="auto",
+            tools=runner.tools_config,
+        )._create_payload("openai", "sk-test")
+
+        assert payload["tools"][0]["type"] == "function"
+        assert payload["tools"][0]["function"]["parameters"] == self.PARAMETERS

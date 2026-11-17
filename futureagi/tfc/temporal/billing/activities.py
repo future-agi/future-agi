@@ -11,6 +11,7 @@ from datetime import datetime
 from asgiref.sync import sync_to_async
 from django.db import close_old_connections
 from temporalio import activity
+
 from tfc.temporal.billing.types import (
     MonthlyClosingInput,
     MonthlyClosingOutput,
@@ -97,14 +98,13 @@ def _generate_monthly_invoices_sync(
 
 def _run_monthly_reset_sync(period: str) -> None:
     try:
-        from ee.usage.tasks.monthly_reset import run_monthly_reset
+        from ee.cloud.tasks.monthly_reset import run_monthly_reset
     except ImportError:
         run_monthly_reset = None
 
     if run_monthly_reset is None:
         # monthly_reset lives in the private cloud overlay (ee/cloud/); it is
-        # absent from OSS and self-hosted EE images (ee/usage/tasks/ ships only
-        # __init__.py + phone_home.py). Skip cleanly instead of raising
+        # absent from OSS and self-hosted EE images. Skip cleanly instead of raising
         # ImportError, which would fail monthly_closing_activity on the 1st of
         # every month on every self-hosted install — before the guarded invoice
         # step below even runs.
@@ -149,7 +149,7 @@ async def monthly_closing_activity(
         except (TypeError, ValueError):
             raise ValueError(
                 f"monthly_closing_activity requires YYYY-MM period, got {period_closed!r}"
-            )
+            ) from None
         period_billed = _next_period_str(period_closed)
         activity.logger.info(
             f"monthly_closing_start closed={period_closed} billed={period_billed}"

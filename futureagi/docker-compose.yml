@@ -422,7 +422,12 @@ services:
   # ===========================================
 
   minio:
-    image: minio/minio:RELEASE.2025-02-07T23-21-09Z
+    # MinIO stopped publishing images (Docker Hub removed minio/minio, quay.io
+    # refuses anonymous pulls). This is a frozen build of the last community
+    # release (Coolify's, pinned by digest): same binary, flags, env vars and
+    # data format, so existing volumes keep working. It gets no more fixes;
+    # moving to a maintained S3 server is tracked separately.
+    image: ghcr.io/coollabsio/minio:RELEASE.2025-10-15T17-29-55Z@sha256:69b55a1c1c5dc285ce04db96689f5b2102317fc77a50680a1874ca6efd1c87f9
     container_name: minio
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
@@ -433,20 +438,6 @@ services:
       - "${MINIO_API_PORT:-9005}:9000"
       - "${MINIO_CONSOLE_PORT:-9006}:9001"
     command: server /data --console-address ":9001"
-
-  # ===========================================
-  # Docker Proxy (for container orchestration)
-  # ===========================================
-
-  docker-proxy:
-    image: alpine/socat
-    container_name: docker-proxy
-    command: -t 900 TCP-LISTEN:2375,fork,reuseaddr UNIX-CONNECT:/var/run/docker.sock
-    ports:
-      - "2375"
-    user: root
-    volumes:
-      - ${DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
 
   # ===========================================
   # Temporal Services
@@ -881,7 +872,8 @@ services:
     entrypoint: ["bash", "/setup.sh"]
 
   peerdb-minio:
-    image: minio/minio:latest
+    # Same frozen MinIO build as the minio service.
+    image: ghcr.io/coollabsio/minio:RELEASE.2025-10-15T17-29-55Z@sha256:69b55a1c1c5dc285ce04db96689f5b2102317fc77a50680a1874ca6efd1c87f9
     container_name: peerdb-minio
     restart: unless-stopped
     volumes:

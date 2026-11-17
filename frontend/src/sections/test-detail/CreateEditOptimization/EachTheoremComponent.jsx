@@ -19,25 +19,26 @@ const EachTheoremComponent = ({ model }) => {
       <SvgColor
         sx={{
           color: "primary.main",
-          width: 20,
-          height: 20,
-          marginTop: 0.5,
+          width: 16,
+          height: 16,
+          marginTop: "2px",
         }}
         src={model?.icon}
       />
       <Box display="flex" flexDirection="column" flex="1">
         <Typography
-          variant="m3"
+          fontSize={13}
+          lineHeight="20px"
           fontWeight="fontWeightMedium"
           color="text.primary"
-          sx={{ mb: 0.5 }}
+          sx={{ mb: 0.25 }}
         >
           {model?.label}
         </Typography>
 
         <Typography
           variant="s2"
-          color="text.primary"
+          color="text.tertiary"
           sx={{
             wordBreak: "break-word",
             lineHeight: 1.4,
@@ -57,10 +58,8 @@ const EachTheoremComponent = ({ model }) => {
             position: "absolute",
             top: 0,
             right: 0,
-            color: "green.700",
-            height: "22px",
-            borderRadius: "1px",
-            bgcolor: "green.o10",
+            color: "status.success.fg",
+            bgcolor: "status.success.bg",
           }}
           label={"Recommended"}
         />

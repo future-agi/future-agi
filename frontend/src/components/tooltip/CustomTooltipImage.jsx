@@ -15,7 +15,7 @@ const CustomTooltipImage = ({ show, title, x, y }) => {
         color: "text.primary",
         padding: "9px 16px",
         borderRadius: "4px",
-        fontSize: "14px",
+        fontSize: "13px",
         maxWidth: "400px",
         wordWrap: "break-word",
         zIndex: 1000,

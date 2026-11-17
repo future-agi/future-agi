@@ -10,7 +10,7 @@ Two reportable facts, both against a loadgen-seeded ClickHouse:
      server stayed healthy after the query-level rejection (not a box-wide OOM).
 
   2. HEADROOM — a realistic scanner-sized batch (``_SWEEP_BATCH_SIZE`` trace ids)
-     read under the *real* 4 GiB guardrail completes, and its ``system.query_log``
+     read under the real 36 GiB guardrail completes, and its ``system.query_log``
      peak ``memory_usage`` sits far below the cap. The peak is printed so the PR
      can report the measured number.
 
@@ -66,7 +66,7 @@ def test_scan_read_rejected_at_tiny_cap_server_stays_healthy(stress_dataset):
 
 
 def test_realistic_scan_batch_peaks_below_cap(stress_dataset):
-    """A scanner-sized batch read under the real 4 GiB guardrail; report the peak."""
+    """A scanner-sized batch read under the real 36 GiB guardrail; report the peak."""
     noise = stress_dataset.noise
     batch = noise.trace_ids[:_SWEEP_BATCH_SIZE]  # the scanner reads in these batches
 

@@ -1,13 +1,16 @@
-import { Box, Chip, useTheme, alpha } from "@mui/material";
+import { Box, Chip, useTheme } from "@mui/material";
 import PropTypes from "prop-types";
 import React from "react";
 import Iconify from "src/components/iconify";
+import { statusColors } from "src/utils/runStatus";
 import { ShowComponent } from "src/components/show";
 import { OutputTypes } from "src/sections/common/DevelopCellRenderer/CellRenderers/cellRendererHelper";
 
 const getColorByValues = (data, type, theme) => {
-  const isDark = theme.palette.mode === "dark";
-  const opacityBg = isDark ? 0.16 : 0.1;
+  const tone = (role) => {
+    const c = statusColors(theme, role);
+    return { color: c.fg, backgroundColor: c.bg };
+  };
 
   let colors = {
     backgroundColor: "",
@@ -18,17 +21,7 @@ const getColorByValues = (data, type, theme) => {
     const isPass = data?.avgBoolPassScore;
     colors = {
       ...colors,
-      color: isPass
-        ? isDark
-          ? theme.palette.green[400]
-          : theme.palette.green[500]
-        : isDark
-          ? theme.palette.red[400]
-          : theme.palette.red[500],
-      backgroundColor: alpha(
-        isPass ? theme.palette.green[500] : theme.palette.red[500],
-        opacityBg,
-      ),
+      ...tone(isPass ? "success" : "danger"),
     };
   } else if (type == "float") {
     if (
@@ -37,20 +30,17 @@ const getColorByValues = (data, type, theme) => {
     ) {
       colors = {
         ...colors,
-        color: isDark ? theme.palette.red[400] : theme.palette.red[500],
-        backgroundColor: alpha(theme.palette.red[500], opacityBg),
+        ...tone("danger"),
       };
     } else if (data.avgFloatScore >= 50 && data.avgFloatScore <= 79) {
       colors = {
         ...colors,
-        color: isDark ? theme.palette.orange[400] : theme.palette.orange[500],
-        backgroundColor: alpha(theme.palette.orange[500], opacityBg),
+        ...tone("warning"),
       };
     } else if (data.avgFloatScore >= 80) {
       colors = {
         ...colors,
-        color: isDark ? theme.palette.green[400] : theme.palette.green[500],
-        backgroundColor: alpha(theme.palette.green[500], opacityBg),
+        ...tone("success"),
       };
     }
   } else if (type === OutputTypes.NUMERIC) {
@@ -175,10 +165,7 @@ const CustomChipRenderer = ({ data, evalId, type, handleErrorClick }) => {
               color: chipColor?.color,
               background: chipColor?.backgroundColor,
               transition: "none",
-              paddingX: (theme) => theme.spacing(0.5),
-              typography: "s2",
               cursor: errorData?.showIcon ? "pointer" : "default",
-              fontWeight: "fontWeightRegular",
               "&:hover": {
                 background: chipColor?.backgroundColor,
                 color: chipColor?.color,
@@ -187,10 +174,12 @@ const CustomChipRenderer = ({ data, evalId, type, handleErrorClick }) => {
           />
           {errorData?.showIcon && (
             <Iconify
-              icon="fluent:warning-24-regular"
+              icon="solar:danger-triangle-linear"
               cursor={errorData?.showIcon ? "pointer" : "default"}
               color={
-                errorData?.errorType == "PARTIAL" ? "orange.400" : "red.500"
+                errorData?.errorType == "PARTIAL"
+                  ? "status.warning.fg"
+                  : "status.danger.fg"
               }
             />
           )}
@@ -212,9 +201,6 @@ const CustomChipRenderer = ({ data, evalId, type, handleErrorClick }) => {
               color: chipColor?.color,
               background: chipColor?.backgroundColor,
               transition: "none",
-              fontWeight: "fontWeightRegular",
-              typography: "s2",
-              paddingX: (theme) => theme.spacing(0.5),
               cursor: errorData?.showIcon ? "pointer" : "default",
               "&:hover": {
                 background: chipColor?.backgroundColor,
@@ -224,10 +210,12 @@ const CustomChipRenderer = ({ data, evalId, type, handleErrorClick }) => {
           />
           {errorData?.showIcon && (
             <Iconify
-              icon="fluent:warning-24-regular"
+              icon="solar:danger-triangle-linear"
               cursor={errorData?.showIcon ? "pointer" : "default"}
               color={
-                errorData?.errorType == "PARTIAL" ? "orange.400" : "red.500"
+                errorData?.errorType == "PARTIAL"
+                  ? "status.warning.fg"
+                  : "status.danger.fg"
               }
             />
           )}
@@ -244,9 +232,6 @@ const CustomChipRenderer = ({ data, evalId, type, handleErrorClick }) => {
                 color: chipColor?.color,
                 background: chipColor?.backgroundColor,
                 transition: "none",
-                fontWeight: "fontWeightRegular",
-                typography: "s2",
-                paddingX: (theme) => theme.spacing(0.5),
                 cursor: "default",
                 "&:hover": {
                   background: chipColor?.backgroundColor,

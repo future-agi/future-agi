@@ -87,7 +87,7 @@ const FixableRecommendations = ({
         <SuggestionAccordionSummary
           expandIcon={
             <Iconify
-              icon="material-symbols:keyboard-arrow-down-rounded"
+              icon="solar:alt-arrow-down-linear"
               width={24}
               height={24}
             />
@@ -101,9 +101,9 @@ const FixableRecommendations = ({
           >
             <SvgColor
               src="/assets/icons/bulb_start.svg"
-              sx={{ width: 16, height: 16, color: "yellow.500" }}
+              sx={{ width: 16, height: 16, color: "status.warning.fg" }}
             />
-            <Typography fontSize={14} fontWeight="fontWeightSemiBold">
+            <Typography fontSize={13} fontWeight="fontWeightSemiBold">
               Prompt based suggestions
             </Typography>
           </Stack>
@@ -180,12 +180,9 @@ const FixableRecommendations = ({
                 sx={{
                   padding: 2,
                   border: "1px solid",
-                  background:
-                    theme.palette.mode === "dark"
-                      ? theme.palette.background.default
-                      : "#FFFFFF",
+                  background: "background.paper",
                   borderColor: theme.palette.divider,
-                  borderRadius: 1,
+                  borderRadius: "8px",
                 }}
               >
                 <Typography typography={"s2"} fontWeight={"fontWeightMedium"}>
@@ -223,12 +220,9 @@ const FixableRecommendations = ({
               sx={{
                 padding: 2,
                 border: "1px solid",
-                background:
-                  theme.palette.mode === "dark"
-                    ? theme.palette.background.default
-                    : "#FFFFFF",
+                background: "background.paper",
                 borderColor: theme.palette.divider,
-                borderRadius: 1,
+                borderRadius: "8px",
                 display: "flex",
                 flexDirection: "column",
                 gap: 1,
@@ -254,14 +248,14 @@ const FixableRecommendations = ({
                   sx={{
                     gap: "12px",
                     paddingY: 0.5,
-                    borderRadius: 0.5,
+                    borderRadius: "4px",
                     display: "flex",
                     alignItems: "center",
                   }}
                 >
                   <SvgColor
                     src="/assets/icons/ic_info.svg"
-                    sx={{ color: "blue.500", width: 16, height: 16 }}
+                    sx={{ color: "status.info.fg", width: 16, height: 16 }}
                   />
                   <Typography variant="s2">
                     Click on multiple suggestions to view its associated calls

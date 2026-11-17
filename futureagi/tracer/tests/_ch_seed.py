@@ -135,18 +135,24 @@ def seed_ch_spans(
     spans: Iterable[Any],
     *,
     client: Any | None = None,
+    version_from_created_at: bool = False,
 ) -> int:
     """Bulk-insert ObservationSpan rows into the CH ``spans`` table.
 
     Returns the number of rows inserted. Uses ``adapt()`` so the row shape
     matches the production PG→CH backfill exactly (same typed-Map split,
-    same attributes-extra merge, same JSON serialisation).
+    same attributes-extra merge, same JSON serialisation). Lifecycle tests can
+    set ``version_from_created_at`` to emulate an earlier/later physical CH
+    arrival without sleeping or changing the system clock.
     """
     rows: list[tuple] = []
     for s in spans:
         pg_row = s if isinstance(s, dict) else _pg_row_from_django_span(s)
         ch_row = adapt(pg_row)
-        rows.append(row_to_tuple(ch_row))
+        row = row_to_tuple(ch_row)
+        if version_from_created_at:
+            row = (*row, _epoch_nanoseconds(ch_row.created_at))
+        rows.append(row)
 
     if not rows:
         return 0
@@ -155,10 +161,14 @@ def seed_ch_spans(
     if own_client:
         client = _get_ch_client()
     try:
-        client.insert("spans", rows, column_names=list(CH_INSERT_COLUMNS))
+        columns = list(CH_INSERT_COLUMNS)
+        if version_from_created_at:
+            columns.append("_version")
+        client.insert("spans", rows, column_names=columns)
     finally:
         if own_client:
             client.close()
+    return len(rows)
 
 
 _TRACE_SESSIONS_COLUMNS = [
@@ -203,6 +213,21 @@ def seed_ch_trace_sessions(
         if own_client:
             client.close()
     return len(rows)
+
+
+def _epoch_nanoseconds(value: datetime) -> int:
+    """Exact UInt64 arrival version used by time-window lifecycle fixtures."""
+
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    value = value.astimezone(UTC)
+    epoch = datetime(1970, 1, 1, tzinfo=UTC)
+    delta = value - epoch
+    return (
+        delta.days * 86_400 * 1_000_000_000
+        + delta.seconds * 1_000_000_000
+        + delta.microseconds * 1_000
+    )
 
 
 _TRACES_COLUMNS = [
@@ -311,6 +336,7 @@ _SCORE_INSERT_COLUMNS = [
     "prototype_run_id",
     "queue_item_id",
     "project_id",
+    "tracer_project_id",
     "label_id",
     "value",
     "annotator_id",
@@ -340,7 +366,9 @@ def _score_row_from_django(score: Any) -> tuple:
 
     now = datetime.now(UTC)
 
-    # Resolve project_id — try Score.project_id first, then walk source FKs.
+    # ``project_id`` belongs to model_hub.DevelopAI. Keep its existing fallback
+    # for legacy test rows, but derive the tracer tenant fence independently:
+    # a non-null DevelopAI id is not interchangeable with tracer.Project.id.
     project_id = getattr(score, "project_id", None)
     if project_id is None:
         for attr in ("trace", "observation_span", "trace_session", "call_execution"):
@@ -348,6 +376,15 @@ def _score_row_from_django(score: Any) -> tuple:
             if source is not None:
                 project_id = getattr(source, "project_id", None)
                 if project_id is not None:
+                    break
+
+    tracer_project_id = getattr(score, "tracer_project_id", None)
+    if tracer_project_id is None:
+        for attr in ("trace", "observation_span", "trace_session"):
+            source = getattr(score, attr, None)
+            if source is not None:
+                tracer_project_id = getattr(source, "project_id", None)
+                if tracer_project_id is not None:
                     break
 
     def _uuid_or_none(val: Any) -> Any:
@@ -370,6 +407,7 @@ def _score_row_from_django(score: Any) -> tuple:
         _uuid_or_none(score.prototype_run_id),
         _uuid_or_none(score.queue_item_id),
         _uuid_or_none(project_id),
+        _uuid_or_none(tracer_project_id),
         str(score.label_id),
         value_json,
         _uuid_or_none(score.annotator_id),
@@ -468,6 +506,23 @@ _EVAL_LOGGER_INSERT_COLUMNS = [
     "_peerdb_version",
 ]
 
+_EVAL_LOGGER_V2_INSERT_COLUMNS = [
+    "id",
+    "trace_session_id",
+    "target_type",
+    "custom_eval_config_id",
+    "output_bool",
+    "output_float",
+    "output_str",
+    "error",
+    "error_message",
+    "eval_explanation",
+    "results_explanation",
+    "created_at",
+    "is_deleted",
+    "_version",
+]
+
 _ZERO_UUID = "00000000-0000-0000-0000-000000000000"
 
 
@@ -551,10 +606,66 @@ def seed_ch_eval_loggers(
     return len(rows)
 
 
+def seed_ch_eval_loggers_v2(
+    eval_loggers: Iterable[Any],
+    *,
+    client: Any | None = None,
+) -> int:
+    """Bulk-insert direct-write-shaped eval rows for endpoint integration tests."""
+
+    legacy_rows = [_eval_logger_row_from_django(el) for el in eval_loggers]
+    rows = [
+        (
+            row[0],
+            row[1],
+            row[2],
+            row[3],
+            row[4],
+            row[5],
+            row[6],
+            row[7],
+            row[8],
+            row[9],
+            row[10],
+            row[13],
+            row[14],
+            row[15],
+        )
+        for row in legacy_rows
+    ]
+    if not rows:
+        return 0
+
+    own_client = client is None
+    if own_client:
+        client = _get_ch_client()
+    try:
+        client.insert(
+            "tracer_eval_logger_v2",
+            rows,
+            column_names=list(_EVAL_LOGGER_V2_INSERT_COLUMNS),
+        )
+    finally:
+        if own_client:
+            client.close()
+
+    return len(rows)
+
+
 def truncate_ch_eval_logger() -> None:
     """Wipe the CH ``tracer_eval_logger`` table. Idempotent."""
     client = _get_ch_client()
     try:
         client.command("TRUNCATE TABLE IF EXISTS tracer_eval_logger")
+    finally:
+        client.close()
+
+
+def truncate_ch_eval_logger_v2() -> None:
+    """Wipe the direct-write eval test table. Idempotent."""
+
+    client = _get_ch_client()
+    try:
+        client.command("TRUNCATE TABLE IF EXISTS tracer_eval_logger_v2")
     finally:
         client.close()

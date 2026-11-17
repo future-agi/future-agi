@@ -1,0 +1,80 @@
+# Enterprise edition: the same chart and the same public image as the open
+# source install, plus a license. Layer it over examples/external.yaml (your
+# own datastores) and your values:
+#
+#   kubectl create secret generic futureagi-license --from-literal=EE_LICENSE_KEY='...'
+#   kubectl create secret generic futureagi-admin \
+#     --from-literal=email=admin@example.com --from-literal=name='First Admin' \
+#     --from-literal=password='...'
+#   kubectl create secret generic futureagi-google-oauth \
+#     --from-literal=AUTH0_CLIENT_ID='...' --from-literal=AUTH0_CLIENT_SECRET='...'
+#   kubectl create secret generic futureagi-mailgun --from-literal=MAILGUN_API_KEY='...'
+#   kubectl create configmap corp-ca --from-file=ca.crt=corp-bundle.pem
+#
+#   helm install futureagi oci://ghcr.io/future-agi/charts/futureagi --version X.Y.Z \
+#     -f external.yaml -f enterprise.yaml -f my-values.yaml --timeout 20m
+#
+# The install notes print the OAuth redirect URIs, the SAML ACS URL and the
+# entity ID to register with your identity provider, and how to check the
+# license.
+edition: ee
+license:
+  existingSecret: futureagi-license
+  existingSecretKey: EE_LICENSE_KEY
+
+auth:
+  google:
+    existingSecret: futureagi-google-oauth
+  # github:
+  #   existingSecret: futureagi-github-oauth   # GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET
+  # microsoft:
+  #   existingSecret: futureagi-microsoft-oauth  # MICROSOFT_CLIENT_ID, MICROSOFT_CLIENT_SECRET
+
+bootstrap:
+  admin:
+    existingSecret: futureagi-admin
+
+config:
+  # Deployment telemetry stays on unless you opt out (config.telemetry=false);
+  # global.airgap turns it off together with the license heartbeat.
+  email:
+    mailgunSenderDomain: mg.example.com
+    existingSecret: futureagi-mailgun
+
+global:
+  # A private registry that mirrors the release's images (crane copy or
+  # oras copy -r keep their digests, so image.pinDigests can stay on; a mirror
+  # that re-pushes or rebuilds them needs image.pinDigests=false).
+  imageRegistry: registry.example.com/futureagi-mirror
+  imagePullSecrets:
+    - name: registry-credentials
+  # A corporate egress proxy. The chart adds the release's Services, the
+  # datastores and the cluster suffixes to NO_PROXY. The LLM gateway does not
+  # honour the proxy yet: allow its egress to the providers.
+  proxy:
+    httpProxy: http://proxy.example.com:3128
+    httpsProxy: http://proxy.example.com:3128
+    noProxy: .example.internal
+  # Must hold the public roots as well as yours (it replaces the trust store):
+  #   cat /etc/ssl/certs/ca-certificates.crt corp-root.pem > corp-bundle.pem
+  caBundle:
+    configMap: corp-ca
+    key: ca.crt
+
+# Roll the pods when a Secret they read is rotated (needs Stakater Reloader).
+reloader:
+  enabled: true
+
+# Customers given a private Enterprise image: point the backend at it (the
+# workers and the bootstrap job use the same image; global.imageRegistry, when
+# set, wins over backend.image.registry). The chart pins the public
+# image's digest on the release tag whatever the registry, which a different
+# build under the same repository path does not have (ImagePullBackOff): turn
+# pinning off, or pin the private image's own digest.
+# image:
+#   pinDigests: false
+# backend:
+#   image:
+#     registry: registry.example.com
+#     repository: futureagi/future-agi
+#     # digest: sha256:...   # instead of pinDigests: false

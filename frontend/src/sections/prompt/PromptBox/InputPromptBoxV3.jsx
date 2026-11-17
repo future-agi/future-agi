@@ -33,6 +33,7 @@ import GeneratePrompt from "../PromptDrawer/GeneratePrompt";
 import UploadedImageViewer from "./UploadedImageViewer";
 import GeneratePromptBolt from "./GeneratePromptBolt";
 import CustomImageBlot from "./CustomImageBlot";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const Delta = Quill.import("delta");
 
@@ -443,6 +444,7 @@ const InputPromptBoxV3 = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [quillRef]);
 
+  const covered = useDrawerCovered(generatePromptOpen);
   return (
     <Box
       sx={{
@@ -502,7 +504,7 @@ const InputPromptBoxV3 = ({
                 }}
               >
                 <Iconify
-                  icon="basil:copy-outline"
+                  icon="solar:copy-linear"
                   sx={{ color: "text.disabled" }}
                 />
               </IconButton>
@@ -570,6 +572,7 @@ const InputPromptBoxV3 = ({
       <Drawer
         anchor="right"
         open={generatePromptOpen}
+        sx={coveredDrawerSx(covered)}
         onClose={() => setGeneratePromptOpen(false)}
         PaperProps={{
           sx: {
@@ -577,7 +580,7 @@ const InputPromptBoxV3 = ({
             width: "calc(100% - 450px)",
             position: "fixed",
             zIndex: 1,
-            borderRadius: "10px",
+            borderRadius: "8px",
             backgroundColor: "background.paper",
           },
         }}

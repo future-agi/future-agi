@@ -95,6 +95,7 @@ import PromptImageInput from "./Components/PromptImageInput";
 import ChooseModelType from "./Components/ChooseModelType";
 import ModelOptionsState from "../Common/ModelOptionsState";
 import CustomAudioDialog from "../CustomAudioDialog";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const DEFAULT_CONFIG_KEYS = [
   "responseFormat",
@@ -1560,12 +1561,9 @@ export const RunPromptForm = React.forwardRef(
                           size="small"
                           onClick={handleOpenModelParams}
                           sx={{
-                            height: "28px",
                             width: "28px",
-                            borderRadius: 0.25,
                             border: "1px solid",
                             borderColor: "divider",
-                            padding: "3px",
                             flexShrink: 0,
                             color: "text.primary",
                           }}
@@ -1634,7 +1632,7 @@ export const RunPromptForm = React.forwardRef(
                     >
                       <HelperText
                         sx={{
-                          color: "red.500",
+                          color: "status.danger.fg",
                           typography: "s2",
                         }}
                         text="Voice support isn't available for the selected model."
@@ -1801,9 +1799,7 @@ export const RunPromptForm = React.forwardRef(
                   color="primary"
                   variant="contained"
                   sx={{
-                    borderRadius: "8px",
                     minWidth: "128px",
-                    py: "6px",
                     ml: "auto",
                   }}
                 >
@@ -1825,7 +1821,7 @@ export const RunPromptForm = React.forwardRef(
                   alignItems: "center",
                   p: "15px",
                   "& .MuiModal-backdrop": {
-                    backgroundColor: "#00000040",
+                    backgroundColor: "rgba(0,0,0,0.25)",
                   },
                 }}
               >
@@ -1833,7 +1829,7 @@ export const RunPromptForm = React.forwardRef(
                   <RunHeader>
                     <RunTitle>Run Preview on Custom Rows</RunTitle>
                     <IconButton onClick={() => setTestRun(false)}>
-                      <Iconify icon="mingcute:close-line" />
+                      <Iconify icon="solar:close-linear" />
                     </IconButton>
                   </RunHeader>
                   <RunBody>
@@ -1948,10 +1944,7 @@ export const RunPromptForm = React.forwardRef(
                       fullWidth
                       variant="contained"
                       sx={{
-                        borderRadius: "6px",
                         color: "text.primary",
-                        boxShadow:
-                          "-20px 20px 40px -4px rgba(145, 158, 171, 0.24)",
                         backgroundColor: "action.hover",
                         "&:hover": {
                           backgroundColor: "action.hover",
@@ -1985,7 +1978,6 @@ export const RunPromptForm = React.forwardRef(
                   variant="outlined"
                   sx={{
                     color: "text.secondary",
-                    minHeight: (theme) => theme.spacing(38 / 8),
                     "&:hover": {
                       borderColor: "transparent !important",
                     },
@@ -2033,9 +2025,6 @@ export const RunPromptForm = React.forwardRef(
                     isUpdatingPrompt ||
                     isLoadingModelParams
                   }
-                  sx={{
-                    minHeight: (theme) => theme.spacing(38 / 8),
-                  }}
                 >
                   <Typography typography="s1" fontWeight={"fontWeightSemiBold"}>
                     {isEditMode ? "Update" : "Run"}
@@ -2152,18 +2141,7 @@ export const RunPromptForm = React.forwardRef(
             size="small"
             variant="outlined"
             onClick={handleViewDocs}
-            startIcon={
-              <SvgColor
-                sx={{
-                  height: "16px",
-                  width: "16px",
-                }}
-                src="/assets/icons/ic_paper.svg"
-              />
-            }
-            sx={{
-              px: 1.5,
-            }}
+            startIcon={<SvgColor width={16} src="/assets/icons/ic_paper.svg" />}
           >
             View Docs
           </Button>
@@ -2174,7 +2152,7 @@ export const RunPromptForm = React.forwardRef(
               color: "text.primary",
             }}
           >
-            <Iconify icon="akar-icons:cross" />
+            <Iconify icon="solar:close-linear" />
           </IconButton>
         </Stack>
         <Box
@@ -2368,6 +2346,7 @@ const RunPrompt = () => {
     }
   };
 
+  const covered = useDrawerCovered(Boolean(openRunPrompt));
   return (
     <Drawer
       anchor="right"
@@ -2378,10 +2357,9 @@ const RunPrompt = () => {
           height: "100vh",
           position: "fixed",
           zIndex: 2,
-          boxShadow: "-10px 0px 100px #00000035",
-          borderRadius: "10px",
+          borderRadius: "8px",
           overflow: "visible",
-          // width: "613px",
+          // width: "640px",
         },
       }}
       ModalProps={{
@@ -2391,6 +2369,7 @@ const RunPrompt = () => {
       }}
       sx={{
         zIndex: 1099,
+        ...coveredDrawerSx(covered),
       }}
     >
       {showPromptForm && (

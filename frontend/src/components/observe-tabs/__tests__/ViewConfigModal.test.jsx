@@ -1,15 +1,38 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "src/utils/test-utils";
 import { ObserveHeaderContext } from "src/sections/project/context/ObserveHeaderContext";
+import { enqueueSnackbar } from "notistack";
 import ViewConfigModal from "../ViewConfigModal";
 
-// Mock the API hooks — expose mockCreate/mockUpdate so tests can assert on payloads
+// Mock the API hooks — expose mockCreate/mockUpdate so tests can assert on payloads.
+// `savedViewsResult` is mutable so duplicate-name tests can seed existing views.
 const mockCreate = vi.fn();
 const mockUpdate = vi.fn();
+let savedViewsResult = { custom_views: [] };
 vi.mock("src/api/project/saved-views", () => ({
   useCreateSavedView: () => ({ mutate: mockCreate, isPending: false }),
   useUpdateSavedView: () => ({ mutate: mockUpdate, isPending: false }),
+  useGetSavedViews: () => ({ data: savedViewsResult }),
+  // Mirror of the real helper (the factory replaces the whole module).
+  getOwnViewNames: (views, userId) =>
+    (views ?? [])
+      .filter((v) => userId && String(v.created_by?.id) === String(userId))
+      .map((v) => v.name),
 }));
+
+vi.mock("notistack", () => ({ enqueueSnackbar: vi.fn() }));
+
+// Current user for the per-user duplicate scope.
+vi.mock("src/auth/hooks", () => ({
+  useAuthContext: () => ({ user: { id: "u1" } }),
+}));
+
+const ownView = (id, name, tabType = "traces") => ({
+  id,
+  name,
+  tab_type: tabType,
+  created_by: { id: "u1" },
+});
 
 describe("ViewConfigModal", () => {
   const defaultProps = {
@@ -100,6 +123,7 @@ describe("ViewConfigModal — config snapshot on save", () => {
   beforeEach(() => {
     mockCreate.mockReset();
     mockUpdate.mockReset();
+    savedViewsResult = { custom_views: [] };
   });
 
   it("create mode sends getViewConfig() output as config", async () => {
@@ -157,5 +181,119 @@ describe("ViewConfigModal — config snapshot on save", () => {
     await waitFor(() => expect(mockUpdate).toHaveBeenCalled());
     expect(mockUpdate.mock.calls[0][0].config).toEqual(stale);
     expect(mockUpdate.mock.calls[0][0]).not.toHaveProperty("tab_type");
+  });
+});
+
+describe("ViewConfigModal — duplicate-name guard", () => {
+  beforeEach(() => {
+    mockCreate.mockReset();
+    mockUpdate.mockReset();
+    savedViewsResult = { custom_views: [] };
+    enqueueSnackbar.mockClear?.();
+  });
+
+  it("blocks submit and shows inline error for an exact duplicate name", async () => {
+    savedViewsResult = { custom_views: [ownView("1", "My View")] };
+    renderWithCtx(() => ({}));
+    fireEvent.change(screen.getByLabelText("Name *"), {
+      target: { value: "My View" },
+    });
+    expect(
+      screen.getByText("A view with this name already exists."),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Create"));
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  it("allows a case-variant name (backend uniqueness is case-sensitive)", async () => {
+    savedViewsResult = { custom_views: [ownView("1", "My View")] };
+    renderWithCtx(() => ({}));
+    fireEvent.change(screen.getByLabelText("Name *"), {
+      target: { value: "my view" },
+    });
+    fireEvent.click(screen.getByText("Create"));
+    await waitFor(() => expect(mockCreate).toHaveBeenCalled());
+  });
+
+  it("allows a name that only another user's shared view holds (per-user scope)", async () => {
+    savedViewsResult = {
+      custom_views: [
+        { id: "1", name: "Latency", tab_type: "traces", created_by: { id: "u2" } },
+      ],
+    };
+    renderWithCtx(() => ({}));
+    fireEvent.change(screen.getByLabelText("Name *"), {
+      target: { value: "Latency" },
+    });
+    fireEvent.click(screen.getByText("Create"));
+    await waitFor(() => expect(mockCreate).toHaveBeenCalled());
+  });
+
+  it("rejects a duplicate name even across a different tab_type (project scope)", async () => {
+    // Backend project-scope uniqueness ignores tab_type, so the modal must too.
+    savedViewsResult = { custom_views: [ownView("1", "My View", "voice")] };
+    renderWithCtx(() => ({}));
+    fireEvent.change(screen.getByLabelText("Name *"), {
+      target: { value: "My View" },
+    });
+    fireEvent.click(screen.getByText("Create"));
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  it("allows a unique name and submits", async () => {
+    savedViewsResult = { custom_views: [ownView("1", "Existing")] };
+    renderWithCtx(() => ({}));
+    fireEvent.change(screen.getByLabelText("Name *"), {
+      target: { value: "Brand New" },
+    });
+    fireEvent.click(screen.getByText("Create"));
+    await waitFor(() => expect(mockCreate).toHaveBeenCalled());
+  });
+
+  it("edit mode blocks renaming onto another view's name", () => {
+    savedViewsResult = {
+      custom_views: [ownView("self", "Mine"), ownView("other", "Taken")],
+    };
+    renderWithCtx(() => ({}), {
+      mode: "edit",
+      initialValues: { id: "self", name: "Mine", tab_type: "traces" },
+    });
+    fireEvent.change(screen.getByLabelText("Name *"), {
+      target: { value: "Taken" },
+    });
+    expect(
+      screen.getByText("A view with this name already exists."),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Save"));
+    expect(mockUpdate).not.toHaveBeenCalled();
+  });
+
+  it("edit mode allows keeping the view's own name (self excluded)", async () => {
+    savedViewsResult = { custom_views: [ownView("self", "Mine")] };
+    renderWithCtx(() => ({}), {
+      mode: "edit",
+      initialValues: { id: "self", name: "Mine", tab_type: "traces" },
+    });
+    // Name field already holds "Mine"; save should not be blocked.
+    fireEvent.click(screen.getByText("Save"));
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalled());
+  });
+
+  it("surfaces the backend error message via snackbar on a create 400", async () => {
+    renderWithCtx(() => ({}));
+    fireEvent.change(screen.getByLabelText("Name *"), {
+      target: { value: "Race View" },
+    });
+    fireEvent.click(screen.getByText("Create"));
+    await waitFor(() => expect(mockCreate).toHaveBeenCalled());
+    // Invoke the onError callback the component supplied to the mutation.
+    const { onError } = mockCreate.mock.calls[0][1];
+    onError({
+      response: { data: { message: "A view named 'Race View' already exists." } },
+    });
+    expect(enqueueSnackbar).toHaveBeenCalledWith(
+      "A view named 'Race View' already exists.",
+      { variant: "error" },
+    );
   });
 });

@@ -43,11 +43,11 @@ const fmtNumber = (n) => {
 const SectionLabel = ({ children }) => (
   <Typography
     sx={{
-      fontSize: 10,
+      fontSize: 12,
       fontWeight: 600,
       color: "text.secondary",
-      textTransform: "uppercase",
-      letterSpacing: "0.06em",
+      textTransform: "none",
+      letterSpacing: 0,
     }}
   >
     {children}
@@ -59,12 +59,9 @@ SectionLabel.propTypes = { children: PropTypes.node };
 const KpiCell = ({ label, value, hint, tone = "default" }) => {
   const toneColor = {
     default: "text.primary",
-    success: "success.main",
-    warn: (theme) =>
-      theme.palette.mode === "dark"
-        ? theme.palette.warning.main
-        : theme.palette.warning.darker,
-    danger: "error.main",
+    success: "status.success.fg",
+    warn: "status.warning.fg",
+    danger: "status.danger.fg",
   }[tone];
   return (
     <Tooltip
@@ -83,11 +80,11 @@ const KpiCell = ({ label, value, hint, tone = "default" }) => {
       >
         <Typography
           sx={{
-            fontSize: 10.5,
+            fontSize: 12,
             fontWeight: 600,
             color: "text.secondary",
-            textTransform: "uppercase",
-            letterSpacing: "0.04em",
+            textTransform: "none",
+            letterSpacing: 0,
             whiteSpace: "nowrap",
           }}
         >
@@ -96,7 +93,7 @@ const KpiCell = ({ label, value, hint, tone = "default" }) => {
         <Typography
           sx={{
             fontSize: 16,
-            fontWeight: 700,
+            fontWeight: 600,
             color: toneColor,
             lineHeight: 1.2,
             whiteSpace: "nowrap",
@@ -305,7 +302,7 @@ const AiSummaryCard = ({ summary }) => {
         }}
       >
         <Iconify
-          icon="mdi:creation"
+          icon="solar:stars-minimalistic-linear"
           width={14}
           sx={{ color: "primary.main", flexShrink: 0 }}
         />
@@ -313,7 +310,7 @@ const AiSummaryCard = ({ summary }) => {
           sx={{
             flex: 1,
             minWidth: 0,
-            fontSize: 11,
+            fontSize: 12,
             color: "text.primary",
             lineHeight: 1.4,
             overflow: "hidden",
@@ -325,7 +322,7 @@ const AiSummaryCard = ({ summary }) => {
           {!open && summary.length > 140 ? "…" : null}
         </Typography>
         <Iconify
-          icon="mdi:chevron-down"
+          icon="solar:alt-arrow-down-linear"
           width={14}
           sx={{
             color: "text.disabled",

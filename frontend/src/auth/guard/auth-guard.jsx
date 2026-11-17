@@ -106,6 +106,12 @@ function Container({ children }) {
 
       router.replace(href);
     } else {
+      const samlNext = sessionStorage.getItem("fai_saml_next");
+      if (samlNext) {
+        sessionStorage.removeItem("fai_saml_next");
+        router.replace(samlNext);
+        return;
+      }
       setChecked(true);
     }
   }, [authenticated, method, router, initialize]);

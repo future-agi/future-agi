@@ -289,8 +289,8 @@ const DatasetDetail = () => {
     if (datasetSelectMode)
       elements.push(
         <Button
-          variant="contained"
-          color="error"
+          variant="outlined"
+          color="inherit"
           size="small"
           onClick={() => resetSelectionState()}
         >

@@ -36,7 +36,7 @@ export default function MultiFilePreview({ thumbnail, files, onRemove, sx }) {
                 m: 0.5,
                 width: 80,
                 height: 80,
-                borderRadius: 1.25,
+                borderRadius: "8px",
                 overflow: "hidden",
                 position: "relative",
                 border: (theme) =>
@@ -57,7 +57,6 @@ export default function MultiFilePreview({ thumbnail, files, onRemove, sx }) {
                   size="small"
                   onClick={() => onRemove(file)}
                   sx={{
-                    p: 0.5,
                     top: 4,
                     right: 4,
                     position: "absolute",
@@ -69,7 +68,7 @@ export default function MultiFilePreview({ thumbnail, files, onRemove, sx }) {
                     },
                   }}
                 >
-                  <Iconify icon="mingcute:close-line" width={14} />
+                  <Iconify icon="solar:close-linear" width={14} />
                 </IconButton>
               )}
             </Stack>
@@ -81,33 +80,41 @@ export default function MultiFilePreview({ thumbnail, files, onRemove, sx }) {
             key={key}
             component={m.div}
             {...varFade().inUp}
-            spacing={2}
+            spacing={1.5}
             direction="row"
             alignItems="center"
             sx={{
-              my: 1,
+              my: 0.5,
               py: 1,
               px: 1.5,
-              borderRadius: 1,
-              border: (theme) =>
-                `solid 1px ${alpha(theme.palette.text.disabled, 0.16)}`,
+              minHeight: 48,
+              borderRadius: "6px",
+              border: "1px solid",
+              borderColor: "border.default",
               ...sx,
             }}
           >
-            <FileThumbnail file={file} />
+            <FileThumbnail file={file} sx={{ width: 28, height: 28 }} />
 
             <ListItemText
               primary={isNotFormatFile ? file : name}
               secondary={isNotFormatFile ? "" : fData(size)}
+              primaryTypographyProps={{
+                fontSize: 13,
+                fontWeight: 500,
+                noWrap: true,
+              }}
               secondaryTypographyProps={{
                 component: "span",
-                typography: "caption",
+                fontSize: 12,
+                color: "text.tertiary",
               }}
+              sx={{ my: 0 }}
             />
 
             {onRemove && (
               <IconButton size="small" onClick={() => onRemove(file)}>
-                <Iconify icon="mingcute:close-line" width={16} />
+                <Iconify icon="solar:close-linear" width={16} />
               </IconButton>
             )}
           </Stack>

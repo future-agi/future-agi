@@ -1278,7 +1278,7 @@ class ExperimentRunner:
             if model_config.get("tools"):
                 tools = Tools.objects.filter(id__in=model_config.get("tools")).all()
                 for tool in tools:
-                    tools_config.append(tool.config)
+                    tools_config.append(tool.as_openai_tool())
 
             rf = model_config.get("response_format")
             if rf and not isinstance(rf, dict):
@@ -1557,7 +1557,7 @@ def _process_row_impl(
         if model_config.get("tools"):
             tools = Tools.objects.filter(id__in=model_config.get("tools")).all()
             for tool in tools:
-                tools_config.append(tool.config)
+                tools_config.append(tool.as_openai_tool())
 
         rf = model_config.get("response_format")
         if rf and not isinstance(rf, dict):

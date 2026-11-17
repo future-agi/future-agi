@@ -357,7 +357,7 @@ const RulePromptInput = ({
           </FormHelperText>
         )}
         {isRulePrompt && (
-          <Typography fontSize={12} color="red.500" marginLeft="7px">
+          <Typography fontSize={12} color="status.danger.fg" marginLeft="7px">
             {!rulePromptData
               ? "This field is required"
               : "Variables added should be used in the rule prompt"}

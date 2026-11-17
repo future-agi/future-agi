@@ -20,7 +20,7 @@ const EvaluationBar = ({
   const { id } = useParams();
 
   return (
-    <Box sx={{}}>
+    <Box>
       <Box
         sx={{
           borderBottom: 1,
@@ -45,20 +45,9 @@ const EvaluationBar = ({
               }
             }}
             sx={{
-              minHeight: 0,
               "& .MuiTab-root": {
                 margin: "0 !important",
-                fontWeight: "600",
-                typography: "s1",
-                color: "primary.main",
-                "&:not(.Mui-selected)": {
-                  color: "text.disabled",
-                  fontWeight: "500",
-                },
               },
-            }}
-            TabIndicatorProps={{
-              style: { backgroundColor: theme.palette.primary.main },
             }}
           >
             {TabOptions.map((tab) => (
@@ -68,7 +57,6 @@ const EvaluationBar = ({
                 value={tab.value}
                 sx={{
                   margin: theme.spacing(0),
-                  px: theme.spacing(1.875),
                 }}
               />
             ))}
@@ -96,7 +84,7 @@ const EvaluationBar = ({
                 marginRight: "12px",
                 fontFamily: "IBM Plex Sans",
                 fontWeight: 500,
-                fontSize: "14px",
+                fontSize: "13px",
                 lineHeight: "22px",
                 paddingRight: "24px",
                 borderRight: "2px solid var(--border-default)",

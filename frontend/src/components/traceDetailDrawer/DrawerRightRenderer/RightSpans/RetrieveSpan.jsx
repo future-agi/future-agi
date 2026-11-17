@@ -1,10 +1,11 @@
 import React, { useMemo, useState } from "react";
+import { SegmentedTabs } from "src/components/tabs/tabs";
 import {
   Accordion,
   AccordionDetails,
   AccordionSummary,
 } from "../SpanAccordianElements";
-import { Box, IconButton, Tab, Tabs, Typography, alpha } from "@mui/material";
+import { Box, IconButton, Tab, Typography, alpha } from "@mui/material";
 import { copyToClipboard, getScorePercentage } from "src/utils/utils";
 import { enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
@@ -176,25 +177,13 @@ const RetreiveSpan = ({
                       alignItems: "center",
                     }}
                   >
-                    <Tabs
-                      textColor="primary"
+                    <SegmentedTabs
                       value={tabValues[docId] || "markdown"}
                       onChange={handleTabChange(docId)}
-                      TabIndicatorProps={{
-                        style: { display: "none" },
-                      }}
-                      sx={{
-                        minHeight: 32,
-                        "& .MuiTab-root": {
-                          minHeight: 32,
-                          padding: "12px 12px",
-                          marginRight: 0,
-                        },
-                      }}
                     >
                       <Tab value="markdown" label="Markdown" />
                       <Tab value="raw" label="Raw" />
-                    </Tabs>
+                    </SegmentedTabs>
                     {allowCopy && (
                       <Box
                         sx={{
@@ -212,7 +201,7 @@ const RetreiveSpan = ({
                           }}
                         >
                           <Iconify
-                            icon="basil:copy-outline"
+                            icon="solar:copy-linear"
                             sx={{ color: "text.secondary" }}
                           />
                         </IconButton>

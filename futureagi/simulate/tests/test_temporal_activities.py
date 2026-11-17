@@ -264,6 +264,19 @@ class TestTemporalClientAPI:
 
         assert result is False
 
+    @patch("simulate.temporal.client._cancel_simulation_runner_workflow_async")
+    def test_cancel_simulation_runner_workflow(
+        self, mock_cancel_async, db, test_execution
+    ):
+        from simulate.temporal.client import cancel_simulation_runner_workflow
+
+        mock_cancel_async.return_value = True
+
+        result = cancel_simulation_runner_workflow(str(test_execution.id))
+
+        assert result is True
+        mock_cancel_async.assert_called_once_with(str(test_execution.id))
+
     @patch("simulate.temporal.client._rerun_call_executions_async")
     def test_rerun_call_executions(
         self,
@@ -394,6 +407,29 @@ class TestTemporalClientAPIIntegration:
         result = await _cancel_test_execution_async(str(test_execution.id))
 
         assert result is True
+        mock_handle.cancel.assert_called_once()
+
+    @patch("tfc.temporal.common.client.get_client")
+    @pytest.mark.asyncio
+    async def test_cancel_simulation_runner_workflow_uses_hosted_id(
+        self, mock_get_client, db, test_execution
+    ):
+        from simulate.temporal.client import _cancel_simulation_runner_workflow_async
+
+        mock_handle = MagicMock()
+        mock_handle.cancel = AsyncMock()
+        mock_client = MagicMock()
+        mock_client.get_workflow_handle.return_value = mock_handle
+        mock_get_client.return_value = mock_client
+
+        result = await _cancel_simulation_runner_workflow_async(
+            str(test_execution.id)
+        )
+
+        assert result is True
+        mock_client.get_workflow_handle.assert_called_once_with(
+            f"sim-runner-{test_execution.id}"
+        )
         mock_handle.cancel.assert_called_once()
 
 
@@ -1576,8 +1612,9 @@ class TestBuildTranscriptData:
         from simulate.models import CallTranscript
         from simulate.temporal.activities.xl import _build_transcript_data
 
-        # VAPI inbound (the resolver's default) maps "user" to tested_agent
-        # and "assistant" to simulator; seed accordingly.
+        # No provider_call_data ⇒ the resolver falls back to VAPI and defaults
+        # to OUTBOUND (its direction default on missing metadata), which maps
+        # "user" to the simulator (customer) and "assistant" to the tested agent.
         CallTranscript.objects.create(
             call_execution=call_execution,
             speaker_role=CallTranscript.SpeakerRole.USER,
@@ -1595,8 +1632,8 @@ class TestBuildTranscriptData:
 
         result = _build_transcript_data(call_execution)
 
-        assert "agent: Hello, how can I help?" in result["transcript"]
-        assert "customer: I need help with my order." in result["transcript"]
+        assert "customer: Hello, how can I help?" in result["transcript"]
+        assert "agent: I need help with my order." in result["transcript"]
 
     @pytest.mark.django_db(transaction=True)
     def test_build_transcript_data_no_transcripts(self, call_execution):

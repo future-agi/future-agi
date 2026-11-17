@@ -24,7 +24,7 @@ const CustomConfigurationField = ({
         <Typography
           sx={{
             fontWeight: 600,
-            fontSize: "14px",
+            fontSize: "13px",
             lineHeight: "18px",
           }}
         >
@@ -73,7 +73,7 @@ const CustomConfigurationField = ({
                 onClick={() => remove(index)}
                 aria-label={`Remove config ${index + 1}`}
               >
-                <Iconify icon="mdi:delete" />
+                <Iconify icon="solar:trash-bin-trash-linear" />
               </IconButton>
             ) : (
               fields.length > 1 && <Box sx={{ width: "85px" }} />

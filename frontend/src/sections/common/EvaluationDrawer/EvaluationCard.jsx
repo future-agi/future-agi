@@ -9,6 +9,7 @@ import {
   Popper,
   IconButton,
 } from "@mui/material";
+import Section from "src/components/section";
 import PropTypes from "prop-types";
 import Iconify from "../../../components/iconify";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
@@ -157,24 +158,20 @@ const EvaluationCard = ({
   }, [createGroupMode, evalItem?.id, selectedEvals]);
 
   return (
-    <Paper
-      elevation={3}
+    <Section
+      variant="panel"
       sx={{
         minHeight: "114px",
         display: "flex",
         flexDirection: "column",
         justifyContent: "space-between",
-        borderRadius: "4px !important",
-        boxShadow: 0,
         cursor: "pointer",
-        border: "1px solid",
-        borderColor: "divider",
         paddingX: "12px",
         paddingY: "16px",
         position: "relative",
         gap: 2,
         ...(isSelected && {
-          borderColor: "primary.main",
+          borderColor: "text.primary",
           bgcolor: "action.hover",
         }),
       }}
@@ -226,11 +223,11 @@ const EvaluationCard = ({
             size="small"
             icon={
               <Iconify
-                icon="octicon:thumbsup-24"
+                icon="solar:like-linear"
                 width={16}
                 height={16}
                 style={{
-                  color: theme.palette.green[400],
+                  color: theme.palette.status.success.fg,
                   marginRight: "2px",
                   marginLeft: "0px",
                 }}
@@ -240,22 +237,16 @@ const EvaluationCard = ({
               position: "absolute",
               top: 0,
               right: 0,
-              backgroundColor: "green.o5",
-              color: "green.400",
-              fontSize: "12px",
+              backgroundColor: "status.success.bg",
+              color: "status.success.fg",
               lineHeight: "18px",
-              fontWeight: 500,
-              height: "24px",
-              px: "8px",
-              py: "4px",
-              borderRadius: "0px",
               borderBottomLeftRadius: "4px",
               "& .MuiChip-label": {
                 padding: 0,
               },
               "&:hover": {
-                backgroundColor: "green.o10",
-                color: "green.500",
+                backgroundColor: "status.success.bg",
+                color: "status.success.fg",
               },
             }}
           />
@@ -266,7 +257,7 @@ const EvaluationCard = ({
           <Typography
             sx={{
               fontWeight: 400,
-              fontSize: "14px",
+              fontSize: "13px",
               lineHeight: "22px",
               color: "text.primary",
             }}
@@ -276,7 +267,6 @@ const EvaluationCard = ({
           <IconButton
             sx={{
               paddingY: 0,
-              paddingX: 0.5,
             }}
             onClick={(e) => {
               e.stopPropagation();
@@ -288,7 +278,7 @@ const EvaluationCard = ({
             }}
           >
             <Iconify
-              icon="tabler:copy"
+              icon="solar:copy-linear"
               sx={{
                 width: theme.spacing(2),
                 height: theme.spacing(2),
@@ -323,15 +313,10 @@ const EvaluationCard = ({
             handleCategoryClick(eval_category);
           }}
           sx={{
-            height: "24px",
             backgroundColor: "action.hover",
-            borderRadius: "0px",
             borderBottomLeftRadius: "4px",
             color: "primary.main",
-            fontSize: "12px",
-            paddingX: "8px",
             lineHeight: "18px",
-            fontWeight: 500,
             flexShrink: 0, // Prevent category chip from shrinking
             "& .MuiChip-label": {
               padding: 0,
@@ -355,14 +340,9 @@ const EvaluationCard = ({
               }}
               size="small"
               sx={{
-                height: "24px",
                 backgroundColor: "background.neutral",
                 borderColor: "divider",
-                fontSize: "11px",
-                borderRadius: "2px",
-                paddingX: "12px",
                 lineHeight: "16px",
-                fontWeight: 400,
                 color: "text.primary",
                 "& .MuiChip-label": {
                   padding: 0,
@@ -387,14 +367,9 @@ const EvaluationCard = ({
                 }}
                 onMouseLeave={hidePopper}
                 sx={{
-                  height: "24px",
                   backgroundColor: "background.neutral",
                   borderColor: "divider",
-                  fontSize: "11px",
-                  borderRadius: "2px",
-                  paddingX: "12px",
                   lineHeight: "16px",
-                  fontWeight: 400,
                   color: "text.primary",
                   cursor: "pointer",
                   flexShrink: 0, // Prevent +N chip from shrinking
@@ -419,27 +394,10 @@ const EvaluationCard = ({
                 <Paper
                   sx={{
                     p: 1,
-                    border: "1px solid",
-                    borderColor: "divider",
-                    boxShadow: 2,
                     maxHeight: "160px",
                     overflowY: "auto",
                     width: "max-content",
                     minWidth: "135px",
-                    borderRadius: "8px",
-                    "&::-webkit-scrollbar": {
-                      width: "5px",
-                    },
-                    "&::-webkit-scrollbar-track": {
-                      background: "transparent",
-                    },
-                    "&::-webkit-scrollbar-thumb": {
-                      backgroundColor: "action.hover",
-                      borderRadius: "4px",
-                    },
-                    "&::-webkit-scrollbar-thumb:hover": {
-                      backgroundColor: "action.hover",
-                    },
                   }}
                 >
                   <Box display="flex" flexDirection="column" gap={0.5}>
@@ -453,7 +411,7 @@ const EvaluationCard = ({
                           handlePopperTagClick(tag);
                         }}
                         sx={{
-                          fontSize: "14px",
+                          fontSize: "13px",
                           fontWeight: 400,
                           color: "text.primary",
                           whiteSpace: "nowrap",
@@ -506,7 +464,7 @@ const EvaluationCard = ({
           )}
         </IconButton>
       </ShowComponent>
-    </Paper>
+    </Section>
   );
 };
 
