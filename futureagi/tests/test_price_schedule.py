@@ -117,6 +117,7 @@ def test_the_backend_ci_runs_when_the_gateway_schedule_changes():
         ),
         pytest.param(_one_row_file(input_cost_per_token=True), id="price-bool"),
         pytest.param(_one_row_file(output_cost_per_token="7.5e-7"), id="price-string"),
+        pytest.param(json.dumps({"": [_row()]}), id="empty-model-key"),
     ],
 )
 def test_the_loader_refuses_a_bad_file(tmp_path, content):
@@ -126,6 +127,96 @@ def test_the_loader_refuses_a_bad_file(tmp_path, content):
 
     with pytest.raises(PriceScheduleError, match=r"^The dated price file "):
         load_price_schedule(path)
+
+
+def _schedule_file(rows):
+    return json.dumps({"gemini-3.7-flash": rows})
+
+
+@pytest.mark.parametrize(
+    ("rows", "names"),
+    [
+        pytest.param(
+            [_row(**{"from": "2027-01-01"}), _row(**{"from": "2026-01-01"})],
+            ("row 1", "later dates"),
+            id="reordered-rows",
+        ),
+        pytest.param(
+            [_row(**{"from": "2027-01-01"}), _row(**{"from": "2027-01-01"})],
+            ("row 1", "later dates"),
+            id="two-rows-on-one-date",
+        ),
+        pytest.param(
+            [_row(**{"from": "2026-01-01"}), _row(input_cost_per_token=0)],
+            ("row 1", "input_cost_per_token", "positive"),
+            id="zero-price",
+        ),
+        pytest.param(
+            [_row(output_cost_per_token=-7.5e-6)],
+            ("row 0", "output_cost_per_token", "positive"),
+            id="negative-price",
+        ),
+        pytest.param(
+            [{k: v for k, v in _row().items() if k != "cache_read_input_token_cost"}],
+            ("row 0", "cache_read_input_token_cost", "missing"),
+            id="missing-field",
+        ),
+        pytest.param(
+            [{k: v for k, v in _row().items() if k != "from"}],
+            ("row 0 is missing its 'from' date.",),
+            id="missing-date",
+        ),
+        pytest.param(
+            [_row(surprise=1)],
+            ("row 0", "surprise", "unknown"),
+            id="unknown-field",
+        ),
+        pytest.param(
+            [_row(input_cost_per_token=float("inf"))],
+            ("row 0", "input_cost_per_token", "finite"),
+            id="infinite-price",
+        ),
+        pytest.param(
+            [_row(output_cost_per_token=float("nan"))],
+            ("row 0", "output_cost_per_token", "finite"),
+            id="nan-price",
+        ),
+        pytest.param(
+            [_row(input_cost_per_token_batches=0)],
+            ("row 0", "input_cost_per_token_batches", "positive"),
+            id="zero-batch-price",
+        ),
+        pytest.param(
+            [_row(input_cost_per_token=10**400)],
+            ("row 0", "input_cost_per_token", "positive"),
+            id="huge-integer-price",
+        ),
+        pytest.param([], ("no rows",), id="empty-row-list"),
+        pytest.param({"from": "2027-01-01"}, ("list of rows",), id="entry-not-a-list"),
+        pytest.param(["2027-01-01"], ("row 0", "object"), id="row-not-an-object"),
+    ],
+)
+def test_the_loader_names_the_entry_and_row_it_refuses(tmp_path, rows, names):
+    path = tmp_path / "s.json"
+    path.write_text(_schedule_file(rows), encoding="utf-8")
+
+    with pytest.raises(PriceScheduleError) as refused:
+        load_price_schedule(path)
+
+    message = str(refused.value)
+    assert str(path) in message
+    assert "gemini-3.7-flash" in message
+    for name in names:
+        assert name in message
+
+
+def test_the_shipped_schedule_loads_in_date_order():
+    loaded = load_price_schedule(PRICE_SCHEDULE_PATH)
+
+    assert loaded == PRICE_SCHEDULE
+    for key, rows in loaded.items():
+        starts = [start for start, _ in rows]
+        assert starts == sorted(set(starts)), key
 
 
 def test_importing_without_the_copy_fails_loudly(tmp_path):

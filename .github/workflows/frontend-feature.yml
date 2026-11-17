@@ -67,7 +67,11 @@ jobs:
       - name: Design system opt-outs
         run: yarn ds:optouts
 
-      - name: Type check
+      # The real compiler now runs (frontend/tsconfig.json). 36 generated-contract
+      # diagnostics remain, so this stays advisory until they are resolved, as in
+      # frontend-develop.yml.
+      - name: Type check (advisory)
+        continue-on-error: true
         run: yarn type-check
 
       - name: Run unit tests

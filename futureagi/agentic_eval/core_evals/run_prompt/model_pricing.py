@@ -323,7 +323,7 @@ def get_model_info(model_name: str) -> Optional[dict]:
 
 
 @lru_cache(maxsize=512)
-def _catalogue_pricing(model_name: str) -> Optional[tuple[Optional[str], dict]]:
+def _catalogue_pricing(model_name: str) -> tuple[str | None, dict] | None:
     """The catalogue entry a name resolves to and its static pricing.
 
     Cached per process, so it never holds a dated price: one cached before
@@ -349,9 +349,7 @@ def _utc_now() -> datetime:
     return datetime.now(UTC)
 
 
-def get_model_pricing(
-    model_name: str, *, at: Optional[datetime] = None
-) -> Optional[dict]:
+def get_model_pricing(model_name: str, *, at: datetime | None = None) -> dict | None:
     """
     Get pricing information for a model, as in force at a moment.
 
