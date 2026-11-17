@@ -12,6 +12,8 @@ const visuallyHidden = {
 };
 const CHECKBOX = '.MuiTableCell-paddingCheckbox';
 const ACTIONS = '[data-cell="actions"]';
+const ROW_LINK = '[data-row-link="true"]';
+const ROW_CHEVRON = '[data-cell="row-chevron"]';
 const TITLE = `& tbody td:first-of-type:not(${CHECKBOX}), & tbody td${CHECKBOX} + td`;
 const FIRST_DETAIL = `& tbody td:first-of-type:not(${CHECKBOX}) + td, & tbody td${CHECKBOX} + td + td`;
 
@@ -23,6 +25,8 @@ const FIRST_DETAIL = `& tbody td:first-of-type:not(${CHECKBOX}) + td, & tbody td
  * its lines; only plain text truncates); cells marked
  * `data-cell="actions"` get their own line. The header stays in the
  * accessibility tree but is visually hidden. Desktop layout is untouched.
+ * Rows built with `rowLinkProps` become tappable cards whose
+ * `data-cell="row-chevron"` cell (from `RowActionsCell`) sits on the right.
  */
 export const stackedTableSx = (theme) => ({
   [theme.breakpoints.down('sm')]: {
@@ -49,6 +53,13 @@ export const stackedTableSx = (theme) => ({
       '& > *': { whiteSpace: 'normal' },
     },
     [`& tbody td${ACTIONS}`]: { display: 'block', mt: 1, '&::before': { content: 'none' } },
+    // Tappable cards (UXF-12): a row that opens its primary target keeps room
+    // on the right for the trailing chevron, which sits centred on the card.
+    [`& tbody tr${ROW_LINK}`]: { position: 'relative', pr: 4 },
+    [`& tbody td${ROW_CHEVRON}`]: {
+      position: 'absolute', right: 0, top: '50%', transform: 'translateY(-50%)',
+      display: 'flex', maxWidth: 'none', color: 'text.secondary', '&::before': { content: 'none' },
+    },
   },
 });
 
@@ -101,3 +112,44 @@ export const fabGutterSx = (theme) => ({
     '& tr > th:last-of-type, & tr > td:last-of-type': { pr: 9 },
   },
 });
+
+// Controls inside a row keep their own click; only the rest of the row opens it.
+const ROW_IGNORE = 'a,button,input,select,textarea,label,[role="button"],[role="checkbox"],[role="menuitem"],[role="menu"],[role="switch"],[data-row-ignore]';
+
+/**
+ * Props for a `TableRow` whose whole row opens its primary target (UXF-12,
+ * design-system data-table rule: clicking the row opens it, every action is in
+ * the trailing ⋯). Pass the same `primary` you give `RowActionsCell`.
+ *
+ *   <TableRow {...rowLinkProps(primary)}> … <RowActionsCell primary={primary} … /></TableRow>
+ *
+ * primary: { label, onClick, disabled? }. A disabled or missing primary gives
+ * an ordinary row. Clicks on links, buttons, checkboxes and menus inside the
+ * row, and clicks that end a text selection, do not open the row. Enter on the
+ * focused row opens it; the same action is also the first item in the ⋯ menu.
+ */
+export function rowLinkProps(primary) {
+  if (!primary || primary.disabled || typeof primary.onClick !== 'function') return {};
+  return {
+    hover: true,
+    tabIndex: 0,
+    'data-row-link': 'true',
+    onClick: (event) => {
+      if (event.defaultPrevented) return;
+      const control = event.target instanceof Element ? event.target.closest(ROW_IGNORE) : null;
+      if (control && control !== event.currentTarget && event.currentTarget.contains(control)) return;
+      const selection = typeof window !== 'undefined' && window.getSelection ? window.getSelection() : null;
+      if (selection && !selection.isCollapsed && String(selection).trim()) return;
+      primary.onClick(event);
+    },
+    onKeyDown: (event) => {
+      if (event.key !== 'Enter' || event.target !== event.currentTarget) return;
+      event.preventDefault();
+      primary.onClick(event);
+    },
+    sx: {
+      cursor: 'pointer',
+      '&:focus-visible': { outline: 2, outlineColor: 'primary.main', outlineOffset: -2 },
+    },
+  };
+}

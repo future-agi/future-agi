@@ -32,6 +32,16 @@ import { ROW_HEIGHT, TABLE_HEADER_HEIGHT } from "src/theme/sizes";
 import { usePreviewState } from "../components/SkillsStatePreview";
 import { buildUsageChart } from "./usageChart";
 
+// Fetch channels, as people read them. SDK fetches (SKILL-TRACES §6.7) also
+// name the SDK version that fetched, when the server reports it.
+const CHANNEL_LABELS = { api: "API", mcp: "MCP", download: "Download", sdk: "SDK" };
+export const channelLabel = (item) => {
+  const name = CHANNEL_LABELS[item?.channel] || item?.channel || "Unknown";
+  const raw = item?.sdkVersion ?? item?.sdk_version;
+  const version = typeof raw === "string" ? raw.trim() : "";
+  return item?.channel === "sdk" && version ? `${name} · ${version}` : name;
+};
+
 export default function UsageTab({ skill }) {
   const theme = useTheme();
   const preview = usePreviewState();
@@ -113,22 +123,28 @@ export default function UsageTab({ skill }) {
   // and the adoption panel's, so a disclosure the reader opened stays open when the data arrives.
   const [aboutOpen, setAboutOpen] = useState(false);
   const usageShown = !(preview === "loading" || query.isPending || preview === "error" || query.isError || empty) && Boolean(usage);
+  // The tab stays "Activity"; its section is "Retrieval (fetches)" (SKILL-TRACES §2.2, §15 D4).
   return (
+    <Section
+      title="Retrieval (fetches)"
+      actions={
+        <TextField
+          select
+          size="small"
+          label="Time range"
+          value={days}
+          onChange={(event) => setDays(Number(event.target.value))}
+          sx={{ width: 180 }}
+        >
+          {[7, 30, 90].map((value) => (
+            <MenuItem key={value} value={value}>
+              Last {value} days
+            </MenuItem>
+          ))}
+        </TextField>
+      }
+    >
     <Stack spacing={3}>
-      <TextField
-        select
-        size="small"
-        label="Time range"
-        value={days}
-        onChange={(event) => setDays(Number(event.target.value))}
-        sx={{ width: 180 }}
-      >
-        {[7, 30, 90].map((value) => (
-          <MenuItem key={value} value={value}>
-            Last {value} days
-          </MenuItem>
-        ))}
-      </TextField>
       {preview === "loading" || query.isPending ? (
         <ContentSkeleton variant="panel" label="Loading usage" />
       ) : preview === "error" || query.isError ? (
@@ -140,7 +156,7 @@ export default function UsageTab({ skill }) {
       ) : empty ? (
         <EmptyState
           title="No fetches in this period"
-          description="Uses appear when someone resolves, downloads or reads this skill through the API or MCP."
+          description="Fetches appear when someone resolves, downloads or reads this skill through the API, the SDK or MCP."
         />
       ) : (
         usage && (
@@ -243,7 +259,7 @@ export default function UsageTab({ skill }) {
                         sx={{ height: ROW_HEIGHT.default }}
                       >
                         <TableCell>{item.label}</TableCell>
-                        <TableCell>{item.channel}</TableCell>
+                        <TableCell>{channelLabel(item)}</TableCell>
                         <TableCell align="right">
                           {item.count.toLocaleString()}
                         </TableCell>
@@ -261,6 +277,7 @@ export default function UsageTab({ skill }) {
       {/* While the adoption panel is showing it carries this caveat inside its own "About this data"; otherwise it stands alone. */}
       {!usageShown && <TechnicalDetails title="About this data" open={aboutOpen} onToggle={setAboutOpen}>{fetchMeaning}</TechnicalDetails>}
     </Stack>
+    </Section>
   );
 }
 UsageTab.propTypes = { skill: PropTypes.object.isRequired };
