@@ -1,0 +1,66 @@
+name: E2E Harness Self-tests
+
+on:
+  pull_request:
+    branches: [dev, main]
+    paths:
+      - "e2e/**"
+      - "bin/e2e"
+      - ".github/workflows/e2e-ci.yml"
+      - ".github/workflows/e2e-harness-selftest.yml"
+      # Inputs read outside e2e/ by the coverage and host-update self-tests.
+      - ".github/PULL_REQUEST_TEMPLATE.md"
+      - "api_contracts/host-update/**"
+  push:
+    branches: [dev, main]
+    paths:
+      - "e2e/**"
+      - "bin/e2e"
+      - ".github/workflows/e2e-ci.yml"
+      - ".github/workflows/e2e-harness-selftest.yml"
+      - ".github/PULL_REQUEST_TEMPLATE.md"
+      - "api_contracts/host-update/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-harness-selftest-${{ github.event_name == 'push' && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  selftest:
+    name: e2e harness self-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: e2e
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          # Keep the harness on the same Node version as e2e-ci.yml.
+          node-version: "22.18"
+          cache: yarn
+          cache-dependency-path: e2e/yarn.lock
+
+      - name: Install harness
+        run: yarn install --frozen-lockfile
+
+      # These checks need neither the application stack nor a browser install.
+      - name: Harness self-tests
+        run: yarn selftest
+
+      - name: Harness self-tests (standalone)
+        run: E2E_STACK=standalone yarn selftest
+
+      - name: Typecheck harness
+        run: yarn typecheck
+
+      - name: Flow catalog is current
+        run: yarn catalog:check

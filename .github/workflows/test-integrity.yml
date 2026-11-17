@@ -1,0 +1,42 @@
+name: Test integrity
+
+# Advisory rollout: do not make this a required status check yet. Errors fail
+# the job; warnings only ask for review. No branches filter, including stacked PRs.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+  workflow_dispatch:
+    inputs:
+      base:
+        description: Base ref to compare with (the checker resolves the merge base)
+        required: false
+        default: origin/dev
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-integrity-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-integrity:
+    name: Test integrity (new errors and review warnings)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Annotation lines must match the PR head, not the synthetic merge commit.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Self-test the gate and its throwaway-repository canary
+        run: python3 -I scripts/test_check_test_integrity.py
+      - name: Report test-integrity changes
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.sha || inputs.base || 'origin/dev' }}
+        run: python3 -I scripts/check_test_integrity.py --base "$BASE_REF"

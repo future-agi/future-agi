@@ -21432,7 +21432,8 @@ export const ModelHubDevelopsAddRunPromptColumnCreateBody = zod.object({
         .min(modelHubDevelopsAddRunPromptColumnCreateBodyConfigTemperatureMin)
         .max(modelHubDevelopsAddRunPromptColumnCreateBodyConfigTemperatureMax)
         .optional()
-        .describe("Controls the randomness. Value between 0 and 2."),
+        .describe("Controls the randomness. Value between 0 and 2.")
+        .nullable(),
       frequency_penalty: zod
         .number()
         .min(
@@ -21442,7 +21443,8 @@ export const ModelHubDevelopsAddRunPromptColumnCreateBody = zod.object({
           modelHubDevelopsAddRunPromptColumnCreateBodyConfigFrequencyPenaltyMax,
         )
         .optional()
-        .describe("Penalty for word repetition. Value between -2 and 2."),
+        .describe("Penalty for word repetition. Value between -2 and 2.")
+        .nullable(),
       presence_penalty: zod
         .number()
         .min(
@@ -21452,7 +21454,8 @@ export const ModelHubDevelopsAddRunPromptColumnCreateBody = zod.object({
           modelHubDevelopsAddRunPromptColumnCreateBodyConfigPresencePenaltyMax,
         )
         .optional()
-        .describe("Penalty for new word usage. Value between -2 and 2."),
+        .describe("Penalty for new word usage. Value between -2 and 2.")
+        .nullable(),
       max_tokens: zod
         .number()
         .min(1)
@@ -21460,7 +21463,8 @@ export const ModelHubDevelopsAddRunPromptColumnCreateBody = zod.object({
         .optional()
         .describe(
           "Maximum number of tokens to generate. Null = use provider default.",
-        ),
+        )
+        .nullable(),
       top_p: zod
         .number()
         .min(modelHubDevelopsAddRunPromptColumnCreateBodyConfigTopPMin)
@@ -21468,11 +21472,13 @@ export const ModelHubDevelopsAddRunPromptColumnCreateBody = zod.object({
         .optional()
         .describe(
           "Controls diversity via nucleus sampling. Value between 0 and 1.",
-        ),
+        )
+        .nullable(),
       response_format: zod
         .union([zod.string(), zod.object({}).passthrough()])
         .optional()
-        .describe("String or JSON object."),
+        .describe("String or JSON object.")
+        .nullable(),
       tool_choice: zod
         .union([
           zod.literal("auto"),
@@ -21480,7 +21486,8 @@ export const ModelHubDevelopsAddRunPromptColumnCreateBody = zod.object({
           zod.literal(null),
         ])
         .optional()
-        .describe("Tool selection mode: 'auto' or 'required'."),
+        .describe("Tool selection mode: 'auto' or 'required'.")
+        .nullable(),
       tools: zod
         .array(
           zod.record(
@@ -21489,17 +21496,20 @@ export const ModelHubDevelopsAddRunPromptColumnCreateBody = zod.object({
           ),
         )
         .optional()
-        .describe("List of tools with tool properties if available."),
+        .describe("List of tools with tool properties if available.")
+        .nullable(),
       output_format: zod
         .enum(["array", "string", "number", "object", "audio", "image"])
         .optional()
-        .describe("Output format type."),
+        .describe("Output format type.")
+        .nullable(),
       concurrency: zod
         .number()
         .min(1)
         .max(modelHubDevelopsAddRunPromptColumnCreateBodyConfigConcurrencyMax)
         .optional()
-        .describe("Number of concurrent operations allowed. Maximum 10."),
+        .describe("Number of concurrent operations allowed. Maximum 10.")
+        .nullable(),
     })
     .default(modelHubDevelopsAddRunPromptColumnCreateBodyConfigDefault),
 });
@@ -21817,7 +21827,8 @@ export const ModelHubDevelopsEditRunPromptColumnCreateBody = zod.object({
         .min(modelHubDevelopsEditRunPromptColumnCreateBodyConfigTemperatureMin)
         .max(modelHubDevelopsEditRunPromptColumnCreateBodyConfigTemperatureMax)
         .optional()
-        .describe("Controls the randomness. Value between 0 and 2."),
+        .describe("Controls the randomness. Value between 0 and 2.")
+        .nullable(),
       frequency_penalty: zod
         .number()
         .min(
@@ -21827,7 +21838,8 @@ export const ModelHubDevelopsEditRunPromptColumnCreateBody = zod.object({
           modelHubDevelopsEditRunPromptColumnCreateBodyConfigFrequencyPenaltyMax,
         )
         .optional()
-        .describe("Penalty for word repetition. Value between -2 and 2."),
+        .describe("Penalty for word repetition. Value between -2 and 2.")
+        .nullable(),
       presence_penalty: zod
         .number()
         .min(
@@ -21837,7 +21849,8 @@ export const ModelHubDevelopsEditRunPromptColumnCreateBody = zod.object({
           modelHubDevelopsEditRunPromptColumnCreateBodyConfigPresencePenaltyMax,
         )
         .optional()
-        .describe("Penalty for new word usage. Value between -2 and 2."),
+        .describe("Penalty for new word usage. Value between -2 and 2.")
+        .nullable(),
       max_tokens: zod
         .number()
         .min(1)
@@ -21845,7 +21858,8 @@ export const ModelHubDevelopsEditRunPromptColumnCreateBody = zod.object({
         .optional()
         .describe(
           "Maximum number of tokens to generate. Null = use provider default.",
-        ),
+        )
+        .nullable(),
       top_p: zod
         .number()
         .min(modelHubDevelopsEditRunPromptColumnCreateBodyConfigTopPMin)
@@ -21853,11 +21867,13 @@ export const ModelHubDevelopsEditRunPromptColumnCreateBody = zod.object({
         .optional()
         .describe(
           "Controls diversity via nucleus sampling. Value between 0 and 1.",
-        ),
+        )
+        .nullable(),
       response_format: zod
         .union([zod.string(), zod.object({}).passthrough()])
         .optional()
-        .describe("String or JSON object."),
+        .describe("String or JSON object.")
+        .nullable(),
       tool_choice: zod
         .union([
           zod.literal("auto"),
@@ -21865,7 +21881,8 @@ export const ModelHubDevelopsEditRunPromptColumnCreateBody = zod.object({
           zod.literal(null),
         ])
         .optional()
-        .describe("Tool selection mode: 'auto' or 'required'."),
+        .describe("Tool selection mode: 'auto' or 'required'.")
+        .nullable(),
       tools: zod
         .array(
           zod.record(
@@ -21874,17 +21891,20 @@ export const ModelHubDevelopsEditRunPromptColumnCreateBody = zod.object({
           ),
         )
         .optional()
-        .describe("List of tools with tool properties if available."),
+        .describe("List of tools with tool properties if available.")
+        .nullable(),
       output_format: zod
         .enum(["array", "string", "number", "object", "audio", "image"])
         .optional()
-        .describe("Output format type."),
+        .describe("Output format type.")
+        .nullable(),
       concurrency: zod
         .number()
         .min(1)
         .max(modelHubDevelopsEditRunPromptColumnCreateBodyConfigConcurrencyMax)
         .optional()
-        .describe("Number of concurrent operations allowed. Maximum 10."),
+        .describe("Number of concurrent operations allowed. Maximum 10.")
+        .nullable(),
     })
     .default(modelHubDevelopsEditRunPromptColumnCreateBodyConfigDefault),
 });
@@ -22131,7 +22151,8 @@ export const ModelHubDevelopsPreviewRunPromptColumnCreateBody = zod.object({
           modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigTemperatureMax,
         )
         .optional()
-        .describe("Controls the randomness. Value between 0 and 2."),
+        .describe("Controls the randomness. Value between 0 and 2.")
+        .nullable(),
       frequency_penalty: zod
         .number()
         .min(
@@ -22141,7 +22162,8 @@ export const ModelHubDevelopsPreviewRunPromptColumnCreateBody = zod.object({
           modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigFrequencyPenaltyMax,
         )
         .optional()
-        .describe("Penalty for word repetition. Value between -2 and 2."),
+        .describe("Penalty for word repetition. Value between -2 and 2.")
+        .nullable(),
       presence_penalty: zod
         .number()
         .min(
@@ -22151,7 +22173,8 @@ export const ModelHubDevelopsPreviewRunPromptColumnCreateBody = zod.object({
           modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigPresencePenaltyMax,
         )
         .optional()
-        .describe("Penalty for new word usage. Value between -2 and 2."),
+        .describe("Penalty for new word usage. Value between -2 and 2.")
+        .nullable(),
       max_tokens: zod
         .number()
         .min(1)
@@ -22159,7 +22182,8 @@ export const ModelHubDevelopsPreviewRunPromptColumnCreateBody = zod.object({
         .optional()
         .describe(
           "Maximum number of tokens to generate. Null = use provider default.",
-        ),
+        )
+        .nullable(),
       top_p: zod
         .number()
         .min(modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigTopPMin)
@@ -22167,11 +22191,13 @@ export const ModelHubDevelopsPreviewRunPromptColumnCreateBody = zod.object({
         .optional()
         .describe(
           "Controls diversity via nucleus sampling. Value between 0 and 1.",
-        ),
+        )
+        .nullable(),
       response_format: zod
         .union([zod.string(), zod.object({}).passthrough()])
         .optional()
-        .describe("String or JSON object."),
+        .describe("String or JSON object.")
+        .nullable(),
       tool_choice: zod
         .union([
           zod.literal("auto"),
@@ -22179,7 +22205,8 @@ export const ModelHubDevelopsPreviewRunPromptColumnCreateBody = zod.object({
           zod.literal(null),
         ])
         .optional()
-        .describe("Tool selection mode: 'auto' or 'required'."),
+        .describe("Tool selection mode: 'auto' or 'required'.")
+        .nullable(),
       tools: zod
         .array(
           zod.record(
@@ -22188,11 +22215,13 @@ export const ModelHubDevelopsPreviewRunPromptColumnCreateBody = zod.object({
           ),
         )
         .optional()
-        .describe("List of tools with tool properties if available."),
+        .describe("List of tools with tool properties if available.")
+        .nullable(),
       output_format: zod
         .enum(["array", "string", "number", "object", "audio", "image"])
         .optional()
-        .describe("Output format type."),
+        .describe("Output format type.")
+        .nullable(),
       concurrency: zod
         .number()
         .min(1)
@@ -22200,7 +22229,8 @@ export const ModelHubDevelopsPreviewRunPromptColumnCreateBody = zod.object({
           modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigConcurrencyMax,
         )
         .optional()
-        .describe("Number of concurrent operations allowed. Maximum 10."),
+        .describe("Number of concurrent operations allowed. Maximum 10.")
+        .nullable(),
     })
     .default(modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigDefault),
   first_n_rows: zod.number().min(1).optional(),
@@ -32259,9 +32289,7 @@ export const ModelHubTestEvaluationCreateBody = zod.object({
   optional_keys: zod
     .array(zod.string().min(1))
     .default(modelHubTestEvaluationCreateBodyOptionalKeysDefault),
-  variable_keys: zod
-    .object({})
-    .passthrough()
+  variable_keys: jsonValueSchema
     .default(modelHubTestEvaluationCreateBodyVariableKeysDefault)
     .describe("Any valid JSON value."),
   run_prompt_column: zod
@@ -42089,13 +42117,13 @@ export const simulateApiHarnessJobsCreateBodyRuntimeMaxDurationSecondsMax = 8640
 
 export const simulateApiHarnessJobsCreateBodyRuntimeNetworkPolicyDefault = `live`;
 export const simulateApiHarnessJobsCreateBodyRuntimeDefault = {
-  isolation: "dedicated_vm",
+  isolation: "dedicated_vm" as const,
   cpu_units: 4,
   memory_mb: 8192,
   parallelism: 1,
   concurrency_weight: 1,
   max_duration_seconds: 3600,
-  network_policy: "live",
+  network_policy: "live" as const,
 };
 export const simulateApiHarnessJobsCreateBodySecurityUntrustedSourceDefault =
   true;
@@ -42132,7 +42160,7 @@ export const simulateApiHarnessJobsCreateBodyRetryDefault = {
   max_infrastructure_attempts: 2,
   initial_backoff_seconds: 1,
   max_backoff_seconds: 15,
-  retryable_domains: ["infrastructure", "connectivity"],
+  retryable_domains: ["infrastructure" as const, "connectivity" as const],
 };
 export const simulateApiHarnessJobsCreateBodyArtifactsRetentionDaysDefault = 30;
 export const simulateApiHarnessJobsCreateBodyArtifactsRetentionDaysMax = 3650;
@@ -42437,13 +42465,13 @@ export const simulateApiHarnessJobsPreflightBodyRuntimeMaxDurationSecondsMax = 8
 
 export const simulateApiHarnessJobsPreflightBodyRuntimeNetworkPolicyDefault = `live`;
 export const simulateApiHarnessJobsPreflightBodyRuntimeDefault = {
-  isolation: "dedicated_vm",
+  isolation: "dedicated_vm" as const,
   cpu_units: 4,
   memory_mb: 8192,
   parallelism: 1,
   concurrency_weight: 1,
   max_duration_seconds: 3600,
-  network_policy: "live",
+  network_policy: "live" as const,
 };
 export const simulateApiHarnessJobsPreflightBodySecurityUntrustedSourceDefault =
   true;
@@ -42480,7 +42508,7 @@ export const simulateApiHarnessJobsPreflightBodyRetryDefault = {
   max_infrastructure_attempts: 2,
   initial_backoff_seconds: 1,
   max_backoff_seconds: 15,
-  retryable_domains: ["infrastructure", "connectivity"],
+  retryable_domains: ["infrastructure" as const, "connectivity" as const],
 };
 export const simulateApiHarnessJobsPreflightBodyArtifactsRetentionDaysDefault = 30;
 export const simulateApiHarnessJobsPreflightBodyArtifactsRetentionDaysMax = 3650;
@@ -70734,6 +70762,181 @@ export const TracerReplaySessionGenerateScenarioBody = zod.object({
     .default(tracerReplaySessionGenerateScenarioBodyGenerateGraphDefault),
 });
 
+export const tracerSavedSqlQueryListQueryOffsetDefault = 0;
+export const tracerSavedSqlQueryListQueryOffsetMin = 0;
+export const tracerSavedSqlQueryListQueryOffsetMax = 10000;
+
+export const TracerSavedSqlQueryListQueryParams = zod.object({
+  project_id: zod.string().uuid(),
+  offset: zod
+    .number()
+    .min(tracerSavedSqlQueryListQueryOffsetMin)
+    .max(tracerSavedSqlQueryListQueryOffsetMax)
+    .default(tracerSavedSqlQueryListQueryOffsetDefault),
+});
+
+export const TracerSavedSqlQueryListResponse = zod.object({
+  items: zod.array(
+    zod.object({
+      id: zod.string().uuid().optional(),
+      project_id: zod.string().optional(),
+      name: zod.string().min(1).optional(),
+      sql: zod.string().min(1).optional(),
+      visibility: zod.enum(["private", "project"]).optional(),
+      chart: zod.object({}).passthrough().optional(),
+      window_hours: zod.number().optional(),
+      created_at: zod.string().datetime({ offset: true }).optional(),
+      created_by_id: zod.string().optional(),
+    }),
+  ),
+  has_more: zod.boolean(),
+});
+
+export const tracerSavedSqlQueryCreateBodyNameMax = 160;
+
+export const tracerSavedSqlQueryCreateBodySqlMax = 32768;
+
+export const tracerSavedSqlQueryCreateBodyVisibilityDefault = `private`;
+export const tracerSavedSqlQueryCreateBodyChartTypeDefault = `table`;
+export const tracerSavedSqlQueryCreateBodyChartXMax = 128;
+
+export const tracerSavedSqlQueryCreateBodyChartYMax = 128;
+
+export const tracerSavedSqlQueryCreateBodyChartDefault = { type: "table" };
+export const tracerSavedSqlQueryCreateBodyWindowHoursDefault = 24;
+export const tracerSavedSqlQueryCreateBodyWindowHoursMax = 744;
+
+export const TracerSavedSqlQueryCreateBody = zod.object({
+  project_id: zod.string().uuid(),
+  name: zod.string().min(1).max(tracerSavedSqlQueryCreateBodyNameMax),
+  sql: zod.string().min(1).max(tracerSavedSqlQueryCreateBodySqlMax),
+  visibility: zod
+    .enum(["private", "project"])
+    .default(tracerSavedSqlQueryCreateBodyVisibilityDefault),
+  chart: zod
+    .object({
+      type: zod
+        .enum(["table", "bar"])
+        .default(tracerSavedSqlQueryCreateBodyChartTypeDefault),
+      x: zod
+        .string()
+        .min(1)
+        .max(tracerSavedSqlQueryCreateBodyChartXMax)
+        .optional(),
+      y: zod
+        .string()
+        .min(1)
+        .max(tracerSavedSqlQueryCreateBodyChartYMax)
+        .optional(),
+    })
+    .default(tracerSavedSqlQueryCreateBodyChartDefault),
+  window_hours: zod
+    .number()
+    .min(1)
+    .max(tracerSavedSqlQueryCreateBodyWindowHoursMax)
+    .default(tracerSavedSqlQueryCreateBodyWindowHoursDefault),
+});
+
+export const TracerSavedSqlQueryReadParams = zod.object({
+  id: zod.string(),
+});
+
+export const TracerSavedSqlQueryReadQueryParams = zod.object({
+  project_id: zod.string().uuid(),
+});
+
+export const TracerSavedSqlQueryReadResponse = zod.object({
+  id: zod.string().uuid().optional(),
+  project_id: zod.string().optional(),
+  name: zod.string().min(1).optional(),
+  sql: zod.string().min(1).optional(),
+  visibility: zod.enum(["private", "project"]).optional(),
+  chart: zod.object({}).passthrough().optional(),
+  window_hours: zod.number().optional(),
+  created_at: zod.string().datetime({ offset: true }).optional(),
+  created_by_id: zod.string().optional(),
+});
+
+export const TracerSavedSqlQueryPartialUpdateParams = zod.object({
+  id: zod.string(),
+});
+
+export const tracerSavedSqlQueryPartialUpdateBodyNameMax = 160;
+
+export const tracerSavedSqlQueryPartialUpdateBodySqlMax = 32768;
+
+export const tracerSavedSqlQueryPartialUpdateBodyVisibilityDefault = `private`;
+export const tracerSavedSqlQueryPartialUpdateBodyChartTypeDefault = `table`;
+export const tracerSavedSqlQueryPartialUpdateBodyChartXMax = 128;
+
+export const tracerSavedSqlQueryPartialUpdateBodyChartYMax = 128;
+
+export const tracerSavedSqlQueryPartialUpdateBodyChartDefault = {
+  type: "table",
+};
+export const tracerSavedSqlQueryPartialUpdateBodyWindowHoursDefault = 24;
+export const tracerSavedSqlQueryPartialUpdateBodyWindowHoursMax = 744;
+
+export const TracerSavedSqlQueryPartialUpdateBody = zod.object({
+  project_id: zod.string().uuid(),
+  name: zod.string().min(1).max(tracerSavedSqlQueryPartialUpdateBodyNameMax),
+  sql: zod.string().min(1).max(tracerSavedSqlQueryPartialUpdateBodySqlMax),
+  visibility: zod
+    .enum(["private", "project"])
+    .default(tracerSavedSqlQueryPartialUpdateBodyVisibilityDefault),
+  chart: zod
+    .object({
+      type: zod
+        .enum(["table", "bar"])
+        .default(tracerSavedSqlQueryPartialUpdateBodyChartTypeDefault),
+      x: zod
+        .string()
+        .min(1)
+        .max(tracerSavedSqlQueryPartialUpdateBodyChartXMax)
+        .optional(),
+      y: zod
+        .string()
+        .min(1)
+        .max(tracerSavedSqlQueryPartialUpdateBodyChartYMax)
+        .optional(),
+    })
+    .default(tracerSavedSqlQueryPartialUpdateBodyChartDefault),
+  window_hours: zod
+    .number()
+    .min(1)
+    .max(tracerSavedSqlQueryPartialUpdateBodyWindowHoursMax)
+    .default(tracerSavedSqlQueryPartialUpdateBodyWindowHoursDefault),
+});
+
+export const TracerSavedSqlQueryPartialUpdateResponse = zod.object({
+  id: zod.string().uuid().optional(),
+  project_id: zod.string().optional(),
+  name: zod.string().min(1).optional(),
+  sql: zod.string().min(1).optional(),
+  visibility: zod.enum(["private", "project"]).optional(),
+  chart: zod.object({}).passthrough().optional(),
+  window_hours: zod.number().optional(),
+  created_at: zod.string().datetime({ offset: true }).optional(),
+  created_by_id: zod.string().optional(),
+});
+
+export const TracerSavedSqlQueryDeleteParams = zod.object({
+  id: zod.string(),
+});
+
+export const TracerSavedSqlQueryDeleteQueryParams = zod.object({
+  project_id: zod.string().uuid(),
+});
+
+export const TracerSavedSqlQueryAddWidgetParams = zod.object({
+  id: zod.string(),
+});
+
+export const TracerSavedSqlQueryAddWidgetBody = zod.object({
+  project_id: zod.string().uuid(),
+  dashboard_id: zod.string().uuid(),
+});
+
 export const TracerSavedViewsListQueryParams = zod.object({
   page: zod
     .number()
@@ -72001,6 +72204,283 @@ export const TracerSharedTracesReadResponse = zod.object({
     graph: zod.object({}).passthrough(),
   }),
 });
+
+/**
+ * Read-only scans; creating a personal execution record grants no write access.
+ */
+export const tracerSqlQueryListQueryOffsetDefault = 0;
+export const tracerSqlQueryListQueryOffsetMin = 0;
+export const tracerSqlQueryListQueryOffsetMax = 10000;
+
+export const TracerSqlQueryListQueryParams = zod.object({
+  project_id: zod.string().uuid(),
+  offset: zod
+    .number()
+    .min(tracerSqlQueryListQueryOffsetMin)
+    .max(tracerSqlQueryListQueryOffsetMax)
+    .default(tracerSqlQueryListQueryOffsetDefault),
+});
+
+export const TracerSqlQueryListResponse = zod.object({
+  items: zod.array(
+    zod.object({
+      id: zod.string().uuid(),
+      project_id: zod.string().uuid(),
+      sql: zod.string().min(1),
+      state: zod.enum([
+        "queued",
+        "running",
+        "succeeded",
+        "failed",
+        "cancelled",
+      ]),
+      created_at: zod.string().datetime({ offset: true }),
+      expires_at: zod.string().datetime({ offset: true }),
+      finished_at: zod.string().datetime({ offset: true }),
+      reused: zod.boolean().optional(),
+      error: zod.string(),
+      result: zod.object({
+        columns: zod
+          .array(
+            zod.object({
+              name: zod.string().min(1),
+              type: zod.string().min(1),
+            }),
+          )
+          .optional(),
+        rows: zod.array(zod.array(zod.object({}).passthrough())).optional(),
+        truncated: zod.boolean().optional(),
+        row_count: zod.number().optional(),
+        result_bytes: zod.number().optional(),
+        elapsed_ms: zod.number().optional(),
+        offset: zod.number().optional(),
+        next_offset: zod.number().optional(),
+        has_more: zod.boolean().optional(),
+        page_row_count: zod.number().optional(),
+        previewed: zod.boolean().optional(),
+        retrieval_note: zod.string().optional(),
+      }),
+      expired: zod.boolean(),
+    }),
+  ),
+  has_more: zod.boolean(),
+});
+
+/**
+ * Read-only scans; creating a personal execution record grants no write access.
+ */
+export const TracerSqlQueryCatalogQueryParams = zod.object({
+  project_id: zod.string().uuid(),
+});
+
+export const TracerSqlQueryCatalogResponse = zod.object({
+  identity_semantics: zod.string().min(1),
+  version: zod.number(),
+  datasets: zod.array(
+    zod.object({
+      available: zod.boolean(),
+      unavailable_reason: zod.string(),
+      name: zod.string().min(1),
+      description: zod.string().min(1),
+      columns: zod.array(
+        zod.object({
+          name: zod.string().min(1),
+          type: zod.string().min(1),
+        }),
+      ),
+    }),
+  ),
+  examples: zod.array(
+    zod.object({
+      id: zod.string().min(1),
+      title: zod.string().min(1),
+      description: zod.string().min(1),
+      sql: zod.string().min(1),
+      datasets: zod.array(zod.string().min(1)),
+    }),
+  ),
+  max_rows: zod.number(),
+  max_window_days: zod.number(),
+  can_save: zod.boolean(),
+});
+
+/**
+ * Advisory index estimate of a query; never admits or blocks a run.
+ */
+export const tracerSqlQueryEstimateBodySqlMax = 32768;
+
+export const TracerSqlQueryEstimateBody = zod.object({
+  project_id: zod.string().uuid(),
+  sql: zod.string().min(1).max(tracerSqlQueryEstimateBodySqlMax),
+  start: zod.string().datetime({ offset: true }),
+  end: zod.string().datetime({ offset: true }),
+});
+
+export const TracerSqlQueryEstimateResponse = zod.object({
+  status: zod.enum(["ok", "unavailable"]),
+  reason: zod.string(),
+  sources: zod.array(
+    zod.object({
+      dataset: zod.string().min(1),
+      estimated: zod.boolean(),
+      parts: zod.number(),
+      marks: zod.number(),
+      max_rows: zod.number(),
+      reason: zod.string(),
+    }),
+  ),
+  max_rows_to_read: zod.number(),
+  exceeds_scan_bound: zod.boolean(),
+  elapsed_ms: zod.number(),
+});
+
+/**
+ * Read-only scans; creating a personal execution record grants no write access.
+ */
+export const TracerSqlQueryRunSavedBody = zod.object({
+  project_id: zod.string().uuid(),
+  saved_query_id: zod.string().uuid(),
+  start: zod.string().datetime({ offset: true }).optional(),
+  end: zod.string().datetime({ offset: true }).optional(),
+});
+
+/**
+ * Read-only scans; creating a personal execution record grants no write access.
+ */
+export const tracerSqlQueryRunBodySqlMax = 32768;
+
+export const tracerSqlQueryRunBodyReuseDefault = true;
+
+export const TracerSqlQueryRunBody = zod.object({
+  project_id: zod.string().uuid(),
+  sql: zod.string().min(1).max(tracerSqlQueryRunBodySqlMax),
+  start: zod.string().datetime({ offset: true }),
+  end: zod.string().datetime({ offset: true }),
+  reuse: zod.boolean().default(tracerSqlQueryRunBodyReuseDefault),
+});
+
+/**
+ * Read-only scans; creating a personal execution record grants no write access.
+ */
+export const TracerSqlQueryReadParams = zod.object({
+  id: zod.string(),
+});
+
+export const tracerSqlQueryReadQueryOffsetDefault = 0;
+export const tracerSqlQueryReadQueryOffsetMin = 0;
+export const tracerSqlQueryReadQueryOffsetMax = 10000;
+
+export const tracerSqlQueryReadQueryLimitMax = 1000;
+
+export const TracerSqlQueryReadQueryParams = zod.object({
+  project_id: zod.string().uuid(),
+  offset: zod
+    .number()
+    .min(tracerSqlQueryReadQueryOffsetMin)
+    .max(tracerSqlQueryReadQueryOffsetMax)
+    .default(tracerSqlQueryReadQueryOffsetDefault),
+  limit: zod
+    .number()
+    .min(1)
+    .max(tracerSqlQueryReadQueryLimitMax)
+    .optional()
+    .describe(
+      "Optional bounded result page; omitted REST requests retain the full snapshot. MCP defaults to 100. Wide rows are explicitly previewed; download for full cells.",
+    ),
+});
+
+export const TracerSqlQueryReadResponse = zod.object({
+  id: zod.string().uuid(),
+  project_id: zod.string().uuid(),
+  sql: zod.string().min(1),
+  state: zod.enum(["queued", "running", "succeeded", "failed", "cancelled"]),
+  created_at: zod.string().datetime({ offset: true }),
+  expires_at: zod.string().datetime({ offset: true }),
+  finished_at: zod.string().datetime({ offset: true }),
+  reused: zod.boolean().optional(),
+  error: zod.string(),
+  result: zod.object({
+    columns: zod
+      .array(
+        zod.object({
+          name: zod.string().min(1),
+          type: zod.string().min(1),
+        }),
+      )
+      .optional(),
+    rows: zod.array(zod.array(zod.object({}).passthrough())).optional(),
+    truncated: zod.boolean().optional(),
+    row_count: zod.number().optional(),
+    result_bytes: zod.number().optional(),
+    elapsed_ms: zod.number().optional(),
+    offset: zod.number().optional(),
+    next_offset: zod.number().optional(),
+    has_more: zod.boolean().optional(),
+    page_row_count: zod.number().optional(),
+    previewed: zod.boolean().optional(),
+    retrieval_note: zod.string().optional(),
+  }),
+  expired: zod.boolean(),
+});
+
+/**
+ * Read-only scans; creating a personal execution record grants no write access.
+ */
+export const TracerSqlQueryCancelParams = zod.object({
+  id: zod.string(),
+});
+
+export const TracerSqlQueryCancelBody = zod.object({
+  project_id: zod.string().uuid(),
+});
+
+export const TracerSqlQueryCancelResponse = zod.object({
+  id: zod.string().uuid(),
+  project_id: zod.string().uuid(),
+  sql: zod.string().min(1),
+  state: zod.enum(["queued", "running", "succeeded", "failed", "cancelled"]),
+  created_at: zod.string().datetime({ offset: true }),
+  expires_at: zod.string().datetime({ offset: true }),
+  finished_at: zod.string().datetime({ offset: true }),
+  reused: zod.boolean().optional(),
+  error: zod.string(),
+  result: zod.object({
+    columns: zod
+      .array(
+        zod.object({
+          name: zod.string().min(1),
+          type: zod.string().min(1),
+        }),
+      )
+      .optional(),
+    rows: zod.array(zod.array(zod.object({}).passthrough())).optional(),
+    truncated: zod.boolean().optional(),
+    row_count: zod.number().optional(),
+    result_bytes: zod.number().optional(),
+    elapsed_ms: zod.number().optional(),
+    offset: zod.number().optional(),
+    next_offset: zod.number().optional(),
+    has_more: zod.boolean().optional(),
+    page_row_count: zod.number().optional(),
+    previewed: zod.boolean().optional(),
+    retrieval_note: zod.string().optional(),
+  }),
+  expired: zod.boolean(),
+});
+
+/**
+ * Read-only scans; creating a personal execution record grants no write access.
+ */
+export const TracerSqlQueryDownloadParams = zod.object({
+  id: zod.string(),
+});
+
+export const TracerSqlQueryDownloadQueryParams = zod.object({
+  project_id: zod.string().uuid(),
+  file_format: zod.enum(["csv", "parquet"]),
+});
+
+export const TracerSqlQueryDownloadResponse = zod.instanceof(File);
 
 export const tracerTraceAnnotationGetAnnotationValuesQueryObservationSpanIdMax = 255;
 
