@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from uuid import uuid4, uuid5
 
 import pytest
 from rest_framework.test import APIClient
 
-from simulate.models import HostedHarnessReceipt
+from simulate.models import HostedHarnessAttempt, HostedHarnessReceipt
 from simulate.services import harness_usage
 from simulate.services.hosted_harness import (
     HostedHarnessError,
@@ -24,6 +25,30 @@ from tfc.ee_loader import has_ee
 requires_cloud_billing = pytest.mark.skipif(
     not has_ee("ee.cloud"), reason="requires ee/cloud billing.yaml (OSS lane)"
 )
+
+# Authoring is priced at the attempt's start. Tests that are not about the date
+# start in 2026, so their amounts do not change when the 2027 prices apply.
+STARTED_IN_2026 = datetime(2026, 11, 2, 12, tzinfo=UTC)
+T26 = datetime(2026, 12, 31, 23, 59, 59, 999999, tzinfo=UTC)
+T27 = datetime(2027, 1, 1, tzinfo=UTC)
+AT_EACH_PRICE = [(T26, 0.585), (T27, 1.17)]
+
+
+def _start_attempt_at(attempt, moment):
+    HostedHarnessAttempt.no_workspace_objects.filter(id=attempt.id).update(
+        created_at=moment
+    )
+    attempt.refresh_from_db()
+
+
+def _ai_credits_equal_usd(monkeypatch):
+    from ee.usage.services.config import BillingConfig
+
+    monkeypatch.setattr(
+        BillingConfig,
+        "get",
+        lambda: SimpleNamespace(calculate_ai_credits=lambda cost_usd: cost_usd),
+    )
 
 
 @pytest.fixture
@@ -146,6 +171,7 @@ def test_authoring_tokens_become_deterministic_ai_credit_events(
     metered_attempt, django_capture_on_commit_callbacks
 ):
     capability, events = metered_attempt
+    _start_attempt_at(capability.attempt, STARTED_IN_2026)
     spend = {
         "stages": [
             {
@@ -171,6 +197,32 @@ def test_authoring_tokens_become_deterministic_ai_credit_events(
     assert harness_usage.harness_consumption(capability.attempt.job)[
         "ai_credits"
     ] == pytest.approx(70.2)
+
+
+@pytest.mark.django_db
+@pytest.mark.requires_ee
+@pytest.mark.parametrize(("created_at", "cost"), AT_EACH_PRICE)
+def test_live_authoring_estimate_prices_at_the_attempts_start(
+    metered_attempt, monkeypatch, created_at, cost
+):
+    capability, events = metered_attempt
+    _start_attempt_at(capability.attempt, created_at)
+    _ai_credits_equal_usd(monkeypatch)
+    job = capability.attempt.job
+    stage = {
+        "stage": "build-environment",
+        "models": ["gemini-3.7-flash"],
+        "tokens_in": 1_000_000,
+        "tokens_out": 100_000,
+        "tokens_cached": 800_000,
+    }
+    job.payload["metadata"] = {
+        "harness_spend": {"attempts": {"1": {"stages": [stage]}}}
+    }
+    job.save(update_fields=["payload"])
+
+    assert harness_usage.harness_consumption(job)["ai_credits"] == pytest.approx(cost)
+    assert events == []
 
 
 @pytest.mark.django_db
@@ -219,6 +271,7 @@ def test_live_authoring_estimates_refresh_without_charging_or_double_counting(
     metered_attempt, django_capture_on_commit_callbacks
 ):
     capability, events = metered_attempt
+    _start_attempt_at(capability.attempt, STARTED_IN_2026)
     job = capability.attempt.job
     first_stage = {
         "stage": "understand-agent",
@@ -238,6 +291,7 @@ def test_live_authoring_estimates_refresh_without_charging_or_double_counting(
     assert events == []
 
     second = register_attempt(job.id, endpoint_base_url="https://platform.example")
+    _start_attempt_at(second.attempt, STARTED_IN_2026 + timedelta(minutes=5))
     second_spend = {"stages": [{**first_stage, "tokens_out": 200_000}]}
     job.refresh_from_db()
     job.payload["metadata"]["harness_spend"]["attempts"]["2"] = second_spend

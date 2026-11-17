@@ -144,10 +144,27 @@ def finish_harness_nudge_turn(conversation_id: str, turn_sequence: int) -> str:
 def stop_harness_nudge_sandbox(conversation_id: str, provider_ref: str) -> str:
     """Delete a chat's own sandbox once its lease is let go: a closed rebuild's, a
     retired idle chat's, or an abandoned one's. An expired lease alone does not stop
-    a process that is still working."""
-    from simulate.services.hosted_harness_gateway import HostedHarnessGateway
+    a process that is still working.
 
-    HostedHarnessGateway()._delete_chat_sandbox(provider_ref, conversation_id)
+    The provider is called directly so a failed delete raises and Temporal retries
+    the activity; the gateway's own helper logs and swallows every error."""
+    from simulate.services.hosted_harness_gateway import (
+        _PROVIDER_POLL_TIMEOUT_SECONDS,
+        HostedHarnessGateway,
+    )
+    from simulate.services.hosted_sandbox import SandboxNotFoundError
+
+    client = HostedHarnessGateway().client
+    try:
+        handle = client.get(
+            provider_ref, request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS
+        )
+    except SandboxNotFoundError:
+        return "gone"
+    try:
+        client.delete(handle, timeout=120, wait=True)
+    except SandboxNotFoundError:
+        return "gone"
     return "stopped"
 
 
