@@ -13,7 +13,11 @@ import pytest
 from simulate.models import HarnessEnvironmentVersion
 from simulate.selectors.environment_documents import recorded_contract
 from simulate.services.harness_environment import environment_detail
-from simulate.services.harness_tool_reach import blocked_tools, production_only
+from simulate.services.harness_tool_reach import (
+    blocked_tools,
+    production_only,
+    tool_status,
+)
 from simulate.services.harness_versioning import archives, drafts
 from simulate.services.harness_versioning.versions import record_authoring
 from simulate.tests.test_harness_versioning_record import (
@@ -579,26 +583,103 @@ class TestVersionRecordedBeforeItsSealedContract:
         assert _blocked(environment, saved) == []
         assert {one["status"] for one in contract["tool_status"]} != {"unsupported"}
 
-    def test_an_edit_that_changes_how_a_tool_is_reached_keeps_its_own(
-        self, user, workspace, monkeypatch
-    ):
-        environment, version, storage = self._version(
-            user, workspace, "rc-edit-entry", monkeypatch
-        )
+    def _through_the_views(self, auth_client, environment):
+        """What the run plan holds back, and each tool's status on the Contract tab, as the views serve them."""
+        base = f"/simulate/api/harness-environments/{environment.id}"
+        plan = auth_client.get(f"{base}/run-plan/").json()
+        contract = auth_client.get(f"{base}/").json()["contract"]
+        statuses = {one["tool"]: one["status"] for one in contract["tool_status"]}
+        return [one["tool"] for one in plan["blocked_tools"]], statuses
+
+    def _edit(self, user, workspace, monkeypatch, key, entries):
+        environment, version, storage = self._version(user, workspace, key, monkeypatch)
         self._bundle(environment, version, storage)
-        moved = {
+        edited = {
             **AUTHORED,
-            "tool_entrypoints": [
+            "tools": [{"name": one["tool"]} for one in entries],
+            "tool_entrypoints": entries,
+        }
+        self._saved_edit(environment, version, edited)
+        return environment
+
+    def test_an_edit_that_adds_a_tool_keeps_the_others_as_built(
+        self, user, workspace, monkeypatch, auth_client
+    ):
+        added = {
+            "tool": "track_parcel",
+            "mode": "import",
+            "module": "agent",
+            "callable": "track_parcel",
+            "service": "",
+            "endpoint": "",
+            "method": "",
+            "effect": "read",
+        }
+        environment = self._edit(
+            user,
+            workspace,
+            monkeypatch,
+            "rc-add-tool",
+            [*AUTHORED["tool_entrypoints"], added],
+        )
+
+        blocked, statuses = self._through_the_views(auth_client, environment)
+
+        sealed = {one["tool"]: one["status"] for one in tool_status(SEALED)}
+        own = {
+            one["tool"]: one["status"]
+            for one in tool_status(
+                {
+                    **AUTHORED,
+                    "tools": [{"name": "track_parcel"}],
+                    "tool_entrypoints": [added],
+                }
+            )
+        }
+        assert blocked == []
+        assert statuses == {**sealed, "track_parcel": own["track_parcel"]}
+
+    def test_an_edit_that_only_reorders_the_tools_keeps_every_one_as_built(
+        self, user, workspace, monkeypatch, auth_client
+    ):
+        environment = self._edit(
+            user,
+            workspace,
+            monkeypatch,
+            "rc-reorder",
+            list(reversed(AUTHORED["tool_entrypoints"])),
+        )
+
+        blocked, statuses = self._through_the_views(auth_client, environment)
+
+        assert blocked == []
+        assert statuses == {one["tool"]: one["status"] for one in tool_status(SEALED)}
+
+    def test_an_edit_that_changes_how_one_tool_is_reached_changes_only_that_one(
+        self, user, workspace, monkeypatch, auth_client
+    ):
+        environment = self._edit(
+            user,
+            workspace,
+            monkeypatch,
+            "rc-edit-entry",
+            [
                 {**one, "endpoint": "orders/lookup"}
                 if one["tool"] == "get_order"
                 else one
                 for one in AUTHORED["tool_entrypoints"]
             ],
+        )
+
+        blocked, statuses = self._through_the_views(auth_client, environment)
+
+        assert blocked == ["get_order"]
+        assert statuses["get_order"] == "unsupported"
+        assert {tool: statuses[tool] for tool in TOOLS if tool != "get_order"} == {
+            one["tool"]: one["status"]
+            for one in tool_status(SEALED)
+            if one["tool"] != "get_order"
         }
-
-        saved = self._saved_edit(environment, version, moved)
-
-        assert _blocked(environment, saved) == sorted(TOOLS)
 
     def test_a_version_its_own_build_sealed_keeps_how_that_build_reaches_the_tools(
         self, user, workspace, monkeypatch
