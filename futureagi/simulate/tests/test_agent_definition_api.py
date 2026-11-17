@@ -237,6 +237,50 @@ class TestListAgentDefinitions:
         assert seen[1:] == others
         assert all(len(p) == page_size for p in pages[:-1])
 
+    @pytest.mark.parametrize("with_required", [False, True])
+    def test_agents_with_the_same_timestamps_page_in_a_stable_order(
+        self, auth_client, organization, workspace, with_required
+    ):
+        # Equal sort keys need a unique tie-breaker, or offset paging can repeat or skip one.
+        now = timezone.now()
+        agents = []
+        for i in range(6):
+            agent = AgentDefinition.objects.create(
+                agent_name=f"Tied Agent {i}",
+                agent_type=AgentDefinition.AgentTypeChoices.TEXT,
+                inbound=True,
+                description="ties",
+                organization=organization,
+                workspace=workspace,
+                languages=["en"],
+            )
+            agents.append(agent)
+        AgentDefinition.no_workspace_objects.filter(
+            id__in=[a.id for a in agents]
+        ).update(updated_at=now, created_at=now)
+        required = agents[3] if with_required else None
+        query = f"agent_definition_id={required.id}&" if required else ""
+
+        seen = []
+        page = 1
+        while True:
+            response = auth_client.get(
+                f"/simulate/agent-definitions/?{query}page={page}&limit=2"
+            )
+            assert response.status_code == status.HTTP_200_OK
+            data = response.json()
+            seen.extend(r["id"] for r in data["results"])
+            if not data["next"]:
+                break
+            page += 1
+
+        rest = sorted(
+            (str(a.id) for a in agents if a is not required),
+            key=uuid.UUID,
+            reverse=True,
+        )
+        assert seen == ([str(required.id)] if required else []) + rest
+
     def test_pagination(self, auth_client, agent_definition, agent_definition_text):
         response = auth_client.get("/simulate/agent-definitions/?page=1&limit=1")
         assert response.status_code == status.HTTP_200_OK

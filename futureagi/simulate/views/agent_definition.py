@@ -201,7 +201,8 @@ class AgentDefinitionView(APIView):
                 except AgentDefinition.DoesNotExist:
                     pass
 
-            agents = agents.order_by("-updated_at", "-created_at")
+            # "-id" last: equal timestamps need a unique tie-breaker for stable pages.
+            agents = agents.order_by("-updated_at", "-created_at", "-id")
             if required_agent:
                 agents = _RequiredFirst(
                     required_agent, agents.exclude(id=required_agent.id)

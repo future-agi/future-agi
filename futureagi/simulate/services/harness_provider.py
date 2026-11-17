@@ -1270,7 +1270,8 @@ def _mint_sandbox_values(request) -> Response | None:
 
     data = request.validated_data
     # A loop, not a comprehension: before Python 3.12 a comprehension's variables live
-    # in a nested frame, so the value would be a local the scrubber does not see here.
+    # in a nested frame, so the scrubber test would not find the value among this
+    # function's local names.
     secret_values = {}
     for alias, secret_value in (data.pop("credential_values", None) or {}).items():
         if secret_value:
