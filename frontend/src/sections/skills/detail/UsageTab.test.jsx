@@ -11,7 +11,7 @@ import { ThemeProvider, createTheme } from "@mui/material/styles";
 import ReactApexChart from "react-apexcharts";
 import { dsPalette, dsTypography } from "src/theme/ds-tokens";
 import { useSkillUsage } from "src/api/skills";
-import UsageTab from "./UsageTab";
+import UsageTab, { channelLabel } from "./UsageTab";
 
 vi.mock("src/api/skills", () => ({ useSkillUsage: vi.fn() }));
 vi.mock("src/components/iconify", () => ({ default: () => null }));
@@ -124,7 +124,7 @@ describe("Usage tab", () => {
     expect(
       consumers.getByRole("cell", { name: "Test integration" }),
     ).toBeInTheDocument();
-    expect(consumers.getByRole("cell", { name: "api" })).toBeInTheDocument();
+    expect(consumers.getByRole("cell", { name: "API" })).toBeInTheDocument();
     expect(consumers.getByRole("cell", { name: "9" })).toBeInTheDocument();
   });
   it("renders zero usage honestly and keeps the fetch caveat visible", () => {
@@ -133,8 +133,9 @@ describe("Usage tab", () => {
     );
     show();
     expect(screen.getByText("No fetches in this period")).toBeInTheDocument();
-    expect(screen.getByText("Uses appear when someone resolves, downloads or reads this skill through the API or MCP.")).toBeInTheDocument();
-    expect(screen.queryByText(/Fetches appear/)).not.toBeInTheDocument();
+    expect(screen.getByText("Fetches appear when someone resolves, downloads or reads this skill through the API, the SDK or MCP.")).toBeInTheDocument();
+    expect(screen.queryByText(/Uses appear/)).not.toBeInTheDocument();
+    expect(screen.getByText("Retrieval (fetches)")).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "About this data" })).toHaveLength(1);
     fireEvent.click(screen.getByRole("button", { name: "About this data" }));
     expect(screen.getByText(/A fetch doesn't prove/)).toBeInTheDocument();
@@ -155,6 +156,41 @@ describe("Usage tab", () => {
       expect(ReactApexChart).not.toHaveBeenCalled();
     },
   );
+  it("titles the tab's section Retrieval (fetches) in every state, with the time range beside it", () => {
+    for (const state of ["", "?state=loading", "?state=error", "?state=empty"]) {
+      const view = show(state);
+      expect(screen.getByText("Retrieval (fetches)")).toBeInTheDocument();
+      expect(screen.getByRole("combobox", { name: "Time range" })).toBeInTheDocument();
+      expect(screen.queryByText(/^Used\b|Uses appear|in use/)).not.toBeInTheDocument();
+      view.unmount();
+    }
+  });
+  it("labels SDK fetches as SDK with the SDK version that fetched, and other channels by name", () => {
+    useSkillUsage.mockReturnValue(success({ ...usage, consumers: [
+      { label: "refund-agent key", channel: "sdk", sdkVersion: "futureagi-python 1.4.0", count: 4, lastAt: `${day}T10:00:00Z` },
+      { label: "ci key", channel: "sdk", count: 2, lastAt: `${day}T10:00:00Z` },
+      { label: "Docs bot", channel: "mcp", count: 2, lastAt: `${day}T10:00:00Z` },
+      { label: "Release script", channel: "download", count: 1, lastAt: `${day}T10:00:00Z` },
+    ] }));
+    show();
+    fireEvent.click(screen.getByRole("button", { name: "Counts and details" }));
+    const consumers = within(screen.getByRole("table", { name: "Skill consumers" }));
+    expect(consumers.getByRole("cell", { name: "SDK · futureagi-python 1.4.0" })).toBeInTheDocument();
+    expect(consumers.getByRole("cell", { name: "SDK" })).toBeInTheDocument();
+    expect(consumers.getByRole("cell", { name: "MCP" })).toBeInTheDocument();
+    expect(consumers.getByRole("cell", { name: "Download" })).toBeInTheDocument();
+    expect(consumers.queryByRole("cell", { name: "sdk" })).not.toBeInTheDocument();
+  });
+  it.each([
+    [{ channel: "sdk", sdkVersion: " futureagi-typescript 2.0.1 " }, "SDK · futureagi-typescript 2.0.1"],
+    [{ channel: "sdk", sdk_version: "futureagi-python 1.4.0" }, "SDK · futureagi-python 1.4.0"],
+    [{ channel: "sdk", sdkVersion: null }, "SDK"],
+    [{ channel: "api", sdkVersion: "futureagi-python 1.4.0" }, "API"],
+    [{ channel: "webhook" }, "webhook"],
+    [{}, "Unknown"],
+  ])("names the channel of %j as %s", (item, label) => {
+    expect(channelLabel(item)).toBe(label);
+  });
   it("retries actual API failures", () => {
     const refetch = vi.fn();
     useSkillUsage.mockReturnValue({ isError: true, refetch });

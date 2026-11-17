@@ -115,7 +115,8 @@ export default function SkillsLibraryView() {
     } },
     { accessorKey: "latestVersion", header: "Latest", size: 118, cell: ({ getValue }) => getValue() ? `v${getValue()}` : "Not published" },
     { accessorKey: "tags", header: "Tags", minSize: 150, meta: { flex: 1 }, cell: ({ getValue }) => <Typography variant="s3" noWrap>{getValue().join(", ") || "—"}</Typography> },
-    { accessorKey: "fetches7d", header: "Used (7 days)", size: 125 },
+    // A server fetch, not a runtime load (UX-18); "Loaded (7 days)" is a separate column.
+    { accessorKey: "fetches7d", header: "Fetched (7 days)", size: 135 },
     { accessorKey: "updatedAt", header: "Updated", minSize: 170, cell: ({ row: { original: skill } }) => (
       <Stack direction="row" alignItems="center" spacing={1}>
         {skill.updatedBy && <Avatar alt={skill.updatedBy.name} sx={{ width: 20, height: 20, typography: "s3", fontFamily: "inherit" }}>{skill.updatedBy.name?.split(/\s+/).map((part) => part[0]).slice(0, 2).join("")}</Avatar>}
@@ -132,7 +133,7 @@ export default function SkillsLibraryView() {
         // Below sm the header stacks like Agent contexts: title, description, then one full-width row of buttons.
         sx={{ mb: 0, flexDirection: { xs: "column", sm: "row" }, gap: 1.5, "& > .MuiStack-root": { minWidth: 0, maxWidth: 1, ml: { xs: 0 } }, "& > .MuiStack-root:last-of-type": { width: { xs: 1, sm: "auto" }, "& > .MuiButton-root": { flex: { xs: 1, sm: "none" } } } }}
         actions={canWrite && !firstRun && <><Button variant="outlined" onClick={() => setImportOpen(true)}>Import</Button><Button variant="contained" color="primary" onClick={() => setNewTemplate("blank")}>New skill</Button></>} />
-      {!loading && !failed && stats?.total > 0 && <Typography variant="s3" color="text.secondary">{[`${stats.total} ${stats.total === 1 ? 'skill' : 'skills'}`, stats.inProduction > 0 && `${stats.inProduction} in production`, stats.fetches7d > 0 && `${stats.fetches7d} ${stats.fetches7d === 1 ? 'use' : 'uses'} in 7 days`, stats.myDrafts > 0 && `${stats.myDrafts} ${stats.myDrafts === 1 ? 'draft' : 'drafts'}`].filter(Boolean).join(' · ')}</Typography>}
+      {!loading && !failed && stats?.total > 0 && <Typography variant="s3" color="text.secondary">{[`${stats.total} ${stats.total === 1 ? 'skill' : 'skills'}`, stats.inProduction > 0 && `${stats.inProduction} in production`, stats.fetches7d > 0 && `${stats.fetches7d} ${stats.fetches7d === 1 ? 'fetch' : 'fetches'} in 7 days`, stats.myDrafts > 0 && `${stats.myDrafts} ${stats.myDrafts === 1 ? 'draft' : 'drafts'}`].filter(Boolean).join(' · ')}</Typography>}
       {!loading && query.isFetching && query.data && <StatusBadge status="checking" label="Updating…" />}
       {!firstRun && <ListToolbar direction={{ xs: "column", sm: "row" }} alignItems={{ xs: "stretch", sm: "flex-end" }} useFlexGap sx={{ flexWrap: "wrap", rowGap: 1, "& > *": { maxWidth: "100%", flexShrink: 0 } }}>
         <FormSearchField sx={{ width: { xs: 1, sm: 280 }, minWidth: 0 }} label="Search skills" searchQuery={search} placeholder="Search skills" inputProps={{ "aria-label": "Search skills" }} onChange={(event) => changeParams({ search: event.target.value })} />

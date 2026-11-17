@@ -351,7 +351,7 @@ it('keeps viewer edit visibly disabled and Use skill outlined', () => {
   expect(screen.getByText("You can't archive this skill. Ask a workspace admin.")).toBeInTheDocument();
 });
 
-vi.mock("../contexts/ContextDependentsPanel", () => ({ default: () => <p>Used by panel</p> }));
+vi.mock("../contexts/ContextDependentsPanel", () => ({ default: () => <p>Linked contexts panel</p> }));
 
 describe("header shape in every state (UX iteration 3, LIB4)", () => {
   const showNamed = (name) => render(
@@ -382,12 +382,21 @@ describe("header shape in every state (UX iteration 3, LIB4)", () => {
     expect(screen.getAllByRole("progressbar")).toHaveLength(1);
     expect(screen.getByRole("progressbar", { name: "Loading skill" })).toBeInTheDocument();
   });
-  it("calls the dependents tab Used by without changing its URL value", () => {
+  it("calls the dependents tab Linked contexts without changing its URL value (UX-18)", () => {
     show();
-    const tab = screen.getByRole("tab", { name: "Used by" });
+    const tab = screen.getByRole("tab", { name: "Linked contexts" });
     expect(screen.queryByRole("tab", { name: "Dependents" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "Used by" })).not.toBeInTheDocument();
     fireEvent.click(tab);
     expect(screen.getByLabelText("URL")).toHaveTextContent("?tab=dependents");
+    expect(screen.getByText("Linked contexts panel")).toBeInTheDocument();
+  });
+  it("keeps every tab's URL value and order; Activity keeps its name and no runtime tab appears unflagged", () => {
+    show();
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Files", "Tests", "Linked contexts", "Versions", "Activity", "Install"]);
+    expect(screen.queryByRole("tab", { name: "Runtime" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "Activity" }));
+    expect(screen.getByLabelText("URL")).toHaveTextContent("?tab=usage");
   });
 });
 
