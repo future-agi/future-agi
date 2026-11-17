@@ -17,6 +17,7 @@ export const SEQUENCE_COPY = {
     "The record was cut short here, so it can't say whether an answer came back.",
   notObserved: (names) => `Declared, no events sent: ${names}`,
   noTurn: "No turn",
+  foldLoop: "Fold the repeated rounds",
   noTaskText: "No task text in the record",
   refused: (reason) => (reason ? `Refused · ${reason}` : "Refused"),
   noResponse: "No response",

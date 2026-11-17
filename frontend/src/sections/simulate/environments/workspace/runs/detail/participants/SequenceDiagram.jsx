@@ -196,12 +196,25 @@ export default function SequenceDiagram({
   const H = y + 6;
 
   const pick = (n) => onSelect(selected === n ? null : n);
-  const keyPick = (n) => (e) => {
+  const onEnter = (act) => (e) => {
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
-      pick(n);
+      e.stopPropagation();
+      act();
     }
   };
+  // The chip on an open loop folds it back, by mouse or keyboard.
+  const foldLoopProps = (id) => ({
+    role: "button",
+    tabIndex: 0,
+    "aria-label": C.foldLoop,
+    style: { cursor: "pointer" },
+    onClick: (e) => {
+      e.stopPropagation();
+      toggleLoop(id);
+    },
+    onKeyDown: onEnter(() => toggleLoop(id)),
+  });
   /* ↑ ↓ (or k j) move between the steps on show; Esc clears. */
   const onKeyDown = (e) => {
     const tag = e.target?.tagName;
@@ -271,9 +284,14 @@ export default function SequenceDiagram({
     role: "button",
     tabIndex: 0,
     ...(r.type === "go" || r.type === "tool" ? { "data-row": s.n } : {}),
-    "aria-label": `Step ${s.n}: ${s.label}`,
+    "aria-label":
+      r.type === "go" || r.type === "tool"
+        ? `Step ${s.n}: ${s.label}`
+        : `Reply to step ${s.n}: ${s.answer?.label ?? ""}`,
     onClick: () => (r.loop && r.closed ? toggleLoop(r.loop.id) : pick(s.n)),
-    onKeyDown: keyPick(s.n),
+    onKeyDown: onEnter(() =>
+      r.loop && r.closed ? toggleLoop(r.loop.id) : pick(s.n),
+    ),
     onMouseEnter: () => setHover(s.n),
     onMouseLeave: () => setHover(null),
     style: {
@@ -522,16 +540,7 @@ export default function SequenceDiagram({
       );
       if (chip)
         items.push(
-          <g
-            key="chip"
-            {...(r.loop &&
-              !r.closed && {
-                onClick: (e) => {
-                  e.stopPropagation();
-                  toggleLoop(r.loop.id);
-                },
-              })}
-          >
+          <g key="chip" {...(r.loop && !r.closed && foldLoopProps(r.loop.id))}>
             <rect
               x={mid + lw / 2 + 6}
               y={yy - 15}
@@ -686,15 +695,7 @@ export default function SequenceDiagram({
       );
       if (lchip)
         items.push(
-          <g
-            key="lchip"
-            {...(!r.closed && {
-              onClick: (e) => {
-                e.stopPropagation();
-                toggleLoop(r.loop.id);
-              },
-            })}
-          >
+          <g key="lchip" {...(!r.closed && foldLoopProps(r.loop.id))}>
             <rect
               x={tx + textW + 8}
               y={yy - 8}
@@ -858,7 +859,7 @@ export default function SequenceDiagram({
             width={svgW}
             height={H}
             viewBox={`0 0 ${svgW} ${H}`}
-            role="img"
+            role="group"
             aria-label={`Sequence of ${shown.length} steps`}
             style={svgStyle}
           >

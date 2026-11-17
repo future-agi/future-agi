@@ -220,6 +220,28 @@ describe("SequenceDiagram", () => {
     expect(stepRow(5)).toBeNull();
   });
 
+  it("a loop opens and folds from the keyboard", () => {
+    draw(seqOf(longRecord()));
+    const loopRow = document.querySelector('[data-row="4"]');
+    fireEvent.keyDown(loopRow, { key: "Enter" });
+    expect(stepRow(5)).not.toBeNull();
+    fireEvent.keyDown(
+      screen.getByRole("button", { name: "Fold the repeated rounds" }),
+      { key: "Enter" },
+    );
+    expect(stepRow(5)).toBeNull();
+  });
+
+  it("screen readers reach each step as a button", () => {
+    draw(seqOf(timeline()));
+    expect(
+      screen.getByRole("button", { name: /^Step 1:/ }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /^Reply to step 1:/ }),
+    ).toBeInTheDocument();
+  });
+
   it("shows a message the API marks as prose as formatted text", () => {
     const answered = {
       ...RETURNED,
