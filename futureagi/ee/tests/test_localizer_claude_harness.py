@@ -264,14 +264,15 @@ def test_factory_uses_sdk_by_default_and_supports_explicit_rollback(monkeypatch)
 
 
 @asynccontextmanager
-async def server(handler):
+async def server(handler, ssl_context=None):
     app = web.Application()
     app.router.add_post("/{tail:.*}", handler)
     runner = web.AppRunner(app, access_log=None, shutdown_timeout=1)
     await runner.setup()
-    await web.TCPSite(runner, "127.0.0.1", 0).start()
+    await web.TCPSite(runner, "127.0.0.1", 0, ssl_context=ssl_context).start()
+    scheme = "https" if ssl_context else "http"
     try:
-        yield f"http://127.0.0.1:{runner.addresses[0][1]}"
+        yield f"{scheme}://127.0.0.1:{runner.addresses[0][1]}"
     finally:
         await runner.cleanup()
 
@@ -303,6 +304,191 @@ async def test_adapter_forwards_only_authorized_requests_and_captures_usage():
     assert received[0][0]["model"] == MODEL
     assert received[0][1]["Authorization"] == "Bearer upstream-test-key"
     assert bridge.usage == {"prompt_tokens": 20, "completion_tokens": 5}
+
+
+def private_ca_server_context(directory):
+    """A test CA file and a server context whose 127.0.0.1 leaf it issued."""
+    import datetime
+    import ipaddress
+    import ssl
+
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.x509.oid import NameOID
+
+    now = datetime.datetime.now(datetime.UTC)
+
+    def issue(subject, issuer, public_key, signing_key, ca, sans=None):
+        builder = (
+            x509.CertificateBuilder()
+            .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, subject)]))
+            .issuer_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, issuer)]))
+            .public_key(public_key)
+            .serial_number(x509.random_serial_number())
+            .not_valid_before(now - datetime.timedelta(minutes=5))
+            .not_valid_after(now + datetime.timedelta(days=1))
+            .add_extension(x509.BasicConstraints(ca=ca, path_length=None), True)
+        )
+        if sans:
+            builder = builder.add_extension(x509.SubjectAlternativeName(sans), False)
+        return builder.sign(signing_key, hashes.SHA256())
+
+    ca_key = ec.generate_private_key(ec.SECP256R1())
+    ca = issue(
+        "synthetic gateway CA",
+        "synthetic gateway CA",
+        ca_key.public_key(),
+        ca_key,
+        True,
+    )
+    leaf_key = ec.generate_private_key(ec.SECP256R1())
+    leaf = issue(
+        "agentcc-gateway",
+        "synthetic gateway CA",
+        leaf_key.public_key(),
+        ca_key,
+        False,
+        [x509.IPAddress(ipaddress.ip_address("127.0.0.1"))],
+    )
+    ca_file = directory / "ca.pem"
+    ca_file.write_bytes(ca.public_bytes(serialization.Encoding.PEM))
+    cert_file = directory / "tls.crt"
+    key_file = directory / "tls.key"
+    cert_file.write_bytes(leaf.public_bytes(serialization.Encoding.PEM))
+    key_file.write_bytes(
+        leaf_key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+    )
+    context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+    context.load_cert_chain(cert_file, key_file)
+    return ca_file, context
+
+
+async def forward_once(url):
+    async with httpx.AsyncClient(trust_env=False) as client:
+        bridge = AgentCCTransport(
+            GatewayConfig(url, "upstream-test-key"), MediaRegistry()
+        )
+        async with bridge.serve():
+            return await client.post(
+                bridge.url + "/v1/messages",
+                json={"model": WIRE_MODEL},
+                headers={"Authorization": f"Bearer {bridge.token}"},
+            )
+
+
+@pytest.mark.parametrize("variable", ["SSL_CERT_FILE", "SSL_CERT_DIR"])
+async def test_adapter_trusts_the_ca_bundle_for_an_https_gateway(
+    tmp_path, monkeypatch, variable
+):
+    """global.caBundle reaches pods as SSL_CERT_FILE: an HTTPS-only gateway
+    with a private-CA certificate must be trusted through it."""
+    import subprocess
+
+    async def upstream(request):
+        return web.json_response({"model": MODEL, "usage": {}})
+
+    ca_file, context = private_ca_server_context(tmp_path)
+    if variable == "SSL_CERT_DIR":
+        # OpenSSL looks CA files up by subject hash in a CA directory.
+        ca_dir = tmp_path / "certs"
+        ca_dir.mkdir()
+        subject_hash = subprocess.run(
+            ["openssl", "x509", "-hash", "-noout", "-in", str(ca_file)],
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        if not subject_hash:
+            pytest.skip("openssl is needed to name a CA directory entry")
+        (ca_dir / f"{subject_hash}.0").write_bytes(ca_file.read_bytes())
+        monkeypatch.delenv("SSL_CERT_FILE", raising=False)
+        monkeypatch.setenv("SSL_CERT_DIR", str(ca_dir))
+    else:
+        monkeypatch.delenv("SSL_CERT_DIR", raising=False)
+        monkeypatch.setenv("SSL_CERT_FILE", str(ca_file))
+    # The gateway hop still ignores proxy settings.
+    monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:9")
+    monkeypatch.setenv("ALL_PROXY", "http://127.0.0.1:9")
+    async with server(upstream, context) as url:
+        result = await forward_once(url)
+    assert result.status_code == 200, result.text
+    assert result.json()["model"] == WIRE_MODEL
+
+
+async def test_adapter_still_verifies_an_https_gateway_without_a_ca_bundle(
+    tmp_path, monkeypatch
+):
+    async def upstream(request):
+        return web.json_response({"model": MODEL, "usage": {}})
+
+    _, context = private_ca_server_context(tmp_path)
+    monkeypatch.delenv("SSL_CERT_FILE", raising=False)
+    monkeypatch.delenv("SSL_CERT_DIR", raising=False)
+    async with server(upstream, context) as url:
+        result = await forward_once(url)
+    assert result.status_code == 502
+    assert result.json()["error"]["message"] == "AgentCC transport failed"
+
+
+def ca_bundle_offenders(source, label="<source>"):
+    """Calls that turn httpx's trust_env off without choosing verify themselves.
+
+    With trust_env=False, httpx ignores SSL_CERT_FILE/SSL_CERT_DIR, where the
+    chart's global.caBundle lands, so verify must be an expression that reads
+    them (verify=True falls back to certifi; verify=False checks nothing).
+    """
+    import ast
+
+    offenders = []
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.Call):
+            continue
+        keywords = {k.arg: k.value for k in node.keywords if k.arg}
+        trust = keywords.get("trust_env")
+        if not (isinstance(trust, ast.Constant) and trust.value is False):
+            continue
+        verify = keywords.get("verify")
+        if verify is None or isinstance(verify, ast.Constant):
+            offenders.append(f"{label}:{node.lineno}")
+    return offenders
+
+
+def test_ca_bundle_guard_flags_constant_verify():
+    def flagged(call):
+        return bool(ca_bundle_offenders(f"import httpx\n{call}\n"))
+
+    assert flagged("httpx.AsyncClient(trust_env=False)")
+    assert flagged("httpx.AsyncClient(trust_env=False, verify=True)")
+    assert flagged("httpx.Client(timeout=5, trust_env=False, verify=False)")
+    assert not flagged(
+        "httpx.AsyncClient(trust_env=False, verify=gateway_tls_verify())"
+    )
+    assert not flagged("httpx.AsyncClient(verify=True)")
+    assert not flagged("httpx.AsyncClient()")
+
+
+def test_no_backend_http_client_drops_the_ca_bundle():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    skipped = {"node_modules", "site-packages", "tests", "migrations"}
+    offenders = []
+    for path in root.rglob("*.py"):
+        relative = path.relative_to(root)
+        if (
+            skipped.intersection(relative.parts)
+            or any(part.startswith(".") for part in relative.parts)
+            or path.name.startswith("test_")
+        ):
+            continue
+        source = path.read_text(encoding="utf-8", errors="ignore")
+        if "trust_env" in source:
+            offenders += ca_bundle_offenders(source, str(relative))
+    assert not offenders, offenders
 
 
 async def test_real_sdk_cli_transports_native_audio_and_calls_tools():

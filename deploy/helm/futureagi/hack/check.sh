@@ -75,6 +75,8 @@ value_sets=(
   "dockerhub-mirror|examples/bundled.yaml ci/dockerhub-mirror.yaml"
   "external-secrets|examples/external.yaml examples/external-secrets.yaml ci/external-secrets.yaml"
   "openshift|examples/bundled.yaml ci/openshift.yaml"
+  "tls|examples/bundled.yaml ci/tls.yaml"
+  "tls-https-only|examples/bundled.yaml ci/tls.yaml ci/tls-https-only.yaml"
 )
 
 echo "== chart defaults: refuse to render, with guidance"
@@ -97,6 +99,28 @@ echo "== inconsistent values: refuse to render"
 # values.schema.json rejects some values before validate.yaml runs, and Helm
 # 3.18+ and Helm 4 word schema errors differently from older Helm 3.
 refused=(
+  "gateway TLS without a Secret|agentccGateway.tls.existingSecret is required|--set agentccGateway.tls.enabled=true"
+  "frontend TLS without a Secret|frontend.tls.existingSecret is required|--set frontend.tls.enabled=true"
+  "gateway TLS overlaps HTTP|agentccGateway.tls.port must differ|--set agentccGateway.tls.enabled=true --set agentccGateway.tls.existingSecret=gw --set agentccGateway.tls.port=8080"
+  "frontend TLS overlaps HTTP|frontend.tls.port must differ|--set frontend.tls.enabled=true --set frontend.tls.existingSecret=fe --set frontend.tls.port=8080"
+  "gateway HTTPS Service port overlaps HTTP|agentccGateway.tls.servicePort must differ|--set agentccGateway.tls.enabled=true --set agentccGateway.tls.existingSecret=gw --set agentccGateway.tls.servicePort=8080"
+  "frontend HTTPS Service port overlaps HTTP|frontend.tls.servicePort must differ|--set frontend.tls.enabled=true --set frontend.tls.existingSecret=fe --set frontend.tls.servicePort=80"
+  "gateway without a listener|agentccGateway.tls.httpEnabled=false requires agentccGateway.tls.enabled=true|--set agentccGateway.tls.httpEnabled=false"
+  "frontend without a listener|frontend.tls.httpEnabled=false requires frontend.tls.enabled=true|--set frontend.tls.httpEnabled=false"
+  "HTTPS-only gateway with HTTP Gateway API route|agentccGateway.tls.httpEnabled=false cannot be used with gatewayApi.llmGateway.enabled|--set agentccGateway.tls.enabled=true --set agentccGateway.tls.existingSecret=gw --set agentccGateway.tls.httpEnabled=false --set global.caBundle.secret=ca --set gatewayApi.enabled=true --set gatewayApi.llmGateway.enabled=true"
+  "HTTPS-only frontend with Ingress|frontend.tls.httpEnabled=false cannot be used with ingress.enabled or gatewayApi.enabled|--set frontend.tls.enabled=true --set frontend.tls.existingSecret=fe --set frontend.tls.httpEnabled=false --set ingress.enabled=true"
+  "HTTPS-only frontend with Gateway API|frontend.tls.httpEnabled=false cannot be used with ingress.enabled or gatewayApi.enabled|--set frontend.tls.enabled=true --set frontend.tls.existingSecret=fe --set frontend.tls.httpEnabled=false --set gatewayApi.enabled=true"
+  "HTTPS-only gateway without a CA bundle|agentccGateway.tls.httpEnabled=false requires global.caBundle|--set agentccGateway.tls.enabled=true --set agentccGateway.tls.existingSecret=gw --set agentccGateway.tls.httpEnabled=false"
+  "HTTPS frontend with remote plain HTTP API|frontend.tls.enabled needs an HTTPS urls.api|--set frontend.tls.enabled=true --set frontend.tls.existingSecret=fe --set urls.api=http://api.example.com"
+  "HTTPS frontend with remote HTTP API, upper-case scheme|frontend.tls.enabled needs an HTTPS urls.api|--set frontend.tls.enabled=true --set frontend.tls.existingSecret=fe --set urls.api=HTTP://api.example.com"
+  "HTTPS-only gateway: the CA bundle replaces the trust store|it replaces the pods' trust store, so it must hold the public roots as well as the gateway CA|--set agentccGateway.tls.enabled=true --set agentccGateway.tls.existingSecret=gw --set agentccGateway.tls.httpEnabled=false"
+  "HTTPS frontend with remote plain HTTP app URL|frontend.tls.enabled needs an HTTPS urls.app|--set frontend.tls.enabled=true --set frontend.tls.existingSecret=fe --set urls.api=https://api.example.com --set urls.app=http://app.example.com"
+  "HTTPS frontend with remote HTTP app URL, upper-case scheme|frontend.tls.enabled needs an HTTPS urls.app|--set frontend.tls.enabled=true --set frontend.tls.existingSecret=fe --set urls.api=https://api.example.com --set urls.app=HTTP://app.example.com"
+  "a gateway reload interval over a minute|agentccGateway.tls.reloadInterval must be above zero and at most 1m|--set agentccGateway.tls.enabled=true --set agentccGateway.tls.existingSecret=gw --set agentccGateway.tls.reloadInterval=2m"
+  "a gateway reload interval just over a minute|agentccGateway.tls.reloadInterval must be above zero and at most 1m|--set agentccGateway.tls.enabled=true --set agentccGateway.tls.existingSecret=gw --set agentccGateway.tls.reloadInterval=1m0.5s"
+  "a zero gateway reload interval|agentccGateway.tls.reloadInterval must be above zero and at most 1m|--set agentccGateway.tls.enabled=true --set agentccGateway.tls.existingSecret=gw --set agentccGateway.tls.reloadInterval=0s"
+  "a gateway reload interval with an unknown unit|re:reloadInterval.*oes not match pattern|--set agentccGateway.tls.reloadInterval=30sec"
+  "a gateway reload interval that is not a duration|re:reloadInterval.*oes not match pattern|--set-string agentccGateway.tls.reloadInterval=30"
   "recaptcha without its key|config.recaptcha needs secrets.extra.RECAPTCHA_SECRET_KEY|--set config.recaptcha=true"
   "gateway replicas without Redis|agentccGateway runs more than one replica without Redis|--set agentccGateway.replicas=2 --set agentccGateway.redis.enabled=false"
   "gateway Redis over TLS|the gateway has no Redis TLS|--set redis.mode=external --set redis.external.host=r --set redis.external.tls=true --set agentccGateway.redis.enabled=true"
@@ -136,6 +160,17 @@ for case in "${refused[@]}"; do
   echo "ok   $name"
 done
 rm -f "$out/refused.txt"
+
+echo "== gateway reload intervals the gateway accepts render"
+for interval in 30s 1.5s 0.5s 500ms 500us 1m 1m0s 0.5m 59.999s 1m0ms; do
+  "$helm" template futureagi "$chart" -f "$chart/examples/bundled.yaml" --set agentccGateway.tls.enabled=true \
+    --set agentccGateway.tls.existingSecret=gw --set "agentccGateway.tls.reloadInterval=$interval" >"$out/interval.txt" 2>&1 || {
+    cat "$out/interval.txt" >&2
+    fail "agentccGateway.tls.reloadInterval=$interval is a duration the gateway accepts, but did not render"
+  }
+done
+rm -f "$out/interval.txt"
+echo "ok   30s 1.5s 0.5s 500ms 500us 1m 1m0s 0.5m 59.999s 1m0ms"
 
 echo "== install-time settings: a change to a live StatefulSet's volume is refused"
 # `lookup` finds nothing under helm template: a copy of the chart reads the
@@ -243,6 +278,26 @@ if KUBECONFIG="$out/no-kubeconfig" "$helm" install futureagi "$chart" --dry-run=
     fail "the install notes misprint a proxy with an odd login"
   }
   echo "ok   host:port only"
+  # An HTTPS-only frontend Service has no http port: forward its https one, to
+  # local port 3000, whose https origin the API trusts (APP_URL localhost:3000).
+  KUBECONFIG="$out/no-kubeconfig" "$helm" install futureagi "$chart" --dry-run=client --namespace futureagi \
+    -f "$chart/examples/bundled.yaml" --set frontend.tls.enabled=true --set frontend.tls.existingSecret=fe \
+    --set frontend.tls.httpEnabled=false >"$out/notes-tls.txt" 2>&1 || { cat "$out/notes-tls.txt" >&2; fail "install notes with an HTTPS-only frontend"; }
+  sed -n '/^NOTES:/,$p' "$out/notes-tls.txt" >"$out/notes-tls-only.txt"
+  if ! grep -qF 'port-forward svc/futureagi-frontend 3000:443' "$out/notes-tls-only.txt" ||
+    ! grep -qF 'then open https://localhost:3000 ' "$out/notes-tls-only.txt" ||
+    grep -qF 'svc/futureagi-frontend 3000:80' "$out/notes-tls-only.txt"; then
+    cat "$out/notes-tls-only.txt" >&2
+    fail "the install notes forward the HTTP port of an HTTPS-only frontend"
+  fi
+  KUBECONFIG="$out/no-kubeconfig" "$helm" install futureagi "$chart" --dry-run=client --namespace futureagi \
+    -f "$chart/examples/bundled.yaml" --set frontend.tls.enabled=true --set frontend.tls.existingSecret=fe \
+    --set frontend.tls.httpEnabled=false --set frontend.service.type=LoadBalancer >"$out/notes-tls-lb.txt" 2>&1 || { cat "$out/notes-tls-lb.txt" >&2; fail "install notes with an HTTPS-only LoadBalancer frontend"; }
+  grep -qF 'https://localhost (LoadBalancer' "$out/notes-tls-lb.txt" && grep -qF 'set urls.app' "$out/notes-tls-lb.txt" || {
+    sed -n '/^NOTES:/,$p' "$out/notes-tls-lb.txt" >&2
+    fail "the install notes print the HTTP URL of an HTTPS-only LoadBalancer frontend"
+  }
+  echo "ok   HTTPS-only frontend port-forward"
 elif grep -q 'cluster unreachable' "$out/notes.txt"; then
   echo "skip (this Helm needs a cluster for a client-side dry run)"
 else

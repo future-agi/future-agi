@@ -40,7 +40,7 @@ const { default: LaunchFixDialog } = await import("../LaunchFixDialog");
 
 const onClose = vi.fn();
 let lastClient;
-function renderDialog() {
+function renderDialog(props = {}) {
   lastClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
@@ -53,6 +53,7 @@ function renderDialog() {
             envId="env-1"
             sourceRunId="te-run-6"
             onClose={onClose}
+            {...props}
           />
         </MemoryRouter>
       </SnackbarProvider>
@@ -397,6 +398,20 @@ describe("LaunchFixDialog", () => {
       .setup()
       .click(screen.getByRole("button", { name: "Close" }));
     expect(onClose).toHaveBeenCalled();
+  });
+
+  it("starts from the cases Run Epoch picked, not the suggestion", async () => {
+    const user = userEvent.setup();
+    // Run Epoch tops what it picks up to the launch minimum before the form opens.
+    const { suggested, limits } = fixtureLaunchOptions("te-run-6");
+    const picked = suggested.target_scenario_keys.slice(-limits.scenarios_min);
+    renderDialog({ initialTargets: picked });
+    await user.click(await screen.findByRole("button", { name: "Run Epoch" }));
+    await waitFor(() => expect(axios.post).toHaveBeenCalled());
+
+    const [, body] = axios.post.mock.calls.at(-1);
+    expect(body.target_scenario_keys).toEqual(picked);
+    expect(picked).not.toEqual(suggested.target_scenario_keys);
   });
 
   it("starts the fix with the contract's fields only and opens its page", async () => {
