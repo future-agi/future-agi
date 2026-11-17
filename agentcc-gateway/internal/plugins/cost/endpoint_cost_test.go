@@ -193,6 +193,7 @@ func TestChatCostUnderTheResellersPrice(t *testing.T) {
 			p := New(true, func() *modeldb.ModelDB { return db }, nil, nil)
 			if !tc.at.IsZero() {
 				p.now = clockAt(tc.at)
+				rc.StartTime = tc.at
 			}
 			pricedBy(t, p, rc, tc.want)
 		})

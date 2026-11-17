@@ -1,15 +1,14 @@
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
-import tiktoken
 import structlog
+import tiktoken
 
-# Loaded with this module so a missing dated price file fails this import,
-# not a later one inside a caller that turns errors into a zero cost.
-import agentic_eval.core_evals.run_prompt.price_schedule  # noqa: F401
-
-# The same for the gateway's price copy.
+# Loaded with this module so a missing price file (the gateway's copy or the
+# dated prices) fails this import, not a later one inside a caller that turns
+# errors into a zero cost.
 import agentic_eval.core_evals.run_prompt.gateway_prices  # noqa: F401
+import agentic_eval.core_evals.run_prompt.price_schedule  # noqa: F401
 
 logger = structlog.get_logger(__name__)
 
@@ -191,9 +190,9 @@ DEFAULT_STT_FALLBACK_PRICING = {"input_per_minute": 0.006}
 def calculate_total_cost(
     model_name: str,
     token_usage: dict,
-    fallback_pricing: Optional[dict] = None,
+    fallback_pricing: dict | None = None,
     *,
-    at: Optional[datetime] = None,
+    at: datetime | None = None,
 ) -> dict:
     """
     Calculate total cost for a model inference.
@@ -258,9 +257,7 @@ def calculate_total_cost(
     ):
         pricing, pricing_source = fallback_pricing, "fallback"
     else:
-        found = lookup_pricing(
-            model_name, at=at, non_token_call=not is_token_call
-        )
+        found = lookup_pricing(model_name, at=at, non_token_call=not is_token_call)
         if found is not None:
             pricing, pricing_source = found.pricing, found.source
             # A table price with no input rate is no price for a token call.

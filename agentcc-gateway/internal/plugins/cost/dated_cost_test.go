@@ -225,3 +225,32 @@ func TestOrgCustomPriceBeatsTheDatedPrice(t *testing.T) {
 		t.Fatalf("cost = %q source = %q, want 1.100000 from org_custom", rc.Metadata["cost"], rc.Metadata["cost_source"])
 	}
 }
+
+// A request is priced when it started, the instant its log row carries, not when
+// the plugin got to it: one that began before midnight and ended after keeps the
+// old price. A row with no start time is priced by the plugin's clock.
+func TestCostPluginPricesAtTheRequestsStart(t *testing.T) {
+	started := time.Date(2026, 12, 31, 23, 59, 50, 0, time.UTC)
+	ended := time.Date(2027, 1, 1, 0, 0, 20, 0, time.UTC)
+
+	for _, tc := range []struct {
+		name  string
+		start time.Time
+		want  string
+	}{
+		{"started before midnight, costed after it", started, "0.150000"},
+		{"started after midnight", ended, "0.300000"},
+		{"no start time: the plugin's clock", time.Time{}, "0.300000"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := New(true, bundledDB(), nil, nil)
+			p.now = clockAt(ended)
+			rc := newRC("gemini-3.7-flash", 100_000, 20_000)
+			rc.StartTime = tc.start
+			p.ProcessResponse(context.Background(), rc)
+			if got := rc.Metadata["cost"]; got != tc.want {
+				t.Fatalf("cost %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

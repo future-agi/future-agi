@@ -354,7 +354,7 @@ def get_model_info(model_name: str) -> Optional[dict]:
 
 
 @lru_cache(maxsize=512)
-def _catalogue_pricing(model_name: str) -> Optional[tuple[Optional[str], dict]]:
+def _catalogue_pricing(model_name: str) -> tuple[str | None, dict] | None:
     """The catalogue entry a name resolves to and its static pricing.
 
     Cached per process, so it never holds a dated price: one cached before
@@ -379,10 +379,10 @@ class PricingLookup(NamedTuple):
 
     pricing: dict
     source: str
-    key: Optional[str]
+    key: str | None
 
 
-def _check_at(at: Optional[datetime]) -> datetime:
+def _check_at(at: datetime | None) -> datetime:
     if at is None:
         return _utc_now()
     if at.utcoffset() is None:
@@ -393,8 +393,8 @@ def _check_at(at: Optional[datetime]) -> datetime:
 
 
 def lookup_pricing(
-    model_name: str, *, at: Optional[datetime] = None, non_token_call: bool = False
-) -> Optional[PricingLookup]:
+    model_name: str, *, at: datetime | None = None, non_token_call: bool = False
+) -> PricingLookup | None:
     """
     Price a model as in force at a moment, and say which table priced it.
 
@@ -457,9 +457,9 @@ def lookup_pricing(
 def get_model_pricing(
     model_name: str,
     *,
-    at: Optional[datetime] = None,
+    at: datetime | None = None,
     non_token_call: bool = False,
-) -> Optional[dict]:
+) -> dict | None:
     """
     Get pricing information for a model, as in force at a moment.
 
@@ -505,7 +505,7 @@ def price_change_dates(
 _TOKEN_CALL_MODES = frozenset({"chat", "completion"})
 
 
-def listed_pricing(row: dict, *, at: Optional[datetime] = None) -> Optional[dict]:
+def listed_pricing(row: dict, *, at: datetime | None = None) -> dict | None:
     """The price the model list shows for one of its rows: the one billed now.
 
     None for a custom model (the organisation sets its own price) and for a row
