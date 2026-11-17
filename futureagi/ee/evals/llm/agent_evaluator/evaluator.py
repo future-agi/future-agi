@@ -1999,8 +1999,13 @@ class AgentEvaluator:
         tools and instructions, runs the multi-turn loop, and returns the result.
         """
         # Import here to avoid circular imports
+        from agentic_eval.core_evals.run_prompt import model_pricing
         from ai_tools.base import ToolContext
         from ee.falcon_ai.agent import AgentLoop
+
+        # The loop reports one token total for the whole run, so a fallback cost
+        # is priced at one instant: the run's start (never later than the calls).
+        run_started_at = model_pricing._utc_now()
 
         # Build tool context from stored org/workspace
         tool_context = self._build_tool_context()
@@ -2585,7 +2590,9 @@ class AgentEvaluator:
             # Cost lookup keyed on the configured alias only — never on
             # a gateway-resolved underlying name.
             cost_model = self._model
-            _calculated = calculate_total_cost(cost_model, self.token_usage)
+            _calculated = calculate_total_cost(
+                cost_model, self.token_usage, at=run_started_at
+            )
 
             # Gateway cost (accumulated across iterations, already factored by service)
             _gateway_cost = getattr(agent.llm_client, "_gateway_cost", 0) or 0
