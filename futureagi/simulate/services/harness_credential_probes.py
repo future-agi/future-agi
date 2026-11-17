@@ -229,17 +229,27 @@ def probe(provider: str, values: Mapping[str, str]) -> ProbeResult:
                 by_value.setdefault(str(values[alias]).strip(), []).append(alias)
             failed = []
             for names in by_value.values():
-                result = _probe_once(provider, spec, {names[0]: values[names[0]]})
+                result, key_rejected = _probe_checked(
+                    provider, spec, {name: values[name] for name in names}, tuple(names)
+                )
                 if not result.ok:
-                    failed.append((names, result))
+                    failed.append((names, result, key_rejected))
             if failed:
-                rejected = {name for names, _ in failed for name in names}
+                # A name is marked to fix only when its key was rejected; an unreachable
+                # provider or a server error is reported in the message alone.
+                wrong = {
+                    name
+                    for names, _, key_rejected in failed
+                    if key_rejected
+                    for name in names
+                }
+                wrong = wrong or {name for names, _, _ in failed for name in names}
                 return ProbeResult(
                     provider,
                     spec.label,
-                    tuple(alias for alias in present if alias in rejected),
+                    tuple(alias for alias in present if alias in wrong),
                     False,
-                    "; ".join(result.message for _, result in failed),
+                    "; ".join(result.message for _, result, _ in failed),
                 )
             return ProbeResult(
                 provider,
@@ -254,7 +264,18 @@ def probe(provider: str, values: Mapping[str, str]) -> ProbeResult:
 def _probe_once(
     provider: str, spec: ProviderProbe, values: Mapping[str, str]
 ) -> ProbeResult:
-    aliases = spec.used(values) or spec.aliases
+    return _probe_checked(provider, spec, values)[0]
+
+
+def _probe_checked(
+    provider: str,
+    spec: ProviderProbe,
+    values: Mapping[str, str],
+    aliases: tuple[str, ...] = (),
+) -> tuple[ProbeResult, bool]:
+    """One probe, and whether the provider rejected the key (as opposed to failing to answer).
+    ``aliases`` names every name that holds the key, when several share it."""
+    aliases = aliases or spec.used(values) or spec.aliases
     named = " + ".join(aliases)
     try:
         request = spec.build(values)
@@ -273,7 +294,7 @@ def _probe_once(
             aliases,
             False,
             f"{spec.label} is unreachable ({type(exc).__name__}); check {named}",
-        )
+        ), False
     except Exception as exc:  # noqa: BLE001 - a malformed URL/secret must not 500 preflight
         return ProbeResult(
             provider,
@@ -281,7 +302,7 @@ def _probe_once(
             aliases,
             False,
             f"{spec.label} check could not run ({type(exc).__name__}); check {named}",
-        )
+        ), False
     if response.status_code in spec.rejected_statuses:
         return ProbeResult(
             provider,
@@ -289,7 +310,7 @@ def _probe_once(
             aliases,
             False,
             f"{spec.label} rejected {named} (HTTP {response.status_code})",
-        )
+        ), True
     if response.status_code >= 400:
         return ProbeResult(
             provider,
@@ -297,10 +318,10 @@ def _probe_once(
             aliases,
             False,
             f"{spec.label} returned HTTP {response.status_code} for {named}",
-        )
+        ), False
     return ProbeResult(
         provider, spec.label, aliases, True, f"{spec.label} accepted {named}"
-    )
+    ), False
 
 
 def probe_all(values: Mapping[str, str]) -> list[ProbeResult]:
