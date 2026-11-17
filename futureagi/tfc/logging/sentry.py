@@ -17,9 +17,10 @@ Usage:
     init_sentry(component="temporal", tags={"queue": "tasks_l"})
 """
 
-import logging
+import contextlib
 import os
 import re
+import sys
 from collections.abc import Callable
 from typing import Any
 from urllib.parse import unquote_plus
@@ -202,11 +203,6 @@ _URL_TOKEN_SEGMENT = re.compile(
 # Linear: no nested quantifiers, and each class excludes the next delimiter.
 _URL_PASSWORD = re.compile(r"://[^/\s:@]*:[^/\s@]+@")
 
-# Failures of the scrub itself are logged here, by name only. init_sentry
-# ignores this logger so the record cannot loop back into Sentry.
-SCRUB_LOGGER_NAME = "tfc.logging.sentry_scrub"
-_scrub_logger = logging.getLogger(SCRUB_LOGGER_NAME)
-
 # Sample rates - configurable via env, lower in production to reduce costs
 # Production: 10% sampling, Staging: 100% sampling
 TRACES_SAMPLE_RATE = float(
@@ -379,8 +375,12 @@ _MAX_FORMATTED = 16_384
 _SDK_MAX_VALUE_LENGTH = 262_144
 
 # A `%` conversion in a log template, with its optional `(name)` mapping key.
+# It runs on user-controlled text (a logging frame's `msg`) for every log call,
+# so no two parts may match the same character: the width starts at 1-9 (a `0`
+# is a flag) and the mapping key stops at the next `%`, or `%0000...` and
+# `%(%(%(...` would each be quadratic.
 _FORMAT_SPEC = re.compile(
-    r"%(?:\([^)]*\))?[#0\- +]*(?:\d+|\*)?(?:\.(?:\d+|\*))?[hlL]?[diouxXeEfFgGcrsa]"
+    r"%(?:\([^)%]*\))?[#0\- +]*(?:[1-9]\d*|\*)?(?:\.(?:\d+|\*))?[hlL]?[diouxXeEfFgGcrsa]"
 )
 _KEY_MENTION = re.compile(
     "|".join(
@@ -739,6 +739,15 @@ def _scrub_deployment_telemetry_event(event: dict) -> dict:
     return event
 
 
+def _report_scrub_failure(exc: Exception) -> None:
+    """Say that a scrub failed, by exception class only. It does not go through
+    the logging module: Python 3.13.4+ drops a record logged while another record
+    on the same thread is being handled, and a hook runs inside the handler of
+    the record that made the event."""
+    with contextlib.suppress(Exception):
+        sys.stderr.write(f"sentry_scrub_failed: {type(exc).__name__}\n")
+
+
 def _get_before_send() -> Callable:
     """
     Create the before_send hook that runs on every error event.
@@ -755,7 +764,7 @@ def _get_before_send() -> Callable:
         try:
             return _before_send(event, hint)
         except Exception as exc:  # noqa: BLE001 - fail closed: drop the event, never send it raw
-            _scrub_logger.error("sentry_scrub_failed: %s", type(exc).__name__)
+            _report_scrub_failure(exc)
             return None
 
     def _before_send(event: dict, hint: dict) -> dict | None:
@@ -832,19 +841,50 @@ def _cut_redis_commands(data: Any) -> Any:
     return data
 
 
+def _scrub_span_data(data: Any) -> Any:
+    """Span data scrubbed as strings, except the `code.*` keys (`code.function`,
+    `code.filepath`, `code.namespace`): they name code, not values, and a
+    function called `get_user_from_token` would otherwise match."""
+    data = _cut_redis_commands(_scrub_url_fields(data))
+    if not isinstance(data, dict):
+        return _scrub_strings(data)
+    scrubbed = _scrub_strings({k: v for k, v in data.items() if not _is_code_key(k)})
+    return {k: data[k] if _is_code_key(k) else scrubbed[k] for k in data}
+
+
+def _is_code_key(key: Any) -> bool:
+    return isinstance(key, str) and key.startswith("code.")
+
+
+def _scrub_span_description(op: Any, description: str) -> str:
+    """A span description. Those of db, http, middleware and function spans are
+    code paths and parametrized SQL, not values, so they are not matched by key
+    name (a query on a `password` column, the CSRF middleware, an OAuth `/token`
+    call). The ones that can carry a value are cut by their shape."""
+    op = op if isinstance(op, str) else ""
+    if op == "db.redis":
+        description = _redis_command_and_key(description)
+    elif op.startswith("http"):
+        description = _scrub_url(description)
+    elif op == "subprocess":
+        # An argv can hold values, so a name in it is read as one.
+        description = _scrub_text(description)
+    if _is_secret_value(description) or any(
+        marker in description for marker in _SAML_VALUE_MARKERS
+    ):
+        return _REDACTED
+    return _TOKEN_KEY_PREFIX.sub(r"\1:" + _REDACTED, description)
+
+
 def _scrub_span(span: dict) -> None:
     """Scrub one transaction span: its data, its tags and its description."""
     if "data" in span:
-        span["data"] = _scrub_strings(
-            _cut_redis_commands(_scrub_url_fields(span["data"]))
-        )
+        span["data"] = _scrub_span_data(span["data"])
     if "tags" in span:
         span["tags"] = _scrub_strings(span["tags"])
     description = span.get("description")
     if isinstance(description, str):
-        if span.get("op") == "db.redis":
-            description = _redis_command_and_key(description)
-        span["description"] = _scrub_text(description)
+        span["description"] = _scrub_span_description(span.get("op"), description)
 
 
 def _get_before_send_transaction() -> Callable:
@@ -860,7 +900,7 @@ def _get_before_send_transaction() -> Callable:
                     _scrub_span(span)
             return _cap_strings(event)
         except Exception as exc:  # noqa: BLE001 - fail closed: drop the event, never send it raw
-            _scrub_logger.error("sentry_scrub_failed: %s", type(exc).__name__)
+            _report_scrub_failure(exc)
             return None
 
     return before_send_transaction
@@ -940,7 +980,6 @@ def init_sentry(
         # transient "failed to reach collector" ERRORs from becoming issues.
         for logger_name in IGNORED_LOGGERS:
             ignore_logger(logger_name)
-        ignore_logger(SCRUB_LOGGER_NAME)
 
         import logging as _logging
 

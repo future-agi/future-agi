@@ -11,10 +11,12 @@ that keep the issue stream clean and safe:
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import pickle
 import secrets
+import signal
 import threading
 import time
 import urllib.request
@@ -24,7 +26,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import pytest
 import redis
 import sentry_sdk
-from sentry_sdk.integrations.logging import LoggingIntegration, ignore_logger
+from sentry_sdk.integrations.logging import LoggingIntegration
 from sentry_sdk.integrations.redis import RedisIntegration
 from sentry_sdk.integrations.stdlib import StdlibIntegration
 from sentry_sdk.scope import ScopeType, use_isolation_scope, use_scope
@@ -44,6 +46,7 @@ from tfc.logging.sentry import (
     _scrub_deployment_telemetry_event,
     _scrub_event,
     _scrub_strings,
+    _template_text,
 )
 from tfc.temporal.common.sentry_interceptor import SentryActivityInboundInterceptor
 
@@ -714,13 +717,6 @@ def _sent_through_client(action, **overrides):
     return sent
 
 
-@pytest.fixture
-def scrub_logger_ignored():
-    # init_sentry ignores this logger; the tests that make the scrub fail need
-    # it ignored too, or its own error record would re-enter the hook.
-    ignore_logger(sentry_module.SCRUB_LOGGER_NAME)
-
-
 # Transactions (4597165438)
 
 
@@ -865,8 +861,8 @@ def _boom(*args, **kwargs):
     raise TypeError("planted bug")
 
 
-def test_a_failing_scrub_drops_the_event_and_logs_only_the_failure(
-    monkeypatch, caplog, scrub_logger_ignored
+def test_a_failing_scrub_drops_the_event_and_reports_only_the_failure(
+    monkeypatch, capsys, caplog
 ):
     secret = secrets.token_hex(16)
     monkeypatch.setattr(sentry_module, "_scrub_strings", _boom)
@@ -875,16 +871,17 @@ def test_a_failing_scrub_drops_the_event_and_logs_only_the_failure(
         sentry_sdk.add_breadcrumb(message="m", data={"customer_api_key": secret})
         logging.getLogger("x").error("failed")
 
-    with caplog.at_level(logging.INFO):
-        sent = _sent_through_client(action)
+    sent = _sent_through_client(action)
     assert sent == []
-    records = [r for r in caplog.records if r.name == sentry_module.SCRUB_LOGGER_NAME]
-    assert [r.getMessage() for r in records] == ["sentry_scrub_failed: TypeError"]
-    assert records[0].exc_info is None
-    assert secret not in caplog.text
+    # On stderr, not through logging: Python 3.13.4+ drops a record logged
+    # while another record on the same thread is being handled, and the hook
+    # runs inside the handler of the record that made the event.
+    captured = capsys.readouterr()
+    assert captured.err == "sentry_scrub_failed: TypeError\n"
+    assert secret not in captured.err + captured.out + caplog.text
 
 
-def test_a_failing_scrub_drops_a_transaction(monkeypatch, caplog, scrub_logger_ignored):
+def test_a_failing_scrub_drops_a_transaction(monkeypatch, capsys):
     monkeypatch.setattr(sentry_module, "_scrub_strings", _boom)
 
     def action():
@@ -897,15 +894,16 @@ def test_a_failing_scrub_drops_a_transaction(monkeypatch, caplog, scrub_logger_i
         before_send_transaction=sentry_module._get_before_send_transaction(),
     )
     assert sent == []
-    assert "sentry_scrub_failed: TypeError" in caplog.text
+    captured = capsys.readouterr()
+    assert captured.err == "sentry_scrub_failed: TypeError\n"
+    assert "planted bug" not in captured.err + captured.out
 
 
-def test_a_failing_telemetry_scrub_also_drops_the_event(
-    monkeypatch, scrub_logger_ignored
-):
+def test_a_failing_telemetry_scrub_also_drops_the_event(monkeypatch, capsys):
     monkeypatch.setattr(sentry_module, "_scrub_deployment_telemetry_event", _boom)
     assert before_send({"message": "x"}, {}) is None
     assert sentry_module._get_before_send_transaction()({"type": "t"}, {}) is None
+    assert capsys.readouterr().err == "sentry_scrub_failed: TypeError\n" * 2
 
 
 def _init_sentry_kwargs(monkeypatch):
@@ -923,9 +921,11 @@ def _init_sentry_kwargs(monkeypatch):
     return seen, ignored
 
 
-def test_init_sentry_ignores_the_scrub_logger_and_wires_the_hooks(monkeypatch):
+def test_init_sentry_ignores_only_the_noisy_loggers_and_wires_the_hooks(monkeypatch):
     seen, ignored = _init_sentry_kwargs(monkeypatch)
-    assert sentry_module.SCRUB_LOGGER_NAME in ignored
+    # The scrub reports a failure on stderr, so there is no logger of its own.
+    assert ignored == list(sentry_module.IGNORED_LOGGERS)
+    assert not hasattr(sentry_module, "SCRUB_LOGGER_NAME")
     # Well above the final cap, so a key name that follows a long text is still
     # in view of the scrub; the hooks cut every string to the cap afterwards.
     assert seen["max_value_length"] == 262_144
@@ -966,6 +966,91 @@ def test_the_password_url_check_stays_linear_on_long_strings(text):
     started = time.monotonic()
     _scrub_strings(text)
     assert time.monotonic() - started < 2
+
+
+class _TookTooLong(BaseException):
+    pass
+
+
+@contextlib.contextmanager
+def _within(seconds):
+    """Fail the test after `seconds` instead of hanging on a quadratic regex
+    (the regex engine checks for signals while it runs)."""
+
+    def expired(signum, frame):
+        raise _TookTooLong(f"still running after {seconds}s")
+
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+    previous = signal.signal(signal.SIGALRM, expired)
+    signal.setitimer(signal.ITIMER_REAL, seconds)
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
+
+
+def _seconds_for(action, limit=1.0, abort_after=8):
+    started = time.monotonic()
+    with _within(abort_after):
+        action()
+    elapsed = time.monotonic() - started
+    assert elapsed < limit, f"took {elapsed:.2f}s"
+
+
+# The longest string the SDK hands a hook (init_sentry's max_value_length).
+_SDK_LIMIT = 262_144
+_HOSTILE_TEMPLATES = {
+    "zero flags": "%" + "0" * _SDK_LIMIT,
+    "open mapping keys": "%(" * (_SDK_LIMIT // 2),
+    "mapping keys with names": "%(a" * (_SDK_LIMIT // 3),
+    "zero flags in runs": ("%" + "0" * 50) * (_SDK_LIMIT // 51),
+}
+
+
+@pytest.mark.parametrize("name", list(_HOSTILE_TEMPLATES))
+def test_a_hostile_log_template_is_read_in_linear_time(name):
+    template = _HOSTILE_TEMPLATES[name]
+    _seconds_for(lambda: sentry_module._names_key_in_template(template))
+    _seconds_for(lambda: sentry_module._template_leaks(template))
+
+
+@pytest.mark.parametrize("name", ["zero flags", "open mapping keys"])
+def test_a_hostile_f_string_error_is_sent_in_linear_time(name):
+    # An f-string with user text in it: the logging frame's `msg` is read for
+    # every log call.
+    user_text = _HOSTILE_TEMPLATES[name]
+
+    def action():
+        logging.getLogger("x").error(f"invalid dataset name {user_text}")
+
+    sent = []
+    _seconds_for(lambda: sent.extend(_sent_through_client(action)))
+    assert len(sent) == 1
+
+
+@pytest.mark.parametrize(
+    "template, text",
+    [
+        ("%s", "\x00"),
+        ("%05d", "\x00"),
+        ("%(a)05.1f", "\x00"),
+        ("%010.3f", "\x00"),
+        ("%*d", "\x00"),
+        ("%-8.*f|%+d|% d|%#x|%ld|%.2s", "\x00|\x00|\x00|\x00|\x00|\x00"),
+        ("%(api_key)s and 100%% of %s", "\x00 and 100 of \x00"),
+        ("%z %", "%z %"),
+    ],
+)
+def test_the_conversions_a_log_template_can_hold_are_still_recognised(template, text):
+    assert _template_text(template) == text
+
+
+def test_a_template_naming_a_key_is_still_read_around_its_conversions():
+    assert sentry_module._names_key_in_template("api_key=%010.3f")
+    assert not sentry_module._names_key_in_template("took %05d ms for %(a)05.1f")
 
 
 @pytest.mark.parametrize(
@@ -1135,6 +1220,94 @@ def test_other_span_descriptions_and_tags_are_scrubbed_as_strings():
         "GET https://example.test/path",
     ]
     assert out["spans"][2]["tags"] == {"http.url": _REDACTED, "plain": "ok"}
+
+
+_CODE_SPAN_DESCRIPTIONS = [
+    (
+        "db",
+        'SELECT "accounts_user"."id", "accounts_user"."password" FROM "accounts_user" '
+        'WHERE "accounts_user"."id" = %s',
+    ),
+    ("middleware.django", "django.middleware.csrf.CsrfViewMiddleware.process_view"),
+    ("http.client", "POST https://oauth2.googleapis.com/token"),
+    ("function", "accounts.views.get_user_from_token"),
+]
+
+
+@pytest.mark.parametrize("op, description", _CODE_SPAN_DESCRIPTIONS)
+def test_a_span_that_names_code_or_sql_keeps_its_description(op, description):
+    event = _span_transaction({"op": op, "description": description})
+    out = sentry_module._get_before_send_transaction()(event, {})
+    assert out["spans"][0]["description"] == description
+
+
+def test_code_spans_keep_their_description_when_sent():
+    def action():
+        with sentry_sdk.start_transaction(name="t", op="task"):
+            for op, description in _CODE_SPAN_DESCRIPTIONS:
+                with sentry_sdk.start_span(op=op, name=description) as span:
+                    span.set_data("code.function", "get_user_from_token")
+
+    sent = _sent_through_client(
+        action,
+        traces_sample_rate=1.0,
+        before_send_transaction=sentry_module._get_before_send_transaction(),
+    )
+    [transaction] = [e for e in sent if e.get("type") == "transaction"]
+    spans = [s for s in transaction["spans"] if s.get("op") != "task"]
+    assert [(s["op"], s["description"]) for s in spans] == _CODE_SPAN_DESCRIPTIONS
+    assert all(s["data"]["code.function"] == "get_user_from_token" for s in spans)
+
+
+def test_the_code_keys_of_span_data_are_kept_and_the_rest_is_still_scrubbed():
+    secret = secrets.token_hex(16)
+    data = {
+        "code.function": "get_user_from_token",
+        "code.filepath": "/app/accounts/token_views.py",
+        "code.namespace": "accounts.token_views",
+        "db.statement": f"api_key={secret}",
+        "customer_api_key": secret,
+    }
+    event = _span_transaction({"op": "function", "data": data})
+    out = sentry_module._get_before_send_transaction()(event, {})
+    assert out["spans"][0]["data"] == {
+        "code.function": "get_user_from_token",
+        "code.filepath": "/app/accounts/token_views.py",
+        "code.namespace": "accounts.token_views",
+        "db.statement": _REDACTED,
+        "customer_api_key": _REDACTED,
+    }
+    assert secret not in json.dumps(out)
+
+
+@pytest.mark.parametrize(
+    "op, description",
+    [
+        ("db", "SELECT 1 -- https://app:hunter2@db.internal/app"),
+        ("function", "https://hooks.slack.com/services/T0/B0/xyz"),
+        ("middleware.django", "<saml:Assertion>x</saml:Assertion>"),
+        ("function", "SAMLResponse=abc"),
+    ],
+)
+def test_a_span_description_that_holds_a_credential_by_shape_is_redacted(
+    op, description
+):
+    event = _span_transaction({"op": op, "description": description})
+    out = sentry_module._get_before_send_transaction()(event, {})
+    assert out["spans"][0]["description"] == _REDACTED
+
+
+def test_an_http_span_description_still_loses_token_path_and_query_values():
+    secret = secrets.token_hex(16)
+    event = _span_transaction(
+        {"op": "http.client", "description": f"GET https://h/shared/{secret}"},
+        {"op": "http.client", "description": f"GET https://h/x?api_key={secret}"},
+    )
+    out = sentry_module._get_before_send_transaction()(event, {})
+    assert [s["description"] for s in out["spans"]] == [
+        f"GET https://h/shared/{_REDACTED}",
+        f"GET https://h/x?{_REDACTED}",
+    ]
 
 
 def test_a_subprocess_span_description_with_a_secret_is_scrubbed_when_sent():
