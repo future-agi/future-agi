@@ -143,7 +143,6 @@ Toggle.propTypes = {
 
 function Legend({ seq }) {
   const theme = useTheme();
-  const fg = theme.palette.text.primary;
   const sub = theme.palette.text.secondary;
   const bad = theme.palette.error.main;
   const has = (t) => seq.rows.some((r) => r.type === t);
@@ -176,24 +175,28 @@ function Legend({ seq }) {
       flexWrap="wrap"
       rowGap={0.5}
     >
-      {item("go", seg(fg), "Asked")}
-      {has("back") &&
-        item("back", seg(sub, "4 3"), "Answer")}
-      {has("none") && item("none", seg(bad, "5 3"), "No answer")}
-      {has("tool") &&
-        item(
-          "tool",
-          <svg width="16" height="12" aria-hidden="true">
-            <path
-              d="M1,2 h9 a4,4 0 0 1 0,8 h-6"
-              fill="none"
-              stroke={sub}
-              strokeWidth="1.3"
-            />
-            <path d="M5,7 L1,10 L5,13 z" fill={sub} />
-          </svg>,
-          "Tool call",
+      {/* What the small tag in front of each arrow's words means. */}
+      {[
+        ["SAID", "words to or from the caller", true],
+        ["TASK", "handed to a worker", seq.steps.some((x) => x.kind === "handoff")],
+        ["RESULT", "a worker's answer", has("back") || has("none")],
+        ["TOOL", "a tool call", has("tool")],
+      ]
+        .filter(([, , on]) => on)
+        .map(([k, text]) =>
+          item(
+            k,
+            <Typography
+              component="span"
+              sx={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.06em", color: "text.secondary" }}
+            >
+              {k}
+            </Typography>,
+            text,
+          ),
         )}
+      {has("back") && item("back", seg(sub, "4 3"), "came back")}
+      {has("none") && item("none", seg(bad, "5 3"), "no answer")}
     </Stack>
   );
 }
@@ -852,6 +855,116 @@ export default function SequenceDiagram({
     r.loop && r.closed ? `${r.loop.first}–${r.loop.last}` : undefined;
 
   /* The lanes part of a row: the arrow and its words, or the tool box. */
+  /* What an arrow's words are (Chintan, 17 Nov: "not sure what the text on
+     the arrow is"): the caller's or coordinator's words, a task handed to a
+     worker, what a worker sent back, or a tool call. */
+  const kindOf = (r, s) => {
+    if (r.type === "tool") return "TOOL";
+    if (r.type === "took") return null;
+    if (r.type === "go") return s.kind === "message" ? "SAID" : "TASK";
+    return s.kind === "message" ? "SAID" : "RESULT";
+  };
+  const KIND_WORDS = {
+    SAID: "Said",
+    TASK: "Task handed over",
+    RESULT: "Result sent back",
+    TOOL: "Tool call",
+  };
+  const TAG_W = (k) => (k ? k.length * 6.2 + 6 : 0);
+  /* The hover card: the full words and what they are, never cut. */
+  const hoverCard = (r, s) => {
+    const k = kindOf(r, s);
+    const reply = r.type === "back" || r.type === "none" || r.type === "took";
+    const closedLoop = r.loop && r.closed;
+    const where = closedLoop
+      ? `Steps ${r.loop.first}–${r.loop.last}`
+      : reply
+        ? `Reply to step ${s.n}`
+        : `Step ${s.n}`;
+    const who =
+      r.type === "tool"
+        ? `${seq.nameOf(s.from)} called ${s.tool}`
+        : reply
+          ? `${seq.nameOf(s.to)} → ${seq.nameOf(r.type === "took" ? seq.lanes[0].id : s.from)}`
+          : `${seq.nameOf(s.from)} → ${seq.nameOf(s.to)}`;
+    const words =
+      r.type === "tool"
+        ? `${s.result || "No result"}`
+        : reply
+          ? s.answer?.full || s.answer?.label
+          : s.full || s.label;
+    const state = closedLoop
+      ? `Repeated ${r.loop.times} times — click to see every round`
+      : r.type === "none"
+        ? null
+        : s.refused && r.type === "tool"
+          ? "Refused"
+          : s.bad && !reply
+            ? "Failed"
+            : /* The arrow's rule: never "slow" for a conversation with the
+                 caller, or several turns in one step. */
+              s.dur != null &&
+                s.dur >= SLOW_SEC &&
+                !reply &&
+                s.from !== seq.lanes[0].id &&
+                !(s.turns > 1)
+              ? `Slow · took ${took(s.dur)}`
+              : null;
+    return (
+      <Box sx={{ maxWidth: 340, py: 0.25 }}>
+        <Typography sx={{ typography: "s3", fontWeight: 600, color: "inherit" }}>
+          {`${where}${
+            r.type === "none"
+              ? " · No reply came back"
+              : k
+                ? ` · ${KIND_WORDS[k]}`
+                : ""
+          }`}
+        </Typography>
+        <Typography sx={{ typography: "s3", color: "inherit", opacity: 0.75 }}>
+          {who}
+        </Typography>
+        {words && (
+          <Typography
+            sx={{
+              typography: "s3",
+              color: "inherit",
+              mt: 0.5,
+              whiteSpace: "pre-wrap",
+            }}
+          >
+            {/* One quote for one turn's words; several turns read as a list. */}
+            {s.kind === "message" && r.type !== "tool" && !(s.turns > 1)
+              ? `“${words}”`
+              : words}
+          </Typography>
+        )}
+        {state && (
+          <Typography sx={{ typography: "s3", fontWeight: 600, color: "inherit", mt: 0.5 }}>
+            {state}
+          </Typography>
+        )}
+        {!closedLoop && (
+          <Typography sx={{ typography: "s3", color: "inherit", opacity: 0.6, mt: 0.5 }}>
+            Click for the full detail
+          </Typography>
+        )}
+      </Box>
+    );
+  };
+  /* A small kind tag in front of an arrow's words. */
+  const kindTag = (k, color) =>
+    k ? (
+      <tspan
+        fontSize="9"
+        fontWeight="700"
+        letterSpacing="0.06em"
+        fill={color || c.muted}
+      >
+        {`${k}  `}
+      </tspan>
+    ) : null;
+
   /* A long call's turn: what the caller said, how many steps, the workers it
      went to; click to open or fold it. */
   const turnRow = (r) => {
@@ -876,8 +989,28 @@ export default function SequenceDiagram({
     const toggle = () =>
       setTurnOpen((was) => ({ ...was, [g.turn]: !open }));
     return (
-      <g
+      <Tooltip
         key={`turn-${g.turn}`}
+        followCursor
+        placement="top"
+        enterDelay={250}
+        title={
+          <Box sx={{ maxWidth: 340 }}>
+            <Typography sx={{ typography: "s3", fontWeight: 600, color: "inherit" }}>
+              {`${name} · ${g.steps.length} ${g.steps.length === 1 ? "step" : "steps"}`}
+            </Typography>
+            {g.text && (
+              <Typography sx={{ typography: "s3", color: "inherit", mt: 0.5 }}>
+                {`“${g.text}”`}
+              </Typography>
+            )}
+            <Typography sx={{ typography: "s3", color: "inherit", opacity: 0.6, mt: 0.5 }}>
+              {open ? "Click to fold" : "Click to open"}
+            </Typography>
+          </Box>
+        }
+      >
+      <g
         role="button"
         tabIndex={0}
         aria-expanded={open}
@@ -917,6 +1050,7 @@ export default function SequenceDiagram({
           </text>
         )}
       </g>
+      </Tooltip>
     );
   };
 
@@ -956,10 +1090,18 @@ export default function SequenceDiagram({
           .filter(Boolean)
           .join(" · ") || null;
       const chipW = chip ? chip.length * 5.9 + 12 : 0;
-      const label = cut(s.label, roomOf(x1, x2) - Math.ceil(chipW / CH));
-      const lw = label.length * CH;
+      const gk = kindOf(r, s);
+      /* The tag takes a few characters, so a step's words may run a little
+         past a short arrow (still inside the drawing). */
+      const room = Math.floor(Math.max(Math.abs(x2 - x1) - 16, 260) / CH);
+      const raw = cut(s.label, room - Math.ceil((chipW + TAG_W(gk)) / CH) - 2);
+      const label = s.kind === "message" ? `“${raw}”` : raw;
+      const lw = label.length * CH + TAG_W(gk);
       const mid =
-        placeX((x1 + x2) / 2, `${label}${" ".repeat(Math.ceil(chipW / CH))}`) -
+        placeX(
+          (x1 + x2) / 2,
+          `${label}${" ".repeat(Math.ceil((chipW + TAG_W(gk)) / CH))}`,
+        ) -
         chipW / 2;
       items.push(
         <line
@@ -981,7 +1123,7 @@ export default function SequenceDiagram({
           fontWeight={wt}
           fill={c.fg}
         >
-          <title>{s.full || s.label}</title>
+          {kindTag(gk, s.bad ? c.bad : null)}
           {label}
         </text>,
         bubble(
@@ -1031,10 +1173,16 @@ export default function SequenceDiagram({
       const tag = isTook ? ` · after step ${s.n}` : ` · reply to step ${s.n}`;
       /* A reply has its row to itself, so its words may run past a short
          arrow — the "reply to step n" tag never eats them. */
-      const label = cut(
+      const rk = kindOf(r, s);
+      const rawR = cut(
         s.answer.label,
-        Math.max(roomOf(x1, x2) - tag.length, Math.floor((svgW - 24) / CH) - tag.length - 2, 18),
+        Math.max(roomOf(x1, x2) - tag.length, Math.floor((svgW - 24) / CH) - tag.length - 2, 18) -
+          Math.ceil(TAG_W(rk) / CH),
       );
+      /* Quotes only for someone's actual words — "Front desk answered each
+         one" is our summary of several turns, not a quote. */
+      const label =
+        s.kind === "message" && !(s.turns > 1) ? `“${rawR}”` : rawR;
       items.push(
         <line
           key="a"
@@ -1049,14 +1197,17 @@ export default function SequenceDiagram({
         />,
         <text
           key="l"
-          x={placeX((x1 + x2) / 2, `${label}${tag}`)}
+          x={placeX(
+            (x1 + x2) / 2,
+            `${label}${tag}${" ".repeat(Math.ceil(TAG_W(rk) / CH))}`,
+          )}
           y={yy - 3}
           textAnchor="middle"
           fontSize="11.5"
           fontWeight={r.type === "none" || on ? 600 : 400}
           fill={bad ? c.bad : c.sub}
         >
-          <title>{s.answer.full || s.answer.label}</title>
+          {kindTag(rk, bad ? c.bad : null)}
           {label}
           <tspan fontWeight="400" fill={bad ? c.bad : c.muted} opacity={0.8}>
             {tag}
@@ -1074,12 +1225,13 @@ export default function SequenceDiagram({
       const lchip = r.loop ? loopChip({ ...r.loop, closed: r.closed }) : null;
       const lchipW = lchip ? lchip.length * 5.9 + 12 : 0;
       const nameW = 6.6;
-      const name = cut(s.tool, Math.floor((side.room * 0.55) / nameW));
+      const tagW = TAG_W("TOOL");
+      const name = cut(s.tool, Math.floor((side.room * 0.55 - tagW) / nameW));
       const resRoom = Math.floor(
-        (side.room - name.length * nameW - 18 - lchipW) / 6.1,
+        (side.room - tagW - name.length * nameW - 18 - lchipW) / 6.1,
       );
       const res = cut(`→ ${s.result || ""}${tail}`, resRoom);
-      const textW = name.length * nameW + 8 + res.length * 6.1;
+      const textW = tagW + name.length * nameW + 8 + res.length * 6.1;
       const tx = side.left ? x - 22 - textW : x + 22;
       const loop = side.left
         ? `M${x},${yy - 5} h-12 a5,5 0 0 0 0,10 h9`
@@ -1125,20 +1277,18 @@ export default function SequenceDiagram({
           fontSize="11"
           fontWeight={wt}
           fill={c.fg}
-          fontFamily={mono}
         >
-          <title>{s.tool}</title>
-          {name}
+          {kindTag("TOOL", s.bad ? c.bad : null)}
+          <tspan fontFamily={mono}>{name}</tspan>
         </text>,
         <text
           key="r"
-          x={tx + name.length * nameW + 8}
+          x={tx + tagW + name.length * nameW + 8}
           y={yy + 4}
           fontSize="11.5"
           fontWeight={s.bad ? 600 : 400}
           fill={s.bad ? c.bad : c.sub}
         >
-          <title>{s.result}</title>
           {res}
         </text>,
       );
@@ -1223,10 +1373,19 @@ export default function SequenceDiagram({
         );
       });
     return (
-      <g key={`${r.type}-${r.n}`} {...rowProps(s, r)}>
-        {bandOf(r, svgW, on)}
-        {items}
-      </g>
+      <Tooltip
+        key={`${r.type}-${r.n}`}
+        title={hoverCard(r, s)}
+        followCursor
+        placement="top"
+        enterDelay={250}
+        enterNextDelay={150}
+      >
+        <g {...rowProps(s, r)}>
+          {bandOf(r, svgW, on)}
+          {items}
+        </g>
+      </Tooltip>
     );
   };
 
