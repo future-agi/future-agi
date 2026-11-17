@@ -242,6 +242,29 @@ func postVertexChat(srv *Server, body string, headers map[string]string) *httpte
 	return w
 }
 
+// finalStreamChunk is the last chunk before [DONE] of an SSE body, which
+// carries the agentcc metadata (cost) when the request asked for it.
+func finalStreamChunk(t *testing.T, body string) models.StreamChunk {
+	t.Helper()
+	var dataLines []string
+	for _, line := range strings.Split(body, "\n") {
+		if strings.HasPrefix(line, "data: ") {
+			dataLines = append(dataLines, strings.TrimPrefix(line, "data: "))
+		}
+	}
+	if len(dataLines) < 3 || dataLines[len(dataLines)-1] != "[DONE]" {
+		t.Fatalf("unexpected stream: %s", body)
+	}
+	var final models.StreamChunk
+	if err := json.Unmarshal([]byte(dataLines[len(dataLines)-2]), &final); err != nil {
+		t.Fatalf("parsing the final metadata chunk: %v", err)
+	}
+	if final.AgentccMetadata == nil {
+		t.Fatalf("no agentcc metadata in the final chunk: %s", dataLines[len(dataLines)-2])
+	}
+	return final
+}
+
 // The uplift follows the instance that served the request, not whichever
 // instance carries the same id in the org's cache.
 func TestVertexUpliftFollowsTheInstanceThatServed(t *testing.T) {
@@ -282,22 +305,7 @@ func TestVertexUpliftFollowsTheInstanceThatServed(t *testing.T) {
 			t.Fatalf("status %d: %s", w.Code, w.Body.String())
 		}
 
-		var dataLines []string
-		for _, line := range strings.Split(w.Body.String(), "\n") {
-			if strings.HasPrefix(line, "data: ") {
-				dataLines = append(dataLines, strings.TrimPrefix(line, "data: "))
-			}
-		}
-		if len(dataLines) < 3 || dataLines[len(dataLines)-1] != "[DONE]" {
-			t.Fatalf("unexpected stream: %s", w.Body.String())
-		}
-		var final models.StreamChunk
-		if err := json.Unmarshal([]byte(dataLines[len(dataLines)-2]), &final); err != nil {
-			t.Fatalf("parsing the final metadata chunk: %v", err)
-		}
-		if final.AgentccMetadata == nil {
-			t.Fatalf("no agentcc metadata in the final chunk: %s", dataLines[len(dataLines)-2])
-		}
+		final := finalStreamChunk(t, w.Body.String())
 		if got := final.AgentccMetadata.Cost; math.Abs(got-0.003146) > 5e-7 || math.Abs(got-0.00286) <= 5e-7 {
 			t.Fatalf("streamed cost = %v, want 0.003146 (not the un-uplifted 0.00286)", got)
 		}
@@ -321,7 +329,8 @@ func vertexRoutingUpstream(t *testing.T, fail func(id string, call int) bool) (*
 	calls := 0
 	var served []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.HasSuffix(r.URL.Path, ":generateContent") {
+		streaming := strings.HasSuffix(r.URL.Path, ":streamGenerateContent")
+		if !streaming && !strings.HasSuffix(r.URL.Path, ":generateContent") {
 			// The gateway's start-up connectivity check is not a request.
 			w.WriteHeader(http.StatusOK)
 			return
@@ -336,6 +345,12 @@ func vertexRoutingUpstream(t *testing.T, fail func(id string, call int) bool) (*
 		mu.Unlock()
 		if failed {
 			http.Error(w, `{"error":{"code":503,"message":"unavailable","status":"UNAVAILABLE"}}`, http.StatusServiceUnavailable)
+			return
+		}
+		if streaming {
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = w.Write([]byte("data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"hi\"}]}}]}\n\n"))
+			_, _ = w.Write([]byte("data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"!\"}]},\"finishReason\":\"STOP\"}],\"usageMetadata\":" + vertexServedUsage + "}\n\n"))
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -463,6 +478,61 @@ func TestVertexUpliftFollowsTheFallbackAndFailoverThatServed(t *testing.T) {
 			got, err := strconv.ParseFloat(strings.TrimSpace(w.Header().Get("x-agentcc-cost")), 64)
 			if err != nil || math.Abs(got-want) > 5e-7 {
 				t.Fatalf("x-agentcc-cost = %q, want %.6f (served by %s)", w.Header().Get("x-agentcc-cost"), want, ids[0])
+			}
+		})
+	}
+}
+
+// A streamed request records the instance that served it, the same as a plain
+// one: after the targets' failover is exhausted, the fallback model's instance
+// decides the uplift, not the instance the request first went to.
+func TestVertexUpliftFollowsTheFallbackThatServedAStream(t *testing.T) {
+	const (
+		primaryModel  = "gemini-4-argon"
+		fallbackModel = "gemini-4-argon-cyber-permissive"
+		body          = `{"model":"gemini-4-argon","messages":[{"role":"user","content":"hi"}],"stream":true}`
+		// vertexServedUsage at the fallback model's price, without and with
+		// the regional uplift.
+		fallbackFlat, fallbackUplifted = 0.005720, 0.006292
+	)
+	targetsAB := func(r *config.RoutingConfig) {
+		r.ModelFallbacks = map[string][]string{primaryModel: {fallbackModel}}
+		r.Targets = map[string][]config.RoutingTargetConfig{primaryModel: {{Provider: "a", Weight: 1}, {Provider: "b", Weight: 1}}}
+	}
+	targetsFail := func(id string, _ int) bool { return id == "a" || id == "b" }
+
+	for _, tc := range []struct {
+		name      string
+		instances []vertexInstance
+		want      float64
+	}{
+		{"failover exhausted, regional targets, global fallback serves",
+			[]vertexInstance{
+				{id: "a", location: "us-central1", models: []string{primaryModel}},
+				{id: "b", location: "us-central1", models: []string{primaryModel}},
+				{id: "fb", location: "global", models: []string{fallbackModel}},
+			}, fallbackFlat},
+		{"failover exhausted, global targets, regional fallback serves",
+			[]vertexInstance{
+				{id: "a", location: "global", models: []string{primaryModel}},
+				{id: "b", location: "global", models: []string{primaryModel}},
+				{id: "fb", location: "us-central1", models: []string{fallbackModel}},
+			}, fallbackUplifted},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			upstream, served := vertexRoutingUpstream(t, targetsFail)
+			defer upstream.Close()
+			srv := vertexRoutingServer(t, upstream.URL, tc.instances, targetsAB)
+			w := postVertexChat(srv, body, map[string]string{"x-agentcc-include-metadata": "1"})
+			if w.Code != http.StatusOK {
+				t.Fatalf("status %d: %s", w.Code, w.Body.String())
+			}
+			if ids := served(); len(ids) != 1 || ids[0] != "fb" {
+				t.Fatalf("instances that served = %v, want only fb", ids)
+			}
+			final := finalStreamChunk(t, w.Body.String())
+			if got := final.AgentccMetadata.Cost; math.Abs(got-tc.want) > 5e-7 {
+				t.Fatalf("streamed cost = %v, want %.6f", got, tc.want)
 			}
 		})
 	}

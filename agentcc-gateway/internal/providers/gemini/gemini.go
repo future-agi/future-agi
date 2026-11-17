@@ -129,9 +129,14 @@ func (p *Provider) VertexLocation() string {
 	// The location is the segment after projects/<id>/locations, the sequence
 	// the API's own paths use. The last such sequence counts, so a proxy prefix
 	// in front of it, or a project named "locations", does not change the answer.
-	for i := len(segments) - 4; i >= 0; i-- {
-		if strings.EqualFold(segments[i], "projects") && strings.EqualFold(segments[i+2], "locations") && segments[i+3] != "" {
-			return strings.ToLower(segments[i+3])
+	// If that last sequence names no location, the host decides, not an earlier
+	// sequence.
+	for i := len(segments) - 3; i >= 0; i-- {
+		if strings.EqualFold(segments[i], "projects") && strings.EqualFold(segments[i+2], "locations") {
+			if i+3 < len(segments) && segments[i+3] != "" {
+				return strings.ToLower(segments[i+3])
+			}
+			break
 		}
 	}
 	host := strings.ToLower(u.Hostname())
