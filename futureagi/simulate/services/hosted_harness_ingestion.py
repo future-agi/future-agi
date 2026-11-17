@@ -14,6 +14,7 @@ from django.db import IntegrityError, transaction
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
+from simulate.constants.hosted_harness import SCENARIO_FAILURE_CODES, TRIAL_STATE_KEY
 from simulate.models import (
     AgentDefinition,
     CallExecution,
@@ -40,7 +41,8 @@ from simulate.services.hosted_harness_validation import (
     receipt_call_times,
     validate_jsonb_strings,
 )
-from simulate.types import CallCallActors
+from simulate.tasks.alk_sim import dispatch_worker_read
+from simulate.types import CallCallActors, is_worker_subject
 from simulate.utils.test_execution_utils import is_fix_check_run
 from tfc.settings.settings import UPLOAD_BUCKET_NAME
 from tfc.utils.storage_client import get_object_url, get_storage_client
@@ -1138,6 +1140,9 @@ def _apply_receipt_to_call(
     call.save(update_fields=list(dict.fromkeys(update_fields)))
     if resolved_modality == CallExecution.SimulationCallType.VOICE:
         _ensure_run_agent_is_voice(job)
+    # Every trial that ended, however it ended: a worker's end state is what the trial's ending made it.
+    finished_id = call.id
+    transaction.on_commit(lambda: dispatch_worker_read(finished_id), robust=True)
     if call.status == CallExecution.CallStatus.COMPLETED:
         call_id = call.id
         run_test_id = getattr(call.test_execution, "run_test_id", None)
@@ -1157,6 +1162,8 @@ def _apply_receipt_to_call(
                 # version's and the winner's runs once it has a winner.
                 if is_fix_check_run(call.test_execution_id):
                     selected, tool_on = [], False
+            if (body.get("failure") or {}).get("code") in SCENARIO_FAILURE_CODES:
+                selected, tool_on = [], False
         except Exception:  # noqa: BLE001 - a receipt is never lost over scheduling
             logger.exception(
                 "harness_eval_selection_lookup_failed for call %s", call_id
@@ -1241,6 +1248,10 @@ def _call_lifecycle_status(body: dict[str, Any]) -> str:
     outcome = body["status"]
     if outcome == "skipped":
         return CallExecution.CallStatus.CANCELLED
+    failure = body.get("failure")
+    if isinstance(failure, dict) and failure.get("code") == "user_canceled":
+        # Stopped by the user during the call: cancelled, whatever part of the call ran.
+        return CallExecution.CallStatus.CANCELLED
     call = body.get("call")
     if isinstance(call, dict) and call.get("started_at") and call.get("ended_at"):
         return CallExecution.CallStatus.COMPLETED
@@ -1251,10 +1262,11 @@ def _call_lifecycle_status(body: dict[str, Any]) -> str:
 
 def receipt_outcome_status(body: dict[str, Any]) -> str:
     """The receipt's status, or no_score when no sub-goal or evaluation passed or failed; an error stays an error."""
+    # A worker's own check is reported beside the task's, never in the call's outcome.
     results = {
         sub_goal_result(one)
         for one in body.get("sub_goals") or []
-        if isinstance(one, dict)
+        if isinstance(one, dict) and not is_worker_subject(one.get("subject"))
     }
     decided = any(
         isinstance(one, dict)
@@ -1303,6 +1315,12 @@ def _receipt_evaluations(body: dict[str, Any]) -> list[dict[str, Any]]:
                 "passed": SUB_GOAL_PASSED.get(result),
                 "reason": str(goal.get("reason") or ""),
                 **({"result": result} if result not in ("pass", "fail") else {}),
+                # A worker's own check, reported beside the task's: kept apart wherever results are listed.
+                **(
+                    {"subject": str(goal["subject"])}
+                    if is_worker_subject(goal.get("subject"))
+                    else {}
+                ),
             }
         )
     for evaluation in body.get("evaluations") or []:
@@ -1497,8 +1515,6 @@ def _epoch_seconds(value: Any) -> float | None:
 
 # Where a call keeps its world actors' actions, sealed in the transcript beside the actors.
 WORLD_ACTIONS_KEY = "harness_world_actions"
-# Where a call keeps what changed in the world during its trial, per participant, and what each actor decided.
-TRIAL_STATE_KEY = "harness_trial_state"
 # What started a call that no person began: the scenario's own task.
 STARTED_BY_KEY = "harness_started_by"
 STARTED_BY_TASK = "task"
@@ -1668,9 +1684,16 @@ def _ingest_hosted_transcript(
                     "approvals",
                     "usage",
                     "duplicates",
+                    "shared_records",
+                    "stopped_workers",
                 )
                 if isinstance(world, dict) and isinstance(world.get(key), list)
             }
+            # Whether the harness cut the list of shared records, as it sealed it beside the list.
+            if isinstance(world, dict) and isinstance(
+                world.get("shared_records_truncated"), bool
+            ):
+                trial["shared_records_truncated"] = world["shared_records_truncated"]
             # The limits the trial ran with, so the record says which applied.
             if isinstance(world, dict) and isinstance(world.get("limits"), dict):
                 trial["limits"] = _actor_limits(world["limits"])
@@ -1681,9 +1704,25 @@ def _ingest_hosted_transcript(
             notices = [
                 # A fault's notice names its action, call and mode; evidence_incomplete counts the pieces instead.
                 {
-                    key: one.get(key)
-                    for key in ("code", "message", "action", "on_call", "mode", "count")
-                    if key in one
+                    **{
+                        key: one.get(key)
+                        for key in (
+                            "code",
+                            "message",
+                            "action",
+                            "on_call",
+                            "mode",
+                            "count",
+                        )
+                        if key in one
+                    },
+                    # The workers a notice names, e.g. a separate worker that bypassed its channel.
+                    **(
+                        {"workers": one["workers"]}
+                        if isinstance(one.get("workers"), list)
+                        and all(isinstance(worker, str) for worker in one["workers"])
+                        else {}
+                    ),
                 }
                 for one in _entries(notices)
                 if isinstance(one.get("message"), str)

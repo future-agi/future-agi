@@ -9,17 +9,18 @@ import uuid
 from collections.abc import Iterator
 from dataclasses import asdict
 from itertools import islice
-from typing import Any
+from typing import Any, get_args
 
 import structlog
 from django.db.models import QuerySet
-from django.http import StreamingHttpResponse
+from django.http import Http404, StreamingHttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import serializers, status
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -28,19 +29,30 @@ from simulate.models import CallExecution, TestExecution
 from simulate.selectors.call_detail import (
     call_actors,
     comparability,
+    earlier_attempts,
     has_customer,
     participants,
     tagged_function_calls,
+    tool_call_count,
     transcript_turns,
     trial_state,
 )
+from simulate.selectors.call_workers import call_workers, scenario_trial_routes
 from simulate.selectors.run_resume import resume_state
 from simulate.selectors.runs import user_executions
 from simulate.serializers.call_detail_v3 import (
     CallCallActorSerializer,
     CallParticipantSerializer,
+    EarlierAttemptSerializer,
     FunctionCallSerializer,
     TrialStateSerializer,
+)
+from simulate.serializers.call_workers_v3 import (
+    CallWorkersPendingSerializer,
+    CallWorkersQuerySerializer,
+    CallWorkersResponseSerializer,
+    TrialRoutesQuerySerializer,
+    TrialRoutesResponseSerializer,
 )
 from simulate.serializers.hosted_harness import HARNESS_FAILURE_DOMAINS
 from simulate.serializers.response.run_test import RunVersionLabelSerializer
@@ -81,6 +93,7 @@ from simulate.services.scoring_status import (
     scoring_counts,
 )
 from simulate.services.test_executor import build_eval_configs_map
+from simulate.types import SubjectKind
 from simulate.views.scoping import run_test_workspace_filter
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_serializers import ApiErrorResponseSerializer
@@ -226,6 +239,7 @@ class OutcomeCountsSerializer(serializers.Serializer):
     passed = serializers.IntegerField()
     failed = serializers.IntegerField()
     error = serializers.IntegerField()
+    cancelled = serializers.IntegerField()
     inconclusive = serializers.IntegerField()
     no_score = serializers.IntegerField()
 
@@ -357,6 +371,17 @@ class SubGoalResultSerializer(serializers.Serializer):
         child=serializers.CharField(),
         required=False,
         help_text="What the check was decided from: world_state, tool_calls, transcript, recording.",
+    )
+    # `worker:<id>` for a worker's own check, reported beside the task verdict; absent for the task's.
+    subject = serializers.CharField(required=False)
+    subject_kind = serializers.ChoiceField(
+        choices=get_args(SubjectKind), default="task"
+    )
+    worker_id = serializers.CharField(
+        required=False, help_text="The worker whose own check this is."
+    )
+    display_name = serializers.CharField(
+        help_text="What the results show: its name, with the worker's name when it is one worker's own check."
     )
 
 
@@ -649,6 +674,10 @@ class CallExecutionV3DetailResponseSerializer(CallExecutionDetailSerializer):
     cost_breakdown_cents = CostBreakdownSerializer()
     evaluations = EvaluationResultSerializer(many=True)
     function_calls = FunctionCallSerializer(many=True)
+    tool_call_count = serializers.IntegerField(
+        help_text="The agent's tool calls, from the tool trace when the call has one, else the transcript; a world "
+        "actor's action is not one, and a hand-off to another agent is a Participants step, not one of them."
+    )
     call_actors = CallCallActorSerializer(many=True)
     participants = CallParticipantSerializer(
         many=True,
@@ -660,6 +689,10 @@ class CallExecutionV3DetailResponseSerializer(CallExecutionDetailSerializer):
         "started it and the person never spoke."
     )
     trial_state = TrialStateSerializer(allow_null=True)
+    earlier_attempts = EarlierAttemptSerializer(many=True)
+    attempt_number = serializers.IntegerField(
+        help_text="Which attempt this call is, counted from 1: one more than its earlier attempts."
+    )
     comparable = serializers.BooleanField(
         help_text="False when the trial did not start from the seeded records; it is then left out of "
         "repeatability, pass^k and run comparisons."
@@ -684,10 +717,13 @@ class CallExecutionV3DetailResponseSerializer(CallExecutionDetailSerializer):
             "cost_breakdown_cents",
             "evaluations",
             "function_calls",
+            "tool_call_count",
             "call_actors",
             "participants",
             "has_customer",
             "trial_state",
+            "earlier_attempts",
+            "attempt_number",
             "comparable",
             "not_comparable_reason",
             "scoring_status",
@@ -700,6 +736,9 @@ def _execution_for_request(request, execution_id) -> TestExecution:
     organization = getattr(request, "organization", None) or getattr(
         request.user, "organization", None
     )
+    if organization is None:
+        # Never a filter on a null organization.
+        raise Http404
     return get_object_or_404(
         TestExecution.objects.select_related(
             "run_test",
@@ -977,11 +1016,14 @@ def build_call_execution_detail(
             "cost_breakdown_cents": normalized["cost_breakdown_cents"],
             "evaluations": normalized["evaluations"],
             "function_calls": calls,
+            "tool_call_count": tool_call_count(data["transcript"], calls),
             "call_actors": actors,
             "participants": participants(call.call_metadata, data["transcript"], calls),
             "has_customer": has_customer(data["transcript"]),
             # Attempted, refused and committed per participant, and what each actor chose: kept apart.
             "trial_state": trial_state(call, calls=calls),
+            "earlier_attempts": (attempts := earlier_attempts(call)),
+            "attempt_number": len(attempts) + 1,
             **comparability(call),
             "scoring_status": normalized["scoring_status"],
             "csat_status": normalized["csat_status"],
@@ -999,22 +1041,96 @@ class CallExecutionV3DetailView(APIView):
         operation_id="simulate_v3_call_execution_detail",
     )
     def get(self, request, call_execution_id, *args, **kwargs):
-        organization = getattr(request, "organization", None) or getattr(
-            request.user, "organization", None
-        )
-        call = get_object_or_404(
+        call = _call_for_request(
+            request,
+            call_execution_id,
             CallExecution.objects.select_related(
                 "scenario",
                 "test_execution__run_test",
                 "test_execution__agent_definition",
                 "test_execution__simulator_agent",
             ).prefetch_related("transcripts", "chat_messages", "snapshots"),
-            run_test_workspace_filter(request, "test_execution__run_test"),
-            id=call_execution_id,
-            test_execution__run_test__organization=organization,
-            test_execution__run_test__deleted=False,
         )
         return Response(build_call_execution_detail(call, request=request))
+
+
+def _call_for_request(
+    request: Request,
+    call_execution_id: uuid.UUID | str,
+    calls: QuerySet[CallExecution] | None = None,
+) -> CallExecution:
+    """One call the requester's organization and workspace may read, or 404."""
+    organization = getattr(request, "organization", None) or getattr(
+        request.user, "organization", None
+    )
+    if organization is None:
+        raise Http404
+    return get_object_or_404(
+        (
+            calls
+            if calls is not None
+            else CallExecution.objects.select_related("test_execution__run_test")
+        ),
+        run_test_workspace_filter(request, "test_execution__run_test"),
+        id=call_execution_id,
+        test_execution__run_test__organization=organization,
+        test_execution__run_test__deleted=False,
+    )
+
+
+class CallExecutionV3WorkersView(APIView):
+    """Which of a multi-agent app's workers did what in this trial, read from the spans the app exported."""
+
+    permission_classes = [IsAuthenticated]
+
+    @validated_request(
+        query_serializer=CallWorkersQuerySerializer,
+        responses={
+            200: CallWorkersResponseSerializer,
+            202: CallWorkersPendingSerializer,
+            204: "No hand-off to other agents was seen in this call or in the earlier attempt asked for",
+        },
+        operation_id="simulate_v3_call_execution_workers",
+    )
+    def get(self, request, call_execution_id, *args, **kwargs):
+        call = _call_for_request(request, call_execution_id)
+        reply = call_workers(
+            call, request.validated_query_data.get("attempt"), timezone.now()
+        )
+        if reply.record is not None:
+            return Response(
+                CallWorkersResponseSerializer(reply.record).data, status=reply.status
+            )
+        if reply.next_read_at is not None:
+            return Response(
+                CallWorkersPendingSerializer(
+                    {"pending": True, "next_read_at": reply.next_read_at}
+                ).data,
+                status=reply.status,
+            )
+        return Response(status=reply.status)
+
+
+class RunTrialRoutesV3View(APIView):
+    """One scenario's trials in the run lined up by who asked whom, and the first step where they went different ways."""
+
+    permission_classes = [IsAuthenticated]
+
+    @validated_request(
+        query_serializer=TrialRoutesQuerySerializer,
+        responses={200: TrialRoutesResponseSerializer},
+        operation_id="simulate_v3_test_execution_trial_routes",
+    )
+    def get(self, request, test_execution_id, *args, **kwargs):
+        execution = _execution_for_request(request, test_execution_id)
+        query = request.validated_query_data
+        routes = scenario_trial_routes(
+            execution,
+            query["scenario_key"],
+            timezone.now(),
+            tool_calls=query.get("tool_calls", False),
+        )
+        return Response(TrialRoutesResponseSerializer(routes).data)
 
 
 class RunAnalyticsV3View(APIView):

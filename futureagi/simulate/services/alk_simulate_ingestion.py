@@ -49,6 +49,7 @@ from simulate.services.test_executor import (
     TestExecutor,
     _run_simulate_evaluations_task,
 )
+from simulate.types import worker_subject_id
 from simulate.utils.ended_reason import to_canonical_ended_reason
 from simulate.utils.eval_summary import INCONCLUSIVE_OUTPUT, NOT_APPLICABLE_OUTPUT
 from simulate.utils.test_execution_utils import (
@@ -1918,7 +1919,14 @@ def _apply_harness_evaluation_outputs(
         if not name:
             continue
         kind = str(evaluation.get("kind") or "checkpoint").strip()[:50]
-        template = _resolve_harness_eval_template(run_test, evaluation, name)
+        subject = str(evaluation.get("subject") or "")
+        worker = worker_subject_id(subject) or ""
+        # A worker's own check is never the task's column: it gets its own id and no error localizer.
+        template = (
+            None
+            if worker
+            else _resolve_harness_eval_template(run_test, evaluation, name)
+        )
         config = None
         if template is not None:
             config = _get_or_create_harness_eval_config(run_test, template, name)
@@ -1927,7 +1935,9 @@ def _apply_harness_evaluation_outputs(
             output_id = str(
                 uuid.uuid5(
                     _HARNESS_EVAL_NAMESPACE,
-                    f"{run_test.id}:{kind}:{name}",
+                    f"{run_test.id}:{kind}:{subject}:{name}"
+                    if worker
+                    else f"{run_test.id}:{kind}:{name}",
                 )
             )
 
@@ -1954,6 +1964,8 @@ def _apply_harness_evaluation_outputs(
             "output_type": output_type,
             **({"result": evaluation["result"]} if evaluation.get("result") else {}),
             "reason": str(evaluation.get("reason") or "")[:10000],
+            # A worker's own check names its worker by subject; the reader's label is the client's.
+            **({"subject": subject} if worker else {}),
             "status": "completed",
             "source": "harness",
             "kind": kind,

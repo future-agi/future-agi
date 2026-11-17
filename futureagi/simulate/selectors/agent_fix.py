@@ -105,6 +105,7 @@ from simulate.temporal.constants import (
     AGENT_FIX_VARIATIONS_RUN_GRACE_MINUTES,
     AGENT_FIX_VARIATIONS_WRITE_MINUTES,
 )
+from simulate.types import is_worker_subject
 from simulate.utils.verdicts import is_pending_placeholder, is_sealed_verdict
 from tracer.services.clickhouse.client import CHError
 
@@ -451,7 +452,12 @@ def check_failure(failure: Mapping[str, Any] | None) -> CheckFailure | None:
 def judged_sub_goals(receipt: Mapping[str, Any]) -> dict[str, bool | None]:
     """Each sub-goal and whether it held (None: undecided); a conversation the agent broke fails every undecided goal.
     Not applicable and inconclusive sub-goals are left out."""
-    checks = [one for one in receipt.get("sub_goals") or [] if isinstance(one, Mapping)]
+    # A worker's own check is reported beside the task's verdict, never folded into it: it does not fail the scenario.
+    checks = [
+        one
+        for one in receipt.get("sub_goals") or []
+        if isinstance(one, Mapping) and not is_worker_subject(one.get("subject"))
+    ]
     results = {
         str(one["name"]): sub_goal_result(dict(one))
         for one in checks
