@@ -128,11 +128,35 @@ def reach_as_built(
         built[tool]
         if isinstance(one, dict)
         and (tool := one.get("tool")) in built
-        and own.get(tool) == one == before.get(tool)
+        and _reach(own.get(tool)) == _reach(one) == _reach(before.get(tool))
         else one
         for one in entries
     ]
     return {**contract, "tool_entrypoints": reached}
+
+
+# The fields of a tool entry that say how the tool is reached.
+_REACH_FIELDS = (
+    "mode",
+    "service",
+    "endpoint",
+    "method",
+    "module",
+    "callable",
+    "factory",
+    "first_arg",
+)
+
+
+def _reach(entry: Any) -> tuple[Any, ...] | None:
+    """How a tool entry reaches its tool, with an empty or absent field read alike: a seal can drop the keys an
+    authored entry leaves empty. Whether the door is said not to reach it counts only as yes or no."""
+    if not isinstance(entry, dict):
+        return None
+    return (
+        *(entry.get(field) or "" for field in _REACH_FIELDS),
+        bool(entry.get("door_unreached")),
+    )
 
 
 def _by_tool(contract: Any) -> dict[Any, dict[str, Any]]:
