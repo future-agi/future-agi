@@ -63509,12 +63509,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Start time",
           type: "string",
           format: "date-time",
+          readOnly: true,
           "x-nullable": true,
         },
         end_time: {
           title: "End time",
           type: "string",
           format: "date-time",
+          readOnly: true,
           "x-nullable": true,
         },
         created_at: {
