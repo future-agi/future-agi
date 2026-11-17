@@ -1,6 +1,7 @@
 import base64
 import hashlib
 import json
+from datetime import timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -23,6 +24,13 @@ pytestmark = pytest.mark.django_db
 @pytest.fixture(autouse=True)
 def versioning_on(settings):
     settings.HARNESS_VERSIONING_ENABLED = True
+
+
+@pytest.fixture(autouse=True)
+def staging_expiry_scheduled(monkeypatch):
+    schedule = harness_sources._schedule_staging_expiry
+    monkeypatch.setattr(harness_sources, "_schedule_staging_expiry", lambda key: None)
+    return schedule
 
 
 def test_kb_reference_import_writes_private_snapshot_and_environment_draft(
@@ -239,6 +247,81 @@ def test_upload_prepare_keeps_csv_and_json_in_one_review(
         "source-2.json",
     ]
     assert {source["role"] for source in seen["sources"]} == {"seed_records"}
+
+
+def test_staging_expiry_uses_the_review_lifetime(monkeypatch, staging_expiry_scheduled):
+    from simulate.tasks.environment_source_imports import (
+        expire_environment_source_import,
+    )
+
+    calls = []
+    monkeypatch.setattr(
+        expire_environment_source_import,
+        "apply_async",
+        lambda **kwargs: calls.append(kwargs),
+    )
+    key = f"{harness_sources.STAGING_PREFIX}/org/env/{'a' * 64}.json"
+
+    staging_expiry_scheduled(key)
+
+    assert calls == [
+        {
+            "args": [key],
+            "task_id": "environment-source-import-expiry-"
+            + hashlib.sha256(key.encode()).hexdigest(),
+            "id_conflict_policy": harness_sources.WorkflowIDConflictPolicy.USE_EXISTING,
+            "start_delay": timedelta(
+                seconds=harness_sources.IMPORT_REF_MAX_AGE_SECONDS + 60
+            ),
+            "dispatch_timeout_seconds": 30,
+        }
+    ]
+
+
+def test_prepare_does_not_store_originals_without_scheduled_expiry(
+    user, workspace, request, monkeypatch
+):
+    storage = request.getfixturevalue("_storage_fixture")
+    environment = _built(user, workspace, "source-expiry-required")
+    monkeypatch.setattr(
+        harness_sources,
+        "execute_source_request",
+        lambda payload: {
+            "ok": True,
+            "result": {
+                "draft": {
+                    "draft_digest": "sha256:prepared",
+                    "sources": [],
+                    "proposals": {},
+                    "diagnostics": [],
+                }
+            },
+        },
+    )
+
+    def unavailable(_key):
+        raise ConnectionError("Temporal unavailable")
+
+    monkeypatch.setattr(
+        harness_sources,
+        "_schedule_staging_expiry",
+        unavailable,
+    )
+    basis = drafts.draft_refs(environment)["environment"]
+
+    with pytest.raises(HostedHarnessError) as caught:
+        harness_sources.prepare_upload_import(
+            environment,
+            [SimpleUploadedFile("guide.txt", b"private", "text/plain")],
+            purpose="reference",
+            expected_environment_version_id=str(environment.environment_version_id),
+            expected_draft={"id": basis.id, "revision": basis.revision},
+        )
+
+    assert caught.value.code == "source_processor_unavailable"
+    assert not any(
+        key.startswith(f"{harness_sources.STAGING_PREFIX}/") for key in storage.objects
+    )
 
 
 def test_safe_version_documents_exclude_private_source_fields():

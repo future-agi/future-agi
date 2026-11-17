@@ -17,13 +17,8 @@ def _validated_response(response: object, operation: object) -> dict:
         not isinstance(response, dict)
         or response.get("version") != RESPONSE_VERSION
         or not isinstance(response.get("ok"), bool)
-        or (
-            response["ok"]
-            and (
-                response.get("operation") != operation
-                or not isinstance(response.get("result"), dict)
-            )
-        )
+        or response.get("operation") != operation
+        or (response["ok"] and not isinstance(response.get("result"), dict))
         or (not response["ok"] and not isinstance(response.get("error"), dict))
     ):
         raise HostedHarnessError(

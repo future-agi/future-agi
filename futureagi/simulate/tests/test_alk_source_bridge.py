@@ -52,6 +52,17 @@ def test_configured_local_sandbox_executes_the_source_contract(settings, monkeyp
             "operation": "accept",
             "result": {},
         },
+        {
+            "version": "environment-sources.response.v1",
+            "ok": False,
+            "operation": "accept",
+            "error": {"code": "source_request_invalid"},
+        },
+        {
+            "version": "environment-sources.response.v1",
+            "ok": False,
+            "error": {"code": "source_request_invalid"},
+        },
     ],
 )
 def test_source_contract_rejects_the_wrong_response_envelope(

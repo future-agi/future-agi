@@ -5,6 +5,7 @@ import csv
 import hashlib
 import io
 import json
+from datetime import timedelta
 from pathlib import PurePath
 from typing import Any
 
@@ -12,6 +13,7 @@ from django.conf import settings
 from django.core import signing
 from django.utils import timezone
 from minio.error import S3Error
+from temporalio.common import WorkflowIDConflictPolicy
 
 from model_hub.services.kb_snapshot import (
     MAX_SELECTION_BYTES,
@@ -123,6 +125,23 @@ def _get_private(key: str) -> bytes:
     finally:
         response.close()
         response.release_conn()
+
+
+def _schedule_staging_expiry(key: str) -> None:
+    from simulate.tasks.environment_source_imports import (
+        expire_environment_source_import,
+    )
+
+    expire_environment_source_import.apply_async(
+        args=[key],
+        task_id=(
+            "environment-source-import-expiry-"
+            + hashlib.sha256(key.encode()).hexdigest()
+        ),
+        id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
+        start_delay=timedelta(seconds=IMPORT_REF_MAX_AGE_SECONDS + 60),
+        dispatch_timeout_seconds=30,
+    )
 
 
 def resolve_evaluator_sources(run) -> dict[str, Any]:
@@ -434,6 +453,15 @@ def _prepare_captured(
     key = (
         f"{STAGING_PREFIX}/{environment.organization_id}/{environment.id}/{digest}.json"
     )
+    try:
+        _schedule_staging_expiry(key)
+    except Exception as exc:
+        raise HostedHarnessError(
+            "source_processor_unavailable",
+            "Environment source processing is temporarily unavailable",
+            status_code=503,
+            retryable=True,
+        ) from exc
     _put_private(key, staged_body)
     workspace_id = getattr(environment, "workspace_id", None)
     import_ref = signing.dumps(
