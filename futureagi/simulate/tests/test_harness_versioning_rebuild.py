@@ -33,6 +33,7 @@ from simulate.services.hosted_harness_conversation import (
     recover_stalled_conversations,
     serialize_conversation,
 )
+from simulate.services.hosted_harness_gateway import _PROVIDER_POLL_TIMEOUT_SECONDS
 from simulate.tasks import harness_nudges as nudge_tasks
 from simulate.tasks import hosted_harness_conversation as conversation_tasks
 from simulate.tests.test_harness_agent_versions import (  # noqa: F401 - fixture
@@ -4320,6 +4321,140 @@ class TestChatSandboxFence:
             "starting",
         )
         made[1].process.execute_session_command.assert_called_once()
+
+    @staticmethod
+    def _start_with(user, workspace, storage, callbacks, key, in_the_start):
+        """Run one chat start whose sandbox is made, then ``in_the_start(leases,
+        conversation, sandbox)`` runs while its process is being prepared."""
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        from simulate.services import hosted_harness_gateway as gateway_module
+
+        environment, _a1, _a2 = _activated(user, workspace, storage, key, callbacks)
+        conversation = ensure_conversation(environment)
+        enqueue_message(environment, content="hi", client_request_id=key)
+        leases = HostedHarnessConversationLease.no_workspace_objects
+        sandbox = MagicMock(id="sandbox-0")
+
+        def prepare(*_args, **_kwargs):
+            in_the_start(leases, conversation, environment, sandbox)
+            return SimpleNamespace(exit_code=0)
+
+        sandbox.process.exec.side_effect = prepare
+        gateway = gateway_module.HostedHarnessGateway.__new__(
+            gateway_module.HostedHarnessGateway
+        )
+        gateway.client = MagicMock(
+            runtime_name="r",
+            runtime_digest="d",
+            max_egress_domains=None,
+            create_timeout_seconds=300,
+        )
+        gateway.client.create.return_value = sandbox
+        with (
+            patch.object(
+                gateway_module.HostedSourceAcquirer,
+                "acquire",
+                lambda _self, _job: (b"source", None),
+            ),
+            patch.object(gateway_module, "_platform_simulator_material", dict),
+            patch.object(
+                gateway_module, "_resolved_egress_domains", lambda *_args: set()
+            ),
+        ):
+            result = gateway.ensure_conversation_runtime(
+                environment,
+                conversation=conversation,
+                endpoint_base_url="https://platform.example",
+                claim_again=False,
+            )
+        return gateway, conversation, leases, result
+
+    @pytest.mark.parametrize(
+        "ended",
+        [
+            {"state": "expired"},
+            {"state": "released"},
+            {"provider_ref": "sandbox-other"},
+        ],
+        ids=["expired", "released", "reclaimed"],
+    )
+    def test_a_start_whose_lease_ended_meanwhile_deletes_its_sandbox(
+        self,
+        user,
+        workspace,
+        storage,
+        scheduled,
+        started,
+        django_capture_on_commit_callbacks,
+        ended,
+    ):
+        def retire(leases, conversation, _environment, _sandbox):
+            leases.filter(conversation=conversation).update(**ended)
+
+        gateway, conversation, leases, result = self._start_with(
+            user,
+            workspace,
+            storage,
+            django_capture_on_commit_callbacks,
+            "r-start-ended",
+            retire,
+        )
+
+        assert result is None
+        gateway.client.get.assert_called_once_with(
+            "sandbox-0",
+            request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS,
+        )
+        gateway.client.delete.assert_called_once()
+        lease = leases.get(conversation=conversation)
+        assert lease.state == ended.get("state", "starting")
+
+    def test_a_retire_during_a_start_leaves_the_sandbox_to_the_start(
+        self,
+        user,
+        workspace,
+        storage,
+        scheduled,
+        started,
+        monkeypatch,
+        django_capture_on_commit_callbacks,
+    ):
+        stopped = []
+        monkeypatch.setattr(
+            nudge_tasks,
+            "schedule_sandbox_stop",
+            lambda conversation_id, ref: stopped.append((conversation_id, ref)),
+        )
+        retired = []
+
+        def retire(leases, conversation, environment, _sandbox):
+            # The process has polled once and acknowledged its command, so the chat
+            # looks idle; the start has not finished.
+            leases.filter(conversation=conversation).update(state="active")
+            HostedHarnessConversationMessage.no_workspace_objects.filter(
+                conversation=conversation, role="user"
+            ).update(state="completed")
+            with django_capture_on_commit_callbacks(execute=True):
+                retired.append(drafts.retire_chat_runtime(environment))
+
+        gateway, conversation, leases, result = self._start_with(
+            user,
+            workspace,
+            storage,
+            django_capture_on_commit_callbacks,
+            "r-start-retired",
+            retire,
+        )
+
+        # The retire ended the lease and did not delete under the start ...
+        assert retired == [1]
+        assert stopped == []
+        # ... and the start, finding its lease ended, deleted its own sandbox.
+        assert result is None
+        gateway.client.delete.assert_called_once()
+        assert leases.get(conversation=conversation).state == "expired"
 
     def test_a_refused_renewal_restarts_the_chat_in_the_same_call(
         self,

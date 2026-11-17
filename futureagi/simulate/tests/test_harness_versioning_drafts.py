@@ -110,10 +110,13 @@ def _conversation(environment):
 
 
 def _finish(environment):
-    """Every queued command's turn has finished."""
+    """Every queued command's turn has finished, and its chat is idle."""
     HostedHarnessConversationMessage.no_workspace_objects.filter(
         conversation__job=environment, role="user"
     ).update(state="completed")
+    HostedHarnessConversation.no_workspace_objects.filter(job=environment).update(
+        state="warm_idle"
+    )
 
 
 def _publish(
@@ -748,6 +751,39 @@ class TestRetireStopsSandbox:
         assert stops == []
         assert len(callbacks) == 1
         callbacks[0]()
+        assert stops == [(str(conversation.id), f"sandbox-{conversation.id}")]
+
+    def test_a_chat_whose_start_is_not_finished_is_expired_and_not_stopped(
+        self, user, workspace, storage, stops, django_capture_on_commit_callbacks
+    ):
+        environment = _built(user, workspace, "d-stop-starting")
+        conversation = _conversation(environment)
+        lease = _lease(conversation)
+        # The claim sets STARTING; the process has polled, the start has not finished.
+        HostedHarnessConversation.no_workspace_objects.filter(
+            id=conversation.id
+        ).update(state="starting")
+
+        with django_capture_on_commit_callbacks(execute=True):
+            assert drafts.retire_chat_runtime(environment) == 1
+
+        lease.refresh_from_db()
+        assert lease.state == "expired"
+        assert stops == []
+
+    def test_a_start_that_has_run_past_its_window_is_stopped_like_any_chat(
+        self, user, workspace, storage, stops, django_capture_on_commit_callbacks
+    ):
+        environment = _built(user, workspace, "d-stop-stuck")
+        conversation = _conversation(environment)
+        _lease(conversation)
+        HostedHarnessConversation.no_workspace_objects.filter(
+            id=conversation.id
+        ).update(state="starting", updated_at=timezone.now() - timedelta(minutes=11))
+
+        with django_capture_on_commit_callbacks(execute=True):
+            assert drafts.retire_chat_runtime(environment) == 1
+
         assert stops == [(str(conversation.id), f"sandbox-{conversation.id}")]
 
     def test_every_idle_conversation_is_stopped(

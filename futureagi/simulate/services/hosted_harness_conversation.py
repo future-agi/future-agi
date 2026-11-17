@@ -55,6 +55,11 @@ logger = logging.getLogger(__name__)
 # polled for this long is gone, whatever its provider still reports.
 RUNTIME_STALE_SECONDS = 90
 _HEARTBEAT_WRITE_SECONDS = 5
+# The idle settle deletes a chat's own sandbox only after its process has been silent this
+# long. A live process polls every few seconds, so ten minutes of silence is a dead one;
+# the shorter stale mark above only decides what to restart, and a process that is merely
+# slow (a stalled network, a paused host) must not lose its sandbox to it.
+RUNTIME_DEAD_SECONDS = max(10 * 60, 6 * RUNTIME_STALE_SECONDS)
 # Restarts that keep failing back off, then give up so the user is not left waiting forever.
 RUNTIME_RETRY_BACKOFF_SECONDS = 60
 RUNTIME_GIVE_UP_SECONDS = 15 * 60
@@ -649,6 +654,30 @@ def _settle_idle(conversation_id) -> int:
             or conversation.state not in _ACTIVE_CONVERSATION_STATES
         ):
             return 0
+        if (
+            lease is not None
+            and lease.attempt_id is None
+            and lease.state == HostedHarnessConversationLease.State.ACTIVE
+            and not lease.provider_ref.startswith("pending:")
+            and lease.heartbeat_at is not None
+            and timezone.now() - lease.heartbeat_at
+            > timedelta(seconds=RUNTIME_DEAD_SECONDS)
+        ):
+            # Its process is gone, not slow: the lease ends and the sandbox is not left to
+            # idle to the provider's limit. Only the lease as it was read: a process whose
+            # poll landed since keeps it, and the chat stays as it is.
+            if not HostedHarnessConversationLease.no_workspace_objects.filter(
+                id=lease.id,
+                state=HostedHarnessConversationLease.State.ACTIVE,
+                provider_ref=lease.provider_ref,
+                heartbeat_at__lt=timezone.now()
+                - timedelta(seconds=RUNTIME_DEAD_SECONDS),
+            ).update(
+                state=HostedHarnessConversationLease.State.EXPIRED,
+                updated_at=timezone.now(),
+            ):
+                return 0
+            stop_chat_sandbox_after_commit(conversation.id, lease.provider_ref)
         settle_interrupted_turn(conversation)
         conversation.state = HostedHarnessConversation.State.COLD
         conversation.save(update_fields=["state", "active_invocation_id", "updated_at"])

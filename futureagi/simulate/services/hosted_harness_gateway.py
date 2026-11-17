@@ -3340,6 +3340,21 @@ class HostedHarnessGateway:
             return False
         return True
 
+    @staticmethod
+    def _start_still_holds_lease(
+        lease: HostedHarnessConversationLease, provider_ref: str
+    ) -> bool:
+        """Whether the lease a finished start issued still names its sandbox and is not
+        expired or released."""
+        gone = HostedHarnessConversationLease.State
+        return (
+            HostedHarnessConversationLease.no_workspace_objects.filter(
+                id=lease.id, provider_ref=provider_ref
+            )
+            .exclude(state__in=(gone.EXPIRED, gone.RELEASED))
+            .exists()
+        )
+
     def _renew_chat_idle_window(self, lease: HostedHarnessConversationLease) -> bool:
         """Keep a chat sandbox for the idle window after the user's latest message.
         Whether the lease is still the one that was renewed: ``False`` when a close, a
@@ -3393,7 +3408,8 @@ class HostedHarnessGateway:
 
         With ``agent_version`` the sandbox gets that version's agent settings and
         source; secret refs name its credentials only, never a value. ``None`` when
-        ``claim_ref``'s claim was given up meanwhile; the new sandbox is deleted.
+        ``claim_ref``'s claim was given up meanwhile, or the lease was ended before the
+        start finished; the new sandbox is deleted.
         """
         workspace_archive = chat_workspace_for(
             job, conversation, chat_state=load_workspace_archive(conversation)
@@ -3557,6 +3573,12 @@ class HostedHarnessGateway:
                 ),
             )
             sandbox.fs.upload_file(str(command.cmd_id).encode(), _CHAT_COMMAND_ID_FILE)
+            if not self._start_still_holds_lease(capability.lease, str(sandbox.id)):
+                # The lease was ended while this start ran (a retire, a close, a
+                # re-claim): the sandbox is nobody's, and the lease is not revived.
+                if not self._delete_chat_sandbox(str(sandbox.id), conversation.id):
+                    self._schedule_retired_stop(conversation.id, str(sandbox.id))
+                return None
             record_runtime_started(conversation)
             return capability.lease
         except Exception:

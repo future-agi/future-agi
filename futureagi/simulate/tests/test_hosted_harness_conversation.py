@@ -1515,6 +1515,91 @@ def test_abandon_survives_a_failed_stop(
     assert "stop_chat_sandboxes_failed" in caplog.text
 
 
+def _idle_chat(organization, key, *, polled_ago):
+    """A chat whose turn is over (nothing waits), whose sandbox last polled
+    ``polled_ago`` ago."""
+    conversation, command = _started_turn(
+        organization,
+        key,
+        queued_ago=timedelta(minutes=40),
+        polled_ago=polled_ago,
+    )
+    command.state = HostedHarnessConversationMessage.State.COMPLETED
+    command.save(update_fields=["state"])
+    conversation.command_acked_through = command.sequence
+    conversation.save(update_fields=["command_acked_through"])
+    return conversation
+
+
+@pytest.mark.django_db
+def test_settle_idle_expires_the_lease_and_stops_a_sandbox_silent_for_ten_minutes(
+    organization, stops, django_capture_on_commit_callbacks
+):
+    from simulate.services.hosted_harness_conversation import _settle_idle
+
+    conversation = _idle_chat(
+        organization, "settle-dead", polled_ago=timedelta(minutes=11)
+    )
+
+    with django_capture_on_commit_callbacks(execute=True):
+        assert _settle_idle(conversation.id) == 1
+
+    conversation.refresh_from_db()
+    assert conversation.state == "cold"
+    assert _lease_of(conversation).state == "expired"
+    assert stops == [(str(conversation.id), "sandbox")]
+
+
+@pytest.mark.django_db
+def test_settle_idle_only_settles_cold_a_sandbox_silent_for_two_minutes(
+    organization, stops, django_capture_on_commit_callbacks
+):
+    from simulate.services.hosted_harness_conversation import _settle_idle
+
+    conversation = _idle_chat(
+        organization, "settle-slow", polled_ago=timedelta(minutes=2)
+    )
+
+    with django_capture_on_commit_callbacks(execute=True):
+        assert _settle_idle(conversation.id) == 1
+
+    conversation.refresh_from_db()
+    assert conversation.state == "cold"
+    assert _lease_of(conversation).state == "active"
+    assert stops == []
+
+
+@pytest.mark.django_db
+def test_settle_idle_leaves_a_process_whose_poll_lands_before_the_write(
+    organization, stops, monkeypatch, django_capture_on_commit_callbacks
+):
+    from django.utils import timezone
+
+    from simulate.services import hosted_harness_conversation as module
+
+    conversation = _idle_chat(
+        organization, "settle-race", polled_ago=timedelta(minutes=11)
+    )
+    real = module._unacked_commands
+
+    def poll_lands(chat):
+        # The lease was read as silent; the process polls before the settle writes.
+        HostedHarnessConversationLease.no_workspace_objects.filter(
+            conversation=conversation
+        ).update(heartbeat_at=timezone.now())
+        return real(chat)
+
+    monkeypatch.setattr(module, "_unacked_commands", poll_lands)
+
+    with django_capture_on_commit_callbacks(execute=True):
+        assert module._settle_idle(conversation.id) == 0
+
+    conversation.refresh_from_db()
+    assert conversation.state == "responding"
+    assert _lease_of(conversation).state == "active"
+    assert stops == []
+
+
 @pytest.mark.django_db
 def test_recovery_reaches_stalled_chat_past_live_candidates(organization):
     from django.utils import timezone

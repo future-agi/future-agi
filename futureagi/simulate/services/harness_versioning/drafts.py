@@ -298,6 +298,7 @@ def retire_chat_runtime(
     so the next turn starts from the current files, and delete each running one after
     commit. A running turn keeps its sandbox."""
     from simulate.services.hosted_harness_conversation import (
+        RUNTIME_START_SECONDS,
         stop_chat_sandboxes_after_commit,
     )
 
@@ -319,6 +320,12 @@ def retire_chat_runtime(
     running = list(
         own.filter(state=State.ACTIVE)
         .exclude(provider_ref__startswith="pending:")
+        # A start that has not finished still holds its sandbox: the lease ends here, and
+        # the start deletes the sandbox itself when it finds the lease gone.
+        .exclude(
+            conversation__state=HostedHarnessConversation.State.STARTING,
+            conversation__updated_at__gt=now - timedelta(seconds=RUNTIME_START_SECONDS),
+        )
         .values_list("id", "conversation_id", "provider_ref")
     )
     expired = 0
