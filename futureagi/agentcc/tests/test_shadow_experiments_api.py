@@ -46,9 +46,7 @@ class TestShadowExperimentCRUD:
             user, name="paused-one", status=AgentccShadowExperiment.STATUS_PAUSED
         )
 
-        response = auth_client.get(
-            "/agentcc/shadow-experiments/?status=paused"
-        )
+        response = auth_client.get("/agentcc/shadow-experiments/?status=paused")
         assert response.status_code == 200
         names = {row["name"] for row in response.json()["result"]}
         assert names == {"paused-one"}
@@ -167,18 +165,14 @@ class TestShadowExperimentLifecycle:
     )
     def test_complete_terminates_experiment(self, mock_push, auth_client, user):
         exp = _make_experiment(user, status=AgentccShadowExperiment.STATUS_ACTIVE)
-        response = auth_client.patch(
-            f"/agentcc/shadow-experiments/{exp.id}/complete/"
-        )
+        response = auth_client.patch(f"/agentcc/shadow-experiments/{exp.id}/complete/")
         assert response.status_code == 200, response.json()
         exp.refresh_from_db()
         assert exp.status == AgentccShadowExperiment.STATUS_COMPLETED
 
     def test_complete_rejects_already_completed(self, auth_client, user):
         exp = _make_experiment(user, status=AgentccShadowExperiment.STATUS_COMPLETED)
-        response = auth_client.patch(
-            f"/agentcc/shadow-experiments/{exp.id}/complete/"
-        )
+        response = auth_client.patch(f"/agentcc/shadow-experiments/{exp.id}/complete/")
         assert response.status_code == 400
 
 
@@ -235,11 +229,7 @@ class TestShadowResultReadOnly:
         # DRF pagination wraps results under "results"; the unpaginated
         # branch wraps under _gm.success_response's "result" key. Accept
         # both shapes.
-        rows = (
-            body.get("result")
-            if "result" in body
-            else body.get("results", [])
-        )
+        rows = body.get("result") if "result" in body else body.get("results", [])
         assert isinstance(rows, list)
         assert len(rows) >= 1
 

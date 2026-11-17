@@ -54,8 +54,16 @@ def progress_block(counts: Mapping[str, int]) -> dict:
 
 
 def has_undrained_work(task: EvalTask) -> bool:
-    """True while any entry is still pending or running (task not yet drained)."""
-    return EvalLogger.objects.filter(
-        eval_task_id=str(task.id),
-        status__in=[EvalEntryStatus.PENDING, EvalEntryStatus.RUNNING],
-    ).exists()
+    """True while any entry is still pending or running (task not yet drained).
+
+    Read from the primary: it guards finalization, and an entry claimed or
+    left running moments ago may not have reached a lagging replica yet.
+    """
+    return (
+        EvalLogger.objects.using("default")
+        .filter(
+            eval_task_id=str(task.id),
+            status__in=[EvalEntryStatus.PENDING, EvalEntryStatus.RUNNING],
+        )
+        .exists()
+    )

@@ -4,7 +4,6 @@ import {
   Alert,
   Box,
   Button,
-  CircularProgress,
   LinearProgress,
   Stack,
   Table,
@@ -17,6 +16,7 @@ import {
 } from "@mui/material";
 import { useRunAnalytics } from "src/api/simulate-environments/runAnalytics";
 import { ROW_HEIGHT } from "src/theme/sizes";
+import { STATUS_META } from "../runs.constants";
 import EmptyState from "../../../components/EmptyState";
 import {
   Bars,
@@ -32,6 +32,7 @@ import DashboardControls, {
 } from "./analytics/DashboardControls";
 import DashboardHistogram from "./analytics/DashboardHistogram";
 import { CHART_GUIDE } from "./analytics/chartGuide";
+import { LoadingScreen } from "src/components/loading-screen";
 
 const WIDGETS = [
   { id: "goal_outcome", title: "Goal outcome breakdown", section: "Outcomes" },
@@ -138,6 +139,7 @@ const OUTCOMES = [
   { key: "failed", label: "Failed", role: "danger" },
   { key: "error", label: "Error", role: "warning" },
   { key: "inconclusive", label: "Inconclusive", role: "neutral" },
+  { key: "no_score", label: STATUS_META.no_score.label, role: "neutral" },
 ];
 const DISTRIBUTIONS = {
   latency_ms: ["Agent response time", "ms"],
@@ -172,12 +174,7 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
   const { data, isPending, isError, refetch } = useRunAnalytics(executionId);
   const printable = useRef(null);
   const [showDetails, setShowDetails] = useState(false);
-  if (isPending)
-    return (
-      <Stack alignItems="center" sx={{ py: 8 }}>
-        <CircularProgress size={26} />
-      </Stack>
-    );
+  if (isPending) return <LoadingScreen compact />;
   if (isError)
     return (
       <Stack alignItems="center">
@@ -270,7 +267,7 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
   const metricsByKey = Object.fromEntries(
     dashboard.metrics.map((metric) => [metric.key, metric]),
   );
-  const passRate = metricsByKey.pass_rate;
+  const trialPass = metricsByKey.trial_pass;
   const dropOff = metricsByKey.drop_off;
   const costPerPass = metricsByKey.cost_per_pass;
   const comparison = dashboard.comparison;
@@ -323,15 +320,19 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
   ].filter(Boolean);
   const headlines = [
     {
-      key: "pass_rate",
-      label: "Calls passed",
-      value: format(passRate?.value, "percent"),
-      reported: passRate?.value != null,
+      key: "trial_pass",
+      // The run's one trial pass, as its header and the runs list read it; label and note served with it.
+      label: trialPass?.label,
+      // no_score means nothing to score, not missing data.
+      value: trialPass?.no_score
+        ? STATUS_META.no_score.label
+        : format(trialPass?.value, "percent"),
+      reported: trialPass?.value != null || Boolean(trialPass?.no_score),
       // No range here: pass^1's range brackets the scenario average, which this
       // pooled rate need not sit inside.
       detail: null,
-      coverage: `${passRate?.measured ?? 0} / ${passRate?.total ?? 0} evaluated`,
-      note: passRate?.note,
+      coverage: `${summary.trials_passed} / ${summary.trials_evaluated} evaluated · ${summary.trials_inconclusive} inconclusive`,
+      note: trialPass?.note,
     },
     {
       key: "drop_off",
@@ -623,7 +624,9 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
                 </Typography>
                 {["p50", "p99", "max"].map((p) => (
                   <Stack key={p} direction="row" justifyContent="space-between">
-                    <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+                    <Typography
+                      sx={{ typography: "s3", color: "text.secondary" }}
+                    >
                       {p === "max" ? "Max" : p}
                     </Typography>
                     <Typography sx={{ typography: "s3" }}>
@@ -646,7 +649,10 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
         <Bars
           rows={dashboard.use_case_risk}
           xKey="scenario"
-          series={OUTCOMES}
+          series={OUTCOMES.filter(
+            (outcome) =>
+              outcome.key !== "no_score" || summary.outcomes?.no_score,
+          )}
           horizontal
           height={330}
           legend
@@ -662,9 +668,7 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
           labels
           multicolor
           angled
-          series={[
-            { key: "invocations", label: "Invocations", colorIndex: 1 },
-          ]}
+          series={[{ key: "invocations", label: "Invocations", colorIndex: 1 }]}
         />
       );
     if (id === "tools_failure")
@@ -783,7 +787,9 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
                     {card.value}
                   </Typography>
                   {card.detail && (
-                    <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+                    <Typography
+                      sx={{ typography: "s3", color: "text.secondary" }}
+                    >
                       {card.detail}
                     </Typography>
                   )}
@@ -817,7 +823,11 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
           {findings.length ? (
             <Box component="ul" sx={{ m: 0, mt: 1, pl: 2.5 }}>
               {findings.map((finding) => (
-                <Typography component="li" key={finding} sx={{ typography: "s1" }}>
+                <Typography
+                  component="li"
+                  key={finding}
+                  sx={{ typography: "s1" }}
+                >
                   {finding}
                 </Typography>
               ))}

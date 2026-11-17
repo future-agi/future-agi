@@ -141,9 +141,7 @@ class TestFailuresStayVisible:
         assert response.status_code == 403
         assert response.data["result"] == "User not associated with an organization"
 
-    def test_no_request_organization_is_still_forbidden_for_stats(
-        self, user, entitled
-    ):
+    def test_no_request_organization_is_still_forbidden_for_stats(self, user, entitled):
         request = APIRequestFactory().get(STATS_URL)
         force_authenticate(request, user=user)
 
@@ -203,9 +201,7 @@ class TestFailuresStayVisible:
         a stats service failure into an empty 200. Same envelope as the list
         failure above."""
         _assert_no_projects(user, workspace)
-        with patch.object(
-            feed_queries, "get_stats", side_effect=RuntimeError("boom")
-        ):
+        with patch.object(feed_queries, "get_stats", side_effect=RuntimeError("boom")):
             response = auth_client.get(STATS_URL)
 
         assert response.status_code == 400
