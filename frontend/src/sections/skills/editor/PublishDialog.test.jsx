@@ -17,6 +17,8 @@ vi.mock("src/api/skills", () => ({
 vi.mock("src/api/skills/testing", () => ({ useSkillTestingOptions: () => ({ data: { assistEnabled: api.assistEnabled } }) }));
 vi.mock("react-router-dom", () => ({ useNavigate: () => api.navigate }));
 vi.mock("notistack", () => ({ enqueueSnackbar: api.snackbar }));
+// eslint-disable-next-line react/prop-types
+vi.mock("src/sections/skills/governance/LabelProtectionDialog", () => ({ default: ({ open }) => (open ? <div role="dialog" aria-label="Manage label protection">Label rules</div> : null) }));
 vi.mock("src/sections/skills/components/TextDiff", () => ({ default: ({ fromText, toText }) => <div data-testid="diff">{fromText} → {toText}</div> }));
 
 const skill = { id: "skill-id", name: "sample-skill", labels: [], protectedLabelNames: [], releaseRevision: 3, permissions: { canRunTests: true } };
@@ -380,4 +382,34 @@ it('keeps production visible but unavailable while a credential warning is open'
   fireEvent.click(screen.getByRole('checkbox', { name: /I reviewed the warnings/ }));
   await waitFor(() => expect(screen.getByRole('button', { name: 'Publish', exact: true })).toBeEnabled());
   expect(screen.getByRole('checkbox', { name: 'production', exact: true })).toBeDisabled();
+});
+
+describe('UXF-09: the label rule beside the label choice', () => {
+  const RULE = "Production is a protected label: only workspace admins can move it, and automation can't.";
+  it("states the skill's current rule for a member, with no Change rules link", async () => {
+    const member = { ...skill, protectedLabelNames: ['production'], permissions: { canManageLabelProtection: false, canRunTests: true } };
+    api.currentSkill = member;
+    renderDialog({ skill: member });
+    expect(screen.getByText(RULE)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Change rules' })).not.toBeInTheDocument();
+    await screen.findByRole('button', { name: 'Publish', exact: true });
+    expect(document.body.textContent.replace(/protected labels?/gi, '').match(/protected/i)).toBeNull();
+  });
+  it('lets an admin open the rules, and publishing still sends the reviewed release revision', async () => {
+    const admin = { ...skill, protectedLabelNames: ['production'], permissions: { canManageLabelProtection: true, canRunTests: true } };
+    api.currentSkill = admin;
+    renderDialog({ skill: admin });
+    fireEvent.click(screen.getByRole('button', { name: 'Change rules' }));
+    expect(screen.getByRole('dialog', { name: 'Manage label protection' })).toBeInTheDocument();
+    const publish = screen.getByRole('button', { name: 'Publish', exact: true });
+    await waitFor(() => expect(publish).toBeEnabled());
+    fireEvent.click(publish);
+    await waitFor(() => expect(api.publish).toHaveBeenCalledWith(expect.objectContaining({ labels: [], expectedReleaseRevision: 3 })));
+  });
+  it('uses the server copy of the rules over the dialog prop', () => {
+    api.currentSkill = { ...skill, protectedLabelNames: ['staging'] };
+    renderDialog();
+    expect(screen.getByText("Staging is a protected label: only workspace admins can move it, and automation can't.")).toBeInTheDocument();
+    expect(screen.queryByText(RULE)).not.toBeInTheDocument();
+  });
 });

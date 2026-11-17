@@ -15,6 +15,8 @@ vi.mock("src/api/skills", () => ({
 }));
 vi.mock("notistack", () => ({ enqueueSnackbar: mocks.toast }));
 vi.mock("src/components/iconify", () => ({ default: () => null }));
+// eslint-disable-next-line react/prop-types
+vi.mock("src/sections/skills/governance/LabelProtectionDialog", () => ({ default: ({ open }) => (open ? <div role="dialog" aria-label="Manage label protection">Label rules</div> : null) }));
 const skill = { id: "skill-1", name: "release-review" };
 
 beforeEach(() => {
@@ -91,5 +93,37 @@ describe("RestoreVersionDialog", () => {
       <RestoreVersionDialog skill={skill} number={1} onClose={onClose} />,
     );
     expect(screen.getByRole("button", { name: "Restoring…" })).toBeDisabled();
+  });
+});
+
+describe("UXF-09: the label rule in the restore dialog", () => {
+  it("states who may move the protected labels afterwards, from the skill's rules", () => {
+    render(<RestoreVersionDialog skill={{ ...skill, protectedLabelNames: ["production"], permissions: { canManageLabelProtection: false } }} number={1} onClose={vi.fn()} />);
+    expect(screen.getByText(/Existing versions and labels will not change/)).toBeInTheDocument();
+    expect(screen.getByText("Production is a protected label: only workspace admins can move it, and automation can't.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Change rules" })).not.toBeInTheDocument();
+    expect(document.body.textContent.replace(/protected labels?/gi, "").match(/protected/i)).toBeNull();
+  });
+
+  it("lets an admin open the rules without restoring", () => {
+    render(<RestoreVersionDialog skill={{ ...skill, protectedLabelNames: ["production", "staging"], permissions: { canManageLabelProtection: true } }} number={1} onClose={vi.fn()} />);
+    expect(screen.getByText("Protected labels (only workspace admins can move them, and automation can't): production, staging.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Change rules" }));
+    expect(screen.getByRole("dialog", { name: "Manage label protection" })).toBeInTheDocument();
+    expect(mocks.restore).not.toHaveBeenCalled();
+  });
+
+  it("claims no rule when the skill's rules are not loaded", () => {
+    render(<RestoreVersionDialog skill={skill} number={1} onClose={vi.fn()} />);
+    expect(screen.queryByTestId("release-rule-note")).not.toBeInTheDocument();
+  });
+
+  it("keeps the explanation beside a failure", async () => {
+    mocks.restore.mockRejectedValueOnce(new Error("Unavailable"));
+    render(<RestoreVersionDialog skill={{ ...skill, protectedLabelNames: [] }} number={2} onClose={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Restore as new version" }));
+    expect(await screen.findByText(/Could not restore this version/)).toBeInTheDocument();
+    expect(screen.getByText(/Publish the files from v2 as a new version of release-review/)).toBeInTheDocument();
+    expect(screen.getByText("No labels are protected.")).toBeInTheDocument();
   });
 });

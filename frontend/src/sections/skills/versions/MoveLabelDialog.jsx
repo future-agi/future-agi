@@ -22,6 +22,9 @@ import VersionSelect from "src/sections/skills/components/VersionSelect";
 import { LABEL_PATTERN, LIMITS } from "src/sections/skills/constants";
 import TestEvidence from '../tests/TestEvidence';
 import ActionReason from "../components/ActionReason";
+import ReleaseRuleNote from "../components/ReleaseRuleNote";
+import LabelProtectionDialog from "../governance/LabelProtectionDialog";
+import { labelDisplayName } from "../utils/terms";
 import { canAttachRun } from "../utils/evidence";
 import CompareSummary from "../compare/CompareSummary";
 
@@ -40,12 +43,20 @@ function MoveLabelForm({ onClose, skill, label, version }) {
   const detail = useSkill(skill.id);
   const targetVersion = useSkillVersion(skill.id, target);
   const [evidenceRunId, setEvidenceRunId] = useState(null);
+  const [rulesOpen, setRulesOpen] = useState(false);
   const authoritative = detail.data ?? skill;
   const pointer = authoritative.labels?.find((item) => item.name === name);
   const canMove = pointer ? pointer.canMove === true : !authoritative.protectedLabelNames?.includes(name) || authoritative.permissions?.canManageLabelProtection === true;
+  // UXF-09: the rule for this label, from the skill's current protected labels
+  // (no list loaded, no sentence). The note only explains; canMove and the
+  // server's CAS still decide.
+  const protectedLabels = Array.isArray(authoritative.protectedLabelNames) ? authoritative.protectedLabelNames : null;
+  const labelIsProtected = Boolean(pointer?.isProtected || protectedLabels?.includes(name));
+  const canChangeRules = authoritative.permissions?.canManageLabelProtection === true;
   const move = useSetSkillLabel(skill.id);
   const validName = LABEL_PATTERN.test(name) && name !== "latest";
   const validTarget = Number.isInteger(target) && target > 0;
+  const showRule = validName && Boolean(protectedLabels);
 
   // Keep the reviewed pointer stable across background refetches. Only an
   // explicit conflict reload may change the CAS precondition for this label.
@@ -264,9 +275,10 @@ function MoveLabelForm({ onClose, skill, label, version }) {
           </Stack>
         )}
         {ready && current === target && <ActionReason id="move-action-reason-1" reason="Choose a different version" />}
-        {!canMove && <Alert severity="info">A workspace admin or organization admin must move this protected label. Publishing an ordinary version remains available.</Alert>}
+        {!canMove && <Alert severity="info">{labelIsProtected ? `Only workspace admins can move ${labelDisplayName(name)}. You can still publish new versions.` : `You can't move ${labelDisplayName(name)} with your current access. You can still publish new versions.`}</Alert>}
         {targetVersion.isError && <ErrorState title="Could not load the target version" onRetry={targetVersion.refetch} />}
-        {validTarget && !noEvidence && <TestEvidence skillId={skill.id} candidate={{ kind: 'version', version: target, digest: targetVersion.data?.digest }} onSelectRun={setEvidenceRunId} selectedRunId={evidenceRunId} recordedWith="" />}
+        {/* UXF-11: one summary line; counts, model and limits stay under Technical details. */}
+        {validTarget && !noEvidence && <TestEvidence variant="summary" skillId={skill.id} candidate={{ kind: 'version', version: target, digest: targetVersion.data?.digest }} onSelectRun={setEvidenceRunId} selectedRunId={evidenceRunId} recordedWith="" />}
         <TextField
           label="Note (optional)"
           size="small"
@@ -278,12 +290,16 @@ function MoveLabelForm({ onClose, skill, label, version }) {
           disabled={move.isPending}
         />
       </Stack>
-      {/* The consequence and the missing-evidence warning sit right above the action, not up in the form. */}
-      {(noEvidence || movesProduction || evidenceAttached) && <Stack spacing={1} sx={{ flexShrink: 0 }}>
+      {/* The rule, the consequence and the missing-evidence warning sit right above the action, not up in the form. */}
+      {(showRule || noEvidence || movesProduction || evidenceAttached) && <Stack spacing={1} sx={{ flexShrink: 0 }}>
+        {showRule && <ReleaseRuleNote rules={{ label: name, protectedLabels }} canChangeRules={canChangeRules} onChangeRules={() => setRulesOpen(true)} />}
         {noEvidence && <Alert severity="warning" action={<Button color="inherit" size="small" component={RouterLink} to={`${paths.dashboard.skills.edit(skill.id)}?tab=tests`}>Run tests</Button>}>No tests run for these files. Not tested is not a pass.</Alert>}
         {movesProduction && <Typography variant="s1">Apps that follow production pick up v{target} the next time they fetch. Pinned versions don&apos;t change.</Typography>}
         {evidenceAttached && <Typography variant="s1">Moving saves the attached test evidence with this label change.</Typography>}
       </Stack>}
+      {/* Mounted only while open. Saving new rules changes the release revision, so this move then
+          fails its CAS and asks for an explicit reload; the reviewed snapshot is never swapped here. */}
+      {rulesOpen && <LabelProtectionDialog open onClose={() => setRulesOpen(false)} skill={authoritative} />}
     </ModalWrapper>
   );
 }

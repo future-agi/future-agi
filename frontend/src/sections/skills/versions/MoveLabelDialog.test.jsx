@@ -10,11 +10,12 @@ const mocks = vi.hoisted(() => ({
   refetch: vi.fn(),
   toast: vi.fn(),
   evidence: vi.fn(),
+  skillPatch: {},
 }));
 vi.mock("src/api/skills", () => ({
   useSkillLabels: mocks.labels,
   useSkillVersions: () => ({ data: { results: [{ number: 3 }, { number: 2 }, { number: 1 }] } }),
-  useSkill: () => ({ data: { ...skill, labels: mocks.labels().data }, refetch: async () => { const response = await mocks.refetch(); return { ...response, data: response.data ? { ...skill, labels: response.data } : undefined }; } }),
+  useSkill: () => ({ data: { ...skill, ...mocks.skillPatch, labels: mocks.labels().data }, refetch: async () => { const response = await mocks.refetch(); return { ...response, data: response.data ? { ...skill, labels: response.data } : undefined }; } }),
   useSkillVersion: () => ({ data: { digest: 'sha256:target' } }),
   useSkillCompare: mocks.compare,
   useSetSkillLabel: () => ({ mutateAsync: mocks.move, isPending: false }),
@@ -60,6 +61,7 @@ const comparison = {
 
 beforeEach(() => {
   vi.resetAllMocks();
+  mocks.skillPatch = {};
   mocks.labels.mockReturnValue(labelsResult());
   mocks.compare.mockReturnValue({ data: comparison });
   mocks.move.mockResolvedValue({});
@@ -244,7 +246,9 @@ describe("MoveLabelDialog", () => {
 });
 
 // eslint-disable-next-line react/prop-types
-vi.mock("src/sections/skills/tests/TestEvidence", () => ({ default: ({ onSelectRun }) => <div>Test evidence<button type="button" onClick={() => onSelectRun("run-1")}>Attach mocked evidence</button></div> }));
+vi.mock("src/sections/skills/tests/TestEvidence", () => ({ default: ({ onSelectRun, variant }) => <div data-testid="test-evidence" data-variant={variant}>Test evidence<button type="button" onClick={() => onSelectRun("run-1")}>Attach mocked evidence</button></div> }));
+// eslint-disable-next-line react/prop-types
+vi.mock("src/sections/skills/governance/LabelProtectionDialog", () => ({ default: ({ open }) => (open ? <div role="dialog" aria-label="Manage label protection">Label rules</div> : null) }));
 
 it('defaults to the newest different version and explains an explicit no-op', async () => {
   mocks.labels.mockReturnValue(labelsResult(3));
@@ -311,5 +315,63 @@ describe("moving production states its consequence at the point of decision", ()
     open("staging");
     await screen.findByText("Currently points to v1.");
     expect(screen.queryByText(/Apps that follow production/)).not.toBeInTheDocument();
+  });
+});
+
+describe("UXF-11: the evidence is one summary line", () => {
+  it("asks TestEvidence for its summary variant (details collapsed under Technical details)", async () => {
+    render(<MoveLabelDialog open onClose={vi.fn()} skill={skill} label="production" />);
+    expect(await screen.findByTestId("test-evidence")).toHaveAttribute("data-variant", "summary");
+  });
+});
+
+describe("UXF-09: the release rule at the point of action", () => {
+  const PROTECTED_RULE = "Production is a protected label: only workspace admins can move it, and automation can't.";
+  // "protected" may appear only as the defined term "protected label(s)".
+  const bareProtected = () => document.body.textContent.replace(/protected labels?/gi, "").match(/protected/i);
+
+  it("states the protected-label rule beside the move, and an admin can open the rules", async () => {
+    render(<MoveLabelDialog open onClose={vi.fn()} skill={skill} label="production" />);
+    expect(await screen.findByText(PROTECTED_RULE)).toBeInTheDocument();
+    expect(bareProtected()).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Change rules" }));
+    expect(screen.getByRole("dialog", { name: "Manage label protection" })).toBeInTheDocument();
+  });
+
+  it("opening the rules does not change what the move sends", async () => {
+    render(<MoveLabelDialog open onClose={vi.fn()} skill={skill} label="production" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Change rules" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Move production from v1 to v3$/ }));
+    await waitFor(() => expect(mocks.move).toHaveBeenCalledWith({
+      label: "production", version: 3, expectedVersion: 1, expectedReleaseRevision: 4,
+      expectedDigest: "sha256:target", evidenceRunId: null, note: "",
+    }));
+  });
+
+  it("says an unprotected label is not protected, built from the same rules", async () => {
+    mocks.labels.mockReturnValue({ data: [{ name: "staging", version: 1, canMove: true }, { name: "production", version: 2, canMove: true }], refetch: mocks.refetch });
+    render(<MoveLabelDialog open onClose={vi.fn()} skill={skill} label="staging" />);
+    expect(await screen.findByText("Staging isn't a protected label: anyone who can edit can move it.")).toBeInTheDocument();
+    expect(screen.queryByText(PROTECTED_RULE)).not.toBeInTheDocument();
+  });
+
+  it("uses the skill's current rules from the server, not a fixed label name", async () => {
+    mocks.skillPatch = { protectedLabelNames: ["release-gate"] };
+    mocks.labels.mockReturnValue({ data: [{ name: "release-gate", version: 1, canMove: true }], refetch: mocks.refetch });
+    render(<MoveLabelDialog open onClose={vi.fn()} skill={skill} label="release-gate" />);
+    expect(await screen.findByText("Release-gate is a protected label: only workspace admins can move it, and automation can't.")).toBeInTheDocument();
+    expect(screen.queryByText(/^Production is a protected label/)).not.toBeInTheDocument();
+  });
+
+  it("explains a member's disabled move without a Change rules link", async () => {
+    const member = { ...skill, permissions: { canManageLabelProtection: false, canRunTests: true } };
+    mocks.skillPatch = { permissions: member.permissions };
+    mocks.labels.mockReturnValue({ data: [{ name: "production", version: 1, canMove: false, isProtected: true }], refetch: mocks.refetch });
+    render(<MoveLabelDialog open onClose={vi.fn()} skill={member} label="production" />);
+    expect(await screen.findByText("Only workspace admins can move Production. You can still publish new versions.")).toBeInTheDocument();
+    expect(screen.getByText(PROTECTED_RULE)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Move production from v1 to v3$/ })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Change rules" })).not.toBeInTheDocument();
+    expect(bareProtected()).toBeNull();
   });
 });
