@@ -159,7 +159,7 @@ it('retains the initially viewed release when background metadata advances lates
 it('mounts the real reviewer inbox without an injected Controller', async () => {
   mount('/dashboard/skills/contexts');
   fireEvent.click(screen.getByRole('tab', { name: 'Reviews' }));
-  expect(await screen.findByText('No reviews waiting for you')).toBeVisible();
+  expect(await screen.findByText('No requests waiting for you')).toBeVisible();
   expect(axios.get.mock.calls.some(([url]) => url.endsWith('/review-inbox/'))).toBe(true);
 });
 it('omits unavailable destinations and moves secondary pages into More', async () => {
@@ -252,7 +252,7 @@ it('loads the production draft review and sends the exact head acknowledgment, t
     throw new Error(`Unexpected write ${url}`);
   });
   mount(`/dashboard/skills/contexts/${id}/review`);
-  const confirm = await screen.findByRole('checkbox', { name: /I reviewed these changes against the current published version/ });
+  const confirm = await screen.findByRole('checkbox', { name: /I've checked the.* against v/ });
   // One publish click acknowledges the reviewed head first: there is no separate confirm step.
   expect(screen.queryByRole('button', { name: 'Confirm review' })).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Publish version' })).toBeDisabled();
@@ -266,7 +266,7 @@ it('loads the production draft review and sends the exact head acknowledgment, t
   expect(writes[1]).toMatch(/\/publish\/$/);
 });
 
-it.each(['Publish version', 'Publish and request review'])('replays %s with the exact post-acknowledgment body even after the server removed the draft', async (button) => {
+it.each(['Publish version', 'Publish and request release'])('replays %s with the exact post-acknowledgment body even after the server removed the draft', async (button) => {
   const read = axios.get.getMockImplementation();
   let removed = false;
   let sends = 0;
@@ -297,7 +297,7 @@ it.each(['Publish version', 'Publish and request review'])('replays %s with the 
     throw new Error(`Unexpected write ${url}`);
   });
   mount(`/dashboard/skills/contexts/${id}/review`);
-  fireEvent.click(await screen.findByRole('checkbox', { name: /I reviewed these changes against the current published version/ }));
+  fireEvent.click(await screen.findByRole('checkbox', { name: /I've checked the.* against v/ }));
   fireEvent.click(screen.getByRole('button', { name: button }));
   const check = await screen.findByRole('button', { name: 'Check status' });
   await waitFor(() => expect(sends).toBe(1));
@@ -331,14 +331,14 @@ it('does not adopt a newly acknowledged same-bytes draft after an intervening re
     throw new Error(`Unexpected write ${url}`);
   });
   mount(`/dashboard/skills/contexts/${id}/review`);
-  fireEvent.click(await screen.findByRole('checkbox', { name: /I reviewed these changes against the current published version/ }));
+  fireEvent.click(await screen.findByRole('checkbox', { name: /I've checked the.* against v/ }));
   moved = true;
   fireEvent.click(screen.getByRole('button', { name: 'Publish version' }));
   expect(await screen.findByText('The draft changed since you reviewed it. Review the changes again.')).toBeVisible();
   const ack = axios.post.mock.calls.find(([url]) => url.endsWith('/acknowledge-head/'));
   expect(ack[1]).toMatchObject({ revision: 3, review_fingerprint: digest });
   expect(axios.post.mock.calls.some(([url]) => url.endsWith('/publish/'))).toBe(false);
-  expect(screen.getByRole('checkbox', { name: /I reviewed these changes against the current published version/ })).not.toBeChecked();
+  expect(screen.getByRole('checkbox', { name: /I've checked the.* against v/ })).not.toBeChecked();
 });
 
 it('loads later-page dependencies and reads linked/generated saved bytes through the production editor', async () => {
@@ -360,9 +360,10 @@ it('loads later-page dependencies and reads linked/generated saved bytes through
   });
   mount(`/dashboard/skills/contexts/${id}/edit`);
   await screen.findByRole('textbox', { name: 'AGENTS.md' });
+  fireEvent.click(screen.getByRole('button', { name: 'Linked skills and settings' }));
   fireEvent.mouseDown(await screen.findByRole('combobox', { name: /Add a published skill/ }));
   fireEvent.click(await screen.findByRole('option', { name: 'Later published skill' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Add to proposed links' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Add skill' }));
   expect(screen.getByText('Later published skill')).toBeVisible();
   // The editor starts with the linked skills folder closed; open it to reach the locked bytes.
   fireEvent.click(await screen.findByRole('treeitem', { name: 'skills' }));
@@ -410,46 +411,47 @@ function installRequest(kind, { current = true, canMove = true, authorId = 'anot
 it.each(['agent_context', 'skill'])('opens, approves and executes a %s request through the production inbox', async (kind) => {
   installRequest(kind);
   mount('/dashboard/skills/reviews');
-  fireEvent.click(await screen.findByRole('button', { name: 'Assigned candidate' }));
-  const acknowledge = await screen.findByRole('checkbox', { name: /I've checked this version/ });
+  fireEvent.click((await screen.findByText(/Assigned candidate ·/)).closest('tr'));
+  const acknowledge = await screen.findByRole('checkbox', { name: /I've checked the/ });
   await waitFor(() => expect(acknowledge).toBeEnabled());
   // The conclusion card and the Who is affected section both state the impact.
   if (kind === 'agent_context') screen.getAllByText(/Of 3 connected apps: 2 move v3 → v4; 1 is pinned and doesn't move\./).forEach((node) => expect(node).toBeVisible());
   fireEvent.click(acknowledge);
   fireEvent.click(screen.getByRole('button', { name: 'Approve release' }));
   await waitFor(() => expect(axios.post.mock.calls.some(([url]) => url.endsWith('/decisions/'))).toBe(true));
-  await waitFor(() => expect(screen.getByRole('checkbox', { name: /I've checked this version/ })).not.toBeChecked());
-  fireEvent.click(screen.getByRole('checkbox', { name: /I've checked this version/ }));
-  fireEvent.click(screen.getByRole('button', { name: 'Release to production' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Release to production' }));
+  // This fixture advances revision on approval, so the new exact key must be acknowledged.
+  fireEvent.click(await screen.findByRole('checkbox', { name: /I've checked the/ }));
   fireEvent.click(await screen.findByRole('button', { name: 'Move production', exact: true }));
   await waitFor(() => expect(axios.post.mock.calls.some(([url]) => url.endsWith('/execute/'))).toBe(true));
 });
 it.each(['agent_context', 'skill'].flatMap((kind) => ['pending', 'approved'].map((status) => [kind, status])))('keeps a stale %s %s packet fail-closed', async (kind, status) => {
   installRequest(kind, { current: false, status });
   mount('/dashboard/skills/reviews');
-  fireEvent.click(await screen.findByRole('button', { name: 'Assigned candidate' }));
-  expect(await screen.findByRole('checkbox', { name: /I've checked this version/ })).toBeDisabled();
+  fireEvent.click((await screen.findByText(/Assigned candidate ·/)).closest('tr'));
+  if (status === 'pending') expect(await screen.findByRole('checkbox', { name: /I've checked the/ })).toBeDisabled();
+  else expect(screen.queryByRole('checkbox', { name: /I've checked the/ })).not.toBeInTheDocument();
   if (status === 'pending') {
     expect(screen.getByRole('button', { name: 'Approve release' })).toBeDisabled();
     // A paused request keeps its release action in place, disabled until renewed and approved.
-    expect(screen.getByRole('button', { name: 'Release to production' })).toBeDisabled();
+    expect(await screen.findByRole('button', { name: 'Release to production' })).toBeDisabled();
   } else {
     expect(screen.queryByRole('button', { name: 'Approve release' })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Release to production' })).toBeDisabled();
+    expect(await screen.findByRole('button', { name: 'Release to production' })).toBeDisabled();
   }
   expect(axios.post.mock.calls.some(([url]) => /\/(decisions|execute)\//.test(url))).toBe(false);
 });
 it.each(['agent_context', 'skill'].flatMap((kind) => ['pending', 'approved'].map((status) => [kind, status])))('does not grant %s %s release authority from readable content', async (kind, status) => {
   installRequest(kind, { canMove: false, authorId: 'author', status });
   mount('/dashboard/skills/reviews');
-  fireEvent.click(await screen.findByRole('button', { name: 'Assigned candidate' }));
-  fireEvent.click(await screen.findByRole('checkbox', { name: /I've checked this version/ }));
+  fireEvent.click((await screen.findByText(/Assigned candidate ·/)).closest('tr'));
+  if (status === 'pending') fireEvent.click(await screen.findByRole('checkbox', { name: /I've checked the/ }));
   if (status === 'pending') {
     expect(screen.getByRole('button', { name: 'Approve release' })).toBeDisabled();
     expect(screen.queryByRole('button', { name: 'Release to production' })).not.toBeInTheDocument();
   } else {
     expect(screen.queryByRole('button', { name: 'Approve release' })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Release to production' })).toBeDisabled();
+    expect(await screen.findByRole('button', { name: 'Release to production' })).toBeDisabled();
   }
   expect(axios.post.mock.calls.some(([url]) => /\/(decisions|execute)\//.test(url))).toBe(false);
 });

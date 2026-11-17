@@ -57,7 +57,7 @@ it('keeps approval and release paused after a stale refusal until explicit refre
   fireEvent.click(screen.getByRole('button', { name: 'Approve release' }));
   expect(await screen.findByText('Approval no longer applies. See what changed and renew the request.')).toBeVisible();
   expect(screen.getByRole('button', { name: 'Approve release' })).toBeDisabled();
-  fireEvent.click(screen.getByRole('button', { name: 'Why this review is paused' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Why this request is paused' }));
   fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
   expect(refresh).toHaveBeenCalledTimes(1);
 });
@@ -74,8 +74,8 @@ it('closes the move confirmation before a stale response can open renewal', asyn
   let reject;
   const execute = vi.fn(() => new Promise((resolve, fail) => { reject = fail; }));
   render(<ReleaseRequestPanel scopeKey="scope" state="ready" request={{ id: 'request', revision: 1, status: 'approved' }} preview={{ packet, current: true, fingerprint: 'fp' }} review={{ complete: true }} permissions={{ canExecute: true }} onExecute={execute} />);
-  fireEvent.click(screen.getByRole('checkbox'));
   fireEvent.click(screen.getByRole('button', { name: 'Release to production' }));
+  fireEvent.click(screen.getByRole('checkbox'));
   fireEvent.click(screen.getByRole('button', { name: 'Move production', exact: true }));
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   reject({ statusCode: 409, code: 'release_conflict' });
@@ -118,13 +118,9 @@ it('keeps one evidence ID consistent across selection, consent, review, paused r
 
   useRenewalPreview.mockReturnValue({ data: { revision: 2, fingerprint: 'renewed', packet: { ...evidencePacket, evidence: [unloaded] }, changes: [], removedEvidence: [] } });
   render(<ReleaseRenewalDialog open requestId="request" onClose={vi.fn()} />);
-  expect(screen.getByText('Not checked yet')).toBeVisible();
-  expect(screen.getByText('Rechecked when you renew.')).toBeVisible();
-  // The renewal says the result is kept; its ID sits under Technical details.
-  expect(screen.getByText('Kept the same result')).toBeVisible();
-  expect(screen.queryByTitle('5cae58ed')).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole('button', { name: 'Technical details' }));
-  expect(screen.getByTitle('5cae58ed')).toBeVisible();
+  // Renewal summarizes retained evidence without claiming the result was checked.
+  expect(screen.getByText("1 test result kept; it'll be rechecked when you renew.")).toBeVisible();
+  expect(screen.queryByText('Passed on test cases')).not.toBeInTheDocument();
   expect(screen.queryByText('Not recorded')).not.toBeInTheDocument();
 });
 
@@ -246,22 +242,23 @@ it('pauses a stale request with one title, one sentence, one action and Refresh 
   expect(screen.getByText('Approval no longer applies. See what changed and renew the request.')).toBeVisible();
   expect(screen.queryByText(/This changed since you opened it/)).not.toBeInTheDocument();
   expect(screen.queryByText('Renew and approve this request before releasing.')).not.toBeInTheDocument();
-  expect(screen.getAllByRole('button', { name: 'Renew review' })).toHaveLength(1);
+  expect(screen.getAllByRole('button', { name: 'Renew request' })).toHaveLength(1);
   expect(screen.queryByRole('button', { name: 'Refresh' })).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole('button', { name: 'Why this review is paused' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Why this request is paused' }));
   expect(screen.getByRole('button', { name: 'Refresh' })).toBeVisible();
   const release = screen.getByRole('button', { name: 'Release to production' });
   expect(release).toBeDisabled();
-  expect(release).toHaveAccessibleDescription('Renew the review first');
+  expect(release).toHaveAccessibleDescription('Renew the request first');
   // The notice lives in the page; the sticky decision bar stays one row (acknowledgment, reason, disabled release).
   const bar = document.querySelector('[data-sticky-footer]');
   expect(bar).not.toBeNull();
   expect(bar.contains(screen.getByText('Approval no longer applies. See what changed and renew the request.'))).toBe(false);
-  expect(bar.contains(screen.getByRole('button', { name: 'Renew review' }))).toBe(false);
-  expect(bar.contains(screen.getByRole('button', { name: 'Why this review is paused' }))).toBe(false);
+  expect(bar.contains(screen.getByRole('button', { name: 'Renew request' }))).toBe(false);
+  expect(bar.contains(screen.getByRole('button', { name: 'Why this request is paused' }))).toBe(false);
   expect(bar.contains(release)).toBe(true);
-  expect(bar.contains(screen.getByText('Renew the review first'))).toBe(true);
-  expect(bar.contains(screen.getByRole('checkbox'))).toBe(true);
+  expect(bar.contains(screen.getByText('Renew the request first'))).toBe(true);
+  // An approved request asks acknowledgment only inside an allowed move confirmation.
+  expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
 });
 it('keeps the renewal approval line free of revision numbers', () => {
   useRenewalPreview.mockReturnValue({ data: { revision: 2, fingerprint: 'renewed', packet, changes: [], removedEvidence: [] } });

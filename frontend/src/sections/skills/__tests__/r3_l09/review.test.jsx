@@ -52,7 +52,7 @@ afterEach(() => {
 const click = (name) => fireEvent.click(screen.getByRole("button", { name }));
 const acknowledge = () =>
   fireEvent.click(
-    screen.getByRole("checkbox", { name: /I've checked this version/ }),
+    screen.getByRole("checkbox", { name: /I've checked the/ }),
   );
 const panelProps = {
   scopeKey: "org:workspace:reviewer",
@@ -99,7 +99,7 @@ describe("typed release evidence", () => {
     // The evidence row states its outcome once; the exact grading counts and the evidence ID are read in Inspect.
     expect(screen.queryByText(/attempts graded/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Evidence ID/)).not.toBeInTheDocument();
-    fireEvent.click(screen.getAllByRole("button", { name: "Inspect", exact: true })[1]);
+    fireEvent.click(screen.getByText("Application test · v7 vs v4").closest("tr"));
     expect(
       screen.getAllByText(/2\/4 attempts graded · 2 incomplete · 1 regression/),
     ).toHaveLength(1);
@@ -323,7 +323,7 @@ describe("exact decisions and retry safety", () => {
     expect(
       screen.getByRole("button", { name: "Approve release" }),
     ).toBeDisabled();
-    click("Why this review is paused");
+    click("Why this request is paused");
     expect(screen.getByText(/Evidence selection changed/)).toBeVisible();
   });
   it("preserves comment after a rejected CAS without refreshing the precondition", async () => {
@@ -409,8 +409,8 @@ describe("exact decisions and retry safety", () => {
         onExecute={execute}
       />,
     );
-    acknowledge();
     click("Release to production");
+    acknowledge();
     expect(execute).not.toHaveBeenCalled();
     click("Move production");
     await screen.findByText("Release receipt");
@@ -488,7 +488,7 @@ describe("reviewer arrival and annotation", () => {
     render(<Arrival />);
     // The tab label carries the waiting count; no separate count line repeats it.
     expect(screen.queryByText("1 request waiting for your decision")).not.toBeInTheDocument();
-    click("refund-context");
+    click("Open request");
     expect(screen.getByText(/Production moves/)).toBeVisible();
     expect(
       screen.getByRole("button", { name: "Approve release" }),
@@ -560,7 +560,7 @@ describe("reviewer arrival and annotation", () => {
       { target: { value: "Fourteen days" } },
     );
     fireEvent.change(
-      screen.getByRole("textbox", { name: "Review explanation" }),
+      screen.getByRole("textbox", { name: "Explanation" }),
       { target: { value: "The policy excludes this case." } },
     );
     rerender(
@@ -574,10 +574,10 @@ describe("reviewer arrival and annotation", () => {
       />,
     );
     expect(
-      screen.getByRole("button", { name: "Append review" }),
+      screen.getByRole("button", { name: "Add check" }),
     ).toBeDisabled();
-    click("I reviewed the new annotations");
-    click("Append review");
+    click("I've read the new checks");
+    click("Add check");
     await waitFor(() => expect(append).toHaveBeenCalledTimes(1));
     expect(append.mock.calls[0][0]).toMatchObject({
       annotationRevision: 2,
@@ -604,7 +604,7 @@ describe("publication and explicit spending", () => {
     );
     fireEvent.click(
       screen.getByRole("checkbox", {
-        name: /these changes against the current published version/,
+        name: /I've checked the.* against v/,
       }),
     );
     click("Publish version");
@@ -631,7 +631,7 @@ describe("publication and explicit spending", () => {
     );
     fireEvent.click(
       screen.getByRole("checkbox", {
-        name: /these changes against the current published version/,
+        name: /I've checked the.* against v/,
       }),
     );
     rerender(
@@ -659,15 +659,16 @@ describe("publication and explicit spending", () => {
     const props = { scopeKey: "scope", state: "ready", canPublish: true, onPublish };
     const { rerender } = render(<ContextReleaseReview {...props} draftReview={warned} />);
     fireEvent.change(screen.getByRole("textbox", { name: "Version note" }), { target: { value: "Cap refunds" } });
-    fireEvent.click(screen.getByRole("checkbox", { name: /these changes against the current published version/ }));
-    fireEvent.click(screen.getByRole("checkbox", { name: /check warnings/ }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /I've checked the.* against v/ }));
     click("Publish version");
     await waitFor(() => expect(onPublish).toHaveBeenCalledTimes(1));
     // The reloaded review is for the same candidate, head and warnings with a new fingerprint.
     const acknowledged = { ...warned, headAcknowledged: true, revision: 9, reviewFingerprint: CONFIG };
     rerender(<ContextReleaseReview {...props} draftReview={acknowledged} />);
-    expect(screen.getByRole("checkbox", { name: /these changes against the current published version/ })).toBeChecked();
-    expect(screen.getByRole("checkbox", { name: /check warnings/ })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /I've checked the.* against v/ })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /check warning/ })).toBeChecked();
+    expect(screen.getAllByRole("checkbox")).toHaveLength(1);
+    expect(onPublish.mock.calls[0][0].acknowledgeWarnings).toBe(true);
     expect(screen.getByRole("textbox", { name: "Version note" })).toHaveValue("Cap refunds");
     expect(screen.getByRole("button", { name: "Publish version" })).toBeEnabled();
     // A candidate or warning change after the head step starts the review over.
@@ -762,43 +763,37 @@ it('puts pending reviews first and reserves the unread marker and Review action 
   const pending = { ...inbox.results[0], id: 'pending', name: 'Pending review', status: 'pending', unread: true };
   const released = { ...inbox.results[0], id: 'released', name: 'Released review', status: 'released', unread: true };
   render(<ReleaseInbox scopeKey="scope" state="ready" data={{ ...inbox, results: [released, pending] }} onOpen={onOpen} onStatusChange={vi.fn()} onPageChange={vi.fn()} />);
-  const rows = within(screen.getByRole('table', { name: 'Assigned release reviews' })).getAllByRole('row').slice(1);
+  const rows = within(screen.getByRole('table', { name: 'Assigned release requests' })).getAllByRole('row').slice(1);
   expect(rows[0]).toHaveTextContent('Pending review');
   expect(within(rows[0]).getByText('Unread')).toBeInTheDocument();
   expect(within(rows[1]).queryByText('Unread')).not.toBeInTheDocument();
   expect(screen.queryByText('New', { exact: true })).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole('button', { name: 'Review', exact: true }));
+  fireEvent.click(within(rows[0]).getByRole('button', { name: 'Open request', exact: true }));
   expect(onOpen).toHaveBeenCalledWith(pending);
   expect(screen.getByRole('combobox', { name: 'Request status' })).toHaveTextContent('All');
 });
 
-it('names what the tab counts, shows Review only to the assigned reviewer and Open to everyone else', () => {
+it('names what the tab counts and keeps opening a request separate from review authority', () => {
   const pending = { ...inbox.results[0], id: 'pending', name: 'Pending review', status: 'pending', authorId: 'author', recipients: [{ id: 'reviewer', name: 'Maya Chen' }] };
   const released = { ...inbox.results[0], id: 'released', name: 'Released review', status: 'released', unread: false, authorId: 'author' };
   const props = { scopeKey: 'scope', state: 'ready', onStatusChange: vi.fn(), onPageChange: vi.fn(), onOpen: vi.fn(), onToggleAuthored: vi.fn() };
   const data = { ...inbox, pendingCount: 1, results: [released, pending] };
   const { rerender } = render(<ReleaseInbox {...props} data={data} currentUserId="reviewer" />);
-  expect(screen.getByText('Review changes before they reach production.')).toBeVisible();
   expect(screen.getByRole('tab', { name: 'Assigned to me · 1 waiting' })).toBeVisible();
   expect(screen.getByRole('tab', { name: 'My requests' })).toBeVisible();
-  expect(screen.getByRole('button', { name: 'Review', exact: true })).toBeVisible();
-  expect(screen.getAllByRole('button', { name: 'Open', exact: true })).toHaveLength(1);
-  // The requester opens their own request; they are never offered "Review".
+  expect(screen.queryByRole('button', { name: 'Review', exact: true })).not.toBeInTheDocument();
+  expect(screen.getAllByRole('button', { name: 'Open request', exact: true })).toHaveLength(2);
   rerender(<ReleaseInbox {...props} data={data} currentUserId="author" />);
   expect(screen.queryByRole('button', { name: 'Review', exact: true })).not.toBeInTheDocument();
-  expect(screen.getAllByRole('button', { name: 'Open', exact: true })).toHaveLength(2);
-  rerender(<ReleaseInbox {...props} data={data} currentUserId="reviewer" authored />);
-  expect(screen.queryByRole('button', { name: 'Review', exact: true })).not.toBeInTheDocument();
+  expect(screen.getAllByRole('button', { name: 'Open request', exact: true })).toHaveLength(2);
   rerender(<ReleaseInbox {...props} data={{ ...data, pendingCount: 0 }} currentUserId="reviewer" />);
   expect(screen.getByRole('tab', { name: 'Assigned to me' })).toBeVisible();
 });
 
-it('uses small outlined buttons for every desktop row action', () => {
-  const pending = { ...inbox.results[0], id: 'pending', name: 'Pending review', status: 'pending', authorId: 'author', recipients: [{ id: 'reviewer', name: 'Maya Chen' }] };
-  const released = { ...inbox.results[0], id: 'released', name: 'Released review', status: 'released', unread: false, authorId: 'author' };
-  render(<ReleaseInbox scopeKey="scope" state="ready" data={{ ...inbox, pendingCount: 1, results: [released, pending] }} currentUserId="reviewer" onStatusChange={vi.fn()} onPageChange={vi.fn()} onOpen={vi.fn()} />);
-  [screen.getByRole('button', { name: 'Review', exact: true }), ...screen.getAllByRole('button', { name: 'Open', exact: true })].forEach((button) => {
-    expect(button).toHaveClass('MuiButton-outlined');
+it('uses small text buttons for the primary desktop row action', () => {
+  render(<ReleaseInbox scopeKey="scope" state="ready" data={{ ...inbox, pendingCount: 1 }} currentUserId="reviewer" onStatusChange={vi.fn()} onPageChange={vi.fn()} onOpen={vi.fn()} />);
+  screen.getAllByRole('button', { name: 'Open request', exact: true }).forEach((button) => {
+    expect(button).toHaveClass('MuiButton-text');
     expect(button).toHaveClass('MuiButton-sizeSmall');
   });
 });
@@ -810,7 +805,7 @@ it('stacks each phone card as name and status, request title, then who and when,
   render(<ReleaseInbox scopeKey="scope" state="ready" data={{ ...inbox, pendingCount: 1, results: [pending] }} currentUserId="reviewer" onStatusChange={vi.fn()} onPageChange={vi.fn()} onOpen={onOpen} />);
   const card = screen.getByRole('button', { name: 'Pending review', exact: true });
   // No separate Review or Open button on a phone: the card is the one tap target; the menu stays at its top right.
-  expect(screen.queryByRole('button', { name: 'Review', exact: true })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Open request', exact: true })).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Open', exact: true })).not.toBeInTheDocument();
   expect(within(card).getByText('In review')).toBeVisible();
   expect(within(card).getByText(/Sam Rivera ·/)).toBeVisible();
@@ -826,7 +821,7 @@ it('says "Waiting for your approval" to the assigned reviewer and names the revi
   const { rerender } = render(<ReleaseInbox {...props} currentUserId="reviewer" />);
   expect(screen.getByText('Waiting for your approval')).toBeVisible();
   expect(screen.queryByText(/Waiting on/)).not.toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'Request release review' })).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Request release' })).toBeVisible();
   expect(screen.queryByRole('button', { name: 'Request review', exact: true })).not.toBeInTheDocument();
   rerender(<ReleaseInbox {...props} currentUserId="someone-else" />);
   expect(screen.getByText('Waiting on Maya Chen')).toBeVisible();
