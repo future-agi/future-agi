@@ -28,6 +28,8 @@ WorkerState = Literal[
     "cancelled",
     "infrastructure",
     "not_observed",
+    # It took part (its tool calls, or control handed to it), but no return or end was recorded, so none is claimed.
+    "observed_no_end",
 ]
 # How a call's trial ended, which a worker still out when it ended takes.
 TrialEnding = Literal["ended", "infrastructure", "cancel_requested", "cancelled"]
@@ -294,7 +296,7 @@ class HarnessWorker(TypedDict):
     instance_ids: list[str]
     model: NotRequired[str]
     tokens: NotRequired[int]
-    # How the worker ended in this call; absent on a timeline read before end states were recorded.
+    # How the worker ended in this call; a timeline read before end states were recorded has it filled when served.
     state: NotRequired[WorkerState]
     # When the harness ended this worker's own process past its deadline; absent for a worker it did not stop.
     stopped_at: NotRequired[float]

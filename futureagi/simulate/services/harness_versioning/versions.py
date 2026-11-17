@@ -50,6 +50,7 @@ REMOVED_REASONS = {
 }
 SUITE_OUTPUT_KINDS = frozenset({"scenarios", "coverage"})
 SEALED_MANIFEST = "environment-bundle/manifest.json"
+SEALED_CONTRACT = "environment-bundle/contract.json"
 # The pairs an environment was last defaulted to, so a roll back reuses their archive.
 DEFAULT_PAIRS_KEPT = 20
 # Not busy, but with nothing ready to move a default on.
@@ -196,14 +197,41 @@ def _stage_outputs(pair_body: bytes) -> list[dict[str, Any]]:
     return authoring_stage_outputs_from_archive(pair_body)
 
 
+def run_contract(
+    job: HostedHarnessJob, split: archives.SplitArchive, *, built: bool
+) -> dict[str, Any]:
+    """The contract a version runs with, as every reader shows it.
+
+    A build can amend the authored contract while it builds (a tool served from the agent's tools service instead
+    of imported, say) and seals the amended one, so a version ``built`` from this tree has the sealed contract. A
+    version whose authored contract is the default version's, unchanged, runs with the default's; any other has
+    its own authored contract until a build seals it.
+    """
+    sealed = _json(split.sealed, SEALED_CONTRACT) if built else None
+    if isinstance(sealed, dict) and sealed:
+        return sealed
+    default = job.environment_version
+    inherited = (default.documents or {}).get("contract") if default else None
+    if (
+        isinstance(inherited, dict)
+        and inherited
+        and default.contract_hash_raw == hashing.contract_hash_raw(split.environment)
+    ):
+        return inherited
+    authored = _json(split.environment, "contract.json")
+    return authored if isinstance(authored, dict) else {}
+
+
 def prepare_pieces(
     job: HostedHarnessJob,
     split: archives.SplitArchive,
     *,
     outputs: list[dict[str, Any]],
     authoring_revision: str,
+    built: bool = False,
 ) -> Pieces:
-    """Pack, key and hash both pieces and their readable documents; stores nothing."""
+    """Pack, key and hash both pieces and their readable documents; stores nothing. ``built``: the archive's sealed
+    bundle was built from this tree."""
     payload = job.payload or {}
     connector = str((payload.get("agent") or {}).get("connector") or "")
     environment_body = archives.pack_archive(split.environment)
@@ -212,7 +240,7 @@ def prepare_pieces(
         job.organization_id, job.id, environment_body
     )
     suite_key = archives.suite_key(job.organization_id, job.id, suite_body)
-    contract = _json(split.environment, "contract.json") or {}
+    contract = run_contract(job, split, built=built)
     sub_goals = _sub_goals(split.environment)
     scenarios = suite_documents(split.suite)
     environment_documents = {
@@ -710,7 +738,12 @@ def record_authoring(
     pair_key = archives.pair_key(job.organization_id, job.id, pair_body)
     revision = authoring_content_digest(pair_body)
     pieces = prepare_pieces(
-        job, split, outputs=_stage_outputs(pair_body), authoring_revision=revision
+        job,
+        split,
+        outputs=_stage_outputs(pair_body),
+        authoring_revision=revision,
+        # Only a build seals this archive's own bundle; an edit carries an older one.
+        built=origin in PROVED_ORIGINS and SEALED_MANIFEST in split.sealed,
     )
     if origin in USER_ORIGINS:
         # Refused before anything is uploaded; checked again under the lock below.

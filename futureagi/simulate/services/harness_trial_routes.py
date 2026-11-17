@@ -54,7 +54,8 @@ def _local(record: CallWorkersRecord) -> dict[str, tuple[str, str | None]]:
 
 def _column(step: WorkerStep, record: CallWorkersRecord) -> RouteColumn:
     workers = _local(record)
-    coordinator = (record.get("coordinator") or {}).get("name")
+    lead = record.get("coordinator")
+    coordinator = lead["name"] if lead else None
 
     def who(
         worker_id: str | None, *, unknown: bool

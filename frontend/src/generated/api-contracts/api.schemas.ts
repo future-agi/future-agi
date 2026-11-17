@@ -19615,6 +19615,11 @@ export interface HarnessEnvironmentToolStatusApi {
    * @minLength 1
    */
   status_label: string;
+  /**
+   * Why a test cannot run an unsupported tool, as the run's own refusal says it; null otherwise.
+   * @minLength 1
+   */
+  status_reason: string;
   /** Restored to the seeded records before each trial; null when not known. */
   reset_between_trials: boolean;
   /**
@@ -28516,6 +28521,7 @@ export const CallWorkerApiState = {
   cancelled: "cancelled",
   infrastructure: "infrastructure",
   not_observed: "not_observed",
+  observed_no_end: "observed_no_end",
 } as const;
 
 export type CleanupApiStatus =
@@ -28576,7 +28582,7 @@ export interface CallWorkerApi {
   /** @minLength 1 */
   model?: string;
   tokens?: number;
-  state?: CallWorkerApiState;
+  state: CallWorkerApiState;
   cut_short: boolean;
   past_deadline: boolean;
   stopped_at?: number;
@@ -28826,6 +28832,7 @@ export const CallWorkerStepApiEndState = {
   cancelled: "cancelled",
   infrastructure: "infrastructure",
   not_observed: "not_observed",
+  observed_no_end: "observed_no_end",
 } as const;
 
 export type CallWorkerStepApiRelationship =
