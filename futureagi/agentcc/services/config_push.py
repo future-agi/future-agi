@@ -944,7 +944,9 @@ def _serialize_org_payload(org_id, payload):
     client_body = GatewayOrgConfig.model_validate(body).model_dump(
         by_alias=True, exclude_none=True
     )
-    httpx.Request("PUT", "http://gateway.invalid/", json=client_body)
+    # Use the client's request construction, not a shallower Request-only probe.
+    with httpx.Client() as client:
+        client.build_request("PUT", "http://gateway.invalid/", json=client_body)
     bulk = GeneralMethods().success_response({str(org_id): body}).data
     bulk["unbuilt_org_ids"] = []
     JSONRenderer().render(bulk)
