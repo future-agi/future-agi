@@ -168,7 +168,7 @@ export default function VoiceCallDrawer({
                     attempt={attempt}
                     callExecutionId={task.id}
                     callStatus={task.status}
-                    traceIds={callTraces.traces.map((trace) => trace.traceId)}
+                    callerName={task.persona}
                     onOpenTrace={(traceId, spanId) => {
                       setOpenStep({ traceId, spanId });
                       setChosenTab("traces");
@@ -202,6 +202,7 @@ export default function VoiceCallDrawer({
     [
       task.id,
       task.status,
+      task.persona,
       showWorkers,
       data,
       attempt,
@@ -280,6 +281,7 @@ VoiceCallDrawer.propTypes = {
     id: PropTypes.string,
     status: PropTypes.string,
     outcomeReason: PropTypes.string,
+    persona: PropTypes.string,
   }).isRequired,
   executionId: PropTypes.string,
   onClose: PropTypes.func,
