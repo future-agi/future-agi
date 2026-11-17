@@ -8,6 +8,8 @@ import { getSkillErrorCode, useSkill, usePublishSkillDraft, useSaveSkillDraft, u
 import { useSkillTestingOptions } from "src/api/skills/testing";
 import { skillFilesDigest, skillManifestDigest } from 'src/api/skills/digest';
 import ActionReason from "../components/ActionReason";
+import ReleaseRuleNote from "../components/ReleaseRuleNote";
+import LabelProtectionDialog from "../governance/LabelProtectionDialog";
 import TestEvidence from '../tests/TestEvidence';
 import AssistPanel from '../assist/AssistPanel';
 import { paths } from "src/routes/paths";
@@ -42,7 +44,12 @@ function PublishReview({ onClose, onDraftChange, skill, draft: initialDraft }) {
   const [summaryOpen, setSummaryOpen] = useState(false);
   const [release, setRelease] = useState(skill);
   const [releaseConflict, setReleaseConflict] = useState(false);
+  const [rulesOpen, setRulesOpen] = useState(false);
   const currentSkill = useSkill(skill.id);
+  // UXF-09: the label rule beside the label choice, from the skill's current
+  // protected labels. It only explains; canMove and the server's CAS decide.
+  const ruleSource = currentSkill.data ?? skill;
+  const protectedLabels = Array.isArray(ruleSource.protectedLabelNames) ? ruleSource.protectedLabelNames : null;
   const options = useSkillTestingOptions();
   useEffect(() => {
     let active = true;
@@ -189,6 +196,7 @@ function PublishReview({ onClose, onDraftChange, skill, draft: initialDraft }) {
   );
 
   return (
+    <>
     <ModalWrapper
       open
       onClose={onClose}
@@ -251,7 +259,7 @@ function PublishReview({ onClose, onDraftChange, skill, draft: initialDraft }) {
           </Stack>
           {credentialWarning && <Typography variant="s3" color="text.secondary">Production can&apos;t be set while a possible credential warning is open.</Typography>}
           {['staging', 'production'].filter((name) => !canMove(name)).map((name) => <Typography key={name} variant="s3" color="text.secondary">You can publish a version. A workspace admin or organization admin must move {name}.</Typography>)}
-
+          {protectedLabels && <ReleaseRuleNote rules={{ protectedLabels }} canChangeRules={ruleSource.permissions?.canManageLabelProtection === true} onChangeRules={() => setRulesOpen(true)} sx={{ mt: 1 }} />}
         </ReviewSection>
         <TextField label="Version note" value={note} onChange={(event) => setNote(event.target.value)} multiline minRows={2} inputProps={{ maxLength: 2000 }} helperText={`${note.length}/2,000 characters`} fullWidth />
       </Stack>
@@ -265,6 +273,11 @@ function PublishReview({ onClose, onDraftChange, skill, draft: initialDraft }) {
         </Stack>
       </DialogActions>
     </ModalWrapper>
+    {/* Mounted only while open, outside the publish dialog's tree so nothing in it reaches publish.
+        New rules change the release revision, so publishing then fails its CAS and asks for
+        "Reload release state"; the reviewed release snapshot is never swapped here. */}
+    {rulesOpen && <LabelProtectionDialog open onClose={() => setRulesOpen(false)} skill={ruleSource} />}
+    </>
   );
 }
 

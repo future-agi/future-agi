@@ -18,6 +18,7 @@ import ErrorState from "src/components/error-state";
 import Section from "src/components/section";
 import { LABEL_PATTERN, LIMITS } from "src/sections/skills/constants";
 import { usePreviewState } from "src/sections/skills/components/SkillsStatePreview";
+import ReleaseRuleNote from "../components/ReleaseRuleNote";
 
 function PolicyHistory({ skillId }) {
   const [page, setPage] = useState(1);
@@ -154,10 +155,12 @@ function ProtectionForm({ skill, onClose, initial }) {
       isValid={valid && canManage && changed && !conflict}
     >
       <Stack spacing={2} sx={{ overflowY: "auto", minWidth: 0 }}>
+        {/* UXF-09: this is where "Change rules" leads, so it defines the term the rule notes use. */}
         <Typography variant="s1">
-          Protected labels can be assigned, moved or removed only by a workspace
-          admin or organization admin/owner. Members can still publish versions.
-          System-key automation cannot move protected labels.
+          A protected label (only admins can move it) can be set, moved or
+          removed only by a workspace admin or an organization admin or owner.
+          Automation that uses a system key can&apos;t move it. Members can
+          still publish versions.
         </Typography>
         {error && (
           <Alert
@@ -205,6 +208,13 @@ function ProtectionForm({ skill, onClose, initial }) {
           Protection survives removal of a label pointer. Saving does not move
           any version.
         </Typography>
+        {/* What Move label, Publish and Restore will say once these names are saved. */}
+        {valid && changed && (
+          <Stack spacing={0.5} data-testid="protection-rule-preview">
+            <Typography variant="s3" color="text.secondary">After saving, people moving labels see:</Typography>
+            <ReleaseRuleNote rules={{ protectedLabels: names }} />
+          </Stack>
+        )}
         <PolicyHistory skillId={skill.id} />
       </Stack>
     </ModalWrapper>

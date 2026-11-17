@@ -6,13 +6,11 @@ import {
   Box,
   Button,
   Checkbox,
-  IconButton,
   ListItemIcon,
   Menu,
   MenuItem,
   Stack,
   Typography,
-  Tooltip,
   Table, TableHead, TableBody, TableRow, TableCell, TableContainer,
 } from "@mui/material";
 
@@ -30,6 +28,10 @@ import StatusBadge from "src/components/status-badge";
 import { ROW_HEIGHT, TABLE_HEADER_HEIGHT } from "src/theme/sizes";
 import { usePreviewState } from "src/sections/skills/components/SkillsStatePreview";
 import VersionLabel from "../components/VersionLabel";
+import ReleaseRuleNote from "../components/ReleaseRuleNote";
+import RowActions from "../components/RowActions";
+import { rowLinkProps } from "../components/responsiveTable";
+import { PROTECTED_LABEL, labelDisplayName } from "../utils/terms";
 import LabelProtectionDialog from '../governance/LabelProtectionDialog';
 import LabelHistoryDrawer from "./LabelHistoryDrawer";
 import MoveLabelDialog from "./MoveLabelDialog";
@@ -71,7 +73,6 @@ export default function VersionsTab({ skill }) {
   const [pageSize, setPageSize] = useState(25);
   const [, setParams] = useSearchParams();
   const [selectedIds, setSelectedIds] = useState([]);
-  const [menu, setMenu] = useState(null);
   const [labelMenu, setLabelMenu] = useState(null);
   const [move, setMove] = useState(null);
   const [history, setHistory] = useState(null);
@@ -105,10 +106,31 @@ export default function VersionsTab({ skill }) {
       );
     versions.refetch();
   };
-  const menuAction = (action) => {
-    setMenu(null);
-    action();
-  };
+  const openFiles = (number) => router.push(`${detailPath}?tab=files&version=${number}`);
+  // UXF-12: the whole row opens the version's files; that and every other
+  // action sit in the trailing ⋯. At 390 the ⋯ stays (phoneMenu): Compare,
+  // Restore and Set label are not reachable from the files view.
+  const versionPrimary = (version) => ({ label: "View files", onClick: () => openFiles(version.number) });
+  const versionActions = (version) => [
+    {
+      label: "Compare with previous",
+      disabled: version.number <= 1,
+      reason: version.number <= 1 ? "v1 is the first version" : undefined,
+      onClick: () => compare(version.number - 1, version.number),
+    },
+    {
+      label: "Compare with production",
+      disabled: !production || version.number === production,
+      reason: labels.isError || labels.isLoading ? undefined : !production ? "No version is in production" : version.number === production ? "This version is in production" : undefined,
+      onClick: () => compare(production, version.number),
+    },
+    { label: "Restore as new version", onClick: () => setRestore(version.number) },
+    { label: "Set label…", onClick: () => setMove({ version: version.number }) },
+  ];
+  // UXF-09: the protection rule, from the skill's current protected labels.
+  const protectedLabels = Array.isArray(skill.protectedLabelNames) ? skill.protectedLabelNames : null;
+  const canChangeRules = skill.permissions?.canManageLabelProtection === true;
+  const isProtectedLabel = (label) => Boolean(label.isProtected || protectedLabels?.includes(label.name));
 
   const columns = [
     { id: 'select', header: '', size: 48, cell: ({ row: { original } }) => <Checkbox size="small" checked={selectedIds.includes(original.id)} disabled={selectedIds.length === 2 && !selectedIds.includes(original.id)} inputProps={{ 'aria-label': `Select v${original.number} for comparison` }} onClick={(event) => event.stopPropagation()} onChange={(_, checked) => setSelectedIds((current) => checked ? [...current, original.id] : current.filter((id) => id !== original.id))} /> },
@@ -169,16 +191,12 @@ export default function VersionsTab({ skill }) {
       header: "Actions",
       size: 72,
       cell: ({ row }) => (
-        <IconButton
-          size="small"
-          aria-label={`Actions for v${row.original.number}`}
-          onClick={(event) => {
-            event.stopPropagation();
-            setMenu({ anchor: event.currentTarget, version: row.original });
-          }}
-        >
-          <Iconify icon="solar:menu-dots-bold" width={20} sx={{ pointerEvents: "none" }} />
-        </IconButton>
+        <RowActions
+          phoneMenu
+          name={`v${row.original.number}`}
+          primary={versionPrimary(row.original)}
+          actions={versionActions(row.original)}
+        />
       ),
     },
   ].map((column) => ({ ...column, enableSorting: false }));
@@ -220,6 +238,14 @@ export default function VersionsTab({ skill }) {
         }
       >
 
+        {protectedLabels && (
+          <ReleaseRuleNote
+            rules={{ protectedLabels }}
+            canChangeRules={canChangeRules}
+            onChangeRules={() => setProtectionOpen(true)}
+            sx={{ mb: 1 }}
+          />
+        )}
         {labels.isLoading && (
           <ContentSkeleton variant="rows" rows={2} label="Loading labels" />
         )}
@@ -241,15 +267,24 @@ export default function VersionsTab({ skill }) {
               alignItems={{ xs: "flex-start", sm: "center" }}
               sx={{ py: 1, borderBottom: "1px solid", borderColor: "divider" }}
             >
-              <Stack direction="row" spacing={1} alignItems="center" sx={{ flex: 1, minWidth: 0 }}>
-                <Typography variant="s1">{label.name.charAt(0).toUpperCase()}{label.name.slice(1)} → v{label.version}</Typography>
-                {(label.isProtected || skill.protectedLabelNames?.includes(label.name)) && <Tooltip describeChild title="Moves need a reviewed release"><span tabIndex={0}><StatusBadge status="protected" label="Protected" /></span></Tooltip>}
+              <Stack direction="row" spacing={1} useFlexGap alignItems="center" sx={{ flex: 1, minWidth: 0, flexWrap: "wrap" }}>
+                <Typography variant="s1">{labelDisplayName(label.name)} → v{label.version}</Typography>
+                {/* UXF-09: never a bare "Protected"; the badge says what it means. */}
+                {isProtectedLabel(label) && <StatusBadge status="protected" label={PROTECTED_LABEL} />}
               </Stack>
-              <Stack direction="row" spacing={1} alignItems="center">
-              <Button size="small" disabled={label.canMove !== true} onClick={() => setMove({ label: label.name })}>Move {label.name}</Button>
-              <Button size="small" onClick={() => setHistory(label.name)}>History for {label.name}</Button>
-              <IconButton size="small" aria-label={`Actions for ${label.name}`} onClick={(event) => setLabelMenu({ anchor: event.currentTarget, label })}><Iconify icon="solar:menu-dots-bold" /></IconButton>
-              </Stack>
+              {/* UXF-12: every label action is in the trailing ⋯ (no row target, so the ⋯ also shows at 390). */}
+              <RowActions
+                name={label.name}
+                actions={[
+                  {
+                    label: "Move",
+                    disabled: label.canMove !== true,
+                    reason: label.canMove === true ? undefined : isProtectedLabel(label) ? "Only workspace admins can move it" : "Your access can't move this label",
+                    onClick: () => setMove({ label: label.name }),
+                  },
+                  { label: "History", onClick: () => setHistory(label.name) },
+                ]}
+              />
             </Stack>
           ))}
       </Section>
@@ -259,9 +294,9 @@ export default function VersionsTab({ skill }) {
       >
         <TableContainer><Table size="small" aria-label="Skill versions" sx={versionsTableSx}>
           <TableHead><TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}>{columns.map((column) => <TableCell key={column.id || column.accessorKey} data-column={column.id || column.accessorKey} sx={column.mobileOnly ? { display: { xs: "table-cell", sm: "none" } } : undefined}>{column.header}</TableCell>)}</TableRow></TableHead>
-          <TableBody>{rows.map((row) => <TableRow hover key={row.id} sx={{ height: ROW_HEIGHT.twoLine }} onClick={() => router.push(`${detailPath}?tab=files&version=${row.number}`)}>
+          <TableBody>{rows.map((row) => { const link = rowLinkProps(versionPrimary(row)); return <TableRow key={row.id} {...link} sx={[{ height: ROW_HEIGHT.twoLine }, link.sx ?? {}]}>
             {columns.map((column) => <TableCell padding={column.id === "select" ? "checkbox" : "normal"} data-column={column.id || column.accessorKey} data-empty={column.accessorKey === "labels" && !(row.labels || []).length ? "true" : undefined} key={column.id || column.accessorKey}>{column.cell ? column.cell({ row: { original: row }, getValue: () => row[column.accessorKey] }) : row[column.accessorKey]}</TableCell>)}
-          </TableRow>)}</TableBody>
+          </TableRow>; })}</TableBody>
         </Table></TableContainer>
         <DataTablePagination
           page={page}
@@ -296,71 +331,8 @@ export default function VersionsTab({ skill }) {
             },
           ]}
         />
-      <Menu
-        anchorEl={menu?.anchor}
-        open={Boolean(menu)}
-        onClose={() => setMenu(null)}
-      >
-        <MenuItem
-          onClick={() =>
-            menuAction(() =>
-              router.push(
-                `${detailPath}?tab=files&version=${menu.version.number}`,
-              ),
-            )
-          }
-        >
-          <ListItemIcon>
-            <Iconify icon="solar:document-text-linear" width={16} />
-          </ListItemIcon>
-          View files
-        </MenuItem>
-        <MenuItem
-          disabled={!menu || menu.version.number <= 1}
-          onClick={() =>
-            menuAction(() =>
-              compare(menu.version.number - 1, menu.version.number),
-            )
-          }
-        >
-          <ListItemIcon>
-            <Iconify icon="solar:transfer-horizontal-linear" width={16} />
-          </ListItemIcon>
-          Compare with previous
-        </MenuItem>
-        <MenuItem
-          disabled={!production || menu?.version.number === production}
-          onClick={() =>
-            menuAction(() => compare(production, menu.version.number))
-          }
-        >
-          <ListItemIcon>
-            <Iconify icon="solar:transfer-horizontal-linear" width={16} />
-          </ListItemIcon>
-          Compare with production
-        </MenuItem>
-        <MenuItem
-          onClick={() => menuAction(() => setRestore(menu.version.number))}
-        >
-          <ListItemIcon>
-            <Iconify icon="solar:restart-linear" width={16} />
-          </ListItemIcon>
-          Restore as new version
-        </MenuItem>
-        <MenuItem
-          onClick={() =>
-            menuAction(() => setMove({ version: menu.version.number }))
-          }
-        >
-          <ListItemIcon>
-            <Iconify icon="solar:tag-linear" width={16} />
-          </ListItemIcon>
-          Set label…
-        </MenuItem>
-      </Menu>
       <Menu anchorEl={labelMenu?.anchor} open={Boolean(labelMenu)} onClose={() => setLabelMenu(null)}>
-        {labelMenu?.label && <MenuItem disabled={labelMenu.label.canMove !== true} onClick={() => { setMove({ label: labelMenu.label.name }); setLabelMenu(null); }}><ListItemIcon><Iconify icon="solar:tag-linear" width={16} /></ListItemIcon>Move</MenuItem>}
-        <MenuItem onClick={() => { setHistory(labelMenu?.label?.name || ''); setLabelMenu(null); }}><ListItemIcon><Iconify icon="solar:history-linear" width={16} /></ListItemIcon>History</MenuItem>
+        <MenuItem onClick={() => { setHistory(''); setLabelMenu(null); }}><ListItemIcon><Iconify icon="solar:history-linear" width={16} /></ListItemIcon>History</MenuItem>
         <MenuItem disabled={skill.permissions?.canManageLabelProtection !== true} onClick={() => { setProtectionOpen(true); setLabelMenu(null); }}><ListItemIcon><Iconify icon="solar:lock-linear" width={16} /></ListItemIcon>Protection</MenuItem>
       </Menu>
       <LabelProtectionDialog open={protectionOpen} onClose={() => setProtectionOpen(false)} skill={skill} />
