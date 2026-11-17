@@ -4,6 +4,7 @@ import { Alert, Button, Checkbox, DialogActions, DialogContent, DialogTitle, For
 import { ClosableDialog } from "src/components/custom-dialog";
 import { AuthoringError, useAuthoringOperation } from "../editor/HotfixHeadReview";
 import TechnicalDetails from "../components/TechnicalDetails";
+import { PROTECTED_LABEL } from "../utils/terms";
 
 // Intent: an administrator reviews original identity and retained consequences.
 // Hierarchy: exact action/version, impact, current authority, explicit confirmation.
@@ -43,8 +44,8 @@ function Safety({ scopeKey, open, onClose, action, resource, review, canAct = fa
         {review.versionId && <Typography variant="s3" sx={{ overflowWrap: "anywhere" }}>Version {review.versionId}</Typography>}
         {(!restore || review.affectedContextCount != null) && <Typography variant="s1">Affected retained parents: {review.affectedContextCount ?? "Not available"}</Typography>}
         {(review.labels || []).map((label) => restore
-          ? <Typography key={label.name} variant="s1">{label.name.charAt(0).toUpperCase()}{label.name.slice(1)} will point at v{label.version} again{label.isProtected ? " · protected" : ""}. Apps following {label.name} pick it up on their next fetch.</Typography>
-          : <Typography key={label.name} variant="s1">Retained {label.name} → v{label.version}{label.isProtected ? " · protected" : ""}</Typography>)}
+          ? <Typography key={label.name} variant="s1">{label.name.charAt(0).toUpperCase()}{label.name.slice(1)} will point at v{label.version} again{label.isProtected ? ` · ${PROTECTED_LABEL}` : ""}. Apps following {label.name} pick it up on their next fetch.</Typography>
+          : <Typography key={label.name} variant="s1">Retained {label.name} → v{label.version}{label.isProtected ? ` · ${PROTECTED_LABEL}` : ""}</Typography>)}
         {(review.blockers || []).map((blocker) => <Alert key={blocker} severity="error">{blocker}</Alert>)}
       </>}
       {!canAct && <Alert severity="info">Current administrator authority is required. No action is available.</Alert>}

@@ -5,8 +5,6 @@ import {
   AlertTitle,
   Box,
   Button,
-  Checkbox,
-  FormControlLabel,
   Stack,
   TextField,
   Typography,
@@ -23,10 +21,27 @@ import ReleaseReceipt from './ReleaseReceipt';
 import DecisionFooterRow from './DecisionFooterRow';
 import ReleaseReviewBody, {
   ReviewState,
+  checkedFiles,
   evidenceKey,
   evidenceProblems,
   useReviewClock,
 } from "./ReleaseReviewBody";
+import Acknowledgment, { acknowledgedInSession, forgetSessionAcknowledgment, useAcknowledgment } from '../components/Acknowledgment';
+import { COMPOSER_SEND, RENEW_REQUEST } from '../utils/terms';
+import { counted } from './reviewPresentation';
+
+// UXF-02: each actor's one tick states that actor's decision.
+export const REQUESTER_ACKNOWLEDGMENT = "I've checked this version, where it's going and the evidence I'm attaching.";
+/**
+ * The reviewer's tick, naming the changed files that are open above it (UXF-05):
+ * "I've checked the 2 changed files, the evidence and what this release will affect."
+ */
+export const reviewerAcknowledgment = (changes) => {
+  const files = Array.isArray(changes) ? checkedFiles(changes).length : 0;
+  return `I've checked ${files ? `the ${counted(files, 'changed file')}` : 'the changes'}, the evidence and what this release will affect.`;
+};
+/** Session scope for a release decision: one request; the ack key binds revision and fingerprint. */
+export const releaseAckScope = (requestId) => (requestId ? `release:${requestId}` : null);
 
 // No auto-retry. An uncertain response keeps the original operation/body, even
 // if current props advance. Scope changes unmount the form and fence completion.
@@ -164,15 +179,30 @@ function PacketActions({
   const packet = preview.packet;
   const fingerprint = preview.fingerprint;
   // Acknowledgment is for this exact server packet revision, never just its
-  // content hash. A controller may keep it across the pending -> approved
-  // remount so the same reviewer is not asked to re-attest an unchanged
-  // revision; any renewal changes the revision and clears it.
-  const [localIdentity, setLocalIdentity] = useState(null);
+  // content hash (the ack key). One tick per actor per decision (UXF-02,
+  // §15 D16): the requester ticks to send, the reviewer ticks to decide. The
+  // final move asks no new tick when this same person ticked this same ack key
+  // earlier in this page session (remembered per request and person, or held
+  // by the controller across the pending -> approved remount). Any renewal
+  // changes the revision, so the key changes and the tick is asked again.
   const ackKey = `${request?.revision ?? 0}:${fingerprint}`;
-  const ackValue =
-    reviewedIdentity !== undefined ? reviewedIdentity : localIdentity;
-  const setAckValue = onReviewedChange || setLocalIdentity;
-  const reviewed = ackValue === ackKey;
+  const finalMove = request?.status === 'approved';
+  const scope = releaseAckScope(request?.id);
+  const ack = useAcknowledgment(ackKey, { scope, actorId: currentUserId, restore: finalMove });
+  const carriedByController = finalMove && reviewedIdentity !== undefined && reviewedIdentity !== null && reviewedIdentity === ackKey;
+  const reviewed = ack.acknowledged || carriedByController;
+  const setReviewed = (checked) => {
+    ack.setAcknowledged(checked);
+    onReviewedChange?.(checked ? ackKey : null);
+  };
+  const forgetReviewed = () => {
+    ack.reset();
+    setAlreadyChecked(false);
+    forgetSessionAcknowledgment({ scope, actorId: currentUserId });
+    onReviewedChange?.(null);
+  };
+  // Asked once at this mount: did this person already tick this exact key?
+  const [alreadyChecked, setAlreadyChecked] = useState(() => finalMove && (carriedByController || acknowledgedInSession({ scope, actorId: currentUserId, identity: ackKey })));
   const reasons = packet.evidence.flatMap((ref) => {
     const live = currentEvidence?.find(
       (item) => evidenceKey(item) === evidenceKey(ref),
@@ -240,12 +270,19 @@ function PacketActions({
   const closed = Boolean(finalReceipt) || request?.status === "released";
   const refresh = onRefresh && (async () => {
     const result = await onRefresh();
-    if (!result?.isError) { operation.clearFailure(); setAckValue(null); }
+    if (!result?.isError) { operation.clearFailure(); forgetReviewed(); }
   });
+  // A request that is no longer current (stale, expired or ABA-changed under
+  // the same key) forgets the remembered tick: the next move asks again.
+  const stale = Boolean(request) && state === 'ready' && !current;
+  const forget = useRef(forgetReviewed);
+  useEffect(() => { forget.current = forgetReviewed; });
+  useEffect(() => { if (stale) forget.current(); }, [stale]);
+  // The final move asks its tick in the confirmation, unless this person already gave it.
+  const moveTickNeeded = finalMove && !alreadyChecked;
   // One quiet reason beside the disabled primary; the paused notice above carries the full explanation.
-  const decisionReason = !current ? (request ? 'Renew the review first' : '')
-    : !reviewed && (!request || request.status === 'pending') ? (request ? 'Tick the acknowledgment to approve' : 'Tick the acknowledgment to send')
-      : !reviewed && request?.status === 'approved' ? 'Tick the acknowledgment to release' : '';
+  const decisionReason = !current ? (request ? 'Renew the request first' : '')
+    : !reviewed && (!request || request.status === 'pending') ? (request ? 'Tick the acknowledgment to approve' : 'Tick the acknowledgment to send') : '';
   // The assigned reviewer reads "your", never their own name.
   const waitingLine = currentUserId && request?.recipients?.some((person) => person.id === currentUserId) ? 'Waiting for your approval'
     : `Waiting for ${request?.recipients?.length ? request.recipients.map((person) => reviewPersonName(person.name)).join(', ') : 'the assigned reviewer'}'s approval`;
@@ -265,8 +302,8 @@ function PacketActions({
       {!closed && !current && <Alert severity="warning">
         <AlertTitle>{renewalReason || (staleCode === 'evidence_expired' ? 'Attached evidence expired after this request was made.' : 'This request changed after it was reviewed.')}</AlertTitle>
         <Typography variant="s1" component="p">{request ? 'Approval no longer applies. See what changed and renew the request.' : 'Refresh the review before sending the request.'}</Typography>
-        {onRenew && request && permissions.canDecide && <Button variant="contained" color="primary" disabled={locked} sx={{ mt: 1 }} onClick={() => { setConfirm(false); onRenew(); }}>Renew review</Button>}
-        {(reasons.length > 0 || refresh) && <TechnicalDetails title="Why this review is paused">
+        {onRenew && request && permissions.canDecide && <Button variant="contained" color="primary" disabled={locked} sx={{ mt: 1 }} onClick={() => { setConfirm(false); onRenew(); }}>{RENEW_REQUEST}</Button>}
+        {(reasons.length > 0 || refresh) && <TechnicalDetails title="Why this request is paused">
           <Stack spacing={0.5} alignItems="flex-start">
             {Array.from(new Set(reasons)).map((reason) => <Typography key={reason} variant="s3">{reason}</Typography>)}
             {refresh && <Button size="small" disabled={locked} onClick={refresh}>Refresh</Button>}
@@ -287,16 +324,16 @@ function PacketActions({
             {/* One decision footer (REV4): the acknowledgment and any text buttons on the left; on the right the reason while the primary waits, the outlined secondary, then the contained primary. */}
             <DecisionFooterRow
               left={<>
-                <FormControlLabel componentsProps={{ typography: { variant: 's3' } }} sx={{ flex: '1 1 240px', minWidth: 0, mr: 0 }}
-                  control={
-                    <Checkbox
-                      checked={reviewed}
-                      disabled={!current || locked}
-                      onChange={(_, value) => setAckValue(value ? ackKey : null)}
-                    />
-                  }
-                  label="I've checked this version, where it's going, the evidence and what the release will change."
-                />
+                {/* The requester's or reviewer's one tick. The final move has none here: it is asked in the
+                    confirmation, and only when this person hasn't already ticked this exact request. */}
+                {!finalMove && <Acknowledgment sx={{ flex: '1 1 240px' }}
+                  acknowledgment={{ ...ack, acknowledged: reviewed, setAcknowledged: setReviewed }}
+                  disabled={!current || locked}
+                  label={request ? reviewerAcknowledgment(review?.changes) : REQUESTER_ACKNOWLEDGMENT}
+                />}
+                {finalMove && current && permissions.canExecute && <Typography variant="s3" color="text.secondary" sx={{ flex: '1 1 240px', minWidth: 0 }}>
+                  {alreadyChecked ? 'You checked this release when you approved it.' : 'Approved. Confirm the move to release it.'}
+                </Typography>}
                 {!request && onEdit && <Button variant="text" size="small" disabled={locked} onClick={onEdit}>Edit request</Button>}
                 {request && request.status !== 'approved' && !commentFocused && !comment && <Button variant="text" size="small" disabled={locked || !canRequestChanges} onClick={() => setCommentFocused(true)}>Add comment</Button>}
               </>}
@@ -339,7 +376,7 @@ function PacketActions({
                       })
                     }
                   >
-                    Send review request
+                    {COMPOSER_SEND}
                   </Button>
                 )}
                 {request && <>
@@ -358,7 +395,7 @@ function PacketActions({
                   </Button>}
                   {(request.status === "approved" || !current) && <Button {...reasonProps('decision-reason', decisionReason)}
                     variant="contained" color="primary"
-                    disabled={!onExecute || !canExecute || !reviewed || locked}
+                    disabled={!onExecute || !canExecute || locked}
                     onClick={() => setConfirm(true)}
                   >
                     Release to production
@@ -374,7 +411,7 @@ function PacketActions({
         </Box>
         </>
       )}
-      {!request && (!recipientId || !permissions.canSubmit) && <Typography variant="s3" color="text.secondary">{!permissions.canSubmit ? 'You need permission to request a review.' : 'Choose an assigned reviewer to continue.'}</Typography>}
+      {!request && (!recipientId || !permissions.canSubmit) && <Typography variant="s3" color="text.secondary">{!permissions.canSubmit ? 'You need permission to request a release.' : 'Choose an assigned reviewer to continue.'}</Typography>}
       {finalReceipt && <ReleaseReceipt receipt={finalReceipt} request={request} />}
       {confirm && !closed && !renewalOpen && <ConfirmDialog
         open
@@ -383,7 +420,15 @@ function PacketActions({
         }}
         closeDisabled={operation.busy}
         title={`Move ${packet.transition.label} to v${packet.transition.version}?`}
-        content={`${packet.transition.label[0].toUpperCase()}${packet.transition.label.slice(1)} for ${request?.name || "this resource"} will point to v${packet.transition.version}. Apps that follow ${packet.transition.label} pick it up the next time they fetch it; check ${packet.subjectKind === 'agent_context' ? 'Connected apps' : 'Consumers'} to confirm delivery. Running conversations aren't changed. Approval is checked again before the move.`}
+        content={<Stack spacing={1.5}>
+          <Typography variant="s1">{`${packet.transition.label[0].toUpperCase()}${packet.transition.label.slice(1)} for ${request?.name || "this resource"} will point to v${packet.transition.version}. Apps that follow ${packet.transition.label} pick it up the next time they fetch it; check ${packet.subjectKind === 'agent_context' ? 'Connected apps' : 'Consumers'} to confirm delivery. Running conversations aren't changed. Approval is checked again before the move.`}</Typography>
+          {/* Asked only when this person hasn't ticked this exact request (same ack key) in this session. */}
+          {moveTickNeeded && <Acknowledgment
+            acknowledgment={{ ...ack, acknowledged: reviewed, setAcknowledged: setReviewed }}
+            disabled={!current || locked}
+            label={reviewerAcknowledgment(review?.changes)}
+          />}
+        </Stack>}
         action={
           <Button
             variant="contained" color="primary"
