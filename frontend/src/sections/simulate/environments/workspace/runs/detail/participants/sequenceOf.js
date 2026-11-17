@@ -336,9 +336,10 @@ const loopsOf = (steps) => {
         noAnswer: span.filter((x) => x.answer?.kind === "none" && x.answer?.bad)
           .length,
       },
+      // The round's other steps by worker or tool, never by their full messages.
       with: span
         .slice(1, best.per)
-        .map((x) => (x.kind === "tool" ? x.tool : x.label)),
+        .map((x) => (x.kind === "tool" ? x.tool : x.to)),
     });
     span.forEach((x) => {
       x.loop = id;

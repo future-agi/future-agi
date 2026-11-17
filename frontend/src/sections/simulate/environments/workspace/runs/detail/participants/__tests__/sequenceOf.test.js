@@ -179,4 +179,40 @@ describe("sequenceOf over the worker record", () => {
     const handoff = seqOf(record).steps.find((s) => s.kind === "handoff");
     expect(handoff).toMatchObject({ key: 1, spanId: "s1", traceId: "t1" });
   });
+
+  it("a repeated round names its other workers, not their messages", () => {
+    const rounds = [0, 1, 2].flatMap((i) => [
+      handOffStep(10 + i * 2, {
+        worker_id: "r/order_lookup",
+        handoff: { ...DELEGATED, seq: 10 + i * 2, at: null },
+        returned: { ...DELEGATED, type: "returned", result: "ok", at: null },
+        end: "finished",
+      }),
+      handOffStep(11 + i * 2, {
+        worker_id: "r/audit",
+        handoff: {
+          ...DELEGATED,
+          seq: 11 + i * 2,
+          worker_id: "r/audit",
+          task: "check the order carefully",
+          at: null,
+        },
+        returned: { ...DELEGATED, type: "returned", result: "ok", at: null },
+        end: "finished",
+      }),
+    ]);
+    const record = timeline({
+      started_at: null,
+      request: { text: "Please refund order 1042", at: null },
+      response: { text: "Done", at: null },
+      steps: rounds,
+      turns: oneTurn(
+        { text: "Please refund order 1042", at: null },
+        { text: "Done", at: null },
+        rounds.map((s) => s.key),
+      ),
+    });
+    const [loop] = seqOf(record).loops;
+    expect(loop).toMatchObject({ per: 2, times: 3, with: ["audit"] });
+  });
 });

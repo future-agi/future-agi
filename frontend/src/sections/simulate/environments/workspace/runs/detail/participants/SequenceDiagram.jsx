@@ -315,7 +315,7 @@ export default function SequenceDiagram({
   /* What a loop row says: how many times, and how many went wrong. */
   const loopChip = (l) =>
     l.closed
-      ? `↻ ${l.times} times${l.with?.length ? ` · with ${l.with.join(", ")}` : ""}${[
+      ? `↻ ${l.times} times${l.with?.length ? ` · with ${l.with.map(seq.nameOf).join(", ")}` : ""}${[
           l.outcomes?.failed && `${l.outcomes.failed} failed`,
           l.outcomes?.refused && `${l.outcomes.refused} refused`,
           l.outcomes?.noAnswer && `${l.outcomes.noAnswer} no answer`,

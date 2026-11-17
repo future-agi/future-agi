@@ -175,7 +175,8 @@ export default function CallWorkersPanel({
       {data.placements.length ? (
         <PlacedChecks placements={data.placements} names={names} />
       ) : null}
-      {notObserved ? (
+      {/* The diagram names them itself when it is drawn. */}
+      {notObserved && !seq?.steps.length ? (
         <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
           {C.workersNotObserved(notObserved)}
         </Typography>

@@ -277,6 +277,16 @@ describe("CallWorkersPanel", () => {
       },
     );
 
+    it("names declared workers that didn't run once, under the diagram", () => {
+      render(<CallWorkersPanel callExecutionId="c1" />);
+      expect(
+        screen.getByText(/Declared, didn't run: Audit worker/),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByText(C.workersNotObserved("Audit worker")),
+      ).toBeNull();
+    });
+
     it("offers Open in trace only when the record names its trace project", () => {
       const traced = { ...DELEGATED, span_id: "s1", trace_id: "t1" };
       const steps = [
