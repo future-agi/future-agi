@@ -16,10 +16,25 @@ export const consumerNextSteps = {
 };
 export const consumerNextStep = (code) => consumerNextSteps[code] || 'Unknown';
 
-// When nothing has reported yet, the long tag would repeat on every row. The list says it once and
-// each row carries the short tag. A mixed list keeps the long tag, which tells rows apart.
-export const NO_REPORT_TAG = 'No report';
-export const NO_REPORT_SUMMARY = 'No app has reported a version yet.';
+// UXF-15 and §15 D17: the list says "apps", never "consumers". When no app has reported, the lead
+// says so and the list shows "No report yet" once, so rows carry no per-row tag. A mixed list keeps the
+// long tag on the rows that have not reported, which tells them apart.
+const apps = (count) => `${count} ${count === 1 ? 'app' : 'apps'}`;
+
+/**
+ * The one-sentence lead above the Connected apps list.
+ *   total      apps that follow this context (all pages)
+ *   shown      apps on this page; `missing` counts within them
+ *   missing    apps on this page that still need a delivery report
+ *   unreported true when no app has reported anything
+ */
+export function appsSummary({ total, shown = total, missing = 0, unreported = false }) {
+  const lead = `${apps(total)} ${total === 1 ? 'follows' : 'follow'} this context.`;
+  if (unreported) return `${lead} ${total === 1 ? "It hasn't" : 'None has'} reported which version it received yet.`;
+  const onPage = total > shown ? ' on this page' : '';
+  if (missing > 0) return `${lead} ${missing} of ${shown}${onPage} still ${missing === 1 ? 'needs' : 'need'} a delivery report to confirm the version received.`;
+  return `${lead} Apps report the version they receive; delivery does not prove use.`;
+}
 
 export const humanizeCode = (code) => {
   if (!code) return 'Not reported';

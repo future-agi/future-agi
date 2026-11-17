@@ -5,8 +5,6 @@ import {
   Alert,
   Box,
   Button,
-  Checkbox,
-  FormControlLabel,
   MenuItem,
   Stack,
   Skeleton,
@@ -37,6 +35,7 @@ import {
 } from "src/api/skills/j6-recovery";
 import EmptyState from 'src/components/empty-state';
 import { useReviewOptions } from 'src/api/skills/review-authoring';
+import { useExecuteReleaseRequest, useReleaseRequest } from 'src/api/skills/review-production';
 import IdentityChip from '../components/IdentityChip';
 import PeoplePicker from '../components/PeoplePicker';
 import EvidenceSummary from '../components/EvidenceSummary';
@@ -44,13 +43,15 @@ import TechnicalDetails from '../components/TechnicalDetails';
 import OperationFeedback from '../components/OperationFeedback';
 import CapabilityNotice from '../components/CapabilityNotice';
 import TextDiff from '../components/TextDiff';
+import Acknowledgment, { useAcknowledgment } from '../components/Acknowledgment';
 import { AsOf } from './ContextConsumersView';
 import CodeBlock from 'src/components/code-block';
 import Iconify from 'src/components/iconify';
 import { consumerNextStep, humanizeCode, needsDeliveryVerification } from './consumerPresentation';
 import { paths } from "src/routes/paths";
 import { restoreCommands } from "./restoreCommands";
-import { suggestRelease, suggestReviewer, initialReleaseState } from "./recoverySuggestion";
+import { suggestRelease, suggestReviewer, initialReleaseState, checkedFiles, rollbackAcknowledgment, rollbackProgress, trackerSteps, canMoveFromTracker } from "./recoverySuggestion";
+import { INBOX_OPEN_REQUEST, OPEN_CONNECTED_APPS } from "../utils/terms";
 import { recipientsOf } from "../utils/conclusions";
 
 // Intent: an operator turns a retained incident into one reviewed recovery
@@ -70,7 +71,7 @@ const stateNames = {
   quarantined: "Quarantined",
 };
 const reasonNames = {
-  current_production: "Production",
+  current_production: "In production",
   quarantined: "Quarantined",
   context_quarantined: "Closure quarantined",
   dependency_unavailable: "Dependency unavailable",
@@ -83,16 +84,16 @@ const mobileLabel = (label) => ({ '&::before': { content: { xs: `"${label}"`, sm
 function Cohort({ cohort, numbers, asOf, active = false }) {
   const missing = cohort.filter(needsDeliveryVerification).length;
   return (
-    <Section title="Verify consumers">
+    <Section title="Check apps updated">
       <Stack spacing={1.5}>
         <Typography variant="s3" color="text.secondary">As of <AsOf value={asOf} />. Moving production doesn&apos;t update running apps. Each app must report the new version before it counts as recovered.</Typography>
-        {active && missing > 0 && <Alert severity="warning">{missing} of {cohort.length} {cohort.length === 1 ? 'consumer' : 'consumers'} still {missing === 1 ? 'needs' : 'need'} delivery verification.</Alert>}
+        {active && missing > 0 && <Alert severity="warning">{missing} of {cohort.length} {cohort.length === 1 ? 'app' : 'apps'} still {missing === 1 ? 'needs' : 'need'} delivery verification.</Alert>}
         {!cohort.length && <EmptyState title="No apps connected yet" description="An app can only confirm what it received once it is connected and reports back." />}
         <TableContainer sx={{ maxWidth: 1 }}>
           <Table size="small" aria-label="Recovery cohort">
             <TableHead sx={{ display: { xs: 'none', sm: 'table-header-group' } }}>
               <TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}>
-                <TableCell>Consumer</TableCell>
+                <TableCell>App</TableCell>
                 <TableCell>Last delivered release</TableCell>
                 <TableCell>Report</TableCell>
                 <TableCell>Recovery verification</TableCell>
@@ -208,7 +209,7 @@ function Candidates({ candidates, chosen, onChoose, bare = false }) {
                 <TableCell>
                   <Stack spacing={0.5} alignItems={{ xs: 'flex-end', sm: 'flex-start' }}>
                     {row.eligible ? (
-                      <StatusBadge status="completed" label="Eligible" />
+                      <StatusBadge status="completed" label="Can roll back to" />
                     ) : (
                       row.reasons.map((reason) => (
                         <StatusBadge
@@ -251,9 +252,10 @@ function Candidates({ candidates, chosen, onChoose, bare = false }) {
                   ))}
                 </TableCell>
                 <TableCell>
-                  {row.isProduction ? <Typography variant="s3" color="text.secondary">In production</Typography> : <Button
+                  {row.isProduction ? <Typography variant="s3" color="text.secondary" aria-hidden="true">—</Typography> : <Button
                     size="small"
-                    variant={chosen === row.id ? "text" : "outlined"}
+                    variant="text"
+                    color={chosen === row.id ? "primary" : "inherit"}
                     aria-pressed={chosen === row.id}
                     startIcon={chosen === row.id ? <Iconify icon="solar:check-circle-linear" width={16} /> : undefined}
                     disabled={!row.selectable}
@@ -295,12 +297,16 @@ const changeStatus = { added: "current_only", changed: "current_only", removed: 
 
 const linkSentence = (links) => links.map((link) => (link.from == null ? `${link.name} v${link.to} added` : link.to == null ? `${link.name} v${link.from} removed` : `${link.name} v${link.from} → v${link.to}`)).join(', ');
 
-// Full review needs every file: start expanded without an extra gesture or inner scroll.
-// People may collapse unchanged files after reading; changed files always remain visible.
-const CLOSURE_ROWS_SHOWN = 6;
+// UXF-05: what a person is asked to tick is open. Changed files are open by default: all of them when
+// there are 3 or fewer, otherwise the first one plus "Show N more changed files". Unchanged files are
+// collapsed behind "Show N unchanged files". Nothing is gated on scrolling. The same rule the release
+// flow uses (review/ReleaseReviewBody.jsx, owned by another lane), kept here so the lanes stay independent.
+const OPEN_CHANGED_LIMIT = 3;
+const countOf = (count, one, many) => `${count} ${count === 1 ? one : many}`;
 
 function ClosureReview({ candidate, production, closure }) {
-  const [showAll, setShowAll] = useState(true);
+  const [moreChanged, setMoreChanged] = useState(false);
+  const [showUnchanged, setShowUnchanged] = useState(false);
   if (closure.isLoading) return <ContentSkeleton sx={{ '& .MuiSkeleton-root': { bgcolor: 'action.selected' } }} />;
   if (closure.error || !closure.data) {
     return (
@@ -312,18 +318,18 @@ function ClosureReview({ candidate, production, closure }) {
     );
   }
   const { rows, changes } = closure.data;
-  const counts = rows.reduce((total, row) => ({ ...total, [row.status]: (total[row.status] ?? 0) + 1 }), {});
-  const changedCount = rows.length - (counts.unchanged ?? 0);
-  const descriptor = changes.find((change) => change.path === DESCRIPTOR_PATH);
-  const content = changes.filter((change) => change.path !== DESCRIPTOR_PATH);
-  const links = descriptor?.links ?? [];
   // Changed files first, so a collapsed table never hides a difference under the acknowledgment.
-  const ordered = [...rows].sort((a, b) => Number(a.status === 'unchanged') - Number(b.status === 'unchanged'));
-  // Every file that differs is always shown; only unchanged files collapse.
-  const visibleCount = Math.max(CLOSURE_ROWS_SHOWN, rows.length - (counts.unchanged ?? 0));
-  const hidden = showAll ? 0 : Math.max(0, ordered.length - visibleCount);
-  const shown = showAll ? ordered : ordered.slice(0, visibleCount);
-  const differing = rows.filter((row) => row.status !== 'unchanged' && row.path !== DESCRIPTOR_PATH).map((row) => row.path);
+  const changedRows = rows.filter((row) => row.status !== 'unchanged');
+  const unchangedRows = rows.filter((row) => row.status === 'unchanged');
+  const changedCount = changedRows.length;
+  const descriptor = changes.find((change) => change.path === DESCRIPTOR_PATH);
+  // The main instructions file comes first, so a long list opens on the file people expect to read.
+  const content = changes.filter((change) => change.path !== DESCRIPTOR_PATH).sort((x, y) => Number(y.path === 'AGENTS.md') - Number(x.path === 'AGENTS.md'));
+  const links = descriptor?.links ?? [];
+  const openContent = content.length <= OPEN_CHANGED_LIMIT || moreChanged ? content : content.slice(0, 1);
+  const hiddenContent = content.length - openContent.length;
+  const shown = showUnchanged ? [...changedRows, ...unchangedRows] : changedRows;
+  const differing = checkedFiles(rows, DESCRIPTOR_PATH).map((row) => row.path);
   const settingsChanged = rows.some((row) => row.path === DESCRIPTOR_PATH && row.status !== 'unchanged');
   const differs = differing.length ? `Only ${differing.length > 3 ? `${differing.length} files` : differing.join(', ')} ${differing.length === 1 ? 'differs' : 'differ'}.` : settingsChanged ? 'Only the generated settings file differs.' : 'Nothing differs from production.';
   const diff = (change) => <TextDiff fromText={change.lines.filter((line) => line.kind !== 'added').map((line) => line.text).join('\n')} toText={change.lines.filter((line) => line.kind !== 'removed').map((line) => line.text).join('\n')} fromTitle={`Production v${production?.number ?? '?'}`} toTitle={`v${candidate.number}`} />;
@@ -334,7 +340,7 @@ function ClosureReview({ candidate, production, closure }) {
         <Typography variant="s1" role="status">
           {links.length ? linkSentence(links) : `Roll back to v${candidate.number}`} · {changedCount} file{changedCount === 1 ? '' : 's'} differ{changedCount === 1 ? 's' : ''}
         </Typography>
-        {/* Every file is still reviewed: the rest are one click away and the acknowledgment covers all of them. */}
+        {/* Every changed file is listed and its change is open; unchanged files are one click away. */}
         <TableContainer sx={{ maxWidth: 1 }}>
           <Table size="small" aria-label="Recovery closure files">
             <TableHead sx={{ display: { xs: 'none', sm: 'table-header-group' } }}>
@@ -358,17 +364,18 @@ function ClosureReview({ candidate, production, closure }) {
             </TableBody>
           </Table>
         </TableContainer>
-        {ordered.length > visibleCount && <Button size="small" color="inherit" sx={{ alignSelf: 'flex-start' }} aria-expanded={showAll} onClick={() => setShowAll((open) => !open)}>{showAll ? 'Show fewer files' : `Show ${hidden} more file${hidden === 1 ? '' : 's'}`}</Button>}
+        {unchangedRows.length > 0 && <Button size="small" variant="text" color="inherit" sx={{ alignSelf: 'flex-start' }} aria-expanded={showUnchanged} onClick={() => setShowUnchanged((open) => !open)}>{showUnchanged ? 'Hide unchanged files' : `Show ${countOf(unchangedRows.length, 'unchanged file', 'unchanged files')}`}</Button>}
         <Typography variant="s3" color="text.secondary">
           {differs}{settingsChanged && differing.length > 0 && ' The generated settings file changes with it.'}
           {candidate.children.length > 0 && ` Linked skills stay at the versions locked in v${candidate.number}.`}
           {candidate.unavailableChildren.length > 0 && ` ${candidate.unavailableChildren.length} source${candidate.unavailableChildren.length === 1 ? " is" : "s are"} retired; their exact files are kept.`}
         </Typography>
-        <Stack spacing={1.5} sx={{ maxHeight: 360, overflowY: 'auto', minWidth: 0 }} aria-label="Recovery file changes" tabIndex={0}>
-        {content.map((change) => <Stack key={change.path} spacing={0.5}>
+        <Stack spacing={1.5} sx={{ minWidth: 0 }} aria-label="Recovery file changes">
+        {openContent.map((change) => <Stack key={change.path} spacing={0.5} data-file-open="true">
           <Typography variant="m3">{changeNames[change.status]}: {change.path}</Typography>
           <Box aria-label={`${change.path} change from production`} tabIndex={0}>{diff(change)}</Box>
         </Stack>)}
+        {hiddenContent > 0 && <Button size="small" variant="text" color="inherit" sx={{ alignSelf: 'flex-start' }} onClick={() => setMoreChanged(true)}>Show {countOf(hiddenContent, 'more changed file', 'more changed files')}</Button>}
         {descriptor && <Stack spacing={0.5}>
           <Typography variant="m3">Linked skill versions</Typography>
           {/* The descriptor is a machine record: its readable meaning leads, its exact bytes stay one click away. */}
@@ -388,6 +395,88 @@ ClosureReview.propTypes = {
   closure: PropTypes.object.isRequired,
 };
 
+const REQUEST_CLOSED_NOTE = {
+  changes_requested: 'The reviewer asked for changes.',
+  superseded: 'A newer request replaced this one.',
+  cancelled: 'This request was cancelled.',
+  canceled: 'This request was cancelled.',
+  rejected: 'The reviewer declined this request.',
+  declined: 'The reviewer declined this request.',
+  expired: 'This request expired.',
+};
+
+// After the request is sent, the same panel is a status tracker (UXF-08): waiting for the reviewer,
+// approved (production moves from one button here), then checking that apps updated. The server
+// decides every step; this panel only reads the request and, once it is approved, sends the same
+// execute request the release page sends. Anything it cannot prove is this session's request, or that
+// this person may move production now, sends the person to the request page, which asks for its own check.
+function RollbackTracker({ candidate, submitted, read, link, evidenceItems, onRefresh }) {
+  const execute = useExecuteReleaseRequest();
+  const [key] = useState(uuid);
+  const [copy, setCopy] = useState({ busy: false, done: false, error: "" });
+  const status = read.data?.request?.status;
+  const progress = rollbackProgress({ awaiting: true, status });
+  const canMove = canMoveFromTracker({ read: read.data, submitted });
+  const move = () => execute.mutate({
+    requestId: submitted.requestId,
+    revision: submitted.requestRevision ?? read.data.request.revision,
+    expectedFingerprint: submitted.fingerprint,
+    idempotencyKey: key,
+  });
+  return (
+    <Stack spacing={1.5}>
+      {progress.phase === 'waiting' && <Alert severity="success" role="status">{`Rollback to v${candidate.number} requested from ${submitted.reviewer}. Production has not moved.`}</Alert>}
+      {progress.phase === 'approved' && <Alert severity="success" role="status">{`${submitted.reviewer} approved the rollback to v${candidate.number}. Production has not moved yet.`}</Alert>}
+      {progress.phase === 'moved' && <Alert severity="success" role="status">{`Production moved to v${candidate.number}. Checking that apps updated is next.`}</Alert>}
+      {progress.phase === 'closed' && <Alert severity="warning" role="status">{`${REQUEST_CLOSED_NOTE[status] ?? 'This request is closed.'} Production has not moved.`}</Alert>}
+      {read.isError && <Alert severity="warning" role="status" action={<Button size="small" color="inherit" onClick={() => read.refetch?.()}>Check again</Button>}>Couldn&apos;t check the request status. Production has not moved.</Alert>}
+      {progress.phase === 'approved' && (canMove ? (
+        <Stack spacing={1} alignItems="flex-start">
+          <Typography variant="s3" color="text.secondary">Moving production doesn&apos;t update running apps. Each app must report the new version before it counts as recovered.</Typography>
+          <Button color="primary" variant="contained" disabled={execute.isPending || Boolean(execute.data)} onClick={move}>{`Move production to v${candidate.number}`}</Button>
+          <OperationFeedback error={execute.error} action="move production" onRefresh={onRefresh} onRetry={move} onReconcile={move} />
+        </Stack>
+      ) : (
+        <Typography variant="s3" color="text.secondary">Open the request to move production: it has changed since it was sent, or moving production needs someone else.</Typography>
+      ))}
+      <TechnicalDetails title="Attached test evidence"><EvidenceSummary items={evidenceItems} emptyText="No matching test evidence attached. Not tested is not a pass." /></TechnicalDetails>
+      {link && (
+        <Stack spacing={1}>
+          <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap" alignItems="center">
+            <Button variant="outlined" color="inherit" href={link}>{INBOX_OPEN_REQUEST}</Button>
+            <Button
+              variant="outlined"
+              disabled={copy.busy}
+              onClick={async () => {
+                setCopy({ busy: true, done: false, error: "" });
+                try {
+                  if (!navigator.clipboard?.writeText) throw new Error("Unavailable");
+                  await navigator.clipboard.writeText(link);
+                  setCopy({ busy: false, done: true, error: "" });
+                } catch {
+                  setCopy({ busy: false, done: false, error: "Could not copy. Select and copy the link manually." });
+                }
+              }}
+            >
+              Copy request link
+            </Button>
+          </Stack>
+          {copy.done && <Typography variant="s3" role="status">Copied the request link.</Typography>}
+          {copy.error && <Alert severity="error">{copy.error}<Typography component="code" variant="s3" sx={{ display: 'block', overflowWrap: 'anywhere', userSelect: 'all' }}>{link}</Typography></Alert>}
+        </Stack>
+      )}
+    </Stack>
+  );
+}
+RollbackTracker.propTypes = {
+  candidate: PropTypes.object.isRequired,
+  submitted: PropTypes.object.isRequired,
+  read: PropTypes.object.isRequired,
+  link: PropTypes.string,
+  evidenceItems: PropTypes.array.isRequired,
+  onRefresh: PropTypes.func,
+};
+
 function RollbackRequest({
   contextId,
   candidate,
@@ -399,6 +488,8 @@ function RollbackRequest({
   onReviewer,
   onRefresh,
   onSubmitted,
+  acknowledgmentLabel,
+  requestRead,
 }) {
   const options = useReviewOptions('agent_context', contextId, candidate.id);
   // Reviewers come from the server's eligible recipients for this request (the same list the
@@ -410,9 +501,10 @@ function RollbackRequest({
   const evidenceRows = (items) => items.map((item) => ({ id: item.sourceId, source: item.source, kind: item.source === 'simulation_native' ? 'application_verification' : 'text_comparison', title: item.source === 'simulation_native' ? 'Application test' : 'Answer check', candidateNumber: candidate.number, status: item.status, visibility: item.visibility, expiresAt: item.payloadExpiresAt }));
   const preview = usePreviewRecoveryRelease();
   const submit = useSubmitRecoveryRequest(contextId);
-  const [reviewed, setReviewed] = useState(false);
+  // One tick, bound to this release and the release revision it was made against (UXF-05, UXF-08).
+  const ack = useAcknowledgment(`${candidate.id}:${candidate.digest ?? ''}:${releaseRevision ?? 0}`);
+  const reviewed = ack.acknowledged;
   const [key] = useState(uuid);
-  const [copy, setCopy] = useState({ busy: false, done: false, error: "" });
   const packet = preview.data;
   const originalSubmission = useRef(null);
   const sendRequest = () => {
@@ -421,31 +513,54 @@ function RollbackRequest({
     submit.mutate(originalSubmission.current);
   };
   // The packet is computed from the reviewed closure the moment the review is
-  // acknowledged; there is nothing further to decide before choosing a reviewer.
+  // acknowledged; there is nothing further to decide before sending the request.
   const requested = useRef(false);
   const originalPreview = useRef(null);
   const startPreview = preview.mutate;
+  const resetPreview = preview.reset;
   useEffect(() => {
-    if (!reviewed || requested.current) return;
+    if (!reviewed) {
+      // Unticking after a refused packet starts the review again.
+      if (requested.current) {
+        requested.current = false;
+        originalPreview.current = null;
+        resetPreview?.();
+      }
+      return;
+    }
+    if (requested.current) return;
     requested.current = true;
     originalPreview.current = { contextId, candidateVersionId: candidate.id, evidence, external_pipeline: null };
     startPreview(originalPreview.current);
-  }, [reviewed, contextId, candidate.id, startPreview, evidence]);
+  }, [reviewed, contextId, candidate.id, startPreview, resetPreview, evidence]);
   const recipient = originalSubmission.current?.reviewerId ?? reviewerId;
   const listed = (reviewers.data ?? []).some((item) => item.id === recipient);
   const reviewerName = (reviewers.data ?? []).find((person) => person.id === recipient)?.name || 'the selected reviewer';
+  const sentFingerprint = originalSubmission.current?.preview?.fingerprint ?? packet?.fingerprint;
   useEffect(() => {
-    if (submit.data?.id) onSubmitted({ candidateId: candidate.id, from: production?.number, revision: releaseRevision, reviewer: reviewerName });
-  }, [submit.data?.id, onSubmitted, candidate.id, production?.number, releaseRevision, reviewerName]);
+    if (submit.data?.id) onSubmitted({ candidateId: candidate.id, from: production?.number, revision: releaseRevision, reviewer: reviewerName, requestId: submit.data.id, requestRevision: submit.data.revision, fingerprint: sentFingerprint });
+  }, [submit.data?.id, submit.data?.revision, onSubmitted, candidate.id, production?.number, releaseRevision, reviewerName, sentFingerprint]);
   const link = submit.data?.id
     ? `${window.location.origin}${paths.dashboard.skills.contextReview(contextId)}?request=${submit.data.id}`
     : "";
+  if (submit.data) {
+    const submitted = { requestId: submit.data.id, requestRevision: submit.data.revision, fingerprint: sentFingerprint, reviewer: reviewerName };
+    return (
+      <Section title="Rollback request">
+        <RollbackTracker candidate={candidate} submitted={submitted} read={requestRead} link={link} onRefresh={onRefresh}
+          evidenceItems={evidenceRows(originalPreview.current?.evidence ?? evidence)} />
+      </Section>
+    );
+  }
+  const tickLocked = Boolean(packet) || preview.isPending || !closureReady || options.isLoading || options.isError;
+  const reason = !canPromote ? 'You cannot request production changes for this context.'
+    : !listed ? 'Choose an authorized reviewer to continue.'
+      : !reviewed ? 'Check the changes to continue.' : '';
   return (
-    <Section title={submit.data ? "Review request" : `Request rollback to v${candidate.number}`}>
+    <Section title="Ask for approval">
       <Stack spacing={1.5}>
         <Typography variant="m3">Production v{production?.number ?? "?"} → v{candidate.number}</Typography>
-        {submit.data && <><Alert severity="success" role="status">Rollback request submitted. Production has not moved. The reviewer approves and releases it from Skills Reviews.</Alert><TechnicalDetails title="Attached test evidence"><EvidenceSummary items={evidenceRows(originalPreview.current?.evidence ?? evidence)} emptyText="No matching test evidence attached. Not tested is not a pass." /></TechnicalDetails></>}
-        {!submit.data && <Section title="Test evidence"><Stack spacing={1}>
+        <Section title="Test evidence"><Stack spacing={1}>
           {options.isLoading ? <ContentSkeleton sx={{ '& .MuiSkeleton-root': { bgcolor: 'action.selected' } }} variant="rows" /> : options.isError ? <ErrorState title="Couldn't load test evidence" onRetry={options.refetch} /> : <>
             <EvidenceSummary items={evidenceRows(matchingEvidence.filter((item) => item.visibility === 'workspace'))} selectable selected={selectedEvidence}
               onToggle={reviewed || packet ? undefined : (item) => { const id = `${item.source}:${item.id}`; setSelectedEvidence((old) => old.includes(id) ? old.filter((value) => value !== id) : [...old, id]); }}
@@ -453,94 +568,26 @@ function RollbackRequest({
             {matchingEvidence.some((item) => item.visibility === 'private') && <><Typography variant="s3">Private evidence is not attached. Share it from Tests before including it in a workspace review.</Typography><EvidenceSummary items={evidenceRows(matchingEvidence.filter((item) => item.visibility === 'private'))} /></>}
           </>}
           <Button variant="outlined" sx={{ alignSelf: 'flex-start' }} href={`?tab=tests&version=${candidate.number}`}>Run tests</Button>
-        </Stack></Section>}
+        </Stack></Section>
         {/* The revision this review is bound to stays in view: it is what tells the author a restart happened. */}
         <Typography variant="s3" color="text.secondary" data-release-revision={releaseRevision}>Reviewed against the release that made v{production?.number ?? "?"} production. If production changes, review and acknowledge the rollback again.</Typography>
         <TechnicalDetails title="Request details" keepMounted><Stack spacing={0.5}><Typography variant="s3">Release revision {releaseRevision}</Typography>{packet && <IdentityChip label="Packet fingerprint" value={packet.fingerprint} />}</Stack></TechnicalDetails>
-        {submit.data ? <FormControlLabel control={<Checkbox checked inputProps={{ readOnly: true }} />} label={`I reviewed everything v${candidate.number} contains, including linked skill versions and files left out.`} /> : <FormControlLabel
-          control={
-            <Checkbox
-              checked={reviewed}
-              disabled={Boolean(packet) || preview.isPending || !closureReady || options.isLoading || options.isError}
-              onChange={(_, checked) => {
-                // Unchecking after a refused packet starts the review again.
-                if (!checked) {
-                  requested.current = false;
-                  originalPreview.current = null;
-                  preview.reset?.();
-                }
-                setReviewed(checked);
-              }}
-            />
-          }
-          label={`I reviewed everything v${candidate.number} contains, including linked skill versions and files left out.`}
-        />}
-        {!submit.data && !reviewed && <Typography variant="s3">Tick the acknowledgment to continue.</Typography>}
-        {!packet && !submit.data && <Stack spacing={1}>
-          <PeoplePicker label="Reviewer" people={reviewers.data ?? []} value={listed ? recipient : ''} onChange={onReviewer} loading={reviewers.isLoading} error={reviewers.error} onRetry={reviewers.refetch} helperText="Choose an independent reviewer. Sending a request does not move production." />
-          <Button color="primary" variant="contained" disabled sx={{ alignSelf: 'flex-start' }}>Submit rollback for review</Button>
-          {preview.isPending && <Box role="status"><StatusBadge status="checking" label="Preparing the rollback request…" /></Box>}
-        </Stack>}
+        {/* One reviewer choice, preselected; the server still checks the reviewer's access when the request is sent. */}
+        <PeoplePicker label="Reviewer" people={reviewers.data ?? []} value={listed ? recipient : ''} onChange={onReviewer} loading={reviewers.isLoading} error={reviewers.error} onRetry={reviewers.refetch} disabled={submit.isPending || Boolean(originalSubmission.current)} helperText="Suggested: whoever last moved production. The reviewer's access is checked when you submit." />
+        <Acknowledgment acknowledgment={ack} label={acknowledgmentLabel} disabled={tickLocked || submit.isPending} />
+        {preview.isPending && <Box role="status"><StatusBadge status="checking" label="Preparing the rollback request…" /></Box>}
         <OperationFeedback error={preview.error} action="prepare a recovery review" onRefresh={onRefresh} onRetry={() => { if (originalPreview.current) startPreview(originalPreview.current); }} />
-        {packet && (
-          <Stack spacing={1}>
-            {!submit.data && <Typography variant="s1" role="status">Rollback request ready. Choose who reviews it.</Typography>}
-            {submit.data ? <Typography variant="s1">Requested from {reviewerName}</Typography> : <PeoplePicker label="Reviewer" people={reviewers.data ?? []} value={listed ? recipient : ''} onChange={onReviewer} loading={reviewers.isLoading} error={reviewers.error} onRetry={reviewers.refetch} disabled={submit.isPending || Boolean(originalSubmission.current) || Boolean(submit.data)} helperText="Suggested: whoever last moved production. The reviewer's access is checked when you submit." />}
-            {!submit.data && <Button color="primary"
-              sx={{ alignSelf: 'flex-start' }}
-              variant="contained"
-              disabled={
-                !listed ||
-                !canPromote ||
-                submit.isPending ||
-                Boolean(submit.data)
-              }
-              onClick={sendRequest}
-            >
-              Submit rollback for review
-            </Button>}
-            {!submit.data && !listed && <Typography variant="s3">Choose an authorized reviewer to continue.</Typography>}
-            {!canPromote && (
-              <Typography variant="s3">
-                You cannot request production changes for this context.
-              </Typography>
-            )}
-            <OperationFeedback error={submit.error} action="request a recovery release" onRefresh={onRefresh} onRetry={sendRequest} onReconcile={sendRequest} />
-            {link && (
-              <Stack spacing={1}>
-                <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap" alignItems="center">
-                  <Button variant="outlined" color="inherit" href={link} aria-label="Review link">Open review request</Button>
-                <Button
-                  variant="outlined"
-                  disabled={copy.busy}
-                  onClick={async () => {
-                    setCopy({ busy: true, done: false, error: "" });
-                    try {
-                      if (!navigator.clipboard?.writeText)
-                        throw new Error("Unavailable");
-                      await navigator.clipboard.writeText(link);
-                      setCopy({ busy: false, done: true, error: "" });
-                    } catch {
-                      setCopy({
-                        busy: false,
-                        done: false,
-                        error: "Could not copy. Select and copy the link manually.",
-                      });
-                    }
-                  }}
-                >
-                  Copy review link
-                </Button></Stack>
-                {copy.done && (
-                  <Typography variant="s3" role="status">
-                    Copied the review link.
-                  </Typography>
-                )}
-                {copy.error && <Alert severity="error">{copy.error}<Typography component="code" variant="s3" sx={{ display: 'block', overflowWrap: 'anywhere', userSelect: 'all' }}>{link}</Typography></Alert>}
-              </Stack>
-            )}
-          </Stack>
-        )}
+        <Button color="primary"
+          sx={{ alignSelf: 'flex-start' }}
+          variant="contained"
+          // The packet exists only after the tick (it is prepared from the checked changes), so it is the proof of the tick.
+          disabled={!listed || !canPromote || !packet || submit.isPending}
+          onClick={sendRequest}
+        >
+          Request rollback to v{candidate.number}
+        </Button>
+        {reason && <Typography variant="s3" color="text.secondary">{reason}</Typography>}
+        <OperationFeedback error={submit.error} action="request a recovery release" onRefresh={onRefresh} onRetry={sendRequest} onReconcile={sendRequest} />
       </Stack>
     </Section>
   );
@@ -556,6 +603,8 @@ RollbackRequest.propTypes = {
   onReviewer: PropTypes.func.isRequired,
   onRefresh: PropTypes.func,
   onSubmitted: PropTypes.func.isRequired,
+  acknowledgmentLabel: PropTypes.string.isRequired,
+  requestRead: PropTypes.object.isRequired,
 };
 
 function LocalRecovery({ contextId, contextName, candidate, canIssue }) {
@@ -668,27 +717,28 @@ LocalRecovery.propTypes = {
   canIssue: PropTypes.bool,
 };
 
-// Same numbered stepper as the release request composer (RequestSteps): the current step is bold,
-// filled and marked for assistive technology. Copied rather than imported so the lanes stay independent.
-const RECOVERY_STEPS = ['Request', 'Approve', 'Confirm apps updated'];
-// Below sm the three steps collapse to one line ("Step 1 of 3 · Request"): three labels and their
-// connectors cannot sit on one 390px row without one wrapping alone.
-function RecoverySteps({ step }) {
+// The status tracker after the request is sent (UXF-08): "Waiting for <reviewer>", "Approved: move
+// production", "Check apps updated". Same numbered look as the release request composer's stepper: the
+// current step is bold, filled and marked for assistive technology; earlier steps are done.
+// Below sm the steps collapse to one line ("Step 1 of 3 · Waiting for Priya Shah"): three labels and
+// their connectors cannot sit on one 390px row without one wrapping alone.
+function RecoverySteps({ step, names }) {
   return <>
-    <Typography variant="s3" color="text.secondary" sx={{ display: { xs: 'block', sm: 'none' } }}>{`Step ${step + 1} of ${RECOVERY_STEPS.length} · ${RECOVERY_STEPS[step]}`}</Typography>
-    <Stack component="ol" direction="row" alignItems="center" flexWrap="wrap" columnGap={1.5} rowGap={1} aria-label="Recovery progress" sx={{ m: 0, p: 0, listStyle: 'none', display: { xs: 'none', sm: 'flex' } }}>
-    {RECOVERY_STEPS.map((name, index) => {
+    <Typography variant="s3" color="text.secondary" sx={{ display: { xs: 'block', sm: 'none' } }}>{`Step ${step + 1} of ${names.length} · ${names[step]}`}</Typography>
+    <Stack component="ol" direction="row" alignItems="center" flexWrap="wrap" columnGap={1.5} rowGap={1} aria-label="Rollback progress" sx={{ m: 0, p: 0, listStyle: 'none', display: { xs: 'none', sm: 'flex' } }}>
+    {names.map((name, index) => {
       const current = index === step;
+      const done = index < step;
       return <Stack component="li" key={name} direction="row" alignItems="center" gap={1} aria-current={current ? 'step' : undefined}>
         {index > 0 && <Box aria-hidden="true" sx={{ width: 24, height: '1px', bgcolor: 'divider' }} />}
-        <Box component="span" aria-hidden="true" sx={{ width: 20, height: 20, borderRadius: '50%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', typography: 's3', fontWeight: 600, bgcolor: current ? 'primary.main' : 'transparent', color: current ? 'primary.contrastText' : 'text.secondary', border: 1, borderColor: current ? 'primary.main' : 'divider' }}>{index + 1}</Box>
+        <Box component="span" aria-hidden="true" sx={{ width: 20, height: 20, borderRadius: '50%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', typography: 's3', fontWeight: 600, bgcolor: current ? 'primary.main' : 'transparent', color: current ? 'primary.contrastText' : 'text.secondary', border: 1, borderColor: current || done ? 'primary.main' : 'divider' }}>{done ? <Iconify icon="solar:check-circle-linear" width={14} /> : index + 1}</Box>
         <Typography component="span" variant="s3" sx={{ fontWeight: current ? 600 : 400, color: current ? 'text.primary' : 'text.secondary' }}>{name}</Typography>
       </Stack>;
     })}
     </Stack>
   </>;
 }
-RecoverySteps.propTypes = { step: PropTypes.number.isRequired };
+RecoverySteps.propTypes = { step: PropTypes.number.isRequired, names: PropTypes.arrayOf(PropTypes.string).isRequired };
 
 // The notice ends in an action: the request an admin needs to act on, ready to paste.
 function RollbackDenied({ contextName, version }) {
@@ -711,6 +761,7 @@ function RollbackDenied({ contextName, version }) {
 RollbackDenied.propTypes = { contextName: PropTypes.string.isRequired, version: PropTypes.number };
 
 const RECOVERY_FACTS_REFRESH_MS = 5000;
+const REQUEST_STATUS_REFRESH_MS = 15000;
 
 export default function J6RecoveryPanel({ contextId, contextName }) {
   const previewState = new URLSearchParams(window.location.search).get("state");
@@ -732,6 +783,20 @@ export default function J6RecoveryPanel({ contextId, contextName }) {
   const [picked, setChosen] = useState(null);
   const [submitted, setSubmitted] = useState(null);
   const onSubmitted = useCallback((receipt) => setSubmitted(receipt), []);
+  // The server's own read of the request this session sent; it decides every step of the tracker.
+  const requestRead = useReleaseRequest(submitted?.requestId, contextId);
+  const latestRead = useRef(requestRead);
+  latestRead.current = requestRead;
+  const requestStatus = requestRead.data?.request?.status;
+  // A request read is heavier than the recovery facts, so it follows more slowly (and only while it can still change).
+  const watching = Boolean(submitted?.requestId) && !['released', 'changes_requested', 'superseded', 'cancelled'].includes(requestStatus);
+  useEffect(() => {
+    if (!watching) return undefined;
+    const timer = setInterval(() => {
+      if (document.visibilityState === "visible") latestRead.current.refetch?.();
+    }, REQUEST_STATUS_REFRESH_MS);
+    return () => clearInterval(timer);
+  }, [watching]);
   const previousProduction = useRef(null);
   const movedFrom = useRef(null);
   // The reviewer stays selected across a restarted review (the release moved), so a
@@ -799,26 +864,33 @@ export default function J6RecoveryPanel({ contextId, contextName }) {
   const awaiting = submitted?.candidateId === chosen && submitted?.revision === data.releaseRevision && !candidate?.isProduction;
   const confirmed = data.cohort.filter((row) => row.observationsComplete === true && row.states.includes('matches_target') && row.loaded?.versionId === row.desired?.versionId && row.states.every((state) => ['matches_target', 'pinned_as_intended'].includes(state))).length;
   const from = previousProduction.current?.id !== production?.id ? previousProduction.current?.number : movedFrom.current;
-  const step = candidate?.isProduction ? 2 : awaiting ? 1 : 0;
+  // -1 until a request is sent, then the tracker's step (UXF-08): waiting, approved, check apps.
+  const { step, phase } = rollbackProgress({ awaiting, isProduction: Boolean(candidate?.isProduction), status: requestStatus });
+  const acknowledgmentLabel = rollbackAcknowledgment({
+    files: checkedFiles(closure.data?.rows, DESCRIPTOR_PATH).length,
+    linkedSkillChanges: (closure.data?.changes ?? []).some((change) => change.path === DESCRIPTOR_PATH && (change.links?.length ?? 0) > 0),
+  });
   // An initial release is not a recovery task. Link to delivery facts, but do not
   // invite an impossible rollback or expose a replacement credential form.
   const initial = initialReleaseState(data.candidates, data.releaseRevision);
   if (initial && !from && !submitted) return <EmptyState title="Nothing to roll back to yet"
-    description={<>{`v${initial.production.number} is the only released version, so there's nothing to roll back to yet.`}{initial.next && <Typography component="span" variant="s1" sx={{ display: 'block', mt: 1 }}>{`To change production, request a release review for v${initial.next.number}.`}</Typography>}</>}
-    // The header carries "Request release review" for a newer release, so the body does not repeat it.
-    action={initial.next ? undefined : <Button variant="outlined" href="?tab=consumers">Open consumers</Button>} />;
+    description={<>{`v${initial.production.number} is the only released version, so there's nothing to roll back to yet.`}{initial.next && <Typography component="span" variant="s1" sx={{ display: 'block', mt: 1 }}>{`To change production, send a release request for v${initial.next.number}.`}</Typography>}</>}
+    // The header carries "Request release for vN" for a newer release, so the body does not repeat it.
+    action={initial.next ? undefined : <Button variant="outlined" href="?tab=consumers">{OPEN_CONNECTED_APPS}</Button>} />;
   return (
     <Stack spacing={3} sx={{ minWidth: 0 }}>
       <Stack spacing={1}>
-        <Typography variant="m3" role="status">{candidate?.isProduction ? `${from ? `Production moved from v${from} to v${candidate.number}` : `Production is v${candidate.number}`} · ${confirmed} of ${data.cohort.length} ${data.cohort.length === 1 ? 'consumer' : 'consumers'} confirmed` : awaiting ? `Rollback to v${candidate?.number} requested from ${submitted.reviewer}. Production has not moved.` : `Production is ${production ? `v${production.number}` : 'not set'}.${candidate ? ` Roll back to v${candidate.number}?` : ' Choose an eligible version to request a rollback.'}`}</Typography>
-        <RecoverySteps step={step} />
+        {/* UXF-08: one title names the target; the target is preselected, so the question is not asked again. */}
+        {!candidate?.isProduction && <Typography component="h2" variant="m1" sx={{ overflowWrap: 'anywhere' }}>{candidate ? `Roll back ${contextName} to v${candidate.number}` : `Roll back ${contextName}`}</Typography>}
+        {!awaiting && <Typography variant="m3" role="status">{candidate?.isProduction ? `${from ? `Production moved from v${from} to v${candidate.number}` : `Production is v${candidate.number}`} · ${confirmed} of ${data.cohort.length} ${data.cohort.length === 1 ? 'app' : 'apps'} confirmed` : `Production is ${production ? `v${production.number}` : 'not set'}.${candidate ? '' : ' Choose an eligible version to request a rollback.'}`}</Typography>}
+        {step >= 0 && <RecoverySteps step={step} names={trackerSteps(submitted?.reviewer, step)} />}
       </Stack>
       {data.canPromote === false && <RollbackDenied contextName={contextName} version={candidate && !candidate.isProduction ? candidate.number : undefined} />}
       {query.isFetching && <StatusBadge status="checking" label="Updating…" sx={{ alignSelf: 'flex-start' }} />}
       {!data.candidates.some((row) => row.eligible) && !candidate?.isProduction && <EmptyState title="No eligible recovery release" description="Excluded releases cannot be requested. Review their restrictions below." />}
       {!candidate?.isProduction && <Box sx={{ display: 'grid', gridTemplateColumns: { xs: 'minmax(0, 1fr)', lg: awaiting ? 'minmax(0, 1fr)' : 'minmax(0, 3fr) minmax(300px, 2fr)' }, gap: 3, alignItems: 'start' }}>
       {!awaiting && <Stack spacing={1.5} sx={{ minWidth: 0 }}>
-        <Section title={candidate ? `Roll back to: v${candidate.number}${suggestion?.candidateId === candidate.id ? ' (suggested)' : ''}` : 'Choose a version to roll back to'}>
+        <Section title="Version to roll back to">
           {suggestion && <Typography variant="s3" color="text.secondary">v{suggestion.number} is the newest eligible release before v{suggestion.failing}. Review it below or choose another.</Typography>}
           {/* The excluded alternatives stay visible: the closure acknowledgment covers them, and a closed disclosure would add a gesture to every recovery. */}
           <Candidates bare candidates={data.candidates} chosen={chosen} onChoose={setChosen} />
@@ -846,17 +918,17 @@ export default function J6RecoveryPanel({ contextId, contextName }) {
           onReviewer={setReviewerId}
           onSubmitted={onSubmitted}
           onRefresh={() => refreshFacts()}
+          acknowledgmentLabel={acknowledgmentLabel}
+          requestRead={requestRead}
         />
       )}
       </Box>}
       {candidate?.isProduction && <TechnicalDetails title="Choose another recovery release"><Candidates candidates={data.candidates} chosen={chosen} onChoose={setChosen} /><TechnicalDetails title="Technical details">{data.candidates.map((release) => <IdentityChip key={release.id} label={`Release v${release.number}`} value={release.digest} />)}<ReleaseNotes candidates={data.candidates} /></TechnicalDetails></TechnicalDetails>}
-      {step < 1 && <Typography variant="s1" color="text.secondary" sx={{ py: 1, borderTop: 1, borderColor: 'divider' }}>2 · Await approval — submit the rollback for independent review.</Typography>}
-      {step < 2 && <Typography variant="s1" color="text.secondary" sx={{ py: 1, borderTop: 1, borderColor: 'divider' }}>3 · Confirm apps updated — available after production moves.</Typography>}
       {/* J6 inspects the incident cohort before requesting a rollback. Keep its facts visible,
           but defer the delivery warning and local tasks until verification is active. */}
-      {(step === 2 || data.cohort.some((row) => row.latestFailure)) && <Cohort cohort={data.cohort} numbers={numbers} asOf={data.asOf} active={step === 2} />}
+      {(phase === 'moved' || data.cohort.some((row) => row.latestFailure)) && <Cohort cohort={data.cohort} numbers={numbers} asOf={data.asOf} active={phase === 'moved'} />}
       {candidate && (candidate.isProduction ? <LocalRecovery key={`local-${candidate.id}`} contextId={contextId} contextName={contextName} candidate={candidate} canIssue={data.canIssueCredentials} /> : <TechnicalDetails title="Prepare recovery on your machine"><LocalRecovery key={`local-${candidate.id}`} contextId={contextId} contextName={contextName} candidate={candidate} canIssue={data.canIssueCredentials} /></TechnicalDetails>)}
-      <Button variant="outlined" sx={{ alignSelf: 'flex-start' }} onClick={() => refreshFacts()}>
+      <Button variant="outlined" sx={{ alignSelf: 'flex-start' }} onClick={() => { refreshFacts(); if (submitted?.requestId) requestRead.refetch?.(); }}>
         Check again
       </Button>
     </Stack>
