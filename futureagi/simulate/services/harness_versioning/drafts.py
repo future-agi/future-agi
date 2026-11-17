@@ -601,6 +601,8 @@ def _prepared(environment: HostedHarnessJob, files: Mapping[str, bytes]):
         authoring_revision="",
         # A bundle the chat sealed from this tree runs the contract it sealed.
         built=SEALED_MANIFEST in split.sealed and _stamped(split),
+        # A chat's save reseals its tree; it is no full build.
+        full_build=False,
     )
     # A draft stands for no authoring revision until it is saved.
     prepared.environment_documents["authoring_revisions"] = []

@@ -763,6 +763,28 @@ class TestVersionRecordedBeforeItsSealedContract:
         }
         assert entries["get_order"] == old
 
+    def test_a_saved_version_s_ready_bundle_sealed_from_the_author_s_entries_reaches_them_as_built(
+        self, user, workspace, monkeypatch, auth_client
+    ):
+        """After a builder's save, the next run assembles a ready bundle from the saved tree: it seals the
+        author's import entries again, and every reader still reaches the tools as the first build did."""
+        environment, version, storage = self._version(
+            user, workspace, "rc-saved-bundle", monkeypatch
+        )
+        self._bundle(environment, version, storage)
+        edited = {**AUTHORED, "hard_constraints": ["Never refund an unshipped order."]}
+        saved = self._saved_edit(environment, version, edited)
+        HarnessEnvironmentVersion._base_manager.filter(id=saved.id).update(
+            origin="chat"
+        )
+        saved.refresh_from_db()
+        self._bundle(environment, saved, storage, contract=edited)
+
+        blocked, statuses = self._through_the_views(auth_client, environment)
+
+        assert blocked == []
+        assert statuses == {one["tool"]: one["status"] for one in tool_status(SEALED)}
+
 
 def test_a_builder_save_that_seals_the_authored_entries_again_runs_as_the_first_build(
     user, workspace, storage, auth_client
@@ -800,7 +822,36 @@ def test_a_builder_save_that_seals_the_authored_entries_again_runs_as_the_first_
     }
     assert reached == {one["tool"]: one for one in SEALED["tool_entrypoints"]}
     base = f"/simulate/api/harness-environments/{environment.id}"
-    plan = auth_client.get(f"{base}/run-plan/").json()
-    contract = auth_client.get(f"{base}/").json()["contract"]
-    assert (plan["blocked_tools"], plan["runnable"]) == ([], True)
-    assert contract["production_only"] == []
+
+    def views():
+        plan = auth_client.get(f"{base}/run-plan/").json()
+        contract = auth_client.get(f"{base}/").json()["contract"]
+        assert (plan["blocked_tools"], plan["runnable"]) == ([], True)
+        assert contract["production_only"] == []
+
+    views()
+
+
+def test_a_full_build_that_keeps_a_tool_imported_is_read_as_that_build_sealed_it(
+    user, workspace, storage
+):
+    """A rebuild that seals the author's import entries (its tools service gone, say) is a build's own decision,
+    never replaced by how an earlier build reached the tools."""
+    from simulate.tests.test_harness_versioning_record import (
+        _environment as _record_environment,
+    )
+
+    environment = _record_environment(user, workspace, "rc-rebuild-import")
+    record_authoring(environment, _built(), origin="authoring")
+    environment.refresh_from_db()
+    edited = {**AUTHORED, "hard_constraints": ["Never refund an unshipped order."]}
+    rebuilt = record_authoring(
+        environment, _built(contract=edited, sealed=edited), origin="authoring"
+    ).environment
+    environment.refresh_from_db()
+
+    assert (
+        recorded_contract(rebuilt.documents)["tool_entrypoints"]
+        == (AUTHORED["tool_entrypoints"])
+    )
+    assert _blocked(environment, rebuilt) == sorted(TOOLS)
