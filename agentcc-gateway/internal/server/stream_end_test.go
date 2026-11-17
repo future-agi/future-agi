@@ -934,7 +934,7 @@ func TestStreamedCharsCountsEachDialectsDeltas(t *testing.T) {
 	n.addChunk(models.StreamChunk{Choices: []models.StreamChoice{{Delta: models.Delta{
 		Content:          &text,
 		ReasoningContent: &reasoning,
-		ToolCalls:        []models.ToolCallDelta{{Function: &models.FunctionCall{Arguments: "[1]"}}},
+		ToolCalls:        []models.ToolCallDelta{{Function: &models.FunctionCallDelta{Arguments: "[1]"}}},
 	}}}})
 	if want := 3 + 7 + 2 + 4 + 2 + 2 + 1 + 3; int(n) != want {
 		t.Errorf("streamedChars = %d, want %d", n, want)
