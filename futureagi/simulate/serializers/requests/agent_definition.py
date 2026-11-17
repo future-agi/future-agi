@@ -1,4 +1,5 @@
 import re
+from typing import Any
 
 from rest_framework import serializers
 
@@ -437,7 +438,7 @@ class AgentDefinitionFilterSerializer(serializers.Serializer):
         ),
         required=False,
     )
-    source = OneOrManyField(
+    source: Any = OneOrManyField(
         child=serializers.ChoiceField(choices=AGENT_SOURCE_FILTERS),
         required=False,
     )

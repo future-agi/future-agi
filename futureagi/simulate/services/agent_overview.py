@@ -1,6 +1,8 @@
+from __future__ import annotations
+
 import operator
 from functools import reduce
-from typing import Any
+from typing import TYPE_CHECKING, Any, TypedDict
 from uuid import UUID
 
 from django.db.models import (
@@ -62,7 +64,17 @@ AGENT_OBSERVE_FILTERS = tuple(_OBSERVE_CONDITIONS)
 AGENT_SOURCE_FILTERS = tuple(_SOURCE_VALUES)
 
 
-def _environment_jobs() -> QuerySet[HostedHarnessJob]:
+class _Owned(TypedDict):
+    _owner: Any
+
+
+if TYPE_CHECKING:
+    from django_stubs_ext import WithAnnotations
+
+    _OwnedJob = WithAnnotations[HostedHarnessJob, _Owned]
+
+
+def _environment_jobs() -> QuerySet[_OwnedJob]:
     # An environment of a deleted test is gone from the page, so it is not
     # counted, as recent runs leave its runs out. One not yet given a test
     # still holds the agent through the version it pins.
@@ -77,7 +89,7 @@ def _environment_jobs() -> QuerySet[HostedHarnessJob]:
     )
 
 
-def _environments() -> QuerySet[HostedHarnessJob]:
+def _environments() -> QuerySet[_OwnedJob]:
     return _environment_jobs().filter(_owner=OuterRef("pk"))
 
 

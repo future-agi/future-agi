@@ -146,16 +146,17 @@ class AgentDefinitionView(APIView):
                 .values("id")[:1]
             )
 
-            agents = annotate_agent_rows(
-                AgentDefinition.objects.filter(
-                    organization=user_organization,
-                )
+            agents = filter_agent_rows(
+                annotate_agent_rows(
+                    AgentDefinition.objects.filter(
+                        organization=user_organization,
+                    )
+                ),
+                validated,
             ).annotate(
                 _latest_version=Subquery(latest_version_subquery),
                 _latest_version_id=Subquery(latest_version_id_subquery),
             )
-
-            agents = filter_agent_rows(agents, validated)
 
             # Apply search filter
             if search_query:
