@@ -255,7 +255,16 @@ export default function OverviewPanel({
             <Fact label="Transports" value={surface.transports.join(" · ")} />
             <Fact
               label="Scenario packs"
-              value={`${stats.packs} packs · ${envState?.scenarios?.length || stats.scenarios} scenarios`}
+              value={(() => {
+                const own = ["scratch", "image"].includes(env.builtFrom?.kind)
+                  ? (envState?.scenarios || []).filter((r) => !r.archived)
+                  : null;
+                /* Its own cases count their own groups, not a generic pack set. */
+                const packs = own?.length
+                  ? new Set(own.map((r) => r.useCase || "Other")).size
+                  : stats.packs;
+                return `${packs} pack${packs === 1 ? "" : "s"} · ${envState?.scenarios?.length || stats.scenarios} scenarios`;
+              })()}
             />
           </Stack>
         </FadeIn>

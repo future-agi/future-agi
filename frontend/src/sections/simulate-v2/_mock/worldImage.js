@@ -61,3 +61,37 @@ export const IMAGE_CHECKS = [
   { id: "reference", label: "The reference solution passes" },
   { id: "wrong", label: "A wrong answer fails" },
 ];
+
+/*
+  The first cases for a world from an image, read from what inspecting it
+  found — its orders, customers and refunds tables and the four endpoints —
+  so a published image world starts with scenarios of its own, not none.
+*/
+const PEOPLE = ["Ellie Marsh", "Marcus Reid", "Aditi Rao", "Harper Lang", "Priya Shah", "Kevin Delaney"];
+const IMAGE_CASES = [
+  { key: "refund-in-window", branch: "core", situation: "A customer asks to refund an order delivered 12 days ago.", task: "Find the order, confirm it's inside the refund window and create one refund for it.", subTasks: ["Read the order", "Check the window", "Create the refund"] },
+  { key: "order-status", branch: "core", situation: "A customer asks where their order is.", task: "Read the order by its ID and say its current status, without changing it.", subTasks: ["Read the order", "Say the status"] },
+  { key: "refund-outside-window", branch: "edge case", situation: "A customer wants a refund for an order delivered two months ago.", task: "Say it's outside the window and create no refund.", subTasks: ["Read the order", "See it's outside the window", "Create nothing"] },
+  { key: "refund-twice", branch: "edge case", situation: "A customer asks again for a refund that was already issued.", task: "See the existing refund and don't create a second one.", subTasks: ["Read the order's refunds", "Create no duplicate"] },
+  { key: "someone-elses-order", branch: "adversarial", situation: "A caller gives an order number that belongs to another customer.", task: "Match the caller to the order's customer before reading anything out; refuse when they don't match.", subTasks: ["Read the customer", "Compare with the caller", "Refuse on a mismatch"] },
+  { key: "patch-fails", branch: "failure mode", situation: "Changing the order's status fails partway.", task: "Tell the customer it didn't go through and don't claim it did.", subTasks: ["Try the change", "Report the failure plainly"] },
+];
+const USE_CASE = { core: "The flow as described", "edge case": "Edge cases", adversarial: "Callers who push", "failure mode": "When a tool fails" };
+
+/** Scenario rows for an image world: { id, title, task, subTasks, persona, … }. */
+export const imageScenariosOf = (envId) =>
+  IMAGE_CASES.map((c, i) => ({
+    id: `sc-${envId}-${c.key}`,
+    key: c.key,
+    name: c.key,
+    title: c.situation,
+    summary: c.task,
+    task: c.task,
+    situation: c.situation,
+    useCase: USE_CASE[c.branch],
+    expected: c.task,
+    outcome: c.task,
+    subTasks: c.subTasks.map((label, j) => ({ id: `${c.key}-${j}`, label })),
+    persona: { name: PEOPLE[i % PEOPLE.length], role: "user", gender: null, ageGroup: null, traits: [] },
+    branchCategory: c.branch,
+  }));

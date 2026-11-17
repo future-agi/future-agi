@@ -41,7 +41,9 @@ export const finishBuildPatch = (env, envState = {}, now = new Date()) => {
   /* Built from scratch: the scenarios the approved design proposed from the
      description, not a pool read from an agent (builder.md §3–4). */
   const scratch = env.builtFrom?.kind === "scratch";
-  const pool = scratch && env.starterScenarios?.length ? env.starterScenarios : generatedPool(env);
+  /* A world from an image is built from what inspecting it found, too. */
+  const image = env.builtFrom?.kind === "image";
+  const pool = (scratch || image) && env.starterScenarios?.length ? env.starterScenarios : generatedPool(env);
   const scenarios = kept.length
     ? envState.scenarios
     : [
@@ -51,11 +53,11 @@ export const finishBuildPatch = (env, envState = {}, now = new Date()) => {
     ];
   const count = scenarios.filter((r) => !r.proposed && !r.archived).length;
   const versions = envState.envVersions || [];
-  const builtFor = scratch ? null : currentAgentVersion(envState)?.label || "v1";
+  const builtFor = scratch || image ? null : currentAgentVersion(envState)?.label || "v1";
   const envVersions = versions.length
     /* Still the first build: v1 carries what the build made. */
     ? versions.map((v, i) => (i === 0 && versions.length === 1 ? { ...v, scenarios: count } : v))
-    : [{ id: `${env.id}-v1`, label: "v1", createdAt: at, note: scratch ? "First build, from your description." : `First build, read from agent ${builtFor}.`, scenarios: count, changed: ["contract", "seed"], tools: (env.tools || []).map((t) => ({ ...t })), builtFor }];
+    : [{ id: `${env.id}-v1`, label: "v1", createdAt: at, note: scratch ? "First build, from your description." : image ? "First build, from your image." : `First build, read from agent ${builtFor}.`, scenarios: count, changed: ["contract", "seed"], tools: (env.tools || []).map((t) => ({ ...t })), builtFor }];
   const total = env.buildProgress?.total || 3;
   return {
     envPatch: { buildStatus: "ready", buildProgress: { done: total, total } },

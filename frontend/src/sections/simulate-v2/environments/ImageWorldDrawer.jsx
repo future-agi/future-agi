@@ -17,6 +17,7 @@ import Iconify from "src/components/iconify";
 import { paths } from "src/routes/paths";
 import { useSimStore } from "../store";
 import { RELEASE_CHECKS, checksStateOf } from "../_mock/release";
+import { finishBuildPatch } from "../_mock/quickBuild";
 import SideDrawer from "../components/SideDrawer";
 import {
   IMAGE_CHECKS,
@@ -24,6 +25,7 @@ import {
   PII_ACTIONS,
   SAMPLE_IMAGE,
   hasTagOnly,
+  imageScenariosOf,
   inspectionOf,
   isPinnedImage,
 } from "../_mock/worldImage";
@@ -189,15 +191,23 @@ export default function ImageWorldDrawer({ open, onClose }) {
       tools: found.tools.map((t) => ({ name: t.name, desc: t.effect })),
       actors: [],
       rules: [],
-      buildStatus: "ready",
+      buildStatus: "building",
       releaseSavedAt: now,
-      starterScenarios: [],
+      starterScenarios: imageScenariosOf(id),
     };
-    commit({ type: "adoptEnvironment", env, now });
+    env.builtFrom.scenarioCount = env.starterScenarios.length;
+    /* Its v1 and scenarios, the way any finished build records them. */
+    const fin = finishBuildPatch(env, {});
+    commit({
+      type: "adoptEnvironment",
+      env: { ...env, ...fin.envPatch },
+      now,
+    });
     commit({
       type: "patchEnvState",
       envId: id,
       patch: {
+        ...fin.statePatch,
         releaseChecks: {
           version: checksStateOf(env, {}).version,
           at: now,
