@@ -1207,6 +1207,7 @@ describe("RunDetail", () => {
         pinnedAgentVersion: { id: "a4", label: "v4" },
         environmentVersion: { id: "e1", label: "v1" },
         suiteVersion: { id: "s2", label: "v2" },
+        seed: "7902065059689103066",
       },
       stats: STATS,
       isLoading: false,
@@ -1216,6 +1217,7 @@ describe("RunDetail", () => {
     await user.click(screen.getByRole("button", { name: "rerun ticked" }));
     expect(onStartRun).toHaveBeenCalledWith(["scenario-a"], 2, {
       initialPicks: { agent: "a4", environment: "e1", suite: "s2" },
+      seed: "7902065059689103066",
     });
   });
 
@@ -1847,5 +1849,28 @@ describe("RunDetail ?rowId=", () => {
     await user.click(screen.getByRole("button", { name: "open from chart" }));
 
     expect(locationText()).toBe("?rowId=c9|REPLACE");
+  });
+});
+
+describe("RunDetail build notice", () => {
+  it("says when the run used a build without the environment's actors, and says nothing otherwise", () => {
+    const notice =
+      "This run used a build without the environment's actors, so none of them came in.";
+    useRunDetail.mockReturnValue({
+      identity: { ...IDENTITY, buildNotice: notice },
+      stats: STATS,
+      isLoading: false,
+    });
+    const { unmount } = renderDetail();
+    expect(screen.getByTestId("run-build-notice")).toHaveTextContent(notice);
+    unmount();
+
+    useRunDetail.mockReturnValue({
+      identity: IDENTITY,
+      stats: STATS,
+      isLoading: false,
+    });
+    renderDetail();
+    expect(screen.queryByTestId("run-build-notice")).toBeNull();
   });
 });

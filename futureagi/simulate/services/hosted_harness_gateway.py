@@ -1555,6 +1555,18 @@ def _with_simulation_mark(
     return document
 
 
+def _with_egress_allowed_hosts(
+    payload: Mapping[str, Any], allowed_domains: Iterable[str]
+) -> dict[str, Any]:
+    """A copy of the document naming the hosts the sandbox allows, so the harness points the agent at a proxy that
+    refuses and logs every other host."""
+    document = dict(payload)
+    metadata = dict(document.get("metadata") or {})
+    metadata["egress_allowed_hosts"] = sorted(allowed_domains)
+    document["metadata"] = metadata
+    return document
+
+
 def _with_used_scenario_keys(
     payload: Mapping[str, Any], job: HostedHarnessJob
 ) -> dict[str, Any]:
@@ -2143,9 +2155,11 @@ def _persist_bundle_stage_outputs(
                 HostedHarnessStageOutput(
                     job=job,
                     title="Contract",
-                    summary=contract_data.get("one_liner", "")
-                    if isinstance(contract_data, dict)
-                    else "",
+                    summary=(
+                        contract_data.get("one_liner", "")
+                        if isinstance(contract_data, dict)
+                        else ""
+                    ),
                     kind="contract",
                     data=contract_data,
                 )
@@ -2215,6 +2229,18 @@ def _persist_bundle_stage_outputs(
                     summary=f"{len(goals)} sub-goals",
                     kind="sub_goals",
                     data=catalogue,
+                )
+            )
+    if "call_actors" not in existing:
+        listing = all_actors(_load_bundle_file(manifest, "actors.json", job))
+        if isinstance(listing, dict) and listing.get("call_actors"):
+            outputs.append(
+                HostedHarnessStageOutput(
+                    job=job,
+                    title="Actors",
+                    summary=call_actors_summary(listing),
+                    kind="call_actors",
+                    data=listing,
                 )
             )
     if outputs:
@@ -2680,6 +2706,10 @@ class HostedHarnessGateway:
                     allowed_domains,
                     simulator_env,
                     max_domains=self.client.max_egress_domains,
+                )
+            if not unrestricted:
+                dispatch_payload = _with_egress_allowed_hosts(
+                    dispatch_payload, allowed_domains
                 )
             launch_spec = SandboxLaunchSpec(
                 cpu_units=capacity.cpu_units,
@@ -3422,8 +3452,11 @@ class HostedHarnessGateway:
             sandbox.fs.upload_file(
                 json.dumps(
                     _with_used_scenario_keys(
-                        _with_simulation_mark(
-                            guest_job_document(job.payload), simulation_mark
+                        _with_egress_allowed_hosts(
+                            _with_simulation_mark(
+                                guest_job_document(job.payload), simulation_mark
+                            ),
+                            allowed_domains,
                         ),
                         job,
                     ),
@@ -3926,6 +3959,7 @@ class HostedHarnessGateway:
             )
         authored_bundle = _json("/work/authoring/environment-bundle/manifest.json")
         sub_goals = _json("/work/authoring/sub_goals.json")
+        call_actors = all_actors(_json("/work/authoring/actors.json"))
         bundle = _json("/work/bundle/manifest.json")
         # Written when the world is sealed, so it appears later than the authoring
         # documents above and only once a store has actually been built.
@@ -4014,6 +4048,7 @@ class HostedHarnessGateway:
             sub_goals=sub_goals,
             build_output=build_output,
             coverage=coverage,
+            call_actors=call_actors,
         )
         activities = _activity_events()
         if activities:
@@ -4687,24 +4722,30 @@ class HostedHarnessGateway:
             label = (
                 RUNTIME_VALIDATION_FAILED
                 if exit_code == 78
-                else AUTHORING_FAILED
-                if authoring_failed
-                else f"guest entrypoint exited {exit_code}"
+                else (
+                    AUTHORING_FAILED
+                    if authoring_failed
+                    else f"guest entrypoint exited {exit_code}"
+                )
             )
             cause = guest_failure_cause(guest_logs)
             attempt.terminal_stage = "failed"
             attempt.terminal_failure = {
                 "domain": "environment" if authoring_invalid else "infrastructure",
-                "stage": "validating_environment"
-                if exit_code == 78
-                else "generating_environment"
-                if authoring_failed
-                else "running",
-                "code": "authoring_runtime_validation_failed"
-                if exit_code == 78
-                else "authoring_failed"
-                if authoring_failed
-                else "guest_crashed",
+                "stage": (
+                    "validating_environment"
+                    if exit_code == 78
+                    else "generating_environment"
+                    if authoring_failed
+                    else "running"
+                ),
+                "code": (
+                    "authoring_runtime_validation_failed"
+                    if exit_code == 78
+                    else "authoring_failed"
+                    if authoring_failed
+                    else "guest_crashed"
+                ),
                 "message": f"{label}: {cause}" if cause else label,
                 "details": {
                     "guest_log_tail": guest_logs,
@@ -5525,6 +5566,24 @@ def _record_harness_spend(
     job.updated_at = locked.updated_at
 
 
+def all_actors(actors_file: Any) -> dict[str, Any] | None:
+    """Every actor in the environment's one `actors.json`, speaking or acting only through the world, in the shape the
+    actor list stage output keeps: the scenarios list and drawer name each one, channel or not."""
+    if not isinstance(actors_file, dict):
+        return None
+    return {
+        "call_actors": [
+            one for one in actors_file.get("actors") or [] if isinstance(one, dict)
+        ]
+    }
+
+
+def call_actors_summary(listing: dict[str, Any]) -> str:
+    """The stage output's one-line summary of the environment's actor list."""
+    count = len(listing.get("call_actors") or [])
+    return f"{count} actor" + ("" if count == 1 else "s")
+
+
 def authoring_stage_outputs(
     contract: Any,
     environment: Any,
@@ -5536,6 +5595,7 @@ def authoring_stage_outputs(
     repair_history: Any = None,
     action_certification: Any = None,
     coverage: Any = None,
+    call_actors: Any = None,
 ) -> list[dict[str, Any]]:
     """Build the complete, secret-safe snapshots shown by the hosted-run UI."""
     outputs: list[dict[str, Any]] = []
@@ -5586,6 +5646,17 @@ def authoring_stage_outputs(
                 "title": "Sub-goal catalogue",
                 "summary": f"{len(goals)} sub-goals · {len(suite)} suite evals",
                 "data": _secret_safe(sub_goals),
+            }
+        )
+    # Sent even when emptied, so a list read on an earlier poll does not outlive it.
+    if isinstance(call_actors, dict):
+        outputs.append(
+            {
+                "id": "00000000-0000-0000-0000-000000000007",
+                "kind": "call_actors",
+                "title": "Actors",
+                "summary": call_actors_summary(call_actors),
+                "data": _secret_safe(call_actors),
             }
         )
     stores = _seeded_stores(build_output)
@@ -5689,6 +5760,7 @@ def authoring_stage_outputs_from_archive(
         "environment.json",
         "scenarios.json",
         "sub_goals.json",
+        "actors.json",
         "certification.json",
         "repair-history.json",
         "action-certification.json",
@@ -5739,6 +5811,7 @@ def authoring_stage_outputs_from_archive(
         repair_history=documents.get("repair-history.json"),
         action_certification=documents.get("action-certification.json"),
         coverage=documents.get("coverage.json"),
+        call_actors=all_actors(documents.get("actors.json")),
     )
 
 

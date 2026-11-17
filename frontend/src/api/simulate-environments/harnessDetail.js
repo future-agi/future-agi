@@ -33,6 +33,10 @@ const toWorldTool = (tool) =>
         desc: tool?.description || tool?.name || "",
         argTypes: tool?.arg_types || undefined,
         requires: tool?.requires || undefined,
+        argUnits: tool?.arg_units || undefined,
+        returns: tool?.returns || undefined,
+        refuses: tool?.refuses || undefined,
+        effects: tool?.effects || undefined,
       };
 
 // world.stores[] → the seed.tables[] shape the SeededDataCard / schema surfaces
@@ -67,6 +71,9 @@ const toScenarioRow = (row) => ({
     label: sg?.what || sg?.name,
     kind: sg?.kind,
   })),
+  callActors: Array.isArray(row?.actors) ? row.actors : [],
+  // {code, message} when the scenario cannot work as set, else null.
+  doorProblem: row?.door_problem,
 });
 
 // evaluations.selected[] → the applied-eval rows useAppliedEvals/EvalRow read.
@@ -84,7 +91,9 @@ export function harnessDetailToEnvironment(detail) {
   const world = detail.world || null;
   const settings = detail.settings || {};
 
-  const tools = contract?.tools ? contract.tools.map(toWorldTool).filter((t) => t.name) : null;
+  const tools = contract?.tools
+    ? contract.tools.map(toWorldTool).filter((t) => t.name)
+    : null;
   const rules = contract?.hard_constraints
     ? contract.hard_constraints.map(String).filter(Boolean)
     : null;
@@ -118,7 +127,9 @@ export function harnessDetailToEnvironment(detail) {
     status: overview.status
       ? envStatusFor(overview.stage, stageToStatus(overview.status))
       : undefined,
-    buildStatus: overview.status ? buildStatusFor(overview.status) : BUILD_STATUS.BUILDING,
+    buildStatus: overview.status
+      ? buildStatusFor(overview.status)
+      : BUILD_STATUS.BUILDING,
     tools: derivedWorld.tools,
     rules: derivedWorld.rules,
     seed: derivedWorld.seed,
@@ -133,19 +144,26 @@ export function harnessDetailToEnvironment(detail) {
     // them over the fixture derivations (fixture fallback stays for nulls).
     amendments: contract?.amendments || null,
     subGoals: contract?.sub_goals || null,
+    callActors: contract?.call_actors || null,
     endConditions: contract?.end_conditions || null,
     useCases: contract?.real_use_cases || null,
     personas: world?.personas || null,
     stores: world?.stores || null,
-    callDirection: contract?.call_direction ?? settings.agent?.call_direction ?? null,
+    callDirection:
+      contract?.call_direction ?? settings.agent?.call_direction ?? null,
     // Where the agent was read from (`settings.source`: kind, repository, ref)
     // and how it is run (`settings.agent.mode`), for the Overview's facts.
     source: settings.source ?? null,
     agentMode: settings.agent?.mode ?? null,
-    // Real per-table field types and per-tool callables, when ALK read them
-    // from source. Empty for provider agents, which have neither.
+    // Real per-table field types, when ALK read them from source. Empty for
+    // provider agents, which have none.
     dataSchema: contract?.data_schema || null,
-    toolEntrypoints: contract?.tool_entrypoints || null,
+    toolStatus: contract?.tool_status,
+    faultTargets: contract?.fault_targets,
+    worldTables: world?.tables,
+    worldTotalRows: world?.total_rows,
+    // `edit`, `list` or null (tab hidden).
+    actorsTab: detail.actors_tab,
     systemPromptExcerpt: contract?.system_prompt_excerpt || null,
     counts: {
       flows: overview.flows_count ?? null,
