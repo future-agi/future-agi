@@ -364,6 +364,25 @@ describe("ChatCallDrawer Participants", () => {
   });
 });
 
+describe("ChatCallDrawer step link", () => {
+  it("a link to a Participants step opens on Participants", () => {
+    mocks.hasWorkers = true;
+    window.history.pushState({}, "", "/?participantsStep=2");
+    render(
+      <ChatCallDrawer
+        task={{ id: "c1", status: "completed" }}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("tab", { name: "Participants" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    window.history.pushState({}, "", "/");
+    mocks.hasWorkers = false;
+  });
+});
+
 describe("ChatCallDrawer trial picker", () => {
   it("shows the scenario's trials in the header and opens the one picked", async () => {
     const user = userEvent.setup();

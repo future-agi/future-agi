@@ -30,6 +30,7 @@ import {
 } from "./callTraces.constants";
 import TrialChangesPanel from "./TrialChangesPanel";
 import { TRIAL_CHANGES_COPY, TRIAL_UNDER_WAY } from "./trialChanges.constants";
+import { openingTab } from "./participants/stepLink";
 
 // The annotate / queue / dataset / tags actions need project + annotation
 // context this embedded drawer doesn't wire; hide them rather than leave dead
@@ -113,7 +114,7 @@ export default function VoiceCallDrawer({
   const callTraces = useCallTraces(executionId, task.id);
   const hasWorkers = useHasWorkers(task.id, task.status);
   // Held here because the panel unmounts while the next call's detail loads.
-  const [chosenTab, setChosenTab] = useState("transcript");
+  const [chosenTab, setChosenTab] = useState(openingTab);
   const seekTo = useVoiceAudioStore((state) => state.seekTo);
   const [openStep, setOpenStep] = useState(null);
   // Forgotten on another call, so stepping to it and back does not reopen the trace.

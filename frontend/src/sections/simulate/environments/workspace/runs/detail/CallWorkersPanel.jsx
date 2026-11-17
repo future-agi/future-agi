@@ -12,8 +12,7 @@ import {
   recordingSeconds,
 } from "./participants/participantsFromRecord";
 import { sequenceOf } from "./participants/sequenceOf";
-
-const STEP_PARAM = "participantsStep";
+import { STEP_PARAM, linkedStepKey } from "./participants/stepLink";
 
 export default function CallWorkersPanel({
   callExecutionId,
@@ -40,7 +39,7 @@ export default function CallWorkersPanel({
   // A link to a step names the API's own step key, which stays put when the record is read again.
   useEffect(() => {
     if (!seq) return;
-    const key = new URLSearchParams(window.location.search).get(STEP_PARAM);
+    const key = linkedStepKey();
     const step = key && seq.steps.find((one) => String(one.key) === key);
     if (step) setSelected(step.n);
   }, [seq]);

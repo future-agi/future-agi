@@ -37,6 +37,7 @@ import {
 import TrialChangesPanel from "./TrialChangesPanel";
 import { TRIAL_CHANGES_COPY, TRIAL_UNDER_WAY } from "./trialChanges.constants";
 import { Meta, Cell, Attr, OutcomeReason } from "./chatDrawerCells";
+import { openingTab } from "./participants/stepLink";
 
 const num = (n) => (n == null ? "-" : Number(n).toLocaleString());
 const secs = (ms) => (ms == null ? "-" : `${(ms / 1000).toFixed(1)}s`);
@@ -114,7 +115,7 @@ export default function ChatCallDrawer({
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [hasNext, hasPrev, onNext, onPrev, shareOpen, traceOpen]);
   const [side, setSide] = useState("analytics");
-  const [chosenArtifact, setChosenArtifact] = useState("transcript");
+  const [chosenArtifact, setChosenArtifact] = useState(openingTab);
   const [focusTurn, setFocusTurn] = useState(null);
   const [openStep, setOpenStep] = useState(null);
   // Forgotten on another call, as in the voice drawer.
