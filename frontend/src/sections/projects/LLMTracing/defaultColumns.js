@@ -66,6 +66,11 @@ export const SKILL_TRACE_COLUMNS = Object.freeze([
   Object.freeze({ id: SKILL_AGENT_COLUMN_ID, name: OBSERVE_SKILL_COPY.agentColumn }),
   Object.freeze({ id: SKILL_CONTEXT_COLUMN_ID, name: OBSERVE_SKILL_COPY.contextColumn }),
 ]);
+// Span list: "Ran after loading" is the span attribute `fi.skills.refs`.
+export const RAN_AFTER_LOADING_COLUMN_ID = "fi.skills.refs";
+export const SKILL_SPAN_COLUMNS = Object.freeze([
+  Object.freeze({ id: RAN_AFTER_LOADING_COLUMN_ID, name: OBSERVE_SKILL_COPY.fields["skill.in_scope"] }),
+]);
 /** Column ids that are not span attributes and must never be requested as attribute keys. */
 export const NON_ATTRIBUTE_CUSTOM_COLUMN_IDS = Object.freeze([SKILLS_COLUMN_ID]);
 

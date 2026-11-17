@@ -149,6 +149,8 @@ import {
   WIDGET_PREVIEW_MAX_WAIT_MS,
 } from "./widgetEditorState";
 import { INTERACTIVE_REQUEST_TIMEOUT_MS } from "src/config/runtime_limits";
+import { useSkillTracesEnabled } from "src/sections/skills/runtime/skillTracesFlag";
+import { OBSERVE_SKILL_COPY } from "src/sections/projects/LLMTracing/skillFilters";
 
 const WIDGET_PREVIEW_REQUEST_TIMEOUT_MS = INTERACTIVE_REQUEST_TIMEOUT_MS;
 
@@ -824,6 +826,61 @@ export function buildWidgetCursorAttributeOptions(
         }) && isWidgetPickerOptionInCategory(option, context.pickerCategory),
     );
 }
+
+// Skill-trace breakdowns (SKILL-TRACES §6.6 Dashboards, lane ST9): system
+// dimensions resolved on the server from skill load rows, so a widget can
+// split requests by skill, skill version or the agent that loaded it.
+// Cohorts overlap, so these series are never stacked into a total.
+export const SKILL_BREAKDOWN_OPTIONS = Object.freeze([
+  Object.freeze({ id: "skill", name: OBSERVE_SKILL_COPY.widget.skill }),
+  Object.freeze({ id: "skill_version", name: OBSERVE_SKILL_COPY.widget.skillVersion }),
+  Object.freeze({ id: "skill_agent", name: OBSERVE_SKILL_COPY.widget.skillAgent }),
+]).map((option) =>
+  Object.freeze({
+    ...option,
+    type: "system",
+    category: "system_metric",
+    dataType: "string",
+    source: "traces",
+  }),
+);
+export const SKILL_BREAKDOWN_IDS = new Set(
+  SKILL_BREAKDOWN_OPTIONS.map((option) => option.id),
+);
+
+/** Add the skill breakdowns to the breakdown picker while skillTraces is on. */
+export function withSkillBreakdownOptions(
+  options,
+  { pickerMode, pickerCategory = "all", search = "", enabled = false } = {},
+) {
+  if (!enabled || pickerMode !== "breakdown") return options;
+  if (!["all", "trace", undefined, null].includes(pickerCategory)) {
+    return options;
+  }
+  const query = normalizeWidgetCatalogSearchText(search);
+  const present = new Set(
+    (options || [])
+      .filter((option) => option?.type === "system")
+      .map((option) => option.id),
+  );
+  const additions = SKILL_BREAKDOWN_OPTIONS.filter(
+    (option) =>
+      !present.has(option.id) &&
+      (!query ||
+        normalizeWidgetCatalogSearchText(`${option.id} ${option.name}`).includes(
+          query,
+        )),
+  );
+  return additions.length ? [...(options || []), ...additions] : options;
+}
+
+/**
+ * The scalar `fi.skill.version_id` attribute exists only on `skill.load`
+ * spans, so a breakdown on it counts those spans, not whole requests.
+ */
+export const isSkillLoadAttributeBreakdown = (breakdown) =>
+  breakdown?.id === "fi.skill.version_id" &&
+  ["custom_attribute", "attribute"].includes(breakdown?.type);
 
 export function mergeWidgetCursorAttributeOptions(
   catalogOptions,
@@ -2873,14 +2930,31 @@ export default function WidgetEditorView() {
     [cursorAttributes, pickerMode, pickerCategory, pickerCapabilityContext],
   );
 
+  const skillTracesEnabled = useSkillTracesEnabled();
   const pickerMetricOptions = useMemo(
     () =>
-      mergeWidgetCursorAttributeOptions(
-        catalogMetricOptions,
-        cursorAttributeOptions,
-        cursorAttributePickerActive,
+      withSkillBreakdownOptions(
+        mergeWidgetCursorAttributeOptions(
+          catalogMetricOptions,
+          cursorAttributeOptions,
+          cursorAttributePickerActive,
+        ),
+        {
+          pickerMode,
+          pickerCategory,
+          search: trimmedDebouncedPickerSearch,
+          enabled: skillTracesEnabled,
+        },
       ),
-    [catalogMetricOptions, cursorAttributeOptions, cursorAttributePickerActive],
+    [
+      catalogMetricOptions,
+      cursorAttributeOptions,
+      cursorAttributePickerActive,
+      pickerMode,
+      pickerCategory,
+      trimmedDebouncedPickerSearch,
+      skillTracesEnabled,
+    ],
   );
 
   const isPickerInventoryLoading = isPaginatedLoading;
@@ -7577,6 +7651,17 @@ export default function WidgetEditorView() {
                           <Iconify icon="solar:close-linear" width={14} />
                         </IconButton>
                       </Stack>
+                      {skillTracesEnabled &&
+                        isSkillLoadAttributeBreakdown(b) && (
+                          <Typography
+                            variant="caption"
+                            color="warning.dark"
+                            role="note"
+                            sx={{ display: "block", mt: 0.75 }}
+                          >
+                            {OBSERVE_SKILL_COPY.widget.versionAttributeWarning}
+                          </Typography>
+                        )}
                     </Box>
                   ))}
                 </Box>

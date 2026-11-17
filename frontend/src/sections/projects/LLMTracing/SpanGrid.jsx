@@ -1,5 +1,5 @@
 /* eslint-disable react/prop-types */
-import { Box, useTheme } from "@mui/material";
+import { Box, Chip, Stack, Tooltip, useTheme } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
 import "src/styles/clean-data-table.css";
 import PropTypes from "prop-types";
@@ -78,6 +78,15 @@ import {
   compactObserveListResponse,
 } from "./observeListPayload";
 import { isExpectedRequestCancellation } from "src/utils/cacheUtils";
+import Iconify from "src/components/iconify";
+import { isSkillTracesEnabled } from "src/sections/skills/runtime/skillTracesFlag";
+import { RAN_AFTER_LOADING_COLUMN_ID } from "./defaultColumns";
+import {
+  OBSERVE_SKILL_COPY,
+  SKILL_LOAD_SPAN,
+  ranAfterLoading,
+  ranAfterLoadingChip,
+} from "./skillFilters";
 import { isGridApiLive, withLiveGridApi } from "src/utils/gridApi";
 import CursorGridPagination from "./CursorGridPagination";
 import useCursorGridPagination from "./useCursorGridPagination";
@@ -94,6 +103,76 @@ const loadSpanObservePage = (params, signal) =>
   }).then((response) =>
     parseAxiosResult(response, parseSpanObserveListResponse),
   );
+
+// Skill traces in the span list (SKILL-TRACES §7.1, lane ST9). "Ran after
+// loading" reads the span's own `fi.skills.refs` list through the normal
+// attribute column hydration, with no extra request.
+export const RanAfterLoadingCell = ({ value }) => {
+  let refs = value;
+  if (typeof refs === "string") {
+    refs = safeParse(refs);
+  }
+  const { refs: parsed } = ranAfterLoading({
+    span_attributes: { "fi.skills.refs": Array.isArray(refs) ? refs : [] },
+  });
+  if (!parsed.length) return null;
+  const visible = parsed.slice(0, 3);
+  return (
+    <Stack
+      direction="row"
+      spacing={0.5}
+      alignItems="center"
+      sx={{ height: "100%", px: 1, overflow: "hidden" }}
+    >
+      {visible.map((ref) => (
+        <Chip
+          key={ref.ref}
+          size="small"
+          label={ranAfterLoadingChip(ref)}
+          sx={{ height: 20, bgcolor: "background.neutral" }}
+        />
+      ))}
+      {parsed.length > visible.length && (
+        <Box component="span" sx={{ typography: "caption", color: "text.secondary" }}>
+          {OBSERVE_SKILL_COPY.moreChips(parsed.length - visible.length)}
+        </Box>
+      )}
+    </Stack>
+  );
+};
+
+RanAfterLoadingCell.propTypes = { value: PropTypes.any };
+
+// `skill.load` rows carry a skill glyph by name (no new span type); a failed
+// load is in the error tone.
+export const SkillLoadNameCell = (props) => {
+  const failed = props?.data?.status === "ERROR";
+  return (
+    <Stack direction="row" alignItems="center" sx={{ height: "100%", minWidth: 0 }}>
+      <Tooltip title={OBSERVE_SKILL_COPY.card.title}>
+        <Box component="span" sx={{ display: "inline-flex", pl: 1.5 }}>
+          <Iconify
+            icon="solar:book-bookmark-linear"
+            width={14}
+            aria-label={OBSERVE_SKILL_COPY.card.title}
+            sx={{ color: failed ? "error.main" : "text.secondary" }}
+          />
+        </Box>
+      </Tooltip>
+      <Box
+        sx={{
+          minWidth: 0,
+          flex: 1,
+          "& .MuiTypography-root": failed ? { color: "error.main" } : {},
+        }}
+      >
+        <NameCell {...props} />
+      </Box>
+    </Stack>
+  );
+};
+
+SkillLoadNameCell.propTypes = { data: PropTypes.object };
 
 const getSpanListColumnDefs = (col) => {
   const colId = col?.id;
@@ -165,9 +244,17 @@ const getSpanListColumnDefs = (col) => {
         return null;
       }
 
+      const skillTraces = isSkillTracesEnabled();
+      if (skillTraces && colId === RAN_AFTER_LOADING_COLUMN_ID) {
+        return { component: RanAfterLoadingCell };
+      }
       if (RENDERER_CONFIG.nameColumns.includes(colId)) {
+        const spanName = params?.data?.span_name ?? params?.data?.name;
         return {
-          component: NameCell,
+          component:
+            skillTraces && spanName === SKILL_LOAD_SPAN
+              ? SkillLoadNameCell
+              : NameCell,
         };
       }
       if (colId === "input" || colId === "output") {

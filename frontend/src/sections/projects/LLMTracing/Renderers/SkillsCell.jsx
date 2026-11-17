@@ -3,9 +3,11 @@ import PropTypes from "prop-types";
 import { Link as RouterLink } from "react-router-dom";
 import { Box, Chip, Menu, MenuItem, Skeleton, Tooltip, Typography } from "@mui/material";
 import { useQueries } from "@tanstack/react-query";
-import axios, { traceSkillsEndpoint } from "src/utils/axios";
+import axios, {
+  TRACE_SKILLS_ROUTE_PENDING,
+  traceSkillsEndpoint,
+} from "src/utils/axios";
 import Iconify from "src/components/iconify";
-import { runtimeErrorKind } from "src/api/skills/runtime";
 import {
   CONTENTS_MISMATCH,
   EVIDENCE,
@@ -32,6 +34,20 @@ export const TRACE_SKILLS_PAGE_LIMIT = 100;
 
 // ---------------------------------------------------------------------------
 // Data: endpoint 6, page-scoped.
+
+// The failure kinds of src/api/skills/runtime.js runtimeErrorKind, kept here
+// so the trace list does not load the Skills API module.
+export const traceSkillsErrorKind = (error) => {
+  const code = error?.response?.data?.code || error?.code;
+  const status = error?.response?.status;
+  if (code === "project_not_readable" || status === 403) return "denied";
+  if (code === "runtime_read_budget_exceeded") return "slow";
+  if (["runtime_read_unavailable", "runtime_read_too_large", TRACE_SKILLS_ROUTE_PENDING].includes(code)) {
+    return "unavailable";
+  }
+  if (code === "invalid_runtime_query" || status === 400) return "invalid";
+  return "error";
+};
 
 const NO_TRACES = Object.freeze({});
 const NO_IDS = Object.freeze([]);
@@ -89,7 +105,7 @@ function combineTraceSkills(results) {
   return {
     status: failed ? "error" : pending ? "loading" : "ready",
     byTrace,
-    errorKind: failed ? runtimeErrorKind(failed.error) : null,
+    errorKind: failed ? traceSkillsErrorKind(failed.error) : null,
     refetch: () => Promise.all(results.map((result) => result.refetch())),
     // Changes whenever any chunk settles or refreshes, for change detection.
     version: results.map((result) => `${result.status}:${result.dataUpdatedAt}:${result.errorUpdatedAt}`).join("|"),

@@ -27,6 +27,26 @@ import LeftControl from "./LeftControl";
 import Legend from "./Legend";
 import GraphSkeleton from "./GraphSkeleton";
 import { formatYAxisValue, getYAxisUnit, getLineSeriesName } from "./common";
+import { hasSkillFilter } from "../skillFilters";
+
+// "Split by skill version" (SKILL-TRACES §6.3, §7.1, UX-12): the graph read
+// groups its series by skill version when it receives
+// `split_by: "skill_version"`. The time-series builder supports it, but the
+// public graph request does not accept it yet (its dispatch, cache identity
+// and response are outside this lane), so the option stays off and the graph
+// never sends a parameter the server would reject. Turn this on, and offer
+// the option, once the graph contract carries `split_by`.
+export const SKILL_VERSION_SPLIT_SUPPORTED = false;
+
+/** Extra graph request fields for "Split by skill version", or none. */
+export const skillVersionSplitParams = ({
+  enabled,
+  filters,
+  supported = SKILL_VERSION_SPLIT_SUPPORTED,
+}) =>
+  enabled && supported && hasSkillFilter(filters)
+    ? { split_by: "skill_version" }
+    : {};
 import SVGColor from "src/components/svg-color";
 import { useLLMTracingStoreShallow } from "../states";
 import { logger } from "src/utils/logger";

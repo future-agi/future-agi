@@ -181,6 +181,7 @@ import {
   removeCustomColumnsFromTab,
   resetColumnsForTab,
   restoreCanonicalColumnVisibility,
+  SKILL_SPAN_COLUMNS,
   SKILL_TRACE_COLUMNS,
   SPAN_BUILT_IN_COLUMNS,
   TRACE_BUILT_IN_COLUMNS,
@@ -3552,10 +3553,13 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     },
     [activeViewTabId, observeId, skillTracesEnabled],
   );
-  const skillColumnChoices =
-    skillTracesEnabled && selectedTab === "trace"
+  const skillColumnChoices = !skillTracesEnabled
+    ? undefined
+    : selectedTab === "trace"
       ? SKILL_TRACE_COLUMNS
-      : undefined;
+      : selectedTab === "spans"
+        ? SKILL_SPAN_COLUMNS
+        : undefined;
   const resolveSkillChipLabels =
     skillTracesEnabled && hasSkillFilter(extraFilters);
   const chipLabelMap = useMemo(
@@ -5322,6 +5326,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
               onAttributeSearchChange={setCustomAttributeSearch}
               inventoryControlProps={inventoryControlProps}
               skillColumns={skillColumnChoices}
+              skillColumnsTitle={OBSERVE_SKILL_COPY.group}
             />
             <Box sx={{ paddingTop: 2 }}>
               <SelectAllBanner
