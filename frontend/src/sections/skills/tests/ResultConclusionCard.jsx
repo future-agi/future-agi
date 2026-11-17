@@ -7,7 +7,7 @@ import TechnicalDetails from '../components/TechnicalDetails';
 // Vel's fix-run-done screen: the one-sentence conclusion first, then its badge, then the next step
 // with its hint, then "How it was decided" as a disclosure. Evidence rows sit below the card.
 // The card states what the server reported; it never infers a verdict itself.
-export default function ResultConclusionCard({ sentence, sentenceProps, meta, badge, actions, hint, decided, children }) {
+export default function ResultConclusionCard({ sentence, sentenceProps, meta, badge, actions, hint, decided, technical, children }) {
   return <Stack spacing={1} sx={{ p: 1.5, border: 1, borderColor: 'divider', borderRadius: 1, minWidth: 0 }}>
     <Typography variant="m3" component="p" sx={{ m: 0 }} {...sentenceProps}>{sentence}</Typography>
     {meta}
@@ -18,6 +18,8 @@ export default function ResultConclusionCard({ sentence, sentenceProps, meta, ba
       {hint}
     </Stack>}
     {decided && <TechnicalDetails title="How it was decided">{decided}</TechnicalDetails>}
+    {/* Kept mounted while folded: it can hold a form (the CI attachment) whose input must survive. */}
+    {technical && <TechnicalDetails title="Technical details" keepMounted>{technical}</TechnicalDetails>}
   </Stack>;
 }
 ResultConclusionCard.propTypes = {
@@ -35,6 +37,8 @@ ResultConclusionCard.propTypes = {
   hint: PropTypes.node,
   /** Contents of the "How it was decided" disclosure. */
   decided: PropTypes.node,
-  /** Rows between the sentence and the badge (e.g. the human-review line). */
+  /** Contents of the card's "Technical details" disclosure (for example the CI attachment, UXF-04). */
+  technical: PropTypes.node,
+  /** Rows between the sentence and the badge (e.g. the human-check line). */
   children: PropTypes.node,
 };

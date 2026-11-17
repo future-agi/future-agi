@@ -270,7 +270,7 @@ function AttemptContent({
                 </Typography>
               )}
               <Button size="small" onClick={() => setReviewCheckId(reviewCheckId === check.checkId ? null : check.checkId)}>
-                {reviewCheckId === check.checkId ? "Close human review" : "Review this check"}
+                {reviewCheckId === check.checkId ? "Close human check" : "Review this check"}
               </Button>
               {reviewCheckId === check.checkId && <HumanCheckReviewController skillId={skillId} runId={runId} attemptId={attemptId} check={check} />}
             </Box>

@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Alert,
   Button,
@@ -16,9 +16,44 @@ import Section from "src/components/section";
 import { ROW_HEIGHT, TABLE_HEADER_HEIGHT } from "src/theme/sizes";
 import TechnicalDetails from '../components/TechnicalDetails';
 import IdentityChip from "../components/IdentityChip";
+import ActionReason from "../components/ActionReason";
 import InventoryFileDrawer from "./InventoryFileDrawer";
 
 const fileKey = (skillId, file) => `${skillId}:${file.path}:${file.sha256}`;
+// The server accepts exactly these five fields (v11/inventory.py), so nothing else is added here.
+const freshReview = (fingerprint) => ({
+  fingerprint,
+  reviewedAllFiles: false,
+  noKnownAnswerKeys: false,
+  classifications: [],
+  falsePositiveSecretFindings: [],
+});
+
+const PROVIDERS = { openai: "OpenAI", anthropic: "Anthropic", google: "Google", azure: "Azure", bedrock: "Amazon Bedrock", mistral: "Mistral" };
+/** A provider id as people read it ("openai" → "OpenAI"). */
+// eslint-disable-next-line react-refresh/only-export-components -- shared by both Tests tabs.
+export const providerName = (value) =>
+  PROVIDERS[String(value || "").toLowerCase()] ||
+  (value ? String(value).charAt(0).toUpperCase() + String(value).slice(1) : "Not reported");
+/** An upper-bound estimate rounded up to the cent: "$0.24". */
+// eslint-disable-next-line react-refresh/only-export-components -- shared by both Tests tabs.
+export const centsUp = (usd) => `$${(Math.ceil(Number(usd) * 100) / 100).toFixed(2)}`;
+
+/**
+ * The one tick that sends a test (UXF-03): "Send these 3 files and the request to OpenAI,
+ * up to $0.24. They contain no answer keys or grading material." The answer-key clause is
+ * part of the sentence only when the tick attests it (`attestsNoAnswerKeys`), so the tick
+ * never sets a field its words don't say.
+ */
+// eslint-disable-next-line react-refresh/only-export-components -- the sentence is shared by both Tests tabs.
+export function sendSentence({ fileCount, what, provider, upTo, attestsNoAnswerKeys = true }) {
+  const files = fileCount === 1 ? "this file" : `these ${fileCount} files`;
+  const cost = upTo ? `, up to ${upTo}` : "";
+  const clause = attestsNoAnswerKeys
+    ? ` ${fileCount === 1 ? "It contains" : "They contain"} no answer keys or grading material.`
+    : "";
+  return `Send ${files} and ${what} to ${provider}${cost}.${clause}`;
+}
 
 export default function TestInventoryReview({
   preview,
@@ -30,7 +65,14 @@ export default function TestInventoryReview({
   subjectName,
   consentHeading,
   children,
+  sendLabel,
+  attestsNoAnswerKeys = true,
+  consentDisabled = false,
+  consentReason = null,
 }) {
+  // With `sendLabel`, the two file statements and the caller's provider consent are one tick
+  // (UXF-03, D16). It counts only for the preview it was given for: a new fingerprint unticks it.
+  const merged = Boolean(sendLabel);
   // Keep the complete inventory one click away; required findings and unticked
   // acknowledgments stay inline at the decision, never inside the disclosure.
   const [inspected, setInspected] = useState(null);
@@ -98,6 +140,27 @@ export default function TestInventoryReview({
     });
   };
   const [bulk, setBulk] = useState({ classification: "", reason: "" });
+  const staleReview =
+    value.fingerprint !== preview.fingerprint &&
+    (value.reviewedAllFiles ||
+      value.noKnownAnswerKeys ||
+      value.classifications.length > 0 ||
+      value.falsePositiveSecretFindings.length > 0);
+  useEffect(() => {
+    // A review given for an earlier preview never carries over: the caller is told it is empty.
+    if (staleReview)
+      onChange({ review: freshReview(preview.fingerprint), complete: false, diagnostic: true });
+  }, [staleReview, preview.fingerprint, onChange]);
+  const sent =
+    value.fingerprint === preview.fingerprint && value.reviewedAllFiles;
+  const sendDisabled = disabled || consentDisabled;
+  const setSent = (checked) => {
+    if (sendDisabled) return;
+    update({
+      reviewedAllFiles: Boolean(checked),
+      noKnownAnswerKeys: Boolean(checked) && attestsNoAnswerKeys,
+    });
+  };
   const classifyAll = () => {
     const keys = new Set(uniqueFlagged.map((file) => fileKey(file.skillId, file)));
     update({
@@ -129,7 +192,7 @@ export default function TestInventoryReview({
       >
         <Stack spacing={1.5}>
           <Typography variant="s1">{files.length} files · {flaggedCount} flagged · {bytes < 1024 ? `${bytes} bytes` : `${(bytes / 1024).toFixed(1)} KB`}</Typography>
-          <TechnicalDetails title="View all files sent to the model">
+          <TechnicalDetails title="View all files sent to the model" defaultOpen>
           <TableContainer><Table size="small" aria-label="Model-visible inventory">
             <TableHead><TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}><TableCell>File</TableCell><TableCell>Source/version</TableCell><TableCell>Flags</TableCell><TableCell>Size</TableCell><TableCell /></TableRow></TableHead>
             <TableBody>{preview.inventory.flatMap((bundle, index) => bundle.files.map((file) => <TableRow key={`${index}:${file.path}`} hover sx={{ height: ROW_HEIGHT.default }}>
@@ -137,7 +200,7 @@ export default function TestInventoryReview({
               <TableCell><Typography variant="s1">{sourceLabel(bundle)}</Typography><TechnicalDetails title="Source details"><IdentityChip value={bundle.skillId} label="Source" kind="id" /><IdentityChip value={bundle.digest} label="Version" /></TechnicalDetails></TableCell>
               <TableCell><Typography variant="s3">{file.flags.length ? file.flags.map((flag) => flag.replaceAll('_', ' ')).join(', ') : 'None'}</Typography></TableCell>
               <TableCell><Typography variant="s3">{file.sizeBytes} bytes</Typography></TableCell>
-              <TableCell><Button size="small" variant="outlined" aria-label={`View ${file.path}`} onClick={() => setInspected({ bundle, file, fingerprint: preview.fingerprint })}>View</Button></TableCell>
+              <TableCell><Button size="small" variant="text" color="inherit" aria-label={`View ${file.path}`} onClick={() => setInspected({ bundle, file, fingerprint: preview.fingerprint })}>View</Button></TableCell>
             </TableRow>))}</TableBody>
           </Table></TableContainer>
           </TechnicalDetails>
@@ -302,37 +365,58 @@ export default function TestInventoryReview({
           </Stack>
         </Section>
       )}
-      {/* The acknowledgments stay separate, unticked and in this order. A caller may group them, with
-          its own consents after these (children), under one heading at the point of decision. */}
-      <Stack spacing={consentHeading ? 0.5 : 2} {...(consentHeading ? { role: "group", "aria-labelledby": "test-consents-heading" } : {})}>
-        {consentHeading && <Typography id="test-consents-heading" component="h3" variant="m3">{consentHeading}</Typography>}
-        <Typography variant="s3" color="text.secondary">Read the files above and check what will be sent to the model before confirming.</Typography>
-        <FormControlLabel
-          control={
-            <Checkbox
-              disabled={disabled}
-              checked={value.noKnownAnswerKeys}
-              onChange={(event) =>
-                update({ noKnownAnswerKeys: event.target.checked })
-              }
-            />
-          }
-          label="The files sent to the model contain no answer keys or grading material."
-        />
-        <FormControlLabel
-          control={
-            <Checkbox
-              disabled={disabled}
-              checked={value.reviewedAllFiles}
-              onChange={(event) =>
-                update({ reviewedAllFiles: event.target.checked })
-              }
-            />
-          }
-          label="I reviewed every file and input that will be sent to the model."
-        />
-        {children}
-      </Stack>
+      {merged ? (
+        <Stack spacing={0.5} {...(consentHeading ? { role: "group", "aria-labelledby": "test-consents-heading" } : {})}>
+          {consentHeading && <Typography id="test-consents-heading" component="h3" variant="m3">{consentHeading}</Typography>}
+          {/* Like components/Acknowledgment: once ticked the label keeps full contrast, even while the
+              form is locked for submitting. A held tick names its reason. */}
+          <FormControlLabel
+            sx={{ alignItems: "flex-start", "& .MuiFormControlLabel-label.Mui-disabled": sent ? { color: "text.primary" } : {} }}
+            control={
+              <Checkbox
+                checked={sent}
+                disabled={sendDisabled}
+                inputProps={consentReason ? { "aria-describedby": "test-send-reason" } : undefined}
+                onChange={(event) => setSent(event.target.checked)}
+                sx={{ mt: -0.75 }}
+              />
+            }
+            label={<span data-acknowledged={sent ? "true" : "false"}>{sendLabel}</span>}
+          />
+          <ActionReason id="test-send-reason" reason={consentReason} />
+        </Stack>
+      ) : (
+        // Legacy layout for callers that keep separate statements: unticked and in this order.
+        <Stack spacing={consentHeading ? 0.5 : 2} {...(consentHeading ? { role: "group", "aria-labelledby": "test-consents-heading" } : {})}>
+          {consentHeading && <Typography id="test-consents-heading" component="h3" variant="m3">{consentHeading}</Typography>}
+          <Typography variant="s3" color="text.secondary">Read the files above and check what will be sent to the model before confirming.</Typography>
+          <FormControlLabel
+            control={
+              <Checkbox
+                disabled={disabled}
+                checked={value.noKnownAnswerKeys}
+                onChange={(event) =>
+                  update({ noKnownAnswerKeys: event.target.checked })
+                }
+              />
+            }
+            label="The files sent to the model contain no answer keys or grading material."
+          />
+          <FormControlLabel
+            control={
+              <Checkbox
+                disabled={disabled}
+                checked={value.reviewedAllFiles}
+                onChange={(event) =>
+                  update({ reviewedAllFiles: event.target.checked })
+                }
+              />
+            }
+            label="I reviewed every file and input that will be sent to the model."
+          />
+          {children}
+        </Stack>
+      )}
       <TechnicalDetails title="About this preview"><Typography variant="s3" color="text.secondary">
         Detection is not proof of independence. A diagnostic run keeps all files
         and cannot claim answer improvement.
@@ -351,4 +435,11 @@ TestInventoryReview.propTypes = {
   /** Opt-in heading that groups the acknowledgments (and any `children` consents) at the decision. */
   consentHeading: PropTypes.string,
   children: PropTypes.node,
+  /** The one send tick (see `sendSentence`). Without it the two file statements stay separate. */
+  sendLabel: PropTypes.string,
+  /** What the send tick sets for "no known answer keys"; its label must say the same. */
+  attestsNoAnswerKeys: PropTypes.bool,
+  /** Holds the send tick (for example while paid runs are off), with the reason beside it. */
+  consentDisabled: PropTypes.bool,
+  consentReason: PropTypes.node,
 };

@@ -27,7 +27,7 @@ import { useSkillsSpendPolicy } from "src/api/skills/r3-spend";
 import ContentSkeleton from "src/components/content-skeleton";
 import ErrorState from "src/components/error-state";
 import Section from "src/components/section";
-import TestInventoryReview from "./TestInventoryReview";
+import TestInventoryReview, { centsUp, providerName, sendSentence } from "./TestInventoryReview";
 import CapabilityNotice from "../components/CapabilityNotice";
 import ActionReason, { reasonProps } from "../components/ActionReason";
 import Money from "../components/Money";
@@ -39,6 +39,8 @@ import AdminAllowanceRequest, { allowanceRequestText } from "./AdminAllowanceReq
 // "Back to tests" after saving (SH7). Read from the window so this works with or without a router.
 const allowanceHref = () =>
   `${paths.dashboard.skills.allowance}?returnTo=${encodeURIComponent(`${window.location.pathname}${window.location.search}`)}`;
+
+const plural = (count, one, many = `${one}s`) => `${count} ${count === 1 ? one : many}`;
 
 async function draftCandidate(draft) {
   return { kind: 'draft', revision: draft.revision, digest: await skillFilesDigest(draft.files) };
@@ -233,7 +235,6 @@ export default function TestRunSetup({
   });
   const [plan, setPlan] = useState(null);
   const [review, setReview] = useState(null);
-  const [acknowledged, setAcknowledged] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [submitted, setSubmitted] = useState(false);
@@ -280,13 +281,22 @@ export default function TestRunSetup({
   // A refusal while the policy is unknown also disables the run; once the re-read policy says an
   // allowance exists, the reviewer may retry and the server checks again.
   const allowanceOff = policyOff || (spendRefused && !spend?.data);
-  // The provider acknowledgment covers this run's spend, so it waits for an allowance: while paid runs
-  // are off it is disabled and cleared, and it comes back unticked once an admin sets one. A submission
-  // already sent (an uncertain outcome) keeps its acknowledgment, so "Retry same submission" is unchanged.
+  // The send tick (files, answer keys and provider processing in one, UXF-03) covers this run's spend,
+  // so it waits for an allowance: while paid runs are off it is disabled and cleared, and it comes back
+  // unticked once an admin sets one. A submission already sent (an uncertain outcome) keeps its tick, so
+  // "Retry same submission" is unchanged.
   const consentHeld = allowanceOff && !submitted;
+  const ticked = Boolean(review?.review.reviewedAllFiles);
   useEffect(() => {
-    if (consentHeld) setAcknowledged(false);
-  }, [consentHeld]);
+    if (consentHeld && ticked)
+      setReview((previous) => previous && {
+        ...previous,
+        review: { ...previous.review, reviewedAllFiles: false, noKnownAnswerKeys: false },
+        complete: false,
+      });
+  }, [consentHeld, ticked]);
+  // The tick counts only for the preview it was given for.
+  const sendReady = Boolean(plan && review?.complete && review.review.fingerprint === plan.preview.fingerprint);
   const valid =
     permitted &&
     model?.canRun &&
@@ -317,7 +327,6 @@ export default function TestRunSetup({
     setSettings((previous) => ({ ...previous, ...patch }));
     setPlan(null);
     setReview(null);
-    setAcknowledged(false);
     setError("");
     submission.current = null;
   };
@@ -393,7 +402,6 @@ export default function TestRunSetup({
         complete: false,
         diagnostic: true,
       });
-      setAcknowledged(false);
       submission.current = null;
     } catch (failure) {
       setError(errorCopy(failure));
@@ -409,8 +417,7 @@ export default function TestRunSetup({
       !plan ||
       (!submitted &&
         (stale ||
-          !review?.complete ||
-          !acknowledged ||
+          !sendReady ||
           (review.diagnostic && settings.purpose !== "diagnostic")))
     )
       return;
@@ -557,9 +564,9 @@ export default function TestRunSetup({
             <MenuItem value="repeated">Repeated comparison</MenuItem>
           </TextField>
           <Typography variant="s3" color="text.secondary">
-            Up to {profileLimits.maxCases} examples ·{" "}
-            {profileLimits.repetitions} attempt(s) per arm ·{" "}
-            {profileLimits.deadlineSeconds} second stop ceiling
+            Up to {plural(profileLimits.maxCases, "test case")} ·{" "}
+            {plural(profileLimits.repetitions, "attempt")} per version ·{" "}
+            stops after {profileLimits.deadlineSeconds} seconds
           </Typography>
           {!production && (
             <Alert severity="info">
@@ -614,18 +621,18 @@ export default function TestRunSetup({
           </Stack>
           {settings.baselines.length + 1 > profileLimits.maxVariants && (
             <Alert severity="warning">
-              Choose exactly one baseline for a quick check, or choose repeated
+              Choose one baseline for a quick check, or choose repeated
               comparison.
             </Alert>
           )}
           {selectedCases.some((item) => !item.reviewed) && (
             <Alert severity="warning">
-              Review every selected example before running.
+              Approve every selected test case before running.
             </Alert>
           )}
           {caseIds.length > profileLimits.maxCases && (
             <Alert severity="warning">
-              Select at most {profileLimits.maxCases} examples for this profile.
+              Select at most {plural(profileLimits.maxCases, "test case")} for this profile.
             </Alert>
           )}
           <TextField
@@ -775,9 +782,10 @@ export default function TestRunSetup({
         <Section title="Confirm the reviewed plan">
           <Stack spacing={2}>
             <Typography variant="s1">
-              {plan.preview.caseCount} examples × {plan.preview.variantCount}{" "}
-              arms × {plan.preview.repetitions} repeats ={" "}
-              {plan.preview.attemptCount} attempts
+              {plural(plan.preview.caseCount, "test case")} ×{" "}
+              {plural(plan.preview.variantCount, "version")} ×{" "}
+              {plural(plan.preview.repetitions, "attempt")} per version ={" "}
+              {plural(plan.preview.attemptCount, "attempt")}
             </Typography>
             <Typography variant="s3" color="text.secondary">
               At most {plan.preview.maxTaskCalls} task calls and{" "}
@@ -800,8 +808,8 @@ export default function TestRunSetup({
             <TechnicalDetails title="Technical details">
               <Stack spacing={0.5}>
                 <Typography variant="s3" color="text.secondary">
-                  Exact upper-bound estimate: USD{" "}
-                  {plan.preview.estimate.upperBoundUsd} · exact stop: USD{" "}
+                  Upper-bound estimate: USD{" "}
+                  {plan.preview.estimate.upperBoundUsd} · stop: USD{" "}
                   {plan.configuration.limits.maxEstimatedCostUsd}
                 </Typography>
                 <Typography variant="s3" color="text.secondary">
@@ -868,47 +876,36 @@ export default function TestRunSetup({
                 For earlier content. Preview again before starting.
               </Alert>
             )}
+            {review.review.reviewedAllFiles && review.diagnostic && settings.purpose !== "diagnostic" && (
+              <Alert severity="warning">
+                A flagged file is marked as evaluation material or overlaps a test
+                case, so this can only run as a diagnostic check. Edit the draft, or
+                choose Diagnostic and preview again.
+              </Alert>
+            )}
             <TestInventoryReview
               preview={plan.preview}
               value={review.review}
               onChange={setReview}
               disabled={locked}
+              sendLabel={sendSentence({
+                fileCount: plan.preview.inventory.reduce((total, bundle) => total + bundle.files.length, 0),
+                what: plural(plan.preview.caseCount, "test case"),
+                provider: [plan.preview.providerDisclosure.taskProvider, plan.preview.providerDisclosure.judgeProvider]
+                  .filter(Boolean)
+                  .map(providerName)
+                  .filter((name, index, all) => all.indexOf(name) === index)
+                  .join(" and "),
+                upTo: centsUp(plan.preview.estimate.upperBoundUsd),
+                attestsNoAnswerKeys: settings.purpose !== "diagnostic",
+              })}
+              attestsNoAnswerKeys={settings.purpose !== "diagnostic"}
+              consentDisabled={consentHeld}
+              consentReason={consentHeld ? "Set an allowance first" : null}
             />
-            {review.diagnostic && settings.purpose !== "diagnostic" && (
-              <Alert severity="warning">
-                Confirm there are no known answer keys, or choose Diagnostic and
-                preview again.
-              </Alert>
-            )}
-            <Stack
-              direction={{ xs: "column", sm: "row" }}
-              spacing={{ xs: 0, sm: 1.5 }}
-              alignItems={{ xs: "flex-start", sm: "center" }}
-            >
-              <FormControlLabel
-                control={
-                  <Checkbox
-                    disabled={locked || consentHeld}
-                    checked={acknowledged && !consentHeld}
-                    inputProps={
-                      consentHeld
-                        ? { "aria-describedby": "skill-consent-reason" }
-                        : undefined
-                    }
-                    // A held acknowledgment never records a tick, so it cannot reappear checked once an allowance exists.
-                    onChange={(event) => { if (!consentHeld && !locked) setAcknowledged(event.target.checked); }}
-                  />
-                }
-                label="Send the reviewed files and example inputs to these model providers within this spend stop"
-              />
-              <ActionReason
-                id="skill-consent-reason"
-                reason={consentHeld ? "Set an allowance first" : null}
-              />
-            </Stack>
             {submitted && error && (
               <Alert severity="warning">
-                The request may already have been accepted. Retry this exact
+                The request may already have been accepted. Retry this same
                 submission; do not start a new paid run to discover its status.
               </Alert>
             )}
@@ -926,8 +923,7 @@ export default function TestRunSetup({
                   (!submitted &&
                     (allowanceOff ||
                       stale ||
-                      !review.complete ||
-                      !acknowledged ||
+                      !sendReady ||
                       (review.diagnostic && settings.purpose !== "diagnostic")))
                 }
                 {...reasonProps(

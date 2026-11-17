@@ -36,6 +36,9 @@ import { fDateTime } from "src/utils/format-time";
 import TestAttemptDrawer from "./TestAttemptDrawer";
 import Money from "../components/Money";
 import TechnicalDetails from "../components/TechnicalDetails";
+import { RowActionsCell } from "../components/RowActions";
+
+const plural = (count, one, many = `${one}s`) => `${count} ${count === 1 ? one : many}`;
 
 const FILTERS = {
   all: "All test cases",
@@ -78,10 +81,10 @@ export function TestExecutionConfiguration({ configuration }) {
           ? `Judge: ${configuration.judge.modelId} · temperature ${configuration.judge.temperature} · output allowance ${configuration.judge.maxOutputTokens} tokens/call`
           : "No AI judge"}
       </Typography>
-      <TechnicalDetails title="Technical details">
+      <TechnicalDetails title="Test runner versions">
         <Typography variant="s3" color="text.secondary">
-          Harness {configuration.harnessVersion} · adapter{" "}
-          {configuration.adapterVersion} · evaluator{" "}
+          Test runner {configuration.harnessVersion} · adapter{" "}
+          {configuration.adapterVersion} · grader{" "}
           {configuration.evaluatorVersion}
         </Typography>
       </TechnicalDetails>
@@ -250,9 +253,10 @@ export default function TestRunResults({
         {run.counts.notStarted} not started
       </Typography>
       <Typography variant="s3" color="text.secondary">
-        {run.selectedCaseIds.length} unique test cases · {run.repetitions}{" "}
-        attempt(s) per arm · {run.competitors.length} selected competitors · In
-        this text-only test, no scripts or external actions
+        {plural(run.selectedCaseIds.length, "test case")} ·{" "}
+        {plural(run.repetitions, "attempt")} per version ·{" "}
+        {plural(run.competitors.length, "selected competitor")} · In this
+        text-only test, no scripts or external actions
       </Typography>
       {run.profile === "quick" && (
         <Typography variant="s3" color="text.secondary">
@@ -303,7 +307,7 @@ export default function TestRunResults({
       {actionError && <Alert severity="error">{actionError}</Alert>}
       <Box component="details">
         <Typography component="summary" variant="s3">
-          Frozen model and execution details ·{" "}
+          Model and test settings ·{" "}
           {run.executionConfiguration.model.modelId}
         </Typography>
         <Stack spacing={1} sx={{ mt: 1 }}>
@@ -466,6 +470,7 @@ export default function TestRunResults({
                         </TableCell>
                       ))}
                       <TableCell>Change</TableCell>
+                      <TableCell aria-label="Actions" />
                     </TableRow>
                   </TableHead>
                   <TableBody>
@@ -545,6 +550,10 @@ export default function TestRunResults({
                         <TableCell>
                           <StatusBadge status={row.change} />
                         </TableCell>
+                        <RowActionsCell
+                          name={row.title}
+                          primary={{ label: "Inspect", onClick: () => select(row) }}
+                        />
                       </TableRow>
                     ))}
                   </TableBody>
