@@ -563,7 +563,13 @@ def _after_close(
                         update_fields=["state", "active_invocation_id", "updated_at"]
                     )
             if ref:
-                tasks.schedule_sandbox_stop(str(conversation.id), ref)
+                try:
+                    tasks.schedule_sandbox_stop(str(conversation.id), ref)
+                except Exception:  # noqa: BLE001 - the sandbox still dies at its idle limit
+                    logger.exception(
+                        "harness_nudge_sandbox_stop_failed conversation=%s",
+                        conversation.id,
+                    )
             if nudges._head(environment_id) is None:
                 return
             if waiting:
@@ -2060,8 +2066,16 @@ def tick_nudges(*, limit: int = 200) -> dict[str, int]:
     HarnessNudge.no_workspace_objects.filter(
         job_id__in=environments, state__in=OPEN
     ).update(updated_at=now)
-    for environment_id in environments:
-        tasks.schedule_nudge_check_task(environment_id)
+    for position, environment_id in enumerate(environments):
+        try:
+            tasks.schedule_nudge_check_task(environment_id)
+        except Exception:  # noqa: BLE001 - the next tick checks the rest
+            logger.exception(
+                "harness_nudge_tick_schedule_failed environment=%s skipped=%d",
+                environment_id,
+                len(environments) - position - 1,
+            )
+            break
     # A retry that finds the environment still busy re-records it: it waits a while.
     versions = _fair(
         HarnessAgentVersionRuntime.no_workspace_objects.filter(
