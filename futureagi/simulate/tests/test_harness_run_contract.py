@@ -501,3 +501,24 @@ class TestVersionRecordedBeforeItsSealedContract:
         assert {
             one["tool"]: one["reachable"] for one in _targets_before(environment)
         } == (dict.fromkeys(TOOLS, True))
+
+    def test_a_draft_that_recorded_no_contract_reads_the_default_version_s(
+        self, user, workspace, monkeypatch
+    ):
+        from simulate.selectors.environment_documents import version_contract
+
+        environment, version, storage = self._version(
+            user, workspace, "rc-draft-bare", monkeypatch
+        )
+        self._bundle(environment, version, storage)
+        draft = HarnessEnvironmentVersion._base_manager.create(
+            job=environment,
+            organization_id=environment.organization_id,
+            workspace_id=environment.workspace_id,
+            status="draft",
+            parent=version,
+            archive_size=0,
+            documents={},
+        )
+
+        assert version_contract(environment, draft) == SEALED

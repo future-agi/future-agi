@@ -35,9 +35,9 @@ def version_contract(
     """The contract a run of an environment version uses: ``version``, else the environment's default version, run
     by the agent and suite named, else the environment's default ones.
 
-    The one that pair's ready bundle was sealed with, else the one the version's documents record; the authoring
-    snapshot only before the environment has a version. Reads the pair's bundle row, and the bundle once per
-    bundle."""
+    The one that pair's ready bundle was sealed with, else the one the version's documents record, else the
+    default version's; the authoring snapshot only before the environment has a version. Reads the pair's bundle
+    row, and the bundle once per bundle."""
     from simulate.services.harness_versioning.assembly import sealed_contract
 
     version = version if version is not None else job.environment_version
@@ -48,7 +48,20 @@ def version_contract(
         agent_version_id=agent_version_id or job.agent_version_id,
         suite_version_id=suite_version_id or job.suite_version_id,
     )
-    return sealed or recorded_contract(version.documents) or contract_data(job)
+    recorded = sealed or recorded_contract(version.documents)
+    if recorded:
+        return recorded
+    # A draft or older version that recorded no contract runs as the default version would, never as the first
+    # authoring snapshot.
+    default = job.environment_version
+    if default is not None and default.id != version.id:
+        return version_contract(
+            job,
+            default,
+            agent_version_id=agent_version_id,
+            suite_version_id=suite_version_id,
+        )
+    return contract_data(job)
 
 
 def row_stage_output(job: HostedHarnessJob, kind: str) -> Any:
