@@ -296,6 +296,11 @@ class RunExecutionSerializer(serializers.Serializer):
     # ``agent_version`` is the version's name; this is the run's agent pin.
     pinned_agent_version = RunVersionLabelSerializer(allow_null=True, required=False)
     agent_differs = serializers.BooleanField(required=False, default=False)
+    build_notice = serializers.CharField(
+        allow_null=True,
+        required=False,
+        help_text="Said when the run replayed a build without its environment's actors.",
+    )
     selected_scenario_keys = serializers.ListField(
         child=serializers.CharField(), required=False, default=list
     )
@@ -753,6 +758,12 @@ def _execution_payload(
         "resume": asdict(resume_state(execution)),
         "summary": summary,
         "fix_run": fix_run,
+        # Said when the run replayed a build without its environment's actors.
+        "build_notice": (
+            ((job.payload or {}).get("metadata") or {}).get("assembly") or {}
+        ).get("notice")
+        if job is not None
+        else None,
     }
 
 

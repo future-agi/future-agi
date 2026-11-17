@@ -574,6 +574,30 @@ def _fallback_predates_cast(
     return None if BUNDLE_ROOT + "actors.json" in files else cast
 
 
+# Said on a run that replayed a build sealed before its environment's actors.
+WITHOUT_ACTORS = (
+    "This run used a build without the environment's actors, so none of them came in."
+)
+
+
+def note_without_actors(job: HostedHarnessJob) -> None:
+    """Say on the run that it replays a build without its environment's actors."""
+    with transaction.atomic():
+        locked = HostedHarnessJob.no_workspace_objects.select_for_update().get(
+            id=job.id
+        )
+        payload = dict(locked.payload or {})
+        metadata = dict(payload.get("metadata") or {})
+        metadata["assembly"] = {
+            **(metadata.get("assembly") or {}),
+            "notice": WITHOUT_ACTORS,
+        }
+        payload["metadata"] = metadata
+        locked.payload = payload
+        locked.save(update_fields=["payload", "updated_at"])
+    job.payload = locked.payload
+
+
 def _claim_cast(bundle: HarnessAssembledBundle, cast: str) -> bool:
     """Take a pending row to be certified for ``cast``, once: of launches racing on it, only the one whose update
     lands certifies it; the cast stays on the row through its fill."""
@@ -825,13 +849,15 @@ def prepare_launch(job: HostedHarnessJob) -> LaunchAssembly | None:
 
     def certifies_for_cast() -> bool:
         # Today's path replays the pair's own archive; one sealed before its environment's actors is certified
-        # with them instead, once, so the actors come in through a door that records them.
-        cast = (
-            _fallback_predates_cast(job, environment_version)
-            if certify_enabled() and defaults
-            else None
-        )
-        return cast is not None and _claim_cast(bundle, cast)
+        # with them instead, once, so the actors come in through a door that records them. One that cannot be
+        # (another launch certifies it, or certifying is off) is said on the run, never replayed silently.
+        cast = _fallback_predates_cast(job, environment_version) if defaults else None
+        if cast is None:
+            return False
+        if certify_enabled() and _claim_cast(bundle, cast):
+            return True
+        note_without_actors(job)
+        return False
 
     if not hit and not certifies:
         if not certifies_for_cast():
@@ -839,13 +865,13 @@ def prepare_launch(job: HostedHarnessJob) -> LaunchAssembly | None:
         certifies = True
     suite_version = HarnessSuiteVersion._base_manager.get(id=job.suite_version_id)
     # Sealed before its environment's actors: certified again once, so later runs replay a bundle that has them.
-    if (
-        hit
-        and certify_enabled()
-        and (cast := _predates_cast(bundle, environment_version))
-        and _recertify(bundle, cast)
-    ):
-        hit, certifies = False, True
+    without_actors = False
+    if hit and (cast := _predates_cast(bundle, environment_version)):
+        if certify_enabled() and _recertify(bundle, cast):
+            hit, certifies = False, True
+        else:
+            # Replayed as sealed, without the environment's actors: said on the run.
+            without_actors = True
 
     def key_for(cached_bundle: HarnessAssembledBundle | None) -> str:
         return assembled_key(
@@ -901,6 +927,7 @@ def prepare_launch(job: HostedHarnessJob) -> LaunchAssembly | None:
             "archive_key": object_key,
             "source_digest": source_digest,
             "bundle_object_key": bundle.object_key if hit else None,
+            **({"notice": WITHOUT_ACTORS} if without_actors else {}),
         }
         payload["metadata"] = metadata
         locked.payload = payload
@@ -1243,6 +1270,8 @@ def mark_failed(job: HostedHarnessJob, message: str) -> None:
     elif assembly.get("outcome") == "miss":
         rows.exclude(state=HarnessAssembledBundle.State.READY).update(
             state=HarnessAssembledBundle.State.FAILED,
+            # A certify for the cast that failed leaves no stamp, so the next launch claims it again.
+            certificate=None,
             error={
                 "code": "authoring_runtime_validation_failed",
                 "message": message[:1000],

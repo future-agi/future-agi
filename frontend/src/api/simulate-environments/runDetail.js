@@ -225,6 +225,8 @@ export function useRunDetail(
       environmentVersion: execution.environment_version ?? null,
       suiteVersion: execution.suite_version ?? null,
       agentDiffers: Boolean(execution.agent_differs),
+      // Said by the server when the run replayed a build without its environment's actors.
+      buildNotice: execution.build_notice ?? null,
       // A fix's check run: `{ id, label }` of the fix that started it, else null.
       fixRun: execution.fix_run ?? null,
       // How far an interrupted run got and whether it can resume; null when the

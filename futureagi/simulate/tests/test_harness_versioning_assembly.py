@@ -764,8 +764,11 @@ class TestCast:
             body=_sealed_authoring(**{"actors.json": CAST}),
         )
 
-        assert assembly.prepare_launch(_run(environment)).hit
+        run = _run(environment)
+        assert assembly.prepare_launch(run).hit
         assert _row(environment).state == "ready"
+        # Replayed without the environment's actors: said on the run.
+        assert run.payload["metadata"]["assembly"]["notice"] == assembly.WITHOUT_ACTORS
 
     def test_a_bundle_sealed_with_the_cast_is_opened_once(
         self, user, workspace, storage, settings
@@ -943,6 +946,47 @@ class TestLaunchMiss:
         assert outcome in outcomes
         # Certified in the run's own sandbox, with the cast, instead of replaying a seal without it.
         assert ("--certify-only" in _command(gateway)) == (outcome == "miss")
+
+    def _castless(self, user, workspace, storage, settings, key):
+        settings.HARNESS_BUNDLE_CERTIFY_ENABLED = True
+        environment = _environment(
+            user,
+            workspace,
+            key,
+            storage,
+            body=_sealed_authoring(**{"actors.json": CAST}),
+        )
+        _uncache(environment)
+        return environment
+
+    def test_a_certify_for_the_cast_that_failed_is_claimed_again_by_the_next_launch(
+        self, user, workspace, storage, settings
+    ):
+        environment = self._castless(
+            user, workspace, storage, settings, "asm-cast-retry"
+        )
+        first = _run(environment, key="r1")
+        assert assembly.prepare_launch(first).outcome == "miss"
+
+        assembly.mark_failed(first, "the certify did not pass")
+        assert _row(environment).certificate is None
+
+        assert assembly.prepare_launch(_run(environment, key="r2")).outcome == "miss"
+
+    def test_a_launch_that_replays_a_build_without_the_cast_says_so_on_the_run(
+        self, user, workspace, storage, settings
+    ):
+        environment = self._castless(
+            user, workspace, storage, settings, "asm-cast-lost"
+        )
+        cast = assembly._cast(_run(environment, key="r0").environment_version)
+        # Another launch is certifying this row for the cast: this one replays the build it has.
+        assert assembly._claim_cast(_row(environment), cast)
+        run = _run(environment, key="r1")
+
+        assert assembly.prepare_launch(run) is None
+        run.refresh_from_db()
+        assert run.payload["metadata"]["assembly"]["notice"] == assembly.WITHOUT_ACTORS
 
     def test_of_two_misses_on_one_row_only_one_certifies_it_for_the_cast(
         self, user, workspace, storage, settings

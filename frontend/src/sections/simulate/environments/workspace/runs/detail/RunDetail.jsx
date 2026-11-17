@@ -4,6 +4,7 @@ import { enqueueSnackbar } from "notistack";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import {
+  Alert,
   Box,
   Stack,
   Typography,
@@ -327,6 +328,15 @@ export default function RunDetail({
             {startedLabel ? ` · started ${startedLabel}` : ""}
             {lastResume ? ` · resumed ${fToNow(lastResume.at)}` : ""}
           </Typography>
+          {identity?.buildNotice && (
+            <Alert
+              severity="warning"
+              sx={{ mt: 1 }}
+              data-testid="run-build-notice"
+            >
+              {identity.buildNotice}
+            </Alert>
+          )}
         </Box>
 
         <ReliabilityHeadline

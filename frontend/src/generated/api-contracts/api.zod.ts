@@ -62188,6 +62188,7 @@ export const SimulateV3TestExecutionCallsQueryParams = zod.object({
 
 export const simulateV3TestExecutionCallsResponseExecutionAgentDiffersDefault =
   false;
+
 export const simulateV3TestExecutionCallsResponseExecutionSelectedScenarioKeysDefault =
   [];
 export const simulateV3TestExecutionCallsResponseExecutionTrialsDefault = 1;
@@ -62234,6 +62235,13 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
       .boolean()
       .default(
         simulateV3TestExecutionCallsResponseExecutionAgentDiffersDefault,
+      ),
+    build_notice: zod
+      .string()
+      .min(1)
+      .optional()
+      .describe(
+        "Said when the run replayed a build without its environment's actors.",
       ),
     selected_scenario_keys: zod
       .array(zod.string().min(1))
