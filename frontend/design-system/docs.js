@@ -16,11 +16,11 @@
   function setTheme(mode) {
     if (mode === "system") root.removeAttribute("data-theme");
     else root.setAttribute("data-theme", mode);
-    try { localStorage.setItem("ds-theme", mode); } catch (e) {}
+    try { localStorage.setItem("ds-theme", mode); } catch { /* Theme still applies when browser storage is unavailable. */ }
     $$(".theme-switch button").forEach((b) => b.classList.toggle("is-selected", b.dataset.set === mode));
   }
   let saved = "system";
-  try { saved = localStorage.getItem("ds-theme") || "system"; } catch (e) {}
+  try { saved = localStorage.getItem("ds-theme") || "system"; } catch { /* Keep the system theme when browser storage is unavailable. */ }
   setTheme(saved);
   $$(".theme-switch button").forEach((b) => b.addEventListener("click", () => setTheme(b.dataset.set)));
 
