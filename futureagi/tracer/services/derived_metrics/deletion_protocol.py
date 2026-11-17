@@ -659,6 +659,10 @@ def _before_delete(sender, instance, using, **kwargs):
                 "write_protocol": (instance.source_manifest or {}).get(
                     "write_protocol"
                 ),
+                "sql_source_window": {
+                    "start": instance.window_start.isoformat(),
+                    "end": instance.window_end.isoformat(),
+                },
             },
         }
     elif sender is DerivedMetricVersion:
@@ -689,7 +693,7 @@ def _before_delete(sender, instance, using, **kwargs):
         return
     project_id = metric.id if scope == "project" else metric.project_id
     with serialized_project(project_id, using=using):
-        _intent(
+        request = _intent(
             organization_id=metric.organization_id,
             project_id=project_id,
             scope=scope,
@@ -697,6 +701,10 @@ def _before_delete(sender, instance, using, **kwargs):
             using=using,
             **payload,
         )
+        if scope == "run":
+            from tracer.sql_workbench.metric_retention import invalidate_snapshot
+
+            invalidate_snapshot(request)
         # A single run deletion need not revoke unrelated readers. A version or
         # metric deletion does; project deletion permanently fences all heads.
         if scope == "project":

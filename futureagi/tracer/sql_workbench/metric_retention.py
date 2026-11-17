@@ -1,9 +1,11 @@
 """Policy and erasure guards for saved metric SQL results (REST and MCP)."""
 
-from django.db.models import Q
+from django.db.models import DateTimeField, Q
+from django.db.models.fields.json import KeyTextTransform, KeyTransform
+from django.db.models.functions import Cast
 from django.utils import timezone
 
-from tracer.models.derived_metric import MetricErasureRequest
+from tracer.models.derived_metric import DerivedMetricRun, MetricErasureRequest
 from tracer.models.sql_query import SQLExecution
 from tracer.services.derived_metrics.source_retention import window_retained
 
@@ -41,10 +43,43 @@ def erasures(organization_id, project_id):
     )
 
 
-def require_source(organization_id, project_id, start, sql):
+def snapshot_deletions(organization_id, project_id, start, end=None):
+    # A run-copy/history cleanup is NOT revocation. Only explicit snapshot
+    # deletion records this durable window, which survives deletion of its PG
+    # parent. Match the catalog's fully-contained window, not mere overlap.
+    requests = MetricErasureRequest.objects.filter(
+        organization_key=organization_id,
+        project_key=project_id,
+        scope_kind="run",
+        store_payload__protocol__isnull=True,
+    ).annotate(
+        sql_start=Cast(
+            KeyTextTransform(
+                "start", KeyTransform("sql_source_window", "store_payload")
+            ),
+            DateTimeField(),
+        ),
+        sql_end=Cast(
+            KeyTextTransform("end", KeyTransform("sql_source_window", "store_payload")),
+            DateTimeField(),
+        ),
+    )
+    window = Q(sql_start__gte=start)
+    if end is not None:
+        window &= Q(sql_end__lte=end)
+    # Pre-window deletion intents can outlive even their PG run tombstone.
+    # Without provenance, conservatively revoke every saved metric result in
+    # this project, not just outputs whose source window can still be recovered.
+    return requests.filter(window | Q(store_payload__sql_source_window__isnull=True))
+
+
+def require_source(organization_id, project_id, start, sql, *, end=None):
     if uses_metrics(sql) and (
         not window_retained(organization_id, start)
         or erasures(organization_id, project_id).exclude(status="done").exists()
+        or snapshot_deletions(organization_id, project_id, start, end)
+        .exclude(status="done")
+        .exists()
     ):
         raise QueryUnavailable(MESSAGE)
 
@@ -81,6 +116,54 @@ def invalidate(queryset):
     )
 
 
+def invalidate_snapshot(request):
+    using = request._state.db
+    window = request.store_payload.get("sql_source_window")
+    if not window:
+        # Ordinary run-copy cleanup must remain independent of SQL output.
+        if request.store_payload.get("protocol"):
+            return
+        # Match the read fence before attempting to recover any legacy window.
+        # Without provenance, all saved metric output in this project is stale.
+        invalidate_scope(request.organization_key, request.project_key)
+        run = (
+            DerivedMetricRun.objects.using(using)
+            .filter(
+                pk=request.run_key,
+                kind="snapshot",
+                deleted_at__isnull=False,
+                definition__metric__organization_id=request.organization_key,
+                definition__metric__project_id=request.project_key,
+            )
+            .first()
+        )
+        if run is None:
+            return
+        window = {
+            "start": run.window_start.isoformat(),
+            "end": run.window_end.isoformat(),
+        }
+        request.store_payload = {**request.store_payload, "sql_source_window": window}
+        MetricErasureRequest.objects.using(using).filter(pk=request.pk).update(
+            store_payload=request.store_payload
+        )
+    jobs = (
+        SQLExecution.objects.using(using)
+        .filter(
+            organization_id=request.organization_key,
+            project_id=request.project_key,
+            start__lte=window["start"],
+            end__gte=window["end"],
+        )
+        .filter(
+            Q(state__in=("queued", "running")) | Q(output_bytes__gt=0) | ~Q(result={})
+        )
+    )
+    for job in jobs.only("id", "sql").iterator(chunk_size=100):
+        if uses_metrics(job.sql):
+            invalidate(SQLExecution.objects.using(using).filter(pk=job.pk))
+
+
 def invalidate_scope(organization_id, project_id=None):
     # Metric SQL has no per-subject lineage, but ordinary SQL is not an output
     # of this store. Parse references rather than treating comments/literals as
@@ -102,6 +185,13 @@ def result_allowed(job):
         window_retained(job.organization_id, job.start)
         and not erasures(job.organization_id, job.project_id)
         .filter(Q(requested_at__gte=job.created_at) | ~Q(status="done"))
+        .exists()
+        and not snapshot_deletions(
+            job.organization_id, job.project_id, job.start, job.end
+        )
+        # A query admitted during deletion can have read the old native rows.
+        # Completion (not request creation) is the safe lower bound for reuse.
+        .filter(Q(completed_at__gte=job.created_at) | ~Q(status="done"))
         .exists()
     )
 

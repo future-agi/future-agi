@@ -1128,10 +1128,13 @@ class RefreshWriter:
         drops to half of what this pass managed, and MetricPassYield ends the
         pass. Never a takeover of an open attempt, never a partial publication.
         """
+        from tracer.services.derived_metrics.busy_guard import counts
+
+        work = counts(self)
         left = self.lease.budget_seconds()
         if left is None or left >= pass_soft_margin_seconds():
             return
-        done = getattr(self, "pass_captures", 0)
+        done = work["captures"]
         with transaction.atomic():
             fence = self.lease.check()
             MetricRefreshAttempt.abort(attempt.id, reason=PASS_YIELD, **fence)
@@ -1803,33 +1806,49 @@ class RefreshWriter:
         if len(ids) > MAX_PASS_UNITS:
             raise ValueError("replacement owner set exceeds pass cap")
         from tracer.services.derived_metrics.backfill import forward_coverage_start
+        from tracer.services.derived_metrics.busy_guard import (
+            counts,
+            record_mixed_closure,
+        )
 
+        self._busy_span_start = getattr(self, "pass_span_captures", 0)
+        counts(self, owners=len(ids), definitions=definitions)
         if any(d.level == "span" for d in definitions):
             from tracer.services.derived_metrics.span_evidence import (
                 freeze_span_fields,
             )
+            from tracer.services.derived_metrics.span_sampling import (
+                SpanSamplingContext,
+            )
 
             self._span_dirty_keys(attempt, change, head, source_ids)
-            for definition in definitions:
-                if definition.level == "span":
-                    coverage = forward_coverage_start(definition)
-                    freeze_span_fields(
-                        self,
-                        attempt,
-                        head,
-                        definition,
-                        scope,
-                        as_of=as_of,
-                        # A forward-only span version owns no span that starts
-                        # before its coverage start (nor beyond retention).
-                        cutoff=cutoff
-                        if coverage is None
-                        else max(v for v in (cutoff, coverage) if v is not None),
-                    )
+            # One frozen quarter-wide context for the entire publication, shared
+            # by definitions with the same filters and every identity page.
+            with SpanSamplingContext(
+                self, attempt, definitions, scope, as_of=as_of
+            ) as sampling:
+                for definition in definitions:
+                    if definition.level == "span":
+                        coverage = forward_coverage_start(definition)
+                        freeze_span_fields(
+                            self,
+                            attempt,
+                            head,
+                            definition,
+                            scope,
+                            as_of=as_of,
+                            sampling=sampling,
+                            # A forward-only span version owns no span that starts
+                            # before its coverage start (nor beyond retention).
+                            cutoff=cutoff
+                            if coverage is None
+                            else max(v for v in (cutoff, coverage) if v is not None),
+                        )
             if any(d.level == "conversation" for d in definitions):
                 owners = self._unowned_span_sessions(attempt, head, ids)
                 if len(ids | owners) <= MAX_PASS_UNITS:
                     ids |= owners
+                record_mixed_closure(self, attempt, definitions, ids | owners)
         # Every capture statement names the pass's source identities in a
         # session table instead of inlining them (bug 7: ~1 MB statements).
         with ExitStack() as capture_relations:
@@ -1948,6 +1967,7 @@ class RefreshWriter:
                                 "metric publication dependency cap exceeded"
                             )
                     self.pass_captures = getattr(self, "pass_captures", 0) + 1
+                    counts(self)
                     for source_page in captured.pages():
                         query, params = source_page.select()
                         old_sql, old_params = committed_rows_select(

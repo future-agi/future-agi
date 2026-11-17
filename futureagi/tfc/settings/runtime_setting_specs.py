@@ -811,6 +811,11 @@ INTERACTIVE_READ_SETTING_SPECS = {
 # METRICS_PASS_MAX_CAPTURES bounds the capture statements one pass plans (a
 # larger arrival window goes to the paged burst sweep); a pass stops cleanly
 # METRICS_PASS_SOFT_MARGIN_SECONDS before its deadline.
+# METRICS_BUSY_MAX_YIELDS pauses an unchanged pending frontier after consecutive
+# nonpublishing passes (at least two). METRICS_BUSY_CAPTURE_MS is an operator
+# capacity hint for diagnostics and retrying paused work when settings improve,
+# NEVER an admission threshold. Neither setting changes the pass deadline or
+# the soft-yield reserve.
 # METRICS_EXPIRY_INTERVAL_SECONDS is how far physical metric expiry may trail
 # the retention policy (batched, like raw spans' daily parts); reads always
 # apply the exact cutoff and erasure stays prompt.
@@ -832,6 +837,8 @@ METRICS_FEATURE_SETTING_SPECS = _specs(
         ("METRICS_MAX_DELTAS_BEFORE_COMPACTION", 19, 1, 19),
         ("METRICS_PASS_MAX_CAPTURES", 48, 1, 10_000),
         ("METRICS_PASS_SOFT_MARGIN_SECONDS", 200, 30, 500),
+        ("METRICS_BUSY_MAX_YIELDS", 3, 2, 100),
+        ("METRICS_BUSY_CAPTURE_MS", 2500, 1, 60_000),
         ("METRICS_EXPIRY_INTERVAL_SECONDS", 86_400, 60, 604_800),
         ("METRICS_HISTORY_GC_GRACE_SECONDS", 1_800, 600, 604_800),
         ("METRICS_GC_MASK_PARTITIONS_PER_RUN", 4, 0, 64),

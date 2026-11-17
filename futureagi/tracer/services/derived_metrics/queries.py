@@ -156,6 +156,8 @@ def snapshot_select(
     source_parameters: dict | None = None,
     include_evidence: bool = False,
     quarter_ambiguity: bool = False,
+    sampling_context: str | None = None,
+    ambiguity_only: bool = False,
 ) -> tuple[str, dict]:
     """Freeze one row per canonical selection unit, independently reducing inputs.
 
@@ -221,9 +223,16 @@ def snapshot_select(
     )
     sampling_ambiguity = (
         f"uniqExact(s.trace_id) OVER (PARTITION BY {ambiguity_scope}) > 1"
-        if definition.selection_unit == "span"
+        if definition.selection_unit == "span" and not ambiguity_only
         else "0"
     )
+    if sampling_context is not None:
+        # The writer freezes the complete quarter's filtered sampler collisions
+        # before paging identities. Never recompute this window over one page.
+        sampling_ambiguity = (
+            "(s.id, toStartOfFifteenMinutes(s.start_time)) IN "
+            f"(SELECT span_id, bucket_start FROM ({sampling_context}))"
+        )
     span_inputs = []
     for item in definition.inputs:
         if item["source"] != "span":
@@ -283,6 +292,19 @@ def snapshot_select(
         WHERE s.is_deleted = 0 AND ({filter_sql}) AND notEmpty({unit}) AND {unit} != '00000000-0000-0000-0000-000000000000' {member_window}
     )""",
     ]
+    if ambiguity_only:
+        if definition.selection_unit != "span" or not quarter_ambiguity:
+            raise ValueError("sampling context requires quarter-scoped spans")
+        # Reuse exactly the compiler's winning, live, filtered membership, not
+        # physical revisions or a separate approximation of membership. Two
+        # extrema prove a trace collision without an unbounded per-id set.
+        return (
+            "WITH " + ", ".join(ctes) + " SELECT raw_span_id AS span_id, "
+            "toStartOfFifteenMinutes(start_time) AS bucket_start FROM members "
+            "GROUP BY raw_span_id, bucket_start "
+            "HAVING min(raw_trace_id) != max(raw_trace_id)",
+            params,
+        )
     span_values = [
         reduce_sql(
             f"m.v_{item['alias']}",

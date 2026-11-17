@@ -672,8 +672,13 @@ def _process_erasure(request_id, *, store=None, writer=None):
         phase = "saved_sql_cleanup"
         try:
             request.refresh_from_db()
-            from tracer.sql_workbench.metric_retention import invalidate_scope
+            from tracer.sql_workbench.metric_retention import (
+                invalidate_scope,
+                invalidate_snapshot,
+            )
 
+            if request.scope_kind == "run":
+                invalidate_snapshot(request)
             if request.scope_kind in {
                 "organization",
                 "project",

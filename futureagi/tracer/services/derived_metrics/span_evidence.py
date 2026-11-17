@@ -295,6 +295,7 @@ def captured_span_fields(
     previous_page=None,
     unit_range=None,
     floors=None,
+    sampling_context=None,
 ):
     """Capture the dirty buckets' span fields into one bounded native table.
 
@@ -385,6 +386,7 @@ def captured_span_fields(
                 as_of=as_of,
                 start_floor=floors[at, until],
                 unit_range=unit_range,
+                sampling_context=sampling_context,
             )
             if preserve_pruned:
                 previous_columns = ", ".join(
@@ -413,6 +415,13 @@ def captured_span_fields(
                 params = merge_bindings(
                     params, previous_params, {"span_capture_cutoff": cutoff}
                 )
+            if unit_range is not None:
+                # Fresh identity pages only. Retirement has its own budget and
+                # must never depend on the busy-slot admission settings.
+                from tracer.services.derived_metrics.busy_guard import counts
+
+                writer.pass_span_captures = getattr(writer, "pass_span_captures", 0) + 1
+                counts(writer)
             # The source compiler executes ONCE per whole dirty bucket. Bound
             # typed bytes before inserting into Memory, not after a lossy LIMIT.
             store.execute(
@@ -648,7 +657,9 @@ def _over_budget(exc):
     ) or (isinstance(exc, MetricVisibilityError) and "exceeds" in str(exc))
 
 
-def freeze_span_fields(writer, attempt, head, definition, scope, *, as_of, cutoff):
+def freeze_span_fields(
+    writer, attempt, head, definition, scope, *, as_of, cutoff, sampling
+):
     """Freeze one replacement per key, including vanished/filtered/moved sources.
 
     Pages are disjoint, key-ordered ranges of span identities, each its own
@@ -661,11 +672,13 @@ def freeze_span_fields(writer, attempt, head, definition, scope, *, as_of, cutof
     consumes these frozen bytes, NOT mutable spans.
     """
     dirty = _dirty_buckets(attempt)
-    after, rows, floors = "", SPAN_CAPTURE_ROWS, {}
+    after, rows, floors = "", SPAN_CAPTURE_ROWS, sampling.floors
     with writer.store.compaction_budget(monotonic() + 600):
         while True:
             writer.lease.keepalive()
+            context = sampling.select(definition)
             through = _span_page_through(writer, head, definition, dirty, after, rows)
+            writer.yield_if_late(attempt)
             try:
                 _freeze_span_page(
                     writer,
@@ -677,11 +690,15 @@ def freeze_span_fields(writer, attempt, head, definition, scope, *, as_of, cutof
                     cutoff=cutoff,
                     unit_range=(after, through),
                     floors=floors,
+                    sampling_context=context,
                 )
+                sampling.check()
             except Exception as exc:
                 if rows > 1 and _over_budget(exc):
                     # Nothing of this page was frozen: budgets are checked
-                    # before either freeze. Retry the same start, smaller.
+                    # before either freeze. The native error discarded scratch
+                    # tables; replay frozen collisions, not mutable source.
+                    sampling.restore_for_retry()
                     rows = max(1, rows // 2)
                     continue
                 raise
@@ -691,7 +708,17 @@ def freeze_span_fields(writer, attempt, head, definition, scope, *, as_of, cutof
 
 
 def _freeze_span_page(
-    writer, attempt, head, definition, scope, *, as_of, cutoff, unit_range, floors
+    writer,
+    attempt,
+    head,
+    definition,
+    scope,
+    *,
+    as_of,
+    cutoff,
+    unit_range,
+    floors,
+    sampling_context=None,
 ):
     with captured_span_fields(
         writer,
@@ -703,6 +730,7 @@ def _freeze_span_page(
         cutoff=cutoff,
         unit_range=unit_range,
         floors=floors,
+        sampling_context=sampling_context,
     ) as (fields, previous, params, count, size):
         tombstones = (
             "SELECT * REPLACE(toUInt8(1) AS is_deleted, 'no_value' AS status, "

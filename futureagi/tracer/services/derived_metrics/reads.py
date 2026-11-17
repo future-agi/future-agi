@@ -289,14 +289,14 @@ def cut_terms(manifest, definition):
 
 
 def _paused(manifest):
-    """Whether a pinned manifest's project is paused as too large (size_cap)."""
+    """Stable capacity reason for this pinned manifest's project, or empty."""
     from tracer.models.derived_metric import MetricReadManifest
 
     return (
         isinstance(manifest, MetricReadManifest)
         and MetricProjectRefresh.objects.filter(project_id=manifest.project_id)
-        .exclude(paused_reason="")
-        .exists()
+        .values_list("paused_reason", flat=True)
+        .first()
     )
 
 
@@ -315,20 +315,46 @@ def open_buckets(store, metric, definition, manifest, start, end):
     rows in the range, then collapse their COMPLETE keys and reapply the predicate.
     A closed/deleted/moved winner must still suppress an older open revision.
     """
+    predicate = (
+        "bucket_start >= %(open_start)s AND bucket_start < %(open_end)s "
+        "AND status = 'open' AND is_deleted = 0"
+    )
+    window_params = {"open_start": start, "open_end": end}
+    keys = {
+        "field_id": (definition.metric_id,),
+        "field_version": (definition.version,),
+    }
+    # No raw nominee means no winning open unit. Prove that common case with
+    # a narrow scan, avoiding the complete-key semi-join's planning cost. This
+    # uses the same pinned attempts, scope and predicate as the full proof;
+    # neither policy nor finality is cached between requests. LIMIT 1 proves
+    # existence only: a positive result MUST still collapse complete histories
+    # below, including closed, moved and deleted revisions outside the window.
+    branches, params = committed_branches(
+        FIELD_VALUES,
+        manifest,
+        org_id=metric.organization_id,
+        project_id=metric.project_id,
+        key_in=keys,
+        columns=("bucket_start", "status", "is_deleted"),
+        param_prefix="open_probe",
+    )
+    if not branches or not _rows(
+        store,
+        "SELECT 1 AS candidate FROM ("
+        + " UNION ALL ".join(branches)
+        + f") WHERE {predicate} LIMIT 1",
+        {**params, **window_params},
+    ):
+        return {}
     fields, params = windowed_rows_select(
         FIELD_VALUES,
         manifest,
         org_id=metric.organization_id,
         project_id=metric.project_id,
-        predicate=(
-            "bucket_start >= %(open_start)s AND bucket_start < %(open_end)s "
-            "AND status = 'open' AND is_deleted = 0"
-        ),
-        params={"open_start": start, "open_end": end},
-        key_in={
-            "field_id": (definition.metric_id,),
-            "field_version": (definition.version,),
-        },
+        predicate=predicate,
+        params=window_params,
+        key_in=keys,
         columns=(
             *FIELD_VALUES.logical_key,
             "generation",
@@ -377,7 +403,7 @@ class Finality:
     @property
     def uncalculated(self):
         """Why a bucket past ``calculated`` has no value."""
-        return "too_large" if self.paused else "not_calculated"
+        return "too_large" if self.paused is True else (self.paused or "not_calculated")
 
     def final(self, bucket):
         return bucket + QUARTER <= self.settled and bucket not in self.opened
@@ -390,14 +416,23 @@ class Finality:
             at += QUARTER
 
     def nonfinal(self, window):
-        return [b for b in self.buckets(window) if not self.final(b)]
+        # Finality has only two exceptions to the settled prefix: the bounded
+        # open-bucket map and the unsettled tail. Do not walk every already-final
+        # quarter (repeatedly for KPI, disclosures and each trend point).
+        start, end = window["window_start"], window["window_end"]
+        tail = start + max(0, (self.settled - start) // QUARTER) * QUARTER
+        opened = sorted(
+            bucket
+            for bucket in self.opened
+            if start <= bucket < min(end, tail)
+            and (bucket - start) % QUARTER == timedelta(0)
+        )
+        return opened + list(self.buckets({"window_start": tail, "window_end": end}))
 
     def complete_through(self, window):
         """End of the window's contiguous final prefix."""
-        for bucket in self.buckets(window):
-            if not self.final(bucket):
-                return bucket
-        return window["window_end"]
+        nonfinal = self.nonfinal(window)
+        return nonfinal[0] if nonfinal else window["window_end"]
 
     def reason(self, window):
         return (
@@ -409,7 +444,7 @@ class Finality:
     def disclosure(self, window):
         nonfinal = self.nonfinal(window)
         return {
-            "complete_through": self.complete_through(window),
+            "complete_through": nonfinal[0] if nonfinal else window["window_end"],
             "partial": bool(nonfinal),
             "nonfinal_buckets": len(nonfinal),
             "open_units": sum(
@@ -718,7 +753,9 @@ def require_calculated_window(
     if finality is None:
         return None
     nonfinal = finality.nonfinal(window)
-    if len(nonfinal) == len(list(finality.buckets(window))):
+    if len(nonfinal) == math.ceil(
+        (window["window_end"] - window["window_start"]) / QUARTER
+    ):
         # Final values stop at the settled bound or earlier.
         raise _not_calculated_yet(
             min(finality.complete_through(window), finality.settled),

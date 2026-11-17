@@ -135,7 +135,7 @@ def _resource_limit(name, default):
 def query_scope(actor, project, start, end, sql):
     from .metric_retention import require_source
 
-    require_source(actor.organization_id, project.id, start, sql)
+    require_source(actor.organization_id, project.id, start, sql, end=end)
     _, references = validate(sql)
     if (
         project.organization_id != actor.organization_id

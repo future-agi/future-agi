@@ -341,10 +341,11 @@ def reserve_projects(*, clock: Callable = timezone.now) -> list[Reservation]:
             )
             if not cursor.fetchone()[0]:
                 return []
-        from tracer.services.derived_metrics import size_cap
+        from tracer.services.derived_metrics import busy_guard, size_cap
 
         if enabled:
             size_cap.resume_within_limit(now=now)
+            busy_guard.resume_within_budget(now=now)
         free = max(
             0,
             limit
@@ -437,13 +438,18 @@ def request_refresh(project_id: UUID, *, clock: Callable = timezone.now) -> bool
             # A skipped lock is NOT proof of a pending/throttled request. Missing
             # state likewise cannot acknowledge delivery; the caller must retry.
             raise RefreshAdmissionUnavailable
-        if state.refresh_requested_at is not None or (
-            state.last_started_at and now < state.last_started_at + RUN_NOW_THROTTLE
-        ):
+        if (
+            state.refresh_requested_at is not None and state.paused_reason != "too_busy"
+        ) or (state.last_started_at and now < state.last_started_at + RUN_NOW_THROTTLE):
             return False
-        MetricProjectRefresh.objects.filter(pk=state.pk).update(
-            refresh_requested_at=now
-        )
+        updates = {"refresh_requested_at": now}
+        if state.paused_reason == "too_busy":
+            from tracer.services.derived_metrics.busy_guard import resume_updates
+
+            if state.lease_expires_at and state.lease_expires_at > now:
+                return False
+            updates.update(resume_updates(now))
+        MetricProjectRefresh.objects.filter(pk=state.pk).update(**updates)
     return True
 
 
@@ -461,6 +467,7 @@ def record_failure(reservation: Reservation, *, now: datetime, code: str) -> Non
         last_error_at=now,
         last_error_code=code,
         consecutive_failures=F("consecutive_failures") + 1,
+        **({"busy_yields": 0} if code == "metric_refresh_failed" else {}),
     )
 
 
@@ -611,8 +618,11 @@ def execute_reservation(
         if not admitted:
             _release_queued(reservation)
             return False
+        from tracer.services.derived_metrics import busy_guard
+
         claimed = False
         previous_head = None
+        previous_frontier = None
         try:
             with _project_admission(
                 lease.project_id, reservation.expiry_id, privacy_only=privacy_only
@@ -632,9 +642,9 @@ def execute_reservation(
             # require their existing independent commit boundaries.
             if not privacy_only and not metrics_enabled(project=lease.project_id):
                 return False
-            previous_head = MetricProjectRefresh.objects.values_list(
-                "head_manifest_id", flat=True
-            ).get(project_id=lease.project_id)
+            state_before = MetricProjectRefresh.objects.get(project_id=lease.project_id)
+            previous_head = state_before.head_manifest_id
+            previous_frontier = busy_guard.frontier(state_before)
             started = lease.ticker()
             if reservation.expiry_id:
                 run_project_cleanup(lease, reservation.expiry_id)
@@ -643,6 +653,8 @@ def execute_reservation(
             # The writer alone advances work flags, cursors and manifest. A
             # successful backfill/repair is not proof of incremental catch-up.
             updates = {"consecutive_failures": 0, "last_error_code": ""}
+            if not privacy_only:
+                updates["busy_yields"] = 0
             with transaction.atomic():
                 state = MetricProjectRefresh._locked(lease.project_id, **lease.check())
                 if (
@@ -665,6 +677,8 @@ def execute_reservation(
                 MetricProjectRefresh.objects.filter(pk=state.pk).update(**updates)
             return True
         except MetricPassDeadline:
+            if claimed and not privacy_only:
+                busy_guard.record_yield(lease, previous_frontier)
             # Published chunk cursors remain durable. A pass that made progress
             # must not inherit the OLD failure's exponential backoff when yielding.
             # Do not acknowledge Run now until the requested pass really finishes.

@@ -236,15 +236,22 @@ class MetricHistoryDefinitionSerializer(DerivedMetricVersionSerializer):
 
 class MetricCalculationPausedSerializer(serializers.Serializer):
     reason = serializers.ChoiceField(
-        choices=["too_large"],
-        help_text="too_large: the project's stored metric rows exceed the limit",
+        choices=["too_large", "too_busy"],
+        help_text="too_large: stored row limit; too_busy: work cannot finish in a pass",
     )
     since = serializers.DateTimeField()
     rows = serializers.IntegerField(
-        min_value=0, help_text="Stored metric rows measured when it paused"
+        min_value=0,
+        allow_null=True,
+        help_text="Stored metric rows measured when it paused",
     )
     limit = serializers.IntegerField(
         min_value=1, help_text="METRICS_MAX_CHECKPOINT_ROWS; raising it resumes"
+    )
+    work = serializers.DictField(
+        child=serializers.IntegerField(min_value=0),
+        required=False,
+        help_text="Non-identifying busy-slot counts: owners, definitions, captures and capacity",
     )
 
 
@@ -292,6 +299,11 @@ class DerivedMetricSerializer(serializers.ModelSerializer):
                 "since": state.paused_at,
                 "rows": state.paused_rows,
                 "limit": max_checkpoint_rows(),
+                **(
+                    {"work": state.busy_counts}
+                    if state.paused_reason == "too_busy"
+                    else {}
+                ),
             }
         ).data
 
@@ -753,13 +765,13 @@ class MetricUnavailableSerializer(serializers.Serializer):
         ),
     )
     reason = serializers.ChoiceField(
-        choices=["not_calculated", "settling", "too_large"],
+        choices=["not_calculated", "settling", "too_large", "too_busy"],
         required=False,
         help_text=(
             "window_not_calculated_yet: not_calculated (past the calculated "
-            "bound), settling (calculated, but holding open units) or "
-            "too_large (the project's metrics are paused: it stores more rows "
-            "than the limit)"
+            "bound), settling (calculated, but holding open units), "
+            "too_large (stored row limit), or too_busy (the pending work "
+            "cannot complete within a pass)"
         ),
     )
 

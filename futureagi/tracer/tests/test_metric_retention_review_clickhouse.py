@@ -234,11 +234,18 @@ def test_copy_cleanup_keeps_valid_sql_results(publication_store, tenants, scope)
         for state in ("running", "succeeded")
         for sql in ("SELECT span_id FROM spans", "SELECT value FROM derived_metrics")
     ]
+    # Production copy cleanup marks its detached namespace explicitly. A bare
+    # run intent with no window is a legacy deletion, not evidence of a safe
+    # copy-only cleanup; it must now conservatively revoke saved metric SQL.
+    from tracer.services.derived_metrics.snapshots import ATTEMPT_CLEANUP_PROTOCOL
+
     job = _intent(
         organization_id=actor.organization_id,
         project_id=project.pk,
         scope=scope,
         run_key=uuid4() if scope == "run" else None,
+        snapshot_key=uuid4() if scope == "run" else None,
+        store_payload={"protocol": ATTEMPT_CLEANUP_PROTOCOL} if scope == "run" else {},
     )
     assert erasure.process_erasure(job.pk, store=publication_store)
     for saved in jobs:

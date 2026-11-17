@@ -1432,12 +1432,15 @@ def _expired_physical_payload(writer, head, cutoff):
     return False
 
 
-def finish_unpublished_replan(writer):
+def finish_unpublished_replan(writer, *, discard_drafts=False):
     """Erase failed first-publication copies without creating an admission head.
 
     The durable policy debt authorizes cleanup, not calculation. Fence every
     existing draft, scrub the generation-bounded namespace, wait for synchronous
     submission receipts, and verify a second scrub before discharging the debt.
+    Without a head there is no retained replacement checkpoint: finite-policy
+    expiry and subject erasure conservatively discard ALL unpublished copies,
+    including retained ones. Repair rediscovers source; no cursor is consumed.
     """
     project_id = writer.lease.project_id
     with serialized_project(project_id):
@@ -1450,9 +1453,35 @@ def finish_unpublished_replan(writer):
             deletion_key__startswith="retention-replan:",
             store_payload__protocol="metric_policy_replan",
         ).exclude(status="done")
-        ids = list(debts.values_list("id", flat=True))
-        if state.head_manifest_id or not ids:
+        if state.head_manifest_id:
             return False
+        if not debts.exists() and (
+            discard_drafts
+            or retention_cutoff(writer.retention_days(), now=writer.lease.clock())
+            is not None
+        ):
+            # A pass_yield is not a policy-replan failure, but its frozen bytes
+            # have the same source lifetime. Persist the normal cleanup debt
+            # BEFORE deleting their only ledger, so interrupted scrubs retry.
+            latest = (
+                MetricRefreshAttempt.objects.filter(project_id=project_id)
+                .order_by("-generation")
+                .first()
+            )
+            if latest is not None:
+                from tracer.services.derived_metrics.deletion_protocol import _intent
+
+                _intent(
+                    organization_id=writer.org_id,
+                    project_id=project_id,
+                    scope="history",
+                    deletion_key=f"retention-replan:{latest.id}",
+                    store_payload={"protocol": "metric_policy_replan"},
+                )
+        ids = list(debts.values_list("id", flat=True))
+        if not ids:
+            # No draft, or this exact generation has already been scrubbed.
+            return discard_drafts
         if MetricGenerationPin.objects.filter(
             project_id=project_id,
             invalidated_at__isnull=True,
@@ -1472,7 +1501,7 @@ def finish_unpublished_replan(writer):
         )
         _purge_terminal_payloads(project_id, through_generation=through)
         MetricProjectRefresh.objects.filter(project_id=project_id).update(
-            pending_repair=True
+            pending_repair=True, pending_expiry=True
         )
     submissions = MetricErasureRequest.objects.filter(
         project_key=project_id,
@@ -1890,6 +1919,93 @@ def expire_project(writer, definitions, *, retention_days, now=None, as_of=None)
     return {"unlimited": unlimited, "purged": complete, "manifest": str(manifest.id)}
 
 
+def _erasure_handoff(store, handoff, request, erased_units):
+    """Transfer unconsumed work, excluding the erased owners and their aliases.
+
+    Preimages can be the only remaining owner link for a failed pass. Include
+    them in the same victim closure used to copy native fields, rather than
+    preserving an erased alias or dropping every unrelated recovery nomination.
+    """
+
+    def identified(value):
+        return isinstance(value, str) and bool(value.strip())
+
+    # Absence is not an identity: sessionless owners share empty/blank slots.
+    # Keep exact nonblank IDs (including their whitespace), never normalize
+    # distinct identities into an alias while computing the victim closure.
+    subjects = {value for value in request.subject_ids if identified(value)}
+    erased_units = {value for value in erased_units if identified(value)}
+    if request.scope_kind == "sessions":
+        erased_units.update(subjects)
+    entries = [entry for values in handoff.values() for entry in values]
+    owner_keys = ("unit_id", "raw_session_id", "canonical_session_id")
+
+    keys = list(
+        {
+            (entry["trace_id"], entry["span_id"])
+            for entry in entries
+            if entry.get("trace_id") and entry.get("span_id")
+        }
+    )
+    identities = {}
+    for offset in range(0, len(keys), 500):
+        # Use the native key encoding, including Unicode/slash escaping; a
+        # Python JSON spelling is not necessarily the stored span identity.
+        identities.update(
+            (tuple(pair), identity)
+            for pair, identity in store.execute(
+                "SELECT pair, toJSONString(pair) FROM "
+                "(SELECT arrayJoin(%(erasure_pairs)s) AS pair)",
+                {"erasure_pairs": keys[offset : offset + 500]},
+            )
+        )
+
+    def span_identity(entry):
+        return identities.get((entry.get("trace_id"), entry.get("span_id")))
+
+    def erased(entry):
+        return (
+            any(entry.get(key) in erased_units for key in owner_keys)
+            or span_identity(entry) in erased_units
+            or (
+                request.scope_kind == "users"
+                and any(
+                    entry.get(key) in subjects
+                    for key in ("raw_user_id", "canonical_user_id")
+                )
+            )
+        )
+
+    while True:
+        previous = len(erased_units)
+        for entry in entries:
+            if erased(entry):
+                erased_units.update(
+                    entry[key] for key in owner_keys if identified(entry.get(key))
+                )
+                identity = span_identity(entry)
+                if identity:
+                    erased_units.add(identity)
+        if len(erased_units) == previous:
+            break
+    retained = {}
+    for part, values in handoff.items():
+        retained[part] = []
+        for entry in values:
+            if erased(entry):
+                continue
+            if (
+                not any(entry.get(key) for key in OWNER_KEYS)
+                and "bucket_start" in entry
+            ):
+                # Anonymous bucket nominations need no private group labels.
+                entry = {
+                    k: v for k, v in entry.items() if k in {"bucket_start", "level"}
+                }
+            retained[part].append(entry)
+    return retained, erased_units
+
+
 def purge_by_scope(store, request, *, writer=None):
     if writer is not None:
         return _purge_with_writer(writer, store, request)
@@ -1949,13 +2065,37 @@ def _purge_by_scope(store, request, *, writer=None):
             raise MetricStateConflict("subject erasure requires a project writer")
         with serialized_project(request.project_key):
             head = MetricProjectRefresh.for_project(request.project_key).head_manifest
-            if head is None or head.revoked_at:
-                raise MetricStateConflict(
-                    "subject erasure requires a usable source manifest"
+            if head is not None:
+                if head.revoked_at:
+                    raise MetricStateConflict(
+                        "subject erasure requires a usable source manifest"
+                    )
+                recovery_pending = head.published_by.source_ceilings.get(
+                    "recovery_pending", False
                 )
-            attempt = writer.begin(
-                purpose="compaction", ceilings={"erasure": str(request.id)}
-            )
+                handoff = {}
+                if recovery_pending:
+                    for chunk in head.published_by.ledger_chunks.exclude(
+                        part="cleanup_intent"
+                    ):
+                        handoff.setdefault(chunk.part, []).extend(chunk.payload)
+                attempt = writer.begin(
+                    purpose="compaction",
+                    ceilings={
+                        "erasure": str(request.id),
+                        "recovery_pending": recovery_pending,
+                    },
+                )
+        if head is None:
+            # No committed values exist to preserve. Scrub all unpublished
+            # copies under the same generation fence and late-write barrier,
+            # rather than leaving a paused first publication uneraseable.
+            if not finish_unpublished_replan(writer, discard_drafts=True):
+                raise MetricStateConflict("unpublished erasure drainage is pending")
+            return {
+                "unpublished_drafts_dropped": True,
+                "anonymous_history_dropped": True,
+            }
         store.assert_visible(head)
         ids = tuple(request.subject_ids)
         params["erase_subjects"] = ids
@@ -2009,7 +2149,16 @@ def _purge_by_scope(store, request, *, writer=None):
                     {**params, **bound},
                 )
             )
-        params["erase_units"] = tuple(row[0] for row in victims) or ("",)
+        handoff, erased_units = _erasure_handoff(
+            store, handoff, request, {row[0] for row in victims}
+        )
+        # Persist the retained nominations BEFORE sealing the successor. No
+        # source cursor is consumed by this copy-only privacy checkpoint.
+        for part, entries in handoff.items():
+            writer.append(attempt, part, entries)
+        # An empty native array is a nonmatch; an empty-string sentinel would
+        # instead match every unrelated sessionless dependency.
+        params["erase_units"] = sorted(erased_units)
         writer.freeze(
             attempt,
             FIELD_VALUES,
@@ -2026,7 +2175,8 @@ def _purge_by_scope(store, request, *, writer=None):
                 project_id=request.project_key,
             )
             predicate = (
-                dep_predicate
+                f"({dep_predicate} OR canonical_session_id IN %(erase_units)s "
+                "OR toJSONString(tuple(trace_id, span_id)) IN %(erase_units)s)"
                 if table == SOURCE_DEPENDENCIES
                 else "unit_id IN %(erase_units)s"
             )
@@ -2090,7 +2240,9 @@ def _purge_by_scope(store, request, *, writer=None):
         with serialized_project(request.project_key):
             writer.lease.check()
             _purge_terminal_payloads(
-                request.project_key, through_generation=attempt.generation
+                request.project_key,
+                recovery_attempt=attempt if recovery_pending else None,
+                through_generation=attempt.generation,
             )
         return {"manifest": str(manifest.id), "anonymous_history_dropped": True}
     if kind not in {"organization", "project", "metric", "version"}:

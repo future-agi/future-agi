@@ -808,12 +808,21 @@ class MetricProjectRefresh(models.Model):
     # the limit admits paused_rows again.
     paused_reason = models.CharField(
         max_length=16,
-        choices=[("", "Not paused"), ("too_large", "Too large")],
+        choices=[
+            ("", "Not paused"),
+            ("too_large", "Too large"),
+            ("too_busy", "Too busy"),
+        ],
         blank=True,
         default="",
     )
     paused_at = models.DateTimeField(null=True, blank=True)
     paused_rows = models.PositiveBigIntegerField(null=True, blank=True)
+    # Non-identifying busy-slot bookkeeping. Publication resets the streak;
+    # only operator-visible work counts survive a pause, never source keys.
+    # DB defaults also admit inserts from old workers during a rolling update.
+    busy_yields = models.PositiveIntegerField(default=0, db_default=0)
+    busy_counts = models.JSONField(default=dict, db_default={}, blank=True)
     # Capture statements this project's next pass may plan, learned when a
     # pass stops at its soft budget (half of what it managed). NULL means the
     # configured METRICS_PASS_MAX_CAPTURES; a fast pass doubles it back.
@@ -2272,6 +2281,7 @@ class MetricReadManifest(models.Model):
             if attempt.source_ceilings.get("logical_expiry"):
                 refresh.pending_expiry = True
             refresh.head_manifest = manifest
+            refresh.busy_yields = 0
             refresh.last_success_at = now
             refresh.consecutive_failures = 0
             refresh.last_error_code = ""
@@ -2281,6 +2291,7 @@ class MetricReadManifest(models.Model):
                     *cursors,
                     "pending_expiry",
                     "head_manifest",
+                    "busy_yields",
                     "last_success_at",
                     "consecutive_failures",
                     "last_error_code",

@@ -686,21 +686,32 @@ def unit_values_select(
     )
 
 
-def span_values_select(
-    definition, scope, *, start, end, as_of, start_floor=None, unit_range=None
+def _span_source_select(
+    definition,
+    scope,
+    *,
+    start,
+    end,
+    as_of,
+    start_floor=None,
+    unit_range=None,
+    sampling_context=None,
+    ambiguity_only=False,
 ):
-    """Transient deduped-span fields for a WHOLE dirty bucket; never persisted.
-
-    Mutable start/filter predicates run after immutable source collapse. This
-    shares the exact typed values, filters, sketches and sampling compiler with
-    preview and conversation refresh. A span settles only after it has ended.
-    """
+    """Shared winning membership for span values and frozen sampler context."""
     from tracer.services.derived_metrics.spec import require_computable
 
     require_computable(definition)
     if definition.level != "span":
         raise ValueError("span totals require a span definition")
     recipe = field_recipe(definition)
+    if (
+        unit_range is not None
+        and sampling_context is None
+        and recipe.source.weighting == "inverse_probability"
+        and any(item["source"] == "eval" for item in recipe.source.inputs)
+    ):
+        raise ValueError("paged sampled spans require a frozen quarter context")
     # A raw timestamp may nominate an identity, never its winning revision.
     # Select the current in-window identities from their complete history before
     # invoking the shared compiler. unit_predicate deliberately disables that
@@ -756,6 +767,8 @@ def span_values_select(
         include_evidence=True,
         # Bucket captures may tile adjacent quarters into one window.
         quarter_ambiguity=True,
+        sampling_context=sampling_context,
+        ambiguity_only=ambiguity_only,
     )
     params["unit_settle_minutes"] = 0
     if start_floor is not None:
@@ -764,8 +777,51 @@ def span_values_select(
         params["span_unit_after"] = unit_range[0]
         if unit_range[1] is not None:
             params["span_unit_through"] = unit_range[1]
+    return source, params
+
+
+def span_sampling_select(definition, scope, *, start, end, as_of, start_floor=None):
+    """Quarter-wide collisions, independent of identity page boundaries."""
+    return _span_source_select(
+        definition,
+        scope,
+        start=start,
+        end=end,
+        as_of=as_of,
+        start_floor=start_floor,
+        ambiguity_only=True,
+    )
+
+
+def span_values_select(
+    definition,
+    scope,
+    *,
+    start,
+    end,
+    as_of,
+    start_floor=None,
+    unit_range=None,
+    sampling_context=None,
+):
+    """Deduped-span fields; sampled identity pages require frozen context.
+
+    Mutable start/filter predicates run after immutable source collapse. This
+    shares typed values, filters, sketches and sampling with previews and
+    conversation refresh. A span settles only after it has ended.
+    """
+    source, params = _span_source_select(
+        definition,
+        scope,
+        start=start,
+        end=end,
+        as_of=as_of,
+        start_floor=start_floor,
+        unit_range=unit_range,
+        sampling_context=sampling_context,
+    )
     return _field_projection(
-        recipe,
+        field_recipe(definition),
         source,
         params,
         (),

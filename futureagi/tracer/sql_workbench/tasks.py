@@ -93,7 +93,9 @@ def execute_sql(job_id):
                 cache_key = ""
         from .metric_retention import require_source, result_allowed
 
-        require_source(job.organization_id, job.project_id, job.start, job.sql)
+        require_source(
+            job.organization_id, job.project_id, job.start, job.sql, end=job.end
+        )
         if not result_allowed(job):
             raise QueryUnavailable(
                 "Metric source data changed or expired. Run the query again."

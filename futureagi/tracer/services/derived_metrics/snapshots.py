@@ -1075,7 +1075,7 @@ def delete_snapshot(metric, snapshot_id, user):
         MetricGenerationPin.objects.filter(pk=run.pin_id).update(
             invalidated_at=timezone.now(), invalidation_reason="erased"
         )
-        _intent(
+        request = _intent(
             organization_id=metric.organization_id,
             project_id=metric.project_id,
             scope="run",
@@ -1085,5 +1085,16 @@ def delete_snapshot(metric, snapshot_id, user):
             snapshot_key=run.snapshot_id,
             result_key=run.result_id,
             deletion_key=f"run:{run.id}",
+            store_payload={
+                "sql_source_window": {
+                    "start": run.window_start.isoformat(),
+                    "end": run.window_end.isoformat(),
+                }
+            },
         )
+        from tracer.sql_workbench.metric_retention import invalidate_snapshot
+
+        # The tombstone, outbox and saved-result CAS fence commit together.
+        # A late native SQL response cannot republish after this cancellation.
+        invalidate_snapshot(request)
     return {"status": "cleanup_pending"}
