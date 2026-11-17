@@ -1423,7 +1423,8 @@ def test_new_attempt_atomically_replaces_prior_scenario_receipt(organization):
     )
     assert created is True
     job.refresh_from_db()
-    assert job.completed_count == 1
+    # The receipt has no call, so no agent turn: its sealed pass is not counted.
+    assert job.completed_count == 0
     second = register_attempt(job.id, endpoint_base_url="https://platform.example")
     update_execution_counts(job)
     job.refresh_from_db()
