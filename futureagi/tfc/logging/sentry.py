@@ -322,14 +322,17 @@ def _is_raw_span_frame(frame: Any) -> bool:
     return any(m == module or module.startswith(f"{m}.") for m in RAW_SPAN_MODULES)
 
 
-def _strip_raw_span_frame_vars(event: dict) -> dict | None:
-    """Drop every frame's variables when any frame comes from trace ingestion.
+def _strip_raw_span_content(event: dict) -> dict | None:
+    """Drop every frame's variables, and ``extra.request``, when any frame
+    comes from trace ingestion.
 
     Exceptions, logged errors (attach_stacktrace) and a top-level stacktrace
     each carry frames, and ``iter_event_frames`` walks all three. The other
-    frames go too: callers and library frames hold the same batch. Changes the
-    event in place and returns it. Returns None, which drops the event, when
-    the stacks cannot be walked, because they may hold a batch that cannot be
+    frames go too: callers and library frames hold the same batch.
+    django_socio_grpc logs a failed call with ``extra={"request": ...}``, and
+    that container's repr holds the whole protobuf request. Changes the event
+    in place and returns it. Returns None, which drops the event, when the
+    stacks cannot be walked, because they may hold a batch that cannot be
     removed.
     """
     # Inline, like every sentry_sdk import here: settings imports this module in
@@ -346,6 +349,9 @@ def _strip_raw_span_frame_vars(event: dict) -> dict | None:
         for frame in frames:
             if isinstance(frame, dict):
                 frame.pop("vars", None)
+        extra = event.get("extra")
+        if isinstance(extra, dict):
+            extra.pop("request", None)
     return event
 
 
@@ -396,7 +402,7 @@ def _get_before_send() -> Callable:
 
         # 4. Scrub secrets/PII from the surviving event. Raw span content goes
         # first, outside the try below: it fails closed, not open.
-        if _strip_raw_span_frame_vars(event) is None:
+        if _strip_raw_span_content(event) is None:
             return None
         try:
             _scrub_event(event)

@@ -16,6 +16,7 @@ import structlog
 from django.core.handlers.asgi import ASGIHandler
 from django.core.signals import request_finished, request_started
 from django.db import close_old_connections
+from django_socio_grpc.settings import grpc_settings
 from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import (
     ExportTraceServiceRequest,
 )
@@ -261,6 +262,22 @@ class _GrpcContext:
         self.aborted = code
 
 
+# The ee rate limiter, stubbed so the run needs no ee/.
+_RATE_LIMIT_ALLOWS = {
+    "ee.usage.services.rate_limiter": SimpleNamespace(
+        RateLimiter=SimpleNamespace(
+            check=lambda org, kind: SimpleNamespace(allowed=True)
+        )
+    )
+}
+
+
+def _export_request():
+    export = ExportTraceServiceRequest()
+    export.resource_spans.add().scope_spans.add().spans.add().name = SPAN_TEXT
+    return export
+
+
 @pytest.mark.parametrize("failure", ["store", "enqueue"])
 def test_the_grpc_receiver_that_cannot_queue_a_batch_sends_no_frame_vars(
     refusing_redis, initialized_sentry, failure
@@ -269,26 +286,68 @@ def test_the_grpc_receiver_that_cannot_queue_a_batch_sends_no_frame_vars(
     _client, events = initialized_sentry
     if failure == "enqueue":
         refusing_redis.setex.side_effect = None
-    export = ExportTraceServiceRequest()
-    export.resource_spans.add().scope_spans.add().spans.add().name = SPAN_TEXT
     context = _GrpcContext()
-    # The ee rate limiter, stubbed so the run needs no ee/.
-    allowed = SimpleNamespace(check=lambda org, kind: SimpleNamespace(allowed=True))
-    limiter = SimpleNamespace(RateLimiter=allowed)
     with (
-        mock.patch.dict(sys.modules, {"ee.usage.services.rate_limiter": limiter}),
+        mock.patch.dict(sys.modules, _RATE_LIMIT_ALLOWS),
         mock.patch.object(
             trace_ingestion.bulk_create_observation_span_task,
             "apply_async",
             side_effect=RuntimeError("Temporal is not reachable"),
         ),
     ):
-        asyncio.run(ObservationSpanService().Export(export, context))
+        asyncio.run(ObservationSpanService().Export(_export_request(), context))
 
     assert context.aborted == grpc.StatusCode.INTERNAL
     refusing_redis.setex.assert_called_once()
     assert len(events) == 1
     _assert_sent_without_frame_vars(events, "tracer.services.grpc")
+
+
+class _GrpcServerContext:
+    """The grpc.aio servicer context a client's call arrives with."""
+
+    def __init__(self):
+        self._code = None
+
+    def invocation_metadata(self):
+        return (("x-api-key", "key-not-sent"), ("x-secret-key", "secret-not-sent"))
+
+    def peer(self):
+        return "ipv4:10.0.0.1:50000"
+
+    def code(self):
+        return self._code
+
+    async def abort(self, code, details):
+        self._code = code
+        raise grpc.aio.AbortError()
+
+
+def test_a_failed_grpc_export_through_the_framework_sends_no_raw_request(
+    refusing_redis, initialized_sentry
+):
+    """django_socio_grpc logs a failed call with extra={"request": its container},
+    and the container's repr holds the whole protobuf request. Export runs here
+    through the framework's own servicer proxy, as grpcrunaioserver serves it."""
+    _client, events = initialized_sentry
+    with (
+        mock.patch.object(grpc_settings, "GRPC_ASYNC", True),
+        mock.patch.object(
+            ObservationSpanService, "authentication_classes", [_ResolvedApiKey]
+        ),
+        mock.patch.dict(sys.modules, _RATE_LIMIT_ALLOWS),
+    ):
+        servicer = ObservationSpanService.as_servicer()
+        with pytest.raises(grpc.aio.AbortError):
+            asyncio.run(servicer.Export(_export_request(), _GrpcServerContext()))
+
+    assert len(events) == 2  # the receiver's logger.exception and the framework's
+    [framework] = [e for e in events if e.get("logger") == "django_socio_grpc.request"]
+    assert "status_code" in framework["extra"]  # the framework's extras did arrive
+    assert "request" not in framework["extra"]
+    _assert_sent_without_frame_vars(events, "tracer.services.grpc")
+    sent = json.dumps(events, default=str)
+    assert "key-not-sent" not in sent and "secret-not-sent" not in sent
 
 
 class _ResolvedApiKey:
