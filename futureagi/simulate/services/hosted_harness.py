@@ -29,6 +29,7 @@ from simulate.models import (
     HostedHarnessScenario,
     TestExecution,
 )
+from simulate.models.hosted_harness import SEED_BITS
 from simulate.services.agent_setup import AgentStoreError, store_agent
 from simulate.services.alk_simulate_ingestion import (
     ALKSimulateIngestionError,
@@ -237,7 +238,7 @@ def create_hosted_job(
         run_id = payload.get("run_id") or uuid.uuid4()
         seed = payload.get("seed")
         if seed is None:
-            seed = secrets.randbits(63)
+            seed = secrets.randbits(SEED_BITS)
         normalized = _json_value(payload)
         # Deployment policy must not change the submitted request's idempotency digest.
         artifacts = normalized["artifacts"]
@@ -414,7 +415,12 @@ def create_selected_harness_run(
         if resolved is not None:
             # A repeated request is answered before anything is written.
             replayed = _replayed_run(
-                environment, child_idempotency_key, resolved, scenario_keys, trials
+                environment,
+                child_idempotency_key,
+                resolved,
+                scenario_keys,
+                trials,
+                seed=seed,
             )
             if replayed is not None:
                 return replayed, False
@@ -472,6 +478,9 @@ def create_selected_harness_run(
             )
         if pins is not None and pins.assembles:
             _refuse_ungradable(pins, scenario_keys)
+        from simulate.services.harness_tool_reach import refuse_production_only
+
+        refuse_production_only(environment, pins, scenario_keys)
 
         manifest: list[dict[str, Any]] = []
         for scenario_key in scenario_keys:
@@ -1147,11 +1156,10 @@ def _replayed_run(
     resolved: ResolvedPins,
     scenario_keys: list[str],
     trials: int,
+    seed: int | None = None,
 ) -> HostedHarnessJob | None:
-    """The run an earlier request with this key created, when this one repeats it.
-
-    A key reused for other versions, scenarios or trials is refused.
-    """
+    """The run an earlier request with this key created, when this one repeats it; a key reused for other versions,
+    scenarios, trials or another seed is refused."""
     existing = HostedHarnessJob.no_workspace_objects.filter(
         organization_id=environment.organization_id, idempotency_key=idempotency_key
     ).first()
@@ -1178,6 +1186,7 @@ def _replayed_run(
         existing.workspace_id != environment.workspace_id
         or metadata.get("selected_scenario_keys") != scenario_keys
         or metadata.get("trials") != trials
+        or (seed is not None and existing.seed != seed)
     ):
         raise HostedHarnessError(
             "idempotency_conflict",

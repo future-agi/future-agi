@@ -1,27 +1,12 @@
 import PropTypes from "prop-types";
 import React from "react";
 import { Box, Stack, Typography } from "@mui/material";
-import { paths } from "src/routes/paths";
 import { rateTone } from "./format";
+import { isRunning, unratedOf } from "./runFacts";
 
-// TestExecution.ExecutionStatus: pending, running, evaluating, cancelling,
-// completed, failed, cancelled.
-const IN_PROGRESS = ["pending", "running", "evaluating", "cancelling"];
-
-export const isRunning = (run) => IN_PROGRESS.includes(run.status);
-
-export const runPath = (run) =>
-  run.kind === "environment" && run.environment
-    ? paths.dashboard.simulate.environments.execution(
-        run.environment.id,
-        run.runTestId,
-        run.testExecutionId,
-      )
-    : `${paths.dashboard.simulate.test}/${run.runTestId}/${run.testExecutionId}`;
-
-export function PassRateCell({ run }) {
+export default function PassRateCell({ run }) {
   const rate = isRunning(run) ? null : run.passRate;
-  const measured = (run.passed ?? 0) + (run.failed ?? 0) + (run.skipped ?? 0);
+  const unrated = isRunning(run) ? "" : unratedOf(run);
   return (
     <Stack
       direction="row"
@@ -57,7 +42,8 @@ export function PassRateCell({ run }) {
           typography: "s3",
           fontWeight: 500,
           fontVariantNumeric: "tabular-nums",
-          width: 76,
+          minWidth: 76,
+          whiteSpace: "nowrap",
           textAlign: "right",
           color: rate == null ? "text.disabled" : rateTone(rate),
         }}
@@ -68,7 +54,15 @@ export function PassRateCell({ run }) {
             component="span"
             sx={{ color: "text.subtitle", fontWeight: 400 }}
           >
-            {` ${run.passed}/${measured}`}
+            {` ${run.trialsPassed}/${run.trialsEvaluated}`}
+          </Box>
+        )}
+        {unrated && (
+          <Box
+            component="span"
+            sx={{ color: "text.subtitle", fontWeight: 400 }}
+          >
+            {` · ${unrated}`}
           </Box>
         )}
       </Typography>
