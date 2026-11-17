@@ -688,10 +688,11 @@ def test_a_rerun_keeps_the_earlier_attempt_s_worker_record_and_trial_state(
     trial = {"state_changes": [{"who": "worker:refund", "committed": 1}]}
     call.call_metadata = {WORKERS_KEY: timeline, TRIAL_STATE_KEY: trial}
     call.save(update_fields=["call_metadata"])
+    url = f"/simulate/v3/call-executions/{call.id}/workers/"
+    before = auth_client.get(url).json()
 
     clear_call_for_rerun(call)
     snapshot = CallExecutionSnapshot.objects.get(call_execution=call)
-    url = f"/simulate/v3/call-executions/{call.id}/workers/"
     current = auth_client.get(url)
     earlier = auth_client.get(url, {"attempt": str(snapshot.id)})
 
@@ -702,6 +703,8 @@ def test_a_rerun_keeps_the_earlier_attempt_s_worker_record_and_trial_state(
     assert current.status_code == 204
     assert earlier.status_code == 200, earlier.content
     assert earlier.json()["state"] == "recorded"
+    # The earlier attempt reads as the call did before the rerun, from the slim record kept on the call.
+    assert earlier.json() == before
     assert {one["id"] for one in earlier.json()["workers"]} == {
         one["id"] for one in timeline["workers"]
     }
@@ -3662,7 +3665,8 @@ def test_an_earlier_attempt_the_user_stopped_keeps_its_own_ending_after_a_rerun(
     from django.utils import timezone
 
     from simulate.models import CallExecution, HostedHarnessAttempt, HostedHarnessJob
-    from simulate.services.call_rerun import call_snapshot, clear_call_for_rerun
+    from simulate.models.test_execution import CallExecutionSnapshot
+    from simulate.services.call_rerun import clear_call_for_rerun
     from simulate.services.harness_workers import WORKERS_KEY
 
     job, sandbox, call = _cut_short_run(user, workspace, storage, settings, "sbr")
@@ -3691,11 +3695,10 @@ def test_an_earlier_attempt_the_user_stopped_keeps_its_own_ending_after_a_rerun(
         cleanup_verified_at=timezone.now()
     )
     call.refresh_from_db()
-    stopped = call_snapshot(call)
-    stopped.save()
 
     # The rerun: a new sandbox attempt, still running, with the refund worker out again.
     clear_call_for_rerun(call)
+    stopped = CallExecutionSnapshot.objects.get(call_execution=call)
     HostedHarnessJob.no_workspace_objects.filter(id=job.id).update(
         state=HostedHarnessJob.State.RUNNING, cancel_reason="", current_attempt_number=2
     )

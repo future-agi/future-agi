@@ -155,6 +155,7 @@ from simulate.services.harness_evals import (
 )
 from simulate.services.harness_run_evals import stamp_eval_queued
 from simulate.services.harness_versioning.read import run_version_labels
+from simulate.services.harness_worker_states import ATTEMPTS_KEY
 from simulate.services.run_outcome import hosted_receipt_outcomes, outcome_fields
 from simulate.services.run_regrade import (
     RegradeAlreadyRunning,
@@ -7552,6 +7553,27 @@ class TestExecutionRerunView(APIView):
 
                 # Bulk update all call executions
                 if call_executions_to_update:
+                    if rerun_type != "eval_only":
+                        # A worker read or a receipt may have written a call's metadata since it was loaded: lock the
+                        # rows and add only each closed attempt's kept record to what they hold now.
+                        current = dict(
+                            CallExecution.objects.select_for_update()
+                            .filter(
+                                id__in=[one.id for one in call_executions_to_update]
+                            )
+                            .order_by("id")
+                            .values_list("id", "call_metadata")
+                        )
+                        for one in call_executions_to_update:
+                            attempts = (one.call_metadata or {}).get(ATTEMPTS_KEY)
+                            one.call_metadata = {
+                                **(current.get(one.id) or {}),
+                                **(
+                                    {ATTEMPTS_KEY: attempts}
+                                    if attempts is not None
+                                    else {}
+                                ),
+                            }
                     if rerun_type == "eval_only":
                         CallExecution.objects.bulk_update(
                             call_executions_to_update,

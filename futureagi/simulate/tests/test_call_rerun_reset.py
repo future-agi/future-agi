@@ -163,3 +163,101 @@ def test_each_rerun_keeps_the_earlier_attempts_and_only_the_latest_ten(
     assert [
         kept[str(one.id)][WORKERS_KEY]["workers"][0]["id"] for one in snapshots[2:]
     ] == [f"w{index}" for index in range(2, MAX_KEPT_ATTEMPTS + 2)]
+
+
+def test_a_kept_attempt_holds_only_what_its_worker_answer_and_trial_view_read(
+    call_execution,
+):
+    from simulate.constants.hosted_harness import TRIAL_STATE_KEY
+    from simulate.services.harness_workers import READ_KEY, WORKERS_KEY
+    from simulate.services.hosted_harness_ingestion import WORLD_ACTIONS_KEY
+
+    call = _finished(call_execution)
+    call.call_metadata = {
+        **call.call_metadata,
+        WORKERS_KEY: {"workers": [{"id": "refund"}], "events": []},
+        READ_KEY: {"at": "2026-11-17T09:00:00+00:00", "failed": False},
+        TRIAL_STATE_KEY: {"state_changes": [{"who": "worker:refund", "attempted": 1}]},
+        WORLD_ACTIONS_KEY: [
+            {
+                "actor_id": "a1",
+                "action": "approve",
+                "refusal_code": "x",
+                "result": {"big": "x" * 500},
+            }
+        ],
+        "hosted_harness_receipt": {
+            "sub_goals": [{"name": "s"}],
+            "failure": None,
+            "call": {"transcript": "x" * 500},
+        },
+    }
+    call.save()
+
+    clear_call_for_rerun(call, clear_metadata=False)
+    call.refresh_from_db()
+
+    [kept] = call.call_metadata[ATTEMPTS_KEY].values()
+    assert set(kept) <= {
+        WORKERS_KEY,
+        READ_KEY,
+        TRIAL_STATE_KEY,
+        WORLD_ACTIONS_KEY,
+        "hosted_harness_receipt",
+        "sub_goals",
+        "harness_attempt_end",
+        "kept_at",
+    }
+    # The receipt and the world's actions only in the fields the views read.
+    assert kept["hosted_harness_receipt"] == {
+        "sub_goals": [{"name": "s"}],
+        "failure": None,
+    }
+    assert kept[WORLD_ACTIONS_KEY] == [
+        {"actor_id": "a1", "action": "approve", "refusal_code": "x"}
+    ]
+    assert "alk_batch_claimed" not in kept and "base_prompt" not in kept
+
+
+def test_an_attempt_record_past_the_size_bound_is_not_kept(call_execution, monkeypatch):
+    from simulate.services import call_rerun
+    from simulate.services.harness_workers import WORKERS_KEY
+
+    call = _finished(call_execution)
+    call.call_metadata = {
+        **call.call_metadata,
+        WORKERS_KEY: {"workers": [{"id": "w"}], "events": []},
+    }
+    call.save()
+    clear_call_for_rerun(call, clear_metadata=False)
+    call.refresh_from_db()
+    monkeypatch.setattr(call_rerun, "MAX_KEPT_ATTEMPT_BYTES", 64)
+    call.call_metadata = {
+        **call.call_metadata,
+        WORKERS_KEY: {"workers": [{"id": "big" * 50}], "events": []},
+    }
+    call.save()
+
+    clear_call_for_rerun(call, clear_metadata=False)
+    call.refresh_from_db()
+
+    # The oversized attempt reads "not kept"; the one before it is kept as it was.
+    first, _second = CallExecutionSnapshot.objects.filter(call_execution=call).order_by(
+        "snapshot_timestamp"
+    )
+    assert list(call.call_metadata[ATTEMPTS_KEY]) == [str(first.id)]
+
+
+def test_a_rerun_keeps_what_the_row_holds_now_not_what_it_held_when_loaded(
+    call_execution,
+):
+    call = _finished(call_execution)
+    # A worker read or a receipt writes the row after the rerun loaded it.
+    CallExecution.objects.filter(id=call.id).update(
+        call_metadata={**call.call_metadata, "written_meanwhile": True}
+    )
+
+    clear_call_for_rerun(call, clear_metadata=False)
+    call.refresh_from_db()
+
+    assert call.call_metadata["written_meanwhile"] is True

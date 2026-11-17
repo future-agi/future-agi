@@ -970,16 +970,25 @@ class TestTestExecutionRerunView:
         self, mock_rerun, auth_client, run_test, test_execution, call_execution
     ):
         mock_rerun.return_value = {"workflow_id": "test-workflow-id", "merged": False}
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
         _actor_turn(call_execution)
-        response = auth_client.post(
-            self.URL_TEMPLATE.format(run_test.id),
-            {
-                "rerun_type": "call_and_eval",
-                "test_execution_ids": [str(test_execution.id)],
-            },
-            format="json",
-        )
+        with CaptureQueriesContext(connection) as queries:
+            response = auth_client.post(
+                self.URL_TEMPLATE.format(run_test.id),
+                {
+                    "rerun_type": "call_and_eval",
+                    "test_execution_ids": [str(test_execution.id)],
+                },
+                format="json",
+            )
         assert response.status_code == status.HTTP_200_OK
+        # The calls are written back under a row lock, so a concurrent metadata write is not lost.
+        assert any(
+            "FOR UPDATE" in one["sql"] and '"simulate_call_execution"' in one["sql"]
+            for one in queries.captured_queries
+        )
         turns, left_behind = _snapshot_actor_turns(call_execution)
         assert turns == [("actor", "Rowan", "friend")]
         assert not left_behind
