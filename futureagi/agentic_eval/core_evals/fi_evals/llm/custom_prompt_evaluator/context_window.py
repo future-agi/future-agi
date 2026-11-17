@@ -12,8 +12,9 @@ Strategy:
 """
 
 import json
+from typing import Any
+
 import structlog
-from typing import Any, Optional
 
 logger = structlog.get_logger(__name__)
 
@@ -373,7 +374,7 @@ def _format_spans(spans: list, max_chars: int = 20000) -> str:
         tokens = span.get("total_tokens", span.get("totalTokens", ""))
         status = span.get("status", "")
 
-        line = f"  {i+1}. [{obs_type}] {name}"
+        line = f"  {i + 1}. [{obs_type}] {name}"
         if model:
             line += f" (model: {model})"
         if latency:

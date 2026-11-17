@@ -15,9 +15,9 @@ from agentic_eval.core_evals.fi_evals.llm.custom_prompt_evaluator.context_window
 def test_truncate_string_never_exceeds_max_chars(max_chars):
     long_input = "x" * 5000
     result = _truncate_string(long_input, max_chars)
-    assert (
-        len(result) <= max_chars
-    ), f"overflow at max_chars={max_chars}: len={len(result)}"
+    assert len(result) <= max_chars, (
+        f"overflow at max_chars={max_chars}: len={len(result)}"
+    )
 
 
 @pytest.mark.unit
