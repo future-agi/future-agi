@@ -160,8 +160,28 @@ describe("sequenceOf over the worker record", () => {
 
   it("a tool call without an end time has no duration", () => {
     const tool = seqOf(timeline()).steps.find((s) => s.tool === "get_order");
-    expect(tool.durMs).toBeUndefined();
+    expect(tool.durMs).toBeNull();
     expect(tool.dur).toBeNull();
+  });
+
+  it("a tool step the record ends takes its duration from the step's times", () => {
+    const record = timeline({
+      steps: [
+        handOffStep(1, {
+          worker_id: "r/order_lookup",
+          handoff: DELEGATED,
+          end: "no_return",
+          children: [LOOKUP.seq],
+        }),
+        {
+          ...callStep(LOOKUP, { parent: 1, depth: 1 }),
+          ended_at: "2026-10-31T11:59:58.500000+00:00",
+        },
+      ],
+      turns: oneTurn(undefined, undefined, [1]),
+    });
+    const tool = seqOf(record).steps.find((s) => s.tool === "get_order");
+    expect(tool.dur).toBe(1.5);
   });
 
   it("keeps the API step key and the span to open", () => {

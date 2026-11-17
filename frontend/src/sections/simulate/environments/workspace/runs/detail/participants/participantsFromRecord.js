@@ -51,11 +51,17 @@ export function participantsFromRecord(record) {
 
   const toCall = (step) => {
     const call = step.call || {};
+    const start = seconds(step.started_at ?? call.at);
+    const end = seconds(step.ended_at);
     return {
       id: step.key,
       key: step.key,
       name: call.tool,
       at: sinceStart(call.at),
+      durationMs:
+        start != null && end != null && end >= start
+          ? Math.round((end - start) * 1000)
+          : null,
       input: call.input ?? null,
       output: call.output ?? null,
       inputOmitted: !!call.input_omitted,
