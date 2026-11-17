@@ -785,6 +785,60 @@ class TestVersionRecordedBeforeItsSealedContract:
         assert blocked == []
         assert statuses == {one["tool"]: one["status"] for one in tool_status(SEALED)}
 
+    def _builder_saved(self, environment, version, run_entries):
+        """A builder's save over ``version``: authored entries as the author writes them, empty keys and all, and the
+        entries its reseal recorded."""
+        full = [
+            {**one, "factory": "", "first_arg": "", "door_unreached": "", "notes": ""}
+            for one in AUTHORED["tool_entrypoints"]
+        ]
+        authored = {**AUTHORED, "tool_entrypoints": full}
+        HarnessEnvironmentVersion._base_manager.filter(id=version.id).update(
+            documents={**version.documents, "contract": authored}
+        )
+        edited = {**authored, "hard_constraints": ["Never refund an unshipped order."]}
+        saved = self._saved_edit(environment, version, edited)
+        HarnessEnvironmentVersion._base_manager.filter(id=saved.id).update(
+            origin="chat",
+            documents={
+                "contract": edited,
+                "run_contract": {**edited, "tool_entrypoints": run_entries},
+            },
+        )
+        return saved
+
+    def test_a_builder_save_whose_seal_drops_empty_keys_still_reaches_the_tools_as_built(
+        self, user, workspace, monkeypatch, auth_client
+    ):
+        environment, version, storage = self._version(
+            user, workspace, "rc-dropped-keys", monkeypatch
+        )
+        self._bundle(environment, version, storage)
+        # The reseal keeps the author's import entries but drops the keys left empty.
+        self._builder_saved(environment, version, AUTHORED["tool_entrypoints"])
+
+        blocked, statuses = self._through_the_views(auth_client, environment)
+
+        assert blocked == []
+        assert statuses == {one["tool"]: one["status"] for one in tool_status(SEALED)}
+
+    def test_a_builder_save_that_really_changes_how_a_tool_is_reached_keeps_it(
+        self, user, workspace, monkeypatch, auth_client
+    ):
+        environment, version, storage = self._version(
+            user, workspace, "rc-real-change", monkeypatch
+        )
+        self._bundle(environment, version, storage)
+        moved = {**AUTHORED["tool_entrypoints"][0], "callable": "_orders.get_order"}
+        self._builder_saved(
+            environment, version, [moved, *AUTHORED["tool_entrypoints"][1:]]
+        )
+
+        blocked, _ = self._through_the_views(auth_client, environment)
+
+        # get_order now reaches the shared ledger itself, so every tool on it is held, as on dev.
+        assert blocked == sorted(TOOLS)
+
 
 def test_a_builder_save_that_seals_the_authored_entries_again_runs_as_the_first_build(
     user, workspace, storage, auth_client
