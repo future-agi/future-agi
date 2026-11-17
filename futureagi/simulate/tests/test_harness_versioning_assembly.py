@@ -988,6 +988,46 @@ class TestLaunchMiss:
         run.refresh_from_db()
         assert run.payload["metadata"]["assembly"]["notice"] == assembly.WITHOUT_ACTORS
 
+    @pytest.mark.parametrize(
+        "cached", [True, False], ids=["cached bundle", "default-pair miss"]
+    )
+    def test_with_certifying_off_a_build_without_the_cast_is_read_once_per_cast(
+        self, cached, user, workspace, storage, settings, monkeypatch
+    ):
+        environment = _environment(
+            user,
+            workspace,
+            f"asm-cast-read-once-{cached}",
+            storage,
+            body=_sealed_authoring(**{"actors.json": CAST}),
+        )
+        if not cached:
+            _uncache(environment)
+        reads = []
+        real_get = archives.get_archive
+        monkeypatch.setattr(
+            archives, "get_archive", lambda key: (reads.append(key), real_get(key))[1]
+        )
+
+        first, second = _run(environment, key="r1"), _run(environment, key="r2")
+        checked = (
+            _row(environment).object_key
+            if cached
+            else first.payload["metadata"]["authoring_object_key"]
+        )
+        read_by = []
+        for run in (first, second):
+            before = reads.count(checked)
+            assembly.prepare_launch(run)
+            read_by.append(reads.count(checked) - before)
+            run.refresh_from_db()
+            assert (
+                run.payload["metadata"]["assembly"]["notice"] == assembly.WITHOUT_ACTORS
+            )
+
+        # The first launch reads it (a cached one also once more, to compose the run's archive); the next never does.
+        assert read_by[0] >= 1 and read_by[1] == 0
+
     def test_of_two_misses_on_one_row_only_one_certifies_it_for_the_cast(
         self, user, workspace, storage, settings
     ):

@@ -531,16 +531,21 @@ def _predates_cast(
     certificate = bundle.certificate or {}
     if certificate.get("sealed_cast") or certificate.get("recast") == cast:
         return None
+    if certificate.get("predates_cast") == cast:
+        return cast
     files = _cached_files(bundle)
     if files is None:
         return None
-    if BUNDLE_ROOT + "actors.json" not in files:
-        return cast
-    bundle.certificate = {**certificate, "sealed_cast": True}
+    lacks = BUNDLE_ROOT + "actors.json" not in files
+    # Kept either way, so the archive is read once per row and cast; a new cast is checked again.
+    bundle.certificate = {
+        **certificate,
+        **({"predates_cast": cast} if lacks else {"sealed_cast": True}),
+    }
     HarnessAssembledBundle._base_manager.filter(
         id=bundle.id, object_key=bundle.object_key
     ).update(certificate=bundle.certificate, updated_at=timezone.now())
-    return None
+    return cast if lacks else None
 
 
 def _cast(environment_version: HarnessEnvironmentVersion) -> str | None:
@@ -552,17 +557,23 @@ def _cast(environment_version: HarnessEnvironmentVersion) -> str | None:
 
 
 def _fallback_predates_cast(
-    job: HostedHarnessJob, environment_version: HarnessEnvironmentVersion
+    job: HostedHarnessJob,
+    environment_version: HarnessEnvironmentVersion,
+    bundle: HarnessAssembledBundle,
 ) -> str | None:
     """The environment version's cast, by digest, when the archive a default-pair miss replays (today's path) was
     sealed without it: replayed, no actor ever comes in and its tool proxy has no actor door. None when there is no
-    cast, no such archive, or it has the actors."""
+    cast, no such archive, or it has the actors. What the archive holds is kept on the row, so it is read once per
+    row and cast."""
     cast = _cast(environment_version)
     key = str(
         ((job.payload or {}).get("metadata") or {}).get("authoring_object_key") or ""
     )
     if cast is None or not key:
         return None
+    certificate = bundle.certificate or {}
+    if certificate.get("fallback_cast") == cast:
+        return cast if certificate.get("fallback_lacks_cast") else None
     try:
         files = archives.read_archive(archives.get_archive(key))
     except S3Error as exc:
@@ -571,7 +582,19 @@ def _fallback_predates_cast(
         return None
     except HostedHarnessError:
         return None
-    return None if BUNDLE_ROOT + "actors.json" in files else cast
+    lacks = BUNDLE_ROOT + "actors.json" not in files
+    seen = {**certificate, "fallback_cast": cast, "fallback_lacks_cast": lacks}
+    rows = HarnessAssembledBundle._base_manager.filter(
+        id=bundle.id, state=HarnessAssembledBundle.State.PENDING
+    )
+    rows = (
+        rows.filter(certificate__isnull=True)
+        if bundle.certificate is None
+        else rows.filter(certificate=bundle.certificate)
+    )
+    if rows.update(certificate=seen, updated_at=timezone.now()):
+        bundle.certificate = seen
+    return cast if lacks else None
 
 
 # Said on a run that replayed a build sealed before its environment's actors.
@@ -851,7 +874,11 @@ def prepare_launch(job: HostedHarnessJob) -> LaunchAssembly | None:
         # Today's path replays the pair's own archive; one sealed before its environment's actors is certified
         # with them instead, once, so the actors come in through a door that records them. One that cannot be
         # (another launch certifies it, or certifying is off) is said on the run, never replayed silently.
-        cast = _fallback_predates_cast(job, environment_version) if defaults else None
+        cast = (
+            _fallback_predates_cast(job, environment_version, bundle)
+            if defaults
+            else None
+        )
         if cast is None:
             return False
         if certify_enabled() and _claim_cast(bundle, cast):
