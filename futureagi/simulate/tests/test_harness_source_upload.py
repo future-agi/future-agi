@@ -68,3 +68,26 @@ def test_upload_size_is_read_with_a_hard_bound(monkeypatch):
             expected_draft={"id": None, "revision": 0},
         )
     assert caught.value.code == "source_limit_exceeded"
+
+
+def test_upload_batch_has_a_total_size_limit(monkeypatch):
+    monkeypatch.setattr(harness_sources, "MAX_SELECTION_BYTES", 3)
+    monkeypatch.setattr(
+        harness_sources,
+        "_require_import_basis",
+        lambda *args: harness_sources.drafts.NO_DRAFT,
+    )
+    uploads = [io.BytesIO(b"aa"), io.BytesIO(b"bb")]
+    uploads[0].name = "first.txt"
+    uploads[1].name = "second.txt"
+
+    with pytest.raises(HostedHarnessError) as caught:
+        harness_sources.prepare_upload_import(
+            SimpleNamespace(),
+            uploads,
+            purpose=None,
+            expected_environment_version_id="version",
+            expected_draft={"id": None, "revision": 0},
+        )
+
+    assert caught.value.code == "source_limit_exceeded"

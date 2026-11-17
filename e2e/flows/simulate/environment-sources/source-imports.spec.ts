@@ -36,7 +36,9 @@ async function openSources(page: Page, environmentId: string) {
     timeout: READY,
   });
   await expect(
-    page.getByText(/Upload: PDF, TXT, CSV, JSON, up to 25 MiB/),
+    page.getByText(
+      /Upload: PDF, TXT, CSV, JSON, up to 100 files, 25 MiB per file and 200 MiB total/,
+    ),
   ).toBeVisible();
   await expect(
     page.getByText(

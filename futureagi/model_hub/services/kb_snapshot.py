@@ -1,5 +1,3 @@
-"""Authorized, immutable capture of Knowledge Base files for Environment imports."""
-
 from __future__ import annotations
 
 import hashlib

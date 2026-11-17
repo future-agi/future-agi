@@ -268,7 +268,9 @@ export default function SourcesPanel({ env, locked }) {
       {capabilities && (
         <Typography variant="body2" color="text.secondary">
           Upload: {capabilities.upload.formats.join(", ").toUpperCase()}, up to{" "}
-          {mebibytes(capabilities.upload.max_file_bytes)} per file. Knowledge
+          {capabilities.upload.max_files} files,{" "}
+          {mebibytes(capabilities.upload.max_file_bytes)} per file and{" "}
+          {mebibytes(capabilities.upload.max_total_bytes)} total. Knowledge
           Base: {capabilities.knowledge_base.formats.join(", ").toUpperCase()},
           up to {capabilities.knowledge_base.max_files} files,{" "}
           {mebibytes(capabilities.knowledge_base.max_file_bytes)} per file and{" "}

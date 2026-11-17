@@ -150,8 +150,6 @@ def download_knowledge_base_file(request, kb_id, file_id):
     """Authorize the collection and its file before touching object storage."""
     kb, file = authorized_knowledge_base_file(request, kb_id, file_id)
 
-    # Keys follow upload_file_to_s3: UUID/UUID.extension. Never accept an object
-    # key or a storage URL from the caller, including an uploaded_url override.
     extension = file.name.rsplit(".", 1)[-1].lower()
     filename = file.name.replace("\\", "/").rsplit("/", 1)[-1]
     filename = "".join(

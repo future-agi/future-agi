@@ -12,7 +12,7 @@ from simulate.services import harness_sources
 from simulate.services.harness_versioning import archives, drafts, versions
 from simulate.services.hosted_harness import HostedHarnessError
 from simulate.tests.test_harness_versioning_backfill import (
-    storage as storage,  # noqa: F401
+    storage as _storage_fixture,  # noqa: F401
 )
 from simulate.tests.test_harness_versioning_record import _save_drafts
 from simulate.tests.test_harness_versioning_rollback import _built
@@ -26,8 +26,9 @@ def versioning_on(settings):
 
 
 def test_kb_reference_import_writes_private_snapshot_and_environment_draft(
-    user, workspace, storage, monkeypatch
+    user, workspace, request, monkeypatch
 ):
+    storage = request.getfixturevalue("_storage_fixture")
     environment = _built(user, workspace, "source-import")
     kb = KnowledgeBaseFile.no_workspace_objects.create(
         name="Support docs",
@@ -195,8 +196,9 @@ def test_kb_reference_import_writes_private_snapshot_and_environment_draft(
 
 
 def test_upload_prepare_keeps_csv_and_json_in_one_review(
-    user, workspace, storage, monkeypatch
+    user, workspace, request, monkeypatch
 ):
+    request.getfixturevalue("_storage_fixture")
     environment = _built(user, workspace, "source-multi-upload")
     seen = {}
 
@@ -273,7 +275,70 @@ def test_safe_version_documents_exclude_private_source_fields():
     assert "private" not in json.dumps(documents)
 
 
-def test_participant_visibility_fails_closed(user, workspace, storage, monkeypatch):
+def test_evaluator_resolution_deduplicates_a_batch_snapshot(monkeypatch):
+    leaf = harness_sources._canonical(
+        {"compiled": {"evaluator_inputs": {"references": ["shared"]}}}
+    )
+    leaf_digest = "sha256:" + hashlib.sha256(leaf).hexdigest()
+    source_digests = {"first": leaf_digest, "second": leaf_digest}
+    aggregate_payload = {
+        "schema_version": 1,
+        "private_snapshot_digests": [leaf_digest],
+        "source_snapshot_digests": source_digests,
+    }
+    aggregate_digest = (
+        "sha256:"
+        + hashlib.sha256(harness_sources._canonical(aggregate_payload)).hexdigest()
+    )
+    aggregate = harness_sources._canonical(
+        {**aggregate_payload, "snapshot_digest": aggregate_digest}
+    )
+    monkeypatch.setattr(
+        harness_sources.archives,
+        "get_archive",
+        lambda key: b"archive",
+    )
+    monkeypatch.setattr(
+        harness_sources.archives,
+        "read_archive",
+        lambda body: {
+            "sources/manifest.json": harness_sources._canonical(
+                {
+                    "snapshot_digest": aggregate_digest,
+                    "sources": [
+                        {"source_id": "first"},
+                        {"source_id": "second"},
+                    ],
+                }
+            )
+        },
+    )
+    monkeypatch.setattr(
+        harness_sources,
+        "_get_private",
+        lambda key: leaf if leaf_digest.removeprefix("sha256:") in key else aggregate,
+    )
+    version = SimpleNamespace(
+        job_id="environment", organization_id="organization", archive_object_key="key"
+    )
+    run = SimpleNamespace(
+        environment_id="environment",
+        organization_id="organization",
+        environment_version=version,
+    )
+
+    resolved = harness_sources.resolve_evaluator_sources(run)
+
+    assert resolved["sources"] == [
+        {
+            "source_ids": ["first", "second"],
+            "evaluator_inputs": {"references": ["shared"]},
+        }
+    ]
+
+
+def test_participant_visibility_fails_closed(user, workspace, request, monkeypatch):
+    storage = request.getfixturevalue("_storage_fixture")
     environment = _built(user, workspace, "source-participant")
     staged = {
         "version": 1,

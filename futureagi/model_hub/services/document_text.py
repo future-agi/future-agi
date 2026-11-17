@@ -1,5 +1,3 @@
-"""Bounded text extraction shared by KB indexing and Environment imports."""
-
 from __future__ import annotations
 
 import io

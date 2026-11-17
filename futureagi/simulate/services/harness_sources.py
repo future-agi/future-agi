@@ -1,5 +1,3 @@
-"""Environment source imports backed by ALK and existing version drafts."""
-
 from __future__ import annotations
 
 import base64
@@ -42,7 +40,9 @@ def source_capabilities(environment) -> dict[str, Any]:
         "upload": {
             "enabled": True,
             "formats": ["pdf", "txt", "csv", "json"],
+            "max_files": MAX_SELECTION_FILES,
             "max_file_bytes": 25 * 1024 * 1024,
+            "max_total_bytes": MAX_SELECTION_BYTES,
         },
         "knowledge_base": {
             "enabled": True,
@@ -164,7 +164,7 @@ def resolve_evaluator_sources(run) -> dict[str, Any]:
         }:
             raise ValueError("source map mismatch")
         resolved = []
-        for source_id, digest in sorted(source_digests.items()):
+        for digest in sorted(set(source_digests.values())):
             key = (
                 f"{SNAPSHOT_PREFIX}/{run.organization_id}/"
                 f"{digest.removeprefix('sha256:')}.json"
@@ -175,7 +175,11 @@ def resolve_evaluator_sources(run) -> dict[str, Any]:
             leaf = json.loads(body)
             resolved.append(
                 {
-                    "source_id": source_id,
+                    "source_ids": sorted(
+                        source_id
+                        for source_id, source_digest in source_digests.items()
+                        if source_digest == digest
+                    ),
                     "evaluator_inputs": leaf["compiled"]["evaluator_inputs"],
                 }
             )
@@ -257,7 +261,7 @@ def prepare_upload_import(
         environment, expected_environment_version_id, expected_draft
     )
     uploads = tuple(uploaded) if isinstance(uploaded, (list, tuple)) else (uploaded,)
-    if len(uploads) > 100:
+    if len(uploads) > MAX_SELECTION_FILES:
         raise HostedHarnessError(
             "source_limit_exceeded",
             "Upload at most 100 files in one Environment import.",
@@ -276,12 +280,20 @@ def prepare_upload_import(
         ".json": {"seed_records"},
     }
     captured = []
+    total_bytes = 0
     for index, item in enumerate(uploads, start=1):
         original = item.read(25 * 1024 * 1024 + 1)
         if len(original) > 25 * 1024 * 1024:
             raise HostedHarnessError(
                 "source_limit_exceeded",
                 "An upload exceeds the 25 MiB Environment import limit.",
+                status_code=413,
+            )
+        total_bytes += len(original)
+        if total_bytes > MAX_SELECTION_BYTES:
+            raise HostedHarnessError(
+                "source_limit_exceeded",
+                "Uploads exceed the 200 MiB Environment import limit.",
                 status_code=413,
             )
         suffix = PurePath(item.name).suffix.lower()

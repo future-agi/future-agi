@@ -1,5 +1,3 @@
-"""Run ALK's pure Environment source contract in the pinned hosted runtime."""
-
 from __future__ import annotations
 
 import json
@@ -11,18 +9,47 @@ from simulate.services.hosted_harness_gateway import _alk_source_overlay
 from simulate.services.hosted_sandbox import SandboxLaunchSpec, get_sandbox_provider
 
 MAX_RESPONSE_BYTES = 512 * 1024 * 1024
+RESPONSE_VERSION = "environment-sources.response.v1"
+
+
+def _validated_response(response: object, operation: object) -> dict:
+    if (
+        not isinstance(response, dict)
+        or response.get("version") != RESPONSE_VERSION
+        or not isinstance(response.get("ok"), bool)
+        or (
+            response["ok"]
+            and (
+                response.get("operation") != operation
+                or not isinstance(response.get("result"), dict)
+            )
+        )
+        or (not response["ok"] and not isinstance(response.get("error"), dict))
+    ):
+        raise HostedHarnessError(
+            "source_processor_invalid",
+            "Environment source processing returned an invalid response",
+            status_code=502,
+        )
+    return response
 
 
 def execute_source_request(payload: dict) -> dict:
+    operation = payload.get("operation")
     sandbox_url = str(getattr(settings, "ALK_HARNESS_SANDBOX_URL", "") or "").strip()
     if sandbox_url:
         from simulate.services.harness_sandbox import HarnessSandboxClient
 
         try:
-            return HarnessSandboxClient(
-                sandbox_url,
-                getattr(settings, "ALK_HARNESS_SANDBOX_TOKEN", "") or None,
-            ).environment_sources(payload)
+            return _validated_response(
+                HarnessSandboxClient(
+                    sandbox_url,
+                    getattr(settings, "ALK_HARNESS_SANDBOX_TOKEN", "") or None,
+                ).environment_sources(payload),
+                operation,
+            )
+        except HostedHarnessError:
+            raise
         except Exception as exc:
             raise HostedHarnessError(
                 "source_processor_unavailable",
@@ -77,7 +104,7 @@ def execute_source_request(payload: dict) -> dict:
         response = json.loads(body)
         if run.exit_code not in {0, 1} or not isinstance(response, dict):
             raise ValueError("invalid response")
-        return response
+        return _validated_response(response, operation)
     except HostedHarnessError:
         raise
     except Exception as exc:
