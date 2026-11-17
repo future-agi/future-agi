@@ -13,7 +13,13 @@ const iconMap = {
     />
   ),
   cost: <Typography variant="body2">$</Typography>,
-  latency: <Iconify icon="stash:clock" color="text.disabled" width={15} />,
+  latency: (
+    <Iconify
+      icon="solar:clock-circle-linear"
+      color="text.disabled"
+      width={16}
+    />
+  ),
 };
 
 export const GeneralStatCellRenderer = (props) => {

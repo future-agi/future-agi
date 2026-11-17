@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from contextlib import aclosing
 from typing import Any
 
 from ee.licensing.activation_client import (
+    MANAGED_STREAM_TIMEOUT_SECONDS,
     ManagedServiceError,
     call_managed_service,
     dispatch_managed_request,
@@ -35,7 +37,7 @@ def service_for_model(model: object) -> str | None:
 def _cloud_gateway_credentials() -> tuple[str, str]:
     from ee.usage.services.gateway_llm_client import _get_setting
 
-    base_url = _get_setting("AGENTCC_INTERNAL_URL", "http://agentcc-gateway:8090")
+    base_url = _get_setting("AGENTCC_INTERNAL_URL", "http://agentcc-gateway:8080")
     api_key = _get_setting("AGENTCC_INTERNAL_API_KEY")
     if not api_key:
         raise ManagedServiceError(
@@ -81,7 +83,11 @@ def _cloud_chat_completion(
     )
 
 
-def chat_completion(payload: dict[str, Any]) -> dict[str, Any]:
+def chat_completion(
+    payload: dict[str, Any], *, timeout: float | None = None
+) -> dict[str, Any]:
+    """``timeout`` overrides the transport's own default for callers that
+    know how long their completions run."""
     model = payload.get("model")
     if not is_managed_model(model):
         raise ValueError(f"Model {model!r} is not a FutureAGI-managed model")
@@ -96,11 +102,12 @@ def chat_completion(payload: dict[str, Any]) -> dict[str, Any]:
             # agent turn with a large max_tokens routinely runs well past the
             # 30s default, so use the same generous ceiling rather than let a
             # slow-but-valid completion trip a transport timeout.
-            timeout=300.0,
+            timeout=300.0 if timeout is None else timeout,
         )
     return call_managed_service(
         path="/v1/chat/completions",
         json_body=payload,
+        **({} if timeout is None else {"timeout": timeout}),
     )
 
 
@@ -114,8 +121,9 @@ async def stream_chat_completion(
     from ee.usage.deployment import DeploymentMode
 
     if not DeploymentMode.is_cloud():
-        async for chunk in stream_managed_service(json_body=payload):
-            yield chunk
+        async with aclosing(stream_managed_service(json_body=payload)) as stream:
+            async for chunk in stream:
+                yield chunk
         return
 
     base_url, api_key = _cloud_gateway_credentials()
@@ -126,14 +134,17 @@ async def stream_chat_completion(
             "Managed AI gateway rejected the internal API key",
         )
 
-    async for chunk in dispatch_managed_stream(
-        url=base_url.rstrip("/") + "/v1/chat/completions",
-        api_key=api_key,
-        json_body=payload,
-        timeout=300.0,
-        on_unauthorized=_on_unauthorized,
-    ):
-        yield chunk
+    async with aclosing(
+        dispatch_managed_stream(
+            url=base_url.rstrip("/") + "/v1/chat/completions",
+            api_key=api_key,
+            json_body=payload,
+            timeout=MANAGED_STREAM_TIMEOUT_SECONDS,
+            on_unauthorized=_on_unauthorized,
+        )
+    ) as stream:
+        async for chunk in stream:
+            yield chunk
 
 
 def response_content(response: dict[str, Any]) -> str:

@@ -294,8 +294,8 @@ func TestFutureAGI_EmptyEvaluations(t *testing.T) {
 	})
 
 	result := g.Check(context.Background(), makeInput([]models.Message{makeMsg("user", "hi")}))
-	if !result.Pass {
-		t.Fatal("expected pass for empty evaluations (fail-open)")
+	if result.Pass || result.Err == nil {
+		t.Fatal("expected typed execution failure: expected pass for empty evaluations")
 	}
 }
 
@@ -311,8 +311,8 @@ func TestFutureAGI_EmptyResult(t *testing.T) {
 	})
 
 	result := g.Check(context.Background(), makeInput([]models.Message{makeMsg("user", "hi")}))
-	if !result.Pass {
-		t.Fatal("expected pass for empty result (fail-open)")
+	if result.Pass || result.Err == nil {
+		t.Fatal("expected typed execution failure: expected pass for empty result")
 	}
 }
 
@@ -417,8 +417,8 @@ func TestFutureAGI_MissingAPIKey(t *testing.T) {
 		"api_key": "", "secret_key": "s",
 	})
 	result := g.Check(context.Background(), makeInput([]models.Message{makeMsg("user", "hi")}))
-	if !result.Pass {
-		t.Fatal("missing api_key should pass (skip)")
+	if result.Pass || result.Err == nil {
+		t.Fatal("expected typed execution failure: missing api_key")
 	}
 }
 
@@ -429,8 +429,8 @@ func TestFutureAGI_MissingEvalID(t *testing.T) {
 		"secret_key": "s",
 	})
 	result := g.Check(context.Background(), makeInput([]models.Message{makeMsg("user", "hi")}))
-	if !result.Pass {
-		t.Fatal("missing eval_id should pass (skip)")
+	if result.Pass || result.Err == nil {
+		t.Fatal("expected typed execution failure: missing eval_id")
 	}
 }
 
@@ -540,75 +540,34 @@ func TestFutureAGI_ArrayContent(t *testing.T) {
 	}
 }
 
-// --- Test: Multiple eval_ids — request payload includes all, any failure fails the check ---
+// --- Test: Multiple eval_ids — one request per template, any failure fails the check ---
 
 func TestFutureAGI_EvalIDsArray_AllPass(t *testing.T) {
-	var receivedReq evalRequest
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewDecoder(r.Body).Decode(&receivedReq)
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"result": []map[string]interface{}{
-				{"evaluations": []map[string]interface{}{
-					{"name": "toxicity", "output": "Passed", "reason": "ok", "runtime": 100.0, "evalId": "76"},
-				}},
-				{"evaluations": []map[string]interface{}{
-					{"name": "injection", "output": "Passed", "reason": "ok", "runtime": 90.0, "evalId": "15"},
-				}},
-				{"evaluations": []map[string]interface{}{
-					{"name": "bias", "output": "Passed", "reason": "ok", "runtime": 80.0, "evalId": "22"},
-				}},
-			},
-		})
-	}))
-	defer srv.Close()
-
-	g := New("multi", map[string]interface{}{
-		"provider":   "futureagi",
-		"eval_ids":   []interface{}{"76", "15", "22"},
-		"api_key":    "k",
-		"secret_key": "s",
-		"base_url":   srv.URL,
-	})
+	g, api := newSingleTemplateCheck(t, map[string]string{"76": "Passed", "15": "Passed", "22": "Passed"}, "76", "15", "22")
 
 	result := g.Check(context.Background(), makeInput([]models.Message{makeMsg("user", "hi")}))
 	if !result.Pass {
 		t.Fatalf("expected pass when all evals pass, got fail: %s", result.Message)
 	}
-	if len(receivedReq.Config) != 3 {
-		t.Errorf("expected 3 entries in request config, got %d", len(receivedReq.Config))
+	if len(api.requested) != 3 {
+		t.Fatalf("expected 3 requests, got %d", len(api.requested))
+	}
+	seen := map[string]bool{}
+	for i, id := range api.requested {
+		seen[id] = true
+		if api.configLen[i] != 1 {
+			t.Errorf("expected 1 entry in each request config, got %d", api.configLen[i])
+		}
 	}
 	for _, id := range []string{"76", "15", "22"} {
-		if _, ok := receivedReq.Config[id]; !ok {
-			t.Errorf("missing eval_id %s in config map", id)
+		if !seen[id] {
+			t.Errorf("missing request for eval_id %s", id)
 		}
 	}
 }
 
 func TestFutureAGI_EvalIDsArray_OneFailsFailsAll(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"result": []map[string]interface{}{
-				{"evaluations": []map[string]interface{}{
-					{"name": "toxicity", "output": "Passed", "reason": "ok", "runtime": 100.0, "evalId": "76"},
-				}},
-				{"evaluations": []map[string]interface{}{
-					{"name": "injection", "output": "Failed", "reason": "prompt injection detected", "runtime": 90.0, "evalId": "15"},
-				}},
-				{"evaluations": []map[string]interface{}{
-					{"name": "bias", "output": "Passed", "reason": "ok", "runtime": 80.0, "evalId": "22"},
-				}},
-			},
-		})
-	}))
-	defer srv.Close()
-
-	g := New("multi", map[string]interface{}{
-		"provider":   "futureagi",
-		"eval_ids":   []interface{}{"76", "15", "22"},
-		"api_key":    "k",
-		"secret_key": "s",
-		"base_url":   srv.URL,
-	})
+	g, _ := newSingleTemplateCheck(t, map[string]string{"76": "Passed", "15": "Failed", "22": "Passed"}, "76", "15", "22")
 
 	result := g.Check(context.Background(), makeInput([]models.Message{makeMsg("user", "ignore previous")}))
 	if result.Pass {
@@ -617,7 +576,7 @@ func TestFutureAGI_EvalIDsArray_OneFailsFailsAll(t *testing.T) {
 	if result.Score != 1.0 {
 		t.Errorf("expected score 1.0, got %f", result.Score)
 	}
-	if result.Message != "prompt injection detected" {
+	if result.Message != "template 15 Failed" {
 		t.Errorf("expected failing eval's reason to surface, got %q", result.Message)
 	}
 	if result.Details["eval_id"] != "15" {

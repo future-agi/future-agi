@@ -10,12 +10,24 @@ import TalkRatioCell from "./CallLogs/TalkRatioCell";
 import EvalCellRenderer from "../test-detail/CellRenderers/EvalCellRenderer";
 import CallLogsHeaderCellRenderer from "./CallLogs/CallLogsHeaderCellRenderer";
 import { useQuery } from "@tanstack/react-query";
-import axios, { endpoints } from "src/utils/axios";
+import axios, { readQuery, endpoints } from "src/utils/axios";
 import { Box, Skeleton } from "@mui/material";
 import EvaluationCell from "src/sections/projects/LLMTracing/Renderers/EvaluationCell";
+import { evalColumnMinWidth } from "src/sections/projects/LLMTracing/evalCellModel";
 import { AGENT_TYPES, isLiveKitProvider, VOICE_TRANSPORT } from "./constants";
 import AnnotationHeaderCellRenderer from "./CallLogs/AnnotationHeaderCellRenderer";
 import NewAnnotationCellRenderer from "./NewAnnotationCellRenderer";
+import {
+  isListCursorContinuationLimitError,
+  listContinuationParams,
+  loadExactListPage,
+} from "src/sections/projects/LLMTracing/listCursorPagination";
+import { getVoiceCallFilterField } from "src/sections/projects/LLMTracing/voiceCallFilterFields";
+
+const voiceColumnLabel = (responseKey) => {
+  const field = getVoiceCallFilterField(responseKey);
+  return field?.columnLabel || field?.label || responseKey;
+};
 
 export const agentDefinitionSections = [
   {
@@ -80,6 +92,7 @@ export const emptyAgentSteps = [
 export const createAgentDefinitionSchema = (options) => {
   const keysRequired = options?.keysRequired || false;
   const agentDefinitionId = options?.agentDefinitionId;
+  const isSourceAgent = options?.agentKind === "source";
   return z
     .object({
       // Basic Information
@@ -110,7 +123,10 @@ export const createAgentDefinitionSchema = (options) => {
         .optional(),
 
       // Behaviour
-      description: z.string().min(1, "Description is required"),
+      // A code agent keeps its instructions in its stored Agent, so its description can be empty.
+      description: isSourceAgent
+        ? z.string()
+        : z.string().min(1, "Description is required"),
       knowledgeBase: z.string().optional(),
       countryCode: z.string().optional(),
       contactNumber: z.string().optional(),
@@ -211,33 +227,36 @@ export const createAgentDefinitionSchema = (options) => {
       }
 
       if (isLiveKitProvider(data.provider)) {
-        if (!data.livekitUrl || data.livekitUrl.trim() === "") {
-          ctx.addIssue({
-            path: ["livekitUrl"],
-            message: "LiveKit Server URL is required",
-            code: z.ZodIssueCode.custom,
-          });
-        }
-        if (!data.livekitApiKey || data.livekitApiKey.trim() === "") {
-          ctx.addIssue({
-            path: ["livekitApiKey"],
-            message: "LiveKit API Key is required",
-            code: z.ZodIssueCode.custom,
-          });
-        }
-        if (!data.livekitApiSecret || data.livekitApiSecret.trim() === "") {
-          ctx.addIssue({
-            path: ["livekitApiSecret"],
-            message: "LiveKit API Secret is required",
-            code: z.ZodIssueCode.custom,
-          });
-        }
-        if (!data.livekitAgentName || data.livekitAgentName.trim() === "") {
-          ctx.addIssue({
-            path: ["livekitAgentName"],
-            message: "Agent Name is required",
-            code: z.ZodIssueCode.custom,
-          });
+        // A code agent only carries the word livekit; its credentials are not on this form.
+        if (!isSourceAgent) {
+          if (!data.livekitUrl || data.livekitUrl.trim() === "") {
+            ctx.addIssue({
+              path: ["livekitUrl"],
+              message: "LiveKit Server URL is required",
+              code: z.ZodIssueCode.custom,
+            });
+          }
+          if (!data.livekitApiKey || data.livekitApiKey.trim() === "") {
+            ctx.addIssue({
+              path: ["livekitApiKey"],
+              message: "LiveKit API Key is required",
+              code: z.ZodIssueCode.custom,
+            });
+          }
+          if (!data.livekitApiSecret || data.livekitApiSecret.trim() === "") {
+            ctx.addIssue({
+              path: ["livekitApiSecret"],
+              message: "LiveKit API Secret is required",
+              code: z.ZodIssueCode.custom,
+            });
+          }
+          if (!data.livekitAgentName || data.livekitAgentName.trim() === "") {
+            ctx.addIssue({
+              path: ["livekitAgentName"],
+              message: "Agent Name is required",
+              code: z.ZodIssueCode.custom,
+            });
+          }
         }
       } else if (data.provider === "others") {
         // if (data.authenticationMethod === "api_key") {
@@ -267,7 +286,9 @@ export const createAgentDefinitionSchema = (options) => {
       } else {
         if (
           data.agentType === AGENT_TYPES.VOICE &&
-          (data.observabilityEnabled || keysRequired || !data.inbound)
+          ((!isSourceAgent && data.observabilityEnabled) ||
+            keysRequired ||
+            !data.inbound)
         ) {
           if (!data?.authenticationMethod) {
             ctx.addIssue({
@@ -383,7 +404,7 @@ export const defaultAgentDefinitionValues = {
 export const icon = (name) => (
   <SvgColor
     src={`/assets/icons/agent/${name}.svg`}
-    sx={{ width: 20, height: 20 }}
+    sx={{ width: 16, height: 16 }}
   />
 );
 
@@ -411,7 +432,7 @@ export const generateEvalColumnsFromConfig = (items = []) => {
         minWidth: 140,
         hide: item.is_visible === false,
         headerComponent: CallLogsHeaderCellRenderer,
-        headerComponentParams: { displayName },
+        headerComponentParams: { displayName, targetType: item.target_type },
         valueGetter: (params) => {
           const v = params.data?.[evalId];
           return v === null || v === undefined || v === "" ? null : Number(v);
@@ -457,6 +478,18 @@ export const generateEvalColumnsFromConfig = (items = []) => {
           </Box>
         );
       }
+      // Project call lists send count tiles, rendered as on the Observe lists.
+      if (evalData?.counts && typeof evalData.counts === "object") {
+        return (
+          <EvaluationCell
+            value={evalData.counts}
+            column={{
+              outputType: item.output_type,
+              choicesMap: item.choices_map,
+            }}
+          />
+        );
+      }
       // PASS_FAIL carries a numeric pass rate — route it through the score
       // (percentage) renderer so it shows "X%" instead of the pill path,
       // which string-matches "fail" and would render 0% as a false "Pass".
@@ -480,10 +513,13 @@ export const generateEvalColumnsFromConfig = (items = []) => {
       headerName: displayName,
       field: `eval_outputs.${evalId}`,
       flex: 1,
-      minWidth: isReason ? 240 : 140,
+      minWidth: isReason ? 240 : evalColumnMinWidth(item, 140),
       hide: item.is_visible === false,
       headerComponent: CallLogsHeaderCellRenderer,
-      headerComponentParams: { displayName },
+      headerComponentParams: {
+        displayName,
+        targetType: isReason ? undefined : item.target_type,
+      },
       valueGetter: (params) => params.data?.eval_outputs?.[dataKey] || {},
       ...(isFilterableEval && {
         context: {
@@ -515,7 +551,7 @@ const LoadingSkeleton = () => {
       width="80%"
       sx={{
         mx: 1,
-        borderRadius: 0.5,
+        borderRadius: "4px",
       }}
       height={15}
     />
@@ -751,7 +787,7 @@ export const getCallLogsColumnDefs = (
       cellRenderer: CallLogsCellRenderer,
     },
     {
-      headerName: "Status",
+      headerName: voiceColumnLabel("status"),
       field: "status",
       flex: 0,
       minWidth: 100,
@@ -759,7 +795,7 @@ export const getCallLogsColumnDefs = (
       cellRenderer: CallLogsCellRenderer,
     },
     {
-      headerName: "Duration",
+      headerName: voiceColumnLabel("duration_seconds"),
       field: "duration_seconds",
       flex: 0,
       minWidth: 90,
@@ -768,21 +804,21 @@ export const getCallLogsColumnDefs = (
 
     // ── Performance ───────────────────────────────────────────────────
     {
-      headerName: "Avg Latency",
+      headerName: voiceColumnLabel("avg_agent_latency_ms"),
       field: "avg_agent_latency_ms",
       flex: 0,
       minWidth: 140,
       cellRenderer: VoiceLatencyCell,
     },
     {
-      headerName: "Turn Count",
+      headerName: voiceColumnLabel("turn_count"),
       field: "turn_count",
       flex: 0,
       minWidth: 110,
       cellRenderer: CallLogsCellRenderer,
     },
     {
-      headerName: "Talk Ratio",
+      headerName: voiceColumnLabel("talk_ratio"),
       field: "talk_ratio",
       flex: 0,
       minWidth: 120,
@@ -792,14 +828,15 @@ export const getCallLogsColumnDefs = (
 
     // ── Resources ─────────────────────────────────────────────────────
     {
-      headerName: "Tokens",
+      headerName: voiceColumnLabel("gen_ai.usage.total_tokens"),
       field: "gen_ai.usage.total_tokens",
       flex: 0,
-      minWidth: 220,
+      // Fit input, output, total, and icons without clipping leading digits.
+      minWidth: 300,
       cellRenderer: VoiceTokenCell,
     },
     {
-      headerName: "Cost",
+      headerName: voiceColumnLabel("cost_cents"),
       field: "cost_cents",
       flex: 0,
       minWidth: 120,
@@ -808,21 +845,21 @@ export const getCallLogsColumnDefs = (
 
     // ── Conversation quality ──────────────────────────────────────────
     {
-      headerName: "User Interrupts",
+      headerName: voiceColumnLabel("user_interruption_count"),
       field: "user_interruption_count",
       flex: 0,
       minWidth: 140,
       cellRenderer: CallLogsCellRenderer,
     },
     {
-      headerName: "Agent Interrupts",
+      headerName: voiceColumnLabel("ai_interruption_count"),
       field: "ai_interruption_count",
       flex: 0,
       minWidth: 140,
       cellRenderer: CallLogsCellRenderer,
     },
     {
-      headerName: "Ended Reason",
+      headerName: voiceColumnLabel("ended_reason"),
       field: "ended_reason",
       flex: 1,
       minWidth: 120,
@@ -838,28 +875,28 @@ export const getCallLogsColumnDefs = (
       cellRenderer: CallLogsCellRenderer,
     },
     {
-      headerName: "Type",
+      headerName: voiceColumnLabel("call_type"),
       field: "call_type",
       flex: 0,
       minWidth: 90,
       cellRenderer: CallLogsCellRenderer,
     },
     {
-      headerName: "User WPM",
+      headerName: voiceColumnLabel("user_wpm"),
       field: "user_wpm",
       flex: 0,
       minWidth: 110,
       cellRenderer: CallLogsCellRenderer,
     },
     {
-      headerName: "Agent WPM",
+      headerName: voiceColumnLabel("bot_wpm"),
       field: "bot_wpm",
       flex: 0,
       minWidth: 110,
       cellRenderer: CallLogsCellRenderer,
     },
     {
-      headerName: "Agent Talk (%)",
+      headerName: voiceColumnLabel("agent_talk_percentage"),
       field: "agent_talk_percentage",
       flex: 0,
       minWidth: 130,
@@ -883,7 +920,7 @@ export const getCallLogsColumnDefs = (
       cellRenderer: CallLogsCellRenderer,
     },
     {
-      headerName: "Call ID",
+      headerName: voiceColumnLabel("call_id"),
       field: "call_id",
       flex: 1,
       minWidth: 120,
@@ -918,7 +955,7 @@ export const getCallLogsColumnDefs = (
 export const useAgentsList = () => {
   const { data, isLoading, error } = useQuery({
     queryKey: ["agents"],
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       let allAgents = [];
       let page = 1;
       let totalPages = null;
@@ -954,12 +991,16 @@ export const useCallLogs = ({
   page,
   pageLimit,
   params,
+  paginationParams,
+  paginationRevision = 0,
+  cursorPagination,
+  paginationGeneration,
   enabled = true,
 }) => {
   const isProjectModule = module === "project";
   const condition = isProjectModule ? !!id : !!id && !!version;
   const queryKey = isProjectModule
-    ? ["callLogs", module, id, pageLimit, params, page]
+    ? ["callLogs", module, id, pageLimit, params, page, paginationRevision]
     : ["callLogs", module, id, version, pageLimit, params, page];
   const getEndpoint = () =>
     isProjectModule
@@ -967,19 +1008,111 @@ export const useCallLogs = ({
       : endpoints.agentDefinitions.getCallLogs(id, version);
   const { data, isLoading, error } = useQuery({
     queryKey: queryKey,
-    queryFn: () =>
-      axios.get(getEndpoint(), {
-        params: { page, page_size: pageLimit, ...params },
-      }),
+    queryFn: async ({ signal }) => {
+      const baseParams = {
+        page,
+        page_size: pageLimit,
+        ...params,
+      };
+      if (isProjectModule && cursorPagination) {
+        const cursorBaseParams = { page_size: pageLimit, ...params };
+        const exactPage = await loadExactListPage({
+          pagination: cursorPagination,
+          pageNumber: page - 1,
+          targetRowCount: pageLimit,
+          cancellationSignal: signal,
+          loadResponse: (requestSignal) =>
+            readQuery(getEndpoint(), {
+              params: cursorPagination.requestParams(
+                page - 1,
+                cursorBaseParams,
+              ),
+              signal: requestSignal,
+            }),
+          nextResponse: (cursor, requestSignal) =>
+            readQuery(getEndpoint(), {
+              params: listContinuationParams(cursorBaseParams, cursor),
+              signal: requestSignal,
+            }),
+          rowsFromResponse: (response) => {
+            const result = response?.data?.result || response?.data || {};
+            return result.results || result.data || result.calls || [];
+          },
+          metadataFromResponse: (response) =>
+            response?.data?.result || response?.data || {},
+          rowIdentity: (row) =>
+            row?.call_id || row?.id || row?.trace_id || null,
+          isCurrent: () => cursorPagination.isCurrent(paginationGeneration),
+        });
+        const rawResponse = exactPage.response || {};
+        const payload = rawResponse.data || {};
+        const result = payload.result || payload;
+        const exactMetadata = {
+          pending: exactPage.pending,
+          stale: exactPage.stale,
+          isLastPage: exactPage.isLastPage,
+          canPrefetch: exactPage.canPrefetch,
+        };
+        const mergedResult = {
+          ...result,
+          results: exactPage.rows,
+          __exactPage: exactMetadata,
+        };
+        return {
+          ...rawResponse,
+          data: payload.result
+            ? {
+                ...payload,
+                ...mergedResult,
+                result: mergedResult,
+              }
+            : mergedResult,
+        };
+      }
+      return readQuery(getEndpoint(), {
+        params: paginationParams
+          ? { ...params, ...paginationParams }
+          : baseParams,
+      });
+    },
     enabled: condition && enabled,
     select: (data) => data?.data,
+    // CallLogsGrid owns a concise retry/empty state. Never let a failed
+    // ClickHouse-backed list request reach the global raw-error snackbar.
+    meta: { errorHandled: true },
+    ...(isProjectModule
+      ? {
+          // Exact project cursors are single-use client state. Do not replay a
+          // visible page on focus, remount, reconnect, or automatic retry;
+          // CallLogsGrid explicitly refreshes from a new page-one generation.
+          staleTime: Infinity,
+          refetchOnWindowFocus: false,
+          refetchOnMount: false,
+          refetchOnReconnect: false,
+          retry: false,
+        }
+      : {
+          retry: (failureCount, queryError) =>
+            !isListCursorContinuationLimitError(queryError) && failureCount < 1,
+        }),
   });
   return { queryKey, data, isLoading, error };
 };
 
 export const prefetchCallLogs = (
   queryClient,
-  { module, id, version, page, pageLimit, params },
+  {
+    module,
+    id,
+    version,
+    page,
+    pageLimit,
+    params,
+    paginationParams,
+    paginationRevision = 0,
+    cursorPagination,
+    paginationGeneration,
+  },
 ) => {
   const isProjectModule = module === "project";
   const condition = isProjectModule ? !!id : !!id && !!version;
@@ -990,14 +1123,76 @@ export const prefetchCallLogs = (
     ? endpoints.project.getCallLogs
     : endpoints.agentDefinitions.getCallLogs(id, version);
   const queryKey = isProjectModule
-    ? ["callLogs", module, id, pageLimit, params, page]
+    ? ["callLogs", module, id, pageLimit, params, page, paginationRevision]
     : ["callLogs", module, id, version, pageLimit, params, page];
   queryClient.prefetchQuery({
     queryKey,
-    queryFn: () =>
-      axios.get(endpoint, {
-        params: { page, page_size: pageLimit, ...params },
-      }),
+    queryFn: async ({ signal }) => {
+      const baseParams = { page, page_size: pageLimit, ...params };
+      if (isProjectModule && cursorPagination) {
+        const cursorBaseParams = { page_size: pageLimit, ...params };
+        const exactPage = await loadExactListPage({
+          pagination: cursorPagination,
+          pageNumber: page - 1,
+          targetRowCount: pageLimit,
+          cancellationSignal: signal,
+          loadResponse: (requestSignal) =>
+            readQuery(endpoint, {
+              params: cursorPagination.requestParams(
+                page - 1,
+                cursorBaseParams,
+              ),
+              signal: requestSignal,
+            }),
+          nextResponse: (cursor, requestSignal) =>
+            readQuery(endpoint, {
+              params: listContinuationParams(cursorBaseParams, cursor),
+              signal: requestSignal,
+            }),
+          rowsFromResponse: (response) => {
+            const result = response?.data?.result || response?.data || {};
+            return result.results || result.data || result.calls || [];
+          },
+          metadataFromResponse: (response) =>
+            response?.data?.result || response?.data || {},
+          rowIdentity: (row) =>
+            row?.call_id || row?.id || row?.trace_id || null,
+          isCurrent: () => cursorPagination.isCurrent(paginationGeneration),
+        });
+        const rawResponse = exactPage.response || {};
+        const payload = rawResponse.data || {};
+        const result = payload.result || payload;
+        const exactMetadata = {
+          pending: exactPage.pending,
+          stale: exactPage.stale,
+          isLastPage: exactPage.isLastPage,
+          canPrefetch: exactPage.canPrefetch,
+        };
+        const mergedResult = {
+          ...result,
+          results: exactPage.rows,
+          __exactPage: exactMetadata,
+        };
+        return {
+          ...rawResponse,
+          data: payload.result
+            ? {
+                ...payload,
+                ...mergedResult,
+                result: mergedResult,
+              }
+            : mergedResult,
+        };
+      }
+      return readQuery(endpoint, {
+        params: paginationParams
+          ? { ...params, ...paginationParams }
+          : baseParams,
+      });
+    },
+    // A speculative next-page failure must stay silent; the foreground read
+    // renders the normal retry state if the user advances to that page.
+    meta: { errorHandled: true },
   });
 };
 
@@ -1013,12 +1208,25 @@ export const useCallExecutionDetail = (callExecutionId, enabled = false) => {
   });
 };
 
-export const useVoiceCallDetail = (traceId, enabled = false) => {
+// Pass the project the call was opened from whenever it is known: the same
+// trace id can exist in several projects.
+export const useVoiceCallDetail = (
+  traceId,
+  { enabled = false, projectId, expectedSpanId } = {},
+) => {
   return useQuery({
-    queryKey: ["voiceCallDetail", traceId],
+    queryKey: expectedSpanId
+      ? ["voiceCallDetail", traceId, projectId, expectedSpanId]
+      : projectId
+        ? ["voiceCallDetail", traceId, projectId]
+        : ["voiceCallDetail", traceId],
     queryFn: () =>
       axios.get(endpoints.project.getVoiceCallDetail, {
-        params: { trace_id: traceId },
+        params: {
+          trace_id: traceId,
+          ...(projectId ? { project_id: projectId } : {}),
+          ...(expectedSpanId ? { expected_span_id: expectedSpanId } : {}),
+        },
       }),
     enabled: !!traceId && enabled,
     select: (data) => data?.data?.result,

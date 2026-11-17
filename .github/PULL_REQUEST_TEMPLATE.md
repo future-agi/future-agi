@@ -15,10 +15,21 @@ For a good review, please make sure:
 
 ## Linked issues
 
-<!-- "Closes #123" links and auto-closes on merge. Also link the Linear issue. -->
+<!-- "Closes #123" links and auto-closes on merge. Also link the Linear issue.
+     Anything bigger than a small fix needs an issue a maintainer has labelled `accepted`. -->
 
 Closes #
 Linear:
+
+## AI use
+
+<!-- Required. Which tool, and how much of this change it produced. Examples:
+       AI use: none
+       AI use: Claude Code wrote the first draft of the test; I wrote the fix and reviewed both
+       AI use: Cursor autocomplete only
+     Undisclosed AI that a reviewer spots gets the PR closed. See CONTRIBUTION_POLICY.md. -->
+
+AI use:
 
 ## Type of change
 
@@ -29,6 +40,17 @@ Linear:
 - [ ] 🧹 Chore / refactor (no user-visible change)
 - [ ] 🚀 Performance improvement
 - [ ] 🧪 Test-only change
+
+## E2E coverage
+
+<!-- One line. `yarn coverage` (from e2e/) tells you which to use:
+     E2E: new <ID>            a flow added in this PR (appears in the FLOWS.md diff)
+     E2E: updated <ID>        an existing flow changed in this PR
+     E2E: covered-by <ID>     an existing, unchanged flow already proves this change
+     E2E: exempt (<reason>)   docs | tooling | tests-only | not-in-stack | backend-internal |
+                              gateway-internal | cosmetic | refactor | test-support | harness-gap <what> -->
+
+E2E:
 
 ---
 
@@ -78,7 +100,11 @@ Linear:
 
 - `test_case_name` — [what it covers]
 
-> Run result: **X passed** across these suites. Lint (ruff) + format (black) clean.
+<!-- Paste the real output of the run below (the summary line at minimum). A count with no output is treated as "not run". -->
+
+```
+<paste `bin/test ...` / `yarn test:run` output here>
+```
 
 ---
 

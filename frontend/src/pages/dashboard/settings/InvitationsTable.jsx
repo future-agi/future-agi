@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { DataGrid } from "@mui/x-data-grid";
-import { Box, useTheme, Checkbox, Tooltip } from "@mui/material";
+import { Box, useTheme, Checkbox, IconButton, Tooltip } from "@mui/material";
 import PropTypes from "prop-types";
 import CreateUserModal from "./CreateUserModal";
 import axios, { endpoints } from "src/utils/axios";
@@ -11,6 +11,8 @@ import DeleteConfirmationDialog from "./DeleteConfirmationDialog";
 import CircularProgress from "@mui/material/CircularProgress"; // Import loader component
 import { trackEvent, Events, PropertyName } from "src/utils/Mixpanel";
 import logger from "src/utils/logger";
+import { fDateLocal } from "src/utils/format-time";
+import { LocalDateTime } from "src/components/date-time/LocalDateTime";
 
 const handleResend = async (invitationId, email, setLoadingResend) => {
   trackEvent(Events.resendInviteClicked, {
@@ -86,7 +88,16 @@ const columns = (
   },
   { field: "name", headerName: "User Name", flex: 1, sortable: false },
   { field: "email", headerName: "Email", flex: 1, sortable: false },
-  { field: "created_at", headerName: "Date Invited", flex: 1, sortable: false },
+  {
+    field: "created_at",
+    headerName: "Date Invited",
+    flex: 1,
+    sortable: false,
+    valueFormatter: (params) => fDateLocal(params.value),
+    renderCell: (params) => (
+      <LocalDateTime value={params.value} emptyText="No invite date recorded" />
+    ),
+  },
   {
     field: "action",
     headerName: "Action",
@@ -106,7 +117,10 @@ const columns = (
             onClick={() => {handleResend(params.row.id)}}
             // onMouseEnter={() => {console.log("resend hovered")}}
           /> */}
-          <span
+          <IconButton
+            size="small"
+            className="row-hover-action"
+            aria-label="Resend invite"
             onClick={() =>
               !loadingResend[params.row.id]
                 ? handleResend(
@@ -116,13 +130,9 @@ const columns = (
                   )
                 : {}
             }
-            style={{
-              // cursor: 'pointer',
+            sx={{
               cursor: loadingResend[params.row.id] ? "not-allowed" : "pointer",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              marginRight: "10px",
+              mr: 1,
             }}
           >
             {loadingResend[params.row.id] ? (
@@ -131,12 +141,12 @@ const columns = (
               <ResendInviteIcon
                 width={20}
                 height={20}
-                fill="#A792FD"
-                stroke="#A792FD"
+                fill={palette.primary.main}
+                stroke={palette.primary.main}
                 strokeWidth={0.0}
               />
             )}{" "}
-          </span>
+          </IconButton>
         </Tooltip>
         <Tooltip title="Delete Invite" arrow>
           {/* <img
@@ -150,26 +160,23 @@ const columns = (
             onClick={() => {handleDelete(params.row.id, setRefreshData)}}
             // onMouseEnter={() => {console.log("delete hovered")}}
           /> */}
-          <span
+          <IconButton
+            size="small"
+            className="row-hover-action"
+            aria-label="Delete invite"
             onClick={() => {
               setOpenDeleteConfirmationDialog(true);
               setSelectedDeleteId(params.row.id);
-            }}
-            style={{
-              cursor: "pointer",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
             }}
           >
             <DeleteInviteIcon
               width={20}
               height={20}
               fill="none"
-              stroke="#DB2F2D"
+              stroke={palette.error.main}
               strokeWidth={1.0}
             />
-          </span>
+          </IconButton>
         </Tooltip>
       </Box>
     ),
@@ -243,7 +250,7 @@ const InvitationsTable = ({
         height: "calc(100vh - 165px)",
         width: "100%",
         border: "1px solid",
-        borderRadius: "15px",
+        borderRadius: "12px",
         borderColor: "text.disabled",
         padding: "10px",
       }}
@@ -275,7 +282,7 @@ const InvitationsTable = ({
             backgroundColor: "background.default",
           },
           "& .MuiDataGrid-columnHeaders": {
-            fontSize: "13px",
+            fontSize: "12px",
             padding: "8px",
             backgroundColor: "background.paper",
             color: "text.disabled",

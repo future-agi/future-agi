@@ -8,6 +8,7 @@ not e2e API tests — the CH infrastructure is already tested elsewhere.
 import uuid
 
 import pytest
+from django.test import override_settings
 
 from tracer.services.clickhouse.query_builders.trace_list import TraceListQueryBuilder
 
@@ -18,14 +19,16 @@ def project_id():
 
 
 class TestSearch:
-    def test_search_adds_ilike_filter(self, project_id):
+    def test_search_uses_bounded_latest_state_filter(self, project_id):
         builder = TraceListQueryBuilder(
             project_id=project_id,
             search="hello world",
         )
-        query, params = builder.build()
-        assert "ILIKE %(search)s" in query
-        assert params["search"] == "%hello world%"
+        query, params = builder.build_filter_match_query(["trace-a"])
+        assert builder.supports_bounded_filter_scan() is True
+        assert "latest_column_value_0" in query
+        assert "positionUTF8(lowerUTF8" in query
+        assert params["latest_filter_param_0"] == "hello world"
 
     def test_search_none_omits_filter(self, project_id):
         builder = TraceListQueryBuilder(project_id=project_id)
@@ -38,15 +41,13 @@ class TestSearch:
         query, params = builder.build()
         assert "ILIKE" not in query
 
-    def test_search_included_in_count_query(self, project_id):
+    def test_search_count_does_not_use_legacy_scan(self, project_id):
         builder = TraceListQueryBuilder(
             project_id=project_id,
             search="test",
         )
-        # Must call build() first to set start_date/end_date
-        builder.build()
-        count_query, count_params = builder.build_count_query()
-        assert "ILIKE %(search)s" in count_query
+        with pytest.raises(ValueError, match="bounded_search_required"):
+            builder.build_count_query()
 
 
 class TestConfigurableColumns:
@@ -126,20 +127,20 @@ class TestSpanCount:
 
 
 class TestSearchAndColumns:
-    def test_search_with_columns_both_applied(self, project_id):
+    def test_search_with_columns_still_uses_bounded_filter(self, project_id):
         builder = TraceListQueryBuilder(
             project_id=project_id,
             search="error",
             columns=["status", "latency_ms"],
         )
-        query, params = builder.build()
-        # Search applied
-        assert "ILIKE %(search)s" in query
-        assert params["search"] == "%error%"
-        # Columns limited
+        query, params = builder.build_filter_match_query(["trace-a"])
+        assert "positionUTF8(lowerUTF8" in query
+        assert params["latest_filter_param_0"] == "error"
+        # Column selection remains presentation metadata; the finite candidate
+        # classifier may safely return a superset of light fields.
+        assert builder.columns == ["status", "latency_ms"]
         assert "status" in query
         assert "latency_ms" in query
-        assert "provider" not in query
 
 
 class TestExistingBehaviorPreserved:
@@ -219,7 +220,7 @@ class TestEvalAveragingAcrossSpans:
     ]
 
     def _row(self, **kw):
-        base = {c: None for c in self._COLS}
+        base = dict.fromkeys(self._COLS)
         base.update(
             trace_id="t1",
             eval_config_id="c1",
@@ -281,20 +282,56 @@ class TestPerfQueryShapes:
         assert "LIMIT 1 BY trace_id" not in query
         assert "LIMIT %(limit)s" in query
 
-    def test_eval_query_dedups_page_slice_without_table_final(self, project_id):
+    @pytest.mark.parametrize(
+        ("eval_table", "version_column", "live_projection", "live_predicate"),
+        [
+            (
+                "tracer_eval_logger",
+                "_peerdb_version",
+                "_peerdb_is_deleted AS latest_state_0",
+                "latest_state_0 = 0 AND (latest_state_1 = 0 OR latest_state_1 IS NULL)",
+            ),
+            (
+                "tracer_eval_logger_v2",
+                "_version",
+                "is_deleted AS latest_state_0",
+                "latest_state_0 = 0",
+            ),
+        ],
+    )
+    def test_eval_query_dedups_page_slice_without_table_final(
+        self,
+        project_id,
+        eval_table,
+        version_column,
+        live_projection,
+        live_predicate,
+    ):
         """Phase-2 must not run table-level FINAL (it merged the WHOLE eval
         table for a ~50-trace page). Dedup happens on the page-scoped slice via
-        `ORDER BY _peerdb_version DESC LIMIT 1 BY id` — verified identical
-        output to FINAL on live data and on multi-version fixtures."""
-        builder = TraceListQueryBuilder(project_id=project_id, eval_config_ids=["ec1"])
-        builder.build()  # binds start_date so the created_at prune is emitted
-        query, params = builder.build_eval_query(["t1"])
-        assert "tracer_eval_logger FINAL" not in query
-        assert "ORDER BY _peerdb_version DESC" in query
+        each table's physical version column, then applies its tombstone guard
+        outside `LIMIT 1 BY id` so a deleted latest row cannot resurrect an
+        older live version."""
+        with override_settings(CH25_EVAL_LOGGER_TABLE=eval_table):
+            builder = TraceListQueryBuilder(
+                project_id=project_id,
+                eval_config_ids=["ec1"],
+            )
+            builder.build()
+            query, params = builder.build_eval_query(["t1"])
+
+        assert f"{eval_table} FINAL" not in query
+        assert f"FROM {eval_table}" in query
+        assert f"ORDER BY {version_column} DESC" in query
+        assert live_projection in query
         assert "LIMIT 1 BY id" in query
-        # The partition-pruning lower bound must survive inside the subquery.
-        assert "created_at >= %(start_date)s - INTERVAL 1 DAY" in query
-        assert "start_date" in params
+        assert f"WHERE {live_predicate}" in query
+        assert query.index("LIMIT 1 BY id") < query.index(f"WHERE {live_predicate}")
+        # Eval rows may arrive days or months after their trace. Page trace ids
+        # plus config ids are the exact identity scope; applying the trace
+        # window to eval.created_at silently drops legitimate late results.
+        assert "created_at >= %(start_date)s - INTERVAL 1 DAY" not in query
+        assert "start_date" not in params
 
     def test_membership_filter_subqueries_are_time_bounded(self, project_id):
         """Trace-membership wraps (`trace_id IN (SELECT … FROM spans …)`) for

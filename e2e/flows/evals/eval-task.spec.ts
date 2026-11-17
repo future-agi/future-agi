@@ -8,7 +8,7 @@ import { flowAnnotation } from '../../lib/flow-meta';
 // The eval runs inside the worker container, so its judge model must reach the
 // gateway over the compose network — E2E.gatewayUrl is a host port the worker
 // cannot resolve. Address + shared key are the root compose defaults
-// (docker-compose.yml AGENTCC_INTERNAL_URL / AGENTCC_INTERNAL_API_KEY); the key
+// (docker-compose.distributed.yml AGENTCC_INTERNAL_URL / AGENTCC_INTERNAL_API_KEY); the key
 // is the same one harness/mock-llm.spec.ts authenticates with.
 const GATEWAY_INTERNAL_URL = 'http://agentcc-gateway:8080/v1';
 const GATEWAY_INTERNAL_KEY = 'local-dev-only-shared-secret-replace-me';
@@ -22,7 +22,7 @@ interface CreatedId { result: { id: string } }
 
 interface EvalResultRow {
   status: string;
-  output_bool: number | null;
+  output_bool: boolean | number | null;
   eval_explanation: string | null;
   output_metadata: string;
 }
@@ -156,7 +156,7 @@ test('EVAL-E2E-001: eval task runs over ingested spans via the mock LLM', {
       return row?.status;
     }, POLL.CDC_VISIBLE).toBe('completed');
 
-    expect(row?.output_bool).toBe(1);
+    expect([true, 1]).toContain(row?.output_bool);
     expect(row?.eval_explanation).toBe(`${verdict} saw llm`);
     const metadata = JSON.parse(row?.output_metadata ?? '{}') as { usage?: Record<string, number> };
     expect(metadata.usage).toEqual(MOCK_USAGE);

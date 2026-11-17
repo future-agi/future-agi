@@ -1,9 +1,10 @@
 import React from "react";
-import { Box, Typography, Link, useTheme } from "@mui/material";
-import SvgColor from "../svg-color";
 import PropTypes from "prop-types";
-import { ShowComponent } from "../show";
+import EmptyState from "../empty-state";
+import SvgColor from "../svg-color";
 
+// First-run empty state with an optional docs link. Renders the Design System
+// EmptyState; kept for its icon-src + link/linkText API.
 const EmptyLayout = ({
   title,
   description,
@@ -14,90 +15,26 @@ const EmptyLayout = ({
   onLinkClick,
   sx = {},
   hideIcon = false,
-}) => {
-  const theme = useTheme();
-  return (
-    <Box
-      display="flex"
-      justifyContent="center"
-      alignItems="center"
-      sx={{
-        height: "100%",
-        ...sx,
-      }}
-    >
-      <Box
-        sx={{
-          maxWidth: 447,
-          width: "100%",
-          textAlign: "center",
-          borderRadius: 2,
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          gap: "14px",
-        }}
-      >
-        <ShowComponent condition={!hideIcon}>
-          <Box
-            sx={{
-              width: 68,
-              height: 68,
-              borderRadius: "8px",
-              border: "2px solid",
-              borderColor: "divider",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            <SvgColor
-              src={icon}
-              sx={{
-                width: "36px",
-                height: "36px",
-                background:
-                  theme.palette.mode === "light"
-                    ? "linear-gradient(135deg, var(--primary-main), #CF6BE8)"
-                    : "linear-gradient(135deg, #FFFFFF, #E6E6E7)",
-              }}
-            />
-          </Box>
-        </ShowComponent>
-        <Box>
-          <Typography
-            fontWeight={"fontWeightMedium"}
-            typography="m3"
-            color={"text.primary"}
-            component={"div"}
-          >
-            {title}
-          </Typography>
-
-          <Typography
-            fontWeight={"fontWeightRegular"}
-            typography="s1"
-            color="text.primary"
-            component="span"
-          >
-            {description}{" "}
-            <Link
-              href={link}
-              target="_blank"
-              rel="noopener noreferrer"
-              underline="always"
-              color={"primary.main"}
-              onClick={onLinkClick ? onLinkClick : () => {}}
-            >
-              {linkText}
-            </Link>
-          </Typography>
-        </Box>
-        {action}
-      </Box>
-    </Box>
-  );
-};
+  quickstart,
+  steps,
+}) => (
+  <EmptyState
+    title={title}
+    description={description}
+    icon={
+      icon && !hideIcon ? (
+        <SvgColor src={icon} sx={{ width: 20, height: 20 }} />
+      ) : undefined
+    }
+    action={action}
+    docsHref={linkText ? link : undefined}
+    docsLabel={linkText}
+    onDocsClick={onLinkClick}
+    quickstart={quickstart}
+    steps={steps}
+    sx={sx}
+  />
+);
 
 EmptyLayout.propTypes = {
   title: PropTypes.string,
@@ -109,6 +46,8 @@ EmptyLayout.propTypes = {
   onLinkClick: PropTypes.func,
   sx: PropTypes.object,
   hideIcon: PropTypes.bool,
+  quickstart: PropTypes.object,
+  steps: PropTypes.array,
 };
 
 export default EmptyLayout;

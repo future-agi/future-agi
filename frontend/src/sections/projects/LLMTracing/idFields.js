@@ -1,3 +1,3 @@
-// Backend treats these columns as direct equality filters; sending
-// `col_type` for them routes through the metric pipeline and matches nothing.
+// Native identifiers use exact membership. Explicit attribute source metadata
+// takes precedence when a customer attribute shares one of these names.
 export const ID_ONLY_FIELDS = new Set(["trace_id", "span_id", "session"]);

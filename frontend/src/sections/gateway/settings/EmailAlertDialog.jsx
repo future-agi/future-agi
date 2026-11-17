@@ -197,14 +197,20 @@ export default function EmailAlertDialog({ open, onClose, alert }) {
   };
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+    <Dialog
+      open={open}
+      onClose={onClose}
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 720 } }}
+      fullWidth
+    >
       <DialogTitle>
         <Box display="flex" justifyContent="space-between" alignItems="center">
           <Typography fontWeight={600}>
             {isEdit ? "Edit Email Alert" : "New Email Alert"}
           </Typography>
           <IconButton onClick={onClose} size="small">
-            <Iconify icon="mingcute:close-line" />
+            <Iconify icon="solar:close-linear" />
           </IconButton>
         </Box>
       </DialogTitle>
@@ -401,7 +407,7 @@ export default function EmailAlertDialog({ open, onClose, alert }) {
             size="small"
             loading={isTesting}
             onClick={handleTest}
-            startIcon={<Iconify icon="mdi:email-outline" />}
+            startIcon={<Iconify icon="solar:letter-linear" />}
             sx={{ mr: "auto" }}
           >
             Send Test
@@ -415,7 +421,6 @@ export default function EmailAlertDialog({ open, onClose, alert }) {
           size="small"
           loading={isCreating || isUpdating}
           onClick={handleSave}
-          sx={{ fontWeight: 500 }}
         >
           {isEdit ? "Update" : "Create"}
         </LoadingButton>

@@ -5,6 +5,11 @@ import logger from "../logger";
 
 import { Events } from "./EventNames";
 import { MIXPANEL_HOST } from "src/config-global";
+import { isSessionReplayBlockedPath } from "src/utils/sessionReplayPolicy";
+import { scrubAnalyticsProperties } from "src/utils/analytics-scrub";
+import { analyticsUrl, pageViewPath } from "src/utils/analytics-url";
+
+export { pageViewPath };
 
 // Mixpanel is opt-in: skip init entirely on OSS builds where no token
 // is set. mixpanel-browser's init(undefined, ...) silently produces a
@@ -12,6 +17,88 @@ import { MIXPANEL_HOST } from "src/config-global";
 // with "Cannot read properties of undefined (reading 'disable_all_events')".
 const MIXPANEL_TOKEN = import.meta.env.VITE_MIXPANEL_TOKEN;
 const MIXPANEL_ENABLED = Boolean(MIXPANEL_TOKEN);
+const runtimeSessionReplayPercent =
+  typeof window === "undefined"
+    ? undefined
+    : window.__FUTURE_AGI_CONFIG__?.VITE_MIXPANEL_SESSION_REPLAY_PERCENT;
+const configuredSessionReplayPercent = Number(
+  runtimeSessionReplayPercent !== undefined &&
+    String(runtimeSessionReplayPercent).trim() !== ""
+    ? runtimeSessionReplayPercent
+    : import.meta.env.VITE_MIXPANEL_SESSION_REPLAY_PERCENT ?? 0,
+);
+const MIXPANEL_SESSION_REPLAY_PERCENT = Number.isFinite(
+  configuredSessionReplayPercent,
+)
+  ? Math.min(100, Math.max(0, configuredSessionReplayPercent))
+  : 0;
+const INITIAL_PATHNAME =
+  typeof window === "undefined" ? "/" : window.location.pathname;
+let mixpanelReplayMayBeActive =
+  MIXPANEL_SESSION_REPLAY_PERCENT > 0 &&
+  !isSessionReplayBlockedPath(INITIAL_PATHNAME);
+let mixpanelReplayConfigDisabled = false;
+let mixpanelReplayStopScript = null;
+
+// mixpanel-browser adds the page address ($current_url), document.referrer
+// ($referrer) and the first referrer it stored ($initial_referrer) to every
+// event. These are reported as analyticsUrl gives them: link codes replaced by
+// the route pattern, one-time query parameters removed.
+const URL_PROPERTIES = ["$current_url", "$referrer", "$initial_referrer"];
+
+// Cleans top-level text values that are URLs just before sending: the URL
+// properties above and values the library collects itself, such as campaign
+// (utm_*) parameters. analyticsUrl leaves text that is not a URL, and URLs
+// without a link code or one-time parameter, as they are.
+const cleanUrlProperties = (properties, isUrlProperty = () => true) => {
+  if (!properties || typeof properties !== "object") return;
+  Object.keys(properties).forEach((name) => {
+    if (typeof properties[name] === "string" && isUrlProperty(name)) {
+      properties[name] = analyticsUrl(properties[name]);
+    }
+  });
+};
+
+// Profile properties the library adds itself: the first referrer and the
+// first campaign values. Profile properties the app sets, such as names, are
+// sent as they are.
+const isLibraryProfileUrlProperty = (name) =>
+  name === "$initial_referrer" || name.startsWith("initial_utm_");
+
+// The values the library would add to an event now, where they differ from
+// what analyticsUrl reports. Empty on ordinary pages.
+const urlPropertyOverrides = () => {
+  const current = {
+    $current_url: window.location.href,
+    $referrer: document.referrer,
+    $initial_referrer: mixpanel.get_property?.("$initial_referrer"),
+  };
+  const overrides = {};
+  URL_PROPERTIES.forEach((name) => {
+    const cleaned = analyticsUrl(current[name]);
+    if (cleaned !== current[name]) overrides[name] = cleaned;
+  });
+  return overrides;
+};
+
+// Caller properties are merged after the library's own, so these replace the
+// library's values for this event.
+const withUrlOverrides = (properties) => {
+  const overrides = urlPropertyOverrides();
+  return Object.keys(overrides).length
+    ? { ...properties, ...overrides }
+    : properties;
+};
+
+// The library stores the first referrer once, as is, and sends it with later
+// events and the user profile. Store it as analyticsUrl reports it instead,
+// and clean a value stored earlier.
+const storeCleanReferrer = (instance) => {
+  instance.persistence?.update_referrer_info?.(analyticsUrl(document.referrer));
+  const stored = instance.get_property?.("$initial_referrer");
+  const cleaned = analyticsUrl(stored);
+  if (cleaned !== stored) instance.register({ $initial_referrer: cleaned });
+};
 
 if (MIXPANEL_ENABLED) {
   try {
@@ -19,14 +106,107 @@ if (MIXPANEL_ENABLED) {
       debug: true,
       persistence: "localStorage",
       ignore_dnt: true,
-      record_sessions_percent: 100,
+      // Product analytics events remain enabled. Session replay is intentionally
+      // opt-in because multiple rrweb recorders retained hundreds of MiB on
+      // mutation-heavy grids. High-mutation routes are blocked even when an
+      // environment explicitly opts into replay.
+      record_sessions_percent: mixpanelReplayMayBeActive
+        ? MIXPANEL_SESSION_REPLAY_PERCENT
+        : 0,
       record_mask_text_class: ".sensitive",
+      // Page views are tracked by the app through trackEvent.
+      track_pageview: false,
+      loaded: storeCleanReferrer,
+      // Run just before each request is sent, also for events the library
+      // sends itself (such as $identify) and for profile updates.
+      hooks: {
+        before_send_events: (data) => {
+          cleanUrlProperties(data?.properties);
+          return data;
+        },
+        before_send_people: (data) => {
+          cleanUrlProperties(data?.$set, isLibraryProfileUrlProperty);
+          cleanUrlProperties(data?.$set_once, isLibraryProfileUrlProperty);
+          return data;
+        },
+      },
       ...(MIXPANEL_HOST && { api_host: MIXPANEL_HOST }),
     });
   } catch (error) {
     logger.error("Failed to initialize Mixpanel:", error);
   }
 }
+
+export const syncMixpanelSessionReplay = (pathname) => {
+  if (
+    !MIXPANEL_ENABLED ||
+    !mixpanelReplayMayBeActive ||
+    !isSessionReplayBlockedPath(pathname)
+  ) {
+    return;
+  }
+
+  try {
+    // Keep each successful transition, but leave replay retryable until every
+    // required operation has succeeded. In particular, do not clear
+    // mixpanelReplayMayBeActive before a throwing set_config/stop call.
+    if (!mixpanelReplayConfigDisabled) {
+      mixpanel.set_config({ record_sessions_percent: 0 });
+      mixpanelReplayConfigDisabled = true;
+    }
+
+    if (mixpanel._recorder) {
+      mixpanel.stop_session_recording();
+      mixpanelReplayMayBeActive = false;
+      mixpanelReplayStopScript = null;
+      return;
+    }
+
+    // The recorder bundle may still be loading. Stop it immediately after its
+    // existing script load handler starts the recorder.
+    const recorderSource = mixpanel.get_config?.("recorder_src");
+    let normalizedRecorderSource = null;
+    if (recorderSource) {
+      try {
+        normalizedRecorderSource = new URL(recorderSource, document.baseURI)
+          .href;
+      } catch (error) {
+        logger.error("Failed to resolve Mixpanel recorder source:", error);
+      }
+    }
+    const recorderScript = normalizedRecorderSource
+      ? Array.from(document.scripts).find(
+          (script) => script.src === normalizedRecorderSource,
+        )
+      : null;
+
+    // A successful config update is sufficient when this browser was not
+    // sampled and no recorder load is in flight.
+    if (!recorderScript) {
+      mixpanelReplayMayBeActive = false;
+      return;
+    }
+    if (mixpanelReplayStopScript === recorderScript) return;
+
+    const stopLoadedRecorder = () => {
+      if (mixpanelReplayStopScript === recorderScript) {
+        mixpanelReplayStopScript = null;
+      }
+      try {
+        if (mixpanel._recorder) mixpanel.stop_session_recording();
+        mixpanelReplayMayBeActive = false;
+      } catch (error) {
+        // The one-shot listener has been consumed. Keep replay eligible for a
+        // direct retry on the next blocked-route synchronization.
+        logger.error("Failed to stop Mixpanel session replay:", error);
+      }
+    };
+    recorderScript.addEventListener("load", stopLoadedRecorder, { once: true });
+    mixpanelReplayStopScript = recorderScript;
+  } catch (error) {
+    logger.error("Failed to stop Mixpanel session replay:", error);
+  }
+};
 
 export const PropertyName = {
   method: "method",
@@ -96,10 +276,35 @@ export const PropertyName = {
   goals: "goals",
 };
 
+const CUSTOM_MODEL_PROVIDERS = new Set([
+  "azure",
+  "openai",
+  "vertex_ai",
+  "custom",
+  "bedrock",
+  "sagemaker",
+]);
+
+// Custom-model events use a fixed property set: the provider (or "other") and
+// whether it was a create or an edit.
+const customModelEventProperties = (properties) => ({
+  model_provider: CUSTOM_MODEL_PROVIDERS.has(properties?.model_provider)
+    ? properties.model_provider
+    : "other",
+  operation: properties?.operation === "edit" ? "edit" : "create",
+});
+
 export const trackEvent = (eventName, properties) => {
   if (!MIXPANEL_ENABLED) return;
   try {
-    mixpanel.track(eventName, properties);
+    mixpanel.track(
+      eventName,
+      withUrlOverrides(
+        eventName === Events.customModelAdded
+          ? customModelEventProperties(properties)
+          : scrubAnalyticsProperties(properties),
+      ),
+    );
   } catch (error) {
     logger.error("Failed to track event:", error);
   }
@@ -109,8 +314,12 @@ export const trackError = (properties, where) => {
   if (!MIXPANEL_ENABLED) return;
   try {
     mixpanel.track(
-      `Client Error : ${where || window.location.pathname}`,
-      properties,
+      `Client Error : ${
+        where
+          ? analyticsUrl(String(where))
+          : pageViewPath(window.location.pathname)
+      }`,
+      withUrlOverrides(scrubAnalyticsProperties(properties)),
     );
   } catch (error) {
     logger.error("Failed to track error:", error);
@@ -127,8 +336,21 @@ export const identifyUser = (userData = {}) => {
   if (!MIXPANEL_ENABLED) return;
 
   try {
-    // Mixpanel identification
-    mixpanel.identify(id);
+    // Mixpanel identification. identify() can send an $identify event; when
+    // requests are not queued it is sent without the before_send hooks, so the
+    // cleaned URL properties are registered for that call only.
+    const overrides = urlPropertyOverrides();
+    const overrideNames = Object.keys(overrides);
+    if (overrideNames.length) {
+      mixpanel.register(overrides, { persistent: false });
+    }
+    try {
+      mixpanel.identify(id);
+    } finally {
+      overrideNames.forEach((name) =>
+        mixpanel.unregister(name, { persistent: false }),
+      );
+    }
     mixpanel.people.set_once("id", id);
     mixpanel.people.set_once("$email", email);
     mixpanel.people.set_once("$name", userData?.name);
@@ -142,13 +364,6 @@ export const identifyUser = (userData = {}) => {
     mixpanel.get_group("org_id", userData?.organization?.id).set_once({
       "Organization Name": userData?.organization?.name,
     });
-
-    // Appcues identification
-    if (window.Appcues) {
-      window.Appcues.identify(id, {
-        email: email,
-      });
-    }
   } catch (error) {
     logger.error("Failed to identify user:", error);
     trackError({
@@ -161,15 +376,11 @@ export const identifyUser = (userData = {}) => {
 };
 
 export const resetUser = () => {
-  if (!MIXPANEL_ENABLED) {
-    if (window.Appcues) window.Appcues.reset();
-    return;
-  }
+  if (!MIXPANEL_ENABLED) return;
   try {
     mixpanel.reset();
-    if (window.Appcues) {
-      window.Appcues.reset();
-    }
+    // reset() clears the stored first referrer; store it again cleaned.
+    storeCleanReferrer(mixpanel);
   } catch (error) {
     logger.error("Failed to reset user:", error);
   }

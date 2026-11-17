@@ -11,7 +11,11 @@
       "properties": {
         "api_key": { "type": "string" },
         "base_url": { "type": "string" },
-        "api_format": { "type": "string" },
+        "api_format": {
+          "type": "string",
+          "description": "The upstream's wire protocol: openai, anthropic, gemini, bedrock, cohere or azure for model calls, or systemone for a structured-decision provider (TypeSafe, Perplexity Decider, a custom System One endpoint), with typesafe accepted as its alias. Empty lets the gateway infer it from the provider ID, which maps typesafe to systemone. A free string, so a format the gateway adds needs no contract change."
+        },
+        "api_path_prefix": { "type": "string" },
         "models": { "type": "array", "items": { "type": "string" } },
         "timeout": { "type": "integer" },
         "weight": { "type": "number" },
@@ -21,7 +25,8 @@
         "aws_access_key_id": { "type": "string" },
         "aws_secret_access_key": { "type": "string" },
         "aws_region": { "type": "string" },
-        "aws_session_token": { "type": "string" }
+        "aws_session_token": { "type": "string" },
+        "service_account_json": { "type": "string" }
       }
     },
     "GuardrailCheck": {
@@ -766,6 +771,42 @@
       "properties": {
         "object": { "type": "string" },
         "data": { "type": "array", "items": { "$ref": "#/$defs/KeyResponse" } }
+      }
+    },
+    "SyncedKey": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "key_hash"],
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "owner": { "type": "string" },
+        "key_hash": { "type": "string" },
+        "key_prefix": { "type": "string" },
+        "models": { "type": "array", "items": { "type": "string" } },
+        "providers": { "type": "array", "items": { "type": "string" } },
+        "metadata": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "expires_at": { "type": "string" }
+      }
+    },
+    "ImportKeysRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["keys"],
+      "properties": {
+        "keys": { "type": "array", "items": { "$ref": "#/$defs/SyncedKey" } }
+      }
+    },
+    "ImportKeysResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["received", "loaded"],
+      "properties": {
+        "received": { "type": "integer" },
+        "loaded": { "type": "integer" }
       }
     },
     "StatusResponse": {

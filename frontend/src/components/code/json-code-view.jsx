@@ -7,7 +7,10 @@ export default function JsonCodeView({ data }) {
   const jsonString = JSON.stringify(data, null, 2);
 
   return (
-    <Paper style={{ padding: "20px", backgroundColor: "var(--bg-neutral)" }}>
+    <Paper
+      variant="outlined"
+      style={{ padding: "20px", backgroundColor: "var(--bg-neutral)" }}
+    >
       <Typography component="pre" style={{ fontFamily: "monospace" }}>
         {jsonString}
       </Typography>

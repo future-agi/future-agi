@@ -28,11 +28,10 @@ export const CREATE_PROMPT_OPTIONS = [
 ];
 
 export const iconStyles = {
-  boxShadow: "2px -2px 12px 0px rgba(0, 0, 0, 0.08)",
   fileIcon: "/assets/icons/ic_prompt.svg",
   folderIcon: "/assets/icons/ic_folder.svg",
-  fileColor: "red.500",
-  folderColor: "blue.500",
+  fileColor: "text.secondary",
+  folderColor: "text.secondary",
 };
 
 export const PROMPT_ICON_MAPPER = {
@@ -65,15 +64,15 @@ export const FOLDERS = {
 
 export const EMPTY_MESSAGE = {
   template: {
-    title: "Create new template",
+    title: "No templates yet",
     description:
-      "Craft a prompt, customize it to your needs, and save it as a reusable template.",
+      "Save a prompt as a template to start new prompts from it, with its messages, variables and model settings.",
     icon: "/assets/icons/ic_scratch.svg",
   },
   prompt: {
-    title: "Add your prompt",
+    title: "No prompts yet",
     description:
-      "Manage datasets across your development lifecycle—create, update, and use them to evaluate prompts and workflows.",
+      "Write a prompt, test it against models in the playground, and version it. Your code fetches the version by label.",
     icon: "/assets/icons/ic_prompt_message.svg",
   },
 };

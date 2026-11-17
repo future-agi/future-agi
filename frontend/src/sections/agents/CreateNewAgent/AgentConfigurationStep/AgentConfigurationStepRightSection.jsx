@@ -1,19 +1,19 @@
 import { Icon } from "@iconify/react";
-import { Box, Button, Typography, Link, useTheme, alpha } from "@mui/material";
+import {
+  Box,
+  Button,
+  Typography,
+  Link,
+  useTheme,
+  alpha,
+} from "@mui/material";
 import React, { useState } from "react";
 import SvgColor from "src/components/svg-color";
 import AgentVideoPlayerModal from "../AgentVideoPlayerModal";
 import PropTypes from "prop-types";
 import { useWatch } from "react-hook-form";
 import { ShowComponent } from "src/components/show";
-import {
-  PROVIDER_CHOICES,
-  PROVIDER_STEPS_MAPPER,
-  isLiveKitProvider,
-} from "../../constants";
-import { enqueueSnackbar } from "notistack";
-import { copyToClipboard } from "src/utils/utils";
-import { HOST_API } from "src/config-global";
+import { PROVIDER_STEPS_MAPPER, isLiveKitProvider } from "../../constants";
 
 const AgentConfigurationStepRightSection = ({ control, getValues }) => {
   const [open, setOpen] = useState(false);
@@ -40,9 +40,9 @@ const AgentConfigurationStepRightSection = ({ control, getValues }) => {
             padding: "12px",
             display: "flex",
             gap: "12px",
-            backgroundColor: "blue.o5",
+            backgroundColor: "status.info.bg",
             border: "1px solid",
-            borderColor: "blue.200",
+            borderColor: "status.info.border",
             borderRadius: "4px",
           }}
         >
@@ -70,16 +70,11 @@ const AgentConfigurationStepRightSection = ({ control, getValues }) => {
                 background: alpha(theme.palette.common.black, 0.6),
                 backdropFilter: "blur(1px)",
                 WebkitBackdropFilter: "blur(4px)",
-                boxShadow: `0 2px 8px ${alpha(theme.palette.common.black, 0.3)}`,
-                transition: "all 0.2s ease-in-out",
                 cursor: "pointer",
-                "&:hover": {
-                  transform: "translate(-50%, -50%) scale(1.05)",
-                },
               }}
             >
               <Icon
-                icon="weui:play-filled"
+                icon="solar:play-linear"
                 width={22}
                 height={22}
                 color="white"
@@ -191,7 +186,7 @@ const AgentConfigurationStepRightSection = ({ control, getValues }) => {
                     {step.link && (
                       <Link
                         href={step.link}
-                        color="blue.500"
+                        color="status.info.fg"
                         target="_blank"
                         rel="noopener noreferrer"
                         fontWeight="fontWeightMedium"
@@ -203,39 +198,6 @@ const AgentConfigurationStepRightSection = ({ control, getValues }) => {
                   </Typography>
                 ),
               )}
-
-              <ShowComponent
-                condition={selectedProvider === PROVIDER_CHOICES.RETELL}
-              >
-                <Typography
-                  component={"span"}
-                  typography="s1"
-                  color="text.primary"
-                >
-                  {`${PROVIDER_STEPS_MAPPER[selectedProvider]?.length + 1}. Please add `}
-                  <Typography
-                    typography="s1"
-                    color="text.primary"
-                    component={"span"}
-                    onClick={() => {
-                      copyToClipboard(`${HOST_API}/tracer/webhook`);
-                      enqueueSnackbar({
-                        message: "Copied to clipboard",
-                        variant: "success",
-                      });
-                    }}
-                    sx={{
-                      textDecorationLine: "underline",
-                      ":hover": {
-                        cursor: "pointer",
-                      },
-                    }}
-                  >
-                    {`${HOST_API}/tracer/webhook`}
-                  </Typography>
-                  {` to the Agent Level Webhook URL on Retell`}
-                </Typography>
-              </ShowComponent>
             </Box>
           </Box>
         </ShowComponent>

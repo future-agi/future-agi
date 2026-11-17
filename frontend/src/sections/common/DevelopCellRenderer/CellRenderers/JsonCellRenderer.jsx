@@ -66,7 +66,15 @@ const JsonCellRenderer = ({
         >
           {hasRenderableValue &&
             (shouldRenderPlainText ? (
-              <Box component="span">{value}</Box>
+              // Not valid JSON: plain table text (12/18). Without its own
+              // line height it inherits the grid cell's, which is the row height.
+              // A block, so the cell's tall line box doesn't wrap it.
+              <Box
+                component="span"
+                sx={{ display: "block", fontSize: 12, lineHeight: "18px" }}
+              >
+                {value}
+              </Box>
             ) : (
               <CustomJsonViewer object={parsedJson} />
             ))}

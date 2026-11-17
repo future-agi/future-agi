@@ -2,8 +2,7 @@ import React from "react";
 import PropTypes from "prop-types";
 import ReactApexChart from "react-apexcharts";
 import { useTheme } from "@mui/material/styles";
-
-const COLORS = ["#7B56DB", "#1ABCFE", "#FF6B6B", "#2ECB71", "#F7B731"];
+import { seriesColors } from "src/theme/data-colors";
 
 export default function WidgetRadarChart({ config }) {
   const theme = useTheme();
@@ -16,11 +15,11 @@ export default function WidgetRadarChart({ config }) {
     chart: {
       type: "radar",
       background: "transparent",
-      foreColor: isDark ? "#a1a1aa" : "#666",
+      foreColor: theme.palette.text.secondary,
       toolbar: { show: false },
     },
     theme: { mode: isDark ? "dark" : "light" },
-    colors: config.colors || COLORS,
+    colors: config.colors || seriesColors(theme),
     xaxis: { categories },
     yaxis: { show: false },
     stroke: { width: 2 },

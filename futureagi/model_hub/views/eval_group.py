@@ -6,10 +6,13 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
 
-logger = structlog.get_logger(__name__)
 from model_hub.db_routing import DATABASE_FOR_EVAL_GROUP_LIST
 from model_hub.models.eval_groups import EvalGroup, History
 from model_hub.models.evals_metric import EvalTemplate
+from model_hub.serializers.catalog_queries import (
+    EvalGroupListQuerySerializer,
+    EvalGroupQuerySerializer,
+)
 from model_hub.serializers.eval_group import (
     ApplyEvalGroupRequestSerializer,
     EvalGroupSerializer,
@@ -23,8 +26,11 @@ from model_hub.services.eval_group import (
 from model_hub.utils.function_eval_params import get_function_params_schema
 from model_hub.views.utils.utils import fetch_required_keys_for_eval_template
 from tfc.routers import uses_db
+from tfc.utils.api_contracts import ExplicitQueryAutoSchema, validated_request
 from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.general_methods import GeneralMethods
+
+logger = structlog.get_logger(__name__)
 
 
 class EvalGroupView(BaseModelViewSetMixin, ModelViewSet):
@@ -64,6 +70,10 @@ class EvalGroupView(BaseModelViewSetMixin, ModelViewSet):
             return self._gm.bad_request(f"Failed to create eval group: {str(e)}")
 
     @uses_db(DATABASE_FOR_EVAL_GROUP_LIST, feature_key="feature:eval_group_list")
+    @validated_request(
+        query_serializer=EvalGroupListQuerySerializer,
+        auto_schema=ExplicitQueryAutoSchema,
+    )
     def list(self, request, *args, **kwargs):
         """List all eval groups for the user's organization.
 
@@ -73,26 +83,29 @@ class EvalGroupView(BaseModelViewSetMixin, ModelViewSet):
         "feature:eval_group_list" is opted in. No query semantics change.
         """
         try:
-            name = request.query_params.get("name")
-            page_size = int(request.query_params.get("page_size", 10))
-            page_number = int(request.query_params.get("page_number", 0))
+            name = request.validated_query_data.get("name")
+            page_size = request.validated_query_data["page_size"]
+            page_number = request.validated_query_data["page_number"]
             start = page_number * page_size
             end = start + page_size
 
-            eval_groups = EvalGroup.no_workspace_objects.db_manager(
-                DATABASE_FOR_EVAL_GROUP_LIST
-            ).filter(
-                Q(
-                    workspace=request.workspace,
-                    deleted=False,
-                    organization=getattr(request, "organization", None)
-                    or request.user.organization,
+            eval_groups = (
+                EvalGroup.no_workspace_objects.db_manager(DATABASE_FOR_EVAL_GROUP_LIST)
+                .filter(
+                    Q(
+                        workspace=request.workspace,
+                        deleted=False,
+                        organization=getattr(request, "organization", None)
+                        or request.user.organization,
+                    )
+                    | Q(is_sample=True, deleted=False)
                 )
-                | Q(is_sample=True, deleted=False)
-            ).select_related("organization", "created_by")
+                .select_related("organization", "created_by")
+            )
 
             if name:
                 from model_hub.utils.eval_list import normalize_search_for_name
+
                 eval_groups = eval_groups.filter(normalize_search_for_name(name))
 
             # Get total count before pagination
@@ -112,8 +125,9 @@ class EvalGroupView(BaseModelViewSetMixin, ModelViewSet):
 
             # Single query to get all template relationships from through table
             all_relationships = (
-                EvalGroup.eval_templates.through.objects
-                .using(DATABASE_FOR_EVAL_GROUP_LIST)
+                EvalGroup.eval_templates.through.objects.using(
+                    DATABASE_FOR_EVAL_GROUP_LIST
+                )
                 .filter(evalgroup_id__in=eval_group_ids)
                 .values_list("evalgroup_id", "evaltemplate_id")
             )
@@ -174,6 +188,7 @@ class EvalGroupView(BaseModelViewSetMixin, ModelViewSet):
                 f"Failed to list eval groups: {str(e)}"
             )
 
+    @validated_request(query_serializer=EvalGroupQuerySerializer)
     def retrieve(self, request, *args, **kwargs):
         """Retrieve a specific eval group"""
         try:
@@ -208,6 +223,7 @@ class EvalGroupView(BaseModelViewSetMixin, ModelViewSet):
 
             if name:
                 from model_hub.utils.eval_list import normalize_search_for_name
+
                 eval_templates = eval_templates.filter(normalize_search_for_name(name))
 
             # Get all template IDs for efficient querying

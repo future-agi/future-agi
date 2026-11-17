@@ -1,5 +1,6 @@
 import { useMemo } from "react";
-import { alpha, useTheme } from "@mui/material";
+import { useTheme } from "@mui/material";
+import { statusColors } from "src/utils/runStatus";
 
 export default function useBaseNodeStyles({
   selected,
@@ -11,33 +12,27 @@ export default function useBaseNodeStyles({
   nodeHeight,
 }) {
   const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
 
   const borderColor = useMemo(() => {
-    if (hasValidationError || isError) return theme.palette.red[500];
-    if (isCompleted) return theme.palette.green[500];
-    if (selected) return theme.palette.blue[500];
-    return isDark ? theme.palette.black[400] : theme.palette.black[200];
-  }, [hasValidationError, isError, isCompleted, selected, isDark, theme]);
+    if (hasValidationError || isError)
+      return statusColors(theme, "danger").solid;
+    if (isCompleted) return statusColors(theme, "success").solid;
+    if (selected) return statusColors(theme, "info").solid;
+    return theme.palette.border?.default ?? theme.palette.divider;
+  }, [hasValidationError, isError, isCompleted, selected, theme]);
 
   const borderStyle = isRunning ? "dashed" : "solid";
 
   const backgroundColor = useMemo(() => {
-    if (hasValidationError || isError)
-      return isDark
-        ? alpha(theme.palette.red[700], 0.3)
-        : theme.palette.red[50];
-    if (isCompleted)
-      return isDark
-        ? alpha(theme.palette.green[500], 0.3)
-        : theme.palette.green[50];
+    if (hasValidationError || isError) return statusColors(theme, "danger").bg;
+    if (isCompleted) return statusColors(theme, "success").bg;
     return theme.palette.background.paper;
-  }, [hasValidationError, isError, isCompleted, isDark, theme]);
+  }, [hasValidationError, isError, isCompleted, theme]);
 
   const boxSx = useMemo(
     () => ({
       minWidth: 200,
-      borderRadius: 0.5,
+      borderRadius: "4px",
       minHeight: nodeHeight,
       borderStyle: isRunning ? "none" : borderStyle,
       borderWidth: isRunning ? 0 : "1px",
@@ -59,8 +54,8 @@ export default function useBaseNodeStyles({
         !isRunning && {
           "&:hover": {
             borderColor: hasValidationError
-              ? theme.palette.red[500]
-              : theme.palette.blue[500],
+              ? statusColors(theme, "danger").solid
+              : statusColors(theme, "info").solid,
           },
           "&:hover .node-delete-btn": {
             opacity: 1,

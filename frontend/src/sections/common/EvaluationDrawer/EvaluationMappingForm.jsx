@@ -1036,6 +1036,8 @@ const EvaluationMappingFormChild = ({
     saveGroup: rest?.saveGroup,
     removedEvals,
     formState,
+    onColumnSearchChange: rest?.onColumnSearchChange,
+    columnInventoryControls: rest?.columnInventoryControls,
   };
   return (
     <form
@@ -1083,6 +1085,8 @@ EvaluationMappingFormChild.propTypes = {
   isEditMode: PropTypes.bool,
   existingEvalsProp: PropTypes.array,
   preserveName: PropTypes.bool,
+  onColumnSearchChange: PropTypes.func,
+  columnInventoryControls: PropTypes.node,
 };
 
 const EvaluationMappingForm = ({
@@ -1203,9 +1207,6 @@ const EvaluationMappingForm = ({
               variant="contained"
               size="small"
               color="error"
-              sx={{
-                paddingX: theme.spacing(3),
-              }}
               onClick={() => {
                 setOpenConfirmDialog(false);
                 if (action === "back") {
@@ -1240,4 +1241,6 @@ EvaluationMappingForm.propTypes = {
   selectedEvalItem: PropTypes.object,
   existingEvalsProp: PropTypes.array,
   preserveName: PropTypes.bool,
+  onColumnSearchChange: PropTypes.func,
+  columnInventoryControls: PropTypes.node,
 };

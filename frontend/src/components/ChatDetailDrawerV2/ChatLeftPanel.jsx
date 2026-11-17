@@ -37,19 +37,19 @@ const ChatLeftPanel = ({ data, scenarioId }) => {
       {
         label: "Transcript",
         value: TABS.TRANSCRIPT,
-        icon: "mdi:file-document-outline",
+        icon: "solar:document-text-linear",
       },
     ];
     if (showPathTabs) {
       t.push({
         label: "Checklist",
         value: TABS.CHECKLIST,
-        icon: "mdi:format-list-checks",
+        icon: "solar:list-check-linear",
       });
       t.push({
         label: "Graph",
         value: TABS.GRAPH,
-        icon: "mdi:graph-outline",
+        icon: "solar:graph-linear",
       });
     }
     return t;

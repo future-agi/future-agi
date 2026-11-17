@@ -22,6 +22,7 @@ os.environ.setdefault("EE_LICENSE_KEY", "test-license-key")
 # "Redis is not available" mid-test.
 os.environ.setdefault("REDIS_URL", "redis://localhost:16379/0")
 os.environ.setdefault("REDIS_LOCK_URL", "redis://localhost:16379/2")
+os.environ.setdefault("FUTURE_AGI_TELEMETRY_URL", "http://127.0.0.1:9")
 
 from .settings import *  # noqa: F403,E402
 from .settings import INSTALLED_APPS  # noqa: E402
@@ -29,6 +30,15 @@ from .settings import INSTALLED_APPS  # noqa: E402
 # Test mode indicator
 TESTING = True
 DEBUG = False
+MCP_RATE_LIMIT_ALLOW_LOCAL_FALLBACK = True
+
+# EE usage endpoint contract fixtures create APICallLog rows directly in the
+# test database. ClickHouse selector behavior has dedicated tests; endpoint
+# contract tests should exercise the deterministic ORM fallback they seed.
+EVAL_USAGE_CLICKHOUSE_ENABLED = os.environ.get(
+    "EVAL_USAGE_CLICKHOUSE_ENABLED",
+    "false",
+).lower() in ("true", "1", "t", "yes", "y")
 
 # Test database configuration
 # Use different ports than dev (5432/9000) to avoid collisions
@@ -84,9 +94,7 @@ CLICKHOUSE_V2 = {
     "QUERY_TYPES_DISABLED": os.environ.get("CH25_QUERY_TYPES_DISABLED", ""),
 }
 
-CH25_EVAL_LOGGER_TABLE = os.environ.get(
-    "CH25_EVAL_LOGGER_TABLE", "tracer_eval_logger"
-)
+CH25_EVAL_LOGGER_TABLE = os.environ.get("CH25_EVAL_LOGGER_TABLE", "tracer_eval_logger")
 
 # Test cache configuration
 CACHES = {
@@ -216,6 +224,7 @@ MODEL_SERVING_URL = os.environ.get(
 # Disable analytics and tracking in tests
 MIXPANEL_TOKEN = None
 SENTRY_DSN = None
+SAML_LOGIN_ENABLED = True
 
 # Test-specific feature flags
 FEATURE_FLAGS = {
@@ -223,6 +232,9 @@ FEATURE_FLAGS = {
     "enable_analytics": False,
     "enable_monitoring": False,
 }
+
+# Exercise the post-backfill reader in unit/API tests. Production defaults to
+# the bounded legacy reader until operators explicitly pass the readiness gate.
 
 
 def ensure_clickhouse_test_database():

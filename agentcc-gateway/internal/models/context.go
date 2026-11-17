@@ -59,6 +59,21 @@ type RequestContext struct {
 	Timings       map[string]time.Duration
 	Errors        []error
 
+	// GuardrailRequest and GuardrailResponse carry the text of a request and
+	// its response, chat-shaped, on the routes that forward the client's own
+	// body: native /v1/messages, /v1/responses and native GenAI. There Request
+	// is nil, so that the cache key is not built from an empty carrier, and
+	// Response holds usage only. Guardrails read these; nothing else does.
+	GuardrailRequest  *ChatCompletionRequest
+	GuardrailResponse *ChatCompletionResponse
+
+	// ServedBy is the provider instance (a providers.Provider) that answered
+	// a chat request, recorded by the chat handlers when the attempt that
+	// served it succeeds. Provider is only its ID, which an org's instance
+	// and the operator's share, and a model fallback can move the request
+	// from one to the other. nil when the handler did not record it.
+	ServedBy any
+
 	// mu serializes writes to Timings and Metadata between the goroutines that
 	// legitimately write them — handlers, pre-plugins, sequential post-plugins,
 	// streaming callbacks.
@@ -74,8 +89,14 @@ type RequestContext struct {
 	RequestHeaders http.Header
 
 	// EndpointType identifies the API endpoint: "chat", "embedding", "image",
-	// "speech", "transcription", or "rerank". Defaults to "chat".
+	// "speech", "transcription", "rerank", or "decision". Defaults to "chat".
 	EndpointType string
+
+	// ServedPriceTable is the price-table name of the provider instance that
+	// served the request, set by the server where retries and failover can
+	// switch instances; nil when not set. A field, not Metadata, because a
+	// caller can write Metadata.
+	ServedPriceTable *string
 
 	// Guardrail results — populated by the guardrails plugin with triggered checks.
 	GuardrailResults []GuardrailResult
@@ -96,6 +117,8 @@ type RequestContext struct {
 	SearchResponse    *SearchResponse
 	OCRRequest        *OCRRequest
 	OCRResponse       *OCRResponse
+	DecisionRequest   *DecisionRequest
+	DecisionResponse  *DecisionResponse
 
 	// Per-org model map: model name → provider ID override.
 	OrgModelMap map[string]string
@@ -128,6 +151,9 @@ type RequestFlags struct {
 	FallbackUsed       bool
 	Timeout            bool
 	ShortCircuited     bool
+	// NoSpend marks a call that cannot spend, such as a delete. Budget and
+	// credit limits do not refuse it: a key out of budget can still clean up.
+	NoSpend bool
 }
 
 var requestContextPool = sync.Pool{
@@ -156,13 +182,17 @@ func (rc *RequestContext) Release() {
 	rc.Model = ""
 	rc.ResolvedModel = ""
 	rc.Provider = ""
+	rc.ServedBy = nil
 	rc.Request = nil
 	rc.Response = nil
+	rc.GuardrailRequest = nil
+	rc.GuardrailResponse = nil
 	rc.IsStream = false
 	rc.SessionID = ""
 	rc.UserID = ""
 	rc.Flags = RequestFlags{}
 	rc.EndpointType = ""
+	rc.ServedPriceTable = nil
 	rc.EmbeddingRequest = nil
 	rc.EmbeddingResponse = nil
 	rc.ImageRequest = nil
@@ -178,6 +208,8 @@ func (rc *RequestContext) Release() {
 	rc.SearchResponse = nil
 	rc.OCRRequest = nil
 	rc.OCRResponse = nil
+	rc.DecisionRequest = nil
+	rc.DecisionResponse = nil
 	rc.OrgModelMap = nil
 	rc.OrgModelFallbacks = nil
 	rc.GuardrailResults = rc.GuardrailResults[:0]
