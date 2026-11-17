@@ -64,7 +64,7 @@ def test_missing_workspace_is_denied(user, organization, hub_skill):
 
 
 def test_other_workspace_resource_is_not_visible(user, organization, workspace, hub_skill, monkeypatch):
-    other = Workspace.objects.create(organization=organization, name="Other")
+    other = Workspace.objects.create(organization=organization, name="Other", created_by=user)
     hub_skill.workspace = other
     hub_skill.save(update_fields=["workspace"])
     monkeypatch.setattr(runtime_loads, "V2AnalyticsQueryService", lambda: pytest.fail("foreign resource queried CH"))
@@ -89,11 +89,11 @@ def test_load_enrichment_and_project_scope(user, organization, workspace, hub_sk
     hub_skill.kind = kind
     hub_skill.save(update_fields=["kind"])
     project = Project.objects.create(
-        organization=organization, workspace=workspace, name="Visible", trace_type="observe", model_type="LLM",
+        organization=organization, workspace=workspace, name="Visible", trace_type="observe", model_type="GenerativeLLM",
     )
-    other = Workspace.objects.create(organization=organization, name="Other")
+    other = Workspace.objects.create(organization=organization, name="Other", created_by=user)
     foreign_project = Project.objects.create(
-        organization=organization, workspace=other, name="Private", trace_type="observe", model_type="LLM",
+        organization=organization, workspace=other, name="Private", trace_type="observe", model_type="GenerativeLLM",
     )
     statements = []
 
@@ -120,7 +120,7 @@ def test_load_enrichment_and_project_scope(user, organization, workspace, hub_sk
 
 def test_project_limit_never_returns_a_partial_latest_load(user, organization, workspace, hub_skill, monkeypatch):
     Project.objects.bulk_create([
-        Project(organization=organization, workspace=workspace, name=f"Project {index}", trace_type="observe", model_type="LLM")
+        Project(organization=organization, workspace=workspace, name=f"Project {index}", trace_type="observe", model_type="GenerativeLLM")
         for index in range(51)
     ])
     monkeypatch.setattr(runtime_loads, "V2AnalyticsQueryService", lambda: pytest.fail("over-limit request queried CH"))
@@ -133,7 +133,7 @@ def test_timeout_is_not_no_loads(user, organization, workspace, hub_skill, publi
     from tracer.services.clickhouse.read_budget import ReadDeadlineExceeded
 
     publish_skill(hub_skill)
-    Project.objects.create(organization=organization, workspace=workspace, name="Visible", trace_type="observe", model_type="LLM")
+    Project.objects.create(organization=organization, workspace=workspace, name="Visible", trace_type="observe", model_type="GenerativeLLM")
 
     class Service:
         def execute_ch_query(self, *args, **kwargs):
