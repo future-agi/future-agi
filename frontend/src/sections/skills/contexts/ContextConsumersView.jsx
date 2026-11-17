@@ -1,6 +1,7 @@
-import { cloneElement, isValidElement, useState } from 'react';
+import { Suspense, cloneElement, isValidElement, lazy, useMemo, useState } from 'react';
 import PropTypes from 'prop-types';
 import { Alert, Box, Button, Drawer, IconButton, Link, MenuItem, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TextField, Tooltip, Typography } from '@mui/material';
+import { Link as RouterLink } from 'react-router-dom';
 import { visuallyHidden } from '@mui/utils';
 import When from '../components/When';
 import Iconify from 'src/components/iconify';
@@ -21,7 +22,15 @@ import { RowActionsCell } from '../components/RowActions';
 import { rowLinkProps } from '../components/responsiveTable';
 import { CONNECTED_APPS, NO_REPORT_YET } from '../utils/terms';
 import { formatUtcFull, formatWhen } from '../utils/format';
+import { buildContextBindingTraceLink } from '../utils/traces';
+import { useSkillTracesEnabled } from '../runtime/skillTracesFlag';
 import { consumerStateNames, consumerNextStep, needsDeliveryVerification, consumerReportAt, midSentence, noAppHasReported, appsSummary } from './consumerPresentation';
+
+// The authorized project picker pulls in the adoption panel and its queries, so it loads only when the
+// `skillTraces` flag is on: with the flag off nothing from the runtime work is imported or rendered here.
+const AuthorizedProjectPicker = lazy(() => import('../governance/AdoptionPanel').then((module) => ({ default: module.AuthorizedProjectPicker })));
+const DAY_MS = 24 * 60 * 60 * 1000;
+const RUNTIME_TRACES = 'Runtime traces';
 
 const mobileLabel = (label) => ({ '&::before': { content: { xs: `"${label}"`, sm: 'none' }, display: 'block', typography: 's3', color: 'text.secondary', mb: 0.5 } });
 const stageNames = { desired: 'Desired', resolved: 'Resolved', installed: 'Installed', discovered: 'Discovered', loaded: 'Delivered' };
@@ -55,6 +64,23 @@ function ConsumerRows({ data, windowDays, onWindowChange, onPageChange, versionN
   const anyReport = data.results.some((row) => consumerReportAt(row, data.asOf));
   const unreported = noAppHasReported(data.results, data.asOf);
   // UXF-15: "Target release" is what the app should receive, "Verification" is delivery, "Last report" stays.
+  // "Runtime traces" (§7.4, flag `skillTraces`): the traces whose skill loads came through one binding,
+  // over the window this list reports from. The project is chosen from the ones this person can open;
+  // the link never confers access.
+  const tracesOn = useSkillTracesEnabled();
+  const [traceProject, setTraceProject] = useState('');
+  const traceWindow = useMemo(() => {
+    const end = new Date();
+    return { windowStart: new Date(end.getTime() - windowDays * DAY_MS), windowEnd: end };
+  }, [windowDays]);
+  const traceLinkOf = (binding) => (tracesOn && traceProject ? buildContextBindingTraceLink({ projectId: traceProject, contextId: binding.contextId, bindingId: binding.id, ...traceWindow }) : null);
+  // The item exists whenever the flag is on, so it can be found; without a project it says what is missing.
+  const traceAction = (binding) => {
+    if (!tracesOn) return [];
+    const link = traceLinkOf(binding);
+    if (link) return [{ label: RUNTIME_TRACES, to: link }];
+    return [{ label: RUNTIME_TRACES, disabled: true, reason: traceProject ? "Couldn't build the link" : 'Choose a traces project first' }];
+  };
   const columns = ['App or repository', 'Kind', 'Should receive', ...(anyDelivered ? ['Last delivered'] : []), 'Delivery', ...(anyReport ? ['Last report'] : [])];
   return <Stack spacing={1.5} sx={{ minWidth: 0 }}>
     {data.results.length > 0 && <Typography variant="s1" color="text.secondary">{appsSummary({ total: data.count ?? data.results.length, shown: data.results.length, missing, unreported })} <Link href="https://docs.futureagi.com/docs/skills/rollout-recovery" target="_blank" rel="noopener noreferrer">How apps report</Link></Typography>}
@@ -72,6 +98,8 @@ function ConsumerRows({ data, windowDays, onWindowChange, onPageChange, versionN
         {[7, 30, 90].map((days) => <MenuItem key={days} value={days}>{days} days</MenuItem>)}
       </TextField>
     </ListToolbar>}
+    {/* On its own line, not in the filter row: the picker brings its own loading, error and "no project" states. */}
+    {tracesOn && data.results.length > 0 && <Suspense fallback={null}><AuthorizedProjectPicker label="Traces project" value={traceProject} onChange={setTraceProject} size="small" sx={{ maxWidth: 320 }} /></Suspense>}
     {data.count > data.pageSize && <Typography variant="s3" color="text.secondary">Search and filters apply to the apps on this page.</Typography>}
     {!data.results.length ? <EmptyState variant="first-run" title="No apps connected yet" description={emptyDescription} action={primaryRegistration(registrationAction)} />
       : !rows.length ? <EmptyState variant="no-results" title="No apps match these filters" onClearFilters={clear} />
@@ -99,7 +127,7 @@ function ConsumerRows({ data, windowDays, onWindowChange, onPageChange, versionN
               {anyDelivered && <TableCell sx={{ display: { xs: 'none', sm: 'table-cell' } }}>{row.loaded ? <Stage stage={row.loaded} versionNumbers={versionNumbers} /> : <Typography variant="s3" color="text.secondary">—</Typography>}</TableCell>}
               <TableCell sx={{ gridColumn: { xs: '1 / -1', sm: 'auto' }, gridRow: { xs: 2, sm: 'auto' }, ...(unreported && { display: { xs: 'none', sm: 'table-cell' } }) }}><Stack spacing={0.5} alignItems="flex-start">{unreported ? <Typography variant="s3" color="text.secondary">—</Typography> : row.states.map((state) => <StatusBadge key={state} status={state} role={state === 'unknown' ? 'neutral' : undefined} label={consumerStateNames[state] ?? 'Unknown'} />)}</Stack></TableCell>
               {anyReport && <TableCell sx={{ display: { xs: 'none', sm: 'table-cell' } }}><Typography variant="s3"><When value={consumerReportAt(row, data.asOf)} fallback="—" /></Typography></TableCell>}
-              <RowActionsCell name={row.binding.name} primary={primary} sx={{ gridColumn: { xs: 2, sm: 'auto' }, gridRow: { xs: 1, sm: 'auto' } }} />
+              <RowActionsCell name={row.binding.name} primary={primary} actions={traceAction(row.binding)} sx={{ gridColumn: { xs: 2, sm: 'auto' }, gridRow: { xs: 1, sm: 'auto' } }} />
             </TableRow>;
           })}</TableBody>
         </Table></TableContainer>}
@@ -112,6 +140,8 @@ function ConsumerRows({ data, windowDays, onWindowChange, onPageChange, versionN
         </Stack>
         <Stack spacing={2}>
           <Alert severity="info"><Typography variant="s3" component="div">Next step</Typography><Typography variant="s1" component="div">{consumerNextStep(selected.nextActionCode)}</Typography></Alert>
+          {/* At 390 px a row is one tappable card with no ⋯ menu, so the traces link is also reachable from here. */}
+          {traceLinkOf(selected.binding) && <Button component={RouterLink} to={traceLinkOf(selected.binding)} variant="text" color="inherit" size="small" sx={{ alignSelf: 'flex-start' }}>{RUNTIME_TRACES}</Button>}
           <Stack component="ol" spacing={0} sx={{ listStyle: 'none', m: 0, p: 0, border: 1, borderColor: 'divider', borderRadius: 1, overflow: 'hidden' }}>
             {Object.entries(stageNames).map(([key, label]) => <Box component="li" key={key} sx={{ display: 'grid', gridTemplateColumns: '11ch minmax(0, 1fr)', gap: 1, p: 1.5, borderBottom: 1, borderColor: 'divider', '&:last-child': { borderBottom: 0 } }}>
               <Typography variant="m3">{label}</Typography><Stack spacing={0.5} alignItems="flex-start"><Stage stage={selected[key]} versionNumbers={versionNumbers} />{selected[key] && <Typography variant="s3" color="text.secondary"><When value={selected[key].observedAt} /></Typography>}</Stack>

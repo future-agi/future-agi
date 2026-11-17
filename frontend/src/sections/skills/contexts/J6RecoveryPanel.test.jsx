@@ -1,12 +1,24 @@
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { enqueueSnackbar } from "notistack";
+import { MemoryRouter } from "react-router-dom";
+import { setSkillTracesOverride } from "../runtime/skillTracesFlag";
 import J6RecoveryPanel from "./J6RecoveryPanel";
 import ContextCampaignList from "./ContextCampaignList";
 import ContextConsumersView from "./ContextConsumersView";
 
 // Keep the real module (the snackbar provider styles import from it) and spy only on enqueueSnackbar.
 vi.mock("notistack", async (importOriginal) => ({ ...(await importOriginal()), enqueueSnackbar: vi.fn() }));
+
+// The authorized project picker (loaded lazily, and only with the skillTraces flag on) is replaced by a plain select.
+vi.mock("../governance/AdoptionPanel", () => ({
+  AuthorizedProjectPicker: ({ value, onChange, label }) => (
+    <select aria-label={label} value={value} onChange={(event) => onChange(event.target.value)}>
+      <option value="">Choose a project</option>
+      <option value="proj-1">Support production</option>
+    </select>
+  ),
+}));
 
 const refresh = vi.fn();
 const previewMutate = vi.fn();
@@ -55,7 +67,10 @@ beforeEach(() => {
   recovery = { candidates: [], cohort: [], releaseRevision: 1 };
   closureData = { rows: [], changes: [] };
 });
-afterEach(() => vi.useRealTimers());
+afterEach(() => {
+  vi.useRealTimers();
+  setSkillTracesOverride(null);
+});
 
 it("keeps the recovery facts current while the tab is visible and stops on unmount", () => {
   const { unmount } = render(
@@ -955,4 +970,73 @@ it('opens a rollout from the whole row, with Open in the trailing ⋯ and no "Re
   expect(row).toHaveAttribute('data-row-link', 'true');
   fireEvent.click(within(row).getAllByRole('cell')[1]);
   expect(onOpen).toHaveBeenCalledWith('c1');
+});
+
+// ---- Connected apps: "Runtime traces" (§7.4, flag `skillTraces`; commit 2) ----
+
+const CONTEXT_ID = '3f1c2a7e-4b5d-4c6e-8f90-a1b2c3d4e5f6';
+const BINDING_ID = '9d8c7b6a-5e4f-4a3b-8c2d-1e0f9a8b7c6d';
+const tracedApp = () => appRow(BINDING_ID, 'Support app', { binding: { id: BINDING_ID, contextId: CONTEXT_ID, name: 'Support app', kind: 'runtime', selector: { label: 'production' } } });
+const renderTraced = () => render(<MemoryRouter><ContextConsumersView scopeKey="workspace" state="ready" data={appsData([tracedApp()])} versionNumbers={{ v2: 2 }} onWindowChange={vi.fn()} onPageChange={vi.fn()} /></MemoryRouter>);
+
+it('shows nothing from the runtime work with the flag off: no project picker and no Runtime traces item', () => {
+  setSkillTracesOverride(false);
+  renderTraced();
+  expect(screen.queryByLabelText('Traces project')).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Actions for Support app' }));
+  expect(screen.getByRole('menuitem', { name: 'Inspect' })).toBeVisible();
+  expect(screen.queryByRole('menuitem', { name: /Runtime traces/ })).toBeNull();
+});
+
+it('with the flag on, offers Runtime traces in the row menu, disabled until a traces project is chosen', async () => {
+  // The picker loads lazily, so these tests wait on real timers.
+  vi.useRealTimers();
+  setSkillTracesOverride(true);
+  renderTraced();
+  expect(await screen.findByLabelText('Traces project')).toBeVisible();
+  fireEvent.click(screen.getByRole('button', { name: 'Actions for Support app' }));
+  const item = screen.getByRole('menuitem', { name: /Runtime traces/ });
+  expect(item).toHaveAttribute('aria-disabled', 'true');
+  expect(screen.getByText('Choose a traces project first')).toBeVisible();
+});
+
+it('opens Observe in the same tab, filtered by this context and binding, once a project is chosen', async () => {
+  // The picker loads lazily, so these tests wait on real timers.
+  vi.useRealTimers();
+  setSkillTracesOverride(true);
+  renderTraced();
+  fireEvent.change(await screen.findByLabelText('Traces project'), { target: { value: 'proj-1' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Actions for Support app' }));
+  const item = screen.getByRole('menuitem', { name: /Runtime traces/ });
+  expect(item).not.toHaveAttribute('aria-disabled', 'true');
+  const url = new URL(item.getAttribute('href'), 'http://localhost');
+  expect(url.pathname).toBe('/dashboard/observe/proj-1/llm-tracing');
+  const filters = JSON.parse(url.searchParams.get('observeLinkFilter'));
+  expect(filters.map((entry) => [entry.column_id, entry.filter_config.col_type, entry.filter_config.filter_value])).toEqual([
+    ['skill.context_id', 'SKILL', CONTEXT_ID],
+    ['skill.binding_id', 'SKILL', BINDING_ID],
+  ]);
+  expect(item).not.toHaveAttribute('target');
+});
+
+it('repeats the traces link in the Inspect drawer, which is the way to it on a phone card', async () => {
+  // The picker loads lazily, so these tests wait on real timers.
+  vi.useRealTimers();
+  setSkillTracesOverride(true);
+  renderTraced();
+  fireEvent.change(await screen.findByLabelText('Traces project'), { target: { value: 'proj-1' } });
+  fireEvent.click(screen.getByText('Support app'));
+  const dialog = screen.getByRole('dialog');
+  expect(within(dialog).getByRole('link', { name: 'Runtime traces' }).getAttribute('href')).toMatch(/^\/dashboard\/observe\/proj-1\/llm-tracing\?/);
+});
+
+it('says the link could not be built when the binding has no valid context id, instead of linking to a wrong list', async () => {
+  // The picker loads lazily, so these tests wait on real timers.
+  vi.useRealTimers();
+  setSkillTracesOverride(true);
+  render(<MemoryRouter><ContextConsumersView scopeKey="workspace" state="ready" data={appsData([appRow('a1', 'Support app')])} onWindowChange={vi.fn()} onPageChange={vi.fn()} /></MemoryRouter>);
+  fireEvent.change(await screen.findByLabelText('Traces project'), { target: { value: 'proj-1' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Actions for Support app' }));
+  expect(screen.getByRole('menuitem', { name: /Runtime traces/ })).toHaveAttribute('aria-disabled', 'true');
+  expect(screen.getByText("Couldn't build the link")).toBeVisible();
 });
