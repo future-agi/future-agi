@@ -10,7 +10,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
     dependencies = [
         ("accounts", "0028_merge_authtoken_scope_and_simulation_agent_key"),
-        ("simulate", "0103_harness_job_verify_of"),
+        ("simulate", "0112_evidence_import_case_duplicate"),
     ]
 
     operations = [
