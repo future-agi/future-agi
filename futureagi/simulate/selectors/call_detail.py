@@ -945,9 +945,13 @@ def trial_state(
         + _approval_notices(calls)
         + [cast(TrialNotice, one) for one in _entries(state.get("notices"))],
     }
-    if state.get("recorded") is not False and _calls_not_seen(changes, calls):
-        # A record from a trial whose agent called tools that never passed the world's door (a seal built before it):
-        # its zeros are not "no change", so they are not shown as one.
+    if (
+        state.get("recorded") is not False
+        and state.get("door") is not True
+        and _calls_not_seen(changes, calls)
+    ):
+        # A record stored before the harness said whether a door stood, whose agent called tools that never passed
+        # one: its zeros are not "no change", so they are not shown as one. A record a door stood for keeps its counts.
         state = {**state, "recorded": False, "why": CALLS_NOT_SEEN}
     if state.get("recorded") is False:
         shown["recorded"] = False

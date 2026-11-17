@@ -381,3 +381,29 @@ def test_a_stored_trial_with_no_tool_calls_keeps_its_counts():
 
     assert "recorded" not in shown
     assert shown["state_changes"][0]["attempted"] == 0
+
+
+def test_a_new_door_trial_whose_agent_called_only_its_own_tools_keeps_no_change():
+    # On an environment with a door, a tool that runs inside the agent (prepare_cancellation) never reaches the world.
+    from simulate.services.hosted_harness_ingestion import _world_change_fields
+
+    stamped = {**OLD_PRE_DOOR_RECORD, **_world_change_fields({"door": True})}
+    calls = [{"name": "prepare_cancellation", "arguments": {}}]
+
+    shown = trial_state(_call(stamped), calls=calls)
+
+    assert "recorded" not in shown
+    assert shown["state_changes"][0]["no_change"] is True
+
+
+def test_a_new_trial_on_a_seal_without_a_door_reads_built_before_world_actions_were_recorded():
+    calls = [{"name": "find_items", "arguments": {"query": "kayak"}}] * 8
+
+    shown = trial_state(
+        _call({"recorded": False, "why": "sealed_without_door"}), calls=calls
+    )
+
+    assert (shown["recorded"], shown["why"]) == (False, "sealed_without_door")
+    assert shown["why_label"].startswith(
+        "This environment was built before world actions were recorded"
+    )
