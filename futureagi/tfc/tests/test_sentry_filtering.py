@@ -369,7 +369,11 @@ def test_scrub_event_rebuilds_a_formatted_line_with_named_arguments():
 
 def test_scrub_event_keeps_a_log_line_with_no_arguments():
     event = {
-        "logentry": {"message": "progress 100%", "params": [], "formatted": "progress 100%"}
+        "logentry": {
+            "message": "progress 100%",
+            "params": [],
+            "formatted": "progress 100%",
+        }
     }
     _scrub_event(event)
     assert event["logentry"]["formatted"] == "progress 100%"
@@ -1517,9 +1521,7 @@ def test_a_redis_breadcrumb_on_an_error_event_keeps_only_command_and_key(
         ],
     )
     [event] = [e for e in sent if e.get("type") != "transaction"]
-    crumbs = [
-        c for c in event["breadcrumbs"]["values"] if c.get("category") == "redis"
-    ]
+    crumbs = [c for c in event["breadcrumbs"]["values"] if c.get("category") == "redis"]
     assert [c["message"] for c in crumbs] == [expected_message]
     assert value_secret not in json.dumps(sent, default=str)
     assert key_secret not in json.dumps(sent, default=str)
@@ -1896,9 +1898,7 @@ def test_both_hooks_cap_every_string_to_the_final_limit():
             "extra": {"a": [{"b": long_text}]},
             "breadcrumbs": {"values": [{"message": "m", "data": {"d": long_text}}]},
             "exception": {
-                "values": [
-                    {"stacktrace": {"frames": [{"vars": {"v": long_text}}]}}
-                ]
+                "values": [{"stacktrace": {"frames": [{"vars": {"v": long_text}}]}}]
             },
         },
         {},

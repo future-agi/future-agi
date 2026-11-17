@@ -436,7 +436,7 @@ def _scrub_template(template: str) -> str:
 def _redact_all(params: Any) -> Any:
     """Every argument replaced, keeping the shape `%` formatting expects."""
     if isinstance(params, dict):
-        return {k: _REDACTED for k in params}
+        return dict.fromkeys(params, _REDACTED)
     if isinstance(params, (list, tuple)):
         return [_REDACTED for _ in params]
     return _REDACTED
@@ -754,7 +754,7 @@ def _get_before_send() -> Callable:
         # Fail closed: if anything raises, the event is dropped, never sent raw.
         try:
             return _before_send(event, hint)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - fail closed: drop the event, never send it raw
             _scrub_logger.error("sentry_scrub_failed: %s", type(exc).__name__)
             return None
 
@@ -859,7 +859,7 @@ def _get_before_send_transaction() -> Callable:
                 if isinstance(span, dict):
                     _scrub_span(span)
             return _cap_strings(event)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - fail closed: drop the event, never send it raw
             _scrub_logger.error("sentry_scrub_failed: %s", type(exc).__name__)
             return None
 
