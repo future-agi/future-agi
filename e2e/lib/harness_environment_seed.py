@@ -292,9 +292,10 @@ def _authoring(documents, *, certified, production_only, actors=False, tool_deta
         ]
         contract["dependencies"] = [
             {
+                # An API someone else runs, by its public host: production-only, so a test never calls it.
                 "name": "payments",
                 "engine": "",
-                "reached": {},
+                "reached": {"host": "api.payments.example.com"},
                 "used_by": [production_only],
             }
         ]
@@ -408,15 +409,14 @@ def seed_environment(
             ],
         },
     )
-    body = archives.pack_archive(
-        _authoring(
-            documents,
-            certified=certified,
-            production_only=production_only,
-            actors=actors,
-            tool_detail=tool_detail,
-        )
+    authored = _authoring(
+        documents,
+        certified=certified,
+        production_only=production_only,
+        actors=actors,
+        tool_detail=tool_detail,
     )
+    body = archives.pack_archive(authored)
     object_key = archives.pair_key(organization.id, environment.id, body)
     archives.put_archive(object_key, body)
     environment.refresh_from_db()
@@ -430,8 +430,13 @@ def seed_environment(
     environment.name = f"e2e-harness-{suffix}"
     environment.state = HostedHarnessJob.State.COMPLETED
     environment.current_stage = "completed"
+    # The environment's detail reads its contract from the build's stage output, as a finished build leaves it.
+    environment.stage_outputs = [
+        *(one for one in environment.stage_outputs or [] if (one or {}).get("kind") != "contract"),
+        {"kind": "contract", "data": json.loads(authored["contract.json"])},
+    ]
     environment.save(
-        update_fields=["payload", "name", "state", "current_stage", "updated_at"]
+        update_fields=["payload", "name", "state", "current_stage", "stage_outputs", "updated_at"]
     )
 
     definition = AgentDefinition.objects.create(
@@ -486,9 +491,17 @@ def seed_environment(
 def _finished_trial(environment, definition, document, trial_state):
     """One finished run of the Environment with one completed trial of its first scenario, its World changes as the
     harness seals them (ingestion keeps them under ``harness_trial_state``)."""
+    from simulate.models import Scenarios
     from simulate.models.test_execution import CallExecution, TestExecution
     from simulate.services.hosted_harness_ingestion import TRIAL_STATE_KEY
 
+    # Every call belongs to a scenario (the column is required).
+    scenario = Scenarios.objects.create(
+        name=document["name"],
+        source="test",
+        organization=environment.organization,
+        workspace=environment.workspace,
+    )
     execution = TestExecution.objects.create(
         run_test_id=environment.run_test_id,
         status=TestExecution.ExecutionStatus.COMPLETED,
@@ -498,6 +511,7 @@ def _finished_trial(environment, definition, document, trial_state):
     )
     call = CallExecution.objects.create(
         test_execution=execution,
+        scenario=scenario,
         status=CallExecution.CallStatus.COMPLETED,
         simulation_call_type=CallExecution.SimulationCallType.TEXT,
         call_metadata={
