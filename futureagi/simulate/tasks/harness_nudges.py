@@ -142,8 +142,9 @@ def finish_harness_nudge_turn(conversation_id: str, turn_sequence: int) -> str:
 
 @temporal_activity(time_limit=180, max_retries=3, queue="default")
 def stop_harness_nudge_sandbox(conversation_id: str, provider_ref: str) -> str:
-    """Delete the sandbox a closed rebuild ran in; an expired lease alone does not
-    stop a turn that is still working."""
+    """Delete a chat's own sandbox once its lease is let go: a closed rebuild's, a
+    retired idle chat's, or an abandoned one's. An expired lease alone does not stop
+    a process that is still working."""
     from simulate.services.hosted_harness_gateway import HostedHarnessGateway
 
     HostedHarnessGateway()._delete_chat_sandbox(provider_ref, conversation_id)

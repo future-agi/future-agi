@@ -376,6 +376,14 @@ def _abandon_outstanding(conversation_id) -> int:
                 and lease.heartbeat_at > oldest.created_at
             )
         )
+        if (
+            lease is not None
+            and lease.attempt_id is None
+            and lease.state == HostedHarnessConversationLease.State.ACTIVE
+            and not lease.provider_ref.startswith("pending:")
+        ):
+            # Its process stopped answering; the sandbox is not left to idle.
+            stop_chat_sandbox_after_commit(conversation.id, lease.provider_ref)
         return _fail_outstanding(
             conversation,
             state=HostedHarnessConversation.State.DEGRADED,
@@ -388,6 +396,19 @@ def _abandon_outstanding(conversation_id) -> int:
                 "delivered. Send it again to retry."
             ),
         )
+
+
+def stop_chat_sandbox_after_commit(conversation_id, provider_ref: str) -> None:
+    """Delete a chat's own sandbox once this transaction commits; at once in autocommit.
+    A failure to schedule is logged and dropped, so it never fails the caller."""
+    conversation_id = str(conversation_id)
+
+    def stop_chat_sandbox() -> None:
+        from simulate.tasks import harness_nudges as nudge_tasks
+
+        nudge_tasks.schedule_sandbox_stop(conversation_id, provider_ref)
+
+    transaction.on_commit(stop_chat_sandbox, robust=True)
 
 
 def _fail_outstanding(
