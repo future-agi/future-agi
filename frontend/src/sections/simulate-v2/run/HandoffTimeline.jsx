@@ -138,7 +138,7 @@ Details.propTypes = { agent: PropTypes.object, task: PropTypes.object };
 
 /* What went wrong, one line each: where (Step 6, Reply to step 8) and what. The line
    itself opens that step — no separate "Go to" (17 Nov, "too verbose"). */
-function IssueLine({ at, text, tone, title, onClick }) {
+function IssueLine({ at, text, tone, title, icon, onClick }) {
   const color = tone === "warning" ? "warning.main" : tone === "muted" ? "text.secondary" : "error.main";
   return (
     <Box
@@ -159,7 +159,7 @@ function IssueLine({ at, text, tone, title, onClick }) {
         "&:hover .issue-text": onClick ? { textDecoration: "underline" } : {},
       }}
     >
-      <Iconify icon="solar:danger-circle-linear" width={14} sx={{ flexShrink: 0 }} />
+      <Iconify icon={icon || "solar:danger-circle-linear"} width={14} sx={{ flexShrink: 0 }} />
       <Typography
         component="span"
         sx={{
@@ -187,6 +187,7 @@ IssueLine.propTypes = {
   text: PropTypes.string,
   tone: PropTypes.string,
   title: PropTypes.string,
+  icon: PropTypes.string,
   onClick: PropTypes.func,
 };
 
@@ -196,6 +197,16 @@ function Issues({ seq, placed, onGo }) {
       key: `p-${x.n}`,
       at: x.range ? `Steps ${x.range[0]}–${x.range[1]}` : `Step ${x.n}`,
       text: x.text.replace(/\s+(at |to )?step \d+$/i, ""),
+      n: x.n,
+    })),
+    /* Refused by the world (Karthik, 17 Nov): amber, with the world's reason
+       — its own line, never counted as a failure. */
+    ...(seq.refusals || []).map((x) => ({
+      key: `r-${x.group}`,
+      at: x.range ? `Steps ${x.range[0]}–${x.range[1]}` : `Step ${x.n}`,
+      text: `${x.tool} refused${x.times > 1 ? ` ${x.times} times` : ""}${x.reason ? ` · ${x.reason}` : ""}`,
+      tone: "warning",
+      icon: "solar:forbidden-circle-linear",
       n: x.n,
     })),
     ...placed.map((f) => {
@@ -221,6 +232,7 @@ function Issues({ seq, placed, onGo }) {
           text={l.text}
           tone={l.tone}
           title={l.title}
+          icon={l.icon}
           onClick={l.n != null ? () => onGo(l.n) : undefined}
         />
       ))}
@@ -429,6 +441,7 @@ export default function HandoffTimeline({
           onOpenTrace={(id) => id && findEntry(g.spans, id) && setSpanId(id)}
           onShowInTranscript={onShowInTranscript}
           linkOf={linkOf}
+          hasTraces={!!p?.traces}
         />
       )}
       <Divider />

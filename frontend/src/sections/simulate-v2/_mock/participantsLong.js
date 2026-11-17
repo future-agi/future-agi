@@ -18,7 +18,15 @@ const call = (id, name, at, resultLabel, extra = {}) => ({
   ...extra,
 });
 
-const worker = (id, name, delegatedAt, endedAt, label, answerLabel, extra = {}) => ({
+const worker = (
+  id,
+  name,
+  delegatedAt,
+  endedAt,
+  label,
+  answerLabel,
+  extra = {},
+) => ({
   id,
   name,
   recorded: true,
@@ -85,7 +93,21 @@ export const LONG_CALL = {
               call("c-order", "get_order", 2.5, "Found · $240", {
                 input: { order_id: 9450 },
               }),
-              call("c-policy", "check_refund_policy", 4, "Needs approval over $200"),
+              call(
+                "c-policy",
+                "check_refund_policy",
+                4,
+                "Needs approval over $200",
+              ),
+              /* The world says no, with its reason (Karthik, 17 Nov). */
+              call("c-refund-try", "issue_refund", 5.5, "Refused", {
+                refused: true,
+                input: { order_id: 9450, amount: 240 },
+                output: {
+                  status: "refused",
+                  reason: "Refunds over $200 need a supervisor's sign-off",
+                },
+              }),
             ],
           },
         ),
@@ -99,17 +121,31 @@ export const LONG_CALL = {
       reply: "I couldn't issue the refund — the payments system kept failing.",
       replyAt: 33,
       workers: [
-        worker(REFUNDS.id, REFUNDS.name, 13, 31, "Issue the refund", "Couldn't issue the refund", {
-          failed: true,
-          state: "failed",
-          calls: [0, 1, 2, 3, 4].map((i) =>
-            call(`c-refund-${i}`, "issue_refund", 14 + i * 3.4, "Failed · payments timeout", {
-              failed: true,
-              input: { order_id: 9450, amount: 240 },
-              output: { error: "payments timeout" },
-            }),
-          ),
-        }),
+        worker(
+          REFUNDS.id,
+          REFUNDS.name,
+          13,
+          31,
+          "Issue the refund",
+          "Couldn't issue the refund",
+          {
+            failed: true,
+            state: "failed",
+            calls: [0, 1, 2, 3, 4].map((i) =>
+              call(
+                `c-refund-${i}`,
+                "issue_refund",
+                14 + i * 3.4,
+                "Failed · payments timeout",
+                {
+                  failed: true,
+                  input: { order_id: 9450, amount: 240 },
+                  output: { error: "payments timeout" },
+                },
+              ),
+            ),
+          },
+        ),
       ],
       own: [],
     },
@@ -129,12 +165,37 @@ export const LONG_CALL = {
       reply: "Done — $240 store credit, and a courier picks it up tomorrow.",
       replyAt: 84,
       workers: [
-        worker(REFUNDS.id, REFUNDS.name, 71, 75.5, "Offer store credit", "$240 credit issued", {
-          calls: [call("c-credit", "issue_store_credit", 72, "Issued · $240")],
-        }),
-        worker(SHIP.id, SHIP.name, 76, 82, "Arrange a pickup", "Pickup booked for tomorrow", {
-          calls: [call("c-pickup", "schedule_pickup", 77, "Booked · tomorrow 10–12")],
-        }),
+        worker(
+          REFUNDS.id,
+          REFUNDS.name,
+          71,
+          75.5,
+          "Offer store credit",
+          "$240 credit issued",
+          {
+            calls: [
+              call("c-credit", "issue_store_credit", 72, "Issued · $240"),
+            ],
+          },
+        ),
+        worker(
+          SHIP.id,
+          SHIP.name,
+          76,
+          82,
+          "Arrange a pickup",
+          "Pickup booked for tomorrow",
+          {
+            calls: [
+              call(
+                "c-pickup",
+                "schedule_pickup",
+                77,
+                "Booked · tomorrow 10–12",
+              ),
+            ],
+          },
+        ),
       ],
       own: [],
     },

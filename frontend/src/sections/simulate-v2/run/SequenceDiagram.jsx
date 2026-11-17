@@ -74,7 +74,7 @@ function useWidth(ref) {
   return w;
 }
 
-function Pill({ n, bad }) {
+function Pill({ n, bad, refused }) {
   return (
     <Box
       component="span"
@@ -90,15 +90,19 @@ function Pill({ n, bad }) {
         fontWeight: 600,
         fontVariantNumeric: "tabular-nums",
         flexShrink: 0,
-        bgcolor: bad ? "error.main" : "text.primary",
-        color: bad ? "common.white" : "background.paper",
+        bgcolor: bad ? "error.main" : refused ? "warning.main" : "text.primary",
+        color: bad || refused ? "common.white" : "background.paper",
       }}
     >
       {n}
     </Box>
   );
 }
-Pill.propTypes = { n: PropTypes.number, bad: PropTypes.bool };
+Pill.propTypes = {
+  n: PropTypes.number,
+  bad: PropTypes.bool,
+  refused: PropTypes.bool,
+};
 
 /* A small on/off control for the view (not an action). */
 function Toggle({ on, onClick, children, disabled }) {
@@ -145,6 +149,7 @@ function Legend({ seq }) {
   const theme = useTheme();
   const sub = theme.palette.text.secondary;
   const bad = theme.palette.error.main;
+  const warn = theme.palette.warning.main;
   const has = (t) => seq.rows.some((r) => r.type === t);
   const item = (key, line, text) => (
     <Stack key={key} direction="row" spacing={0.75} alignItems="center">
@@ -178,7 +183,11 @@ function Legend({ seq }) {
       {/* What the small tag in front of each arrow's words means. */}
       {[
         ["SAID", "words to or from the caller", true],
-        ["TASK", "handed to a worker", seq.steps.some((x) => x.kind === "handoff")],
+        [
+          "TASK",
+          "handed to a worker",
+          seq.steps.some((x) => x.kind === "handoff"),
+        ],
         ["RESULT", "a worker's answer", has("back") || has("none")],
         ["TOOL", "a tool call", has("tool")],
       ]
@@ -188,7 +197,12 @@ function Legend({ seq }) {
             k,
             <Typography
               component="span"
-              sx={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.06em", color: "text.secondary" }}
+              sx={{
+                fontSize: 9,
+                fontWeight: 700,
+                letterSpacing: "0.06em",
+                color: "text.secondary",
+              }}
             >
               {k}
             </Typography>,
@@ -197,6 +211,10 @@ function Legend({ seq }) {
         )}
       {has("back") && item("back", seg(sub, "4 3"), "came back")}
       {has("none") && item("none", seg(bad, "5 3"), "no answer")}
+      {seq.steps.some((x) => x.refused) &&
+        item("refused", seg(warn), "refused by the world")}
+      {seq.steps.some((x) => x.kind === "tool" && x.bad) &&
+        item("failed", seg(bad), "failed")}
     </Stack>
   );
 }
@@ -304,6 +322,7 @@ CopyLink.propTypes = { url: PropTypes.string.isRequired };
 function StepDetail({
   seq,
   step,
+  hasTraces = false,
   onOpenTrace,
   onShowInTranscript,
   linkOf,
@@ -319,13 +338,24 @@ function StepDetail({
         ? `Waited ${took(step.dur)}, no answer`
         : `Took ${took(step.dur)}`),
     step.turns > 1 && `${step.turns} turns`,
-    step.model && `Model ${step.model}`,
-    step.tokens != null && `${step.tokens.toLocaleString()} tokens`,
     step.kind === "handoff" &&
       step.tools > 0 &&
       `${step.tools} tool ${step.tools === 1 ? "call" : "calls"}`,
   ].filter(Boolean);
   const link = linkOf ? linkOf(step.n) : null;
+  /* Karthik, 17 Nov: model and tokens are recorded per worker, not per step,
+     and only when the app sends traces — so they're said once, as the
+     worker's total across the call, and only then. */
+  const workerSteps =
+    step.kind === "handoff"
+      ? seq.steps.filter((x) => x.kind === "handoff" && x.to === step.to)
+      : [];
+  const workerTokens = workerSteps.reduce((n, x) => n + (x.tokens || 0), 0);
+  const workerModel = workerSteps.find((x) => x.model)?.model;
+  const workerLine =
+    hasTraces && step.kind === "handoff" && (workerModel || workerTokens)
+      ? `${seq.nameOf(step.to)} across the call${workerModel ? ` · ${workerModel}` : ""}${workerTokens ? ` · ${workerTokens.toLocaleString()} tokens` : ""} · from traces`
+      : null;
 
   const asked = tool ? (
     <>
@@ -348,10 +378,7 @@ function StepDetail({
           : "Asked"}
       </Label>
       <Box>
-        <Typography sx={{ typography: "s2", fontWeight: 500 }}>
-          {step.label}
-        </Typography>
-        <Cap>Exact message</Cap>
+        {/* The exact message, once — no short label of ours above it. */}
         {step.full ? (
           <Quote>{step.full}</Quote>
         ) : (
@@ -366,19 +393,19 @@ function StepDetail({
     <>
       <Label>Result</Label>
       <Box>
-        <Typography
-          sx={{
-            typography: "s2",
-            fontWeight: 500,
-            color: step.bad ? "error.main" : "text.primary",
-          }}
-        >
-          {step.result}
-        </Typography>
-        {step.output != null && (
+        {step.output != null ? (
           <Quote code bad={step.bad}>
             {json(step.output)}
           </Quote>
+        ) : (
+          <Typography
+            sx={{
+              typography: "s2",
+              color: step.bad ? "error.main" : "text.tertiary",
+            }}
+          >
+            {step.result}
+          </Typography>
         )}
       </Box>
     </>
@@ -389,23 +416,7 @@ function StepDetail({
         {a.kind === "none" ? (
           <Quote bad={a.bad}>{a.full}</Quote>
         ) : (
-          <>
-            <Typography
-              sx={{
-                typography: "s2",
-                fontWeight: 500,
-                color: a.bad ? "error.main" : "text.primary",
-              }}
-            >
-              {a.label}
-            </Typography>
-            {a.full && (
-              <>
-                <Cap>Exact message</Cap>
-                <Quote>{a.full}</Quote>
-              </>
-            )}
-          </>
+          <Quote bad={a.bad}>{a.full || a.label}</Quote>
         )}
       </Box>
     </>
@@ -420,7 +431,7 @@ function StepDetail({
         useFlexGap
         flexWrap="wrap"
       >
-        <Pill n={step.n} bad={step.bad} />
+        <Pill n={step.n} bad={step.bad} refused={step.refused} />
         <Typography sx={{ typography: "s2", fontWeight: 600 }}>
           {`${seq.nameOf(step.from)} → ${to}`}
         </Typography>
@@ -477,6 +488,25 @@ function StepDetail({
           {meta.join(" · ")}
         </Typography>
       )}
+      {step.refused && (
+        <Typography
+          sx={{ typography: "s3", color: "warning.main", fontWeight: 600 }}
+        >
+          {`Refused by the world${step.reason ? ` · ${step.reason}` : ""}`}
+        </Typography>
+      )}
+      {workerLine && (
+        <Typography
+          sx={{
+            typography: "s3",
+            color: "text.tertiary",
+            fontVariantNumeric: "tabular-nums",
+            mt: "-4px !important",
+          }}
+        >
+          {workerLine}
+        </Typography>
+      )}
       {failures.map((f) => {
         const unsure = f.status === "inconclusive";
         const tone = unsure ? "warning" : "error";
@@ -525,6 +555,7 @@ function StepDetail({
 }
 StepDetail.propTypes = {
   failures: PropTypes.array,
+  hasTraces: PropTypes.bool,
   seq: PropTypes.object.isRequired,
   step: PropTypes.object.isRequired,
   onOpenTrace: PropTypes.func,
@@ -557,6 +588,7 @@ export default function SequenceDiagram({
   onShowInTranscript,
   linkOf,
   failures = [],
+  hasTraces = false,
 }) {
   const theme = useTheme();
   const wrapRef = useRef(null);
@@ -624,9 +656,13 @@ export default function SequenceDiagram({
   const loopOpen = (l) =>
     openLoops.has(l.id) ||
     (selected != null && selected !== l.first && l.steps.includes(selected)) ||
-    failures.some((f) => f.n != null && f.n !== l.first && l.steps.includes(f.n)) ||
+    failures.some(
+      (f) => f.n != null && f.n !== l.first && l.steps.includes(f.n),
+    ) ||
     /* Problems only never hides a problem inside a loop. */
-    (problemsOnly && hasProblems && l.steps.some((n) => n !== l.first && chain.has(n)));
+    (problemsOnly &&
+      hasProblems &&
+      l.steps.some((n) => n !== l.first && chain.has(n)));
   const toggleLoop = (id) =>
     setOpenLoops((was) => {
       const next = new Set(was);
@@ -647,7 +683,9 @@ export default function SequenceDiagram({
   const selTurn = selected != null ? byN[selected]?.turn : null;
   useEffect(() => {
     if (selTurn == null) return;
-    setTurnOpen((was) => (was[selTurn] === false ? { ...was, [selTurn]: true } : was));
+    setTurnOpen((was) =>
+      was[selTurn] === false ? { ...was, [selTurn]: true } : was,
+    );
   }, [selected, selTurn]);
   const foldedTurn = new Set(
     turnGroups.filter((g) => !turnIsOpen(g)).map((g) => g.turn),
@@ -691,7 +729,9 @@ export default function SequenceDiagram({
     const x = X[from];
     const right = svgW - x - 30;
     const left = x - 30;
-    return right >= Math.min(260, left) ? { left: false, room: right } : { left: true, room: left };
+    return right >= Math.min(260, left)
+      ? { left: false, room: right }
+      : { left: true, room: left };
   };
 
   /* Rows on show: a closed loop is its first step's row with no replies;
@@ -710,7 +750,9 @@ export default function SequenceDiagram({
   const ordered = long
     ? turnGroups.flatMap((g) => [
         { type: "turn", n: null, group: g },
-        ...seq.rows.filter((r) => byN[r.n].turn === g.turn && rowOn(r)).map(asRow),
+        ...seq.rows
+          .filter((r) => byN[r.n].turn === g.turn && rowOn(r))
+          .map(asRow),
       ])
     : seq.rows.filter(rowOn).map(asRow);
   let y = top;
@@ -798,8 +840,7 @@ export default function SequenceDiagram({
     tabIndex: 0,
     ...(r.type === "go" || r.type === "tool" ? { "data-row": s.n } : {}),
     "aria-label": `Step ${s.n}: ${s.label}`,
-    onClick: () =>
-      r.loop && r.closed ? toggleLoop(r.loop.id) : pick(s.n),
+    onClick: () => (r.loop && r.closed ? toggleLoop(r.loop.id) : pick(s.n)),
     onKeyDown: keyPick(s.n),
     onMouseEnter: () => setHover(s.n),
     onMouseLeave: () => setHover(null),
@@ -822,7 +863,7 @@ export default function SequenceDiagram({
           width={w}
           height={18}
           rx={9}
-          fill={s.bad ? c.bad : c.fg}
+          fill={s.bad ? c.bad : s.refused ? c.warn : c.fg}
           stroke={c.paper}
           strokeWidth="2"
         />
@@ -832,7 +873,7 @@ export default function SequenceDiagram({
           textAnchor="middle"
           fontSize="11"
           fontWeight="600"
-          fill={s.bad ? "#fff" : c.paper}
+          fill={s.bad || s.refused ? "#fff" : c.paper}
         >
           {text}
         </text>
@@ -898,7 +939,7 @@ export default function SequenceDiagram({
       : r.type === "none"
         ? null
         : s.refused && r.type === "tool"
-          ? "Refused"
+          ? "Refused by the world" /* the reason is already in the words */
           : s.bad && !reply
             ? "Failed"
             : /* The arrow's rule: never "slow" for a conversation with the
@@ -912,7 +953,9 @@ export default function SequenceDiagram({
               : null;
     return (
       <Box sx={{ maxWidth: 340, py: 0.25 }}>
-        <Typography sx={{ typography: "s3", fontWeight: 600, color: "inherit" }}>
+        <Typography
+          sx={{ typography: "s3", fontWeight: 600, color: "inherit" }}
+        >
           {`${where}${
             r.type === "none"
               ? " · No reply came back"
@@ -940,12 +983,21 @@ export default function SequenceDiagram({
           </Typography>
         )}
         {state && (
-          <Typography sx={{ typography: "s3", fontWeight: 600, color: "inherit", mt: 0.5 }}>
+          <Typography
+            sx={{
+              typography: "s3",
+              fontWeight: 600,
+              color: "inherit",
+              mt: 0.5,
+            }}
+          >
             {state}
           </Typography>
         )}
         {!closedLoop && (
-          <Typography sx={{ typography: "s3", color: "inherit", opacity: 0.6, mt: 0.5 }}>
+          <Typography
+            sx={{ typography: "s3", color: "inherit", opacity: 0.6, mt: 0.5 }}
+          >
             Click for the full detail
           </Typography>
         )}
@@ -976,18 +1028,21 @@ export default function SequenceDiagram({
         g.steps
           .map((n) => byN[n])
           .flatMap((x) => [x.from, x.to])
-          .filter((id) => id && id !== seq.lanes[0].id && id !== seq.lanes[1]?.id),
+          .filter(
+            (id) => id && id !== seq.lanes[0].id && id !== seq.lanes[1]?.id,
+          ),
       ),
     ].map(seq.nameOf);
-    const probs = (seq.problems || []).filter((pr) => g.steps.includes(pr.n)).length;
+    const probs = (seq.problems || []).filter((pr) =>
+      g.steps.includes(pr.n),
+    ).length;
     /* The record's own turn numbers; back-to-back turns answered alone are
        one step, so its header names them all ("Turns 4–8"). */
     const merged = Math.max(1, ...g.steps.map((n) => byN[n].turns || 1));
     const name =
       merged > 1 ? `Turns ${g.turn}–${g.turn + merged - 1}` : `Turn ${g.turn}`;
     const words = `${name} · ${g.label ? `“${cut(g.text || g.label, 46)}”` : `${seq.nameOf(seq.lanes[1]?.id)} follows up`} · ${g.steps.length} ${g.steps.length === 1 ? "step" : "steps"}${who.length ? ` · ${who.join(", ")}` : ""}`;
-    const toggle = () =>
-      setTurnOpen((was) => ({ ...was, [g.turn]: !open }));
+    const toggle = () => setTurnOpen((was) => ({ ...was, [g.turn]: !open }));
     return (
       <Tooltip
         key={`turn-${g.turn}`}
@@ -996,7 +1051,9 @@ export default function SequenceDiagram({
         enterDelay={250}
         title={
           <Box sx={{ maxWidth: 340 }}>
-            <Typography sx={{ typography: "s3", fontWeight: 600, color: "inherit" }}>
+            <Typography
+              sx={{ typography: "s3", fontWeight: 600, color: "inherit" }}
+            >
               {`${name} · ${g.steps.length} ${g.steps.length === 1 ? "step" : "steps"}`}
             </Typography>
             {g.text && (
@@ -1004,52 +1061,54 @@ export default function SequenceDiagram({
                 {`“${g.text}”`}
               </Typography>
             )}
-            <Typography sx={{ typography: "s3", color: "inherit", opacity: 0.6, mt: 0.5 }}>
+            <Typography
+              sx={{ typography: "s3", color: "inherit", opacity: 0.6, mt: 0.5 }}
+            >
               {open ? "Click to fold" : "Click to open"}
             </Typography>
           </Box>
         }
       >
-      <g
-        role="button"
-        tabIndex={0}
-        aria-expanded={open}
-        aria-label={`${open ? "Fold" : "Open"} turn ${g.turn}`}
-        onClick={toggle}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            toggle();
-          }
-        }}
-        style={{ cursor: "pointer", outline: "none" }}
-      >
-        <rect
-          x={0}
-          y={yy - ROW_H.turn / 2 + 2}
-          width={svgW}
-          height={ROW_H.turn - 4}
-          fill={c.code}
-        />
-        <text x={10} y={yy + 4} fontSize="11.5" fill={c.sub}>
-          {open ? "▾" : "▸"}
-        </text>
-        <text x={24} y={yy + 4} fontSize="11.5" fontWeight="600" fill={c.fg}>
-          {cut(words, Math.floor((svgW - 140) / 6.2))}
-        </text>
-        {probs > 0 && (
-          <text
-            x={svgW - 10}
-            y={yy + 4}
-            textAnchor="end"
-            fontSize="11"
-            fontWeight="600"
-            fill={c.bad}
-          >
-            {`${probs} ${probs === 1 ? "problem" : "problems"}`}
+        <g
+          role="button"
+          tabIndex={0}
+          aria-expanded={open}
+          aria-label={`${open ? "Fold" : "Open"} turn ${g.turn}`}
+          onClick={toggle}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              toggle();
+            }
+          }}
+          style={{ cursor: "pointer", outline: "none" }}
+        >
+          <rect
+            x={0}
+            y={yy - ROW_H.turn / 2 + 2}
+            width={svgW}
+            height={ROW_H.turn - 4}
+            fill={c.code}
+          />
+          <text x={10} y={yy + 4} fontSize="11.5" fill={c.sub}>
+            {open ? "▾" : "▸"}
           </text>
-        )}
-      </g>
+          <text x={24} y={yy + 4} fontSize="11.5" fontWeight="600" fill={c.fg}>
+            {cut(words, Math.floor((svgW - 140) / 6.2))}
+          </text>
+          {probs > 0 && (
+            <text
+              x={svgW - 10}
+              y={yy + 4}
+              textAnchor="end"
+              fontSize="11"
+              fontWeight="600"
+              fill={c.bad}
+            >
+              {`${probs} ${probs === 1 ? "problem" : "problems"}`}
+            </text>
+          )}
+        </g>
       </Tooltip>
     );
   };
@@ -1137,12 +1196,13 @@ export default function SequenceDiagram({
         items.push(
           <g
             key="chip"
-            {...(r.loop && !r.closed && {
-              onClick: (e) => {
-                e.stopPropagation();
-                toggleLoop(r.loop.id);
-              },
-            })}
+            {...(r.loop &&
+              !r.closed && {
+                onClick: (e) => {
+                  e.stopPropagation();
+                  toggleLoop(r.loop.id);
+                },
+              })}
           >
             <rect
               x={mid + lw / 2 + 6}
@@ -1176,13 +1236,15 @@ export default function SequenceDiagram({
       const rk = kindOf(r, s);
       const rawR = cut(
         s.answer.label,
-        Math.max(roomOf(x1, x2) - tag.length, Math.floor((svgW - 24) / CH) - tag.length - 2, 18) -
-          Math.ceil(TAG_W(rk) / CH),
+        Math.max(
+          roomOf(x1, x2) - tag.length,
+          Math.floor((svgW - 24) / CH) - tag.length - 2,
+          18,
+        ) - Math.ceil(TAG_W(rk) / CH),
       );
       /* Quotes only for someone's actual words — "Front desk answered each
          one" is our summary of several turns, not a quote. */
-      const label =
-        s.kind === "message" && !(s.turns > 1) ? `“${rawR}”` : rawR;
+      const label = s.kind === "message" && !(s.turns > 1) ? `“${rawR}”` : rawR;
       items.push(
         <line
           key="a"
@@ -1231,6 +1293,8 @@ export default function SequenceDiagram({
         (side.room - tagW - name.length * nameW - 18 - lchipW) / 6.1,
       );
       const res = cut(`→ ${s.result || ""}${tail}`, resRoom);
+      /* Red for a broken tool; amber for a call the world refused. */
+      const tone = s.bad ? c.bad : s.refused ? c.warn : null;
       const textW = tagW + name.length * nameW + 8 + res.length * 6.1;
       const tx = side.left ? x - 22 - textW : x + 22;
       const loop = side.left
@@ -1250,7 +1314,7 @@ export default function SequenceDiagram({
           key="loop"
           d={loop}
           fill="none"
-          stroke={s.bad ? c.bad : c.muted}
+          stroke={tone || c.muted}
           strokeWidth="1.3"
         />,
         <path
@@ -1260,7 +1324,7 @@ export default function SequenceDiagram({
               ? `M${x - 3},${yy + 5} l-4,-3 v6 z`
               : `M${x + 3},${yy + 5} l4,-3 v6 z`
           }
-          fill={s.bad ? c.bad : c.muted}
+          fill={tone || c.muted}
         />,
         bubble(
           side.left
@@ -1278,7 +1342,7 @@ export default function SequenceDiagram({
           fontWeight={wt}
           fill={c.fg}
         >
-          {kindTag("TOOL", s.bad ? c.bad : null)}
+          {kindTag("TOOL", tone)}
           <tspan fontFamily={mono}>{name}</tspan>
         </text>,
         <text
@@ -1286,8 +1350,8 @@ export default function SequenceDiagram({
           x={tx + tagW + name.length * nameW + 8}
           y={yy + 4}
           fontSize="11.5"
-          fontWeight={s.bad ? 600 : 400}
-          fill={s.bad ? c.bad : c.sub}
+          fontWeight={tone ? 600 : 400}
+          fill={tone || c.sub}
         >
           {res}
         </text>,
@@ -1317,7 +1381,13 @@ export default function SequenceDiagram({
               textAnchor="middle"
               fontSize="10.5"
               fontWeight="500"
-              fill={r.loop.badCount && r.closed ? c.bad : c.sub}
+              fill={
+                r.closed && r.loop.badCount
+                  ? c.bad
+                  : r.closed && r.loop.outcomes?.refused
+                    ? c.warn
+                    : c.sub
+              }
             >
               {lchip}
             </text>
@@ -1415,7 +1485,9 @@ export default function SequenceDiagram({
             <Toggle
               on={turnGroups.every((g) => !foldedTurn.has(g.turn))}
               onClick={() => {
-                const allOpen = turnGroups.every((g) => !foldedTurn.has(g.turn));
+                const allOpen = turnGroups.every(
+                  (g) => !foldedTurn.has(g.turn),
+                );
                 setTurnOpen(
                   Object.fromEntries(turnGroups.map((g) => [g.turn, !allOpen])),
                 );
@@ -1632,6 +1704,7 @@ export default function SequenceDiagram({
             onOpenTrace={onOpenTrace}
             onShowInTranscript={onShowInTranscript}
             linkOf={linkOf}
+            hasTraces={hasTraces}
             failures={failures.filter((f) => f.n === sel.n)}
           />
         ) : (
@@ -1648,6 +1721,8 @@ export default function SequenceDiagram({
 SequenceDiagram.propTypes = {
   /* Failed sub-goals placed on steps (placeFailures). */
   failures: PropTypes.array,
+  /* Model + tokens exist per worker only when the app sends traces. */
+  hasTraces: PropTypes.bool,
   seq: PropTypes.object.isRequired,
   selected: PropTypes.number,
   onSelect: PropTypes.func.isRequired,

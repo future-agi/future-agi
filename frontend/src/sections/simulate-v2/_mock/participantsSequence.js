@@ -18,17 +18,44 @@ import {
   NO_EVENTS,
   NOT_TIED,
   answerLabelOf,
-  callLabelOf,
   fullAnswerOf,
-  handoffLabelOf,
   handoffMessageOf,
-  shortLineOf,
+  resultSentenceOf,
   tokensOf,
   toolDurationOf,
 } from "./participants";
 import { USER_NODE } from "./participantsGraph";
 
 const SAME_TIME_S = 1.5;
+
+/* Karthik, 17 Nov: the record has the exact text, not a summary. Arrows show
+   the exact words (on one line, cut to fit by the diagram) — never a label we
+   made up from tool names or outputs. */
+const oneLine = (t) =>
+  String(t ?? "")
+    .replace(/\s*\n+\s*/g, " · ")
+    .trim();
+/* What the worker itself handed back — its reply only. Its tool calls are
+   steps of their own, so their outputs aren't repeated in the answer. */
+const replyOf = (w) => (w.recorded ? w.result : resultSentenceOf(w));
+/* Karthik, 17 Nov: a call the world refused is its own outcome, with the
+   world's reason — not a failure. A call outside the worker's tools is
+   refused too (the world stopped it); a broken tool is a failure. */
+const isRefused = (c) => !!(c.blocked || c.refused);
+const refusalOf = (c) =>
+  c.reason ??
+  c.output?.reason ??
+  (c.blocked ? "Not one of this worker's tools" : null);
+/* A tool's output as recorded: text as is, an object as its own fields. */
+const outputText = (c) => {
+  if (isRefused(c)) return `Refused${refusalOf(c) ? ` · ${refusalOf(c)}` : ""}`;
+  const o = c.output;
+  if (o == null) return "No response";
+  if (typeof o !== "object") return String(o);
+  return Object.entries(o)
+    .map(([k, v]) => `${k}: ${typeof v === "object" ? JSON.stringify(v) : v}`)
+    .join(" · ");
+};
 const UNTIED = "__untied__";
 
 /**
@@ -73,7 +100,7 @@ export const sequenceOf = (p, { callerName = null } = {}) => {
         from: USER_NODE,
         to: coord.id,
         at: start,
-        label: shortLineOf(t.request),
+        label: oneLine(t.request),
         full: t.request,
         turn: t.n,
         spanId: `t${t.n}`,
@@ -82,7 +109,7 @@ export const sequenceOf = (p, { callerName = null } = {}) => {
           ? {
               kind: "answer",
               at: turnEnd ?? start,
-              label: shortLineOf(t.reply),
+              label: oneLine(t.reply),
               full: t.reply,
             }
           : {
@@ -100,7 +127,7 @@ export const sequenceOf = (p, { callerName = null } = {}) => {
         from: coord.id,
         to: USER_NODE,
         at: start,
-        label: shortLineOf(t.reply),
+        label: oneLine(t.reply),
         full: t.reply,
         turn: t.n,
         spanId: `t${t.n}`,
@@ -142,15 +169,17 @@ export const sequenceOf = (p, { callerName = null } = {}) => {
                 kind: "answer",
                 bad: failed,
                 at: w.endedAt,
-                label: answerLabelOf(w),
-                full: fullAnswerOf(w),
+                label: oneLine(replyOf(w)) || answerLabelOf(w),
+                full: replyOf(w),
               };
       push({
         kind: "handoff",
         from: parent,
         to: node,
         at: w.delegatedAt,
-        label: handoffLabelOf(w),
+        label:
+          oneLine(handoffMessageOf(w) || w.task) ||
+          "No task text in the record",
         full: handoffMessageOf(w) || w.task || null,
         turn: t.n,
         spanId: `t${t.n}:${w.id}`,
@@ -167,12 +196,13 @@ export const sequenceOf = (p, { callerName = null } = {}) => {
           tool: c.name,
           at: c.at,
           label: c.name,
-          result: c.resultLabel || callLabelOf(c),
+          result: outputText(c),
           turn: t.n,
           input: c.input ?? null,
           output: c.output ?? null,
-          bad: !!(c.blocked || c.failed),
-          refused: !!c.blocked,
+          bad: !!c.failed && !isRefused(c),
+          refused: isRefused(c),
+          reason: isRefused(c) ? refusalOf(c) : null,
           spanId: `t${t.n}:${c.id}`,
           durMs: c.durationMs ?? toolDurationOf(c),
           answer: null,
@@ -192,12 +222,13 @@ export const sequenceOf = (p, { callerName = null } = {}) => {
         tool: c.name,
         at: c.at,
         label: c.name,
-        result: c.resultLabel || callLabelOf(c),
+        result: outputText(c),
         turn: t.n,
         input: c.input ?? null,
         output: c.output ?? null,
-        bad: !!(c.blocked || c.failed),
-        refused: !!c.blocked,
+        bad: !!c.failed && !isRefused(c),
+        refused: isRefused(c),
+        reason: isRefused(c) ? refusalOf(c) : null,
         spanId: `t${t.n}:${c.id}`,
         durMs: c.durationMs ?? toolDurationOf(c),
         answer: null,
@@ -228,10 +259,15 @@ export const sequenceOf = (p, { callerName = null } = {}) => {
       prev.full = prev.turnTexts
         .map((x, i) => `Turn ${prev.turnNums[i] ?? i + 1}: ${x}`)
         .join("\n");
+      /* Each reply as recorded, numbered by the record's turns — no
+         summary line of ours. The arrow shows the last one. */
+      prev.replyTexts.push(s.answer.full);
       prev.answer = {
         ...s.answer,
-        label: `${laneInfo[coord.id].name} answered each one`,
-        full: `${laneInfo[coord.id].name} answered all ${prev.turns} turns on its own and didn't hand off.\n\nLast reply: ${s.answer.full}`,
+        label: oneLine(s.answer.full),
+        full: prev.replyTexts
+          .map((x, i) => `Turn ${prev.turnNums[i] ?? i + 1}: ${x}`)
+          .join("\n"),
       };
       return;
     }
@@ -239,6 +275,7 @@ export const sequenceOf = (p, { callerName = null } = {}) => {
       ...s,
       turnTexts: s.kind === "message" ? [s.full] : [],
       turnNums: s.kind === "message" ? [s.turn] : [],
+      replyTexts: s.kind === "message" && s.answer?.full ? [s.answer.full] : [],
     });
   });
   steps.forEach((s, i) => {
@@ -353,7 +390,7 @@ export const sequenceOf = (p, { callerName = null } = {}) => {
       n: s.n,
       text:
         s.kind === "tool"
-          ? `${s.tool} ${s.refused ? "was refused" : "failed"} at step ${s.n}`
+          ? `${s.tool} failed at step ${s.n}`
           : s.kind === "message"
             ? `No reply to step ${s.n}`
             : s.answer?.kind === "none"
@@ -436,7 +473,8 @@ export const sequenceOf = (p, { callerName = null } = {}) => {
   const loopOf = Object.fromEntries(loops.map((l) => [l.id, l]));
   /* Grouped by loop and by what went wrong, in the record's words: a
      refusal, a failure and a no-answer in one loop are three lines. */
-  const baseOf = (t) => t.replace(/ at step \d+$/, "").replace(/ step \d+$/, "");
+  const baseOf = (t) =>
+    t.replace(/ at step \d+$/, "").replace(/ step \d+$/, "");
   const merged = [];
   problems.forEach((pr) => {
     const st = byN[pr.n];
@@ -445,16 +483,41 @@ export const sequenceOf = (p, { callerName = null } = {}) => {
     const group = `${l.id}|${baseOf(pr.text)}`;
     if (merged.some((m) => m.group === group)) return undefined;
     const same = problems
-      .filter((q) => byN[q.n]?.loop === l.id && baseOf(q.text) === baseOf(pr.text))
+      .filter(
+        (q) => byN[q.n]?.loop === l.id && baseOf(q.text) === baseOf(pr.text),
+      )
       .map((q) => q.n);
     return merged.push({
       n: pr.n,
       loop: l.id,
       group,
       range: same.length > 1 ? [same[0], same[same.length - 1]] : null,
-      text: same.length > 1 ? `${baseOf(pr.text)} ${same.length} times` : pr.text,
+      text:
+        same.length > 1 ? `${baseOf(pr.text)} ${same.length} times` : pr.text,
     });
   });
+  /* Calls the world refused, each with its reason — counted apart from
+     problems. A refusal can be the world doing its job; whether trying was
+     wrong is for a sub-goal check to say. Repeats in one loop are one line. */
+  const refusals = [];
+  steps
+    .filter((s) => s.refused)
+    .forEach((s) => {
+      const group = `${s.loop || s.n}|${s.tool}|${s.reason}`;
+      const had = refusals.find((r) => r.group === group);
+      if (had) {
+        had.range = [had.n, s.n];
+        had.times += 1;
+      } else
+        refusals.push({
+          n: s.n,
+          group,
+          tool: s.tool,
+          reason: s.reason,
+          range: null,
+          times: 1,
+        });
+    });
   /* The caller's turns, for grouping a long call (each step keeps its turn). */
   const turnGroups = [];
   steps.forEach((s) => {
@@ -470,6 +533,7 @@ export const sequenceOf = (p, { callerName = null } = {}) => {
       g.text = s.turnTexts?.[0] || s.full || s.label;
     }
     if (s.bad || s.answer?.bad) g.bad = true;
+    if (s.refused) g.refused = (g.refused || 0) + 1;
   });
   turnGroups.forEach((g, i) => {
     g.index = i + 1;
@@ -484,6 +548,7 @@ export const sequenceOf = (p, { callerName = null } = {}) => {
     loops,
     turnGroups,
     problems: merged,
+    refusals,
     nameOf,
     end: last,
     notRun: p.observed ? p.notRun || [] : [],
