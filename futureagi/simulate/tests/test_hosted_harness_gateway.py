@@ -3302,7 +3302,10 @@ def test_fresh_lease_starts_chat_once_for_concurrent_messages(
 def test_chat_sandbox_job_document_omits_server_only_chat_state(
     organization, monkeypatch
 ):
-    from simulate.services.hosted_harness_conversation import ensure_conversation
+    from simulate.services.hosted_harness_conversation import (
+        enqueue_message,
+        ensure_conversation,
+    )
 
     job, _ = create_hosted_job(organization, _payload(), idempotency_key="chat-doc")
     job.payload = {
@@ -3317,6 +3320,8 @@ def test_chat_sandbox_job_document_omits_server_only_chat_state(
     job.current_stage = "failed"
     job.save(update_fields=["payload", "state", "current_stage", "updated_at"])
     conversation = ensure_conversation(job)
+    # A sandbox starts for a message that waits for one.
+    enqueue_message(job, content="hi", client_request_id="omits-chat-state")
     client = _Daytona()
     gateway = object.__new__(HostedHarnessGateway)
     gateway.client = client

@@ -304,6 +304,34 @@ def test_a_stop_that_cannot_be_scheduled_still_ends_the_claim(
 
 
 @pytest.mark.django_db
+def test_a_stop_that_could_not_be_scheduled_is_sent_again_by_the_sweep(
+    organization, inline, django_capture_on_commit_callbacks, monkeypatch
+):
+    real = nudge_tasks.schedule_sandbox_stop
+
+    def unreachable(*_args):
+        raise RuntimeError("scheduler unreachable")
+
+    monkeypatch.setattr(nudge_tasks, "schedule_sandbox_stop", unreachable)
+    ctx = _checked(organization, django_capture_on_commit_callbacks)
+    _turn(ctx, ctx.check)
+    assert _lease(ctx).state == Lease.State.EXPIRED
+    assert _names(inline, STOP) == []
+
+    # The scheduler is back; the next sweep sends the stop the lease still owes.
+    monkeypatch.setattr(nudge_tasks, "schedule_sandbox_stop", real)
+    # The sweep closes stale connections itself; the test's own must stay open.
+    monkeypatch.setattr(conversation_tasks, "close_old_connections", lambda: None)
+    sweep = conversation_tasks.recover_hosted_harness_conversations._original_func
+    sweep()
+
+    assert _names(inline, STOP) == [[str(ctx.conversation.id), "sandbox-check"]]
+    # Once sent, later sweeps do not send it again.
+    sweep()
+    assert _names(inline, STOP) == [[str(ctx.conversation.id), "sandbox-check"]]
+
+
+@pytest.mark.django_db
 def test_a_stop_during_the_check_stops_its_sandbox_when_the_turn_ends(
     organization, inline, django_capture_on_commit_callbacks
 ):
@@ -463,7 +491,12 @@ def test_a_stop_with_nothing_running_starts_no_sandbox(
 ):
     ctx = _checked(organization, django_capture_on_commit_callbacks)
     _turn(ctx, ctx.check)
-    assert platform_landing_pending(_job(ctx), ctx.conversation) is False
+    assert (
+        platform_landing_pending(
+            job=_job(ctx), conversation=ctx.conversation
+        )
+        is False
+    )
     live = None
     elsewhere = queue == "live_elsewhere"
     if queue in ("live_runtime", "live_elsewhere"):
@@ -515,6 +548,124 @@ def test_a_stop_with_nothing_running_starts_no_sandbox(
         start.assert_not_called()
         assert set(states.values()) == {Message.State.COMPLETED}
         assert _conversation(ctx).state == Conversation.State.COLD
+
+
+def _stale_chat_sandbox(organization, capture):
+    """A person's chat in a sandbox of its own that has idled out: the lease is still
+    ACTIVE on paper, its heartbeat and deadline have run out, nothing is waiting."""
+    ctx = _built(organization, capture)
+    _finished(ctx)
+    first = enqueue_message(ctx.job, content="hi", client_request_id="p0")[1]
+    _sandbox(ctx, "sandbox-chat", after=ctx.build.sequence)
+    _turn(ctx, first)
+    Lease.no_workspace_objects.filter(conversation=ctx.conversation).update(
+        heartbeat_at=timezone.now() - timedelta(minutes=31),
+        expires_at=timezone.now() - timedelta(minutes=1),
+    )
+    assert _lease(ctx).state == Lease.State.ACTIVE
+    return ctx
+
+
+@pytest.mark.django_db
+def test_a_stop_with_nothing_running_retires_the_stale_chat_sandbox(
+    organization, inline, django_capture_on_commit_callbacks
+):
+    ctx = _stale_chat_sandbox(organization, django_capture_on_commit_callbacks)
+    stop = enqueue_message(
+        ctx.job, content="", client_request_id="stop-it", kind="interrupt"
+    )[1]
+
+    result, start, delete = _ensure(ctx)
+
+    assert result is None
+    start.assert_not_called()
+    stop.refresh_from_db()
+    assert stop.state == Message.State.COMPLETED
+    # The sandbox is not left to run until its provider's limit.
+    delete.assert_called_once_with("sandbox-chat", ctx.conversation.id)
+    assert _lease(ctx).state == Lease.State.EXPIRED
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("case", ["late_after_the_checks_retire", "stale_sandbox"])
+def test_an_ensure_with_nothing_queued_starts_no_sandbox(
+    organization, inline, django_capture_on_commit_callbacks, case
+):
+    if case == "stale_sandbox":
+        ctx = _stale_chat_sandbox(organization, django_capture_on_commit_callbacks)
+    else:
+        ctx = _checked(organization, django_capture_on_commit_callbacks)
+        _turn(ctx, ctx.check)
+        assert _lease(ctx).state == Lease.State.EXPIRED
+    assert (
+        platform_landing_pending(
+            job=_job(ctx), conversation=ctx.conversation
+        )
+        is False
+    )
+
+    # The start was asked for twice, and both arrive after nothing is left to run.
+    first = _ensure(ctx)
+    second = _ensure(ctx)
+
+    for result, start, _delete in (first, second):
+        assert result is None
+        start.assert_not_called()
+    assert _lease(ctx).state == Lease.State.EXPIRED
+    assert _conversation(ctx).state != Conversation.State.STARTING
+    if case == "stale_sandbox":
+        first[2].assert_called_once_with("sandbox-chat", ctx.conversation.id)
+        second[2].assert_not_called()
+
+
+@pytest.mark.django_db
+def test_a_landing_wakeup_sent_while_a_start_runs_still_starts_the_chat(
+    organization, storage, inline, django_capture_on_commit_callbacks, monkeypatch
+):
+    from simulate.services import hosted_harness_conversation as conversation_module
+
+    ctx = _checked_with_files(organization, django_capture_on_commit_callbacks)
+    enqueue_message(ctx.job, content="run them", client_request_id="p1")
+    running = f"hosted-conversation-runtime-{ctx.conversation.id}"
+    asked = []
+
+    def apply_async(*, args, task_id=None, **_options):
+        # A request for the id of a run that is going merges into it and is dropped.
+        if task_id != running:
+            asked.append(list(args))
+
+    monkeypatch.setattr(
+        conversation_tasks.ensure_hosted_harness_conversation_runtime,
+        "apply_async",
+        apply_async,
+    )
+    real = conversation_module.platform_landing_pending
+    reads = []
+
+    def read_then_settle(*args, **kwargs):
+        value = real(*args, **kwargs)
+        reads.append(value)
+        if len(reads) == 1:
+            # This start has read "pending"; before it returns, the files land and the
+            # promotion's wakeup is sent.
+            _publish(ctx, {"digest": ctx.digest, "sequence": ctx.checkpoint_sequence})
+            conversation_module.start_chat_after_platform_landing(
+                conversation_id=str(ctx.conversation.id),
+                turn_sequence=ctx.turn_sequence,
+            )
+        return value
+
+    monkeypatch.setattr(
+        conversation_module, "platform_landing_pending", read_then_settle
+    )
+
+    started = _ensure(ctx)[1].called
+    if not started:
+        # Not started by the run itself: the wakeup must have been asked for on its own.
+        assert asked, "the wakeup merged into the running start and was lost"
+        started = _ensure(ctx)[1].called
+
+    assert started
 
 
 def _checked_with_files(organization, capture):
@@ -575,7 +726,12 @@ def test_the_wait_ends_when_the_publish_cannot_land(
     organization, storage, inline, django_capture_on_commit_callbacks, settled
 ):
     ctx = _checked_with_files(organization, django_capture_on_commit_callbacks)
-    assert platform_landing_pending(_job(ctx), ctx.conversation) is True
+    assert (
+        platform_landing_pending(
+            job=_job(ctx), conversation=ctx.conversation
+        )
+        is True
+    )
 
     if settled == "refused":
         # An older landing, and the drafts its workspace was composed on.
@@ -585,8 +741,15 @@ def test_the_wait_ends_when_the_publish_cannot_land(
             "draft_basis": {"token": "t0"},
         }
         _publish(ctx, earlier)
-        assert platform_landing_pending(_job(ctx), ctx.conversation) is True
-        record_platform_landing_refused(str(ctx.conversation.id), ctx.turn_sequence)
+        assert (
+            platform_landing_pending(
+                job=_job(ctx), conversation=ctx.conversation
+            )
+            is True
+        )
+        record_platform_landing_refused(
+        conversation_id=str(ctx.conversation.id), turn_sequence=ctx.turn_sequence
+    )
         assert _job(ctx).payload["metadata"]["conversation_checkpoints"] == {
             str(ctx.conversation.id): {
                 **earlier,
@@ -598,7 +761,12 @@ def test_the_wait_ends_when_the_publish_cannot_land(
             state=HostedHarnessJob.State.FAILED
         )
 
-    assert platform_landing_pending(_job(ctx), ctx.conversation) is False
+    assert (
+        platform_landing_pending(
+            job=_job(ctx), conversation=ctx.conversation
+        )
+        is False
+    )
 
 
 @pytest.mark.django_db
@@ -615,10 +783,17 @@ def test_the_wait_ends_just_past_its_bound(
     )
 
     # Exactly at the bound the wait holds; a microsecond past, it does not.
-    assert platform_landing_pending(_job(ctx), ctx.conversation, now=bound) is True
     assert (
         platform_landing_pending(
-            _job(ctx), ctx.conversation, now=bound + timedelta(microseconds=1)
+            job=_job(ctx), conversation=ctx.conversation, now=bound
+        )
+        is True
+    )
+    assert (
+        platform_landing_pending(
+            job=_job(ctx),
+            conversation=ctx.conversation,
+            now=bound + timedelta(microseconds=1),
         )
         is False
     )
@@ -719,7 +894,7 @@ def test_a_settled_check_starts_the_waiting_chat(
     record = conversation_tasks.ensure_hosted_harness_conversation_runtime.apply_async
 
     def apply_async(*, args, **options):
-        waits_at_start.append(platform_landing_pending(_job(ctx), ctx.conversation))
+        waits_at_start.append(platform_landing_pending(job=_job(ctx), conversation=ctx.conversation))
         record(args=args, **options)
 
     monkeypatch.setattr(

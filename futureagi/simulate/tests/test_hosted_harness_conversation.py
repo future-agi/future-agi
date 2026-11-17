@@ -576,6 +576,8 @@ def test_conversation_runtime_lease_starts_once_and_reuses_warm_sandbox(
 
     gateway = object.__new__(gateway_module.HostedHarnessGateway)
     gateway.client = Client()
+    # A sandbox starts for a message that waits for one.
+    enqueue_message(job, content="hello", client_request_id="lease-hello")
 
     lease = gateway.ensure_conversation_runtime(
         job,

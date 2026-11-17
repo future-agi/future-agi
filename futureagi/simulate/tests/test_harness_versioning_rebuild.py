@@ -107,6 +107,9 @@ def inline(monkeypatch):
     return calls
 
 
+PROMOTE = conversation_tasks.promote_hosted_harness_conversation_checkpoint.name
+
+
 def _names(calls, name):
     return [args for task, args in calls if task == name]
 
@@ -2044,6 +2047,140 @@ class TestGuestTurn:
             [str(conversation.id), 2]
         ]
 
+    @pytest.mark.parametrize("original", ["interrupted", "plain"])
+    def test_a_turn_reported_again_after_an_interrupt_is_not_promoted(
+        self,
+        user,
+        workspace,
+        storage,
+        scheduled,
+        started,
+        inline,
+        auth_client,
+        django_capture_on_commit_callbacks,
+        original,
+    ):
+        environment, nudge, _a1, _a2 = _queued(
+            user,
+            workspace,
+            storage,
+            f"r-guest-replay-{original}",
+            auth_client,
+            django_capture_on_commit_callbacks,
+        )
+        assert rebuild.dispatch_nudge(environment.id, start_runtime=False)
+        nudge.refresh_from_db()
+        command = nudge.command_message
+        conversation = command.conversation
+        capability = issue_conversation_capability(
+            conversation,
+            endpoint_base_url="https://platform.example",
+            provider_ref="sandbox-nudge",
+            attempt=None,
+            ttl_seconds=600,
+        )
+        client, headers = APIClient(), _headers(capability)
+        ran = {"command_message_id": str(command.id)}
+        events = [(1, "turn_started", ran)]
+        if original == "interrupted":
+            stop = enqueue_message(
+                environment, content="", client_request_id="stop", kind="interrupt"
+            )[1]
+            events.append(
+                (2, "turn_interrupted", {**ran, "interrupt_message_id": str(stop.id)})
+            )
+        events.append((len(events) + 1, "turn_completed", {**ran, "replayed": True}))
+        with django_capture_on_commit_callbacks(execute=True):
+            response = _send(client, conversation, headers, 0, *events)
+        assert response.status_code == 200, response.content
+
+        promoted = _names(inline, PROMOTE)
+        nudge.refresh_from_db()
+        if original == "interrupted":
+            # The replacement reports no outcome, which says nothing of how the turn
+            # went: the interrupted turn is not published.
+            assert promoted == []
+            assert nudge.state == "failed"
+            assert _names(inline, "finish_harness_nudge_turn") == [
+                [str(conversation.id), events[-1][0]]
+            ]
+        else:
+            # Asked for by the turn's ingestion and by the rebuild's fence; one landing.
+            assert promoted
+            assert all(one == [str(conversation.id), events[-1][0]] for one in promoted)
+            assert _names(inline, "finish_harness_nudge_turn") == []
+
+    @pytest.mark.parametrize("original", ["interrupted", "failed", "plain"])
+    def test_a_landing_retry_does_not_promote_a_replay_of_a_turn_that_went_badly(
+        self,
+        user,
+        workspace,
+        storage,
+        scheduled,
+        started,
+        inline,
+        auth_client,
+        django_capture_on_commit_callbacks,
+        original,
+    ):
+        from simulate.models import HostedHarnessConversationEvent
+
+        environment, nudge, _a1, _a2 = _queued(
+            user,
+            workspace,
+            storage,
+            f"r-retry-replay-{original}",
+            auth_client,
+            django_capture_on_commit_callbacks,
+        )
+        assert rebuild.dispatch_nudge(environment.id, start_runtime=False)
+        nudge.refresh_from_db()
+        command = nudge.command_message
+        conversation = command.conversation
+        rebuild.start_nudge_turn(
+            nudge.id, message_id=command.id, started_at=timezone.now()
+        )
+        ran = {"command_message_id": str(command.id)}
+        history = [(1, "turn_started", ran)]
+        if original == "interrupted":
+            history.append((2, "turn_interrupted", ran))
+        elif original == "failed":
+            history.append((2, "turn_completed", {**ran, "outcome": "failed"}))
+        replay = len(history) + 1
+        history.append((replay, "turn_completed", {**ran, "replayed": True}))
+        now = timezone.now()
+        for sequence, kind, payload in history:
+            HostedHarnessConversationEvent.no_workspace_objects.create(
+                event_id=f"r-retry-replay-{original}-{sequence}",
+                conversation=conversation,
+                sequence=sequence,
+                kind=kind,
+                payload=payload,
+                digest="x",
+                emitted_at=now,
+            )
+        HostedHarnessConversationEvent.no_workspace_objects.filter(
+            conversation=conversation, sequence=replay
+        ).update(
+            created_at=now - rebuild.NUDGE_LANDING_RETRY_AFTER - timedelta(minutes=1)
+        )
+        nudge.refresh_from_db()
+        HarnessNudge.no_workspace_objects.filter(id=nudge.id).update(
+            draft_snapshot={**nudge.draft_snapshot, "turn_sequence": replay}
+        )
+
+        with patch(
+            "simulate.services.hosted_harness_conversation.promote_turn_checkpoint"
+        ) as promote:
+            rebuild.check_nudges(environment.id)
+
+        nudge.refresh_from_db()
+        if original == "plain":
+            promote.assert_called_once_with(str(conversation.id), replay)
+        else:
+            promote.assert_not_called()
+            assert nudge.state == "failed"
+
 
 def _rebuild_with_lease(
     user,
@@ -2632,6 +2769,55 @@ class TestChecks:
         assert not HarnessEnvironmentVersion.all_objects.filter(
             job=environment, nudge=nudge, status="discarded"
         ).exists()
+
+    def test_a_renewal_committed_between_the_check_and_the_close_keeps_the_rebuild_open(
+        self,
+        user,
+        workspace,
+        storage,
+        scheduled,
+        started,
+        inline,
+        auth_client,
+        django_capture_on_commit_callbacks,
+    ):
+        environment, nudge, conversation, _reply = _rebuild_with_lease(
+            user,
+            workspace,
+            storage,
+            "r-renewed",
+            auth_client,
+            django_capture_on_commit_callbacks,
+            lease_state="active",
+            expires_in=timedelta(minutes=-1),
+            heartbeat_age=timedelta(minutes=30),
+        )
+        real = rebuild._rebuild_stuck
+        calls = []
+        renewed_to = timezone.now() + timedelta(minutes=30)
+
+        def renewed_after_the_first_look(nudge_, conversation_, now):
+            calls.append(1)
+            result = real(nudge_, conversation_, now)
+            if len(calls) == 1:
+                # The lease had run out when the closer looked; a renewal commits now.
+                HostedHarnessConversationLease.no_workspace_objects.filter(
+                    conversation=conversation
+                ).update(expires_at=renewed_to)
+            return result
+
+        with patch.object(rebuild, "_rebuild_stuck", renewed_after_the_first_look):
+            with django_capture_on_commit_callbacks(execute=True):
+                rebuild.check_nudges(environment.id)
+
+        assert len(calls) == 2
+        nudge.refresh_from_db()
+        assert nudge.state == "running"
+        lease = HostedHarnessConversationLease.no_workspace_objects.get(
+            conversation=conversation
+        )
+        assert (lease.state, lease.expires_at) == ("active", renewed_to)
+        assert not _names(inline, "stop_harness_nudge_sandbox")
 
     def test_recovery_keeps_messages_waiting_behind_a_rebuild(
         self,
@@ -3913,6 +4099,8 @@ class TestChatSandboxFence:
             user, workspace, storage, "r-late-start", django_capture_on_commit_callbacks
         )
         conversation = ensure_conversation(environment)
+        # The start is for a message that waits for a sandbox.
+        enqueue_message(environment, content="hi", client_request_id="r-late-start")
         leases = HostedHarnessConversationLease.no_workspace_objects
 
         made = []
@@ -3966,6 +4154,63 @@ class TestChatSandboxFence:
             "starting",
         )
         made[1].process.execute_session_command.assert_called_once()
+
+    def test_a_refused_renewal_restarts_the_chat_in_the_same_call(
+        self,
+        user,
+        workspace,
+        storage,
+        scheduled,
+        started,
+        inline,
+        django_capture_on_commit_callbacks,
+    ):
+        from unittest.mock import MagicMock
+
+        from simulate.services.hosted_harness_gateway import HostedHarnessGateway
+
+        environment, a1, _a2 = _activated(
+            user, workspace, storage, "r-refused", django_capture_on_commit_callbacks
+        )
+        conversation = ensure_conversation(environment)
+        capability = issue_conversation_capability(
+            conversation,
+            endpoint_base_url="https://platform.example",
+            provider_ref="sandbox-old",
+            attempt=None,
+            ttl_seconds=3600,
+            agent_version=a1,
+        )
+        leases = HostedHarnessConversationLease.no_workspace_objects
+        leases.filter(id=capability.lease.id).update(
+            state="active", heartbeat_at=timezone.now()
+        )
+        HostedHarnessConversation.no_workspace_objects.filter(
+            id=conversation.id
+        ).update(active_invocation_id="turn-1")
+        enqueue_message(environment, content="and also", client_request_id="refused")
+        gateway = HostedHarnessGateway.__new__(HostedHarnessGateway)
+        gateway.client = MagicMock(runtime_name="r", runtime_digest="d")
+        # A close ends the lease while the renewal's provider call is out.
+        gateway.client.renew_ttl.side_effect = lambda *_a, **_k: leases.filter(
+            id=capability.lease.id
+        ).update(state="expired")
+
+        with (
+            patch.object(gateway, "_delete_chat_sandbox") as deleted,
+            patch.object(gateway, "_start_chat_sandbox") as start,
+        ):
+            gateway.ensure_conversation_runtime(
+                environment,
+                conversation=conversation,
+                endpoint_base_url="https://platform.example",
+            )
+
+        lease = leases.get(id=capability.lease.id)
+        assert lease.state == "starting"
+        assert lease.provider_ref.startswith("pending:")
+        start.assert_called_once()
+        deleted.assert_called_once_with("sandbox-old", conversation.id)
 
     def test_events_that_waited_out_a_stop_are_refused(
         self,
@@ -4202,7 +4447,19 @@ class _Side:
 
         self.thread = threading.Thread(target=run, daemon=True)
         self.thread.start()
-        self.pid = self.pids.get(timeout=_WAIT_CAP_SECONDS)
+        deadline = time.monotonic() + _WAIT_CAP_SECONDS
+        while True:
+            try:
+                self.pid = self.pids.get(timeout=0.1)
+                break
+            except queue.Empty:
+                # The thread failed before it reported: its own error is the news.
+                if not self.thread.is_alive():
+                    if self.error is not None:
+                        raise self.error
+                    raise AssertionError("the other side ended without a backend pid")
+                if time.monotonic() > deadline:
+                    raise AssertionError("the other side never reported its backend pid")
 
     def settled(self):
         """Finished, or stopped on a row lock the caller holds."""
@@ -4259,7 +4516,7 @@ def _lapsed(user, workspace, storage, key, auth_client, capture, **extra):
 
 class TestLeaseExpiryRaces:
     @pytest.mark.django_db(transaction=True)
-    def test_a_renewal_landing_after_the_closers_read_leaves_a_consistent_end(
+    def test_a_renewal_landing_after_the_closers_read_is_refused(
         self,
         user,
         workspace,
@@ -4307,12 +4564,10 @@ class TestLeaseExpiryRaces:
 
         nudge.refresh_from_db()
         lease.refresh_from_db()
-        renewed = lease.expires_at > timezone.now()
-        if nudge.state == "failed":
-            # The close won: the renewal was refused, and the lease is not alive.
-            assert (lease.state, renewed) == ("expired", False)
-        else:
-            assert (nudge.state, lease.state, renewed) == ("running", "active", True)
+        # The renewal starts once the closer holds the lease lock, so it blocks and the
+        # close wins: the renewal is refused and the lease is not alive.
+        assert nudge.state == "failed"
+        assert (lease.state, lease.expires_at > timezone.now()) == ("expired", False)
 
     @pytest.mark.django_db(transaction=True)
     def test_a_renewal_waiting_on_the_lease_cannot_revive_it_once_the_close_commits(
@@ -4357,6 +4612,44 @@ class TestLeaseExpiryRaces:
         lease.refresh_from_db()
         assert lease.state == "expired"
         assert lease.expires_at <= timezone.now()
+
+    def test_a_renewal_of_a_lease_claimed_again_leaves_the_claims_deadline(
+        self,
+        user,
+        workspace,
+        storage,
+        scheduled,
+        started,
+        inline,
+        auth_client,
+        django_capture_on_commit_callbacks,
+    ):
+        environment, nudge, conversation, _reply = _rebuild_with_lease(
+            user,
+            workspace,
+            storage,
+            "r-renew-claimed",
+            auth_client,
+            django_capture_on_commit_callbacks,
+            lease_state="active",
+            expires_in=timedelta(minutes=5),
+            heartbeat_age=timedelta(seconds=10),
+        )
+        stale = _lease_of(conversation)
+        claimed_until = timezone.now() + timedelta(minutes=10)
+        # The renewal's provider call is in flight; meanwhile a restart claims the same
+        # row (same id, a new pending ref).
+        HostedHarnessConversationLease.no_workspace_objects.filter(id=stale.id).update(
+            provider_ref="pending:claim-2",
+            state="starting",
+            expires_at=claimed_until,
+        )
+
+        _renewing_gateway()._renew_chat_idle_window(stale)
+
+        lease = _lease_of(conversation)
+        assert (lease.provider_ref, lease.state) == ("pending:claim-2", "starting")
+        assert lease.expires_at == claimed_until
 
     def test_a_restart_claimed_before_the_old_cleanup_runs_is_kept(
         self,

@@ -29,6 +29,7 @@ from simulate.services.hosted_harness_conversation import (
     PLATFORM_LANDING_WAIT_SECONDS,
     enqueue_message,
     environment_authoring_revision,
+    give_up_platform_landing,
     platform_landing_pending,
     promote_turn_checkpoint,
     record_platform_landing_refused,
@@ -217,7 +218,12 @@ def test_a_replayed_check_turn_keeps_the_checks_files_for_the_next_chat(
     saved = storage.objects[_conversation(ctx).latest_workspace_object_key]
     assert _one_liner(saved) == "checked"
     assert _names(inline, PROMOTE) == [[str(ctx.conversation.id), turn_sequence]]
-    assert platform_landing_pending(_job(ctx), _conversation(ctx)) is True
+    assert (
+        platform_landing_pending(
+            job=_job(ctx), conversation=_conversation(ctx)
+        )
+        is True
+    )
 
     promote_turn_checkpoint(str(ctx.conversation.id), turn_sequence)
     enqueue_message(ctx.job, content="run them", client_request_id="p1")
@@ -247,7 +253,12 @@ def test_a_replayed_turn_the_person_stopped_is_not_published_and_chat_does_not_w
     _post(ctx, interrupt.sequence, ("turn_completed", {**ran, "replayed": True}))
 
     assert _names(inline, PROMOTE) == []
-    assert platform_landing_pending(_job(ctx), _conversation(ctx)) is False
+    assert (
+        platform_landing_pending(
+            job=_job(ctx), conversation=_conversation(ctx)
+        )
+        is False
+    )
     enqueue_message(ctx.job, content="run them", client_request_id="p1")
     archive = _cold_start(ctx, provider)
 
@@ -306,7 +317,12 @@ def test_chat_started_after_the_wait_does_not_keep_the_checks_files_and_fences_t
     assert _lease(ctx).state == Lease.State.EXPIRED
     # The promotion is asked for, and has not run: the environment still says "original".
     assert _names(inline, PROMOTE) == [[str(ctx.conversation.id), turn_sequence]]
-    assert platform_landing_pending(_job(ctx), _conversation(ctx)) is True
+    assert (
+        platform_landing_pending(
+            job=_job(ctx), conversation=_conversation(ctx)
+        )
+        is True
+    )
     waiting = enqueue_message(ctx.job, content="run them", client_request_id="p1")[1]
 
     # The publish has not settled 781 s after the turn: the wait lets chat go.
@@ -322,7 +338,12 @@ def test_chat_started_after_the_wait_does_not_keep_the_checks_files_and_fences_t
     assert _one_liner(archive) == "original"
     assert _published(ctx).get("refused_sequence") == checkpoint_sequence
     assert len(_lines(ctx, "were not kept")) == 1
-    assert platform_landing_pending(_job(ctx), _conversation(ctx)) is False
+    assert (
+        platform_landing_pending(
+            job=_job(ctx), conversation=_conversation(ctx)
+        )
+        is False
+    )
 
     # The late landing is dropped.
     revision = environment_authoring_revision(_job(ctx))
@@ -353,7 +374,9 @@ def test_a_refusal_survives_a_newer_checkpoint_being_published(
         ctx, ctx.check.sequence, ("turn_completed", {**ran, "outcome": "success"})
     )
     turn_sequence = numbered[-1][0]
-    record_platform_landing_refused(str(ctx.conversation.id), turn_sequence)
+    record_platform_landing_refused(
+        conversation_id=str(ctx.conversation.id), turn_sequence=turn_sequence
+    )
     refused = _published(ctx)["refused_sequence"]
     assert refused == turn_sequence - 1
     person = enqueue_message(ctx.job, content="run them", client_request_id="p1")[1]
@@ -437,3 +460,89 @@ def test_a_stop_with_no_sandbox_does_not_leave_the_question_open(
         "stop": stop.state,
         "sandbox_started": start.called,
     }
+
+
+def _members(archive):
+    with tarfile.open(fileobj=io.BytesIO(archive), mode="r:gz") as files:
+        return {
+            member.name: files.extractfile(member).read()
+            for member in files.getmembers()
+            if member.isfile()
+        }
+
+
+@pytest.mark.django_db
+def test_the_next_chat_is_given_the_checks_files_and_the_chats_own_state(
+    user, workspace, storage, inline, provider, django_capture_on_commit_callbacks
+):
+    ctx = _checked_environment(
+        user, workspace, django_capture_on_commit_callbacks, "check-lifecycle"
+    )
+    # The check edits a file and drops a scenario, then its turn ends well.
+    ran = {"command_message_id": str(ctx.check.id)}
+    _post(ctx, ctx.build.sequence, ("turn_started", ran))
+    body = with_authoring_basis(
+        _chat_checkpoint(NAMES[:1], one_liner="checked"), ctx.revision
+    )
+    committed = _commit_checkpoint(ctx.client, ctx.conversation, ctx.headers, body)
+    _post(ctx, ctx.build.sequence, ("checkpoint_committed", committed))
+    numbered, _ = _post(
+        ctx, ctx.check.sequence, ("turn_completed", {**ran, "outcome": "success"})
+    )
+    turn_sequence = numbered[-1][0]
+    assert _names(inline, PROMOTE) == [[str(ctx.conversation.id), turn_sequence]]
+
+    # Its promotion lands, then the person writes and chat cold-starts.
+    promote_turn_checkpoint(str(ctx.conversation.id), turn_sequence)
+    assert _published(ctx)["digest"] == committed["digest"]
+    enqueue_message(ctx.job, content="run them", client_request_id="p1")
+    files = _members(_cold_start(ctx, provider))
+
+    # The check's file content, and its removal of a scenario, are what chat starts from.
+    assert json.loads(files["contract.json"]) == {"one_liner": "checked"}
+    assert f"scenarios/{NAMES[0]}/scenario.json" in files
+    assert not [name for name in files if name.startswith(f"scenarios/{NAMES[1]}/")]
+    assert [one["name"] for one in json.loads(files["scenarios.json"])] == list(
+        NAMES[:1]
+    )
+    # The chat's own saved state comes from its checkpoint.
+    assert files[".claude/sessions/1.key"] == b"private"
+    assert files[".futureagi-conversation.json"] == b"{}"
+
+
+def test_a_checkpoint_entry_from_before_the_refusal_mark_still_parses():
+    from simulate.services.hosted_harness_conversation import (
+        parse_checkpoint_entry,
+    )
+
+    legacy = {
+        "digest": "sha256:" + "1" * 64,
+        "sequence": 4,
+        "content_revision": "r1",
+        "draft_basis": {"token": "t", "environment": {"id": "d", "revision": 2}},
+    }
+
+    assert parse_checkpoint_entry(legacy) == legacy
+    assert parse_checkpoint_entry({**legacy, "refused_sequence": 7}) == {
+        **legacy,
+        "refused_sequence": 7,
+    }
+    assert parse_checkpoint_entry({"refused_sequence": "9"}) == {"refused_sequence": 9}
+    assert parse_checkpoint_entry(None) == {}
+    assert parse_checkpoint_entry("not an entry") == {}
+
+
+@pytest.mark.django_db
+def test_the_landing_functions_take_their_arguments_by_keyword(
+    user, workspace, storage, inline, django_capture_on_commit_callbacks
+):
+    ctx = _checked_environment(
+        user, workspace, django_capture_on_commit_callbacks, "check-keywords"
+    )
+    for call, args in (
+        (platform_landing_pending, (ctx.job, ctx.conversation)),
+        (give_up_platform_landing, (ctx.job, ctx.conversation)),
+        (record_platform_landing_refused, (str(ctx.conversation.id), 1)),
+    ):
+        with pytest.raises(TypeError):
+            call(*args)

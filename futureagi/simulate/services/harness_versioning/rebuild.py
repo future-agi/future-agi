@@ -517,6 +517,59 @@ def _expire_chat_lease(
     return "" if ref.startswith("pending:") else ref
 
 
+# Set on an expired lease's ``fence_hash`` (no bearer secret hashes to it, and an expired
+# lease takes none) when the stop of its sandbox could not be scheduled; the recovery
+# sweep sends the stop again. A new claim of the row overwrites it, and the claim deletes
+# the old sandbox itself.
+SANDBOX_STOP_UNSENT = "stop-unsent"
+
+
+def _mark_sandbox_stop_unsent(conversation_id: str, ref: str) -> None:
+    try:
+        HostedHarnessConversationLease.no_workspace_objects.filter(
+            conversation_id=conversation_id,
+            provider_ref=ref,
+            state=HostedHarnessConversationLease.State.EXPIRED,
+        ).update(fence_hash=SANDBOX_STOP_UNSENT, updated_at=timezone.now())
+    except Exception:  # noqa: BLE001 - the sandbox still dies at its provider's limit
+        logger.exception(
+            "harness_sandbox_stop_not_marked conversation=%s", conversation_id
+        )
+
+
+def resend_unsent_sandbox_stops(*, limit: int = 100) -> int:
+    """Send again the sandbox stops that could not be scheduled when their lease ended.
+    How many were scheduled."""
+    from simulate.tasks import harness_nudges as tasks
+
+    sent = 0
+    owed = (
+        HostedHarnessConversationLease.no_workspace_objects.filter(
+            state=HostedHarnessConversationLease.State.EXPIRED,
+            attempt__isnull=True,
+            fence_hash=SANDBOX_STOP_UNSENT,
+        )
+        .exclude(provider_ref="")
+        .exclude(provider_ref__startswith="pending:")[:limit]
+    )
+    for lease in list(owed):
+        try:
+            tasks.schedule_sandbox_stop(str(lease.conversation_id), lease.provider_ref)
+        except Exception:  # noqa: BLE001 - the next sweep sends it
+            logger.exception(
+                "harness_sandbox_stop_resend_failed conversation=%s",
+                lease.conversation_id,
+            )
+            continue
+        HostedHarnessConversationLease.no_workspace_objects.filter(
+            id=lease.id,
+            provider_ref=lease.provider_ref,
+            fence_hash=SANDBOX_STOP_UNSENT,
+        ).update(fence_hash="", updated_at=timezone.now())
+        sent += 1
+    return sent
+
+
 def _start_runtime(conversation_id: str) -> None:
     from simulate.services.hosted_harness_ingress import _public_base_url
     from simulate.tasks.hosted_harness_conversation import schedule_conversation_runtime
@@ -563,7 +616,14 @@ def _after_close(
                         update_fields=["state", "active_invocation_id", "updated_at"]
                     )
             if ref:
-                tasks.schedule_sandbox_stop(str(conversation.id), ref)
+                try:
+                    tasks.schedule_sandbox_stop(str(conversation.id), ref)
+                except Exception:  # noqa: BLE001 - the sweep sends the stop again
+                    logger.exception(
+                        "harness_nudge_sandbox_stop_failed conversation=%s",
+                        conversation.id,
+                    )
+                    _mark_sandbox_stop_unsent(str(conversation.id), ref)
             if nudges._head(environment_id) is None:
                 return
             if waiting:
@@ -1192,6 +1252,21 @@ def stop_after_platform_turn(conversation_id: str) -> None:
                 "harness_platform_turn_sandbox_stop_failed conversation=%s",
                 conversation_id,
             )
+            _mark_sandbox_stop_unsent(conversation_id, ref)
+
+
+def _replay_finished_well(
+    conversation_id: str, sequence: int, payload: Mapping[str, Any]
+) -> bool:
+    """Whether a turn reported again with no outcome (``replayed``) is one nothing says
+    went badly: the rule chat applies to the same turn before it publishes."""
+    from simulate.services.hosted_harness_conversation import _turn_finished_well
+
+    return _turn_finished_well(
+        HostedHarnessConversationEvent(
+            conversation_id=conversation_id, sequence=sequence, payload=dict(payload)
+        )
+    )
 
 
 def end_nudge_turn(
@@ -1226,10 +1301,14 @@ def end_nudge_turn(
         )
         _expire_chat_lease(conversation)
     outcome = payload.get("outcome")
-    if payload.get("replayed"):
+    replayed = bool(payload.get("replayed"))
+    if replayed and _replay_finished_well(conversation_id, sequence, payload):
         _schedule_checkpoint_promotion(conversation_id, sequence)
     elif (
-        outcome in ("failed", "interrupted")
+        # A turn reported again whose first end says it did not go well, as one that
+        # reported it did not, is not published.
+        replayed
+        or outcome in ("failed", "interrupted")
         or payload.get("interrupted")
         or snapshot.get("interrupted")
     ):
@@ -1499,7 +1578,9 @@ def _report(
         secret_texts,
         [
             len(text) >= cap + CREDENTIAL_VALUE_MAX_CHARS
-            for text, (_part, _at, _text, cap) in zip(secret_texts, secret_parts)
+            for text, (_part, _at, _text, cap) in zip(
+                secret_texts, secret_parts, strict=True
+            )
         ],
     )
     report: dict[str, Any] = {
@@ -2015,7 +2096,10 @@ def check_nudges(environment_id: Any) -> None:
             _close_if_open(environment_id, nudge.id, "landing_failed")
         elif waited > NUDGE_LANDING_RETRY_AFTER and ended is not None:
             payload = ended.payload or {}
-            if payload.get("outcome") == "success" or payload.get("replayed"):
+            if payload.get("outcome") == "success" or (
+                payload.get("replayed")
+                and _replay_finished_well(str(conversation.id), sequence, payload)
+            ):
                 try:
                     promote_turn_checkpoint(str(conversation.id), sequence)
                 except HostedHarnessError as exc:
