@@ -243,6 +243,8 @@ def test_latest_load_replays_corrections_and_ignores_stamped_children(runtime_ch
     statement = builder(project).build_latest_load(resource_id=SKILL, kind=kind, version_ids=[VERSION])
     rows = execute(runtime_ch, statement)
     assert len(rows) == 1 and rows[0]["version_id"] == VERSION
-    assert rows[0]["start_time"] == START
+    # clickhouse-connect returns UTC DateTime64 values naive when its server
+    # timezone is UTC; compare the instant rather than the driver's tzinfo.
+    assert rows[0]["start_time"].replace(tzinfo=timezone.utc) == START
     seed_ch_spans([{**load, "deleted": True, "created_at": END + timedelta(seconds=1), "span_attributes": {}}], client=runtime_ch, version_from_created_at=True)
     assert execute(runtime_ch, statement) == []
