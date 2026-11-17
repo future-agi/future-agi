@@ -672,7 +672,10 @@ def test_the_regrade_locks_the_run_test_then_claims_then_locks_the_calls(
     run = _run(run_test)
     calls = [_call(run, scenario), _call(run, scenario)]
 
-    with CaptureQueriesContext(connection) as captured, _watching_lock_depths() as locks:
+    with (
+        CaptureQueriesContext(connection) as captured,
+        _watching_lock_depths() as locks,
+    ):
         _regrade(
             run_test,
             [run],
@@ -743,7 +746,10 @@ def test_the_add_eval_put_back_takes_the_run_test_lock_first(
         call_metadata={EVAL_QUEUED_KEY: {str(mapped_eval.id): "2026-01-01T00:00:00Z"}}
     )
 
-    with CaptureQueriesContext(connection) as captured, _watching_lock_depths() as locks:
+    with (
+        CaptureQueriesContext(connection) as captured,
+        _watching_lock_depths() as locks,
+    ):
         _clear_queued_stamps(
             _ids(call), str(mapped_eval.id), test_execution_id=str(run.id)
         )
@@ -770,7 +776,10 @@ def test_add_eval_with_an_already_bound_eval_locks_the_run_test_first(
 
     # The eval is already bound, so the view never reaches add_selected_eval,
     # which is where the run test's lock is otherwise taken.
-    with CaptureQueriesContext(connection) as captured, _watching_lock_depths() as locks:
+    with (
+        CaptureQueriesContext(connection) as captured,
+        _watching_lock_depths() as locks,
+    ):
         counts = queue_eval_for_finished_calls(run, mapped_eval)
 
     assert counts["queued"] == 2
@@ -847,14 +856,13 @@ def test_each_runs_put_back_guard_excludes_only_its_own_restored_calls(
     every run's restored calls, a request over many runs would cost runs times
     calls while it holds all the locks."""
     runs = [_run(run_test) for _ in range(3)]
-    calls_of = {
-        run.id: [_call(run, scenario), _call(run, scenario)] for run in runs
-    }
+    calls_of = {run.id: [_call(run, scenario), _call(run, scenario)] for run in runs}
     all_calls = [call for calls in calls_of.values() for call in calls]
     dispatch.side_effect = ConnectionError("broker unreachable")
 
-    with CaptureQueriesContext(connection) as captured, pytest.raises(
-        RegradeDispatchFailed
+    with (
+        CaptureQueriesContext(connection) as captured,
+        pytest.raises(RegradeDispatchFailed),
     ):
         _regrade(
             run_test,
