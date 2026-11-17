@@ -1470,7 +1470,9 @@ export default function AnnotateWorkspaceView() {
   const hasTransientRefetchError =
     !!detailError &&
     detail?.item?.id === currentItemId &&
-    (detailErrorStatus == null || detailErrorStatus >= 500);
+    (detailErrorStatus == null ||
+      detailErrorStatus === 429 ||
+      detailErrorStatus >= 500);
 
   if (detailError && !hasTransientRefetchError) {
     return (

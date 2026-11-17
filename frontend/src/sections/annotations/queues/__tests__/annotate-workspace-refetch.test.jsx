@@ -136,7 +136,7 @@ function expectDrafts() {
 }
 
 describe("annotation workspace refetch recovery", () => {
-  it.each([503, undefined])(
+  it.each([429, 503, undefined])(
     "keeps all drafts through transient %s failure and retry",
     async (statusCode) => {
       state.fetch.mockResolvedValue(detail);

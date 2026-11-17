@@ -232,8 +232,10 @@
 
 ### ANNOT-E2E-005 — queue members drill into disagreements and recover from unavailable items
 
-**Goal:** A queue member opens the exact disagreed item in the appropriate workspace and can recover when that item is unavailable  
-**Spec:** `flows/annotations/agreement-drilldown.spec.ts:53`  
+**Goal:** A queue member opens the exact disagreed item in the appropriate workspace and can recover when that item is unavailable
+
+**Spec:** `flows/annotations/agreement-drilldown.spec.ts:53`
+
 **Tags:** —
 
 **User steps:**
@@ -243,14 +245,14 @@
 3. use keyboard open, traversal, Escape and Enter to inspect the exact item in each role
 4. read a long label in light and dark without horizontal overflow
 5. open an unassigned and a deleted item, read a persistent explanation and return to the queue
-6. resolve and remove an open label, reconnect after the real stale interval and see the popup close
+6. resolve disagreements, then remove a label and delete its synthetic scores; reconnect after each real stale interval and see the popup close
 
 **Backend state verified:**
 
 - four non-admin viewer_roles and real agreement responses match the seeded 0/3/25 conflicts and capped item sets
 - each role opens the exact source row and permitted score authors in review or annotate mode
 - unassigned and deleted item navigation returns real 403 and 404 while the UI offers persistent queue recovery
-- public score corrections and label removal change agreement results and close the already-open popup on refetch
+- score corrections resolve disagreements; label removal retains historical agreement until all 54 synthetic label scores are deleted, then refetch closes the already-open popup
 
 ## auth
 
