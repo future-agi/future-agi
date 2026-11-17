@@ -658,28 +658,38 @@ class TestVersionRecordedBeforeItsSealedContract:
     def test_an_edit_that_changes_how_one_tool_is_reached_changes_only_that_one(
         self, user, workspace, monkeypatch, auth_client
     ):
+        from simulate.selectors.environment_documents import version_contract
+
+        changed = {
+            **next(
+                one
+                for one in AUTHORED["tool_entrypoints"]
+                if one["tool"] == "get_order"
+            ),
+            "endpoint": "orders/lookup",
+        }
         environment = self._edit(
             user,
             workspace,
             monkeypatch,
             "rc-edit-entry",
             [
-                {**one, "endpoint": "orders/lookup"}
-                if one["tool"] == "get_order"
-                else one
+                changed if one["tool"] == "get_order" else one
                 for one in AUTHORED["tool_entrypoints"]
             ],
         )
 
-        blocked, statuses = self._through_the_views(auth_client, environment)
-
-        assert blocked == ["get_order"]
-        assert statuses["get_order"] == "unsupported"
-        assert {tool: statuses[tool] for tool in TOOLS if tool != "get_order"} == {
-            one["tool"]: one["status"]
-            for one in tool_status(SEALED)
-            if one["tool"] != "get_order"
+        entries = {
+            one["tool"]: one
+            for one in version_contract(environment)["tool_entrypoints"]
         }
+        sealed = {one["tool"]: one for one in SEALED["tool_entrypoints"]}
+        assert entries == {**sealed, "get_order": changed}
+        blocked, statuses = self._through_the_views(auth_client, environment)
+        # get_order now reaches the returns ledger itself, so the ledger is an API this test cannot stand in for: every
+        # tool that uses it reads Unsupported, as the production-only rule says of a shared dependency.
+        assert blocked == sorted(TOOLS)
+        assert set(statuses.values()) == {"unsupported"}
 
     def test_a_version_its_own_build_sealed_keeps_how_that_build_reaches_the_tools(
         self, user, workspace, monkeypatch
