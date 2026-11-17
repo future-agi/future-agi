@@ -9,12 +9,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-try:
-    from agentic_eval.core_evals.fi_utils.exceptions import EvalConfigError
-except ImportError:
-    # Older installs do not yet expose the evaluator's typed config error.
-    class EvalConfigError(ValueError):
-        """An evaluation configuration error whose message is safe to display."""
+from agentic_eval.core_evals.fi_utils.exceptions import EvalConfigError
 
 
 class MissingEvalInputError(EvalConfigError):

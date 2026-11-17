@@ -1493,12 +1493,17 @@ class EvaluationRunner:
             logger.warning("evaluation_metadata_unavailable", error_code=error.code)
             response = {"reason": str(error), "error_code": error.code}
             status = value = CellStatus.ERROR.value
+            user_eval_metric = self.user_eval_metric
+            if user_eval_metric is None:
+                # Not reachable: this method reads the metric's config before
+                # the try. Without the metric there is no reason cell to close.
+                raise
             wants_reason = bool(
                 self.experiment_dataset
-            ) or self.user_eval_metric.config.get("reason_column")
+            ) or user_eval_metric.config.get("reason_column")
             if wants_reason and not self.optimize:
                 reason_column = self._create_reason_column(
-                    self.dataset, f"{self.user_eval_metric.name}-reason"
+                    self.dataset, f"{user_eval_metric.name}-reason"
                 )
                 if reason_column is not None:
                     self._create_reason_cell(

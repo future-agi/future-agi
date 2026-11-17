@@ -1,5 +1,7 @@
 """Expected evaluation refusals, available without the optional billing package."""
 
+from typing import TYPE_CHECKING, Any
+
 
 class EvaluationDenied(Exception):
     """A policy refusal, not an evaluator or billing infrastructure failure."""
@@ -16,6 +18,12 @@ class EvaluationDenied(Exception):
 
     def as_dict(self):
         return {**self.details, "code": self.code, "message": str(self)}
+
+    if TYPE_CHECKING:
+        # Declared for the type checker only. The subclasses a view can catch
+        # define it; this class does not, so response() on a bare
+        # EvaluationDenied still raises AttributeError.
+        def _response(self, general_methods: Any) -> Any: ...
 
     def response(self, general_methods):
         response = self._response(general_methods)
