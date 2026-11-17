@@ -144,7 +144,7 @@ function TreeItem({
         sx={{
           flex: 1,
           minWidth: 0,
-          fontSize: 13,
+          fontSize: 12,
           fontWeight: selected ? 600 : depth ? 400 : 500,
         }}
       >
@@ -480,7 +480,7 @@ function NotableSentences({ notes }) {
                   color: toneColor(theme, notableDirection(note)),
                 }}
               />
-              <Typography variant="body2" sx={{ fontSize: 13 }}>
+              <Typography variant="body2" sx={{ fontSize: 12 }}>
                 {notableText(note)}
               </Typography>
             </Stack>
@@ -514,7 +514,7 @@ function RootCause({ insight }) {
         Root cause
       </Typography>
       <Box>
-        <Typography variant="body2" sx={{ fontSize: 13, lineHeight: "20px" }}>
+        <Typography variant="body2" sx={{ fontSize: 12, lineHeight: "20px" }}>
           {insight.root_cause}
         </Typography>
         {quote && (
@@ -534,7 +534,7 @@ function RootCause({ insight }) {
           <Typography variant="caption" fontWeight={600} sx={{ pt: "2px" }}>
             Fix
           </Typography>
-          <Typography variant="body2" sx={{ fontSize: 13, lineHeight: "20px" }}>
+          <Typography variant="body2" sx={{ fontSize: 12, lineHeight: "20px" }}>
             {insight.fix}
           </Typography>
         </>
@@ -633,7 +633,7 @@ const tableSx = {
     py: 0.75,
     whiteSpace: "nowrap",
   },
-  "& tbody td": { fontSize: 13, verticalAlign: "top", py: 1 },
+  "& tbody td": { fontSize: 12, verticalAlign: "top", py: 1 },
   "& tbody tr": { cursor: "pointer" },
 };
 
@@ -698,7 +698,7 @@ function SummariesTable({ units, onOpen }) {
                   <Box>
                     <Typography
                       variant="body2"
-                      sx={{ fontSize: 13, ...clamp(2) }}
+                      sx={{ fontSize: 12, ...clamp(2) }}
                     >
                       {unit.summary || unit.label || unit.excerpt}
                     </Typography>
@@ -814,14 +814,14 @@ function ItemsTable({ units, unit, onOpen }) {
                 <Typography
                   variant="body2"
                   noWrap
-                  sx={{ fontSize: 13, maxWidth: 140 }}
+                  sx={{ fontSize: 12, maxWidth: 140 }}
                   title={row.user_id}
                 >
                   {row.user_id || "–"}
                 </Typography>
               </TableCell>
               <TableCell>
-                <Typography variant="body2" sx={{ fontSize: 13, ...clamp(1) }}>
+                <Typography variant="body2" sx={{ fontSize: 12, ...clamp(1) }}>
                   {row.excerpt || row.label || "–"}
                 </Typography>
               </TableCell>
@@ -1146,7 +1146,7 @@ export default function CategoryExplorer({
           <Typography
             variant="body2"
             color="text.secondary"
-            sx={{ mt: 0.75, fontSize: 13, maxWidth: 820 }}
+            sx={{ mt: 0.75, fontSize: 12, maxWidth: 820 }}
           >
             {category.description}
           </Typography>
@@ -1195,7 +1195,7 @@ export default function CategoryExplorer({
                 <Typography
                   variant="body2"
                   color="text.secondary"
-                  sx={{ fontSize: 13 }}
+                  sx={{ fontSize: 12 }}
                 >
                   Nothing here differs clearly from the rest of the report once
                   every comparison is accounted for.

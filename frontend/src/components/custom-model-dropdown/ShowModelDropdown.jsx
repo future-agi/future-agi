@@ -347,8 +347,6 @@ const ShowModelDropdown = forwardRef(
           mt: mode === "top" ? "-40px" : 0,
           "& .MuiPaper-root": {
             bgcolor: "background.paper",
-            border: "1px solid",
-            borderColor: "divider",
             p: "12px",
             marginTop: "-2px",
             borderRadius: "0px 0px 4px 4px !important",

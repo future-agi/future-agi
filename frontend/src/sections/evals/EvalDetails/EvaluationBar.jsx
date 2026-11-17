@@ -84,7 +84,7 @@ const EvaluationBar = ({
                 marginRight: "12px",
                 fontFamily: "IBM Plex Sans",
                 fontWeight: 500,
-                fontSize: "13px",
+                fontSize: "12px",
                 lineHeight: "22px",
                 paddingRight: "24px",
                 borderRight: "2px solid var(--border-default)",

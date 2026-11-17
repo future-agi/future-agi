@@ -54,7 +54,9 @@ def _retained_source_files(kb):
     client = get_storage_client()
     files = []
     for file_obj in kb.files.filter(deleted=False):
-        extension = file_obj.name.rsplit(".", 1)[-1].lower() if "." in file_obj.name else ""
+        extension = (
+            file_obj.name.rsplit(".", 1)[-1].lower() if "." in file_obj.name else ""
+        )
         object_name = f"{file_obj.id}.{extension}" if extension else str(file_obj.id)
         object_key = f"knowledge-base/{kb.id}/{object_name}"
         try:
@@ -66,11 +68,15 @@ def _retained_source_files(kb):
 
 
 class Command(BaseCommand):
-    help = "Restore KB embeddings only when the KB has no live vectors in replicated syn."
+    help = (
+        "Restore KB embeddings only when the KB has no live vectors in replicated syn."
+    )
 
     def add_arguments(self, parser):
         parser.add_argument(
-            "--dry-run", action="store_true", help="Print what would be restored; write nothing."
+            "--dry-run",
+            action="store_true",
+            help="Print what would be restored; write nothing.",
         )
         parser.add_argument(
             "--write-freeze-confirmed",
@@ -91,7 +97,9 @@ class Command(BaseCommand):
             from model_hub.utils.kb_indexer import KBIndexer
 
         restored = skipped = failed = 0
-        queryset = KnowledgeBaseFile.objects.filter(deleted=False).order_by("created_at")
+        queryset = KnowledgeBaseFile.objects.filter(deleted=False).order_by(
+            "created_at"
+        )
         for kb in queryset.iterator():
             kb_id = str(kb.id)
             if kb_id in present:
@@ -106,7 +114,9 @@ class Command(BaseCommand):
                 skipped += 1
                 continue
             if dry_run:
-                self.stdout.write(f"[syn] {kb_id}: would restore {len(source_files)} files")
+                self.stdout.write(
+                    f"[syn] {kb_id}: would restore {len(source_files)} files"
+                )
                 continue
 
             try:
@@ -120,7 +130,9 @@ class Command(BaseCommand):
                         indexer.embedding_manager.close()
                     if not result or result.get("error"):
                         raise RuntimeError(
-                            result.get("error") if result else "indexer returned no result"
+                            result.get("error")
+                            if result
+                            else "indexer returned no result"
                         )
             except Exception as exc:
                 failed += 1
@@ -136,13 +148,17 @@ class Command(BaseCommand):
                     finally:
                         remover.embedding_manager.close()
                 except Exception:
-                    logger.exception("missing_kb_embedding_rollback_failed", kb_id=kb_id)
+                    logger.exception(
+                        "missing_kb_embedding_rollback_failed", kb_id=kb_id
+                    )
                 self.stdout.write(f"[syn] {kb_id}: failed ({exc})")
                 continue
 
             restored += 1
             self.stdout.write(f"[syn] {kb_id}: restored")
 
-        self.stdout.write(f"[syn] restored={restored} skipped={skipped} failed={failed}")
+        self.stdout.write(
+            f"[syn] restored={restored} skipped={skipped} failed={failed}"
+        )
         if failed:
             raise CommandError(f"completed with {failed} failed KB restore(s)")

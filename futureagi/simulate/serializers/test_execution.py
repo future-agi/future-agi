@@ -15,6 +15,7 @@ from simulate.models import (
     CallTranscript,
     TestExecution,
 )
+from simulate.selectors.call_transcripts import with_speakers
 from simulate.serializers.chat_message import ChatMessageSerializer
 from simulate.utils.eval_summary import iter_live_eval_outputs
 from simulate.utils.test_execution_utils import canonical_scenario_column_name
@@ -72,12 +73,20 @@ class CallTranscriptSerializer(serializers.ModelSerializer):
 
     start_time_seconds = serializers.SerializerMethodField()
     end_time_seconds = serializers.SerializerMethodField()
+    speaker_name = serializers.CharField(
+        max_length=255, required=False, allow_blank=True
+    )
+    actor_id = serializers.CharField(
+        max_length=255, required=False, allow_blank=True, allow_null=True
+    )
 
     class Meta:
         model = CallTranscript
         fields = [
             "id",
             "speaker_role",
+            "speaker_name",
+            "actor_id",
             "content",
             "start_time_ms",
             "start_time_seconds",
@@ -758,8 +767,8 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
 
         # Filter out transcripts with 'unknown' speaker role
         if hasattr(obj, "transcripts"):
-            filtered_transcripts = obj.transcripts.exclude(
-                speaker_role=CallTranscript.SpeakerRole.UNKNOWN
+            filtered_transcripts = with_speakers(
+                obj.transcripts.exclude(speaker_role=CallTranscript.SpeakerRole.UNKNOWN)
             )
             call_metadata = getattr(obj, "call_metadata", None) or {}
             offset = call_metadata.get("recording_offset_ms", 0)
@@ -1572,8 +1581,8 @@ class CallExecutionSerializer(serializers.ModelSerializer):
         """Get transcripts excluding those with 'unknown' role"""
         # Filter out transcripts with 'unknown' speaker role
         if hasattr(obj, "transcripts"):
-            filtered_transcripts = obj.transcripts.exclude(
-                speaker_role=CallTranscript.SpeakerRole.UNKNOWN
+            filtered_transcripts = with_speakers(
+                obj.transcripts.exclude(speaker_role=CallTranscript.SpeakerRole.UNKNOWN)
             )
             call_metadata = getattr(obj, "call_metadata", None) or {}
             offset = call_metadata.get("recording_offset_ms", 0)
