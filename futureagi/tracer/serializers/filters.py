@@ -1225,11 +1225,25 @@ class ObserveGraphDataPointSerializer(serializers.Serializer):
     cost_coverage = CostCoverageSerializer(required=False)
 
 
+class SkillVersionGraphPointSerializer(ObserveGraphDataPointSerializer):
+    traces = serializers.IntegerField()
+    incomplete = serializers.IntegerField()
+
+
+class SkillVersionGraphSeriesSerializer(serializers.Serializer):
+    version_id = serializers.UUIDField()
+    label = serializers.CharField()
+    data = SkillVersionGraphPointSerializer(many=True)
+
+
 class ObserveGraphDataResultSerializer(serializers.Serializer):
+    split_by = serializers.ChoiceField(choices=("skill_version",), required=False)
+    series = SkillVersionGraphSeriesSerializer(many=True, required=False)
+    totals_note = serializers.CharField(required=False)
     metric_name = serializers.CharField(allow_blank=True)
     name = serializers.CharField(required=False, allow_blank=True)
     metric_statistic = serializers.ChoiceField(
-        choices=OBSERVE_GRAPH_METRIC_STATISTIC_CHOICES,
+        choices=(*OBSERVE_GRAPH_METRIC_STATISTIC_CHOICES, "p95"),
         required=False,
         help_text=(
             "Statistic of the published system-metric series per bucket. "

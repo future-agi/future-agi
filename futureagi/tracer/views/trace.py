@@ -2939,7 +2939,16 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             analytics = V2AnalyticsQueryService()
             workspace_id = getattr(getattr(request, "workspace", None), "id", None)
             try:
-                if metric_type == "SYSTEM_METRIC":
+                if body.get("split_by") == "skill_version":
+                    from tracer.services.clickhouse.skill_graph import fetch_skill_version_graph
+                    graph = fetch_skill_version_graph(
+                        analytics=analytics, project_id=project_id, filters=filters,
+                        interval=interval, metric_id=metric_id, refresh=refresh,
+                        organization_id=str(project.organization_id),
+                        workspace_id=str(workspace_id) if workspace_id else None,
+                        timeout_ms=graph_action_remaining_ms(deadline),
+                    )
+                elif metric_type == "SYSTEM_METRIC":
                     graph = fetch_system_metric_graph_ch(
                         analytics=analytics,
                         project_id=project_id,

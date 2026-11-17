@@ -860,6 +860,7 @@ class TraceObserveIndexQuerySerializer(StrictInputSerializer):
 
 
 class TraceGraphDataRequestSerializer(ObserveGraphDataRequestSerializer):
+    split_by = serializers.ChoiceField(choices=("skill_version",), required=False)
     observe_type = serializers.ChoiceField(
         choices=["trace", "voice"],
         required=False,
@@ -881,6 +882,19 @@ class TraceGraphDataRequestSerializer(ObserveGraphDataRequestSerializer):
 
     def validate(self, attrs):
         attrs = super().validate(attrs)
+        if attrs.get("split_by"):
+            from tracer.services.clickhouse.query_builders.filters import is_skill_filter
+            from tracer.services.clickhouse.skill_graph import METRICS
+            from datetime import timedelta
+            from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
+            window = BaseQueryBuilder.analyze_bounded_datetime_filters(attrs["filters"])
+            if window.end - window.start > timedelta(days=90, microseconds=1):
+                raise serializers.ValidationError({"split_by": "Choose a window of at most 90 days."})
+            config = attrs["req_data_config"]
+            if (attrs.get("observe_type") != "trace" or config.get("type") != "SYSTEM_METRIC"
+                    or str(config.get("id", "")).lower() not in METRICS
+                    or not any(is_skill_filter(item) for item in attrs["filters"])):
+                raise serializers.ValidationError({"split_by": "Requires a supported trace system metric and SKILL filter."})
         is_voice = attrs.get("observe_type") == "voice"
         if attrs.get("remove_simulation_calls") and not is_voice:
             raise serializers.ValidationError(

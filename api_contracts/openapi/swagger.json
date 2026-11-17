@@ -95058,6 +95058,102 @@
             },
             "parameters": []
         },
+        "/tracer/trace/skill-projection/": {
+            "post": {
+                "operationId": "tracer_trace_skill-projection_create",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/TraceSkillsRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "401": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "410": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "413": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "428": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsConflictError"
+                        }
+                    },
+                    "422": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsChecksError"
+                        }
+                    },
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsTraceSkillsResultResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "Skills"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
         "/tracer/trace/voice_call_detail/": {
             "get": {
                 "operationId": "tracer_trace_voice_call_detail",
@@ -209495,6 +209591,69 @@
                 }
             }
         },
+        "SkillVersionGraphPoint": {
+            "required": [
+                "timestamp",
+                "value",
+                "traces",
+                "incomplete"
+            ],
+            "type": "object",
+            "properties": {
+                "timestamp": {
+                    "title": "Timestamp",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "value": {
+                    "title": "Value",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "primary_traffic": {
+                    "title": "Primary traffic",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "cost_coverage": {
+                    "$ref": "#/definitions/CostCoverage"
+                },
+                "traces": {
+                    "title": "Traces",
+                    "type": "integer"
+                },
+                "incomplete": {
+                    "title": "Incomplete",
+                    "type": "integer"
+                }
+            }
+        },
+        "SkillVersionGraphSeries": {
+            "required": [
+                "version_id",
+                "label",
+                "data"
+            ],
+            "type": "object",
+            "properties": {
+                "version_id": {
+                    "title": "Version id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "label": {
+                    "title": "Label",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SkillVersionGraphPoint"
+                    }
+                }
+            }
+        },
         "ObserveGraphDataPoint": {
             "description": "Graph points. A sampled series is published only with complete declared stratum coverage; degraded reads never publish points.",
             "required": [
@@ -209530,6 +209689,24 @@
             ],
             "type": "object",
             "properties": {
+                "split_by": {
+                    "title": "Split by",
+                    "type": "string",
+                    "enum": [
+                        "skill_version"
+                    ]
+                },
+                "series": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SkillVersionGraphSeries"
+                    }
+                },
+                "totals_note": {
+                    "title": "Totals note",
+                    "type": "string",
+                    "minLength": 1
+                },
                 "metric_name": {
                     "title": "Metric name",
                     "type": "string"
@@ -209546,7 +209723,8 @@
                         "count",
                         "sum",
                         "mean",
-                        "percentage"
+                        "percentage",
+                        "p95"
                     ]
                 },
                 "data": {
@@ -213538,6 +213716,24 @@
             ],
             "type": "object",
             "properties": {
+                "split_by": {
+                    "title": "Split by",
+                    "type": "string",
+                    "enum": [
+                        "skill_version"
+                    ]
+                },
+                "series": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SkillVersionGraphSeries"
+                    }
+                },
+                "totals_note": {
+                    "title": "Totals note",
+                    "type": "string",
+                    "minLength": 1
+                },
                 "metric_name": {
                     "title": "Metric name",
                     "type": "string"
@@ -213554,7 +213750,8 @@
                         "count",
                         "sum",
                         "mean",
-                        "percentage"
+                        "percentage",
+                        "p95"
                     ]
                 },
                 "data": {
@@ -214851,6 +215048,13 @@
                     ],
                     "additionalProperties": false
                 },
+                "split_by": {
+                    "title": "Split by",
+                    "type": "string",
+                    "enum": [
+                        "skill_version"
+                    ]
+                },
                 "observe_type": {
                     "title": "Observe type",
                     "description": "Population the graph counts: every trace, or only voice calls (traces whose root span is a conversation), exactly as list_voice_calls selects them.",
@@ -215487,6 +215691,491 @@
                     "title": "Allow sampled",
                     "description": "Omit for backward-compatible complete bounded pages, which may label count as a lower bound. Send false to require an exact total. Send true to opt in explicitly to lower-bound totals and, on the first page, a clearly labelled bounded partial result when the full ordered prefix cannot be proven inside the read budget.",
                     "type": "boolean"
+                }
+            }
+        },
+        "TraceSkillsRequest": {
+            "required": [
+                "project_id",
+                "projection"
+            ],
+            "type": "object",
+            "properties": {
+                "project_id": {
+                    "title": "Project id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "projection": {
+                    "title": "Projection",
+                    "type": "string",
+                    "enum": [
+                        "page",
+                        "detail",
+                        "cohort"
+                    ]
+                },
+                "trace_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "maxLength": 256,
+                        "minLength": 1
+                    },
+                    "maxItems": 100,
+                    "minItems": 1
+                },
+                "trace_id": {
+                    "title": "Trace id",
+                    "type": "string",
+                    "maxLength": 256,
+                    "minLength": 1
+                },
+                "filters": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "column_id": {
+                                "type": "string",
+                                "description": "Column or attribute id to filter on."
+                            },
+                            "property_id": {
+                                "type": "string",
+                                "description": "Optional stable namespaced Property Registry identity."
+                            },
+                            "display_name": {
+                                "type": "string",
+                                "description": "Optional UI label for chips and saved views."
+                            },
+                            "source": {
+                                "type": "string",
+                                "description": "Optional source surface for mixed-source filters, for example traces, datasets, or simulation."
+                            },
+                            "output_type": {
+                                "type": "string",
+                                "description": "Optional metric output type metadata used by eval and annotation filters."
+                            },
+                            "group": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 2147483647,
+                                "description": "SKILL row-correlation group; omitted means 0. Groups are ANDed."
+                            },
+                            "filter_config": {
+                                "type": "object",
+                                "properties": {
+                                    "filter_type": {
+                                        "type": "string",
+                                        "description": "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map."
+                                    },
+                                    "filter_op": {
+                                        "type": "string",
+                                        "description": "Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null."
+                                    },
+                                    "filter_value": {
+                                        "description": "Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type."
+                                    },
+                                    "col_type": {
+                                        "type": "string",
+                                        "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL."
+                                    },
+                                    "attribute_value_types": {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "string",
+                                            "enum": [
+                                                "string",
+                                                "number",
+                                                "boolean"
+                                            ],
+                                            "x-nullable": true
+                                        },
+                                        "description": "Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values."
+                                    }
+                                },
+                                "required": [
+                                    "filter_type",
+                                    "filter_op"
+                                ],
+                                "additionalProperties": false
+                            }
+                        },
+                        "required": [
+                            "column_id",
+                            "filter_config"
+                        ],
+                        "additionalProperties": false
+                    },
+                    "default": [],
+                    "description": "On trace, span, session, graph, and eval-task bounded reads, created_at/start_time datetime filters support equals, greater_than, greater_than_or_equal, less_than, less_than_or_equal, between, not_equals, not_between, is_null, and is_not_null. Missing bounds retain the finite default window: 30 days ago for the lower bound and request-time now for the upper bound. Between and not_between use half-open [start, end) ranges; not_equals excludes one DateTime64(6) microsecond. Because the physical created_at/start_time field is non-null, is_null returns an exact empty result without a ClickHouse read and is_not_null preserves the base window. Valid contradictions also return an exact empty result.",
+                    "x-boundedDatetimeOperators": [
+                        "between",
+                        "equals",
+                        "greater_than",
+                        "greater_than_or_equal",
+                        "is_not_null",
+                        "is_null",
+                        "less_than",
+                        "less_than_or_equal",
+                        "not_between",
+                        "not_equals"
+                    ]
+                },
+                "to": {
+                    "title": "To",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "cursor": {
+                    "title": "Cursor",
+                    "type": "string",
+                    "maxLength": 2048,
+                    "minLength": 1
+                },
+                "limit": {
+                    "title": "Limit",
+                    "type": "integer",
+                    "default": 100,
+                    "maximum": 100,
+                    "minimum": 1
+                },
+                "from": {
+                    "title": "From",
+                    "type": "string",
+                    "format": "date-time"
+                }
+            }
+        },
+        "TraceSkill": {
+            "required": [
+                "skill_id",
+                "name",
+                "version_id",
+                "version",
+                "requested_label",
+                "agent",
+                "agent_key",
+                "evidence",
+                "digest_status",
+                "loads",
+                "span_ids"
+            ],
+            "type": "object",
+            "properties": {
+                "skill_id": {
+                    "title": "Skill id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "version_id": {
+                    "title": "Version id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "version": {
+                    "title": "Version",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "requested_label": {
+                    "title": "Requested label",
+                    "type": "string"
+                },
+                "requested_version": {
+                    "title": "Requested version",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "agent": {
+                    "title": "Agent",
+                    "type": "string"
+                },
+                "agent_key": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "evidence": {
+                    "title": "Evidence",
+                    "type": "string"
+                },
+                "digest_status": {
+                    "title": "Digest status",
+                    "type": "string",
+                    "enum": [
+                        "verified",
+                        "mismatch"
+                    ]
+                },
+                "loads": {
+                    "title": "Loads",
+                    "type": "integer"
+                },
+                "span_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                }
+            }
+        },
+        "FailedSkillLoad": {
+            "required": [
+                "skill_name",
+                "error_type",
+                "span_id"
+            ],
+            "type": "object",
+            "properties": {
+                "skill_name": {
+                    "title": "Skill name",
+                    "type": "string"
+                },
+                "error_type": {
+                    "title": "Error type",
+                    "type": "string"
+                },
+                "span_id": {
+                    "title": "Span id",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "TraceSkillEntry": {
+            "required": [
+                "skills",
+                "failed",
+                "more"
+            ],
+            "type": "object",
+            "properties": {
+                "skills": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/TraceSkill"
+                    }
+                },
+                "failed": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/FailedSkillLoad"
+                    }
+                },
+                "more": {
+                    "title": "More",
+                    "type": "integer"
+                }
+            }
+        },
+        "TraceContext": {
+            "required": [
+                "context_id",
+                "name",
+                "version"
+            ],
+            "type": "object",
+            "properties": {
+                "context_id": {
+                    "title": "Context id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "version": {
+                    "title": "Version",
+                    "type": "integer"
+                }
+            }
+        },
+        "TraceScopeCoverage": {
+            "required": [
+                "spans",
+                "stamped_spans",
+                "rate",
+                "span_ids_before_first_load"
+            ],
+            "type": "object",
+            "properties": {
+                "spans": {
+                    "title": "Spans",
+                    "type": "integer"
+                },
+                "stamped_spans": {
+                    "title": "Stamped spans",
+                    "type": "integer"
+                },
+                "rate": {
+                    "title": "Rate",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "span_ids_before_first_load": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                }
+            }
+        },
+        "FailedRequests": {
+            "required": [
+                "count",
+                "rate"
+            ],
+            "type": "object",
+            "properties": {
+                "count": {
+                    "title": "Count",
+                    "type": "integer"
+                },
+                "rate": {
+                    "title": "Rate",
+                    "type": "number",
+                    "x-nullable": true
+                }
+            }
+        },
+        "CohortLatency": {
+            "required": [
+                "p95"
+            ],
+            "type": "object",
+            "properties": {
+                "p95": {
+                    "title": "P95",
+                    "type": "number",
+                    "x-nullable": true
+                }
+            }
+        },
+        "CohortCost": {
+            "required": [
+                "per_trace_mean"
+            ],
+            "type": "object",
+            "properties": {
+                "per_trace_mean": {
+                    "title": "Per trace mean",
+                    "type": "number",
+                    "x-nullable": true
+                }
+            }
+        },
+        "TraceCohortSummary": {
+            "required": [
+                "traces",
+                "incomplete",
+                "failed_requests",
+                "latency_ms",
+                "cost"
+            ],
+            "type": "object",
+            "properties": {
+                "traces": {
+                    "title": "Traces",
+                    "type": "integer"
+                },
+                "incomplete": {
+                    "title": "Incomplete",
+                    "type": "integer"
+                },
+                "failed_requests": {
+                    "$ref": "#/definitions/FailedRequests"
+                },
+                "latency_ms": {
+                    "$ref": "#/definitions/CohortLatency"
+                },
+                "cost": {
+                    "$ref": "#/definitions/CohortCost"
+                }
+            }
+        },
+        "TraceSkillsResult": {
+            "required": [
+                "next_cursor",
+                "truncated"
+            ],
+            "type": "object",
+            "properties": {
+                "traces": {
+                    "title": "Traces",
+                    "type": "object",
+                    "additionalProperties": {
+                        "$ref": "#/definitions/TraceSkillEntry"
+                    }
+                },
+                "skills": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/TraceSkill"
+                    }
+                },
+                "failed": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/FailedSkillLoad"
+                    }
+                },
+                "contexts": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/TraceContext"
+                    }
+                },
+                "linked_not_loaded": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "coverage": {
+                    "$ref": "#/definitions/TraceScopeCoverage"
+                },
+                "summary": {
+                    "$ref": "#/definitions/TraceCohortSummary"
+                },
+                "next_cursor": {
+                    "title": "Next cursor",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "truncated": {
+                    "title": "Truncated",
+                    "type": "boolean"
+                }
+            }
+        },
+        "SkillsTraceSkillsResultResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/TraceSkillsResult"
                 }
             }
         },
