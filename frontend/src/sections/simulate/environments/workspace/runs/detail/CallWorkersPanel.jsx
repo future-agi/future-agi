@@ -81,6 +81,7 @@ export default function CallWorkersPanel({
       .map((one) => one.name)
       .join(", ");
   const notObserved = named((one) => !one.observed);
+  const noEnd = named((one) => one.state === "observed_no_end");
   const pastDeadline = named((one) => one.past_deadline);
   const bypassed = named((one) => one.channel_bypassed);
   const cutShort = data.workers
@@ -224,6 +225,14 @@ export default function CallWorkersPanel({
       {notObserved ? (
         <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
           {C.workersNotObserved(notObserved)}
+        </Typography>
+      ) : null}
+      {noEnd ? (
+        <Typography
+          data-testid="workers-no-end"
+          sx={{ typography: "s3", color: "text.subtitle" }}
+        >
+          {C.workersNoEnd(noEnd)}
         </Typography>
       ) : null}
       {cutShort ? (

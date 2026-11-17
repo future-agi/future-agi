@@ -111,6 +111,8 @@ export const CALL_WORKERS_COPY = {
       "This attempt ran before attempts kept their participants, so its record wasn't kept.",
   },
   workersNotObserved: (names) => `Not observed: ${names}`,
+  // Took part (its tool calls, or control handed to it) with no return recorded: no end is claimed for it.
+  workersNoEnd: (names) => `Took part, no end recorded: ${names}`,
   // A worker's end state when the trial cut it short; one that returned or never ran has none shown.
   cutShort: {
     no_return: "no return before the call ended",

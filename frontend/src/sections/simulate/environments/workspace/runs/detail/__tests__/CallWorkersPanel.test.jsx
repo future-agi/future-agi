@@ -957,6 +957,31 @@ describe("CallWorkersPanel", () => {
       expect(screen.getAllByTestId("worker-row")).toHaveLength(2);
     });
 
+    it("says a worker took part with no end recorded, never that it completed", () => {
+      result = {
+        data: {
+          ...twoTurns({}),
+          workers: TIMELINE.workers.map((one) =>
+            one.worker_id === handoff.worker_id
+              ? { ...one, state: "observed_no_end", cut_short: false }
+              : { ...one, state: "completed", cut_short: false },
+          ),
+        },
+        isLoading: false,
+        isError: false,
+      };
+      render(<CallWorkersPanel callExecutionId="c1" />);
+      const named = TIMELINE.workers.find(
+        (one) => one.worker_id === handoff.worker_id,
+      ).name;
+      expect(screen.getByTestId("workers-no-end")).toHaveTextContent(
+        C.workersNoEnd(named),
+      );
+      expect(screen.getByTestId("workers-no-end")).not.toHaveTextContent(
+        /completed/i,
+      );
+    });
+
     it("shows a worker's failed check on its hand-off, and a task check named by no worker and on no step", () => {
       result = {
         data: timeline({
