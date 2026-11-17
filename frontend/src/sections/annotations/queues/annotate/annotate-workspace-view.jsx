@@ -61,7 +61,12 @@ import {
   resolveSelectedAnnotatorScope,
 } from "./annotation-view-mode";
 import useKeyboardShortcuts from "./use-keyboard-shortcuts";
-import { QUEUE_ROLES, hasQueueRole, isQueueAnnotatorRole, shortId } from "../constants";
+import {
+  QUEUE_ROLES,
+  hasQueueRole,
+  isQueueAnnotatorRole,
+  shortId,
+} from "../constants";
 import { SS_KEY_USER_ID } from "src/utils/sessionKeys";
 
 const MAX_HISTORY = 50;
@@ -499,7 +504,8 @@ export default function AnnotateWorkspaceView() {
   });
   const { data: liveDiscussion } = useItemDiscussion(queueId, currentItemId, {
     // Wait for this item's detail before polling a discussion we may not access.
-    enabled: detailEnabled && detail?.item?.id === currentItemId && !detailError,
+    enabled:
+      detailEnabled && detail?.item?.id === currentItemId && !detailError,
     refetchInterval: commentsOpen ? 3000 : 10000,
     refetchIntervalInBackground: false,
   });

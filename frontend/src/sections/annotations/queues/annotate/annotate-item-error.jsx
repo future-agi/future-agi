@@ -33,9 +33,13 @@ export default function AnnotateItemError({ statusCode, onBack, onRetry }) {
         {message}
       </Alert>
       {!forbidden && !missing && (
-        <Button variant="outlined" onClick={onRetry}>Try Again</Button>
+        <Button variant="outlined" onClick={onRetry}>
+          Try Again
+        </Button>
       )}
-      <Button variant="outlined" onClick={onBack}>Back to Queue</Button>
+      <Button variant="outlined" onClick={onBack}>
+        Back to Queue
+      </Button>
     </Box>
   );
 }

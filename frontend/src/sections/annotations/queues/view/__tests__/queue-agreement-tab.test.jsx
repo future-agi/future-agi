@@ -105,7 +105,9 @@ describe("QueueAgreementTab", () => {
     expect(screen.getByText("Tone")).toBeInTheDocument();
 
     // Non-zero disagreement count is interactive with aria attributes
-    const trigger = screen.getByRole("button", { name: "25 disagreements for Relevance" });
+    const trigger = screen.getByRole("button", {
+      name: "25 disagreements for Relevance",
+    });
     expect(trigger).toBeInTheDocument();
     expect(trigger).toHaveAttribute("id", "disagreement-trigger-label-1");
     expect(trigger).toHaveAttribute("aria-haspopup", "dialog");
@@ -120,7 +122,9 @@ describe("QueueAgreementTab", () => {
     const user = userEvent.setup();
     render(<QueueAgreementTab queueId="queue-1" />);
 
-    const trigger = screen.getByRole("button", { name: "25 disagreements for Relevance" });
+    const trigger = screen.getByRole("button", {
+      name: "25 disagreements for Relevance",
+    });
     await user.click(trigger);
 
     expect(trigger).toHaveAttribute("aria-expanded", "true");
@@ -128,9 +132,17 @@ describe("QueueAgreementTab", () => {
     // Popover heading
     expect(screen.getByText("Disagreed Items: Relevance")).toBeInTheDocument();
 
-    const popover = screen.getByRole("dialog", { name: "Disagreed Items: Relevance" });
-    expect(popover).toHaveAttribute("id", trigger.getAttribute("aria-controls"));
-    expect(popover).toHaveAttribute("aria-labelledby", "disagreement-popover-title");
+    const popover = screen.getByRole("dialog", {
+      name: "Disagreed Items: Relevance",
+    });
+    expect(popover).toHaveAttribute(
+      "id",
+      trigger.getAttribute("aria-controls"),
+    );
+    expect(popover).toHaveAttribute(
+      "aria-labelledby",
+      "disagreement-popover-title",
+    );
 
     // Displays truncated short IDs (8 chars) instead of full 36-char UUIDs
     expect(screen.getByText("Item #3fa85f64")).toBeInTheDocument();
@@ -145,7 +157,9 @@ describe("QueueAgreementTab", () => {
     const user = userEvent.setup();
     render(<QueueAgreementTab queueId="queue-1" canViewSubmissions />);
 
-    const trigger = screen.getByRole("button", { name: "25 disagreements for Relevance" });
+    const trigger = screen.getByRole("button", {
+      name: "25 disagreements for Relevance",
+    });
     await user.click(trigger);
 
     const itemLink = screen.getByText("Item #3fa85f64");
@@ -160,7 +174,9 @@ describe("QueueAgreementTab", () => {
     const user = userEvent.setup();
     render(<QueueAgreementTab queueId="queue-1" canViewSubmissions={false} />);
 
-    const trigger = screen.getByRole("button", { name: "25 disagreements for Relevance" });
+    const trigger = screen.getByRole("button", {
+      name: "25 disagreements for Relevance",
+    });
     await user.click(trigger);
 
     const itemLink = screen.getByText("Item #3fa85f64");
@@ -176,7 +192,9 @@ describe("QueueAgreementTab", () => {
     render(<QueueAgreementTab queueId="queue-1" />);
 
     // Label 1 has 25 disagreements with 3 items returned -> "+ 22 more disagreements"
-    const triggerLabel1 = screen.getByRole("button", { name: "25 disagreements for Relevance" });
+    const triggerLabel1 = screen.getByRole("button", {
+      name: "25 disagreements for Relevance",
+    });
     await user.click(triggerLabel1);
 
     expect(screen.getByText("+ 22 more disagreements")).toBeInTheDocument();
@@ -185,7 +203,9 @@ describe("QueueAgreementTab", () => {
     await user.keyboard("{Escape}");
 
     // Open Label 3 (2 disagreements with 2 items returned -> no overflow text)
-    const triggerLabel3 = screen.getByRole("button", { name: "2 disagreements for Grammar" });
+    const triggerLabel3 = screen.getByRole("button", {
+      name: "2 disagreements for Grammar",
+    });
     await user.click(triggerLabel3);
 
     expect(screen.getByText("Disagreed Items: Grammar")).toBeInTheDocument();
@@ -197,7 +217,9 @@ describe("QueueAgreementTab", () => {
     const { rerender } = render(<QueueAgreementTab queueId="queue-1" />);
 
     // Open popover for Label 1
-    const trigger = screen.getByRole("button", { name: "25 disagreements for Relevance" });
+    const trigger = screen.getByRole("button", {
+      name: "25 disagreements for Relevance",
+    });
     await user.click(trigger);
 
     expect(screen.getByText("Item #3fa85f64")).toBeInTheDocument();
@@ -224,26 +246,46 @@ describe("QueueAgreementTab", () => {
     expect(screen.queryByText("Item #3fa85f64")).not.toBeInTheDocument();
   });
 
-  it.each(["zero", "removed"])("closes when the selected label is %s and focuses surviving results", async (change) => {
-    const user = userEvent.setup();
-    const { rerender } = render(<QueueAgreementTab queueId="queue-1" />);
-    await user.click(screen.getByRole("button", { name: "25 disagreements for Relevance" }));
-    const labels = { ...mockAgreementData.labels };
-    if (change === "removed") delete labels["label-1"];
-    else labels["label-1"] = { ...labels["label-1"], disagreement_count: 0, disagreement_items: [] };
-    mocks.useQueueAgreement.mockReturnValue({ data: { ...mockAgreementData, labels }, isLoading: false });
-    rerender(<QueueAgreementTab queueId="queue-1" />);
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "Agreement results" })).toHaveFocus();
-    mocks.useQueueAgreement.mockReturnValue({ data: mockAgreementData, isLoading: false });
-    rerender(<QueueAgreementTab queueId="queue-1" />);
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-  });
+  it.each(["zero", "removed"])(
+    "closes when the selected label is %s and focuses surviving results",
+    async (change) => {
+      const user = userEvent.setup();
+      const { rerender } = render(<QueueAgreementTab queueId="queue-1" />);
+      await user.click(
+        screen.getByRole("button", { name: "25 disagreements for Relevance" }),
+      );
+      const labels = { ...mockAgreementData.labels };
+      if (change === "removed") delete labels["label-1"];
+      else
+        labels["label-1"] = {
+          ...labels["label-1"],
+          disagreement_count: 0,
+          disagreement_items: [],
+        };
+      mocks.useQueueAgreement.mockReturnValue({
+        data: { ...mockAgreementData, labels },
+        isLoading: false,
+      });
+      rerender(<QueueAgreementTab queueId="queue-1" />);
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      expect(
+        screen.getByRole("region", { name: "Agreement results" }),
+      ).toHaveFocus();
+      mocks.useQueueAgreement.mockReturnValue({
+        data: mockAgreementData,
+        isLoading: false,
+      });
+      rerender(<QueueAgreementTab queueId="queue-1" />);
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    },
+  );
 
   it("does not carry an open selection into another queue", async () => {
     const user = userEvent.setup();
     const { rerender } = render(<QueueAgreementTab queueId="queue-1" />);
-    await user.click(screen.getByRole("button", { name: "25 disagreements for Relevance" }));
+    await user.click(
+      screen.getByRole("button", { name: "25 disagreements for Relevance" }),
+    );
     rerender(<QueueAgreementTab queueId="queue-2" />);
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
@@ -251,11 +293,15 @@ describe("QueueAgreementTab", () => {
   it("opens by keyboard, restores focus on Escape and opens the exact item on Enter", async () => {
     const user = userEvent.setup();
     render(<QueueAgreementTab queueId="queue-1" canViewSubmissions />);
-    const trigger = screen.getByRole("button", { name: "25 disagreements for Relevance" });
+    const trigger = screen.getByRole("button", {
+      name: "25 disagreements for Relevance",
+    });
     trigger.focus();
     await user.keyboard("{Enter}");
     await user.tab();
-    expect(screen.getByRole("button", { name: "Item #3fa85f64" })).toHaveFocus();
+    expect(
+      screen.getByRole("button", { name: "Item #3fa85f64" }),
+    ).toHaveFocus();
     await user.keyboard("{Escape}");
     expect(trigger).toHaveFocus();
     await user.keyboard("{Enter}");
@@ -268,14 +314,33 @@ describe("QueueAgreementTab", () => {
 
   it("keeps the full long label in the cell and popup accessible name and title", async () => {
     const labelName = "LongUnbrokenDisagreementLabel".repeat(6);
-    mocks.useQueueAgreement.mockReturnValue({ data: { ...mockAgreementData, labels: {
-      "label-1": { ...mockAgreementData.labels["label-1"], label_name: labelName },
-    } }, isLoading: false });
+    mocks.useQueueAgreement.mockReturnValue({
+      data: {
+        ...mockAgreementData,
+        labels: {
+          "label-1": {
+            ...mockAgreementData.labels["label-1"],
+            label_name: labelName,
+          },
+        },
+      },
+      isLoading: false,
+    });
     const user = userEvent.setup();
     render(<QueueAgreementTab queueId="queue-1" />);
-    expect(screen.getByRole("cell", { name: labelName })).toHaveAttribute("title", labelName);
-    await user.click(screen.getByRole("button", { name: `25 disagreements for ${labelName}` }));
-    expect(screen.getByRole("dialog", { name: `Disagreed Items: ${labelName}` })).toBeVisible();
-    expect(screen.getByText(`Disagreed Items: ${labelName}`)).toHaveAttribute("title", labelName);
+    expect(screen.getByRole("cell", { name: labelName })).toHaveAttribute(
+      "title",
+      labelName,
+    );
+    await user.click(
+      screen.getByRole("button", { name: `25 disagreements for ${labelName}` }),
+    );
+    expect(
+      screen.getByRole("dialog", { name: `Disagreed Items: ${labelName}` }),
+    ).toBeVisible();
+    expect(screen.getByText(`Disagreed Items: ${labelName}`)).toHaveAttribute(
+      "title",
+      labelName,
+    );
   });
 });

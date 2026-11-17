@@ -511,7 +511,11 @@ export default function QueueDetailView() {
         <Tabs
           value={activeTab}
           onChange={(_, v) => setActiveTab(v)}
-          sx={{ boxShadow: "none", borderBottom: "1px solid", borderColor: "divider" }}
+          sx={{
+            boxShadow: "none",
+            borderBottom: "1px solid",
+            borderColor: "divider",
+          }}
         >
           <Tab label="Items" />
           {isManager && <Tab label="Settings" />}

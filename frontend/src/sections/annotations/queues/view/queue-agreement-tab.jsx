@@ -77,7 +77,13 @@ export default function QueueAgreementTab({
   const pairs = annotator_pairs || [];
 
   return (
-    <Box ref={resultsRef} role="region" aria-label="Agreement results" tabIndex={-1} sx={{ p: 3 }}>
+    <Box
+      ref={resultsRef}
+      role="region"
+      aria-label="Agreement results"
+      tabIndex={-1}
+      sx={{ p: 3 }}
+    >
       {/* Overall Agreement */}
       <Section variant="panel" sx={{ mb: 3 }}>
         <Box sx={{ textAlign: "center" }}>
@@ -130,7 +136,10 @@ export default function QueueAgreementTab({
               <TableBody>
                 {labelEntries.map(([id, label]) => (
                   <TableRow key={id}>
-                    <TableCell title={label.label_name} sx={{ overflowWrap: "anywhere" }}>
+                    <TableCell
+                      title={label.label_name}
+                      sx={{ overflowWrap: "anywhere" }}
+                    >
                       {label.label_name}
                     </TableCell>
                     <TableCell>
