@@ -47,9 +47,10 @@ def with_cast(
         if key not in _OWNED_KEYS
     }
     files = dict(environment_files)
-    # No actors, no limits and nothing else kept means no file, so removing the only actor leaves nothing to review.
+    # No actors, no limits, no point still to decide and nothing else kept means no file, so removing the only actor
+    # leaves nothing to review; a point still to decide is kept with an empty cast.
     files.pop(ACTORS_FILE, None)
-    if actors or kept or others:
+    if actors or kept or points or others:
         body: dict[str, Any] = {
             "schema": rules["formats"][ACTORS_FILE],
             "actors": actors,

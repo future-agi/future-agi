@@ -37,6 +37,7 @@ from simulate.services.harness_starting_records import (
 from simulate.services.harness_versioning import drafts
 from simulate.services.harness_versioning.versions import PROOF_CLOCK_SKEW
 from simulate.services.hosted_harness import HostedHarnessError
+from simulate.utils.json_values import same_json
 
 logger = structlog.get_logger(__name__)
 
@@ -205,6 +206,21 @@ def _same(value: JsonValue, seeded: JsonValue) -> bool:
     def number(one: JsonValue) -> bool:
         return isinstance(one, (int, float)) and not isinstance(one, bool)
 
+    # Nested values field by field and item by item, by the same rule: `{"vip": true}` is never `{"vip": 1}`.
+    if isinstance(value, dict) or isinstance(seeded, dict):
+        return (
+            isinstance(value, dict)
+            and isinstance(seeded, dict)
+            and value.keys() == seeded.keys()
+            and all(_same(value[name], seeded[name]) for name in value)
+        )
+    if isinstance(value, list) or isinstance(seeded, list):
+        return (
+            isinstance(value, list)
+            and isinstance(seeded, list)
+            and len(value) == len(seeded)
+            and all(_same(one, other) for one, other in zip(value, seeded, strict=True))
+        )
     if (
         value is None
         or seeded is None
@@ -282,7 +298,7 @@ def _seed_not_as_asked(
     if twice:
         return twice
     row, _ = seeded_row(files, **lookup)
-    if row == seeded_row(before, **lookup)[0]:
+    if same_json(row, seeded_row(before, **lookup)[0]):
         return None
     named = f"{lookup['table']} {lookup['key']}"
     if row is None:
@@ -531,7 +547,7 @@ def refuse_invented(
         )
     wanted = message.payload["_record"]
     before = _current_files(environment, scenario_key)
-    if before is not None and files.document == before.document:
+    if before is not None and same_json(files.document, before.document):
         # The scenario is left as it is, but the save may still rewrite the record it was asked to start from.
         why = _seed_not_as_asked(files, before, wanted)
     else:

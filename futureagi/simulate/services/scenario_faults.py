@@ -13,6 +13,7 @@ from pydantic_core import PydanticCustomError
 from simulate.constants.scenario_faults import FAULT_MODES, FaultMode
 from simulate.selectors.environment_documents import registration_key
 from simulate.services.hosted_harness import HostedHarnessError
+from simulate.utils.json_values import same_json
 
 if TYPE_CHECKING:
     from simulate.services.harness_actor_rules import ActorRecord
@@ -546,7 +547,7 @@ def require_valid_faults(
         key = scenario_key(scenario)
         unchanged = (
             key in kept
-            and kept[key] == scenario.get("faults")
+            and same_json(kept[key], scenario.get("faults"))
             and _same_targets(scenario.get("faults"), before_targets, targets)
         )
         name = str(scenario.get("name") or scenario.get("scenario_key") or "a scenario")

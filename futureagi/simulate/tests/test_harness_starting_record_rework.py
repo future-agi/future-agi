@@ -625,6 +625,51 @@ def test_a_rework_s_save_that_drops_its_scenario_is_refused(
     assert error.value.code == "starting_record_not_as_seeded"
 
 
+@pytest.mark.parametrize("where", ["field", "nested"])
+def test_a_save_that_turns_a_seeded_number_into_true_is_refused(
+    user, workspace, storage, auth_client, where
+):
+    # Python reads `true == 1`: the record as seeded is compared as JSON, field by field and inside nested values.
+    from simulate.services.harness_starting_records import scenario_files
+    from simulate.services.hosted_harness import HostedHarnessError
+    from simulate.tests.test_harness_amend_archive import NAMES
+    from simulate.tests.test_harness_starting_records import CONTRACT, SCENARIO, STORE
+    from simulate.tests.test_harness_versioning_record import _authoring
+
+    seeded = json.loads(json.dumps(STORE))
+    priya = next(
+        one for one in seeded["rows"]["users"] if one["rider_id"] == "rdr_priya"
+    )
+    priya.update({"vip": 1} if where == "field" else {"prefs": {"vip": 1, "tags": [1]}})
+    environment = _rides(
+        user,
+        workspace,
+        storage,
+        f"rework-bool-{where}",
+        **{"store.json": json.dumps(seeded)},
+    )
+    assert _rework(auth_client, environment).status_code == 202
+    document = scenario_files(environment, KEY).document
+    saved = json.loads(json.dumps(seeded))
+    row = next(one for one in saved["rows"]["users"] if one["rider_id"] == "rdr_priya")
+    row.update(
+        {"vip": True} if where == "field" else {"prefs": {"vip": 1, "tags": [True]}}
+    )
+    body = _authoring(
+        names=NAMES[:1],
+        contract=CONTRACT,
+        **{
+            "scenarios.json": json.dumps([document]),
+            f"scenarios/{SCENARIO}/scenario.json": json.dumps(document),
+            "store.json": json.dumps(saved),
+        },
+    )
+
+    with pytest.raises(HostedHarnessError) as error:
+        _save(storage, _requests(environment).get(), body)
+    assert error.value.code == "starting_record_not_as_seeded"
+
+
 def _later_command(rework, *, offset, reply_to=None):
     return Message.no_workspace_objects.create(
         conversation_id=rework.conversation_id,

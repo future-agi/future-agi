@@ -29,6 +29,7 @@ from simulate.services.harness_actor_rules import (
     text_of,
 )
 from simulate.types import CallActorTrigger
+from simulate.utils.json_values import same_json
 
 
 class ResponseTimingChange(TypedDict):
@@ -286,7 +287,7 @@ def replaced_record(
     for key, value in sent.items():
         if key in RESPONSE_ONLY_FIELDS:
             continue
-        if key in shown and value == shown[key]:
+        if key in shown and same_json(value, shown[key]):
             if key in kept:
                 record[key] = kept[key]
             continue

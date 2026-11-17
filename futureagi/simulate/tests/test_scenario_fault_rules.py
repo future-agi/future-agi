@@ -499,3 +499,18 @@ def test_an_unchanged_fault_whose_tool_the_write_removes_is_refused(change):
             before, targets=now, cast=[], before=before, before_targets=earlier
         )
     assert raised.value.details["problems"][0]["field"] == "action"
+
+
+def test_a_fault_whose_call_number_becomes_true_is_checked_again():
+    # Python reads `true == 1`: unchanged faults are the same JSON, never equal by Python's own rule.
+    # Saved under older rules (an after-commit timeout on a read): kept while unchanged, checked once it changes.
+    before = [_scenario("refund", [{**AFTER_COMMIT_ON_A_READ[0], "on_call": 1}])]
+    now = [_scenario("refund", [{**AFTER_COMMIT_ON_A_READ[0], "on_call": True}])]
+    require_valid_faults(
+        before, targets=TARGETS, cast=[], before=before, before_targets=TARGETS
+    )
+
+    with pytest.raises(HostedHarnessError):
+        require_valid_faults(
+            now, targets=TARGETS, cast=[], before=before, before_targets=TARGETS
+        )

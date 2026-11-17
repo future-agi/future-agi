@@ -295,6 +295,68 @@ def test_a_policy_point_the_builder_could_not_model_waits_for_the_person_until_a
     assert (again.status_code, again.json()["error"]) == (404, "unresolved_not_found")
 
 
+@pytest.mark.parametrize(
+    "change", ["accept one of two points", "remove the last actor"]
+)
+def test_points_still_to_decide_outlive_an_empty_cast(
+    user, workspace, storage, auth_client, change
+):
+    environment = record_tests._environment(
+        user, workspace, f"actors-points-{change[:6]}"
+    )
+    first = {
+        "policy": "Discounts over 25% need the VP",
+        "why": "no record holds it",
+        "actor": "manager",
+    }
+    second = {
+        "policy": "Refunds over $500 need two people",
+        "why": "no record holds it",
+        "actor": "manager",
+    }
+    actors = (
+        {"actors": [], "unresolved": [first, second]}
+        if change == "accept one of two points"
+        else {"actors": [MANAGER], "unresolved": [second]}
+    )
+    record_authoring(
+        environment,
+        _authoring(contract=CRM_CONTRACT, **{"actors.json": json.dumps(actors)}),
+        origin="authoring",
+    )
+    environment.refresh_from_db()
+    _rows(environment)
+
+    if change == "accept one of two points":
+        done = auth_client.post(
+            f"{BASE}/{environment.id}/actor-unresolved/accept/",
+            {"policy": first["policy"]},
+            format="json",
+        )
+    else:
+        done = auth_client.delete(f"{BASE}/{environment.id}/actors/manager/")
+    assert done.status_code in (200, 204), done.content
+
+    assert auth_client.get(f"{BASE}/{environment.id}/actors/").json()["unresolved"] == [
+        second
+    ]
+
+
+def test_a_replace_that_sends_true_where_the_read_showed_1_is_that_value_never_the_stored_one():
+    # Python reads `true == 1`: a field sent back keeps its stored value only when it is the same JSON as read.
+    from simulate.services.harness_actor_fields import record_defaults
+    from simulate.services.harness_actor_merge import replaced_record
+
+    rules = json.loads(harness_actor_rules._RULES_BEFORE_DECLARED.read_text())
+    stored = {**MANAGER, "max_turns": 1}
+
+    record = replaced_record(
+        {**MANAGER, "max_turns": True}, stored, record_defaults(rules)
+    )
+
+    assert record["max_turns"] is True
+
+
 def test_a_view_hides_another_actor_s_private_material(
     user, workspace, storage, auth_client
 ):
@@ -886,6 +948,26 @@ def test_an_actor_a_version_saved_before_actor_digests_already_had_reads_as_chan
         "removed": [],
     }
     assert draft.summary == "1 actor changed"
+
+
+def test_an_unknown_channel_is_refused_when_the_schema_only_mentions_enum_in_its_text():
+    rules = json.loads(harness_actor_rules._RULES_BEFORE_DECLARED.read_text())
+    if not rules.get("channels"):
+        rules["channels"] = {"phone": {}, "chat": {}}
+    rules["records"]["actors.json"].setdefault("properties", {})["channel"] = {
+        "type": "string",
+        "description": "Not an enum: any channel the release knows.",
+    }
+    speaker = {
+        "id": "colleague",
+        "name": "Jordan",
+        "play": "live",
+        "channel": "carrier_pigeon",
+    }
+
+    problems = harness_actor_choices.new_choice_problems(None, speaker, {}, rules)
+
+    assert any("carrier_pigeon" in one for one in problems)
 
 
 def test_a_call_actor_never_takes_the_name_of_a_caller_it_is_with():
