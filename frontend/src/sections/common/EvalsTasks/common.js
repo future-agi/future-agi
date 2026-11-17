@@ -286,6 +286,7 @@ export const getDefaultTaskValues = (data, observeId) => {
       filters: formatTaskFilters(data?.filters_applied || {}),
       spansLimit: Number(data?.spans_limit),
       samplingRate: Number(data?.sampling_rate),
+      samplingPolicy: data?.sampling_policy ?? null,
       evalsDetails: data?.evals_applied,
       runType: data?.run_type,
       rowType: data?.row_type ?? "spans",

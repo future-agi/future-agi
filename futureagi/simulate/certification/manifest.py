@@ -38,7 +38,8 @@ COMMIT_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 SCENARIO_REF_RE = re.compile(r"^scenarios:[A-Za-z0-9_.\-/]+$")
 
 SUITE_DIR = Path(__file__).resolve().parent / "suites"
-REPO_ROOT = SUITE_DIR.parents[3]
+# Docker copies ``futureagi/`` to /app/backend, so refs are relative to that root.
+REPO_ROOT = SUITE_DIR.parents[2]
 
 TARGET_KINDS = frozenset({"local_test", "hosted_service"})
 AGENT_CONNECTORS = frozenset(
@@ -315,7 +316,10 @@ def _validate_authorization(value: Any, where: str, target_kind: str) -> dict:
             where,
             "external targets require authorization.expires_at",
         )
-    if target_kind == "hosted_service" and not value.get("target_endpoint_reviewed"):
+    if (
+        target_kind == "hosted_service"
+        and value.get("target_endpoint_reviewed") is not True
+    ):
         _fail(
             "authorization_unverified",
             where,

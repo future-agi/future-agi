@@ -126,6 +126,16 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
+	// Sync a newer price table in the background; boot never waits on it.
+	if pricer != nil {
+		url, interval := catalogueSyncSettings(log, os.LookupEnv)
+		if syncer := pricing.NewSyncer(pricer, priceTable, url, interval, log); syncer != nil {
+			go syncer.Run(ctx)
+		} else {
+			log.Info("pricing catalogue sync off; pricing from the loaded table")
+		}
+	}
+
 	opts := []server.Option{server.WithLogger(log)}
 	if pricer != nil {
 		opts = append(opts, server.WithPricer(pricer))
@@ -241,6 +251,30 @@ func loadPriceTable(log *slog.Logger, path string) *pricing.Table {
 		log.Warn("pricing table loaded with skipped entries", "skipped", table.Skipped)
 	}
 	return table
+}
+
+// catalogueSyncSettings reads FI_PRICING_CATALOGUE_URL and
+// FI_PRICING_SYNC_INTERVAL. An unset URL syncs from pricing.DefaultCatalogueURL,
+// unless FI_PRICING_JSON pins a file, which the sync would otherwise replace.
+// A URL set to "" turns the sync off.
+func catalogueSyncSettings(log *slog.Logger, lookup func(string) (string, bool)) (string, time.Duration) {
+	url, set := lookup("FI_PRICING_CATALOGUE_URL")
+	if !set {
+		if pinned, _ := lookup("FI_PRICING_JSON"); pinned != "" {
+			url = ""
+		} else {
+			url = pricing.DefaultCatalogueURL
+		}
+	}
+	var interval time.Duration
+	if v, _ := lookup("FI_PRICING_SYNC_INTERVAL"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			log.Warn("FI_PRICING_SYNC_INTERVAL is not a duration; using the default", "value", v, "err", err)
+		}
+		interval = d
+	}
+	return url, interval
 }
 
 func loadConfig(log *slog.Logger, path string) rootConfig {
