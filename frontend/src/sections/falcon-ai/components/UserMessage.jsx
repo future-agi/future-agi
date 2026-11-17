@@ -46,7 +46,7 @@ function RenderContent({ content, theme }) {
             borderRadius: "6px",
             bgcolor: alpha(theme.palette.primary.main, 0.2),
             color: "primary.main",
-            fontSize: 13,
+            fontSize: 12,
             fontWeight: 600,
             verticalAlign: "baseline",
           }}
@@ -113,7 +113,7 @@ export default function UserMessage({ message }) {
               whiteSpace: "pre-wrap",
               wordBreak: "break-word",
               overflowWrap: "break-word",
-              fontSize: 13,
+              fontSize: 12,
               lineHeight: 1.8,
               color: "text.primary",
             }}

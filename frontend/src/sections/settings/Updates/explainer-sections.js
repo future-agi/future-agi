@@ -455,7 +455,7 @@ export const EXPLAINER_SECTIONS = [
     title: "Where the report is read",
     text: "Standalone uses the app service, which contains the API and embedded processes. Distributed uses the backend service; the frontend only calls its API. Production adds the explicit initialization boundary.",
     mechanism:
-      "Workers, the collector, AgentCC gateway, Temporal and PeerDB do not control host updates. Neither Falcon AI nor other agents receive update tools or privileges. This integration does not install a Helm updater.",
+      "Workers, the collector, AgentCC gateway, Temporal and PeerDB do not control host updates. Neither Chat nor other agents receive update tools or privileges. This integration does not install a Helm updater.",
   },
   {
     id: "gates",

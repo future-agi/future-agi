@@ -828,6 +828,11 @@ err_dict = {
     "SECRET_KEY_NOT_DISABLED": ["Keys not disabled. Please try again."],
     "API_KEY_DISABLED": ["Keys already disabled."],
     "API_KEY_ENABLED": ["Keys already enabled."],
+    "API_KEY_EXPIRED": ["API key has expired"],
+    "API_KEY_EXPIRY_IN_PAST": ["Expiry must be in the future."],
+    "API_KEY_EXPIRED_CANNOT_ENABLE": [
+        "This key has expired and can't be re-enabled. Generate a new key."
+    ],
     "SECRET_KEY_NOT_ENABLED": ["Keys not enabled. Please try again."],
     "FAILED_TO_GET_KEYS": ["Unable to fetch keys. Please try again."],
     "KEY_NAME_EXISTS": ["Keys with this already name exists."],

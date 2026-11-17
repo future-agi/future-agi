@@ -92,9 +92,7 @@ class TestAgentccSessionDestroy:
 @pytest.mark.integration
 @pytest.mark.api
 class TestAgentccSessionClose:
-    def test_close_transitions_active_to_closed(
-        self, auth_client, user, workspace
-    ):
+    def test_close_transitions_active_to_closed(self, auth_client, user, workspace):
         session = _make_session(user, workspace, session_id="sess-close")
         assert session.status == "active"
 

@@ -34,7 +34,9 @@ def _safe_count(name: str, collector: Callable[[], int]) -> int | None:
         return None
 
 
-def collect_counts(window_start: datetime, window_end: datetime) -> dict[str, int | None]:
+def collect_counts(
+    window_start: datetime, window_end: datetime
+) -> dict[str, int | None]:
     # Traces and spans live in the CH v2 `spans` table post-CH-25; the
     # legacy PG Trace/ObservationSpan tables are being removed and report 0
     # on modern deployments.
