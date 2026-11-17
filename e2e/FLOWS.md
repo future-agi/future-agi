@@ -230,6 +230,29 @@
 - public soft deletion excludes retained predicates without changing source spans
 - sibling project, owner B organization and owner A explicit other workspace cannot read target Scores/catalog/results
 
+### ANNOT-E2E-005 — a completed queue compares its selected judge with human labels
+
+**Goal:** Select a queue evaluator and read completed judge-versus-human agreement without changing human-human agreement
+
+**Spec:** `flows/annotations/judge-human-agreement.spec.ts:30`
+
+**Tags:** —
+
+**User steps:**
+
+1. mint a project, two traces, a Pass/Fail label, a queue and a mock-backed evaluator through supported APIs
+2. select the evaluator in queue Settings, save and reload
+3. annotate the two spans through the browser with Pass and Fail
+4. run the evaluator on the project and complete the queue through Settings
+5. read exactly 50.0% agreement and two comparable item-label pairs
+
+**Backend state verified:**
+
+- the exact minted project and source spans retain their organization and workspace identities
+- the browser-selected evaluator persists on the exact queue in the detail API and Postgres after reload
+- the two human Scores and completed evaluator results retain exact queue, span, label and verdict identities in Postgres and latest ClickHouse
+- the completed agreement API returns exactly one match in two comparisons while human-human fields remain unchanged
+
 ## auth
 
 ### AUTH-E2E-001 — user signs in with email and password
