@@ -222,6 +222,7 @@ def fetch(request, version, channel=None):
         channel=channel or ("mcp" if in_process else "api"),
         consumer_key=f"key:{key.pk}" if key else f"user:{request.user.pk}",
         consumer_label=(key.name or "")[:200] if key else request.user.email[:200],
+        **usage.fetch_metadata(request.headers),
     )
 
 
