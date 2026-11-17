@@ -1,7 +1,7 @@
+import { useState } from "react";
 import PropTypes from "prop-types";
 import { Box, Stack, Typography } from "@mui/material";
 import { alpha } from "@mui/material/styles";
-import Iconify from "src/components/iconify";
 
 /*
   Trial routes (proposal 8, 16 Nov): every trial of this scenario on one
@@ -61,7 +61,9 @@ function Cell({ cell, onClick }) {
     >
       {none
         ? "not asked"
-        : `${cell.n} · ${cell.text}${cell.turns ? ` · ×${cell.turns}` : ""}`}
+        : /* What happened, not how long (Chintan, 17 Nov): the step, and
+             what went wrong instead when it did (the step is on hover). */
+          `${cell.bad ? `${cell.state.charAt(0).toUpperCase()}${cell.state.slice(1)}` : `Step ${cell.n}`}${cell.turns ? ` · ×${cell.turns}` : ""}`}
     </Box>
   );
 }
@@ -75,6 +77,7 @@ export default function TrialRoutes({
   onOpen,
   onCompare,
 }) {
+  const [open, setOpen] = useState(false);
   const { columns, rows, split } = routes;
   const cur = rows.find((r) => r.idx === current) || rows[0];
   /* Who to compare with: a trial that ended differently, else any other. */
@@ -82,45 +85,125 @@ export default function TrialRoutes({
     rows.find((r) => r.idx !== cur.idx && r.status !== cur.status) ||
     rows.find((r) => r.idx !== cur.idx);
   const tint = (t) => alpha(t.palette.warning.main, 0.08);
+  /* "no answer in 1, 3 · answered in 2" — each outcome once, not per trial. */
+  const splitWords = split
+    ? Object.entries(
+        rows.reduce((acc, r) => {
+          const st = r.cells[split.key]?.state || "not asked";
+          (acc[st] = acc[st] || []).push(r.idx + 1);
+          return acc;
+        }, {}),
+      )
+        .map(([st, ns]) => `${st} in ${ns.join(", ")}`)
+        .join(" · ")
+    : "";
+  /* One line by default (17 Nov, "too verbose"): the trials as dots, where
+     they first went differently, and Compare; the table on demand. */
   return (
     <Box sx={{ borderTop: "1px solid", borderColor: "divider" }}>
       <Stack
         direction="row"
-        spacing={1}
+        spacing={1.25}
         alignItems="center"
-        sx={{ px: 2, pt: 1, pb: 0.75 }}
+        useFlexGap
+        flexWrap="wrap"
+        sx={{ px: 2, py: 0.75 }}
       >
-        <Box sx={{ flex: 1, minWidth: 0 }}>
-          <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-            {`Trial routes · ${rows.length} repeats of this scenario`}
-          </Typography>
+        <Stack direction="row" spacing={0.5} alignItems="center">
           <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-            Steps matched across trials by who asked whom
-            {showTools ? "" : " · tool calls folded"}
+            {`${rows.length} trials`}
           </Typography>
-        </Box>
-        <Box
+          {rows.map((r) => (
+            <Box
+              key={r.idx}
+              component="button"
+              type="button"
+              title={`Trial ${r.idx + 1} · ${r.status === "passed" ? "Passed" : "Failed"}${r.result ? ` · ${r.result.text}` : ""}`}
+              onClick={() => onOpen(r.idx)}
+              sx={{
+                width: 18,
+                height: 18,
+                p: 0,
+                border: "1px solid",
+                borderColor: r.idx === cur.idx ? "text.primary" : "transparent",
+                borderRadius: "50%",
+                bgcolor: "transparent",
+                cursor: "pointer",
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <Box
+                sx={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: "50%",
+                  bgcolor: r.status === "passed" ? "success.main" : "error.main",
+                }}
+              />
+            </Box>
+          ))}
+        </Stack>
+        <Typography
+          sx={{ typography: "s3", color: "text.secondary", flex: 1, minWidth: 200 }}
+        >
+          {split ? (
+            <>
+              {"Split at "}
+              <Box component="span" sx={{ fontWeight: 600, color: "text.primary" }}>
+                {split.label}
+              </Box>
+              {`: ${splitWords}`}
+            </>
+          ) : (
+            "Every trial took the same route"
+          )}
+        </Typography>
+        {other && split && (
+          <Typography
+            component="button"
+            type="button"
+            onClick={() => onCompare(other.idx)}
+            sx={linkSx}
+          >
+            {`Compare ${cur.idx + 1} with ${other.idx + 1}`}
+          </Typography>
+        )}
+        <Typography
           component="button"
           type="button"
-          aria-pressed={showTools}
-          onClick={onToggleTools}
-          sx={{
-            height: 24,
-            px: 1,
-            border: "1px solid",
-            borderColor: "divider",
-            borderRadius: "6px",
-            bgcolor: showTools ? "action.selected" : "background.paper",
-            typography: "s3",
-            fontWeight: 500,
-            color: "text.primary",
-            cursor: "pointer",
-          }}
+          onClick={() => setOpen((v) => !v)}
+          sx={{ ...linkSx, color: "text.secondary" }}
         >
-          Show tool calls
-        </Box>
+          {open ? "Hide trials" : "Show trials"}
+        </Typography>
       </Stack>
-      <Box sx={{ overflowX: "auto", px: 2 }}>
+      {open && (
+        <>
+          <Stack direction="row" justifyContent="flex-end" sx={{ px: 2, pb: 0.5 }}>
+            <Box
+              component="button"
+              type="button"
+              aria-pressed={showTools}
+              onClick={onToggleTools}
+              sx={{
+                height: 22,
+                px: 1,
+                border: "1px solid",
+                borderColor: "divider",
+                borderRadius: "6px",
+                bgcolor: showTools ? "action.selected" : "background.paper",
+                typography: "s3",
+                fontWeight: 500,
+                color: "text.primary",
+                cursor: "pointer",
+              }}
+            >
+              Show tool calls
+            </Box>
+          </Stack>
+      <Box sx={{ overflowX: "auto", px: 2, pb: 1 }}>
         <Box
           component="table"
           sx={{
@@ -212,15 +295,6 @@ export default function TrialRoutes({
                     >
                       {r.status === "passed" ? "Passed" : "Failed"}
                     </Typography>
-                    {r.result && (
-                      <Typography
-                        component="span"
-                        title={r.result.text}
-                        sx={{ typography: "s3", color: "text.tertiary" }}
-                      >
-                        {` · sub-goal at ${r.result.at}`}
-                      </Typography>
-                    )}
                   </td>
                   {columns.map((c) => (
                     <Box
@@ -240,49 +314,8 @@ export default function TrialRoutes({
           </tbody>
         </Box>
       </Box>
-      <Stack
-        direction="row"
-        spacing={1}
-        alignItems="flex-start"
-        useFlexGap
-        flexWrap="wrap"
-        sx={{
-          px: 2,
-          py: 0.75,
-          bgcolor: split ? tint : "transparent",
-        }}
-      >
-        <Iconify
-          icon="solar:routing-2-linear"
-          width={14}
-          sx={{ mt: "2px", color: "text.secondary" }}
-        />
-        <Typography sx={{ typography: "s3", color: "text.secondary", flex: 1 }}>
-          {split ? (
-            <>
-              <Box
-                component="span"
-                sx={{ fontWeight: 600, color: "text.primary" }}
-              >
-                {`First split: ${split.label}. `}
-              </Box>
-              {split.text}
-            </>
-          ) : (
-            "Every trial took the same route."
-          )}
-        </Typography>
-        {other && (
-          <Typography
-            component="button"
-            type="button"
-            onClick={() => onCompare(other.idx)}
-            sx={linkSx}
-          >
-            {`Compare trial ${cur.idx + 1} with trial ${other.idx + 1}`}
-          </Typography>
-        )}
-      </Stack>
+        </>
+      )}
     </Box>
   );
 }

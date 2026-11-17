@@ -154,7 +154,7 @@ export const routesOf = (trials, { showTools = false } = {}) => {
       status: t.status,
       cells,
       result: f
-        ? { text: f.text, at: f.row === "answer" ? `↩ ${f.n}` : `step ${f.n}` }
+        ? { text: f.text, at: f.row === "answer" ? `reply to step ${f.n}` : `step ${f.n}` }
         : null,
     };
   });

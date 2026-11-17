@@ -10,18 +10,19 @@ import {
 } from "@mui/material";
 import { alpha, useTheme } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
-import { clock } from "../_mock/participants";
 
 /*
   Participants as a sequence (design A, 16 Nov): one lane per participant,
   time going down. A solid arrow is a step with what it asked; a dashed arrow
-  is what came back, tagged with the step it answers (↩ 2); a red dashed
+  is what came back, tagged with the step it answers (reply to step 2); a red dashed
   arrow is an answer that never came. Tool calls are numbered steps drawn as
   a box on the lane of the agent that ran them. Picking a step shows the
   exact message and answer under the diagram.
 
   From the competitor review (16 Nov):
-    · how long each step took, with a bar (AgentOps waterfall, MS Dev UI)
+    · (17 Nov, Chintan: what happened, not when) no clock or took column —
+      a step shows how long it took only when it was slow; tool calls read
+      as one line on the lane that ran them
     · a step opens the transcript and recording at its moment (Opik / Dev UI
       linked selection; "play from here" is ours, these are voice calls)
     · click a lane to follow one participant (Opik, the old tree filter)
@@ -31,12 +32,13 @@ import { clock } from "../_mock/participants";
     · ↑ ↓ (or j k) move between steps, Esc clears (Datadog, Langfuse)
 */
 
-const GUT = 140; // step pill, start time, time taken, same-time bracket
+const GUT = 56; // step pill only — no clock, no took column (Chintan, 17 Nov)
 const LANE_PAD = 64; // half a lane header, plus air
 const MIN_GAP = 118; // lanes closer than this scroll sideways
-const ROW_H = { go: 44, tool: 40, back: 36, none: 38, took: 38 };
+const ROW_H = { go: 44, tool: 34, back: 36, none: 38, took: 38 };
 const CH = 6.4; // average character width at 12px
-const BAR_W = 34; // longest step's bar in the Took column
+/* A step says how long it took only when that's part of what happened. */
+const SLOW_SEC = 20;
 
 const cut = (text, chars) => {
   const s = String(text || "");
@@ -45,12 +47,14 @@ const cut = (text, chars) => {
 };
 const KIND = { message: "Message", handoff: "Hand-off", tool: "Tool call" };
 
-/** 0.4 s · 3.2 s · 42 s · 1:13 */
+/** 0.4 s · 3.2 s · 42 s · 1 min 13 s */
 const took = (sec) => {
   if (sec == null || Number.isNaN(sec)) return "—";
   if (sec < 10) return `${sec.toFixed(1)} s`;
   if (sec < 60) return `${Math.round(sec)} s`;
-  return clock(sec);
+  const m = Math.floor(sec / 60);
+  const r = Math.round(sec % 60);
+  return r ? `${m} min ${r} s` : `${m} min`;
 };
 
 function useWidth(ref) {
@@ -171,34 +175,20 @@ function Legend({ seq }) {
     >
       {item("go", seg(fg), "Asked")}
       {has("back") &&
-        item("back", seg(sub, "4 3"), "Answer · ↩ n = answers step n")}
+        item("back", seg(sub, "4 3"), "Answer")}
       {has("none") && item("none", seg(bad, "5 3"), "No answer")}
-      {seq.groups.length > 0 &&
-        item(
-          "same",
-          <svg width="8" height="14" aria-hidden="true">
-            <path
-              d="M1,1 h4 v12 h-4"
-              fill="none"
-              stroke={sub}
-              strokeWidth="1.2"
-            />
-          </svg>,
-          "Same time",
-        )}
       {has("tool") &&
         item(
           "tool",
-          <Box
-            sx={{
-              width: 14,
-              height: 10,
-              border: "1px solid",
-              borderColor: "divider",
-              borderRadius: "3px",
-              bgcolor: "background.neutral",
-            }}
-          />,
+          <svg width="16" height="12" aria-hidden="true">
+            <path
+              d="M1,2 h9 a4,4 0 0 1 0,8 h-6"
+              fill="none"
+              stroke={sub}
+              strokeWidth="1.3"
+            />
+            <path d="M5,7 L1,10 L5,13 z" fill={sub} />
+          </svg>,
           "Tool call",
         )}
     </Stack>
@@ -316,12 +306,6 @@ function StepDetail({
   const tool = step.kind === "tool";
   const to = tool ? step.tool : seq.nameOf(step.to);
   const a = step.answer;
-  const when =
-    a?.kind === "none"
-      ? `${clock(step.at)} → ${a.bad ? "no answer" : a.label.toLowerCase()}`
-      : a?.at != null
-        ? `${clock(step.at)} → ${clock(a.at)}`
-        : clock(step.at);
   const waited = a?.kind === "none" && step.dur != null;
   const meta = [
     step.dur != null &&
@@ -446,15 +430,6 @@ function StepDetail({
         >
           {KIND[step.kind]}
         </Box>
-        <Typography
-          sx={{
-            typography: "s3",
-            color: "text.tertiary",
-            fontVariantNumeric: "tabular-nums",
-          }}
-        >
-          {when}
-        </Typography>
         <Box sx={{ flex: 1 }} />
         {onShowInTranscript && step.at != null && (
           <Button
@@ -465,7 +440,7 @@ function StepDetail({
             startIcon={<Iconify icon="solar:play-circle-linear" width={14} />}
             sx={smallBtn}
           >
-            {`Show in transcript · ${clock(step.at)}`}
+            Show in transcript
           </Button>
         )}
         {onOpenTrace && (
@@ -517,7 +492,7 @@ function StepDetail({
               {`${unsure ? "Unsure" : f.mark === "critical" ? "Failed" : "Missed"} ${f.mark === "critical" ? "critical" : "supporting"} sub-goal: ${f.text}`}
             </Typography>
             <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-              {`${seq.nameOf(f.lane)}${f.row === "answer" ? ` · its reply ↩ ${step.n}` : ""} · ${f.basis === "the conversation" ? "judged from the conversation" : "checked against end state and tool calls"}`}
+              {`${seq.nameOf(f.lane)}${f.row === "answer" ? ` · its reply to step ${step.n}` : ""} · ${f.basis === "the conversation" ? "judged from the conversation" : "checked against end state and tool calls"}`}
             </Typography>
             {f.said && (
               <>
@@ -633,26 +608,22 @@ export default function SequenceDiagram({
   const X = Object.fromEntries(
     seq.lanes.map((ln, i) => [ln.id, LANE_PAD + i * gap]),
   );
-  const headW = Math.min(150, gap - 8);
+  /* Never wider than the first lane's padding, or it clips at the edge. */
+  const headW = Math.min(150, gap - 8, 2 * LANE_PAD - 6);
   const nameChars = Math.floor((headW - 12) / 6.6);
   const heads = seq.lanes.map((ln) => nameLines(ln.name, nameChars));
   const headH = heads.some((h) => h.length > 1) ? 54 : 40;
   const top = 10 + headH + 42; // first row's centre line
-  const toolW = Math.max(200, Math.min(320, gap * 1.7));
-  const lastLane = seq.lanes[L - 1]?.id;
-  /* A tool box runs right of its lane when there's room; otherwise it
-     folds to two lines inside the gap next to the lane (left of the last
-     lane), so it never sits across another participant's lane. */
-  const toolBox = (from) => {
-    const x = X[from];
-    if (x + 14 + toolW <= laneW - 6) return { x: x + 14, w: toolW, wide: true };
-    const w = gap - 24;
-    return from === lastLane
-      ? { x: x - 12 - w, w, wide: false, left: true }
-      : { x: x + 12, w, wide: false };
-  };
   const svgW = Math.max(laneW, 2 * LANE_PAD + gap * (L - 1));
-  const maxDur = Math.max(0.001, ...shown.map((s) => s.dur || 0));
+  /* A tool call is a row of its own, so its one line may run across the
+     lanes beside it (on a paper backing); left of the lane when the lane is
+     near the right edge. */
+  const toolSide = (from) => {
+    const x = X[from];
+    const right = svgW - x - 30;
+    const left = x - 30;
+    return right >= Math.min(260, left) ? { left: false, room: right } : { left: true, room: left };
+  };
 
   let y = top;
   const rows = seq.rows
@@ -663,11 +634,6 @@ export default function SequenceDiagram({
       return out;
     });
   const H = y + 6;
-  const firstY = Object.fromEntries(
-    rows
-      .filter((r) => r.type === "go" || r.type === "tool")
-      .map((r) => [r.n, r.y]),
-  );
 
   const pick = (n) => onSelect(selected === n ? null : n);
   const keyPick = (n) => (e) => {
@@ -756,16 +722,15 @@ export default function SequenceDiagram({
     },
   });
 
-  /* The fixed column: step pill (or ↩ n), when it started, how long it took. */
+  /* The fixed column: the step pill. A reply has no number of its own —
+     only steps are numbered (17 Nov); the reply says which step it answers. */
   const gutterRow = (r) => {
     const s = byN[r.n];
     const yy = r.y;
     const on = selected === s.n;
     const step = r.type === "go" || r.type === "tool";
-    const t = step ? s.at : s.answer?.at;
     const w = s.n > 9 ? 26 : 20;
-    const bad = step ? s.bad : r.type === "none" && s.answer?.bad;
-    const waited = s.answer?.kind === "none" && s.answer?.bad;
+    const bad = step && s.bad;
     return (
       <g key={`${r.type}-${r.n}`} {...rowProps(s, r)}>
         {bandOf(r, GUT, on)}
@@ -790,73 +755,7 @@ export default function SequenceDiagram({
               {s.n}
             </text>
           </>
-        ) : (
-          <>
-            <rect
-              x={12}
-              y={yy - 9}
-              width={34}
-              height={18}
-              rx={9}
-              fill="none"
-              stroke={c.line}
-            />
-            <text
-              x={29}
-              y={yy + 4}
-              textAnchor="middle"
-              fontSize="11"
-              fontWeight="600"
-              fill={bad ? c.bad : c.muted}
-            >
-              {`↩ ${s.n}`}
-            </text>
-          </>
-        )}
-        <text
-          x={54}
-          y={yy + 4}
-          fontSize="11"
-          fill={c.muted}
-          style={{ fontVariantNumeric: "tabular-nums" }}
-        >
-          {t != null ? clock(t) : "—"}
-        </text>
-        {step && s.dur != null && (
-          <g>
-            <title>
-              {waited
-                ? `Waited ${took(s.dur)}, no answer`
-                : `Took ${took(s.dur)}`}
-            </title>
-            <text
-              x={88}
-              y={yy + 1}
-              fontSize="11"
-              fontWeight={s.dur >= maxDur * 0.5 ? 600 : 400}
-              fill={waited ? c.bad : c.sub}
-              style={{ fontVariantNumeric: "tabular-nums" }}
-            >
-              {took(s.dur)}
-            </text>
-            <rect
-              x={88}
-              y={yy + 6}
-              width={BAR_W}
-              height={3}
-              rx={1.5}
-              fill={c.line}
-            />
-            <rect
-              x={88}
-              y={yy + 6}
-              width={Math.max(2, (BAR_W * s.dur) / maxDur)}
-              height={3}
-              rx={1.5}
-              fill={waited ? c.bad : c.faint}
-            />
-          </g>
-        )}
+        ) : null}
       </g>
     );
   };
@@ -872,12 +771,24 @@ export default function SequenceDiagram({
       const x1 = X[s.from];
       const x2 = X[s.to];
       const dir = x2 > x1 ? 1 : -1;
+      /* How long it took, only when it was slow — never for a conversation
+         with the caller, whose length is the caller's. */
+      const slow =
+        s.dur != null &&
+        s.dur >= SLOW_SEC &&
+        !(s.turns > 1) &&
+        s.from !== seq.lanes[0].id &&
+        s.answer?.kind !== "none";
       const chip =
-        s.turns > 1
-          ? `×${s.turns} turns`
-          : foldTools && s.tools > 0
-            ? `+${s.tools} tool ${s.tools === 1 ? "call" : "calls"}`
-            : null;
+        [
+          s.turns > 1 && `×${s.turns} turns`,
+          foldTools &&
+            s.tools > 0 &&
+            `+${s.tools} tool ${s.tools === 1 ? "call" : "calls"}`,
+          slow && `slow · ${took(s.dur)}`,
+        ]
+          .filter(Boolean)
+          .join(" · ") || null;
       const chipW = chip ? chip.length * 5.9 + 12 : 0;
       const label = cut(s.label, roomOf(x1, x2) - Math.ceil(chipW / CH));
       const lw = label.length * CH;
@@ -937,7 +848,13 @@ export default function SequenceDiagram({
       const x2 = isTook ? X[seq.lanes[0].id] : X[s.from];
       const dir = x2 > x1 ? 1 : -1;
       const bad = !!s.answer.bad;
-      const label = cut(s.answer.label, roomOf(x1, x2));
+      const tag = isTook ? ` · after step ${s.n}` : ` · reply to step ${s.n}`;
+      /* A reply has its row to itself, so its words may run past a short
+         arrow — the "reply to step n" tag never eats them. */
+      const label = cut(
+        s.answer.label,
+        Math.max(roomOf(x1, x2) - tag.length, Math.floor((svgW - 24) / CH) - tag.length - 2, 18),
+      );
       items.push(
         <line
           key="a"
@@ -952,7 +869,7 @@ export default function SequenceDiagram({
         />,
         <text
           key="l"
-          x={placeX((x1 + x2) / 2, label)}
+          x={placeX((x1 + x2) / 2, `${label}${tag}`)}
           y={yy - 3}
           textAnchor="middle"
           fontSize="11.5"
@@ -961,45 +878,61 @@ export default function SequenceDiagram({
         >
           <title>{s.answer.full || s.answer.label}</title>
           {label}
+          <tspan fontWeight="400" fill={bad ? c.bad : c.muted} opacity={0.8}>
+            {tag}
+          </tspan>
         </text>,
       );
     } else if (r.type === "tool") {
+      /* A tool call: a small loop on the lane that ran it, then one line —
+         the tool's name and what came back. */
       const x = X[s.from];
-      const b = toolBox(s.from);
+      const side = toolSide(s.from);
       const mono = "ui-monospace, SFMono-Regular, Menlo, monospace";
-      const nameRoom = b.wide
-        ? Math.floor((b.w * 0.62) / 6.6)
-        : Math.floor((b.w - 16) / 6.3);
-      const name = cut(s.tool, nameRoom);
-      const resRoom = b.wide
-        ? Math.floor((b.w - 24 - name.length * 6.6 - 14) / 6.1)
-        : Math.floor((b.w - 16) / 6.1) - 2;
-      const h = b.wide ? 24 : 34;
+      const slow = s.dur != null && s.dur >= SLOW_SEC;
+      const tail = slow ? ` · slow · ${took(s.dur)}` : "";
+      const nameW = 6.6;
+      const name = cut(s.tool, Math.floor((side.room * 0.55) / nameW));
+      const resRoom = Math.floor(
+        (side.room - name.length * nameW - 18) / 6.1,
+      );
+      const res = cut(`→ ${s.result || ""}${tail}`, resRoom);
+      const textW = name.length * nameW + 8 + res.length * 6.1;
+      const tx = side.left ? x - 22 - textW : x + 22;
+      const loop = side.left
+        ? `M${x},${yy - 5} h-12 a5,5 0 0 0 0,10 h9`
+        : `M${x},${yy - 5} h12 a5,5 0 0 1 0,10 h-9`;
       items.push(
-        <line
-          key="s"
-          x1={b.left ? b.x + b.w : x}
-          y1={yy}
-          x2={b.left ? x : b.x}
-          y2={yy}
-          stroke={c.faint}
-          strokeWidth="1.2"
-        />,
         <rect
-          key="b"
-          x={b.x}
-          y={yy - h / 2}
-          width={b.w}
-          height={h}
-          rx={5}
-          fill={c.code}
-          stroke={on ? c.selLine : s.bad ? c.bad : c.line}
+          key="bg"
+          x={tx - 4}
+          y={yy - 9}
+          width={textW + 8}
+          height={18}
+          rx={4}
+          fill={on ? c.sel : c.paper}
+        />,
+        <path
+          key="loop"
+          d={loop}
+          fill="none"
+          stroke={s.bad ? c.bad : c.muted}
+          strokeWidth="1.3"
+        />,
+        <path
+          key="tip"
+          d={
+            side.left
+              ? `M${x - 3},${yy + 5} l-4,-3 v6 z`
+              : `M${x + 3},${yy + 5} l4,-3 v6 z`
+          }
+          fill={s.bad ? c.bad : c.muted}
         />,
         <text
           key="n"
-          x={b.x + 8}
-          y={b.wide ? yy + 4 : yy - 3}
-          fontSize={b.wide ? 11 : 10.5}
+          x={tx}
+          y={yy + 4}
+          fontSize="11"
           fontWeight={wt}
           fill={c.fg}
           fontFamily={mono}
@@ -1009,15 +942,14 @@ export default function SequenceDiagram({
         </text>,
         <text
           key="r"
-          x={b.wide ? b.x + b.w - 10 : b.x + 8}
-          y={b.wide ? yy + 4 : yy + 11}
-          textAnchor={b.wide ? "end" : "start"}
-          fontSize={b.wide ? 11.5 : 11}
+          x={tx + name.length * nameW + 8}
+          y={yy + 4}
+          fontSize="11.5"
           fontWeight={s.bad ? 600 : 400}
           fill={s.bad ? c.bad : c.sub}
         >
           <title>{s.result}</title>
-          {`→ ${cut(s.result, resRoom)}`}
+          {res}
         </text>,
       );
     }
@@ -1035,7 +967,7 @@ export default function SequenceDiagram({
         const lx = X[f.lane] ?? X[s.from];
         /* A tool box sits right of its lane, so the tag goes left of it;
            an arrow's words sit above it, so the tag goes beside its end. */
-        const tool = r.type === "tool" && !toolBox(s.from).left;
+        const tool = r.type === "tool" && !toolSide(s.from).left;
         const right = !tool && lx + 8 + w <= svgW - 4;
         const bx = right ? lx + 8 : Math.max(2, lx - 8 - w);
         const by = tool ? yy : yy + 7;
@@ -1178,36 +1110,17 @@ export default function SequenceDiagram({
           viewBox={`0 0 ${GUT} ${H}`}
           style={{ ...svgStyle, flexShrink: 0 }}
         >
-          {["STEP", "AT", "TOOK"].map((t, i) => (
-            <text
-              key={t}
-              x={[14, 54, 88][i]}
-              y={labelY}
-              fontSize="10.5"
-              fontWeight="600"
-              letterSpacing="0.05em"
-              fill={c.faint}
-            >
-              {t}
-            </text>
-          ))}
+          <text
+            x={14}
+            y={labelY}
+            fontSize="10.5"
+            fontWeight="600"
+            letterSpacing="0.05em"
+            fill={c.faint}
+          >
+            STEP
+          </text>
           {rows.map(gutterRow)}
-          {seq.groups.map(([a, b]) => {
-            const y1 = firstY[a];
-            const y2 = firstY[b];
-            if (y1 == null || y2 == null) return null;
-            return (
-              <g key={`g-${a}`}>
-                <title>Sent at the same time</title>
-                <path
-                  d={`M128,${y1 - 6} h4 v${y2 - y1 + 12} h-4`}
-                  fill="none"
-                  stroke={c.faint}
-                  strokeWidth="1.2"
-                />
-              </g>
-            );
-          })}
         </svg>
         <Box sx={{ flex: 1, minWidth: 0, overflowX: "auto" }}>
           <svg

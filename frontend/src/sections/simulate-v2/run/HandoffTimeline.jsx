@@ -14,7 +14,6 @@ import {
   CHECKS_SOON,
   LIMITS_SOON,
   TOPOLOGY,
-  TRACES_SOON,
   participantsOf,
 } from "../_mock/participants";
 import { participantsGraphOf } from "../_mock/participantsGraph";
@@ -41,25 +40,6 @@ const contractSample = () => {
 const PARTIAL_NOTE =
   "Partial read: the record stopped at 5,000 events, so later steps aren't shown.";
 
-/* Open trace stays off until the app's own traces are linked to the call. */
-function TracesLink() {
-  return (
-    <Tooltip title={TRACES_SOON} arrow>
-      <Stack
-        direction="row"
-        spacing={0.5}
-        alignItems="center"
-        sx={{ color: "text.disabled", cursor: "default" }}
-      >
-        <Iconify icon="solar:square-top-down-linear" width={14} />
-        <Typography sx={{ typography: "s3", color: "inherit" }}>
-          Open trace
-        </Typography>
-      </Stack>
-    </Tooltip>
-  );
-}
-
 const Quiet = ({ children }) => (
   <Typography sx={{ typography: "s2", color: "text.tertiary" }}>
     {children}
@@ -67,57 +47,46 @@ const Quiet = ({ children }) => (
 );
 Quiet.propTypes = { children: PropTypes.node };
 
-/* On top: the call in a sentence, then whether it was recorded (the full
-   wording and the supported shape on hover) and Open trace. */
-function Recorded({ p, children }) {
+/* On top: the call in one sentence. Recorded is the normal case, so it's a
+   quiet icon with the wording on hover; Not recorded is said in words. */
+function Recorded({ p }) {
   const why = `${
     p.observed
       ? "Recorded in this run — every hand-off and answer is a real event."
       : "Not recorded — the app sent no worker events, so this shows how it's set up, not what happened."
   } Supported shape: ${p.topology || TOPOLOGY}.`;
   return (
-    <Stack spacing={0.5}>
+    <Stack direction="row" spacing={0.75} alignItems="center">
       <Typography sx={{ typography: "s2", fontWeight: 500 }}>
         {p.summary}
       </Typography>
-      <Stack
-        direction="row"
-        spacing={1.5}
-        alignItems="center"
-        useFlexGap
-        flexWrap="wrap"
-      >
-        <Tooltip title={why} arrow>
-          <Stack
-            direction="row"
-            spacing={0.5}
-            alignItems="center"
-            sx={{ cursor: "default" }}
-          >
-            <Iconify
-              icon={
-                p.observed
-                  ? "solar:check-circle-linear"
-                  : "solar:info-circle-linear"
-              }
-              width={14}
-              sx={{ color: p.observed ? "success.main" : "text.tertiary" }}
-            />
+      <Tooltip title={why} arrow>
+        <Stack
+          direction="row"
+          spacing={0.5}
+          alignItems="center"
+          sx={{ cursor: "default" }}
+        >
+          <Iconify
+            icon={
+              p.observed
+                ? "solar:check-circle-linear"
+                : "solar:info-circle-linear"
+            }
+            width={14}
+            sx={{ color: p.observed ? "success.main" : "text.tertiary" }}
+          />
+          {!p.observed && (
             <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-              {p.observed ? "Recorded in this run" : "Not recorded"}
+              Not recorded
             </Typography>
-          </Stack>
-        </Tooltip>
-        {p.traces && <TracesLink />}
-        {children}
-      </Stack>
+          )}
+        </Stack>
+      </Tooltip>
     </Stack>
   );
 }
-Recorded.propTypes = {
-  p: PropTypes.object.isRequired,
-  children: PropTypes.node,
-};
+Recorded.propTypes = { p: PropTypes.object.isRequired };
 
 /* What isn't recorded yet, and the call's shared state. The Tool / Used by
    list is gone: the graph draws each tool under the worker that called it. */
@@ -166,133 +135,100 @@ function Details({ agent, task }) {
 }
 Details.propTypes = { agent: PropTypes.object, task: PropTypes.object };
 
-/* What went wrong, on top, each with a jump to its step (Datadog-style
-   error flags on the run itself). */
-const goLinkSx = {
-  typography: "s3",
-  fontWeight: 500,
-  color: "text.primary",
-  p: 0,
-  border: 0,
-  bgcolor: "transparent",
-  cursor: "pointer",
-  whiteSpace: "nowrap",
-  textDecoration: "underline",
-  textUnderlineOffset: "2px",
-  textDecorationColor: (t) => t.palette.divider,
-  "&:hover": { textDecorationColor: "currentColor" },
-};
-
-/* Each failed or unsure sub-goal, with the participant and step its
-   evidence points to — or "not tied to a step" and why (plan MA-2). */
-function SubGoalLines({ placed, nameOf, onGo }) {
-  if (!placed.length) return null;
+/* What went wrong, one line each: where (Step 6, Reply to step 8) and what. The line
+   itself opens that step — no separate "Go to" (17 Nov, "too verbose"). */
+function IssueLine({ at, text, tone, title, onClick }) {
+  const color = tone === "warning" ? "warning.main" : tone === "muted" ? "text.secondary" : "error.main";
   return (
-    <Stack spacing={0.25}>
-      {placed.map((f) => {
-        const unsure = f.status === "inconclusive";
-        const kind = `${unsure ? "Unsure" : f.mark === "critical" ? "Failed" : "Missed"} ${f.mark === "critical" ? "critical" : "supporting"} sub-goal`;
-        const where =
-          f.n == null
-            ? `not tied to a step · ${f.untied.toLowerCase()}`
-            : f.row === "answer"
-              ? `${nameOf(f.lane)}, in its reply ↩ ${f.n}`
-              : `${nameOf(f.lane)}, at step ${f.n}`;
-        return (
-          <Stack
-            key={f.key || f.text}
-            direction="row"
-            spacing={0.75}
-            alignItems="center"
-            useFlexGap
-            flexWrap="wrap"
-          >
-            <Iconify
-              icon="solar:close-circle-linear"
-              width={14}
-              sx={{
-                color: unsure
-                  ? "warning.main"
-                  : f.mark === "critical"
-                    ? "error.main"
-                    : "text.tertiary",
-              }}
-            />
-            <Typography
-              sx={{
-                typography: "s3",
-                fontWeight: 500,
-                color: unsure
-                  ? "warning.main"
-                  : f.mark === "critical"
-                    ? "error.main"
-                    : "text.secondary",
-              }}
-            >
-              {`${kind}: ${f.text}`}
-            </Typography>
-            <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-              {`· ${where}`}
-            </Typography>
-            {f.n != null && (
-              <Typography
-                component="button"
-                type="button"
-                onClick={() => onGo(f.n)}
-                sx={goLinkSx}
-              >
-                {f.row === "answer" ? `Go to ↩ ${f.n}` : `Go to step ${f.n}`}
-              </Typography>
-            )}
-          </Stack>
-        );
-      })}
-    </Stack>
+    <Box
+      component={onClick ? "button" : "div"}
+      type={onClick ? "button" : undefined}
+      onClick={onClick}
+      title={title}
+      sx={{
+        display: "flex",
+        alignItems: "center",
+        gap: 0.75,
+        p: 0,
+        border: 0,
+        bgcolor: "transparent",
+        textAlign: "left",
+        cursor: onClick ? "pointer" : "default",
+        color,
+        "&:hover .issue-text": onClick ? { textDecoration: "underline" } : {},
+      }}
+    >
+      <Iconify icon="solar:danger-circle-linear" width={14} sx={{ flexShrink: 0 }} />
+      <Typography
+        component="span"
+        sx={{
+          typography: "s3",
+          fontWeight: 600,
+          color: "inherit",
+          whiteSpace: "nowrap",
+          fontVariantNumeric: "tabular-nums",
+        }}
+      >
+        {at}
+      </Typography>
+      <Typography
+        component="span"
+        className="issue-text"
+        sx={{ typography: "s3", color: "text.primary", textUnderlineOffset: "2px" }}
+      >
+        {text}
+      </Typography>
+    </Box>
   );
 }
-SubGoalLines.propTypes = {
-  placed: PropTypes.array.isRequired,
-  nameOf: PropTypes.func.isRequired,
-  onGo: PropTypes.func.isRequired,
+IssueLine.propTypes = {
+  at: PropTypes.string,
+  text: PropTypes.string,
+  tone: PropTypes.string,
+  title: PropTypes.string,
+  onClick: PropTypes.func,
 };
 
-function Problems({ seq, onGo }) {
-  if (!seq.problems.length) return null;
-  const many = seq.problems.length > 1;
+function Issues({ seq, placed, onGo }) {
+  const lines = [
+    ...seq.problems.map((x) => ({
+      key: `p-${x.n}`,
+      at: `Step ${x.n}`,
+      text: x.text.replace(/\s+(at |to )?step \d+$/i, ""),
+      n: x.n,
+    })),
+    ...placed.map((f) => {
+      const unsure = f.status === "inconclusive";
+      const critical = f.mark === "critical";
+      return {
+        key: f.key || f.text,
+        at: f.n == null ? "No step" : f.row === "answer" ? `Reply to step ${f.n}` : `Step ${f.n}`,
+        text: `${unsure ? "Unsure" : critical ? "Critical sub-goal failed" : "Sub-goal missed"}: ${f.text}`,
+        tone: unsure ? "warning" : critical ? "error" : "muted",
+        title: f.n == null ? `Not tied to a step · ${f.untied}` : undefined,
+        n: f.n,
+      };
+    }),
+  ];
+  if (!lines.length) return null;
   return (
-    <Stack
-      direction="row"
-      spacing={0.75}
-      alignItems="center"
-      useFlexGap
-      flexWrap="wrap"
-    >
-      <Iconify
-        icon="solar:danger-circle-linear"
-        width={14}
-        sx={{ color: "error.main" }}
-      />
-      <Typography
-        sx={{ typography: "s3", color: "error.main", fontWeight: 500 }}
-      >
-        {`${seq.problems.length} ${many ? "problems" : "problem"}: ${seq.problems.map((x) => x.text).join("; ")}`}
-      </Typography>
-      {seq.problems.map((x) => (
-        <Typography
-          key={x.n}
-          component="button"
-          type="button"
-          onClick={() => onGo(x.n)}
-          sx={goLinkSx}
-        >
-          {`Go to step ${x.n}`}
-        </Typography>
+    <Stack spacing={0.25}>
+      {lines.map((l) => (
+        <IssueLine
+          key={l.key}
+          at={l.at}
+          text={l.text}
+          tone={l.tone}
+          title={l.title}
+          onClick={l.n != null ? () => onGo(l.n) : undefined}
+        />
       ))}
     </Stack>
   );
 }
-Problems.propTypes = {
+Issues.propTypes = {
   seq: PropTypes.object.isRequired,
+  placed: PropTypes.array.isRequired,
   onGo: PropTypes.func.isRequired,
 };
 
@@ -447,10 +383,8 @@ export default function HandoffTimeline({
             {`API record · "${sample}" sample from the platform contract`}
           </Typography>
         )}
-        <Recorded p={p}>
-          <Problems seq={seq} onGo={setPicked} />
-        </Recorded>
-        <SubGoalLines placed={placed} nameOf={seq.nameOf} onGo={setPicked} />
+        <Recorded p={p} />
+        <Issues seq={seq} placed={placed} onGo={setPicked} />
         {p.partial && <Quiet>{p.partial}</Quiet>}
       </Stack>
       {routes && !sample && (

@@ -2,7 +2,6 @@ import { useLayoutEffect, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import { Box, Stack, Typography } from "@mui/material";
 import { alpha, useTheme } from "@mui/material/styles";
-import { clock } from "../_mock/participants";
 import { alignTrials } from "../_mock/participantsTrials";
 
 /*
@@ -135,29 +134,60 @@ export default function CompareSequence({ seqA, seqB, a, b, onStop, onPick }) {
         </text>,
       );
     } else if (r.type === "tool") {
+      /* Same as the sequence: a loop on the lane that ran it, then one line
+         (Chintan, 17 Nov); left of the lane near the right edge. */
       const x = X[s.from];
-      const w = Math.min(gap - 22, 210);
+      const right = svgW - x - 28;
+      const leftSide = right < Math.min(240, x - GUT - 28);
+      const room = leftSide ? x - GUT - 28 : right;
+      const col = s.bad ? c.bad : base;
+      const name = cut(s.tool, Math.floor((room * 0.55) / 6.4));
+      const res = cut(
+        `→ ${s.result || ""}`,
+        Math.floor((room - name.length * 6.4 - 16) / 6),
+      );
+      const textW = name.length * 6.4 + 8 + res.length * 6;
+      const tx = leftSide ? x - 22 - textW : x + 22;
       items.push(
-        <line key="c" x1={x} y1={yy} x2={x + 10} y2={yy} stroke={c.faint} />,
         <rect
-          key="b"
-          x={x + 10}
-          y={yy - 10}
-          width={w}
-          height={20}
+          key="bg"
+          x={tx - 4}
+          y={yy - 9}
+          width={textW + 8}
+          height={18}
           rx={4}
-          fill={c.code}
-          stroke={s.bad ? c.bad : base === c.fg ? c.line : base}
+          fill={c.paper}
+        />,
+        <path
+          key="loop"
+          d={
+            leftSide
+              ? `M${x},${yy - 5} h-12 a5,5 0 0 0 0,10 h9`
+              : `M${x},${yy - 5} h12 a5,5 0 0 1 0,10 h-9`
+          }
+          fill="none"
+          stroke={col}
+          strokeWidth="1.3"
         />,
         <text
-          key="t"
-          x={x + 18}
+          key="n"
+          x={tx}
           y={yy + 4}
           fontSize="10.5"
-          fill={s.bad ? c.bad : base}
+          fill={col}
           fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace"
         >
-          {cut(`${s.tool} → ${s.result}`, Math.floor((w - 14) / 6.2))}
+          {name}
+        </text>,
+        <text
+          key="r"
+          x={tx + name.length * 6.4 + 8}
+          y={yy + 4}
+          fontSize="11"
+          fill={col}
+          opacity={0.85}
+        >
+          {res}
         </text>,
       );
     } else {
@@ -207,14 +237,14 @@ export default function CompareSequence({ seqA, seqB, a, b, onStop, onPick }) {
     const o = whenOf(mine);
     const rel =
       t != null && o != null ? (t < o ? "earlier" : "later") : "moved";
-    return `${rel} · ${t != null ? clock(t) : "—"}`;
+    return rel;
   };
   const gutterText = (u) => {
     if (!u) return "not asked";
     const s = u.step;
     const step = u.row.type === "go" || u.row.type === "tool";
-    const t = step ? s.at : s.answer?.at;
-    return `${step ? s.n : `↩ ${s.n}`} · ${t != null ? clock(t) : "—"}`;
+    /* The step, not its clock (Chintan, 17 Nov). */
+    return step ? `Step ${s.n}` : `reply to ${s.n}`;
   };
 
   return (
