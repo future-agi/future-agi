@@ -81,8 +81,8 @@ def test_a_refusal_with_no_token_set_names_the_missing_setting(monkeypatch):
 
 @pytest.mark.parametrize(
     "token",
-    [f"{TOKEN}\n", f"{TOKEN}\r\nX-Injected: 1", f"{TOKEN}☃"],
-    ids=["trailing-newline", "embedded-crlf", "non-latin-1"],
+    [f"{TOKEN}\n", f"{TOKEN}\r\nX-Injected: 1", f"{TOKEN}\nX-Injected: 1", f"{TOKEN}☃"],
+    ids=["trailing-newline", "embedded-crlf", "embedded-lf", "non-latin-1"],
 )
 def test_a_malformed_token_is_unavailable_without_the_token(token):
     # The real HTTP stack raises here, with the header in its message, before any request.
@@ -112,6 +112,7 @@ def test_a_403_is_the_sandboxs_own_refusal_not_a_token_rejection(sandbox):
     [
         f"{TOKEN}\n",
         f"{TOKEN}\r\nX-Injected: 1",
+        f"{TOKEN}\nX-Injected: 1",
         f"{TOKEN}\u2603",
         f" {TOKEN}",
         f"{TOKEN} ",
@@ -119,6 +120,7 @@ def test_a_403_is_the_sandboxs_own_refusal_not_a_token_rejection(sandbox):
     ids=[
         "trailing-newline",
         "embedded-crlf",
+        "embedded-lf",
         "non-latin-1",
         "leading-space",
         "trailing-space",
