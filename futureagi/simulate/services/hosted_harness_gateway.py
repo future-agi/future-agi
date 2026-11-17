@@ -2603,6 +2603,23 @@ class HostedHarnessGateway:
         _validate_resolved_egress_domains(
             allowed_domains, max_domains=self.client.max_egress_domains
         )
+        simulation_only = bool((payload.get("metadata") or {}).get("simulation_only"))
+        fresh_build = authoring_archive is None and not simulation_only
+        harness_builds = fresh_build and getattr(
+            settings, "ALK_HOSTED_BUILDER_SESSION", True
+        )
+        if fresh_build:
+            allowed_domains = _normalize_egress_domains(
+                [
+                    *allowed_domains,
+                    *_authoring_egress_domains(
+                        simulator_env, "", provider_profile=False
+                    ),
+                ]
+            )
+            _validate_resolved_egress_domains(
+                allowed_domains, max_domains=self.client.max_egress_domains
+            )
         # Decided before the attempt is registered or a sandbox exists, and applied in one
         # step below, so a failure anywhere in it leaves the secrets, the egress list and
         # the document exactly as they were.
@@ -2865,15 +2882,7 @@ class HostedHarnessGateway:
                 if authoring_target_secrets
                 else ""
             )
-            simulation_only = bool(
-                (dispatch_payload.get("metadata") or {}).get("simulation_only")
-            )
             # A fresh build is the conversation's harness's work; this command waits for it.
-            harness_builds = (
-                authoring_archive is None
-                and not simulation_only
-                and getattr(settings, "ALK_HOSTED_BUILDER_SESSION", True)
-            )
             bundle_command = (
                 "rm -rf /work/bundle && "
                 "cp -a /work/authoring/environment-bundle /work/bundle && "
