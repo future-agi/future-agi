@@ -3084,6 +3084,7 @@ class HostedHarnessGateway:
         }
         from simulate.services.harness_versioning import rebuild
         from simulate.services.hosted_harness_conversation import (
+            give_up_platform_landing,
             platform_landing_pending,
             settle_stop_only_queue,
         )
@@ -3094,6 +3095,7 @@ class HostedHarnessGateway:
             if rebuild.landing_pending(job):
                 # A rebuild's result is landing; chat restarts once it has.
                 return None
+            give_up_platform_landing(job, conversation)
             if platform_landing_pending(job, conversation):
                 # The build check's files are still publishing; chat starts once they settle.
                 return None
