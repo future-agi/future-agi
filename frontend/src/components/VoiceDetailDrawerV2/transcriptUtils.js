@@ -64,6 +64,8 @@ export const readTime = (obj, keys) => {
   return null;
 };
 
+const SLOW_RESPONSE_SECONDS = 2;
+
 /**
  * Enrich the raw transcript with silence, overlap, and duration info.
  *
@@ -78,10 +80,18 @@ export const readTime = (obj, keys) => {
  *   duration   → seconds
  *   silenceBefore → seconds (null if < 0.3s or indeterminate)
  *   overlapsPrev  → true when this turn started before the previous ended
+ *   slowResponse  → true when an agent turn starts after a silent gap longer
+ *                   than SLOW_RESPONSE_SECONDS that follows a caller or agent
+ *                   turn (never a system row)
+ *
+ * `skipSystemRows` keeps system rows out of the time rebase and out of the
+ * silence/overlap pairing, so the other turns come out exactly as if the
+ * rows were not passed; they only stop an agent turn after them from being
+ * counted as slow. The rows are still returned; the caller hides them.
  */
 export const enrichTurns = (
   transcript,
-  { enableTemporalFeatures = true } = {},
+  { enableTemporalFeatures = true, skipSystemRows = false } = {},
 ) => {
   if (!Array.isArray(transcript) || transcript.length === 0) return [];
 
@@ -134,6 +144,8 @@ export const enrichTurns = (
       end: null,
       silenceBefore: null,
       overlapsPrev: false,
+      slowResponse: false,
+      agentLatency: null,
     }));
   }
 
@@ -147,6 +159,7 @@ export const enrichTurns = (
   // and rendered as raw numbers (e.g. "29608380:45" in the KPI strip).
   let epochMinStart = Infinity;
   for (const t of raw) {
+    if (skipSystemRows && t.role === "system") continue;
     if (t.start != null && t.start < epochMinStart) epochMinStart = t.start;
   }
   if (epochMinStart !== Infinity) {
@@ -172,7 +185,9 @@ export const enrichTurns = (
 
   // Step 4: synthesize sequential positions when nothing has a start
   // time but durations are known.
-  const hasAnyStart = raw.some((t) => t.start != null);
+  const hasAnyStart = raw.some(
+    (t) => t.start != null && !(skipSystemRows && t.role === "system"),
+  );
   const hasAnyDuration = raw.some((t) => t.duration != null);
   if (!hasAnyStart && hasAnyDuration) {
     let cursor = 0;
@@ -211,20 +226,39 @@ export const enrichTurns = (
   // sits inline at the moment it ran, often mid-turn; it is not speech, so it
   // neither interrupts nor splits the gap between the turns around it.
   let prev = null;
+  // Set when a skipped system row sits between `prev` and the current turn.
+  let systemBetween = false;
   for (const cur of sorted) {
     cur.silenceBefore = null;
     cur.overlapsPrev = false;
+    cur.slowResponse = false;
+    cur.agentLatency = null;
     if (cur.role === "tool") continue;
+    if (skipSystemRows && cur.role === "system") {
+      systemBetween = true;
+      continue;
+    }
     if (prev && prev.end != null && cur.start != null) {
       const gap = cur.start - prev.end;
       if (gap < -0.1) {
         cur.silenceBefore = 0;
         cur.overlapsPrev = true;
-      } else if (gap > 0.3) {
-        cur.silenceBefore = gap;
+      } else {
+        if (gap > 0.3) cur.silenceBefore = gap;
+        // Only a gap that follows a caller or agent turn is an agent
+        // response time; a system row in between is not.
+        if (
+          cur.role === "assistant" &&
+          !systemBetween &&
+          (prev.role === "user" || prev.role === "assistant")
+        ) {
+          cur.agentLatency = Math.max(gap, 0);
+          if (gap > SLOW_RESPONSE_SECONDS) cur.slowResponse = true;
+        }
       }
     }
     prev = cur;
+    systemBetween = false;
   }
   return sorted;
 };
@@ -262,6 +296,7 @@ export const computeCallMetrics = (turns) => {
       silenceTotal: 0,
       silenceCount: 0,
       timeToFirstWord: null,
+      worstAgentLatency: null,
     };
   }
 
@@ -292,12 +327,19 @@ export const computeCallMetrics = (turns) => {
   let silenceTotal = 0;
   let silenceCount = 0;
   let interruptionCount = 0;
+  let worstAgentLatency = null;
   turns.forEach((t) => {
     if (t.silenceBefore != null && t.silenceBefore > 0) {
       silenceTotal += t.silenceBefore;
       silenceCount += 1;
     }
     if (t.overlapsPrev) interruptionCount += 1;
+    if (
+      t.agentLatency != null &&
+      (worstAgentLatency == null || t.agentLatency > worstAgentLatency)
+    ) {
+      worstAgentLatency = t.agentLatency;
+    }
   });
 
   // Time to first word: earliest start among non-system turns. For voice
@@ -323,5 +365,6 @@ export const computeCallMetrics = (turns) => {
     silenceTotal,
     silenceCount,
     timeToFirstWord: ttfw,
+    worstAgentLatency,
   };
 };
