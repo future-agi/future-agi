@@ -8,6 +8,8 @@ Usage:
     python manage.py strip_eval_config_evaluator_keys --restore-all [--keys k1 k2]
 """
 
+import uuid
+
 from django.core.management.base import BaseCommand, CommandError
 
 from simulate.models import SimulateEvalConfig, SimulateEvalConfigRemovedKeys
@@ -30,7 +32,9 @@ class Command(BaseCommand):
     )
 
     def add_arguments(self, parser):
-        parser.add_argument("--dry-run", action="store_true", help="Count, write nothing.")
+        parser.add_argument(
+            "--dry-run", action="store_true", help="Count, write nothing."
+        )
         parser.add_argument(
             "--restore", nargs="+", metavar="EVAL_CONFIG_ID", help="Restore these rows."
         )
@@ -41,7 +45,8 @@ class Command(BaseCommand):
             "--keys",
             nargs="+",
             metavar="KEY",
-            help=f"Narrow the keys a restore brings back (of: {', '.join(sorted(RESTORABLE_KEYS))}).",
+            choices=sorted(RESTORABLE_KEYS),
+            help="Narrow the keys a restore brings back (default: all of them).",
         )
 
     def handle(self, *args, **options):
@@ -52,17 +57,27 @@ class Command(BaseCommand):
             if options["dry_run"]:
                 raise CommandError("--dry-run applies to the strip, not a restore.")
             keys = options["keys"] or RESTORABLE_KEYS
+            ids = None
+            if options["restore"]:
+                ids = []
+                for value in options["restore"]:
+                    try:
+                        ids.append(uuid.UUID(value))
+                    except ValueError as exc:
+                        raise CommandError(f"Not an eval config id: {value}") from exc
             report = restore(
                 SimulateEvalConfig,
                 SimulateEvalConfigRemovedKeys,
-                ids=options["restore"] if options["restore"] else None,
+                ids=ids,
                 keys=keys,
             )
             self.stdout.write(
-                f"restored={len(report['restored'])} "
-                f"missing={len(report['missing'])} raced={len(report['raced'])}"
+                " ".join(
+                    f"{label}={len(report[label])}"
+                    for label in ("restored", "missing", "raced", "skipped", "none")
+                )
             )
-            for label in ("missing", "raced"):
+            for label in ("missing", "raced", "skipped", "none"):
                 for eval_config_id in report[label]:
                     self.stdout.write(f"{label}: {eval_config_id}")
             return

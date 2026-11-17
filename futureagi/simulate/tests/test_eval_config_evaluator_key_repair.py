@@ -17,10 +17,10 @@ from datetime import timedelta
 from io import StringIO
 
 import pytest
-from django.core.management import call_command
+from django.core.management import CommandError, call_command
 from django.db import connection
 from django.db.migrations.loader import MigrationLoader
-from django.db.models import QuerySet
+from django.db.models import JSONField, QuerySet, Value
 from django.test import override_settings
 from django.utils import timezone
 
@@ -61,9 +61,17 @@ CHECK_INTERNET_PARAMETER = {
     "config": {"check_internet": {"type": "boolean"}},
 }
 
+API_KEY_PARAMETER = {
+    "eval_type_id": "AgentEvaluator",
+    "config": {"api_key": {"type": "string"}},
+}
+
 # (id, template config, nested dict as read, nested dict after, the copy kept)
-# `None` for the copy means no copy row is written.
-GOLDEN = [
+# `None` for the copy means no copy row is written. A template config of `None` is stored
+# as a JSON null.
+# The two lists below are identical today. A later change to the service's rule edits only
+# SERVICE_GOLDEN; MIGRATION_GOLDEN is the frozen migration's behaviour and never changes.
+_GOLDEN_ROWS = [
     (
         "agent-leak-with-api-key",
         NO_PARAMETER_LIST,
@@ -145,7 +153,23 @@ GOLDEN = [
         {},
         {"pass_threshold": 0.5, "model": "m"},
     ),
+    (
+        "api-key-among-the-templates-own-parameters",
+        API_KEY_PARAMETER,
+        {"pass_threshold": 0.5, "model": "m", "api_key": "sk-3"},
+        {},
+        {"pass_threshold": 0.5, "model": "m"},
+    ),
+    (
+        "template-config-is-none",
+        None,
+        {"pass_threshold": 0.5, "model": "m", "api_key": "sk-4", "rule_prompt": "r"},
+        {},
+        {"pass_threshold": 0.5, "model": "m", "rule_prompt": "r"},
+    ),
 ]
+SERVICE_GOLDEN = copy.deepcopy(_GOLDEN_ROWS)
+MIGRATION_GOLDEN = copy.deepcopy(_GOLDEN_ROWS)
 
 _historical_apps = None
 
@@ -229,11 +253,16 @@ def run_test(db, organization, workspace, agent_definition):
 @pytest.fixture
 def make_template(db, organization):
     def _make(config):
-        return EvalTemplate.objects.create(
+        template = EvalTemplate.objects.create(
             name=f"strip-keys-eval-{uuid.uuid4().hex[:8]}",
-            config=copy.deepcopy(config),
+            config={} if config is None else copy.deepcopy(config),
             organization=organization,
         )
+        if config is None:
+            EvalTemplate.objects.filter(pk=template.pk).update(
+                config=Value(None, output_field=JSONField())
+            )
+        return template
 
     return _make
 
@@ -265,19 +294,12 @@ def _copies(row):
 @pytest.mark.unit
 @pytest.mark.django_db
 class TestGoldenTable:
-    @pytest.mark.parametrize(
-        "template_config, before, after, kept_copy",
-        [case[1:] for case in GOLDEN],
-        ids=[case[0] for case in GOLDEN],
-    )
-    def test_the_rule_matches_the_golden_table(
-        self, copy_under_test, make_row, template_config, before, after, kept_copy
-    ):
+    def _check(self, run, make_row, template_config, before, after, kept_copy):
         row = make_row(
             {"config": copy.deepcopy(before)}, template_config=template_config
         )
 
-        copy_under_test.run()
+        run()
 
         assert _reload(row).config == {"config": after}
         copies = _copies(row)
@@ -287,6 +309,30 @@ class TestGoldenTable:
             assert [c.removed for c in copies] == [kept_copy]
             assert "api_key" not in copies[0].removed
             assert None not in copies[0].removed.values()
+
+    @pytest.mark.parametrize(
+        "template_config, before, after, kept_copy",
+        [case[1:] for case in SERVICE_GOLDEN],
+        ids=[case[0] for case in SERVICE_GOLDEN],
+    )
+    def test_the_service_matches_its_golden_table(
+        self, make_row, template_config, before, after, kept_copy
+    ):
+        self._check(
+            _ServiceCopy.run, make_row, template_config, before, after, kept_copy
+        )
+
+    @pytest.mark.parametrize(
+        "template_config, before, after, kept_copy",
+        [case[1:] for case in MIGRATION_GOLDEN],
+        ids=[case[0] for case in MIGRATION_GOLDEN],
+    )
+    def test_the_migration_matches_its_golden_table(
+        self, make_row, template_config, before, after, kept_copy
+    ):
+        self._check(
+            _MigrationCopy.run, make_row, template_config, before, after, kept_copy
+        )
 
 
 @pytest.mark.unit
@@ -439,29 +485,48 @@ class TestStrip:
         assert counts == (1, 1)
         assert _reload(row).config == {"config": {"api_key": "k"}}
 
-    def test_a_restored_row_is_not_stripped_again(self, make_row):
+    def test_a_restored_row_that_leaks_again_loses_the_key_and_signal_but_keeps_its_text(
+        self, make_row
+    ):
         row = make_row(
             {"config": {"pass_threshold": 0.5, "model": "m", "rule_prompt": "mine"}}
         )
         strip_rows(SimulateEvalConfig, SimulateEvalConfigRemovedKeys)
         restore(SimulateEvalConfig, SimulateEvalConfigRemovedKeys)
-        after_restore = _reload(row).config
 
-        # Something wrote the signal back, as an old pod would.
+        # Something wrote the key and the signal back, as an old pod would.
         SimulateEvalConfig.all_objects.filter(pk=row.pk).update(
             config={
                 "config": {
-                    **after_restore["config"],
+                    "rule_prompt": "mine",
                     "pass_threshold": 0.5,
                     "model": "m",
+                    "provider": "p",
+                    "api_key": "sk-leak",
                 }
             }
         )
-        before_strip = _reload(row).config
         counts = strip_rows(SimulateEvalConfig, SimulateEvalConfigRemovedKeys)
 
-        assert counts == (1, 0)
-        assert _reload(row).config == before_strip
+        assert counts == (1, 1)
+        assert _reload(row).config == {"config": {"rule_prompt": "mine"}}
+        assert [c.removed for c in _copies(row) if c.restored_at is None] == [
+            {"pass_threshold": 0.5, "model": "m", "provider": "p"}
+        ]
+
+    def test_a_restored_row_with_only_the_key_loses_just_the_key(self, make_row):
+        row = make_row(
+            {"config": {"pass_threshold": 0.5, "model": "m", "rule_prompt": "mine"}}
+        )
+        strip_rows(SimulateEvalConfig, SimulateEvalConfigRemovedKeys)
+        restore(SimulateEvalConfig, SimulateEvalConfigRemovedKeys)
+        SimulateEvalConfig.all_objects.filter(pk=row.pk).update(
+            config={"config": {"rule_prompt": "mine", "api_key": "sk-leak"}}
+        )
+
+        strip_rows(SimulateEvalConfig, SimulateEvalConfigRemovedKeys)
+
+        assert _reload(row).config == {"config": {"rule_prompt": "mine"}}
 
 
 @pytest.mark.unit
@@ -490,7 +555,13 @@ class TestRestore:
 
         report = restore(SimulateEvalConfig, SimulateEvalConfigRemovedKeys)
 
-        assert report == {"restored": [row.id], "missing": [], "raced": []}
+        assert report == {
+            "restored": [row.id],
+            "missing": [],
+            "raced": [],
+            "skipped": [],
+            "none": [],
+        }
         assert _reload(row).config == {
             "config": {"rule_prompt": "text", "choices": ["a"]}
         }
@@ -525,7 +596,7 @@ class TestRestore:
 
         assert _reload(row).config == {"config": {"rule_prompt": "older"}}
 
-    def test_keys_narrow_the_set_and_cannot_widen_it(self, make_row):
+    def test_keys_narrow_the_set(self, make_row):
         row = self._stripped(
             make_row,
             {"pass_threshold": 0.5, "model": "m", "rule_prompt": "t", "choices": ["a"]},
@@ -534,7 +605,7 @@ class TestRestore:
         restore(
             SimulateEvalConfig,
             SimulateEvalConfigRemovedKeys,
-            keys=["rule_prompt", "model"],
+            keys=["rule_prompt"],
         )
 
         assert _reload(row).config == {"config": {"rule_prompt": "t"}}
@@ -547,7 +618,13 @@ class TestRestore:
 
         report = restore(SimulateEvalConfig, SimulateEvalConfigRemovedKeys)
 
-        assert report == {"restored": [], "missing": [gone], "raced": []}
+        assert report == {
+            "restored": [],
+            "missing": [gone],
+            "raced": [],
+            "skipped": [],
+            "none": [],
+        }
 
     def test_a_soft_deleted_row_is_restored_and_a_missing_nested_dict_created(
         self, make_row
@@ -605,6 +682,158 @@ class TestRestore:
 
         assert not eval_config_repair.has_leak_signal(_reload(row).config["config"])
 
+    def test_a_narrowed_restore_leaves_the_copy_open_for_a_second_one(self, make_row):
+        row = self._stripped(
+            make_row,
+            {
+                "pass_threshold": 0.5,
+                "model": "m",
+                "rule_prompt": "r",
+                "system_prompt": "s",
+            },
+        )
+
+        first = restore(
+            SimulateEvalConfig,
+            SimulateEvalConfigRemovedKeys,
+            keys=["rule_prompt"],
+        )
+        [copy_row] = _copies(row)
+
+        assert first["restored"] == [row.id]
+        assert _reload(row).config == {"config": {"rule_prompt": "r"}}
+        assert copy_row.restored_at is None
+        assert copy_row.restored_keys == ["rule_prompt"]
+
+        second = restore(
+            SimulateEvalConfig,
+            SimulateEvalConfigRemovedKeys,
+            keys=["system_prompt"],
+        )
+        [copy_row] = _copies(row)
+
+        assert second["restored"] == [row.id]
+        assert _reload(row).config == {
+            "config": {"rule_prompt": "r", "system_prompt": "s"}
+        }
+        assert copy_row.restored_at is not None
+        assert copy_row.restored_keys == ["rule_prompt", "system_prompt"]
+
+    def test_a_narrowed_restore_that_applies_nothing_marks_nothing(self, make_row):
+        row = self._stripped(
+            make_row, {"pass_threshold": 0.5, "model": "m", "rule_prompt": "r"}
+        )
+
+        report = restore(
+            SimulateEvalConfig,
+            SimulateEvalConfigRemovedKeys,
+            keys=["system_prompt"],
+        )
+        [copy_row] = _copies(row)
+
+        assert report["restored"] == []
+        assert copy_row.restored_at is None
+        assert not copy_row.restored_keys
+        assert _reload(row).config == {"config": {}}
+
+    def test_restored_at_waits_for_every_restorable_key(self, make_row):
+        row = self._stripped(
+            make_row,
+            {"pass_threshold": 0.5, "model": "m", "rule_prompt": "r", "choices": ["a"]},
+        )
+        restore(SimulateEvalConfig, SimulateEvalConfigRemovedKeys, keys=["choices"])
+        assert _copies(row)[0].restored_at is None
+
+        restore(SimulateEvalConfig, SimulateEvalConfigRemovedKeys, keys=["rule_prompt"])
+
+        assert _copies(row)[0].restored_at is not None
+
+    def test_a_key_the_row_already_held_counts_as_handled(self, make_row):
+        row = self._stripped(
+            make_row, {"pass_threshold": 0.5, "model": "m", "rule_prompt": "old"}
+        )
+        SimulateEvalConfig.all_objects.filter(pk=row.pk).update(
+            config={"config": {"rule_prompt": "new"}}
+        )
+
+        report = restore(SimulateEvalConfig, SimulateEvalConfigRemovedKeys)
+        [copy_row] = _copies(row)
+
+        assert report["restored"] == []
+        assert copy_row.restored_at is not None
+
+    def test_a_bad_key_raises(self, make_row):
+        with pytest.raises(ValueError):
+            restore(
+                SimulateEvalConfig,
+                SimulateEvalConfigRemovedKeys,
+                keys=["rule_prompt", "model"],
+            )
+
+    def test_an_empty_key_set_raises(self, make_row):
+        with pytest.raises(ValueError):
+            restore(SimulateEvalConfig, SimulateEvalConfigRemovedKeys, keys=[])
+
+    def test_a_copy_with_only_signal_keys_is_neither_marked_nor_reported(
+        self, make_row
+    ):
+        row = make_row({"config": {}})
+        SimulateEvalConfigRemovedKeys.objects.create(
+            eval_config_id=row.id, removed={"pass_threshold": 0.5, "model": "m"}
+        )
+
+        report = restore(
+            SimulateEvalConfig, SimulateEvalConfigRemovedKeys, ids=[row.id]
+        )
+        [copy_row] = _copies(row)
+
+        assert report["restored"] == []
+        assert report["none"] == [row.id]
+        assert copy_row.restored_at is None
+        assert copy_row.restored_keys is None
+        assert _reload(row).config == {"config": {}}
+
+    def test_an_id_with_no_copy_is_reported_as_none(self, make_row):
+        row = make_row({"config": {}})
+
+        report = restore(
+            SimulateEvalConfig, SimulateEvalConfigRemovedKeys, ids=[row.id]
+        )
+
+        assert report["none"] == [row.id]
+        assert report["restored"] == []
+
+    def test_a_sql_null_config_row_is_restored(self, make_row):
+        row = make_row({"config": {}})
+        SimulateEvalConfig.all_objects.filter(pk=row.pk).update(config=None)
+        SimulateEvalConfigRemovedKeys.objects.create(
+            eval_config_id=row.id, removed={"rule_prompt": "x"}
+        )
+
+        report = restore(SimulateEvalConfig, SimulateEvalConfigRemovedKeys)
+
+        assert report["restored"] == [row.id]
+        assert _reload(row).config == {"config": {"rule_prompt": "x"}}
+
+    @pytest.mark.parametrize("nested", ["text", ["a"], None, 3])
+    def test_a_nested_value_that_is_not_a_dict_is_skipped_not_replaced(
+        self, make_row, nested
+    ):
+        row = make_row({"config": {}})
+        SimulateEvalConfig.all_objects.filter(pk=row.pk).update(
+            config={"config": nested, "run_config": {}}
+        )
+        SimulateEvalConfigRemovedKeys.objects.create(
+            eval_config_id=row.id, removed={"rule_prompt": "x"}
+        )
+
+        report = restore(SimulateEvalConfig, SimulateEvalConfigRemovedKeys)
+
+        assert report["skipped"] == [row.id]
+        assert report["restored"] == []
+        assert _reload(row).config == {"config": nested, "run_config": {}}
+        assert _copies(row)[0].restored_at is None
+
 
 @pytest.mark.unit
 @pytest.mark.django_db
@@ -628,7 +857,13 @@ class TestCommand:
         call_command(
             "strip_eval_config_evaluator_keys", "--restore", str(row.id), stdout=out
         )
-        assert out.getvalue().split() == ["restored=1", "missing=0", "raced=0"]
+        assert out.getvalue().split() == [
+            "restored=1",
+            "missing=0",
+            "raced=0",
+            "skipped=0",
+            "none=0",
+        ]
         assert _reload(row).config == {"config": {"rule_prompt": "t"}}
 
     def test_restore_all_with_keys(self, make_row):
@@ -653,6 +888,64 @@ class TestCommand:
         )
 
         assert _reload(row).config == {"config": {"choices": ["a"]}}
+
+    def test_restore_with_restore_all_is_refused(self, make_row):
+        with pytest.raises(CommandError):
+            call_command(
+                "strip_eval_config_evaluator_keys",
+                "--restore",
+                str(uuid.uuid4()),
+                "--restore-all",
+                stdout=StringIO(),
+            )
+
+    def test_restore_with_dry_run_is_refused(self, make_row):
+        with pytest.raises(CommandError):
+            call_command(
+                "strip_eval_config_evaluator_keys",
+                "--restore-all",
+                "--dry-run",
+                stdout=StringIO(),
+            )
+
+    def test_keys_without_a_restore_is_refused(self, make_row):
+        with pytest.raises(CommandError):
+            call_command(
+                "strip_eval_config_evaluator_keys",
+                "--keys",
+                "rule_prompt",
+                stdout=StringIO(),
+            )
+
+    def test_a_key_that_cannot_be_restored_is_refused(self, make_row):
+        with pytest.raises(CommandError):
+            call_command(
+                "strip_eval_config_evaluator_keys",
+                "--restore-all",
+                "--keys",
+                "model",
+                stdout=StringIO(),
+            )
+
+    def test_a_bad_uuid_is_a_plain_error(self, make_row):
+        with pytest.raises(CommandError, match="not-a-uuid"):
+            call_command(
+                "strip_eval_config_evaluator_keys",
+                "--restore",
+                "not-a-uuid",
+                stdout=StringIO(),
+            )
+
+    def test_an_id_with_no_copy_is_printed(self, make_row):
+        row = make_row({"config": {}})
+        out = StringIO()
+
+        call_command(
+            "strip_eval_config_evaluator_keys", "--restore", str(row.id), stdout=out
+        )
+
+        assert f"none: {row.id}" in out.getvalue().splitlines()
+        assert "restored=0" in out.getvalue().split()
 
 
 @pytest.mark.unit
