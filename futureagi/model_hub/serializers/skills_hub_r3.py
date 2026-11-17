@@ -145,6 +145,23 @@ class PointerTransition(ContextSerializer):
     expected_impact_fingerprint = Digest()
 
 
+class PolicyChange(ContextSerializer):
+    """One release-rule change since approval, from the audit rows (UXF-10).
+
+    `before`, `after`, `changed_by` and `changed_at` are all null when the
+    audit rows can't account for a rule counter bump: the values at approval
+    weren't recorded. Nothing is inferred.
+    """
+
+    field = s.ChoiceField(
+        choices=["protected_labels", "quarantine", "release_rules", "security_rules"]
+    )
+    before = s.JSONField(allow_null=True)
+    after = s.JSONField(allow_null=True)
+    changed_by = s.CharField(allow_null=True)
+    changed_at = s.DateTimeField(allow_null=True)
+
+
 class ExternalPipelineReference(ContextSerializer):
     url = s.URLField(max_length=2000)
     configuration_identity = s.CharField(max_length=255)

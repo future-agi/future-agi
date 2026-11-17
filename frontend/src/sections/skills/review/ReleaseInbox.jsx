@@ -4,9 +4,6 @@ import {
   Box,
   Button,
   ButtonBase,
-  IconButton,
-  ListItemIcon,
-  Menu,
   MenuItem,
   Stack,
   Table,
@@ -31,8 +28,10 @@ import { reviewPersonName } from '../utils/review-display';
 import PageHeader from "src/components/page-header";
 import ListToolbar from "src/components/list-toolbar";
 import EmptyState from "src/components/empty-state";
-import Iconify from "src/components/iconify";
 import StatusBadge from "src/components/status-badge";
+import RowActions, { RowActionsCell } from "../components/RowActions";
+import { rowLinkProps } from "../components/responsiveTable";
+import { INBOX_OPEN_REQUEST, RELEASE_REQUEST } from "../utils/terms";
 import { DataTablePagination } from "src/components/data-table";
 import { ROW_HEIGHT, TABLE_HEADER_HEIGHT } from "src/theme/sizes";
 import { skillsRouteSx } from "../components/routeGutter";
@@ -67,16 +66,17 @@ function InboxRows({
   currentUserId,
 }) {
   const mobile = useMediaQuery((theme) => theme.breakpoints.down('sm'));
-  const [menu, setMenu] = useState(null);
   const operation = useReviewedOperation();
-  const row = data.results.find((item) => item.id === menu?.id);
   const rows = [...data.results].sort((a, b) => Number(b.status === 'pending') - Number(a.status === 'pending'));
-  // "Review" is for the assigned reviewer of a waiting request; everyone else, including the requester, opens it.
-  const canReview = (item) => item.status === 'pending' && !authored && (!currentUserId || item.authorId !== currentUserId)
-    && (!item.recipients?.length || !currentUserId || item.recipients.some((person) => person.id === currentUserId));
-  const action = (item) => canReview(item)
-    ? <Button size="small" variant="outlined" onClick={() => onOpen(item)}>Review</Button>
-    : <Button size="small" variant="outlined" onClick={() => onOpen(item)}>Open</Button>;
+  // UXF-12: the whole row opens the request; "Open request" stays inline as a ghost button and leads the ⋯
+  // menu, which also holds "Mark this revision seen" (kept reachable on a phone: phoneMenu).
+  const primary = (item) => ({ label: INBOX_OPEN_REQUEST, onClick: () => onOpen(item) });
+  const secondary = (item) => [{
+    label: 'Mark this revision seen',
+    disabled: !onSeen || !item.unread || operation.busy || operation.uncertain,
+    reason: !item.unread ? 'Already seen' : undefined,
+    onClick: () => operation.run(onSeen, { requestId: item.id, revision: item.revision }),
+  }];
   const settled = (item) => item.status !== 'pending';
   return (
     <Stack spacing={1}>
@@ -112,12 +112,12 @@ function InboxRows({
       {!data.results.length ? (
         <EmptyState
           variant="no-results"
-          title={authored ? 'No requests sent yet' : 'No reviews waiting for you'}
+          title={authored ? 'No requests sent yet' : 'No requests waiting for you'}
           description={authored ? 'Requests you send appear here.' : 'Requests assigned to you appear here.'}
         />
       ) : (
         <>
-          {mobile ? <Stack aria-label="Assigned release reviews">{rows.map((item) => <Box key={item.id} sx={{ position: 'relative', borderBottom: 1, borderColor: 'divider' }}>
+          {mobile ? <Stack aria-label="Assigned release requests">{rows.map((item) => <Box key={item.id} sx={{ position: 'relative', borderBottom: 1, borderColor: 'divider' }}>
             {/* One stacked card, and the whole card opens the request: name and status, the request title, then who and when. */}
             <ButtonBase aria-label={item.name} onClick={() => onOpen(item)} sx={{ display: 'block', width: 1, textAlign: 'left', py: 1.5, pr: 5, borderRadius: 1, '&.Mui-focusVisible': { outline: '2px solid', outlineColor: 'primary.main', outlineOffset: -2 } }}>
               <Stack spacing={0.5} sx={{ minWidth: 0 }}>
@@ -129,31 +129,28 @@ function InboxRows({
                 <Typography variant="s3" color="text.secondary">{reviewPersonName(item.authorName)} · <When value={item.updatedAt} fallback="Time not reported" /></Typography>
               </Stack>
             </ButtonBase>
-            <IconButton size="small" aria-label={`Actions for ${item.name}`} onClick={(event) => setMenu({ id: item.id, anchor: event.currentTarget })} sx={{ position: 'absolute', top: 10, right: 0 }}><Iconify icon="solar:menu-dots-bold" width={16} /></IconButton>
+            <Box sx={{ position: 'absolute', top: 10, right: 0 }}><RowActions name={item.name} primary={primary(item)} actions={secondary(item)} phoneMenu /></Box>
           </Box>)}</Stack> : <TableContainer sx={{ maxWidth: 1 }}>
-            <Table size="small" aria-label="Assigned release reviews">
+            <Table size="small" aria-label="Assigned release requests">
               <TableHead>
                 <TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}>
-                  <TableCell>Release</TableCell>
+                  <TableCell>{RELEASE_REQUEST}</TableCell>
                   <TableCell>Status</TableCell>
                   <TableCell>Updated</TableCell>
                   <TableCell align="right">Actions</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
-                {rows.map((item) => (
+                {rows.map((item) => {
+                  const { sx: linkSx, ...link } = rowLinkProps(primary(item));
+                  return (
                   <TableRow
                     key={item.id}
-                    hover
-                    sx={{ minHeight: ROW_HEIGHT.default }}
+                    {...link}
+                    sx={[{ minHeight: ROW_HEIGHT.default }, linkSx || {}]}
                   >
                     <TableCell sx={{ width: { xs: '70%', sm: 'auto' } }}>
-                      <Button
-                        color="inherit"
-                        aria-label={item.name}
-                        onClick={() => onOpen(item)}
-                        sx={{ maxWidth: 1, p: 0, justifyContent: 'flex-start' }}
-                      >
+                      <Box sx={{ display: 'flex', alignItems: 'center', maxWidth: 1 }}>
                         {item.unread && item.status === 'pending' && <><Box component="span" aria-hidden="true" sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: 'primary.main', flexShrink: 0, mr: 1 }} /><Box component="span" sx={visuallyHidden}>Unread</Box></>}
                         <Typography
                           variant="s1"
@@ -166,7 +163,7 @@ function InboxRows({
                         >
                           {item.name}{item.transition && ` · ${releaseTitle(item.transition)}`}
                         </Typography>
-                      </Button>
+                      </Box>
                       <Typography variant="s3" display="block">
                         Requested by {reviewPersonName(item.authorName)} · {item.subjectKind === "agent_context"
                           ? "Agent context"
@@ -179,20 +176,10 @@ function InboxRows({
                       <StatusBadge status={item.status === "pending" ? "in_review" : item.status === "changes_requested" ? "needs_changes" : item.status} label={item.status === "changes_requested" ? "Changes requested" : undefined} />
                     </TableCell>
                     <TableCell sx={{ color: 'text.secondary', width: { xs: '70%', sm: 'auto' }, pt: { xs: 0, sm: 1 } }}><When value={item.updatedAt} fallback="Time not reported" /></TableCell>
-                    <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>
-                      {action(item)}
-                      <IconButton
-                        size="small"
-                        aria-label={`Actions for ${item.name}`}
-                        onClick={(event) =>
-                          setMenu({ id: item.id, anchor: event.currentTarget })
-                        }
-                      >
-                        <Iconify icon="solar:menu-dots-bold" width={16} />
-                      </IconButton>
-                    </TableCell>
+                    <RowActionsCell name={item.name} primary={primary(item)} actions={secondary(item)} inline="primary" />
                   </TableRow>
-                ))}
+                  );
+                })}
               </TableBody>
             </Table>
           </TableContainer>}
@@ -205,41 +192,6 @@ function InboxRows({
           />
         </>
       )}
-      <Menu
-        open={Boolean(row)}
-        anchorEl={menu?.anchor}
-        onClose={() => setMenu(null)}
-      >
-        <MenuItem
-          onClick={() => {
-            onOpen(row);
-            setMenu(null);
-          }}
-        >
-          <ListItemIcon>
-            <Iconify icon="solar:eye-linear" width={16} />
-          </ListItemIcon>
-          Open exact request
-        </MenuItem>
-        <MenuItem
-          disabled={
-            !onSeen || !row?.unread || operation.busy || operation.uncertain
-          }
-          onClick={async () => {
-            const current = row;
-            setMenu(null);
-            await operation.run(onSeen, {
-              requestId: current.id,
-              revision: current.revision,
-            });
-          }}
-        >
-          <ListItemIcon>
-            <Iconify icon="solar:check-read-linear" width={16} />
-          </ListItemIcon>
-          Mark this revision seen
-        </MenuItem>
-      </Menu>
     </Stack>
   );
 }
@@ -276,11 +228,11 @@ export default function ReleaseInbox({
         description="Review changes before they reach production."
         sx={{ mb: 1.5, flexDirection: { xs: 'column', sm: 'row' }, gap: 1.5, '& > .MuiStack-root + .MuiStack-root': { ml: { xs: 0, sm: 2 } } }}
         actions={scopeKey && !["off", "denied", "forbidden", "unavailable"].includes(state) && <>
-          {onCompose && <Button variant="contained" color="primary" onClick={onCompose}>Request release review</Button>}
+          {onCompose && <Button variant="contained" color="primary" onClick={onCompose}>Request release</Button>}
         </>}
       />
       {scopeKey && !['off', 'denied', 'forbidden', 'unavailable'].includes(state) && onToggleAuthored && <CustomTabs value={authored ? 'mine' : 'assigned'} onChange={(_, value) => { if ((value === 'mine') !== authored) onToggleAuthored(); }} aria-label="Review inbox views" sx={{ mb: 1.5 }}><Tab value="assigned" label={data?.pendingCount ? `Assigned to me · ${data.pendingCount} waiting` : 'Assigned to me'} /><Tab value="mine" label="My requests" /></CustomTabs>}
-      {!scopeKey || ['denied', 'forbidden'].includes(state) ? <CapabilityNotice title="You don't have access to reviews." description="Ask a workspace admin for reviewer access." actions={<RequestReviewerAccess />} /> : state === 'loading' ? <ContentSkeleton variant="rows" rows={5} label="Loading reviews" /> : state === 'error' ? <ErrorState title="Couldn't load reviews." onRetry={onRetry} /> : state === 'empty' || (state === 'ready' && data && !data.results.length) ? <EmptyState title={authored ? 'No requests sent yet' : 'No reviews waiting for you'} description={authored ? 'Requests you send appear here.' : 'Requests assigned to you appear here.'} secondaryAction={!authored && onToggleAuthored ? <Button onClick={onToggleAuthored}>View my requests</Button> : undefined} /> : scopeKey && state === "ready" && data ? (
+      {!scopeKey || ['denied', 'forbidden'].includes(state) ? <CapabilityNotice title="You don't have access to reviews." description="Ask a workspace admin for reviewer access." actions={<RequestReviewerAccess />} /> : state === 'loading' ? <ContentSkeleton variant="rows" rows={5} label="Loading reviews" /> : state === 'error' ? <ErrorState title="Couldn't load reviews." onRetry={onRetry} /> : state === 'empty' || (state === 'ready' && data && !data.results.length) ? <EmptyState title={authored ? 'No requests sent yet' : 'No requests waiting for you'} description={authored ? 'Requests you send appear here.' : 'Requests assigned to you appear here.'} secondaryAction={!authored && onToggleAuthored ? <Button onClick={onToggleAuthored}>View my requests</Button> : undefined} /> : scopeKey && state === "ready" && data ? (
         <InboxRows
           key={scopeKey}
           {...{ data, status, onStatusChange, onPageChange, onOpen, onSeen, authored, currentUserId }}

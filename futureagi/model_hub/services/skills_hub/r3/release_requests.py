@@ -21,10 +21,12 @@ from model_hub.models.skills_hub_r3 import (
     HubSkillReleaseRecipient,
     HubSkillReleaseRequest,
 )
+from model_hub.models.skills_hub_v11 import HubSkillLabelPolicyEvent
 from model_hub.models.skills_hub_v12 import (
     HubSkillContextBinding,
     HubSkillContextDependency,
     HubSkillContextOperation,
+    HubSkillContextQuarantine,
 )
 from model_hub.services.skills_hub.errors import SkillsHubError
 from model_hub.services.skills_hub.labels import _set_label_locked, _validate_name
@@ -1038,6 +1040,122 @@ def _renewed_packet(
     return packet, changes, removed
 
 
+# --- UXF-10: what changed in the release rules since approval ---------------
+# A packet stores only the rule counters it was approved under
+# (`expected_release_revision`, `expected_security_revision`), never the rule
+# values. The values come from the append-only audit rows written in the same
+# transaction as each counter bump: label-protection events carry the old and
+# new protected names, quarantine events carry each version's state. An entry
+# is reported only when the audit rows account for the counter delta exactly;
+# any bump they don't account for is reported with before/after, who and when
+# all null, which the dialog shows as "Values at approval weren't recorded".
+# Label pointer moves also advance `release_revision`; they are not rule
+# changes and produce no entry (the `changes` rows already report the move).
+_POLICY_CHANGE_LIMIT = 100
+
+
+def _person(user) -> str | None:
+    return (user.name or user.email) if user is not None else None
+
+
+def _unrecorded(field: str) -> dict:
+    return {
+        "field": field,
+        "before": None,
+        "after": None,
+        "changed_by": None,
+        "changed_at": None,
+    }
+
+
+def _policy_changes(
+    principal: SkillPrincipal, skill_id: UUID, old: dict, new: dict
+) -> list[dict]:
+    scope = _scope(principal)
+    changes: list[dict] = []
+    release_from = old["expected_release_revision"]
+    release_to = new["expected_release_revision"]
+    if release_to > release_from:
+        protection = list(
+            HubSkillLabelPolicyEvent.objects.filter(
+                **scope,
+                skill_id=skill_id,
+                from_revision__gte=release_from,
+                to_revision__lte=release_to,
+            )
+            .select_related("actor")
+            .order_by("to_revision")[:_POLICY_CHANGE_LIMIT]
+        )
+        moves = set(
+            HubSkillLabelEvent.objects.filter(
+                skill_id=skill_id,
+                release_revision__gt=release_from,
+                release_revision__lte=release_to,
+            ).values_list("release_revision", flat=True)
+        )
+        accounted = moves | {event.to_revision for event in protection}
+        for event in protection:
+            changes.append(
+                {
+                    "field": "protected_labels",
+                    "before": sorted(event.old_names),
+                    "after": sorted(event.new_names),
+                    "changed_by": _person(event.actor),
+                    "changed_at": event.created_at,
+                }
+            )
+        if any(
+            revision not in accounted
+            for revision in range(release_from + 1, release_to + 1)
+        ):
+            changes.append(_unrecorded("release_rules"))
+    security_from = old["expected_security_revision"]
+    security_to = new["expected_security_revision"]
+    if security_to > security_from:
+        delta = security_to - security_from
+        # Every security bump is one quarantine event under the skill row lock,
+        # so the newest `delta` events are exactly the ones after approval.
+        limit = min(delta, _POLICY_CHANGE_LIMIT)
+        events = list(
+            HubSkillContextQuarantine.objects.filter(
+                **scope, version__skill_id=skill_id
+            )
+            .select_related("version", "actor")
+            .order_by("-created_at", "-revision")[:limit]
+        )
+        for event in reversed(events):
+            # Revision 1 is the version's first event: it was not quarantined
+            # before. A missing earlier event leaves the earlier state unknown.
+            before = (
+                False
+                if event.revision == 1
+                else HubSkillContextQuarantine.objects.filter(
+                    **scope, version_id=event.version_id, revision=event.revision - 1
+                )
+                .values_list("active", flat=True)
+                .first()
+            )
+            changes.append(
+                {
+                    "field": "quarantine",
+                    "before": (
+                        None
+                        if before is None
+                        else {"version": event.version.number, "quarantined": before}
+                    ),
+                    "after": {
+                        "version": event.version.number,
+                        "quarantined": event.active,
+                    },
+                    "changed_by": _person(event.actor),
+                    "changed_at": event.created_at,
+                }
+            )
+        if len(events) < delta:
+            changes.append(_unrecorded("security_rules"))
+    return changes
+
+
 def release_renewal_preview(*, principal: SkillPrincipal, request_id: UUID) -> dict:
     _authorize(principal, write=True)
     request, packet = _request_packet(principal=principal, request_id=request_id)
@@ -1048,6 +1166,12 @@ def release_renewal_preview(*, principal: SkillPrincipal, request_id: UUID) -> d
     fingerprint = _review_digest(renewed)
     if fingerprint == packet.fingerprint:
         raise _error("review_current", "This packet is still current.")
+    policy_changes = _policy_changes(
+        principal,
+        request.skill_id,
+        packet.packet["transition"],
+        renewed["transition"],
+    )
     return {
         "request_id": str(request.pk),
         "revision": request.revision,
@@ -1058,6 +1182,7 @@ def release_renewal_preview(*, principal: SkillPrincipal, request_id: UUID) -> d
         "fingerprint": fingerprint,
         "changes": changes,
         "removed_evidence": removed,
+        "policy_changes": policy_changes,
     }
 
 

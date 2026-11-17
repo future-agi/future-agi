@@ -5,7 +5,8 @@ import StatusBadge from 'src/components/status-badge';
 import { runStatusOf } from 'src/utils/runStatus';
 import { ROW_HEIGHT, TABLE_HEADER_HEIGHT } from 'src/theme/sizes';
 import { evidenceCoverage, evidenceOutcome } from '../utils/review-display';
-import { stackedTableSx } from './responsiveTable';
+import { rowLinkProps, stackedTableSx } from './responsiveTable';
+import RowActions, { RowActionsCell } from './RowActions';
 import When from './When';
 
 // Missing results are "Not recorded", never a pass. A result the page could not
@@ -46,9 +47,16 @@ function useStacked() {
 
 // Display and controlled selection only. Sharing always belongs to the caller,
 // which must explicitly confirm it; neither selection nor Inspect shares data.
-// A private row carries the Private badge only; the caller states once, above
-// the list, that private results must be shared before they can be attached.
-export default function EvidenceSummary({ items = [], selectable = false, selected = [], onToggle, onInspect, renderAction, emptyText = 'No matching test evidence. Not tested is not a pass.' }) {
+// A private row carries a neutral "Private" tag only; the caller states once,
+// above the list, that private results must be shared before they can be attached.
+//
+// Opt-in props (UXF-12, UXF-17):
+//   rowActions        the whole row opens Inspect, which is also the first ⋯ item
+//                     (no per-row button). Off: the row keeps its Inspect text button.
+//   privateSelectable a private row's checkbox can be ticked; the caller must open
+//                     its share consent for that row from onToggle and attach it
+//                     only after the person confirms.
+export default function EvidenceSummary({ items = [], selectable = false, selected = [], onToggle, onInspect, renderAction, rowActions = false, privateSelectable = false, emptyText = 'No matching test evidence. Not tested is not a pass.' }) {
   const [stacked, boxRef] = useStacked();
   const selections = selected instanceof Set ? selected : new Set(selected);
   if (!items.length) return <Typography variant="s1" color="text.secondary">{emptyText}</Typography>;
@@ -58,7 +66,7 @@ export default function EvidenceSummary({ items = [], selectable = false, select
     const title = item.title || kinds[item.kind] || 'Test result';
     const notLoaded = item.resultState === 'not_loaded';
     const result = notLoaded ? null : item.outcome || (item.status === 'completed' ? null : item.status);
-    const checkbox = selectable && <Checkbox size="small" checked={checked} disabled={!onToggle || (!checked && item.visibility === 'private')} onChange={() => onToggle(item)} inputProps={{ 'aria-label': `Attach ${title}` }} />;
+    const checkbox = selectable && <Checkbox size="small" checked={checked} disabled={!onToggle || (!checked && item.visibility === 'private' && !privateSelectable)} onChange={() => onToggle(item)} inputProps={{ 'aria-label': `Attach ${title}` }} />;
     const titleLine = <Stack direction="row" gap={1} alignItems="center" flexWrap="wrap" sx={{ minWidth: 0 }}><Typography variant="s1">{title}</Typography>{item.origin === 'from_test' ? <Chip size="small" variant="outlined" label="From your test" /> : item.suggested && <Chip size="small" variant="outlined" label="Suggested" />}</Stack>;
     const notes = <>
       {notLoaded
@@ -72,17 +80,21 @@ export default function EvidenceSummary({ items = [], selectable = false, select
     const coverage = evidenceCoverage(item.counts, item.cases);
     // A row action: a small text button (the design system's table-row style).
     const inspect = <Button size="small" variant="text" disabled={!onInspect} onClick={() => onInspect(item)} sx={{ flexShrink: 0 }}>Inspect</Button>;
-    return { item, key, checked, checkbox, titleLine, notes, perCheck, badge, coverage, inspect };
+    // UXF-12: with rowActions the row itself opens Inspect, which also leads the ⋯ menu.
+    const primary = rowActions && onInspect ? { label: 'Inspect', onClick: () => onInspect(item) } : undefined;
+    return { item, key, checked, checkbox, titleLine, notes, perCheck, badge, coverage, inspect, primary, title };
   });
 
   if (stacked) {
     // Stacked rows: title with the result on the right; coverage; visibility and
     // expiry with Inspect on the right. Same controls and names as the table.
     return <Box ref={boxRef} sx={{ minWidth: 0, maxWidth: 1 }}><Box component="ul" aria-label="Test evidence" sx={{ m: 0, p: 0, listStyle: 'none' }}>
-      {rows.map(({ item, key, checked, checkbox, titleLine, notes, perCheck, badge, coverage, inspect }) => {
+      {rows.map(({ item, key, checked, checkbox, titleLine, notes, perCheck, badge, coverage, inspect, primary, title }) => {
         const visibility = VISIBILITY[item.visibility] ?? 'Visibility not reported';
-        return <Stack key={key} component="li" direction="row" gap={1} data-selected={selectable && checked ? 'true' : undefined}
-          sx={{ py: 1.5, borderBottom: 1, borderColor: 'divider', minWidth: 0, ...(selectable && checked ? { bgcolor: 'action.selected' } : {}) }}>
+        // A tappable stacked row: the row handlers only (TableRow's `hover` is not a DOM prop).
+        const { hover: _hover, sx: linkSx, ...link } = rowLinkProps(primary);
+        return <Stack key={key} component="li" direction="row" gap={1} data-selected={selectable && checked ? 'true' : undefined} {...link}
+          sx={{ py: 1.5, borderBottom: 1, borderColor: 'divider', minWidth: 0, ...(selectable && checked ? { bgcolor: 'action.selected' } : {}), ...linkSx }}>
           {checkbox && <Box sx={{ flexShrink: 0, mt: -0.75, ml: -0.75 }}>{checkbox}</Box>}
           <Stack spacing={0.5} sx={{ flex: 1, minWidth: 0 }}>
             <Stack direction="row" alignItems="flex-start" justifyContent="space-between" gap={1}>
@@ -98,7 +110,7 @@ export default function EvidenceSummary({ items = [], selectable = false, select
                 {/* " · " only between parts that exist, so no line starts with a separator. */}
                 {[visibility, <When key="expires" value={item.expiresAt} kind="expiry" fallback="Expiry not reported" />].filter(Boolean).map((part, index) => <Fragment key={index}>{index > 0 && ' · '}{part}</Fragment>)}
               </Typography>
-              {inspect}
+              {primary ? <RowActions name={title} primary={primary} /> : inspect}
             </Stack>
           </Stack>
         </Stack>;
@@ -114,17 +126,20 @@ export default function EvidenceSummary({ items = [], selectable = false, select
         {/* The Inspect buttons name themselves; the column header only needs a name for assistive technology. */}
         <TableCell aria-label="Actions" />
       </TableRow></TableHead>
-      <TableBody>{rows.map(({ item, key, checked, checkbox, titleLine, notes, badge, coverage, inspect }) => <TableRow key={key} hover selected={selectable && checked} sx={{ height: ROW_HEIGHT.default }}>
+      <TableBody>{rows.map(({ item, key, checked, checkbox, titleLine, notes, badge, coverage, inspect, primary, title }) => {
+        const { sx: linkSx, ...link } = rowLinkProps(primary);
+        return <TableRow key={key} hover selected={selectable && checked} {...link} sx={[{ height: ROW_HEIGHT.default }, linkSx || {}]}>
         {selectable && <TableCell padding="checkbox">{checkbox}</TableCell>}
         <TableCell sx={{ minWidth: 180 }}><Stack spacing={0.5}>{titleLine}{notes}</Stack></TableCell>
         {/* Result is the badge only (per-check results keep their check name beside each badge). */}
         <TableCell sx={nowrap(140)}>{badge}</TableCell>
         <TableCell sx={{ minWidth: { sm: 160 } }}><Typography variant="s3">{coverage}</Typography></TableCell>
-        <TableCell sx={nowrap(110)}>{item.visibility === 'private' ? <StatusBadge status="private" /> : item.visibility === 'workspace' ? <StatusBadge status="workspace" role="neutral" label="Workspace" /> : <Typography component="span" variant="s3">Not reported</Typography>}</TableCell>
+        <TableCell sx={nowrap(110)}>{item.visibility === 'private' ? <StatusBadge status="private" role="neutral" label={VISIBILITY.private} /> : item.visibility === 'workspace' ? <StatusBadge status="workspace" role="neutral" label="Workspace" /> : <Typography component="span" variant="s3">Not reported</Typography>}</TableCell>
         {/* Under the "Expires" header the cell reads "in 29 days" (the stacked row keeps "Expires in 29 days"). */}
         <TableCell sx={nowrap(120)}><Typography component="span" variant="s3"><When value={item.expiresAt} kind="expiry-short" /></Typography></TableCell>
-        <TableCell data-cell="actions" sx={nowrap()}>{inspect}</TableCell>
-      </TableRow>)}</TableBody>
+        {primary ? <RowActionsCell name={title} primary={primary} /> : <TableCell data-cell="actions" sx={nowrap()}>{inspect}</TableCell>}
+      </TableRow>;
+      })}</TableBody>
     </Table>
   </TableContainer></Box>;
 }
@@ -136,5 +151,7 @@ EvidenceSummary.propTypes = {
   onToggle: PropTypes.func,
   onInspect: PropTypes.func,
   renderAction: PropTypes.func,
+  rowActions: PropTypes.bool,
+  privateSelectable: PropTypes.bool,
   emptyText: PropTypes.string,
 };

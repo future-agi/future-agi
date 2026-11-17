@@ -14,6 +14,7 @@ import TechnicalDetails from "../components/TechnicalDetails";
 import When from "../components/When";
 import { IdentityValue, ReviewState } from "./ReleaseReviewBody";
 import { OperationFeedback, useReviewedOperation } from "./ReleaseRequestPanel";
+import { HUMAN_CHECK } from "../utils/terms";
 
 function AnnotationForm({
   reference,
@@ -32,15 +33,15 @@ function AnnotationForm({
   const locked =
     operation.busy || operation.uncertain || Boolean(operation.result);
   return (
-    <Section title="Human review">
+    <Section title={HUMAN_CHECK}>
       <Stack spacing={1.5}>
         <Stack direction="row" spacing={1}>
           <Typography variant="s1">Automatic result</Typography>
           <StatusBadge status={machineVerdict} />
         </Stack>
         <Typography variant="s3" color="text.secondary">
-          Your review is added next to the automatic result; it doesn&apos;t
-          change it. A new review means the release needs a fresh review.
+          Your check is added next to the automatic result; it doesn&apos;t
+          change it. A new check means the release request needs a new approval.
         </Typography>
         <TechnicalDetails>
           <IdentityValue
@@ -56,7 +57,7 @@ function AnnotationForm({
                 : item.verdict === "agree"
                   ? "Agree"
                   : "Disagree"}{" "}
-              · {item.actor?.name ?? item.actorId ?? "Attributed reviewer"}
+              · {item.actor?.name ?? item.actorId ?? "Attributed person"}
             </Typography>
             <Typography variant="s3" color="text.secondary">
               <When value={item.createdAt} />
@@ -85,7 +86,7 @@ function AnnotationForm({
         ))}
         {!annotations.length && (
           <Typography variant="s3" color="text.secondary">
-            No human reviews yet.
+            No human checks yet.
           </Typography>
         )}
         <TextField
@@ -113,7 +114,7 @@ function AnnotationForm({
           helperText="Cite only the relevant text. The server checks this against the retained check or attempt."
         />
         <TextField
-          label="Review explanation"
+          label="Explanation"
           size="small"
           multiline
           minRows={2}
@@ -124,7 +125,7 @@ function AnnotationForm({
         />
         {stale && (
           <Alert severity="warning">
-            Someone added another review. Your explanation is kept. Read it
+            Someone added another check. Your explanation is kept. Read it
             before you add yours.
           </Alert>
         )}
@@ -133,14 +134,14 @@ function AnnotationForm({
             disabled={locked}
             onClick={() => setRevision(reference.annotationRevision)}
           >
-            I reviewed the new annotations
+            I&apos;ve read the new checks
           </Button>
         )}
         <OperationFeedback operation={operation} />
         {operation.result && (
           <Alert severity="info">
-            Review recorded. The automatic result is unchanged. Refresh the
-            release review before deciding.
+            Check recorded. The automatic result is unchanged. Refresh the
+            release request before deciding.
           </Alert>
         )}
         <Stack direction="row" spacing={1}>
@@ -165,11 +166,11 @@ function AnnotationForm({
               })
             }
           >
-            Append review
+            Add check
           </Button>
           {onRefresh && (
             <Button disabled={operation.busy} onClick={onRefresh}>
-              Refresh annotations
+              Refresh checks
             </Button>
           )}
         </Stack>

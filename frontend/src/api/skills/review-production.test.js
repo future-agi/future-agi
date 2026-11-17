@@ -1,6 +1,6 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 import axios from 'src/utils/axios';
-import { loadSkillReview } from './review-production';
+import { loadSkillReview, mapRenewal } from './review-production';
 
 vi.mock('src/utils/axios', () => ({ default: { get: vi.fn(), post: vi.fn() } }));
 const envelope = (result) => ({ data: { result } });
@@ -35,4 +35,27 @@ it('rejects a comparison missing changed file bytes', async () => {
 });
 it('rejects a candidate whose immutable ID differs even with the same digest', async () => {
   await expect(loadSkillReview('skill', { ...packet, candidate_version_id: 'different-version' }, {})).rejects.toThrow('no longer matches');
+});
+
+// UXF-10: the renewal mapper carries the rule changes, and keeps "not sent" (null)
+// apart from "nothing changed" ([]) so the dialog never claims nothing changed.
+const renewal = { request_id: 'request', revision: 2, status: 'approved', subject_id: 'skill', previous_fingerprint: 'old', fingerprint: 'new',
+  packet: { schema: 1, subject_kind: 'skill', subject_id: 'skill', candidate_version_id: 'version-4', candidate_digest: 'digest-4',
+    transition: { label: 'production', version: 4, expected_version: 3, expected_release_revision: 2, expected_security_revision: 1, expected_impact_fingerprint: 'impact' },
+    target: null, evidence: [], external_pipeline: null },
+  changes: [{ item: 'transition.expected_security_revision', before: 0, after: 1 }], removed_evidence: [] };
+it('maps policy changes with their values, who and when', () => {
+  const mapped = mapRenewal({ ...renewal, policy_changes: [
+    { field: 'protected_labels', before: [], after: ['production'], changed_by: 'Priya Shah', changed_at: '2026-11-16T10:00:00Z' },
+    { field: 'security_rules', before: null, after: null, changed_by: null, changed_at: null },
+  ] });
+  expect(mapped.policyChanges).toEqual([
+    { field: 'protected_labels', before: [], after: ['production'], changedBy: 'Priya Shah', changedAt: '2026-11-16T10:00:00Z', recorded: true },
+    { field: 'security_rules', before: null, after: null, changedBy: null, changedAt: null, recorded: false },
+  ]);
+  expect(mapped.changes).toEqual([{ item: 'transition.expected_security_revision', before: 0, after: 1 }]);
+});
+it('keeps a missing policy list as null, not as no changes', () => {
+  expect(mapRenewal(renewal).policyChanges).toBeNull();
+  expect(mapRenewal({ ...renewal, policy_changes: [] }).policyChanges).toEqual([]);
 });

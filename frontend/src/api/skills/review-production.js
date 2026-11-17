@@ -101,8 +101,21 @@ export const mapRenewal = (value) => {
     packet: { ...packet, evidence: packet.evidence.map((ref) => ({ ...ref, resultState: 'not_loaded' })) },
     changes: value.changes.map((row) => ({ item: row.item, before: row.before, after: row.after })),
     removedEvidence: value.removed_evidence.map((row) => ({ source: row.source, sourceId: row.source_id, reason: row.reason })),
+    // UXF-10: each release-rule change since approval, from the server's audit
+    // rows. Null values mean the values at approval weren't recorded. `null`
+    // (not []) when the server sent no list, so the dialog never claims
+    // "nothing changed" for a rule counter it can't explain.
+    policyChanges: Array.isArray(value.policy_changes) ? value.policy_changes.map(mapPolicyChange) : null,
   };
 };
+export const mapPolicyChange = (row) => ({
+  field: row.field,
+  before: row.before ?? null,
+  after: row.after ?? null,
+  changedBy: row.changed_by ?? null,
+  changedAt: row.changed_at ?? null,
+  recorded: row.before !== null && row.before !== undefined && row.after !== null && row.after !== undefined,
+});
 export async function loadRenewal(requestId, config) {
   return mapRenewal(skillV11Result(await axios.get(renewalPath(requestId), config)));
 }

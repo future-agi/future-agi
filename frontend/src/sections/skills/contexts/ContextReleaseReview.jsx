@@ -4,8 +4,6 @@ import {
   Alert,
   Box,
   Button,
-  Checkbox,
-  FormControlLabel,
   Stack,
   TextField,
   Typography,
@@ -16,8 +14,10 @@ import { useStickyFooterHeight } from '../components/stickyFooter';
 import IdentityChip from "../components/IdentityChip";
 import TechnicalDetails from "../components/TechnicalDetails";
 import { mountName, publishSentence } from "../utils/conclusions";
-
-const DESCRIPTOR_FILE = ".futureagi/context.json";
+import Acknowledgment from "../components/Acknowledgment";
+import ReleaseRuleNote from "../components/ReleaseRuleNote";
+import { PUBLISH_AND_REQUEST_RELEASE } from "../utils/terms";
+import { counted } from "../review/reviewPresentation";
 
 // "v2 changes refund-policy v1 → v2; AGENTS.md is unchanged." The section title already says what
 // publishing creates, so the sentence leads with the version it creates.
@@ -37,15 +37,29 @@ import ReleaseRequestPanel, {
   useReviewedOperation,
 } from "../review/ReleaseRequestPanel";
 import {
+  ChangedFiles,
+  DESCRIPTOR_FILE,
   IdentityValue,
   ReviewFileDiff,
   ReviewState,
+  checkedFiles,
 } from "../review/ReleaseReviewBody";
 import CapabilityChanges from "../review/CapabilityChanges";
 import DecisionFooterRow from "../review/DecisionFooterRow";
 
+// UXF-02: the publisher's one tick names what it covers: the changed files
+// against the published version, and the check warnings when there are any.
+//   "I've checked the 2 changed files against v1 and the 2 check warnings"
+export function publishAcknowledgmentLabel(review) {
+  const files = checkedFiles(review.changes).length;
+  const what = files ? `the ${counted(files, "changed file")}` : "the changes";
+  const against = review.expectedHeadVersion ? ` against v${review.expectedHeadVersion}` : "";
+  const warnings = review.checks?.summary?.warnings || 0;
+  return `I've checked ${what}${against}${warnings ? ` and the ${counted(warnings, "check warning")}` : ""}`;
+}
 function DraftPublication({
   name,
+  releaseRules,
   carried,
   onCarry,
   draftReview,
@@ -56,7 +70,8 @@ function DraftPublication({
   oneStepOperation,
   onRefresh,
 }) {
-  const [warningFingerprint, setWarningFingerprint] = useState(null);
+  // UXF-02: one tick, bound to this review fingerprint, sets both publish
+  // acknowledgments (the review and, when there are warnings, the warnings).
   const [ackFingerprint, setAckFingerprint] = useState(null);
   // The publish operation lives in the controller: the head acknowledgment inside
   // the one publish click advances the draft revision and remounts this form, and
@@ -66,7 +81,7 @@ function DraftPublication({
   const footer = useRef(null);
   useStickyFooterHeight(footer);
   // Acknowledging the head issues a new review fingerprint for the very same candidate bytes.
-  // The reviewer's two acknowledgements carry across that one step, and only when the candidate,
+  // The publisher's acknowledgment carries across that one step, and only when the candidate,
   // its origin, the reviewed head and its static warnings are all unchanged; any other change
   // to the review (a new fingerprint for any other reason) starts the review over.
   const carriedHere =
@@ -81,12 +96,12 @@ function DraftPublication({
   const [note, setNote] = useState(
     (carriedHere ? carried.note : undefined) ?? draftReview.note ?? "",
   );
-  const warnings =
-    warningFingerprint === draftReview.reviewFingerprint ||
-    (carriedHere && carried.warned);
   const reviewed =
     ackFingerprint === draftReview.reviewFingerprint ||
     (carriedHere && carried.reviewed);
+  const warningCount = draftReview.checks?.summary.warnings ?? 0;
+  // The warnings are listed open above the tick, so the same tick covers them.
+  const warnings = reviewed && warningCount > 0;
   const oneStep = oneStepOperation || operation;
   const locked =
     operation.busy ||
@@ -116,21 +131,19 @@ function DraftPublication({
     reviewed &&
     (!draftReview.checks.summary.warnings || warnings) &&
     !locked;
-  // One quiet reason beside the actions while one of them waits: the acknowledgments first, then the confirmation.
-  const warningsPending = draftReview.checks?.summary.warnings > 0 && !warnings;
-  const acknowledgmentReason = !reviewed ? "Tick the review box to publish." : warningsPending ? "Tick the warnings box to publish." : null;
+  // One quiet reason beside the actions while they wait for the tick.
+  const acknowledgmentReason = !reviewed ? "Tick the box to publish." : null;
   // A conflict means the draft or the published head moved after the reviewer ticked: the ticks clear and the
   // review reloads, so the next publish is for what the reviewer sees now.
   const stalled = operation.stale ? operation.failure : oneStep !== operation && oneStep.stale ? oneStep.failure : null;
   const reset = useRef(null);
-  useEffect(() => { reset.current = () => { setAckFingerprint(null); setWarningFingerprint(null); onCarry(null); onRefresh?.(); }; });
+  useEffect(() => { reset.current = () => { setAckFingerprint(null); onCarry(null); onRefresh?.(); }; });
   useEffect(() => { if (stalled) reset.current(); }, [stalled]);
   const clearStale = () => { if (!stalled) return; operation.clearFailure(); if (oneStep !== operation) oneStep.clearFailure(); };
   const blocked = (send) => !send || (draftReview.baseVersion !== draftReview.expectedHeadVersion && !draftReview.headChanges);
   const carryAcknowledgments = () => onCarry({
     reviewed,
     note,
-    warned: warnings,
     candidateDigest: draftReview.candidateDigest,
     baseVersion: draftReview.baseVersion,
     expectedHeadVersion: draftReview.expectedHeadVersion,
@@ -158,6 +171,13 @@ function DraftPublication({
             </Typography>
             {onRefresh && <Button variant="text" size="small" disabled={locked} onClick={() => { clearStale(); onRefresh(); }} sx={{ flexShrink: 0, alignSelf: "flex-start" }}>Reload draft</Button>}
           </Stack>
+          {/* UXF-09: why production needs a release request here, from the rules this page was given. */}
+          <ReleaseRuleNote rules={releaseRules || {
+            label: "production",
+            ...(Array.isArray(draftReview.protectedLabelNames) ? { protectedLabels: draftReview.protectedLabelNames } : {}),
+            reviewRequired: true,
+            subjectKind: "agent_context",
+          }} />
           {draftReview.baseVersion !== draftReview.expectedHeadVersion && (
             <Alert severity="warning">
               This repair starts from v{draftReview.baseVersion}, not the latest v{draftReview.expectedHeadVersion}. Publishing makes it the new latest without the other changes in v{draftReview.expectedHeadVersion}.
@@ -173,15 +193,20 @@ function DraftPublication({
       </Section>
       <Section id="review-files" title={draftReview.baseVersion == null ? "Changes in your draft" : `Changes since v${draftReview.baseVersion}`}>
         <Stack spacing={1.5}>
-          {/* Files people read come first; the machine descriptor's exact diff is one click away. */}
-          {draftReview.changes.filter((file) => file.path !== DESCRIPTOR_FILE).map((file) => (
-            <Box key={file.path}>
+          {/* UXF-05: files people read come first and changed ones are open; unchanged ones are collapsed.
+              The machine descriptor's exact diff is one click away. */}
+          <ChangedFiles files={draftReview.changes.filter((file) => file.path !== DESCRIPTOR_FILE)} renderFile={(file, { open }) => open ? (
+            <Box>
               <Typography variant="m3" sx={{ overflowWrap: "anywhere" }}>
                 {file.path}
               </Typography>
               <ReviewFileDiff file={file} fromTitle={draftReview.baseVersion == null ? "New context" : `v${draftReview.baseVersion}`} toTitle="Your draft" />
             </Box>
-          ))}
+          ) : (
+            <TechnicalDetails title={`${file.path} · unchanged`}>
+              <ReviewFileDiff file={file} fromTitle={draftReview.baseVersion == null ? "New context" : `v${draftReview.baseVersion}`} toTitle="Your draft" />
+            </TechnicalDetails>
+          )} />
           {draftReview.changes.filter((file) => file.path === DESCRIPTOR_FILE).map((file) => (
             <TechnicalDetails key={file.path} title="Settings file change">
               <ReviewFileDiff file={file} fromTitle={draftReview.baseVersion == null ? "New context" : `v${draftReview.baseVersion}`} toTitle="Your draft" />
@@ -192,14 +217,18 @@ function DraftPublication({
       {draftReview.baseVersion !== draftReview.expectedHeadVersion && (
         <Section title="Changes against the current published version">
           <Stack spacing={1.5}>
-            {draftReview.headChanges?.map((file) => (
-              <Box key={file.path}>
+            {draftReview.headChanges && <ChangedFiles files={draftReview.headChanges} renderFile={(file, { open }) => open ? (
+              <Box>
                 <Typography variant="m3" sx={{ overflowWrap: "anywhere" }}>
                   {file.path}
                 </Typography>
                 <ReviewFileDiff file={file} fromTitle={`v${draftReview.expectedHeadVersion}`} toTitle="Your draft" />
               </Box>
-            ))}
+            ) : (
+              <TechnicalDetails title={`${file.path} · unchanged`}>
+                <ReviewFileDiff file={file} fromTitle={`v${draftReview.expectedHeadVersion}`} toTitle="Your draft" />
+              </TechnicalDetails>
+            )} />}
             {!draftReview.headChanges && (
               <Alert severity="warning">
                 Head comparison not loaded. Review it before acknowledging
@@ -232,7 +261,8 @@ function DraftPublication({
           </TechnicalDetails>
         </Stack>
       </Section>
-      <TechnicalDetails title="Permission changes"><CapabilityChanges changes={draftReview.capabilities} summary /></TechnicalDetails>
+      {/* A permission change is something to check, so it is open; "none found" stays one click away. */}
+      <TechnicalDetails title="Permission changes" defaultOpen={draftReview.capabilities?.changes?.length > 0}><CapabilityChanges changes={draftReview.capabilities} summary /></TechnicalDetails>
       <Section id="review-checks" title="Checks">
         {draftReview.checks ? (
           <ChecksList checks={draftReview.checks} />
@@ -257,7 +287,7 @@ function DraftPublication({
         />
       </Box>
       {/* One sticky decision bar: the acknowledgments on the left; on the right the reason while a button waits,
-          then Publish version, then Publish and request review. One click on either records the reviewed head and publishes. */}
+          then Publish version, then Publish and request release. One click on either records the reviewed head and publishes. */}
       <Box ref={footer} data-sticky-footer sx={{ position: "sticky", bottom: 0, zIndex: 2, bgcolor: "background.paper", borderTop: 1, borderColor: "divider", minHeight: 64, py: 1, px: 1.5 }}>
         <Stack spacing={1.5}>
           {stalled ? (
@@ -271,35 +301,21 @@ function DraftPublication({
           <DecisionFooterRow
             left={
               <Stack spacing={0.5} role="group" aria-label="Review acknowledgments" sx={{ flex: "1 1 100%", minWidth: 0 }}>
-                <FormControlLabel
-                  sx={{ mr: 0 }}
-                  componentsProps={{ typography: { variant: "s3" } }}
-                  control={
-                    <Checkbox
-                      checked={reviewed}
-                      disabled={locked}
-                      onChange={(_, checked) => {
-                        clearStale();
-                        setAckFingerprint(checked ? draftReview.reviewFingerprint : null);
-                      }}
-                    />
-                  }
-                  label="I reviewed these changes against the current published version."
+                <Acknowledgment
+                  label={publishAcknowledgmentLabel(draftReview)}
+                  disabled={locked}
+                  acknowledgment={{
+                    identity: draftReview.reviewFingerprint,
+                    acknowledged: reviewed,
+                    // Ticked for an earlier review of this draft: say why it is asked again.
+                    changed: !reviewed && ackFingerprint !== null && ackFingerprint !== draftReview.reviewFingerprint,
+                    setAcknowledged: (checked) => {
+                      clearStale();
+                      setAckFingerprint(checked ? draftReview.reviewFingerprint : null);
+                      if (!checked && carriedHere) onCarry(null);
+                    },
+                  }}
                 />
-                {draftReview.checks?.summary.warnings > 0 && (
-                  <FormControlLabel
-                    sx={{ mr: 0 }}
-                    componentsProps={{ typography: { variant: "s3" } }}
-                    control={
-                      <Checkbox
-                        checked={warnings && reviewed}
-                        disabled={locked || !reviewed}
-                        onChange={(_, checked) => setWarningFingerprint(checked ? draftReview.reviewFingerprint : null)}
-                      />
-                    }
-                    label="I've read the check warnings for this version."
-                  />
-                )}
               </Stack>
             }
             reason={<ActionReason id="publish-review-reason" reason={acknowledgmentReason} sx={{ textAlign: { sm: "right" } }} />}
@@ -332,7 +348,7 @@ function DraftPublication({
                     oneStep.run(onPublishAndRequest, publishInput);
                   }}
                 >
-                  Publish and request review
+                  {PUBLISH_AND_REQUEST_RELEASE}
                 </Button>
               )
             }
@@ -344,6 +360,7 @@ function DraftPublication({
 }
 DraftPublication.propTypes = {
   name: PropTypes.string,
+  releaseRules: PropTypes.object,
   carried: PropTypes.object,
   onCarry: PropTypes.func.isRequired,
   draftReview: PropTypes.object.isRequired,
@@ -397,6 +414,7 @@ export default function ContextReleaseReview({
 }
 ContextReleaseReview.propTypes = {
   receipt: PropTypes.object,
+  releaseRules: PropTypes.object,
   scopeKey: PropTypes.string,
   state: PropTypes.string,
   name: PropTypes.string,

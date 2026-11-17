@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import PropTypes from "prop-types";
 import {
   Alert,
+  Box,
   Button,
   Checkbox,
   FormControlLabel,
@@ -31,8 +32,40 @@ import SummaryTable from "./SummaryTable";
 import VersionLabel from "../components/VersionLabel";
 import { counted, responsiveEvidenceSx } from "./reviewPresentation";
 
-// Said once above a list of results, never on every row (UX iteration 5, REV3).
-export const PRIVATE_RESULTS_NOTE = 'Private results are visible only to you. Share them with the workspace so the reviewer can see them.';
+// Said once above a list of results, never on every row (UX iteration 5, REV3; UXF-17).
+export const PRIVATE_RESULTS_NOTE = 'Private results are visible only to you; sharing lets the reviewer see them.';
+
+// The generated settings file is grouped under "Other files", never shown as a changed file to check.
+export const DESCRIPTOR_FILE = '.futureagi/context.json';
+
+/** Files a person reads and checks: every changed file except the generated settings file. */
+export const checkedFiles = (files) => (files || []).filter((file) => file.status !== 'unchanged' && file.path !== DESCRIPTOR_FILE);
+
+/**
+ * UXF-05: what a person is asked to tick is open. Changed files are open by
+ * default: all of them when there are `openLimit` or fewer, otherwise the
+ * first one plus "Show N more changed files". Unchanged files are collapsed
+ * behind "Show N unchanged files". Nothing is gated on scrolling.
+ *
+ * renderFile(file, { open }) renders one file; `open` is false only for
+ * unchanged files, which start collapsed.
+ */
+export function ChangedFiles({ files, renderFile, openLimit = 3 }) {
+  const [moreChanged, setMoreChanged] = useState(false);
+  const [showUnchanged, setShowUnchanged] = useState(false);
+  const changed = files.filter((file) => file.status !== 'unchanged');
+  const unchanged = files.filter((file) => file.status === 'unchanged');
+  const shownChanged = changed.length <= openLimit || moreChanged ? changed : changed.slice(0, 1);
+  const hidden = changed.length - shownChanged.length;
+  return <Stack spacing={1.5} sx={{ minWidth: 0 }}>
+    {shownChanged.map((file) => <Box key={file.path} data-file-open="true" sx={{ minWidth: 0 }}>{renderFile(file, { open: true })}</Box>)}
+    {hidden > 0 && <Button variant="text" size="small" color="inherit" sx={{ alignSelf: 'flex-start' }} onClick={() => setMoreChanged(true)}>Show {counted(hidden, 'more changed file', 'more changed files')}</Button>}
+    {unchanged.length > 0 && (showUnchanged
+      ? unchanged.map((file) => <Box key={file.path} data-file-open="false" sx={{ minWidth: 0 }}>{renderFile(file, { open: false })}</Box>)
+      : <Button variant="text" size="small" color="inherit" sx={{ alignSelf: 'flex-start' }} onClick={() => setShowUnchanged(true)}>Show {counted(unchanged.length, 'unchanged file')}</Button>)}
+  </Stack>;
+}
+ChangedFiles.propTypes = { files: PropTypes.array.isRequired, renderFile: PropTypes.func.isRequired, openLimit: PropTypes.number };
 
 const TERMINAL = new Set([
   "completed",
@@ -133,7 +166,7 @@ export function ReviewState({ state, onRetry }) {
       <EmptyState
         variant="no-results"
         title="Nothing to review"
-        description="Publish an immutable candidate before requesting a release decision."
+        description="Publish a version before requesting a release."
       />
     );
   const messages = {
@@ -497,7 +530,7 @@ export default function ReleaseReviewBody({
   );
   const checksEmpty = checks && checks.items?.length === 0 && checks.summary?.errors === 0 && checks.summary?.warnings === 0 && capabilities?.changes.length === 0 && !packet.externalPipeline;
   const isContext = packet.subjectKind === 'agent_context';
-  const changedFiles = changes ? changes.filter((file) => file.status !== 'unchanged').length : null;
+  const changedFiles = changes ? checkedFiles(changes).length : null;
   // The summary table states each fact once; everything below it is detail the table cannot hold.
   const evidenceFact = evidence.length ? `${counted(evidence.length, 'test result')} attached`
     : availableEvidence > 0 ? (onEditEvidence ? <>No test results attached · <Button variant="text" size="small" onClick={onEditEvidence}>Attach</Button></> : `No test results attached (${availableEvidence} available).`)
@@ -531,7 +564,7 @@ export default function ReleaseReviewBody({
         <EvidenceSummary items={evidence.map((ref) => {
           const summary = summaries?.find((item) => evidenceKey(item) === evidenceKey(ref));
           return { id: ref.sourceId, source: ref.source, resultState: ref.resultState, title: evidenceTitle(ref, packet.transition.version, packet.transition.expectedVersion), outcome: (ref.source === 'simulation_native' && nativeBadge(summary)) || ref.outcome || (ref.source === 'skills_text' ? summary?.answer : undefined), status: ref.status, visibility: ref.visibility, expiresAt: ref.payloadExpiresAt, counts: ref.counts || (summary && { graded: summary.graded, planned: summary.planned, regressed: summary.regressions, disagreements: summary.disagreements }) };
-        })} renderAction={(item) => {
+        })} rowActions renderAction={(item) => {
           // Each row states its outcome once (the Coverage cell carries the counts). The evidence ID and the
           // exact grading counts are one Inspect away, where the reviewer reads this result in full.
           const summary = summaries?.find((row) => evidenceKey(row) === `${item.source}:${item.id}`);
@@ -545,18 +578,19 @@ export default function ReleaseReviewBody({
           {!ordered.length && (
             <Typography variant="s3">No file changes loaded.</Typography>
           )}
-          {ordered.filter((file) => file.path !== ".futureagi/context.json").map((file) => (
-            <TechnicalDetails key={file.path} title={`${file.path} · ${file.status}`} defaultOpen={file.path === 'AGENTS.md' || file.path === 'SKILL.md'}>
+          {/* UXF-05: changed files open (the main file first), unchanged ones collapsed. */}
+          <ChangedFiles files={ordered.filter((file) => file.path !== DESCRIPTOR_FILE)} renderFile={(file, { open }) => (
+            <TechnicalDetails title={`${file.path} · ${file.status}`} defaultOpen={open}>
               {onOpenFile && (
-                <Button onClick={() => onOpenFile(file.path)}>
+                <Button variant="text" size="small" onClick={() => onOpenFile(file.path)}>
                   Load complete diff
                 </Button>
               )}
               <ReviewFileDiff file={file} fromTitle={fromTitle} toTitle={toTitle} />
             </TechnicalDetails>
-          ))}
-          {ordered.some((file) => file.path === '.futureagi/context.json') && <TechnicalDetails title="Other files">
-            {ordered.filter((file) => file.path === '.futureagi/context.json').map((file) => <Stack key={file.path} spacing={1}><Typography variant="s3">{file.path} · {file.status}</Typography><ReviewFileDiff file={file} fromTitle={fromTitle} toTitle={toTitle} /></Stack>)}
+          )} />
+          {ordered.some((file) => file.path === DESCRIPTOR_FILE) && <TechnicalDetails title="Other files">
+            {ordered.filter((file) => file.path === DESCRIPTOR_FILE).map((file) => <Stack key={file.path} spacing={1}><Typography variant="s3">{file.path} · {file.status}</Typography><ReviewFileDiff file={file} fromTitle={fromTitle} toTitle={toTitle} /></Stack>)}
           </TechnicalDetails>}
           {moreChanges && (
             <Button
