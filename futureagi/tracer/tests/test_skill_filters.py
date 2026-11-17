@@ -338,7 +338,7 @@ def test_root_status_matches_runtime_canonical_root_across_window_and_replays(sk
         root("early-ok", "OK", start_time=early), root("early-ok", "ERROR"),
         root("tie", "OK", id="0000000000000001"),
         root("tie", "ERROR", id="0000000000000002"),
-        deleted, {**deleted, "is_deleted": 1, "created_at": END, "span_attributes": {}},
+        deleted, {**deleted, "deleted": True, "created_at": END, "span_attributes": {}},
         root("deleted-root", "OK"),
         corrected, {**corrected, "status": "OK", "created_at": END},
         # A foreign root for the missing-root trace must not complete it.
