@@ -81,7 +81,6 @@ export default function PagedScenarioViews({
           <ScenarioTable
             rows={rows}
             groups={shownGroups}
-            env={env}
             onEdit={onEdit}
             onRemove={onRemove}
             onOpen={onOpen}
