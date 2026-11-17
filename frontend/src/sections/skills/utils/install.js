@@ -132,6 +132,7 @@ export function buildCurlResolve({ origin, organizationId, workspaceId, names = 
  * Install without Python: resolve, then read every file through the consumption routes
  * with the read-only key. It needs curl and jq. It follows the manifest and chunk
  * continuations, refuses paths that leave the folder, and does not verify digests;
+ * its loop variable is not `path`, which zsh ties to $PATH;
  * the Python installer does.
  */
 export function buildCurlInstall({ origin, organizationId, workspaceId, names = [], label, version, dir = '.claude/skills' }) {
@@ -158,15 +159,15 @@ export function buildCurlInstall({ origin, organizationId, workspaceId, names = 
     '  [ -n "$next" ] || break',
     '  page=$(get -H "X-Context-Resolution: $lease" -G --data-urlencode "file_offset=$next" --data-urlencode "file_limit=25" "$base/$id/versions/$number/manifest/")',
     'done',
-    'printf %s "$paths" | while IFS= read -r path; do',
-    '  [ -n "$path" ] || continue',
-    '  case "$path" in /*|..|../*|*/..|*/../*) echo "Refusing unsafe path: $path" >&2; exit 1;; esac',
-    '  mkdir -p "$(dirname "$dir/$path")"',
-    '  : > "$dir/$path"',
+    'printf %s "$paths" | while IFS= read -r entry; do',
+    '  [ -n "$entry" ] || continue',
+    '  case "$entry" in /*|..|../*|*/..|*/../*) echo "Refusing unsafe path: $entry" >&2; exit 1;; esac',
+    '  mkdir -p "$(dirname "$dir/$entry")"',
+    '  : > "$dir/$entry"',
     '  offset=0',
     '  while [ -n "$offset" ]; do',
-    '    chunk=$(get -H "X-Context-Resolution: $lease" -G --data-urlencode "path=$path" --data-urlencode "offset=$offset" --data-urlencode "max_bytes=32768" "$base/$id/versions/$number/files/")',
-    '    jq -j .result.text <<<"$chunk" >> "$dir/$path"',
+    '    chunk=$(get -H "X-Context-Resolution: $lease" -G --data-urlencode "path=$entry" --data-urlencode "offset=$offset" --data-urlencode "max_bytes=32768" "$base/$id/versions/$number/files/")',
+    '    jq -j .result.text <<<"$chunk" >> "$dir/$entry"',
     '    offset=$(jq -r \'.result.next_offset // empty\' <<<"$chunk")',
     '  done',
     'done',

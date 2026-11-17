@@ -255,6 +255,15 @@ describe("the read-only key matches the install command", () => {
     expect(screen.queryByRole("button", { name: "Create key" })).not.toBeInTheDocument();
   });
 
+  it("drops a previous selector's key state while the pinned version loads", async () => {
+    hooks.list = { data: { results: [credential("77777777-7777-4777-8777-777777777777", [grant({ labels: ["production"] })])] }, isLoading: false, isError: false };
+    hooks.version = { data: undefined, isError: false };
+    show();
+    expect(screen.queryByText("Create a key first")).not.toBeInTheDocument();
+    await selectLabel("Pinned version");
+    expect(screen.getByText("Create a key first")).toBeVisible();
+  });
+
   it("counts only a key that grants the selected label", async () => {
     hooks.list = { data: { results: [credential("66666666-6666-4666-8666-666666666666", [grant({ labels: ["canary"] })])] }, isLoading: false, isError: false };
     show();

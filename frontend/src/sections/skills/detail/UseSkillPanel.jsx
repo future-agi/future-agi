@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Alert,
   Box,
@@ -49,11 +49,13 @@ function CopyableCode({ code }) {
 }
 CopyableCode.propTypes = { code: PropTypes.string.isRequired };
 
-// The key step shows this while the exact version loads. It ignores the props the install steps add to the key panel.
-function KeyStatus({ children }) {
+// The key step shows this while the exact version loads. It ignores the other props the install steps add to the key panel.
+function KeyStatus({ children, onAvailabilityChange }) {
+  // No key is usable while the version loads, so the "Create a key first" badge must not keep the last selector's answer.
+  useEffect(() => { onAvailabilityChange?.(false); }, [onAvailabilityChange]);
   return <Typography variant="s3" color="text.secondary" role="status">{children}</Typography>;
 }
-KeyStatus.propTypes = { children: PropTypes.node };
+KeyStatus.propTypes = { children: PropTypes.node, onAvailabilityChange: PropTypes.func };
 
 const APPLICATION_CLIENTS = [
   { id: "python", label: "Python" },

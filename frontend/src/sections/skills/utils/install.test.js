@@ -109,7 +109,8 @@ describe('fallback without Python', () => {
     expect(script).toContain('X-Context-Resolution: $lease');
     expect(script).toContain('.result.next_file_offset');
     expect(script).toContain('.result.next_offset');
-    expect(script).toContain('--data-urlencode "path=$path"');
+    expect(script).toContain('--data-urlencode "path=$entry"');
+    expect(script).not.toMatch(/\$path\b|read -r path\b/);
     expect(script).toContain('jq -j .result.text');
     expect(script).toContain('/model-hub/skills/consumption"');
     expect(script.startsWith(env.join('\n'))).toBe(true);
