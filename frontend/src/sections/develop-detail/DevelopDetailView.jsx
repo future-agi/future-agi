@@ -286,8 +286,14 @@ const DevelopDetailView = () => {
     if (isCompareDataset && currentTab === "data") {
       return (
         <CompareDataRightSection
+          hideScenarioFeatures={hideScenarioFeatures}
           compareId={compareId}
           refreshGrid={refreshGrid}
+          onComparisonExpired={() => {
+            // Build a fresh comparison for the same selection.
+            compareId.current = null;
+            compareGridApiRef.current?.api?.refreshServerSide({ purge: true });
+          }}
           onRunEvaluation={() =>
             !hideScenarioFeatures && setOpenRunCompareEvaluation(true)
           }

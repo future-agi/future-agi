@@ -4,7 +4,7 @@ Tests for Temporal background task activities.
 Run with: pytest tfc/temporal/background_tasks/tests/test_activities.py -v
 """
 
-from pathlib import Path
+import os
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -104,41 +104,70 @@ class TestProcessHuggingFaceDatasetActivity:
 class TestDeleteCompareFolderActivity:
     """Tests for delete_compare_folder_activity."""
 
-    @patch("tfc.utils.storage.delete_compare_folder")
-    def test_deletes_local_folder_if_exists(
-        self, mock_s3_delete, monkeypatch, tmp_path
-    ):
-        """The writer's directory is removed after remote deletion."""
+    def test_removes_remote_objects_then_local_folder(self, monkeypatch, tmp_path):
         from tfc.temporal.background_tasks.activities import (
             delete_compare_folder_activity,
         )
         from tfc.utils.storage import get_compare_local_dir
 
-        monkeypatch.setenv("COMPARE_DATASET_LOCAL_ROOT", str(tmp_path))
+        monkeypatch.setenv("COMPARE_DATASET_LOCAL_ROOT", str(tmp_path / "compare"))
         test_compare_id = "test-compare-123"
-        folder = Path(get_compare_local_dir(test_compare_id))
-        folder.mkdir()
-        (folder / "test.json").write_text("{}", encoding="utf-8")
+        test_folder = get_compare_local_dir(test_compare_id)
+        os.makedirs(test_folder)
+        with open(os.path.join(test_folder, "metadata.json"), "w") as f:
+            f.write("{}")
+        seen = []
+
+        def delete_remote(compare_id):
+            # The local folder is still there while the remote objects go.
+            seen.append((compare_id, os.path.isdir(test_folder)))
+
+        monkeypatch.setattr(
+            "model_hub.utils.compare_storage.delete_compare_objects", delete_remote
+        )
 
         delete_compare_folder_activity(test_compare_id)
 
-        assert not folder.exists()
-        mock_s3_delete.assert_called_once_with(test_compare_id)
+        assert seen == [(test_compare_id, True)]
+        assert not os.path.exists(test_folder)
 
-    @patch("tfc.utils.storage.delete_compare_folder")
-    def test_skips_local_deletion_if_folder_not_exists(
-        self, mock_s3_delete, monkeypatch, tmp_path
+    def test_keeps_local_folder_when_remote_deletion_fails(self, monkeypatch, tmp_path):
+        from tfc.temporal.background_tasks.activities import (
+            delete_compare_folder_activity,
+        )
+        from tfc.utils.storage import get_compare_local_dir
+
+        monkeypatch.setenv("COMPARE_DATASET_LOCAL_ROOT", str(tmp_path / "compare"))
+        test_folder = get_compare_local_dir("test-compare-456")
+        os.makedirs(test_folder)
+
+        def delete_remote(compare_id):
+            raise RuntimeError("storage unavailable")
+
+        monkeypatch.setattr(
+            "model_hub.utils.compare_storage.delete_compare_objects", delete_remote
+        )
+
+        with pytest.raises(RuntimeError):
+            delete_compare_folder_activity("test-compare-456")
+        assert os.path.isdir(test_folder)
+
+    def test_missing_local_folder_still_removes_remote_objects(
+        self, monkeypatch, tmp_path
     ):
-        """A missing local root still allows remote cleanup."""
         from tfc.temporal.background_tasks.activities import (
             delete_compare_folder_activity,
         )
 
-        monkeypatch.setenv("COMPARE_DATASET_LOCAL_ROOT", str(tmp_path / "missing"))
+        monkeypatch.setenv("COMPARE_DATASET_LOCAL_ROOT", str(tmp_path / "compare"))
+        seen = []
+        monkeypatch.setattr(
+            "model_hub.utils.compare_storage.delete_compare_objects", seen.append
+        )
+
         delete_compare_folder_activity("nonexistent-123")
 
-        mock_s3_delete.assert_called_once_with("nonexistent-123")
-        assert not (tmp_path / "missing").exists()
+        assert seen == ["nonexistent-123"]
 
 
 @pytest.mark.django_db

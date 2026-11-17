@@ -13,13 +13,15 @@ import pytest
 from django.utils import timezone
 
 from model_hub.tasks import develop_dataset as tasks
-from model_hub.utils import compare_cleanup
+from model_hub.utils import compare_cleanup as legacy_cleanup
+from model_hub.utils import compare_storage
 from tfc.temporal.background_tasks.activities import delete_compare_folder_activity
 from tfc.utils import storage
 
 FIRST_ID = "6f1c2a52-6d0b-4a0e-9f5e-0c7b1a2d3e01"
 SECOND_ID = "6f1c2a52-6d0b-4a0e-9f5e-0c7b1a2d3e02"
-SWEEP_LISTING = call(storage.UPLOAD_BUCKET_NAME, prefix="compare/", recursive=True)
+PRIVATE_BUCKET = "synthetic-private-compare"
+SWEEP_LISTING = call(PRIVATE_BUCKET, prefix="compare/", recursive=True)
 
 
 @pytest.fixture(autouse=True)
@@ -31,8 +33,12 @@ def isolated_storage(monkeypatch, tmp_path, settings):
     client.list_objects.return_value = [
         SimpleNamespace(object_name="compare/test/page.json")
     ]
-    monkeypatch.setattr(storage, "get_storage_client", lambda: client)
-    monkeypatch.setattr(compare_cleanup, "logger", Mock(), raising=False)
+    settings.UPLOAD_BUCKET_NAME = ""
+    monkeypatch.setattr(
+        compare_storage, "_client_and_bucket", lambda: (client, PRIVATE_BUCKET)
+    )
+    monkeypatch.setattr(legacy_cleanup, "logger", Mock())
+    monkeypatch.setattr(compare_storage, "logger", Mock(), raising=False)
     return client
 
 
@@ -81,11 +87,11 @@ def frozen_clock(now):
 def expire_folders(monkeypatch, *folders):
     # ctime cannot be set portably; freeze only the sweep's clock.
     now = max(folder.stat().st_ctime for folder in folders) + 7201
-    monkeypatch.setattr(compare_cleanup, "time", frozen_clock(now))
+    monkeypatch.setattr(compare_storage, "time", frozen_clock(now))
 
 
 def logged_errors():
-    return compare_cleanup.logger.error.call_args_list
+    return compare_storage.logger.exception.call_args_list
 
 
 @pytest.mark.parametrize(
@@ -96,9 +102,9 @@ def test_scheduled_cleanup_uses_writer_root(
 ):
     if configured:
         monkeypatch.setenv("COMPARE_DATASET_LOCAL_ROOT", str(tmp_path / "scratch"))
-    expired = make_compare("expired")
-    fresh = make_compare("fresh")
-    boundary = make_compare("boundary")
+    expired = make_compare("6f1c2a52-6d0b-4a0e-9f5e-0c7b1a2d3e11")
+    fresh = make_compare("6f1c2a52-6d0b-4a0e-9f5e-0c7b1a2d3e12")
+    boundary = make_compare("6f1c2a52-6d0b-4a0e-9f5e-0c7b1a2d3e13")
     ordinary_file = expired.parent / "keep.txt"
     ordinary_file.write_text("keep", encoding="utf-8")
     target = tmp_path / "outside"
@@ -115,19 +121,23 @@ def test_scheduled_cleanup_uses_writer_root(
             return SimpleNamespace(st_mode=result.st_mode, st_ctime=now - age)
         return result
 
-    monkeypatch.setattr(compare_cleanup.os, "stat", folder_stat)
-    monkeypatch.setattr(compare_cleanup, "time", frozen_clock(now))
+    monkeypatch.setattr(compare_storage.os, "stat", folder_stat)
+    monkeypatch.setattr(compare_storage, "time", frozen_clock(now))
     tasks.delete_unused_compare_folder()
 
     assert not expired.exists()
     assert fresh.exists() and boundary.exists()
     assert ordinary_file.exists() and target.exists() and link.is_symlink()
     assert isolated_storage.list_objects.call_args_list == [
-        call(storage.UPLOAD_BUCKET_NAME, prefix="compare/expired/", recursive=True),
+        call(
+            PRIVATE_BUCKET,
+            prefix=f"compare/{expired.name}/",
+            recursive=True,
+        ),
         SWEEP_LISTING,
     ]
     isolated_storage.remove_object.assert_called_once_with(
-        storage.UPLOAD_BUCKET_NAME, "compare/test/page.json"
+        PRIVATE_BUCKET, "compare/test/page.json"
     )
     assert logged_errors() == []
 
@@ -146,17 +156,16 @@ def test_missing_root_is_quiet(monkeypatch, tmp_path, isolated_storage, configur
 
 def test_root_permission_error_is_logged(monkeypatch):
     monkeypatch.setattr(
-        compare_cleanup.os, "listdir", Mock(side_effect=PermissionError("denied"))
+        compare_storage.os, "listdir", Mock(side_effect=PermissionError("denied"))
     )
     tasks.delete_unused_compare_folder()
-    compare_cleanup.logger.error.assert_called_once()
-    assert compare_cleanup.logger.error.call_args.kwargs["exc_info"] is True
+    compare_storage.logger.exception.assert_called_once()
 
 
 def test_child_disappears_after_listing(monkeypatch, tmp_path, isolated_storage):
     monkeypatch.setenv("COMPARE_DATASET_LOCAL_ROOT", str(tmp_path / "compare"))
-    missing = make_compare("missing")
-    expired = make_compare("expired")
+    missing = make_compare("6f1c2a52-6d0b-4a0e-9f5e-0c7b1a2d3e14")
+    expired = make_compare("6f1c2a52-6d0b-4a0e-9f5e-0c7b1a2d3e11")
     expire_folders(monkeypatch, missing, expired)
     original_listdir = os.listdir
 
@@ -165,11 +174,15 @@ def test_child_disappears_after_listing(monkeypatch, tmp_path, isolated_storage)
         shutil.rmtree(missing)
         return names
 
-    monkeypatch.setattr(compare_cleanup.os, "listdir", list_then_remove)
+    monkeypatch.setattr(compare_storage.os, "listdir", list_then_remove)
     tasks.delete_unused_compare_folder()
     assert not expired.exists()
     assert isolated_storage.list_objects.call_args_list == [
-        call(storage.UPLOAD_BUCKET_NAME, prefix="compare/expired/", recursive=True),
+        call(
+            PRIVATE_BUCKET,
+            prefix=f"compare/{expired.name}/",
+            recursive=True,
+        ),
         SWEEP_LISTING,
     ]
     assert logged_errors() == []
@@ -179,15 +192,15 @@ def test_scheduled_remote_failure_keeps_marker_and_continues(
     monkeypatch, tmp_path, isolated_storage
 ):
     monkeypatch.setenv("COMPARE_DATASET_LOCAL_ROOT", str(tmp_path / "compare"))
-    failed = make_compare("failed")
-    expired = make_compare("expired")
+    failed = make_compare("6f1c2a52-6d0b-4a0e-9f5e-0c7b1a2d3e15")
+    expired = make_compare("6f1c2a52-6d0b-4a0e-9f5e-0c7b1a2d3e11")
     expire_folders(monkeypatch, failed, expired)
     monkeypatch.setattr(
-        compare_cleanup.os, "listdir", lambda path: ["failed", "expired"]
+        compare_storage.os, "listdir", lambda path: [failed.name, expired.name]
     )
 
     def list_objects(bucket, *, prefix, recursive):
-        if prefix == "compare/failed/":
+        if prefix == "compare/6f1c2a52-6d0b-4a0e-9f5e-0c7b1a2d3e15/":
             raise PermissionError("remote denied")
         return [SimpleNamespace(object_name=f"{prefix}page.json")]
 
@@ -195,7 +208,7 @@ def test_scheduled_remote_failure_keeps_marker_and_continues(
     tasks.delete_unused_compare_folder()
     assert (failed / "metadata.json").exists()
     assert not expired.exists()
-    compare_cleanup.logger.error.assert_called_once()
+    compare_storage.logger.exception.assert_called_once()
 
     isolated_storage.list_objects.side_effect = None
     tasks.delete_unused_compare_folder()
@@ -254,8 +267,8 @@ def test_remote_sweep_failure_is_retried_by_the_next_run(isolated_storage):
     tasks.delete_unused_compare_folder()
 
     assert remote.ids() == {FIRST_ID}
-    compare_cleanup.logger.error.assert_called_once()
-    assert compare_cleanup.logger.error.call_args.kwargs["compare_id"] == FIRST_ID
+    compare_storage.logger.exception.assert_called_once()
+    assert compare_storage.logger.exception.call_args.kwargs["compare_id"] == FIRST_ID
 
     remote.fail_ids = set()
     tasks.delete_unused_compare_folder()
@@ -265,15 +278,21 @@ def test_remote_sweep_failure_is_retried_by_the_next_run(isolated_storage):
 def test_remote_listing_failure_is_logged(isolated_storage):
     isolated_storage.list_objects.side_effect = ConnectionError("unreachable")
     tasks.delete_unused_compare_folder()
-    compare_cleanup.logger.error.assert_called_once()
-    assert compare_cleanup.logger.error.call_args.kwargs["exc_info"] is True
+    compare_storage.logger.exception.assert_called_once()
 
 
-def test_missing_bucket_is_quiet(isolated_storage):
-    isolated_storage.bucket_exists.return_value = False
-    tasks.delete_unused_compare_folder()
+def test_missing_private_bucket_does_not_delete_or_hide_failure(
+    monkeypatch, isolated_storage
+):
+    def unavailable():
+        raise RuntimeError("synthetic missing bucket")
+
+    monkeypatch.setattr(compare_storage, "_client_and_bucket", unavailable)
+    assert not compare_storage.sweep_remote_compare_objects(
+        deadline=real_time.monotonic() + 60
+    )
     isolated_storage.list_objects.assert_not_called()
-    assert logged_errors() == []
+    compare_storage.logger.exception.assert_called_once()
 
 
 def test_remote_sweep_stops_at_the_deadline(monkeypatch, isolated_storage):
@@ -286,22 +305,22 @@ def test_remote_sweep_stops_at_the_deadline(monkeypatch, isolated_storage):
     )
     clock = SimpleNamespace(now=0.0)
     monkeypatch.setattr(
-        compare_cleanup, "time", SimpleNamespace(monotonic=lambda: clock.now)
+        compare_storage, "time", SimpleNamespace(monotonic=lambda: clock.now)
     )
-    original_delete = storage.delete_compare_folder
+    original_delete = compare_storage._remove_prefix
 
-    def delete_then_run_out_of_time(compare_id):
-        original_delete(compare_id)
+    def delete_then_run_out_of_time(client, bucket, compare_id):
+        original_delete(client, bucket, compare_id)
         clock.now = 100.0
 
-    monkeypatch.setattr(storage, "delete_compare_folder", delete_then_run_out_of_time)
+    monkeypatch.setattr(compare_storage, "_remove_prefix", delete_then_run_out_of_time)
 
-    compare_cleanup.sweep_remote_compare_prefixes(deadline=50.0)
-    # The oldest goes first; the rest waits for the next run.
+    compare_storage.sweep_remote_compare_objects(deadline=50.0)
+    # The first expired prefix is removed; the rest waits for the next run.
     assert remote.ids() == {SECOND_ID}
-    assert compare_cleanup.logger.warning.call_args.kwargs["remaining"] == 1
+    assert compare_storage.logger.warning.call_args.kwargs["bucket"] == PRIVATE_BUCKET
 
-    compare_cleanup.sweep_remote_compare_prefixes(deadline=200.0)
+    compare_storage.sweep_remote_compare_objects(deadline=200.0)
     assert remote.ids() == set()
 
 
@@ -327,9 +346,9 @@ def test_api_process_sweeps_its_own_root(monkeypatch, tmp_path, isolated_storage
             )
         return result
 
-    monkeypatch.setattr(compare_cleanup.os, "stat", folder_stat)
-    monkeypatch.setattr(compare_cleanup, "LOCAL_SWEEP_INTERVAL_SECONDS", 0.01)
-    sweeper = compare_cleanup._LocalSweeper()
+    monkeypatch.setattr(compare_storage.os, "stat", folder_stat)
+    monkeypatch.setattr(compare_storage, "LOCAL_SWEEP_INTERVAL_SECONDS", 0.01)
+    sweeper = compare_storage._LocalSweeper()
     sweeper.ensure_running()
     try:
         deadline = real_time.monotonic() + 10
@@ -345,8 +364,8 @@ def test_api_process_sweeps_its_own_root(monkeypatch, tmp_path, isolated_storage
 
 
 def test_api_sweeper_starts_once(monkeypatch):
-    monkeypatch.setattr(compare_cleanup, "LOCAL_SWEEP_INTERVAL_SECONDS", 3600)
-    sweeper = compare_cleanup._LocalSweeper()
+    monkeypatch.setattr(compare_storage, "LOCAL_SWEEP_INTERVAL_SECONDS", 3600)
+    sweeper = compare_storage._LocalSweeper()
     sweeper.ensure_running()
     first = sweeper._thread
     sweeper.ensure_running()
@@ -365,9 +384,9 @@ def test_api_sweeper_survives_an_unexpected_error(monkeypatch):
         if len(calls) == 1:
             raise RuntimeError("unexpected")
 
-    monkeypatch.setattr(compare_cleanup, "sweep_local_compare_root", sweep)
-    monkeypatch.setattr(compare_cleanup, "LOCAL_SWEEP_INTERVAL_SECONDS", 0.01)
-    sweeper = compare_cleanup._LocalSweeper()
+    monkeypatch.setattr(compare_storage, "sweep_local_compare_root", sweep)
+    monkeypatch.setattr(compare_storage, "LOCAL_SWEEP_INTERVAL_SECONDS", 0.01)
+    sweeper = compare_storage._LocalSweeper()
     sweeper.ensure_running()
     try:
         deadline = real_time.monotonic() + 10
@@ -376,7 +395,7 @@ def test_api_sweeper_survives_an_unexpected_error(monkeypatch):
     finally:
         sweeper.stop()
     assert len(calls) >= 2
-    compare_cleanup.logger.exception.assert_called_once()
+    compare_storage.logger.exception.assert_called_once()
 
 
 @pytest.fixture(params=["activity", "api"])
@@ -384,13 +403,13 @@ def explicit_cleanup(request):
     if request.param == "activity":
         return delete_compare_folder_activity
     # What the API's DELETE runs in its background thread.
-    return compare_cleanup.cleanup_compare_folder
+    return compare_storage.remove_compare
 
 
 def test_explicit_remote_failure_preserves_marker(explicit_cleanup, isolated_storage):
     folder = make_compare("retry")
     isolated_storage.remove_object.side_effect = PermissionError("remote denied")
-    with pytest.raises(ValueError):
+    with pytest.raises(PermissionError):
         explicit_cleanup("retry")
     assert (folder / "metadata.json").exists()
     isolated_storage.remove_object.side_effect = None
@@ -451,10 +470,10 @@ def test_concurrently_removed_child_does_not_leave_other_files(
 def test_background_cleanup_failure_keeps_marker(isolated_storage):
     folder = make_compare("background")
     isolated_storage.list_objects.side_effect = PermissionError("remote denied")
-    compare_cleanup.start_compare_cleanup("background").join(10)
+    legacy_cleanup.start_compare_cleanup("background").join(10)
     assert (folder / "metadata.json").exists()
-    compare_cleanup.logger.exception.assert_called_once()
+    legacy_cleanup.logger.exception.assert_called_once()
 
     isolated_storage.list_objects.side_effect = None
-    compare_cleanup.start_compare_cleanup("background").join(10)
+    legacy_cleanup.start_compare_cleanup("background").join(10)
     assert not folder.exists()
