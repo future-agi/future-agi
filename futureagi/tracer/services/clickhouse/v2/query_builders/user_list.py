@@ -25,5 +25,18 @@ from tracer.services.clickhouse.v2.query_builders._rewrite import V2RewriteMixin
 class UserListQueryBuilderV2(V2RewriteMixin, UserListQueryBuilder):
     """Drop-in v2 UserList builder — adds SETTINGS for projection routing."""
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        from tracer.services.clickhouse.query_builders.filters import is_skill_filter
+        from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
+            UnsupportedFilterShapeError,
+        )
+
+        # V10: Users reinterprets ordinary leaves as raw attributes and compiles
+        # relational leaves independently per user. It does not yet preserve
+        # same-load groups. This is phase 2 per the contract, not an empty set.
+        if any(is_skill_filter(item) for item in self.filters):
+            raise UnsupportedFilterShapeError("SKILL filters are not yet supported on Users")
+
 
 __all__ = ["UserListQueryBuilderV2"]

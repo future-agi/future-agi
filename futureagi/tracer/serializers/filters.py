@@ -55,7 +55,7 @@ FILTER_CONFIG_SCHEMA = {
         },
         "col_type": {
             "type": "string",
-            "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+            "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
         },
         "attribute_value_types": {
             "type": "array",
@@ -94,6 +94,12 @@ FILTER_ITEM_SCHEMA = {
         "output_type": {
             "type": "string",
             "description": "Optional metric output type metadata used by eval and annotation filters.",
+        },
+        "group": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 2147483647,
+            "description": "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
         },
         "filter_config": FILTER_CONFIG_SCHEMA,
     },
@@ -633,6 +639,19 @@ class FilterItemField(serializers.JSONField):
             except ValueError as exc:
                 raise serializers.ValidationError(str(exc)) from exc
 
+        if config.get("col_type") == "SKILL":
+            from tracer.services.clickhouse.query_builders.filters import (
+                validate_skill_filter_item,
+            )
+
+            try:
+                validate_skill_filter_item(value)
+            except ValueError as exc:
+                raise serializers.ValidationError(str(exc)) from exc
+            return value
+        if "group" in value:
+            raise serializers.ValidationError("group is supported only for SKILL filters.")
+
         filter_value = config.get("filter_value")
         attribute_value_types = config.get("attribute_value_types")
         is_span_attribute = config.get("col_type") == "SPAN_ATTRIBUTE"
@@ -944,6 +963,14 @@ class FilterListField(serializers.ListField):
         parsed = parse_filter_list_payload(data)
         validate_filter_list_complexity(parsed)
         validated = super().to_internal_value(parsed)
+        from tracer.services.clickhouse.query_builders.filters import (
+            validate_skill_filter_groups,
+        )
+
+        try:
+            validate_skill_filter_groups(validated)
+        except ValueError as exc:
+            raise serializers.ValidationError(str(exc)) from exc
         _check_filter_json_size(
             json.dumps(validated, ensure_ascii=False, separators=(",", ":"))
         )
