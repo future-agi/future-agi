@@ -32,6 +32,34 @@ import SkillDocumentEditor from "./SkillDocumentEditor";
 import useDraftSession from "./useDraftSession";
 import useUnsavedNavigation from "./useUnsavedNavigation";
 
+// Context draft layout (UXF-01). The AGENTS.md editor must keep room for 20 lines at desktop widths and
+// 12 on a phone however much sits around it: its height is fixed from these floors, and the page scrolls
+// instead of squeezing it. The viewport terms only let it grow on tall screens.
+export const CONTEXT_EDITOR_LINES = { desktop: 20, phone: 12 };
+const EDITOR_LINE_PX = 21; // the tallest line Monaco uses at its default font size (macOS)
+const EDITOR_FRAME_PX = 52; // file-name bar and border around the text
+const editorMinHeight = (lines) => lines * EDITOR_LINE_PX + EDITOR_FRAME_PX;
+const COLUMN_EXTRA_PX = 52; // Edit/Preview switch and the gap under it
+const FLOOR_MARGIN_PX = 16;
+const PHONE_HEADROOM_LINES = 4;
+const SECOND_ROW_PX = 224; // md only: Checks/Tests row (at most 200px) and its gap share the grid height
+const columnFloor = (lines) => editorMinHeight(lines) + COLUMN_EXTRA_PX + FLOOR_MARGIN_PX;
+export const contextEditorLayout = {
+  desktopFloor: columnFloor(CONTEXT_EDITOR_LINES.desktop),
+  mdFloor: columnFloor(CONTEXT_EDITOR_LINES.desktop) + SECOND_ROW_PX,
+  phoneRow: columnFloor(CONTEXT_EDITOR_LINES.phone + PHONE_HEADROOM_LINES),
+  editorFloor: editorMinHeight(CONTEXT_EDITOR_LINES.phone),
+};
+const contextGridSx = {
+  flexGrow: { xs: 1, md: 0 },
+  flexShrink: 0,
+  flexBasis: 'auto',
+  height: {
+    md: `clamp(${contextEditorLayout.mdFloor}px, calc(100vh - 100px), 1600px)`,
+    lg: `clamp(${contextEditorLayout.desktopFloor}px, calc(100vh - 300px), 1400px)`,
+  },
+  gridTemplateRows: { xs: `minmax(${contextEditorLayout.phoneRow}px, 1fr)`, md: 'minmax(0, 1fr) auto', lg: 'minmax(0, 1fr)' },
+};
 const savingState = (session) => session.dirty || session.status === 'saving';
 const contextReadOnly = (path) => /^(skills|\.futureagi)(\/|$)/i.test(path);
 const contextReserved = (path) => contextReadOnly(path) || /(^|\/)(AGENTS|CLAUDE|GEMINI|SKILL)\.md$/i.test(path);
@@ -72,6 +100,11 @@ function EditorSession({ skill, initialDraft, refetchDraft, kind = 'skill', reso
   const migrationRecovery = !isContext && params.get('preserve') === 'migration';
   const session = useDraftSession(skill.id, initialDraft, migrationRecovery || preparing || discardOpen || Boolean(publishDraft), resourceApi);
   useEffect(() => { if (session.dirty || ['saving', 'error', 'conflict'].includes(session.status) || session.revision !== initialDraft.revision) setHasEdited(true); }, [session.dirty, session.status, session.revision, initialDraft.revision]);
+  // Linked skills and settings stay in one summary row until opened. Work that is waiting for the author
+  // opens it: skills proposed by a migration, or a dependency/head update that needs its retry.
+  const proposedLinksPending = isContext && Array.isArray(contextControls.proposedLinks) && contextControls.proposedLinks.length > 0 && !(initialDraft.contextSpec?.links?.length);
+  const [detailsOpen, setDetailsOpen] = useState(Boolean(proposedLinksPending));
+  useEffect(() => { if (isContext && session.mutationError) setDetailsOpen(true); }, [isContext, session.mutationError]);
   const validation = useDraftChecks(session.files, skill.name, 600, !isContext);
   const publishPending = !isContext && (savingState(session) || !validation.current);
   const latestSession = useRef(session);
@@ -186,7 +219,11 @@ function EditorSession({ skill, initialDraft, refetchDraft, kind = 'skill', reso
   if (migrationRecovery) return <J1MigrationDraftRecovery skill={skill} session={session}
     onPreserved={() => guard.allow(() => navigate(paths.dashboard.skills.root, location.state?.reopenMigration ? { state: { reopenMigration: location.state.reopenMigration } } : undefined))} />;
 
-  return <Stack spacing={2} sx={{ flex: { xs: '1 0 auto', md: '1 1 0%' }, minHeight: 0 }}>
+  const linkCount = session.resolvedLock?.links?.length || 0;
+  const purposeText = (session.description ?? session.contextSpec?.description ?? '').trim();
+  const detailsNotes = [proposedLinksPending && 'Proposed skills need review', stale && `Latest is v${skill.latestVersion}`, session.mutationError && 'An update needs a retry'].filter(Boolean);
+
+  return <Stack spacing={2} data-slot="editor-session" sx={{ flex: { xs: '1 0 auto', md: '1 1 0%' }, minHeight: 0, ...(isContext ? { overflowY: { md: 'auto' }, px: { md: 0.5 }, mx: { md: -0.5 } } : {}) }}>
     <ObjectHeader title={skill.name}
       crumbs={[{ label: isContext ? 'Agent contexts' : 'Skills', to: isContext ? paths.dashboard.skills.contexts : paths.dashboard.skills.root }, { label: skill.name, to: detailPath }, { label: 'Draft' }]}
       purpose={isContext ? `${session.baseVersion == null ? 'New context' : `Based on v${session.baseVersion}`} · ${session.resolvedLock?.links?.length || 0} linked skill${session.resolvedLock?.links?.length === 1 ? '' : 's'}` : session.baseVersion === null ? 'New skill' : `Draft based on v${session.baseVersion}`}
@@ -212,10 +249,26 @@ function EditorSession({ skill, initialDraft, refetchDraft, kind = 'skill', reso
     {stale && <Alert severity="warning" sx={{ flexShrink: 0 }} action={!isContext && <Button color="inherit" disabled={locked || saving || session.status === 'conflict'} onClick={compareLatest}>Compare</Button>}>
       {isContext ? `The content origin remains v${session.baseVersion}. Latest is v${skill.latestVersion}; review it separately without copying its files.` : `v${skill.latestVersion} was published after you started. Compare your saved draft with the latest version before publishing.`}
     </Alert>}
-    {isContext && <TextField label="Context purpose" size="small" value={session.description ?? session.contextSpec?.description ?? ''} onChange={(event) => session.editFields({ description: event.target.value })} disabled={locked} inputProps={{ maxLength: 1024 }} helperText="Versioned with the standing instructions and accepted skills." />}
+    {isContext && <Box data-slot="context-details" sx={{ flexShrink: 0, minWidth: 0, border: 1, borderColor: 'divider', borderRadius: 1 }}>
+      <Stack direction="row" alignItems="center" spacing={1} sx={{ px: 1, py: 0.5, minWidth: 0 }}>
+        <Button size="small" aria-expanded={detailsOpen} aria-controls="context-details-panel" onClick={() => setDetailsOpen((open) => !open)} sx={{ flexShrink: 0 }}
+          startIcon={<Iconify icon={detailsOpen ? 'solar:alt-arrow-down-linear' : 'solar:alt-arrow-right-linear'} width={16} />}>Linked skills and settings</Button>
+        <Typography variant="s3" color="text.secondary" noWrap sx={{ minWidth: 0, flex: 1 }}>{linkCount} linked skill{linkCount === 1 ? '' : 's'} · {purposeText || 'No purpose yet'}</Typography>
+        {detailsNotes.length > 0 && <Typography variant="s3" color="status.warning.fg" sx={{ flexShrink: 0, display: { xs: 'none', sm: 'block' } }}>{detailsNotes.join(' · ')}</Typography>}
+      </Stack>
+      {/* Collapsed means hidden, not unmounted: the links and head review keep their previews and acknowledgments. */}
+      <Box id="context-details-panel" role="region" aria-label="Linked skills and settings" hidden={!detailsOpen} sx={{ px: 1.5, pb: 1.5 }}>
+        <Stack spacing={2} sx={{ minWidth: 0 }}>
+          {detailsNotes.length > 0 && <Typography variant="s3" color="status.warning.fg" sx={{ display: { xs: 'block', sm: 'none' } }}>{detailsNotes.join(' · ')}</Typography>}
+          <TextField label="Context purpose" size="small" value={session.description ?? session.contextSpec?.description ?? ''} onChange={(event) => session.editFields({ description: event.target.value })} disabled={locked} inputProps={{ maxLength: 1024 }} helperText="Versioned with the standing instructions and accepted skills." />
+          <ContextLinksPanel scopeKey={scopeKey} session={session} availableSkills={contextControls.availableSkills} upstream={contextControls.upstream} onPreview={contextControls.previewDependencies} onApply={contextControls.applyDependencies} proposedLinks={contextControls.proposedLinks} readOnly={locked} />
+          <HotfixHeadReview scopeKey={scopeKey} session={session} onPreview={locked ? undefined : contextControls.previewHead} onAcknowledge={locked ? undefined : contextControls.acknowledgeHead} />
+        </Stack>
+      </Box>
+    </Box>}
     {/* Underline tabs pick the panel; the pill control below stays for Document, Source and Preview, so two identical controls never stack. */}
     <CustomTabs value={mobilePanel} onChange={(_, value) => setMobilePanel(value)} aria-label="Editor panels" sx={{ display: { xs: 'flex', md: 'none' }, flexShrink: 0 }}><Tab value="files" label="Files" /><Tab value="editor" label="Editor" /><Tab value="review" label="Checks and tests" /></CustomTabs>
-    <Box sx={{ display: 'grid', flex: 1, minHeight: 0, gridTemplateColumns: { xs: 'minmax(0, 1fr)', md: '200px minmax(0, 1fr)', lg: '200px minmax(0, 1fr) 280px' }, gridTemplateRows: { xs: 'minmax(400px, 1fr)', md: 'minmax(0, 1fr) auto', lg: 'minmax(0, 1fr)' }, gap: 3 }}>
+    <Box data-slot="editor-grid" sx={{ display: 'grid', flex: 1, minHeight: 0, gridTemplateColumns: { xs: 'minmax(0, 1fr)', md: '200px minmax(0, 1fr)', lg: '200px minmax(0, 1fr) 280px' }, gridTemplateRows: { xs: 'minmax(400px, 1fr)', md: 'minmax(0, 1fr) auto', lg: 'minmax(0, 1fr)' }, gap: 3, ...(isContext ? contextGridSx : {}) }}>
       <Box sx={{ display: { xs: mobilePanel === 'files' ? 'block' : 'none', md: 'block' }, minWidth: 0, minHeight: 0, overflowY: 'auto' }}>
         <FileTree files={files} pinned={[root]} protectedPaths={[root]} {...(isContext ? { generatedFolders: ['.futureagi'], collapsedFolders: ['skills'] } : {})} isPathReadOnly={isContext ? contextReserved : undefined} selectedPath={selectedPath} onSelect={(path) => { openFile(path); setMobilePanel('editor'); }} readOnly={locked}
           onCreate={(path) => {
@@ -233,7 +286,7 @@ function EditorSession({ skill, initialDraft, refetchDraft, kind = 'skill', reso
         {!file && (readOnlyFileQuery?.error ? <ErrorState title="File unavailable" onRetry={readOnlyFileQuery.refetch} /> : linked ? <ContentSkeleton label="Loading the saved context file" /> : <Alert severity="info">Select a file in this draft.</Alert>)}
         {isMarkdown && file.path !== 'SKILL.md' && <SegmentedTabs value={mode} onChange={(_, value) => setMode(value)} aria-label="Markdown view" sx={{ flexShrink: 0 }}><Tab value="edit" label={fileReadOnly ? 'Source' : 'Edit'} /><Tab value="preview" label="Preview" /></SegmentedTabs>}
         {file?.path === 'SKILL.md' && <SkillDocumentEditor file={file} target={target} readOnly={fileReadOnly} onOpenPath={openFile} onChange={changeContent} />}
-        {file && file.path !== 'SKILL.md' && (isMarkdown && mode === 'preview' ? <Box sx={{ flex: 1, minHeight: 0, overflowY: 'auto' }}><SkillMarkdownPreview literal={isContext} content={file.content} currentPath={file.path} onOpenPath={openFile} /></Box> : <SkillFileEditor key={file.path} file={file} target={target} readOnly={fileReadOnly} onChange={changeContent} />)}
+        {file && file.path !== 'SKILL.md' && (isMarkdown && mode === 'preview' ? <Box sx={{ flex: 1, minHeight: 0, overflowY: 'auto' }}><SkillMarkdownPreview literal={isContext} content={file.content} currentPath={file.path} onOpenPath={openFile} /></Box> : <SkillFileEditor key={file.path} file={file} target={target} readOnly={fileReadOnly} onChange={changeContent} {...(isContext ? { minHeight: contextEditorLayout.editorFloor } : {})} />)}
       </Stack>
       <Box sx={{ display: { xs: mobilePanel === 'review' ? 'block' : 'none', md: 'block' }, minWidth: 0, minHeight: 0, overflowY: 'auto', maxHeight: { md: 200, lg: 'none' }, gridColumn: { md: '1 / -1', lg: 'auto' } }}>
         <SegmentedTabs value={panel} onChange={(_, value) => setPanel(value)} aria-label="Draft review panels"><Tab value="checks" label="Checks" /><Tab value="tests" label="Tests" disabled={isContext && !contextControls.renderTests} /></SegmentedTabs>
@@ -244,10 +297,6 @@ function EditorSession({ skill, initialDraft, refetchDraft, kind = 'skill', reso
         <Box sx={{ pt: 1.5 }} hidden={panel !== 'tests'}>{isContext ? contextControls.renderTests?.({ session, onSave: session.flush, onOpenFile: openFile }) : <EditorTestsPanel skill={skill} draft={session} isDirty={session.dirty} onSave={session.flush} onOpenFile={openFile} onImproveSelection={options.data?.assistEnabled ? (selection) => openAssist('description', selection) : undefined} />}</Box>
       </Box>
     </Box>
-    {isContext && <Stack spacing={2} sx={{ flexShrink: 0 }}>
-      <ContextLinksPanel scopeKey={scopeKey} session={session} availableSkills={contextControls.availableSkills} upstream={contextControls.upstream} onPreview={contextControls.previewDependencies} onApply={contextControls.applyDependencies} proposedLinks={contextControls.proposedLinks} readOnly={locked} />
-      <HotfixHeadReview scopeKey={scopeKey} session={session} onPreview={locked ? undefined : contextControls.previewHead} onAcknowledge={locked ? undefined : contextControls.acknowledgeHead} />
-    </Stack>}
     {assistKind && !publishDraft && <Stack spacing={1.5}><Box><Button size="small" onClick={closeAssist}>Close assistance</Button></Box><AssistPanel skill={skill} draft={session} kind={assistKind} sourceRunId={sourceRunId} isDirty={session.dirty} onSave={session.flush} onApplied={session.reload} /></Stack>}
     {isContext && conflictOpen ? <Stack spacing={1.5}>
       <Button onClick={refreshConflict}>Load current server draft</Button>

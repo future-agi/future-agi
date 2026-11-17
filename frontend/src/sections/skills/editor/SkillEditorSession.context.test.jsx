@@ -2,14 +2,14 @@ vi.mock('./useDraftChecks', () => ({ default: () => ({ current: true, pending: f
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
-import SkillEditorSession from './SkillEditorSession';
+import SkillEditorSession, { CONTEXT_EDITOR_LINES, contextEditorLayout } from './SkillEditorSession';
 
 vi.mock('src/api/skills/context-skill-inventory', () => ({ useLinkedSkillUpstream: () => ({}) }));
 
 const legacy = vi.hoisted(() => ({ save: vi.fn(), discard: vi.fn() }));
 vi.mock('src/api/skills', () => ({ useSaveSkillDraft: () => ({ mutateAsync: legacy.save }), useDiscardSkillDraft: () => ({ mutateAsync: legacy.discard }), getSkillErrorCode: (error) => error.code }));
 vi.mock('src/api/skills/testing', () => ({ useSkillV11Scope: () => ({ identity: 'org:workspace:user:context', enabled: true }), useSkillTestingOptions: () => ({ data: { assistEnabled: false } }) }));
-vi.mock('./SkillFileEditor', () => ({ default: ({ file, readOnly, onChange }) => <textarea aria-label="Context file source" value={file.content} readOnly={readOnly} onChange={(event) => onChange(event.target.value)} /> }));
+vi.mock('./SkillFileEditor', () => ({ default: ({ file, readOnly, onChange, minHeight }) => <textarea aria-label="Context file source" data-min-height={minHeight} value={file.content} readOnly={readOnly} onChange={(event) => onChange(event.target.value)} /> }));
 vi.mock('./PublishDialog', () => ({ default: () => <p>Legacy publication must not mount</p> }));
 vi.mock('../tests/EditorTestsPanel', () => ({ default: () => null }));
 vi.mock('../assist/AssistPanel', () => ({ default: () => null }));
@@ -101,4 +101,78 @@ it('describes the checks in plain words, without internal terms', () => {
   mount();
   expect(screen.getByText('Checks cover the saved context, including its linked skills.')).toBeInTheDocument();
   expect(screen.queryByText(/accepted dependencies/)).not.toBeInTheDocument();
+});
+
+// jsdom does no layout and ignores media queries, so the layout is checked on what the page declares:
+// the floors computed from the acceptance line counts, the rules emotion writes for them, and the
+// editor's own height floor. The 20-line and 12-line captures on the VM are the proof of the result.
+const declaredCss = () => [...document.querySelectorAll('style')].map((node) => node.textContent || '').join('')
+  + [...document.styleSheets].flatMap((sheet) => [...sheet.cssRules]).map((rule) => rule.cssText).join('');
+const lineHeight = 21;
+
+it('budgets at least 20 desktop lines and 12 phone lines for the AGENTS.md text area', () => {
+  expect(CONTEXT_EDITOR_LINES).toEqual({ desktop: 20, phone: 12 });
+  // The text itself, without the file-name bar or the Edit/Preview switch around it.
+  expect(contextEditorLayout.desktopFloor).toBeGreaterThanOrEqual(CONTEXT_EDITOR_LINES.desktop * lineHeight);
+  expect(contextEditorLayout.mdFloor).toBeGreaterThanOrEqual(contextEditorLayout.desktopFloor + 200);
+  expect(contextEditorLayout.phoneRow).toBeGreaterThanOrEqual(CONTEXT_EDITOR_LINES.phone * lineHeight);
+  expect(contextEditorLayout.editorFloor).toBeGreaterThanOrEqual(CONTEXT_EDITOR_LINES.phone * lineHeight);
+});
+
+it('gives the editor grid a fixed, non-shrinking height and the text area its own floor', () => {
+  mount();
+  const grid = document.querySelector('[data-slot="editor-grid"]');
+  expect(grid).toHaveStyle({ flexShrink: '0' });
+  expect(screen.getByLabelText('Context file source')).toHaveAttribute('data-min-height', String(contextEditorLayout.editorFloor));
+  const css = declaredCss().replace(/\s+/g, '');
+  expect(css).toContain(`height:clamp(${contextEditorLayout.desktopFloor}px,`);
+  expect(css).toContain(`height:clamp(${contextEditorLayout.mdFloor}px,`);
+  expect(css).toContain(`minmax(${contextEditorLayout.phoneRow}px,1fr)`);
+});
+
+it('keeps linked skills and settings in a closed summary row above the editor', () => {
+  mount();
+  const row = document.querySelector('[data-slot="context-details"]');
+  const grid = document.querySelector('[data-slot="editor-grid"]');
+  expect(row.compareDocumentPosition(grid) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(row).not.toContainElement(grid);
+  const toggle = screen.getByRole('button', { name: 'Linked skills and settings' });
+  expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  expect(row).toHaveTextContent('0 linked skills · Purpose');
+  // Closed means hidden, not unmounted: the panels keep their state and the editor never moves into them.
+  expect(screen.queryByRole('region', { name: 'Linked skills and settings' })).not.toBeInTheDocument();
+  expect(screen.getByRole('region', { name: 'Linked skills and settings', hidden: true })).toContainElement(screen.getByLabelText('Context purpose', { selector: 'input' }));
+  expect(screen.getByLabelText('Context file source')).toBeVisible();
+});
+
+it('opens the row to show the linked skills, the head review and the purpose, and closes it again', () => {
+  mount();
+  const toggle = screen.getByRole('button', { name: 'Linked skills and settings' });
+  fireEvent.click(toggle);
+  expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  const region = screen.getByRole('region', { name: 'Linked skills and settings' });
+  expect(region).toBeVisible();
+  expect(region).toHaveTextContent('Linked skills (0)');
+  expect(region).toHaveTextContent('Compare with the latest version');
+  expect(screen.getByLabelText('Context purpose')).toBeVisible();
+  fireEvent.click(toggle);
+  expect(screen.queryByRole('region', { name: 'Linked skills and settings' })).not.toBeInTheDocument();
+});
+
+it('opens the row on arrival when migration-proposed skills are waiting for review, and names pending work', () => {
+  mount({}, { contextControls: { proposedLinks: [{ skillId: 'refunds', version: 3 }] } });
+  expect(screen.getByRole('button', { name: 'Linked skills and settings' })).toHaveAttribute('aria-expanded', 'true');
+  expect(document.querySelector('[data-slot="context-details"]')).toHaveTextContent('Proposed skills need review');
+  expect(document.querySelector('[data-slot="context-details"]')).toHaveTextContent('Latest is v6');
+});
+
+it('keeps the typed purpose when the row is closed and reopened', () => {
+  mount();
+  const toggle = screen.getByRole('button', { name: 'Linked skills and settings' });
+  fireEvent.click(toggle);
+  fireEvent.change(screen.getByLabelText('Context purpose'), { target: { value: 'New purpose' } });
+  fireEvent.click(toggle);
+  expect(document.querySelector('[data-slot="context-details"]')).toHaveTextContent('New purpose');
+  fireEvent.click(toggle);
+  expect(screen.getByLabelText('Context purpose')).toHaveValue('New purpose');
 });

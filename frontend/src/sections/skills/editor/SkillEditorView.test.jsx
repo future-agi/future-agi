@@ -86,6 +86,16 @@ describe("skill editor", () => {
     expect(api.tests.draft.files[0].content).toBe(expected);
   });
 
+  it("keeps the skill editor layout: a flexing grid and no linked-skills row", async () => {
+    mount();
+    await screen.findByRole("button", { name: "Publish", exact: true });
+    const grid = document.querySelector('[data-slot="editor-grid"]');
+    expect(grid).toHaveStyle({ display: "grid", flex: "1", minHeight: "0" });
+    expect(document.querySelector('[data-slot="context-details"]')).toBeNull();
+    expect(screen.queryByRole("button", { name: "Linked skills and settings" })).not.toBeInTheDocument();
+    expect(document.querySelector('[data-slot="editor-session"]')).toHaveStyle({ minHeight: "0" });
+  });
+
   it("waits for stale cached draft revalidation before latching the editing snapshot", async () => {
     api.draft = { data: initial, isFetching: true };
     const view = mount();
