@@ -18,6 +18,8 @@ Run with:
     python -m pytest agentic_eval/core_evals/run_prompt/tests/test_model_pricing.py -v -m unit
 """
 
+from datetime import UTC, datetime
+
 import pytest
 
 from agentic_eval.core_evals.fi_utils.token_count_helper import (
@@ -117,6 +119,7 @@ class TestTokenBasedPricing:
                 "cached_input_tokens": 800,
                 "completion_tokens": 100,
             },
+            at=datetime(2026, 11, 2, tzinfo=UTC),
         )
 
         assert result["prompt_cost"] == 0.00021
@@ -133,6 +136,7 @@ class TestTokenBasedPricing:
                 "cached_input_tokens": 800,
                 "completion_tokens": 100,
             },
+            at=datetime(2026, 11, 2, tzinfo=UTC),
         )
 
         assert result["total_cost"] == 0.000585

@@ -1376,6 +1376,13 @@ const ModelSelector = ({
             sx: {
               width: 440,
               maxWidth: "calc(100vw - 32px)",
+              // Keep asynchronous results below decision rows from moving the
+              // popover under a pointer gesture. MUI's paper maxHeight still
+              // constrains this footprint to the viewport's 16px margins.
+              height: 528,
+              display: "flex",
+              flexDirection: "column",
+              overflow: "hidden",
               borderRadius: "8px",
               p: 0,
             },
@@ -1383,7 +1390,14 @@ const ModelSelector = ({
         }}
       >
         {/* Search */}
-        <Box sx={{ p: 1, borderBottom: "1px solid", borderColor: "divider" }}>
+        <Box
+          sx={{
+            p: 1,
+            flexShrink: 0,
+            borderBottom: "1px solid",
+            borderColor: "divider",
+          }}
+        >
           <TextField
             size="small"
             fullWidth
@@ -1408,7 +1422,12 @@ const ModelSelector = ({
         <Box
           role="menu"
           aria-label="Evaluation models"
-          sx={{ maxHeight: 480, overflowY: "auto" }}
+          sx={{
+            flex: 1,
+            minHeight: 0,
+            overflowY: "auto",
+            scrollbarGutter: "stable",
+          }}
           onScroll={(e) => {
             const { scrollTop, scrollHeight, clientHeight } = e.target;
             if (

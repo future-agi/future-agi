@@ -1,14 +1,17 @@
 package cost
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"log/slog"
+	"math"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/modeldb"
 	"github.com/futureagi/agentcc-gateway/internal/models"
@@ -54,6 +57,10 @@ type Plugin struct {
 	tenantStore      *tenant.Store
 	aliasCostFactors map[string]float64 // alias prefix → cost multiplier
 	priceTables      func(orgID, providerID string) string
+	// now is the costing clock: time.Now unless a test sets it.
+	now func() time.Time
+	// providerTypes gives the type a provider's config records, "" for none.
+	providerTypes func(orgID, providerID string) string
 
 	unpricedWarned      sync.Map     // price hint + model → struct{}: already warned about
 	unpricedWarnedCount atomic.Int32 // size of unpricedWarned, for the cap
@@ -75,6 +82,37 @@ func (p *Plugin) SetPriceTables(f func(orgID, providerID string) string) {
 	p.priceTables = f
 }
 
+// clock is the plugin's own time, used to price a request that has no start time.
+func (p *Plugin) clock() time.Time {
+	if p.now != nil {
+		return p.now()
+	}
+	return time.Now()
+}
+
+// pricedAt is the instant a request is priced at: when it started, which is the
+// time its log row carries, or the plugin's clock when it has no start time.
+func (p *Plugin) pricedAt(rc *models.RequestContext) time.Time {
+	if rc.StartTime.IsZero() {
+		return p.clock()
+	}
+	return rc.StartTime
+}
+
+// SetProviderTypes gives the plugin the type each provider's config records,
+// so a reseller configured under another ID is still known by its type.
+func (p *Plugin) SetProviderTypes(f func(orgID, providerID string) string) {
+	p.providerTypes = f
+}
+
+// providerType is the type rc's provider's config records, or "".
+func (p *Plugin) providerType(rc *models.RequestContext) string {
+	if p.providerTypes == nil || rc.Provider == "" {
+		return ""
+	}
+	return p.providerTypes(rc.Metadata[tenant.MetadataKeyOrgID], rc.Provider)
+}
+
 func (p *Plugin) Name() string               { return "cost" }
 func (p *Plugin) Priority() int              { return 500 }
 func (p *Plugin) ShouldSkipOnCacheHit() bool { return true } // No cost to calculate on cache hits.
@@ -90,6 +128,18 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 		return pipeline.ResultContinue()
 	}
 
+	// Video tariffs are pinned independently of the chat model database.
+	switch rc.EndpointType {
+	case "video":
+		value, err := strconv.ParseFloat(rc.Metadata["video_cost_usd"], 64)
+		if err == nil && value >= 0 && !math.IsNaN(value) && !math.IsInf(value, 0) {
+			rc.Metadata["cost"] = fmt.Sprintf("%.6f", value)
+		}
+		return pipeline.ResultContinue()
+	}
+	if p.modelDB == nil {
+		return pipeline.ResultContinue()
+	}
 	db := p.modelDB()
 	if db == nil {
 		return pipeline.ResultContinue()
@@ -124,6 +174,7 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 
 	opts := modeldb.CostOptions{
 		Cached: rc.Metadata["cache_status"] == "hit",
+		At:     p.pricedAt(rc),
 	}
 
 	var cost float64
@@ -207,9 +258,14 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 		}
 		usage := rc.Response.Usage
 		billed = float64(usage.PromptTokens + usage.CompletionTokens)
-		cost, ok = db.CalculateCost(model, usage.PromptTokens, usage.CompletionTokens, opts)
+		providerType := p.providerType(rc)
+		ownKey, keep := resellerPrice(db, model, rc.Provider, table, providerType, opts.At)
+		opts.TablePrice = keep
+		cost, ok = db.CalculateCost(cmp.Or(ownKey, model), usage.PromptTokens, usage.CompletionTokens, opts)
 		if !ok && rc.ResolvedModel != "" && rc.Model != "" {
-			cost, ok = db.CalculateCost(priceKey(db, rc.Model, rc.Provider, table), usage.PromptTokens, usage.CompletionTokens, opts)
+			fallback := priceKey(db, rc.Model, rc.Provider, table)
+			ownKey, opts.TablePrice = resellerPrice(db, fallback, rc.Provider, table, providerType, opts.At)
+			cost, ok = db.CalculateCost(cmp.Or(ownKey, fallback), usage.PromptTokens, usage.CompletionTokens, opts)
 		}
 	}
 
@@ -289,6 +345,104 @@ func (p *Plugin) tableName(rc *models.RequestContext) string {
 func listsExactly(db *modeldb.ModelDB, id string) bool {
 	m, ok := db.Get(id)
 	return ok && m.ID == id
+}
+
+// googleTables are the names Google's own providers key the table under.
+var googleTables = map[string]bool{"vertex_ai": true, "gemini": true}
+
+// keepsTablePrice says whether a request is priced at the table's own rate
+// rather than a dated one. A reseller with its own entry for the model keeps
+// its price; Google's own providers, and resellers with no entry of their
+// own (which already take Google's price), follow the date. A provider is
+// known by its ID, the table name it states, and the type its config records.
+func keepsTablePrice(db *modeldb.ModelDB, model, provider, table, configuredType string) bool {
+	if provider == "" {
+		return false
+	}
+	m, ok := db.Get(model)
+	if !ok {
+		return false
+	}
+	names := []string{provider, table, tableProviderNames[provider], configuredType}
+	for _, name := range names {
+		if googleTables[name] {
+			return false
+		}
+	}
+	base := m.ID[strings.LastIndexByte(m.ID, '/')+1:]
+	for _, name := range names {
+		if name == "" {
+			continue
+		}
+		if listsExactly(db, name+"/"+base) || listsExactly(db, name+"/google/"+base) {
+			return true
+		}
+	}
+	return false
+}
+
+// googleFlashKeys are the keys Google's own Gemini 3.6/3.7/3.8 Flash entries
+// are listed under. A fixed list, not "has dated rows", so the rule below
+// outlives those rows.
+var googleFlashKeys = map[string]bool{
+	"gemini-3.6-flash":           true,
+	"gemini-3.7-flash":           true,
+	"gemini-3.8-flash":           true,
+	"gemini/gemini-3.6-flash":    true,
+	"gemini/gemini-3.7-flash":    true,
+	"gemini/gemini-3.8-flash":    true,
+	"vertex_ai/gemini-3.6-flash": true,
+	"vertex_ai/gemini-3.7-flash": true,
+	"vertex_ai/gemini-3.8-flash": true,
+}
+
+// ownPriceFrom is when a reseller's own price for those models wins whatever
+// it is. Before it, the own price wins only where it equals the price the
+// request is billed already, so no bill moves before Google's price does.
+var ownPriceFrom = time.Date(2027, time.January, 1, 0, 0, 0, 0, time.UTC)
+
+// resellerPrice says how a chat request is priced when its provider resells
+// the model. ownKey is the provider's own entry to bill instead of model, or
+// ""; keepTablePrice bills model at the table's own rate, never a dated one.
+// Only Google's Gemini Flash keys take the provider's own entry: the first one
+// listed with an input and an output price, from ownPriceFrom on, or before it
+// when it equals the price in force for model. Anything else is priced as
+// keepsTablePrice says.
+func resellerPrice(db *modeldb.ModelDB, model, provider, table, configuredType string, at time.Time) (ownKey string, keepTablePrice bool) {
+	if !keepsTablePrice(db, model, provider, table, configuredType) {
+		return "", false
+	}
+	m, ok := db.Get(model)
+	if !ok {
+		return "", false
+	}
+	if !googleFlashKeys[m.ID] {
+		return "", true
+	}
+	base := m.ID[strings.LastIndexByte(m.ID, '/')+1:]
+	for _, name := range []string{provider, table, tableProviderNames[provider], configuredType} {
+		if name == "" {
+			continue
+		}
+		for _, key := range []string{name + "/" + base, name + "/google/" + base} {
+			own, ok := db.Get(key)
+			if !ok || own.ID != key {
+				continue
+			}
+			p := own.PricingAt(at)
+			if p.InputPerToken <= 0 || p.OutputPerToken <= 0 {
+				continue
+			}
+			if at.Before(ownPriceFrom) {
+				g := m.PricingAt(at)
+				if p.InputPerToken != g.InputPerToken || p.OutputPerToken != g.OutputPerToken {
+					return "", true
+				}
+			}
+			return key, false
+		}
+	}
+	return "", true
 }
 
 // imageCost prices an image call: by tokens when the upstream reported them,

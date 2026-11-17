@@ -1,115 +1,59 @@
 # fi-collector
 
-The FutureAGI OpenTelemetry Collector — production write path for the new
-ClickHouse 25.3 spans store. Replaces the entire
-`SDK → Django OTLP → Redis → Celery → PG → PeerDB → CH 24.10 → spans_mv` chain
-mandated to die by `PLAN_V2_NO_CDC.md`.
+A custom Go OTLP receiver and ClickHouse 25.3 writer for Future AGI's v2 spans
+schema. It uses OTel `pdata` and gRPC libraries, **not** the OpenTelemetry Collector
+service/processor/exporter framework or OCB. The writer uses **HTTP JSONEachRow**,
+not the native `clickhouse-go` protocol.
 
-```
-Customer SDK (OTLP / HTTP / gRPC)
-    → fi-collector  (this binary)
-       • OTLP receiver
-       • memory_limiter (backpressure)
-       • batch processor (10K spans / 5s)
-       • clickhouse25 exporter — splits OTel attrs into typed Maps + typed JSON,
-                                 writes via clickhouse-go native protocol
-    → ClickHouse 25.3 spans table
+```text
+SDK → OTLP/HTTP JSON or protobuf, or OTLP/gRPC
+    → authentication + usage check + byte leases
+    → converter (typed Maps + JSON overflow + GenAI hot columns)
+    → in-memory pending rows (retain accounted work leases)
+    → bounded concurrent flushers → ClickHouse HTTP JSONEachRow
+    → optional best-effort curated dimensions and configured sidecars
 ```
 
-No PG span-write path. No Redis buffer. No CDC. No `spans_mv`. The typed-Map split that used
-to run inside CH (and caused the OOMs) now runs in this Go binary at ingest
-time, with bounded per-batch memory.
+Default batch triggers are **5,000 rows or 5 seconds**, not a hard maximum batch
+size. Current ingestion uses byte leases from reading through synchronous writer
+and sidecar ownership. See the operational limits below before treating an OTLP
+acknowledgement as durable storage. A byte budget is not a hard RSS bound.
 
-## Two run modes
+## Layout and build
+
+- `cmd/fi-collector`: custom entrypoint; YAML plus `FI_*` environment configuration.
+- `pkg/server`: HTTP/gRPC receivers, usage checks, byte admission and batching.
+- `exporter/clickhouse25exporter/converter.go`: OTLP-to-v2 row conversion.
+- `pkg/adapter`, `pkg/chwriter`: attribute splitting and HTTP inserts/retries.
+- `pkg/curatedwriter`, `pkg/observedcatalog`, `pkg/traceavailable`: sidecar paths.
+- `config/collector.yaml`: current configuration (no local/prod OCB configs).
+- `cmd/loadgen`: deterministic seeding tool; direct converter/writer by default,
+  optional OTLP/gRPC wire mode. Its manifest is not a loss/throughput benchmark.
+- `cmd/otlpbench`, `pkg/ingestbench`, `benchmark/`: bounded OTLP measurement and
+  independent persistence verification, reporting and sizing inputs.
+
+From this directory, with the Go toolchain declared in `go.mod`:
+
+```bash
+go build -o bin/fi-collector ./cmd/fi-collector
+go test ./...
+./bin/fi-collector --config config/collector.yaml
+```
+
+There is no Makefile or OCB install step. Configure real PostgreSQL auth and the
+ClickHouse schema/endpoint before running the production binary. It fails startup
+without PostgreSQL auth. Root application Compose deployments provide the broader
+stack; the older `docker-compose.standalone.yml` is **not a complete authenticated
+standalone deployment** and must not be advertised as a working two-service
+production setup. Do not start it on shared host ports as a benchmark shortcut.
 
 ### Observed attributes
 
-The collector durably enqueues attribute observations after source inserts and
-publishes them to one Kafka topic. `fi-property-catalog-consumer` writes two
-additive indexes; native metadata readers remain in place. See
-[OSS/local setup and recovery](PROPERTY_CATALOG_OSS.md) for Compose, credentials,
-storage preservation and bounded historical backfill.
-
-### 1. Bundled with the FutureAGI backend (single docker compose up)
-
-Both root Compose files at `future-agi/` run `fi-collector` next to Django,
-Postgres and ClickHouse: the default `docker-compose.yml` runs it inside the
-`app` container, and `docker-compose.distributed.yml` runs it as its own service. One
-`docker compose up` brings everything live; SDKs point at the collector
-instead of Django's `/v1/traces` endpoint.
-
-### 2. Standalone (just collector + ClickHouse)
-
-```bash
-cd fi-collector/
-docker compose -f docker-compose.standalone.yml up
-# SDKs → http://localhost:4317 (gRPC) or http://localhost:4318 (HTTP)
-# ClickHouse 25.3 at localhost:18123 (HTTP) / 19000 (native)
-```
-
-Use this for testing the collector in isolation, or for deploying it as a
-sidecar in a non-FutureAGI environment.
-
-## Why a custom OTel exporter
-
-Off-the-shelf options considered:
-
-- **opentelemetry-collector-contrib's `clickhouseexporter`** — assumes its own
-  hardcoded schema (otel_traces / otel_logs / otel_metrics). Doesn't know
-  about typed Map columns, materialized hot LLM keys, the v2 schema's
-  PROJECTION shapes, or the `attributes_extra` typed JSON overflow tier.
-  Would require us to rebuild every dashboard query against its schema.
-
-- **Direct CH writer in Django** — keeps Python in the hot path, which is the
-  entire reason for moving off PG-as-write-target. Doesn't scale to 1B/day.
-
-- **Custom Go OTel exporter (this)** — uses the official OTel Collector
-  framework (receivers / processors / exporters / queue / retry / batching
-  all come for free); custom exporter component does ONE thing: take OTLP
-  span pdata and write a row matching `tracer/services/clickhouse/v2/schema/`
-  via the official `clickhouse-go/v2` native driver. Same code path SigNoz,
-  ClickStack, and Uptrace all use.
-
-## Layout
-
-```
-fi-collector/
-├── cmd/fi-collector/main.go               — ocb-generated entrypoint
-├── pkg/
-│   ├── adapter/                           — typed-Map split logic
-│   │   ├── adapter.go                     — port of pg_to_ch_adapter.py:split_attributes
-│   │   └── adapter_test.go                — table-driven tests pinning every branch
-│   └── chwriter/                          — CH 25.3 writer
-│       ├── writer.go                      — clickhouse-go/v2 batched bulk insert
-│       └── writer_test.go
-├── exporter/clickhouse25exporter/         — the OTel Collector component
-│   ├── config.go                          — yaml-config schema
-│   ├── factory.go                         — component registration with otelcol
-│   ├── exporter.go                        — OTLP traces → adapter → chwriter
-│   └── exporter_test.go
-├── config/
-│   ├── fi-collector-local.yaml            — local dev: OTLP → batch → clickhouse25
-│   └── fi-collector-prod.yaml             — prod: + memory_limiter, retry, queue
-├── builder-config.yaml                    — ocb manifest (which components to compile in)
-├── Dockerfile                             — scratch runtime, ~25 MiB image
-├── docker-compose.standalone.yml          — collector + CH only, for isolated testing
-├── Makefile                               — build / run / test / docker / bench
-├── go.mod / go.sum
-└── README.md                              — this file
-```
-
-## Build / run
-
-Local dev (against a CH 25.3 sidecar running at 127.0.0.1:19001):
-
-```bash
-make build               # ocb + go build → bin/fi-collector
-make run                 # bin/fi-collector --config config/fi-collector-local.yaml
-make test                # unit tests
-make bench               # benchmark adapter + writer
-```
-
-For OCB (the OTel Collector builder): the Makefile installs it if missing.
+Observed attributes are disabled by default. Configured direct mode writes the
+observed catalog from the collector; Kafka mode uses a durable observation spool
+and `fi-property-catalog-consumer`. That spool is for attribute observations after
+source inserts, **not a durable queue for incoming canonical span payloads**. See
+[OSS/local setup and recovery](PROPERTY_CATALOG_OSS.md).
 
 ## PostgreSQL authentication configuration
 
@@ -169,7 +113,7 @@ Use this to refresh pricing without rebuilding the collector:
 
 ```bash
 # Mount a newer pricing file (e.g., from a ConfigMap or shared volume)
-FI_PRICING_JSON=/etc/fi-collector/model_prices.json ./bin/fi-collector --config config/fi-collector-prod.yaml
+FI_PRICING_JSON=/etc/fi-collector/model_prices.json ./bin/fi-collector --config config/collector.yaml
 ```
 
 Refresh the embedded snapshot by re-vendoring `fi-collector/pkg/pricing/model_prices.json` at build
@@ -179,7 +123,7 @@ time (this is a compile-time `//go:embed`):
 # Inside the repo
 curl -sSL https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json \
   -o fi-collector/pkg/pricing/model_prices.json
-make build
+go build -o bin/fi-collector ./cmd/fi-collector
 ```
 
 **Note:** Token-based cost computation also includes a per-organization fallback (`CustomAIModel`)
@@ -321,23 +265,39 @@ a `google.rpc.Status` body in the request's media type (protobuf or JSON),
 with the same message as the gRPC status, so exporters can log why; 415 and
 405, and the auth middleware's refusals, stay text/plain.
 
-## Migration relationship
+## Measurement and durability boundaries
 
-- This component is the **steady-state writer**. After it's deployed, the
-  old `bulk_create_observation_span_task` (Celery), `PayloadStorage`
-  (Redis buffer), the PG `tracer_observation_span` table, all PeerDB infra,
-  the CH 24.10 `spans_mv`, and the entire `docker-compose.peerdb.yml`
-  CAN be deleted (per `PLAN_V2_NO_CDC.md` §4–5).
-- The **historical backfill** (one-shot, Python, lives in `planning/.../migration/scripts/`)
-  populates the new CH cluster with everything PG was holding at cutover
-  time. After this collector is live, new spans flow direct, and the
-  historical-data tooling is archived.
+Successful OTLP responses acknowledge in-memory enqueue before ClickHouse insertion.
+The byte budget bounds accounted ingestion ownership, not hard RSS, crash loss or
+exactly-once storage. Graceful shutdown closes enqueue before the final drain.
+The admin `/healthz` retains `ingest` and adds build/runtime/writer/limits and
+observational pending-plus-in-flight row counts (`admission`). These counts include
+synchronous sidecars; some counted rows may already be query-visible.
+`limits.admission_model` is `byte-leases-v1`; `max_pending_rows: 0` is a legacy
+receipt field, not an unbounded-memory configuration. `FI_MAX_PENDING_ROWS` is
+obsolete and rejected at startup. Use the byte-budget settings above. gRPC gzip
+remains disabled because its decompression cannot be covered by the wire leases;
+HTTP gzip is supported and budgeted.
 
-## Status
+## End-to-end benchmark and current evidence
 
-This is the scaffolding + adapter + writer + exporter component, with
-tests. Production readiness needs:
+See [benchmark design and runbook](benchmark/README.rst) for safe defaults, the
+OTLP/HTTP protobuf/JSON (optionally gzip) and uncompressed gRPC wire paths, per-request
+outcome accounting (acknowledged, partial, whole-request rejected, ambiguous),
+exact-ID ClickHouse verification that separates acknowledged-but-missing spans from
+rejected ones and can resume from a checkpoint, the measured collector settings for the 15k
+spans/s x 24h and 60k spans/s burst target profiles need (neither profile has been
+run), direct ClickHouse and authenticated application read probes, provenance
+recording, measurement limitations and an explicitly extrapolated sizing
+worksheet.
 
-- Real load test (10K+ spans/sec sustained against a real CH cluster)
-- Integration with the root Compose files
-- Monitoring/metrics exporter for ops visibility
+The CLI is offline by default and requires `--execute` to send anything. Remote
+hosts need an exact allowlist and run-ID confirmation; larger load also needs a
+separate confirmation. It never starts/stops containers or inserts directly into
+ClickHouse. Unit/mock tests and a small real smoke do **not** establish capacity.
+The full-scale soak, burst, application read latency at that volume and measured
+hardware-specific sizing remain pending until run on provisioned infrastructure.
+
+Deploying this collector alone is not authorization to delete old ingestion or
+migration services. Cutover, reconciliation, rollback and historical backfill
+must be verified for each deployment separately.
