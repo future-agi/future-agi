@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Bug Fixes
+
+- **gateway:** Keep a provider out of routing until the cooldown from its latest failure has elapsed, including failures from calls already in flight. Existing readmission and recovery callbacks are unchanged.
+
 ## [1.56.1](https://github.com/future-agi/future-agi/compare/v1.56.0...v1.56.1) (2026-10-28)
 
 

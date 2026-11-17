@@ -2163,7 +2163,7 @@ func TestCircuitBreaker_TrippedProviderRecoversThroughRouter(t *testing.T) {
 // TestCircuitBreaker_ReadmitWaitsForLateFailures — a request already in flight
 // when the breaker opened can fail afterwards and push out the cooldown that
 // Allow() checks. Handing the provider back to the router before Allow() admits
-// a probe would make failover spend an attempt on it for nothing.
+// a probe would make routing select a provider that admission still rejects.
 func TestCircuitBreaker_ReadmitWaitsForLateFailures(t *testing.T) {
 	cfg := newTestCBConfig()
 	cfg.Cooldown = 100 * time.Millisecond
