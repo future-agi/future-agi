@@ -227,6 +227,29 @@ def test_live_authoring_estimate_prices_at_the_attempts_start(
 
 @pytest.mark.django_db
 @pytest.mark.requires_ee
+def test_sealed_authoring_is_priced_at_the_attempts_start_not_the_seal(
+    metered_attempt, monkeypatch, django_capture_on_commit_callbacks
+):
+    # Authoring has no request start of its own: it is priced at the attempt's
+    # created_at. The attempt started before midnight and is sealed after it.
+    from agentic_eval.core_evals.run_prompt import model_pricing
+
+    capability, _ = metered_attempt
+    _start_attempt_at(capability.attempt, T26)
+    _ai_credits_equal_usd(monkeypatch)
+    monkeypatch.setattr(model_pricing, "_utc_now", lambda: T27 + timedelta(hours=1))
+    spend = {"stages": [_stage("gemini-3.7-flash")]}
+
+    with django_capture_on_commit_callbacks(execute=True):
+        harness_usage.record_harness_authoring_usage(capability.attempt, spend)
+
+    capability.attempt.refresh_from_db()
+    record = capability.attempt.authoring_usage_report["records"][0]
+    assert record["cost_usd"] == pytest.approx(0.585)
+
+
+@pytest.mark.django_db
+@pytest.mark.requires_ee
 def test_saved_simulation_run_does_not_rebill_authoring(
     metered_attempt, django_capture_on_commit_callbacks
 ):

@@ -4,7 +4,7 @@ import json
 import uuid
 from collections import defaultdict
 from dataclasses import replace
-from datetime import datetime
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
 
@@ -28,6 +28,7 @@ from django.db.models import (
 )
 from django.db.models.functions import JSONObject, Round
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 from drf_yasg import openapi
 from rest_framework import serializers, status
 from rest_framework.decorators import action
@@ -234,6 +235,25 @@ SPAN_LIST_READ_SETTINGS = {
 # users, page content and the unbounded fallback list - keep the single worker
 # they always had; only the bounded selector's wide seeds gain workers.
 SPAN_LIST_SINGLE_WORKER_READ_SETTINGS = {**SPAN_LIST_READ_SETTINGS, "max_threads": 1}
+
+
+def _posted_span_start(value) -> datetime:
+    """The instant a posted span started, as an aware UTC datetime.
+
+    A span is priced at its start, as the gateway prices a request at its start.
+    A start that is absent or cannot be read is priced now.
+    """
+    moment = value
+    if isinstance(value, str):
+        try:
+            moment = parse_datetime(value.strip())
+        except ValueError:
+            moment = None
+    if not isinstance(moment, datetime):
+        return datetime.now(UTC)
+    if moment.utcoffset() is None:
+        return moment.replace(tzinfo=UTC)
+    return moment.astimezone(UTC)
 
 
 def _span_filtered_page_depth_exceeded(
@@ -1522,6 +1542,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                         getattr(request, "organization", None)
                         or request.user.organization
                     ).id,
+                    at=_posted_span_start(observation_span.get("start_time")),
                 )
 
                 observation_span["cost"] = cost

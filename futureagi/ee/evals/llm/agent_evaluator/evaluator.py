@@ -1438,6 +1438,10 @@ class AgentEvaluator:
             temperature=0.0,
             max_tokens=protect_max_tokens,
         )
+        # The request starts here; its tokens are priced at this instant.
+        from agentic_eval.core_evals.run_prompt import model_pricing
+
+        call_started_at = model_pricing._utc_now()
         response = llm._try_gateway_completion(
             {
                 "model": alias,
@@ -1496,7 +1500,9 @@ class AgentEvaluator:
                 calculate_total_cost,
             )
 
-            self.cost.update(calculate_total_cost(alias, self.token_usage))
+            self.cost.update(
+                calculate_total_cost(alias, self.token_usage, at=call_started_at)
+            )
         except Exception:
             pass
 

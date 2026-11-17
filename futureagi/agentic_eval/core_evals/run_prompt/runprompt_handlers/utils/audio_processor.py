@@ -18,7 +18,10 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import structlog
 from tfc.utils.lazy_extras import av
 
-from agentic_eval.core_evals.fi_utils.token_count_helper import calculate_total_cost
+from agentic_eval.core_evals.fi_utils.token_count_helper import (
+    calculate_total_cost,
+    request_started_at,
+)
 from tfc.utils.storage import (
     audio_bytes_from_url_or_base64,
     convert_to_mp3,
@@ -232,7 +235,9 @@ class AudioProcessor:
 
         try:
             cost_payload = (
-                calculate_total_cost(model, usage_payload)
+                calculate_total_cost(
+                    model, usage_payload, at=request_started_at(start_time)
+                )
                 if (prompt_tokens is not None and completion_tokens is not None)
                 else {"total_cost": 0.0, "prompt_cost": 0.0, "completion_cost": 0.0}
             )
@@ -490,7 +495,9 @@ class AudioProcessor:
                 "audio_seconds": duration_seconds,
             },
             "cost": calculate_total_cost(
-                model_name=model, token_usage={"audio_seconds": duration_seconds}
+                model_name=model,
+                token_usage={"audio_seconds": duration_seconds},
+                at=request_started_at(start_time),
             ),
             "response_time": completion_time,
         }

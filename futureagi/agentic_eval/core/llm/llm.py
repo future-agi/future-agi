@@ -5,8 +5,8 @@ import os
 import re
 import time
 import traceback
-from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
 from functools import wraps
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -16,9 +16,6 @@ import boto3
 import litellm
 import requests
 import structlog
-from agentic_eval.core.utils.functions import download_image_to_base64
-from agentic_eval.core.utils.model_config import ModelConfigs
-from agentic_eval.core_evals.fi_utils.token_count_helper import calculate_total_cost
 from anthropic import AnthropicBedrock, AsyncAnthropic, AsyncAnthropicBedrock
 from botocore.exceptions import ClientError
 from clickhouse_driver import Client
@@ -28,6 +25,9 @@ from litellm import completion
 from openai import AsyncOpenAI, OpenAI
 
 from agentic_eval.core.database.ch_vector import get_clickhouse_client_kwargs
+from agentic_eval.core.utils.functions import download_image_to_base64
+from agentic_eval.core.utils.model_config import ModelConfigs
+from agentic_eval.core_evals.fi_utils.token_count_helper import calculate_total_cost
 
 logger = structlog.get_logger(__name__)
 from agentic_eval.core.llm.audio_utils import (

@@ -300,9 +300,7 @@ def test_the_prompt_stats_average_the_dated_cost(dated_cells):
 
 
 @pytest.mark.django_db(transaction=True)
-def test_the_dataset_column_metadata_averages_the_dated_cost(
-    auth_client, dated_cells
-):
+def test_the_dataset_column_metadata_averages_the_dated_cost(auth_client, dated_cells):
     dataset, _, column = dated_cells
 
     response = auth_client.get(
@@ -332,9 +330,7 @@ def test_the_change_dates_follow_the_key_that_sets_the_price():
 
 
 @pytest.mark.django_db
-def test_the_parts_are_priced_just_before_each_date_and_on_it(
-    dated_cells, monkeypatch
-):
+def test_the_parts_are_priced_just_before_each_date_and_on_it(dated_cells, monkeypatch):
     _, run_prompter, column = dated_cells
     seen = []
 
@@ -356,17 +352,33 @@ def test_the_parts_are_priced_just_before_each_date_and_on_it(
 # --- Every run writes the instant it started with the tokens
 
 
-def _run_row(monkeypatch, run_prompter, column, row, now, edit_mode):
-    """Run ``RunPrompts.process_row`` once with the model call stubbed."""
+def _run_row(
+    monkeypatch,
+    run_prompter,
+    column,
+    row,
+    now,
+    edit_mode,
+    value_info=None,
+    populate=None,
+):
+    """Run ``RunPrompts.process_row`` once with the model call stubbed.
+
+    ``now`` is the clock: one instant, or the instants successive reads of it
+    return (the last repeats).
+    """
     from model_hub.views import run_prompt as run_prompt_view
 
-    value_info = {
-        "data": {"response": "new"},
-        "metadata": {
-            "usage": {"prompt_tokens": 1_000_000, "completion_tokens": 1_000_000},
-            "response_time": 2.0,
-        },
-    }
+    if value_info is None:
+        value_info = {
+            "data": {"response": "new"},
+            "metadata": {
+                "usage": {"prompt_tokens": 1_000_000, "completion_tokens": 1_000_000},
+                "response_time": 2.0,
+            },
+        }
+    instants = list(now) if isinstance(now, list | tuple) else [now]
+    clock = iter(instants)
 
     class StubRunPrompt:
         def __init__(self, **kwargs):
@@ -379,9 +391,11 @@ def _run_row(monkeypatch, run_prompter, column, row, now, edit_mode):
     monkeypatch.setattr(run_prompt_view, "log_and_deduct_cost_for_api_request", None)
     monkeypatch.setattr(run_prompt_view, "close_old_connections", lambda: None)
     monkeypatch.setattr(
-        run_prompt_view, "populate_placeholders", lambda messages, **kwargs: messages
+        run_prompt_view,
+        "populate_placeholders",
+        populate or (lambda messages, **kwargs: messages),
     )
-    monkeypatch.setattr(run_prompt_view, "_utc_now", lambda: now)
+    monkeypatch.setattr(run_prompt_view, "_utc_now", lambda: next(clock, instants[-1]))
 
     runner = run_prompt_view.RunPrompts(run_prompter.id)
     runner.load_run_prompt_id()
@@ -434,6 +448,256 @@ def test_a_cell_made_by_an_edit_mode_run_writes_its_start(prompt_column, monkeyp
     cell = _run_row(monkeypatch, run_prompter, column, row, BEFORE_2027, True)
 
     assert cell.column_metadata == {"run_started_at": BEFORE_2027.isoformat()}
+
+
+@pytest.mark.django_db
+def test_the_call_stamps_the_instant_it_started_not_the_start_of_the_row(
+    prompt_column, monkeypatch
+):
+    dataset, run_prompter, column = prompt_column
+    row = Row.objects.create(dataset=dataset, order=0)
+    before_midnight = datetime(2026, 12, 31, 23, 59, 59, tzinfo=UTC)
+    call_start = datetime(2027, 1, 1, 0, 0, 1, tzinfo=UTC)
+
+    # The row took the first reading; its bookkeeping then ran past midnight, and
+    # the call started at the second.
+    cell = _run_row(
+        monkeypatch, run_prompter, column, row, [before_midnight, call_start], False
+    )
+
+    assert cell.column_metadata == {"run_started_at": call_start.isoformat()}
+    stats = cell_token_cost(Cell.objects.filter(column=column), run_prompter.model)
+    assert stats["cost"] == 9.0
+
+
+@pytest.mark.django_db
+def test_a_row_that_fails_before_its_call_keeps_the_start_of_the_row(
+    prompt_column, monkeypatch
+):
+    dataset, run_prompter, column = prompt_column
+    row = Row.objects.create(dataset=dataset, order=0)
+
+    def fail(messages, **kwargs):
+        raise RuntimeError("placeholders failed")
+
+    # The model call is never reached, so only the start of the row was taken.
+    cell = _run_row(
+        monkeypatch,
+        run_prompter,
+        column,
+        row,
+        [BEFORE_2027, AFTER_2027],
+        False,
+        populate=fail,
+    )
+
+    assert cell.status == CellStatus.ERROR.value
+    assert cell.column_metadata == {"run_started_at": BEFORE_2027.isoformat()}
+
+
+class _FalsyInfo(dict):
+    """A value_info that is falsy whatever it holds."""
+
+    def __bool__(self):
+        return False
+
+
+@pytest.mark.django_db
+def test_a_first_run_with_a_falsy_value_info_saves_a_cell_with_no_tokens(
+    prompt_column, monkeypatch
+):
+    dataset, run_prompter, column = prompt_column
+    row = Row.objects.create(dataset=dataset, order=0)
+
+    cell = _run_row(
+        monkeypatch,
+        run_prompter,
+        column,
+        row,
+        AFTER_2027,
+        False,
+        value_info=_FalsyInfo(),
+    )
+
+    assert cell.prompt_tokens is None
+    assert cell.completion_tokens is None
+    assert cell.response_time is None
+    assert cell.column_metadata == {"run_started_at": AFTER_2027.isoformat()}
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("stored", [None, [], "text", 7])
+def test_a_run_over_a_non_dict_column_metadata_still_stamps_its_start(
+    prompt_column, monkeypatch, stored
+):
+    dataset, run_prompter, column = prompt_column
+    old = _cell(dataset, column, 0, BEFORE_2027)
+    Cell.objects.filter(id=old.id).update(column_metadata=stored)
+
+    cell = _run_row(monkeypatch, run_prompter, column, old.row, AFTER_2027, True)
+
+    assert cell.column_metadata == {"run_started_at": AFTER_2027.isoformat()}
+
+
+# --- A stored run start is checked on save and guarded when read
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "bad",
+    ["not a date", "2026-13-45T00:00:00+00:00", "1767225600", "2027-01-01", 1767225600],
+)
+def test_a_cell_is_not_saved_with_a_run_start_that_is_not_iso(prompt_column, bad):
+    from django.core.exceptions import ValidationError
+
+    dataset, _, column = prompt_column
+    cell = _cell(dataset, column, 0, BEFORE_2027)
+
+    cell.column_metadata = {"run_started_at": bad}
+    with pytest.raises(ValidationError):
+        cell.save()
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "good",
+    [
+        AFTER_2027.isoformat(),
+        "2027-01-02T12:00:00Z",
+        "2027-01-02T12:00:00.123456+00:00",
+    ],
+)
+def test_a_run_start_is_stored_as_the_string_it_was_given(prompt_column, good):
+    dataset, _, column = prompt_column
+    cell = _cell(dataset, column, 0, BEFORE_2027)
+
+    cell.column_metadata = {"run_started_at": good}
+    cell.save()
+
+    cell.refresh_from_db()
+    assert cell.column_metadata == {"run_started_at": good}
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "not a date",
+        "2026-13-45T00:00:00+00:00",
+        "2026-02-30T00:00:00+00:00",
+        "1767225600",
+        "",
+        7,
+        None,
+        ["2027-01-02T12:00:00+00:00"],
+    ],
+)
+def test_a_bad_run_start_already_stored_is_priced_at_the_creation_of_the_cell(
+    prompt_column, bad
+):
+    dataset, run_prompter, column = prompt_column
+    stamped = _cell(dataset, column, 0, BEFORE_2027, run_started_at=AFTER_2027)
+    broken = _cell(dataset, column, 1, BEFORE_2027)
+    # Written around the model's validation, as an old or hand-made row could be.
+    Cell.objects.filter(id=broken.id).update(column_metadata={"run_started_at": bad})
+
+    stats = cell_token_cost(Cell.objects.filter(column=column), run_prompter.model)
+
+    # 9.0 for the stamped cell (its run start), 4.5 for the broken one (created
+    # before the change); the aggregate does not fail on the bad value.
+    assert stats["cost"] == 13.5
+    assert stats["cell_count"] == 2
+    assert stamped.id != broken.id
+
+
+# --- The embedding writer keeps what another writer stamped
+
+
+def _write_between_the_read_and_the_write(cell_id, metadata):
+    """An execute wrapper: just before the statement that writes
+    ``column_metadata``, another writer stamps the cell."""
+    from django.db import connection
+
+    state = {"done": False}
+
+    def wrapper(execute, sql, params, many, context):
+        if (
+            not state["done"]
+            and sql.lstrip().upper().startswith("UPDATE")
+            and "column_metadata" in sql
+        ):
+            state["done"] = True
+            Cell.objects.filter(id=cell_id).update(column_metadata=metadata)
+        return execute(sql, params, many, context)
+
+    return connection.execute_wrapper(wrapper), state
+
+
+def _embedding_manager():
+    from unittest.mock import MagicMock
+
+    from agentic_eval.core.embeddings.embedding_manager import EmbeddingManager
+
+    manager = EmbeddingManager.__new__(EmbeddingManager)
+    manager.db_client = MagicMock()
+    return manager
+
+
+@pytest.mark.django_db
+def test_embedding_a_cell_keeps_a_run_start_written_while_it_ran(prompt_column):
+    dataset, _, column = prompt_column
+    cell = _cell(dataset, column, 0, BEFORE_2027)
+    stamp = {"run_started_at": AFTER_2027.isoformat()}
+    hook, state = _write_between_the_read_and_the_write(cell.id, stamp)
+
+    with hook:
+        done = _embedding_manager().bulk_insert_embeddings(
+            "t",
+            [
+                {
+                    "eval_id": "e",
+                    "vector": [0.1],
+                    "metadata": {},
+                    "cell_id": str(cell.id),
+                }
+            ],
+        )
+
+    assert state["done"]
+    assert done == [str(cell.id)]
+    cell.refresh_from_db()
+    assert cell.column_metadata == {
+        "run_started_at": AFTER_2027.isoformat(),
+        "embedding": True,
+        "audio_duration_seconds": 0,
+    }
+
+
+@pytest.mark.django_db
+def test_embedding_a_cell_keeps_its_audio_duration_and_sets_its_own_key(
+    prompt_column,
+):
+    dataset, _, column = prompt_column
+    kept = _cell(dataset, column, 0, BEFORE_2027)
+    bare = _cell(dataset, column, 1, BEFORE_2027)
+    Cell.objects.filter(id=kept.id).update(
+        column_metadata={"audio_duration_seconds": 3.5, "embedding": False}
+    )
+    Cell.objects.filter(id=bare.id).update(column_metadata=None)
+
+    done = _embedding_manager().bulk_insert_embeddings(
+        "t",
+        [
+            {"eval_id": "e", "vector": [0.1], "metadata": {}, "cell_id": str(c.id)}
+            for c in (kept, bare)
+        ],
+    )
+
+    assert sorted(done) == sorted([str(kept.id), str(bare.id)])
+    kept.refresh_from_db()
+    bare.refresh_from_db()
+    assert kept.column_metadata == {"audio_duration_seconds": 3.5, "embedding": True}
+    assert bare.column_metadata == {"audio_duration_seconds": 0, "embedding": True}
 
 
 # --- The cell writers leave the token counts and the run start alone

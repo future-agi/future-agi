@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 
 import numpy as np
 import structlog
-from django.db.models import Count, DateTimeField, F, Q, Sum
+from django.db.models import Case, Count, DateTimeField, F, Q, Sum, When
 from django.db.models.fields.json import KeyTextTransform
 from django.db.models.functions import Cast, Coalesce
 
@@ -13,7 +13,7 @@ logger = structlog.get_logger(__name__)
 from agentic_eval.core_evals.fi_utils.token_count_helper import calculate_total_cost
 from agentic_eval.core_evals.run_prompt.model_pricing import price_change_dates
 from model_hub.models.choices import CellStatus, SourceChoices
-from model_hub.models.develop_dataset import Cell, Column
+from model_hub.models.develop_dataset import RUN_STARTED_AT_PATTERN, Cell, Column
 from model_hub.models.evals_metric import UserEvalMetric
 from model_hub.utils.SQL_queries import SQLQueryHandler
 from tfc.utils.clickhouse import ClickHouseClientSingleton
@@ -972,11 +972,20 @@ def cell_token_cost(cells, model_name):
             "cell_count": Count("id"),
             "response_time": Sum("response_time", default=0),
         }
+        # A stamp is cast only when it reads as an ISO date and time: a value that
+        # does not (written around the model's validation) is priced at created_at,
+        # rather than failing the cast and the whole aggregate.
         cells = cells.annotate(
+            run_started_text=KeyTextTransform("run_started_at", "column_metadata")
+        ).annotate(
             priced_at=Coalesce(
-                Cast(
-                    KeyTextTransform("run_started_at", "column_metadata"),
-                    DateTimeField(),
+                Case(
+                    When(
+                        run_started_text__regex=f"^({RUN_STARTED_AT_PATTERN})$",
+                        then=Cast("run_started_text", DateTimeField()),
+                    ),
+                    default=None,
+                    output_field=DateTimeField(),
                 ),
                 F("created_at"),
             )

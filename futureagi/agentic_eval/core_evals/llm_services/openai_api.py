@@ -9,7 +9,10 @@ import structlog
 logger = structlog.get_logger(__name__)
 from agentic_eval.core_evals.fi_utils.fi_model import Model
 from agentic_eval.core_evals.fi_utils.json import JsonHelper
-from agentic_eval.core_evals.fi_utils.token_count_helper import calculate_total_cost
+from agentic_eval.core_evals.fi_utils.token_count_helper import (
+    calculate_total_cost,
+    request_started_at,
+)
 from agentic_eval.core_evals.llm_services.abstract_llm import AbstractLlmService
 
 DEFAULT_TEMPERATURE = 0.0
@@ -51,6 +54,7 @@ class OpenAiService(AbstractLlmService):
             kwargs['temperature'] = DEFAULT_TEMPERATURE
         try:
             start_time = time.time()
+            started_at = request_started_at(start_time)
             response = self.openai.chat.completions.create(
                 model=model, messages=messages, **kwargs
             )
@@ -62,7 +66,7 @@ class OpenAiService(AbstractLlmService):
                     "prompt_tokens": response.usage.prompt_tokens,
                     "total_tokens": response.usage.total_tokens,
                 },
-                "cost": calculate_total_cost(model, dict(response.usage)),
+                "cost": calculate_total_cost(model, dict(response.usage), at=started_at),
                 "response_time": completion_time
             }
             if response.choices[0].finish_reason == 'tool_calls':

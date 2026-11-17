@@ -2,6 +2,7 @@ import json
 import time
 import traceback
 import uuid
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import structlog
@@ -376,6 +377,8 @@ def run_eval_func(
 
         partial_input_warning, _run_kwargs = validate_eval_inputs(template, _run_kwargs)
 
+        # The evaluation starts here; a fallback cost is priced at this instant.
+        eval_started_at = datetime.now(UTC)
         eval_result = eval_instance.run(**_run_kwargs)
         end_time = time.time()
 
@@ -486,7 +489,9 @@ def run_eval_func(
                     or getattr(template, "model", None)
                     or ModelChoices.TURING_LARGE.value
                 )
-                _fallback = calculate_total_cost(pricing_model, _token_usage)
+                _fallback = calculate_total_cost(
+                    pricing_model, _token_usage, at=eval_started_at
+                )
                 _fallback_cost = _fallback.get("total_cost", 0)
                 _pricing_source = _fallback.get("pricing_source", "")
             except Exception:

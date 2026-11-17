@@ -12,10 +12,13 @@ Features:
 """
 
 import time
+from datetime import datetime
 from typing import Any, Dict, Optional, Tuple
 
 import requests
 import structlog
+
+from agentic_eval.core_evals.fi_utils.token_count_helper import request_started_at
 
 from agentic_eval.core_evals.run_prompt.runprompt_handlers.base_handler import (
     BaseModelHandler,
@@ -135,7 +138,11 @@ class CustomModelHandler(BaseModelHandler):
         return payload
 
     def _calculate_token_costs(
-        self, prompt_text: str, completion_text: str, image_urls: list
+        self,
+        prompt_text: str,
+        completion_text: str,
+        image_urls: list,
+        started_at: datetime | None = None,
     ) -> Tuple[int, int, Dict[str, float]]:
         """
         Calculate token counts and costs for custom model.
@@ -144,6 +151,8 @@ class CustomModelHandler(BaseModelHandler):
             prompt_text: Input text for token counting
             completion_text: Output text for token counting
             image_urls: List of image URLs in the prompt
+            started_at: The aware UTC instant the request started, which prices
+                the call. None means now.
 
         Returns:
             Tuple of (prompt_tokens, completion_tokens, cost_dict)
@@ -181,6 +190,7 @@ class CustomModelHandler(BaseModelHandler):
             model_name=self.context.model,
             token_usage=token_usage,
             fallback_pricing=fallback_pricing,
+            at=started_at,
         )
 
         return estimated_prompt_tokens, estimated_completion_tokens, cost_dict
@@ -264,6 +274,7 @@ class CustomModelHandler(BaseModelHandler):
                 prompt_text=prompt_text,
                 completion_text=response_content,
                 image_urls=image_urls,
+                started_at=request_started_at(start_time),
             )
 
             # Build metadata

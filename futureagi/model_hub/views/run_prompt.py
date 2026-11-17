@@ -1164,7 +1164,8 @@ def _with_run_started_at(column_metadata, started_at):
     ``tfc.utils.functions.cell_token_cost``), so it is written wherever a run
     writes tokens. Other keys (an audio duration) are kept.
     """
-    return {**(column_metadata or {}), "run_started_at": started_at.isoformat()}
+    kept = column_metadata if isinstance(column_metadata, dict) else {}
+    return {**kept, "run_started_at": started_at.isoformat()}
 
 
 class RunPrompts:
@@ -1340,7 +1341,8 @@ class RunPrompts:
 
     def process_row(self, row, column, edit_mode=False):
         row_id = str(row.id)
-        # The run starts here, before the call; its tokens are priced at this instant.
+        # Only the default for a row that fails before its call starts: the call
+        # takes its own start just before it is made (see below).
         run_started_at = _utc_now()
         logger.info(
             "RunPrompts_process_row_started",
@@ -1501,6 +1503,10 @@ class RunPrompts:
                     run_prompt_id=str(self.run_prompt_id),
                     row_id=row_id,
                 )
+                # The run starts here, not at the top of the row: its tokens are
+                # priced at the instant the call starts, as the gateway prices a
+                # request, whatever the bookkeeping before it took.
+                run_started_at = _utc_now()
                 response, value_info = run_prompt.litellm_response()
                 logger.info(
                     "RunPrompts_process_row_litellm_response_received",
@@ -1655,9 +1661,9 @@ class RunPrompts:
                     run_prompt_id=str(self.run_prompt_id),
                     row_id=row_id,
                 )
-                prompt_tokens = (None,)
-                completion_tokens = (None,)
-                response_time = (None,)
+                prompt_tokens = None
+                completion_tokens = None
+                response_time = None
                 if value_info:
                     prompt_tokens = (
                         value_info.get("metadata", {})

@@ -1,7 +1,7 @@
 import json
 import re
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from enum import Enum
 from typing import Any, Optional
 
@@ -1742,7 +1742,12 @@ def _span_started_at(otel_span: dict) -> Optional[datetime]:
     if not start_ns:
         return None
     try:
-        return datetime.fromtimestamp(int(start_ns) / 1e9, tz=UTC)
+        # Integer arithmetic: a float of nanoseconds rounds the last microsecond
+        # of a second up into the next one (and the next year).
+        ns = int(start_ns)
+        return datetime.fromtimestamp(ns // 10**9, tz=UTC) + timedelta(
+            microseconds=ns % 10**9 // 1000
+        )
     except (TypeError, ValueError, OverflowError, OSError):
         return None
 
@@ -1826,6 +1831,8 @@ def _dated_token_cost(
     model: str, prompt_tokens: int, completion_tokens: int, at: Optional[datetime]
 ) -> Optional[float]:
     """The cost at ``at`` for a model whose price the dated schedule changes, else None."""
+    if not isinstance(model, str):
+        return None
     from agentic_eval.core_evals.fi_utils.token_count_helper import (
         calculate_total_cost,
     )

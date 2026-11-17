@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 import structlog
@@ -185,6 +185,16 @@ DEFAULT_TTS_FALLBACK_PRICING = {"input_per_1M_characters": 15.0}
 # STT (Speech-to-Text) models - minute-based pricing
 # Conservative default estimate (~$0.006 per minute)
 DEFAULT_STT_FALLBACK_PRICING = {"input_per_minute": 0.006}
+
+
+def request_started_at(start_time: float) -> datetime:
+    """The aware UTC instant of a ``time.time()`` reading taken as a request starts.
+
+    A call is priced at the instant its request starts, as the gateway prices it,
+    so a call that starts before a price change and is handled after it keeps the
+    old price. Pass this as ``at`` to ``calculate_total_cost``.
+    """
+    return datetime.fromtimestamp(start_time, tz=UTC)
 
 
 def calculate_total_cost(

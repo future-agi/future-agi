@@ -1,6 +1,7 @@
 import json
+import re
 import uuid
-from typing import Optional
+from datetime import datetime
 
 import pydantic
 import structlog
@@ -265,12 +266,39 @@ def validate_cell_choice(value):
         )
 
 
+# The ISO 8601 form a run writes its start in (``datetime.isoformat()``, UTC). A
+# regex both Python and Postgres read: the schema checks a value with it on save,
+# and the price query only casts a stored value that matches it (``cell_token_cost``).
+# It rejects a day a month never has; only 29 February of a common year passes it,
+# and the schema's date parse rejects that one on save.
+RUN_STARTED_AT_PATTERN = (
+    r"[1-9]\d{3}-("
+    r"02-(0[1-9]|[12]\d)"
+    r"|(0[13578]|1[02])-(0[1-9]|[12]\d|3[01])"
+    r"|(0[469]|11)-(0[1-9]|[12]\d|30)"
+    r")"
+    r"[T ]([01]\d|2[0-3]):[0-5]\d(:[0-5]\d(\.\d{1,6})?)?"
+    r"(Z|[+-]\d{2}:\d{2})?"
+)
+
+
 # Pydantic schema for column metadata
 class ColumnMetadataSchema(pydantic.BaseModel):
     # Both keys are optional: an audio cell carries the duration, a run-prompt cell
     # carries the instant its run started (ISO, UTC), which dates its price.
-    audio_duration_seconds: Optional[float] = pydantic.Field(default=None, ge=0.0)
-    run_started_at: Optional[str] = None
+    audio_duration_seconds: float | None = pydantic.Field(default=None, ge=0.0)
+    run_started_at: datetime | None = None
+
+    @pydantic.field_validator("run_started_at", mode="before")
+    @classmethod
+    def _run_started_at_is_iso(cls, value):
+        """An ISO 8601 string only: no epoch number, no date alone. The stored
+        value stays that string; the schema only checks it."""
+        if value is not None and not (
+            isinstance(value, str) and re.fullmatch(RUN_STARTED_AT_PATTERN, value)
+        ):
+            raise ValueError("run_started_at must be an ISO 8601 date and time")
+        return value
 
 
 def validate_column_metadata(value):

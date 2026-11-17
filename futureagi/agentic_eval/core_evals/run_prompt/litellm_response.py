@@ -4,7 +4,10 @@ import os
 import re
 import time
 
-from agentic_eval.core_evals.fi_utils.token_count_helper import calculate_total_cost
+from agentic_eval.core_evals.fi_utils.token_count_helper import (
+    calculate_total_cost,
+    request_started_at,
+)
 from model_hub.queries.tts_voices import resolve_voice_id
 
 from agentic_eval.core.utils.json_utils import extract_dict_from_string
@@ -89,6 +92,11 @@ async def create_model_manager_async(model_name, organization_id):
     manager = LiteLLMModelManager(model_name)
     await sync_to_async(manager._add_custom_models)(organization_id)
     return manager
+
+
+def _call_started_at():
+    """The aware UTC instant a request starts: read just before the call is made."""
+    return request_started_at(time.time())
 
 
 class RunPrompt:
@@ -342,7 +350,9 @@ class RunPrompt:
         }
         try:
             cost_payload = (
-                calculate_total_cost(self.model, usage_payload)
+                calculate_total_cost(
+                    self.model, usage_payload, at=request_started_at(start_time)
+                )
                 if (prompt_tokens is not None and completion_tokens is not None)
                 else {"total_cost": 0.0, "prompt_cost": 0.0, "completion_cost": 0.0}
             )
@@ -623,7 +633,9 @@ class RunPrompt:
         # Use actual_model (parsed/stripped model name) for pricing lookup
         # since self.model may have prefixes like "hd/1024-x-1792/dall-e-3"
         try:
-            cost_payload = calculate_total_cost(actual_model, usage_payload)
+            cost_payload = calculate_total_cost(
+                actual_model, usage_payload, at=request_started_at(start_time)
+            )
         except Exception as e:
             logger.warning(f"Failed to calculate image cost: {e}")
             # Fallback cost estimation for image models
@@ -791,7 +803,9 @@ class RunPrompt:
                 "audio_seconds": duration_seconds,
             },
             "cost": calculate_total_cost(
-                model_name=self.model, token_usage={"audio_seconds": duration_seconds}
+                model_name=self.model,
+                token_usage={"audio_seconds": duration_seconds},
+                at=request_started_at(start_time),
             ),
             "response_time": completion_time,
         }
@@ -1001,6 +1015,7 @@ class RunPrompt:
                     model_name=self.model,
                     token_usage=token_usage,
                     fallback_pricing=fallback_pricing,
+                    at=request_started_at(start_time),
                 )
 
                 metadata = {
@@ -1113,6 +1128,8 @@ class RunPrompt:
         chunk_buffer = ""
         try:
             response = None
+            # The request starts here; its tokens are priced at this instant.
+            started_at = _call_started_at()
             with litellm_try_except():
                 response = litellm.completion(**payload, drop_params=True)
 
@@ -1398,7 +1415,9 @@ class RunPrompt:
                 "prompt_tokens": chunk.usage.prompt_tokens,
                 "total_tokens": chunk.usage.total_tokens,
             },
-            "cost": calculate_total_cost(chunk.model, dict(chunk.usage)),
+            "cost": calculate_total_cost(
+                chunk.model, dict(chunk.usage), at=started_at
+            ),
             "response_time": end_time - start_time,
         }
 
@@ -1438,6 +1457,8 @@ class RunPrompt:
             return response_content, value_info
 
         response = None
+        # The request starts here; its tokens are priced at this instant.
+        started_at = _call_started_at()
         with litellm_try_except():
             response = litellm.completion(**payload, drop_params=True)
 
@@ -1504,7 +1525,9 @@ class RunPrompt:
                 "prompt_tokens": prompt_tokens,
                 "total_tokens": total_tokens,
             },
-            "cost": calculate_total_cost(response.model, dict(response.usage)),
+            "cost": calculate_total_cost(
+                response.model, dict(response.usage), at=started_at
+            ),
             "response_time": completion_time,  # Assuming a static time or calculated elsewhere
         }
 
@@ -2827,6 +2850,8 @@ class RunPrompt:
 
         chunk_buffer = ""
         try:
+            # The request starts here; its tokens are priced at this instant.
+            started_at = _call_started_at()
             response = await litellm.acompletion(**payload, drop_params=True)
             tool_calls = []
             tool_calls_str = ""
@@ -3108,7 +3133,9 @@ class RunPrompt:
                 "prompt_tokens": chunk.usage.prompt_tokens,
                 "total_tokens": chunk.usage.total_tokens,
             },
-            "cost": calculate_total_cost(chunk.model, dict(chunk.usage)),
+            "cost": calculate_total_cost(
+                chunk.model, dict(chunk.usage), at=started_at
+            ),
             "response_time": end_time - start_time,
         }
 

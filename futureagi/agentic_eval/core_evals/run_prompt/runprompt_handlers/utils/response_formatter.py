@@ -13,12 +13,16 @@ import ast
 import json
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 import structlog
 
 from agentic_eval.core.utils.json_utils import strip_code_fence
-from agentic_eval.core_evals.fi_utils.token_count_helper import calculate_total_cost
+from agentic_eval.core_evals.fi_utils.token_count_helper import (
+    calculate_total_cost,
+    request_started_at,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -127,6 +131,7 @@ class ResponseFormatter:
         tools: Optional[List[Dict]] = None,
         output_format: Optional[str] = None,
         show_reasoning_process: bool = False,
+        started_at: datetime | None = None,
     ) -> Tuple[Any, Dict[str, Any]]:
         """
         Format a standard LLM completion response.
@@ -137,12 +142,16 @@ class ResponseFormatter:
             start_time: Request start time (time.time())
             tools: Optional list of tools if tool calling was used
             output_format: Optional output format specification
+            started_at: The aware UTC instant the request started, which prices
+                the call. None means ``start_time``.
 
         Returns:
             Tuple of (formatted_response, value_info dict)
         """
         end_time = time.time()
         completion_time = (end_time - start_time) * 1000
+        if started_at is None:
+            started_at = request_started_at(start_time)
 
         # Extract response content
         response_content = response.choices[0].message.content
@@ -158,7 +167,9 @@ class ResponseFormatter:
         # Build metadata
         metadata = {
             "usage": usage.to_dict(),
-            "cost": calculate_total_cost(response_model, usage.to_cost_dict()),
+            "cost": calculate_total_cost(
+                response_model, usage.to_cost_dict(), at=started_at
+            ),
             "response_time": completion_time,
         }
 
@@ -264,6 +275,7 @@ class ResponseFormatter:
     def build_streaming_metadata(
         chunk: Any,
         start_time: float,
+        started_at: datetime | None = None,
     ) -> Dict[str, Any]:
         """
         Build metadata from the final streaming chunk.
@@ -271,12 +283,16 @@ class ResponseFormatter:
         Args:
             chunk: Final chunk from streaming response with usage info
             start_time: Request start time
+            started_at: The aware UTC instant the request started, which prices
+                the call. None means ``start_time``.
 
         Returns:
             Metadata dictionary
         """
         end_time = time.time()
         completion_time = end_time - start_time
+        if started_at is None:
+            started_at = request_started_at(start_time)
 
         if not hasattr(chunk, "usage") or chunk.usage is None:
             return {
@@ -297,7 +313,7 @@ class ResponseFormatter:
 
         return {
             "usage": usage_dict,
-            "cost": calculate_total_cost(chunk.model, dict(chunk.usage)),
+            "cost": calculate_total_cost(chunk.model, dict(chunk.usage), at=started_at),
             "response_time": completion_time,
         }
 
