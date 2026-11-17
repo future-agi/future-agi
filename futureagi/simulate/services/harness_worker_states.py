@@ -276,6 +276,20 @@ def worker_cleanup(
 # How an attempt ended, kept beside its record when a rerun snapshots it (`attempt_end`): read for that attempt
 # instead of the call, its job and its sandbox as they are now.
 ATTEMPT_END_KEY = "harness_attempt_end"
+# Each earlier attempt's kept record (its worker record, trial state, receipt and `ATTEMPT_END_KEY`), on the call's own
+# metadata by the id of the snapshot its rerun took; the latest `MAX_KEPT_ATTEMPTS` only.
+ATTEMPTS_KEY = "harness_attempts"
+MAX_KEPT_ATTEMPTS = 10
+
+
+def attempt_metadata(
+    call: CallExecution, attempt: CallExecutionSnapshot
+) -> dict[str, Any] | None:
+    """An earlier attempt's kept record, or None when its rerun kept none (before attempts were kept, or dropped as one
+    of the oldest)."""
+    attempts = (call.call_metadata or {}).get(ATTEMPTS_KEY)
+    kept = attempts.get(str(attempt.id)) if isinstance(attempts, Mapping) else None
+    return dict(kept) if isinstance(kept, Mapping) else None
 
 
 def _attempt_execution(
@@ -297,16 +311,18 @@ def _attempt_job(
     return _job_of(call, _attempt_execution(call, attempt))
 
 
-def _kept_end(attempt: CallExecutionSnapshot) -> Mapping[str, Any] | None:
-    kept = (attempt.call_metadata or {}).get(ATTEMPT_END_KEY)
+def _kept_end(
+    call: CallExecution, attempt: CallExecutionSnapshot
+) -> Mapping[str, Any] | None:
+    kept = (attempt_metadata(call, attempt) or {}).get(ATTEMPT_END_KEY)
     return kept if isinstance(kept, Mapping) else None
 
 
-def _attempt_as_ended(attempt: CallExecutionSnapshot) -> Any:
-    """An earlier attempt as its snapshot kept the call when it ended: its status, metadata and end."""
+def _attempt_as_ended(call: CallExecution, attempt: CallExecutionSnapshot) -> Any:
+    """An earlier attempt as its snapshot and kept record left the call when it ended: its status, metadata and end."""
     return SimpleNamespace(
         status=attempt.status,
-        call_metadata=attempt.call_metadata or {},
+        call_metadata=attempt_metadata(call, attempt) or {},
         completed_at=attempt.completed_at,
     )
 
@@ -316,14 +332,14 @@ def stopped_by_user(
 ) -> bool:
     """Whether the user stopped this call, or the earlier attempt a rerun kept (`attempt`, from its own snapshot):
     cancelled, and its receipt or its job says the user stopped it; a fix ending or an environment delete is not."""
-    kept = _kept_end(attempt) if attempt is not None else None
+    kept = _kept_end(call, attempt) if attempt is not None else None
     if kept is not None:
         return kept.get("stopped_by_user") is True
     status = attempt.status if attempt is not None else call.status
     if status != CallExecution.CallStatus.CANCELLED:
         return False
     metadata = (
-        attempt.call_metadata if attempt is not None else call.call_metadata
+        attempt_metadata(call, attempt) if attempt is not None else call.call_metadata
     ) or {}
     receipt = metadata.get("hosted_harness_receipt")
     failure = receipt.get("failure") if isinstance(receipt, Mapping) else None
@@ -425,8 +441,8 @@ def served_workers(
         return {**timeline, "workers": workers}
     # Read once for every worker, not per worker. An earlier attempt is read as its own snapshot and job kept it,
     # never as the call stands now.
-    kept = _kept_end(attempt) if attempt is not None else None
-    ended: Any = call if attempt is None else _attempt_as_ended(attempt)
+    kept = _kept_end(call, attempt) if attempt is not None else None
+    ended: Any = call if attempt is None else _attempt_as_ended(call, attempt)
     if attempt is None:
         execution = _execution(call)
     else:

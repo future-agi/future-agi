@@ -1,10 +1,27 @@
 from typing import Any
 
+from django.utils import timezone
+
+from simulate.constants.hosted_harness import TRIAL_STATE_KEY
 from simulate.models import CallExecution
 from simulate.models.test_execution import CallExecutionSnapshot
 from simulate.selectors.call_transcripts import with_speakers
-from simulate.services.harness_worker_states import ATTEMPT_END_KEY
+from simulate.services.harness_worker_states import (
+    ATTEMPT_END_KEY,
+    ATTEMPTS_KEY,
+    MAX_KEPT_ATTEMPTS,
+)
 from simulate.services.harness_workers import READ_KEY, WORKERS_KEY, attempt_end
+from simulate.services.hosted_harness_ingestion import WORLD_ACTIONS_KEY
+
+# What an earlier attempt's worker record and its trial are read from, kept per attempt (`keep_attempt`).
+_ATTEMPT_KEYS = (
+    WORKERS_KEY,
+    READ_KEY,
+    TRIAL_STATE_KEY,
+    WORLD_ACTIONS_KEY,
+    "hosted_harness_receipt",
+)
 
 
 def transcript_snapshot(call_execution: CallExecution) -> list[dict]:
@@ -23,18 +40,42 @@ def transcript_snapshot(call_execution: CallExecution) -> list[dict]:
     ]
 
 
-def _with_attempt_end(call_execution: CallExecution) -> Any:
-    metadata = call_execution.call_metadata
-    if not isinstance(metadata, dict):
-        return metadata
+def keep_attempt(
+    call_execution: CallExecution, snapshot: CallExecutionSnapshot
+) -> None:
+    """Keep the attempt a rerun snapshot closes on the call itself (not saved): its worker record, trial and how it
+    ended, by the snapshot's id, the latest `MAX_KEPT_ATTEMPTS` only."""
+    metadata = (
+        call_execution.call_metadata
+        if isinstance(call_execution.call_metadata, dict)
+        else {}
+    )
+    record: dict[str, Any] = {
+        key: metadata[key] for key in _ATTEMPT_KEYS if key in metadata
+    }
     ending = attempt_end(call_execution)
-    return {**metadata, ATTEMPT_END_KEY: ending} if ending is not None else metadata
+    if ending is not None:
+        record[ATTEMPT_END_KEY] = ending
+    record["kept_at"] = timezone.now().isoformat()
+    earlier = metadata.get(ATTEMPTS_KEY)
+    attempts = {
+        **(earlier if isinstance(earlier, dict) else {}),
+        str(snapshot.id): record,
+    }
+    # Stored as jsonb, which keeps no key order: the oldest go by when they were kept.
+    latest = sorted(
+        attempts, key=lambda key: str(attempts[key].get("kept_at") or ""), reverse=True
+    )
+    call_execution.call_metadata = {
+        **metadata,
+        ATTEMPTS_KEY: {key: attempts[key] for key in latest[:MAX_KEPT_ATTEMPTS]},
+    }
 
 
 def call_snapshot(call_execution: CallExecution) -> CallExecutionSnapshot:
-    """The call's whole result as a call-and-eval rerun keeps it, with who spoke each turn. Not saved: single reruns
-    save it, bulk reruns create many at once."""
-    return CallExecutionSnapshot(
+    """The call's whole result as a call-and-eval rerun keeps it, with who spoke each turn, and the attempt's record kept
+    on the call (`keep_attempt`). Neither saved: single reruns save them, bulk reruns write many at once."""
+    snapshot = CallExecutionSnapshot(
         call_execution=call_execution,
         rerun_type=CallExecutionSnapshot.RerunType.CALL_AND_EVAL,
         service_provider_call_id=call_execution.service_provider_call_id,
@@ -66,8 +107,6 @@ def call_snapshot(call_execution: CallExecution) -> CallExecutionSnapshot:
         tool_outputs=call_execution.tool_outputs,
         provider_call_data=call_execution.provider_call_data,
         monitor_call_data=call_execution.monitor_call_data,
-        # With how this attempt ended, so the attempt reads its own ending after the call moves on.
-        call_metadata=_with_attempt_end(call_execution),
         avg_agent_latency_ms=call_execution.avg_agent_latency_ms,
         user_interruption_count=call_execution.user_interruption_count,
         user_interruption_rate=call_execution.user_interruption_rate,
@@ -80,6 +119,8 @@ def call_snapshot(call_execution: CallExecution) -> CallExecutionSnapshot:
         conversation_metrics_data=call_execution.conversation_metrics_data,
         transcripts=transcript_snapshot(call_execution),
     )
+    keep_attempt(call_execution, snapshot)
+    return snapshot
 
 
 def eval_snapshot(call_execution: CallExecution) -> CallExecutionSnapshot:
@@ -110,12 +151,16 @@ def clear_call_for_rerun(
     if clear_metadata:
         # The results grid resolves a call's Scenario Information cells via row_id, so it always survives.
         metadata = call_execution.call_metadata or {}
-        kept = {key: metadata[key] for key in keep_metadata_keys if key in metadata}
+        kept = {
+            key: metadata[key]
+            for key in (*keep_metadata_keys, ATTEMPTS_KEY)
+            if key in metadata
+        }
         if metadata.get("row_id"):
             kept["row_id"] = metadata["row_id"]
         call_execution.call_metadata = kept
     elif isinstance(call_execution.call_metadata, dict):
-        # The earlier attempt's worker record lives on in its snapshot, never in the new attempt's.
+        # The earlier attempt's worker record lives on in its kept record, never in the new attempt's.
         call_execution.call_metadata = {
             key: value
             for key, value in call_execution.call_metadata.items()

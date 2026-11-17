@@ -440,6 +440,7 @@ class TestVersionRecordedBeforeItsSealedContract:
             annotate_for_list,
             edit_fault_side,
             environment_row,
+            with_version_contract,
         )
 
         environment, version, storage = self._version(
@@ -454,8 +455,10 @@ class TestVersionRecordedBeforeItsSealedContract:
         assert {one["tool"]: one["reachable"] for one in targets} == dict.fromkeys(
             TOOLS, True
         )
-        listed = annotate_for_list(
-            type(environment).no_workspace_objects.filter(id=environment.id)
+        listed = with_version_contract(
+            annotate_for_list(
+                type(environment).no_workspace_objects.filter(id=environment.id)
+            )
         ).get()
         assert listed.version_contract == SEALED
         assert environment_row(listed)["tools_count"] == len(TOOLS)

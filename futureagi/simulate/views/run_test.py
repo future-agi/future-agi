@@ -7561,7 +7561,8 @@ class TestExecutionRerunView(APIView):
                     else:
                         CallExecution.objects.bulk_update(
                             call_executions_to_update,
-                            CallExecution.RESET_FIELDS,
+                            # With each closed attempt's kept record (`call_snapshot`).
+                            [*CallExecution.RESET_FIELDS, "call_metadata"],
                             batch_size=BATCH_SIZE,
                         )
 

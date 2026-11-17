@@ -8,6 +8,7 @@ import pytest
 
 from simulate.models.test_execution import CallExecution, CallExecutionSnapshot
 from simulate.services.call_rerun import clear_call_for_rerun
+from simulate.services.harness_worker_states import ATTEMPTS_KEY, MAX_KEPT_ATTEMPTS
 from simulate.tests.test_rerun_api import (  # fixtures this file builds on
     agent_definition,
     call_execution,
@@ -73,8 +74,15 @@ def test_a_hosted_rerun_resets_the_row_and_keeps_only_its_row_id_and_named_keys(
         False,
     )
     assert (call.eval_outputs, call.tool_outputs) == ({}, {})
-    assert call.call_metadata == {"row_id": "row-1", "attempt_id": "a-1"}
     snapshot = CallExecutionSnapshot.objects.get(call_execution=call)
+    # With the closed attempt's kept record, by its snapshot's id.
+    assert call.call_metadata == {
+        "row_id": "row-1",
+        "attempt_id": "a-1",
+        ATTEMPTS_KEY: {
+            str(snapshot.id): call.call_metadata[ATTEMPTS_KEY][str(snapshot.id)]
+        },
+    }
     assert (
         snapshot.provider_call_data,
         snapshot.cost_cents,
@@ -118,8 +126,40 @@ def test_a_native_rerun_never_carries_the_earlier_attempt_s_worker_record_into_t
     clear_call_for_rerun(call, clear_metadata=False)
     call.refresh_from_db()
 
-    # The new attempt starts with no record of its own; the earlier one is kept in its snapshot.
+    # The new attempt starts with no record of its own; the earlier one is kept by its snapshot's id.
     assert WORKERS_KEY not in call.call_metadata and READ_KEY not in call.call_metadata
     assert call.call_metadata["alk_batch_claimed"] is True
     snapshot = CallExecutionSnapshot.objects.get(call_execution=call)
-    assert snapshot.call_metadata[WORKERS_KEY] == record
+    kept = call.call_metadata[ATTEMPTS_KEY][str(snapshot.id)]
+    assert (kept[WORKERS_KEY], kept[READ_KEY]["failed"]) == (record, False)
+    # Only what the attempt's worker record and trial read: not the call's other metadata.
+    assert "alk_batch_claimed" not in kept and "row_id" not in kept
+
+
+@pytest.mark.parametrize("clear_metadata", [True, False])
+def test_each_rerun_keeps_the_earlier_attempts_and_only_the_latest_ten(
+    call_execution, clear_metadata
+):
+    from simulate.services.harness_workers import WORKERS_KEY
+
+    call = _finished(call_execution)
+    for index in range(MAX_KEPT_ATTEMPTS + 2):
+        call.call_metadata = {
+            **call.call_metadata,
+            WORKERS_KEY: {"workers": [{"id": f"w{index}"}], "events": []},
+        }
+        call.save()
+        clear_call_for_rerun(call, clear_metadata=clear_metadata)
+        call.refresh_from_db()
+
+    snapshots = list(
+        CallExecutionSnapshot.objects.filter(call_execution=call).order_by(
+            "snapshot_timestamp"
+        )
+    )
+    kept = call.call_metadata[ATTEMPTS_KEY]
+    # A reset keeps the attempts; the two oldest are dropped, the latest ten kept with their own record.
+    assert set(kept) == {str(one.id) for one in snapshots[2:]}
+    assert [
+        kept[str(one.id)][WORKERS_KEY]["workers"][0]["id"] for one in snapshots[2:]
+    ] == [f"w{index}" for index in range(2, MAX_KEPT_ATTEMPTS + 2)]

@@ -734,7 +734,6 @@ def test_an_attempt_kept_before_records_reads_not_kept_and_another_call_s_attemp
     others = CallExecutionSnapshot.objects.create(
         call_execution=other,
         rerun_type=CallExecutionSnapshot.RerunType.CALL_AND_EVAL,
-        call_metadata={},
     )
     url = f"/simulate/v3/call-executions/{call.id}/workers/"
 
@@ -749,7 +748,6 @@ def test_an_attempt_kept_before_records_reads_not_kept_and_another_call_s_attemp
     evals_only = CallExecutionSnapshot.objects.create(
         call_execution=call,
         rerun_type=CallExecutionSnapshot.RerunType.EVAL_ONLY,
-        call_metadata={},
     )
     assert auth_client.get(url, {"attempt": str(evals_only.id)}).status_code == 404
 
