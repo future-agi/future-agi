@@ -7,12 +7,13 @@ import {
   ButtonBase,
   InputBase,
   Stack,
+  Tab,
   Typography,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { LogoTile } from "../../environments/LandingBits";
 import { PANEL_SX, focusRing } from "../../environments/landingStyles";
-import ChipCard from "../../environments/ChipCard";
+import { SegmentedTabs } from "src/components/tabs/tabs";
 import { highlightOf, searchCatalog } from "./catalogSearch";
 
 /**
@@ -229,30 +230,26 @@ export default function ConnectCatalog({
             alignItems={{ md: "center" }}
             spacing={{ xs: 1, md: 2 }}
           >
-            <Box
-              sx={{
-                display: "flex",
-                flexWrap: "wrap",
-                gap: 0.75,
-                flex: 1,
-                minWidth: 0,
-              }}
-            >
-              {showAll && (
-                <ChipCard
-                  label={<Count label="All" n={total} />}
-                  on={filter === "all"}
-                  onClick={() => setFilter("all")}
-                />
-              )}
-              {groups.map((g) => (
-                <ChipCard
-                  key={g.id}
-                  label={<Count label={g.title} n={g.items.length} />}
-                  on={filter === g.id}
-                  onClick={() => setFilter(g.id)}
-                />
-              ))}
+            {/* Which list you see: the design system's segmented control,
+                not chips — so it can't be mistaken for a tag or a button. */}
+            <Box sx={{ flex: 1, minWidth: 0 }}>
+              <SegmentedTabs
+                value={filter}
+                onChange={(_, v) => setFilter(v)}
+                variant="scrollable"
+                scrollButtons={false}
+              >
+                {showAll && (
+                  <Tab value="all" label={<Count label="All" n={total} />} />
+                )}
+                {groups.map((g) => (
+                  <Tab
+                    key={g.id}
+                    value={g.id}
+                    label={<Count label={g.title} n={g.items.length} />}
+                  />
+                ))}
+              </SegmentedTabs>
             </Box>
             {/* Nothing to connect: the agent can start here instead. */}
             {onBuild && (
@@ -455,10 +452,11 @@ ConnectCatalog.propTypes = {
 function Count({ label, n }) {
   return (
     <>
-      {`${label} `}
+      {label}
       <Box
         component="span"
         sx={{
+          ml: 0.5,
           fontWeight: 400,
           color: "text.secondary",
           fontVariantNumeric: "tabular-nums",
@@ -735,7 +733,10 @@ function CatalogRow({
           }}
         >
           {selected && <Iconify icon="solar:check-circle-linear" width={14} />}
-          {selected ? "Selected" : ready?.action || "Connect"}
+          {/* The verb says what happens next: code is uploaded, the rest connected. */}
+          {selected
+            ? "Selected"
+            : ready?.action || (item.kind === "upload" ? "Upload" : "Connect")}
         </Box>
       )}
     </ButtonBase>

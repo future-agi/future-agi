@@ -112,14 +112,23 @@ export default function DescribeFlowStep({
   };
 
   /* ── attachments ────────────────────────────────────────────────── */
-  const onFiles = (list) => {
+  /* Text files are read for real, so the builder works from what they say,
+     not their name. Other formats are read in the cloud sandbox. */
+  const READABLE = /\.(md|markdown|txt)$/i;
+  const onFiles = async (list) => {
     if (!list || !list.length) return;
-    const next = Array.from(list).map((f) => ({
-      id: `${f.name}-${f.size}-${f.lastModified}`,
-      name: f.name,
-      size: f.size,
-      type: f.type,
-    }));
+    const next = await Promise.all(
+      Array.from(list).map(async (f) => ({
+        id: `${f.name}-${f.size}-${f.lastModified}`,
+        name: f.name,
+        size: f.size,
+        type: f.type,
+        ...(READABLE.test(f.name) &&
+          f.size < 512 * 1024 && {
+            text: await f.text().catch(() => null),
+          }),
+      })),
+    );
     onAdd(next);
   };
 
@@ -412,11 +421,17 @@ export default function DescribeFlowStep({
                     <Box sx={{ flex: 1, minWidth: 0 }}>
                       <Typography
                         noWrap
-                        sx={{ typography: "s2", fontWeight: 500, color: "text.primary" }}
+                        sx={{
+                          typography: "s2",
+                          fontWeight: 500,
+                          color: "text.primary",
+                        }}
                       >
                         {f.name}
                       </Typography>
-                      <Typography sx={{ typography: "s3", color: "text.disabled" }}>
+                      <Typography
+                        sx={{ typography: "s3", color: "text.disabled" }}
+                      >
                         {formatFileSize(f.size)}
                       </Typography>
                     </Box>
@@ -482,8 +497,6 @@ export default function DescribeFlowStep({
           </Box>
         </Box>
 
-
-
         {/* What the attached files need before building — right under the
             box that holds them. */}
         {files?.length > 0 && filesFooter}
@@ -494,41 +507,41 @@ export default function DescribeFlowStep({
           chips.length > 0 &&
           !value.trim() &&
           !files?.length && (
-          <Stack
-            direction="row"
-            spacing={0.75}
-            flexWrap="wrap"
-            rowGap={0.75}
-            sx={{ mt: 1.25 }}
-          >
-            {chips.map((c) => (
-              <Box
-                key={c}
-                {...clickable(() =>
-                  onChange(value ? `${value.trim()} ${c}` : c),
-                )}
-                sx={{
-                  ...focusRing,
-                  px: 1,
-                  py: 0.375,
-                  borderRadius: "6px",
-                  border: "1px solid",
-                  borderColor: "divider",
-                  bgcolor: "action.hover",
-                  cursor: "pointer",
-                  typography: "s3",
-                  color: "text.secondary",
-                  "&:hover": {
-                    borderColor: "text.disabled",
-                    color: "text.primary",
-                  },
-                }}
-              >
-                {c}
-              </Box>
-            ))}
-          </Stack>
-        )}
+            <Stack
+              direction="row"
+              spacing={0.75}
+              flexWrap="wrap"
+              rowGap={0.75}
+              sx={{ mt: 1.25 }}
+            >
+              {chips.map((c) => (
+                <Box
+                  key={c}
+                  {...clickable(() =>
+                    onChange(value ? `${value.trim()} ${c}` : c),
+                  )}
+                  sx={{
+                    ...focusRing,
+                    px: 1,
+                    py: 0.375,
+                    borderRadius: "6px",
+                    border: "1px solid",
+                    borderColor: "divider",
+                    bgcolor: "action.hover",
+                    cursor: "pointer",
+                    typography: "s3",
+                    color: "text.secondary",
+                    "&:hover": {
+                      borderColor: "text.disabled",
+                      color: "text.primary",
+                    },
+                  }}
+                >
+                  {c}
+                </Box>
+              ))}
+            </Stack>
+          )}
 
         <input
           ref={inputRef}
@@ -543,7 +556,11 @@ export default function DescribeFlowStep({
         />
       </Box>
 
-      <Stack direction="row" alignItems="center" sx={{ px: 1.5, pt: 0.5, pb: 1.25 }}>
+      <Stack
+        direction="row"
+        alignItems="center"
+        sx={{ px: 1.5, pt: 0.5, pb: 1.25 }}
+      >
         {onBack ? (
           <Button
             size="small"

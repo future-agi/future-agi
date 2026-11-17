@@ -67,9 +67,23 @@ export default function ConnectAgentPicker({
   const [scenarioCount, setScenarioCount] = useState(
     String(DEFAULT_BUILD_SCENARIOS),
   );
+  /* Files for the environment it builds (policy, records) — carried to the build. */
+  const [buildFiles, setBuildFiles] = useState([]);
+  /* What it should test — asked first, as on an agent's Build environment. */
+  const [buildRequest, setBuildRequest] = useState("");
   const buildCtx = useMemo(
-    () => (buildMode ? { scenarioCount, setScenarioCount } : null),
-    [buildMode, scenarioCount],
+    () =>
+      buildMode
+        ? {
+            scenarioCount,
+            setScenarioCount,
+            files: buildFiles,
+            setFiles: setBuildFiles,
+            request: buildRequest,
+            setRequest: setBuildRequest,
+          }
+        : null,
+    [buildMode, scenarioCount, buildFiles, buildRequest],
   );
   const { state, commit } = useSimStore();
   const { enqueueSnackbar } = useSnackbar();
@@ -170,6 +184,9 @@ export default function ConnectAgentPicker({
           scenarioCount:
             Number(source.scenarioCount || scenarioCount) ||
             DEFAULT_BUILD_SCENARIOS,
+          /* Not saved on the agent — handed to the build it starts. */
+          ...(buildFiles.length && { buildFiles }),
+          ...(buildRequest.trim() && { buildRequest: buildRequest.trim() }),
         }),
         /* Connected from an issue: its project is the one — settled, not a suggestion. */
         ...(((prefill?.project && observeProject?.id === prefill.project) ||
@@ -235,6 +252,8 @@ export default function ConnectAgentPicker({
       prefill?.project,
       profile,
       scenarioCount,
+      buildFiles,
+      buildRequest,
       state,
     ],
   );

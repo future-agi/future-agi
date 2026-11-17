@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   Box,
   Button,
+  ButtonBase,
   IconButton,
   MenuItem,
   Select,
@@ -15,13 +16,13 @@ import { closeSnackbar, enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import SideDrawer from "../../components/SideDrawer";
-import CopyCommandButton from "../../components/CopyCommandButton";
 import MappingEditor from "./MappingEditor";
 import AddSourceMenu from "./AddSourceMenu";
 import PersonalDataChoice from "./PersonalDataChoice";
+import SourceUsage from "./SourceUsage";
 import {
-  ROLES,
-  VISIBILITY,
+  normalizeRole,
+  defaultVisibility,
   PRIVACY,
   SUPPORTED_ACCEPT,
   roleLabel,
@@ -29,14 +30,12 @@ import {
   typeLabelOf,
   readFile,
   sourceFromOrg,
-  participantViewsOf,
   usageOf,
   refreshPlanOf,
   regroundPatch,
   keepPinnedPatch,
-  exportPreviewOf,
   sourceEditPatch,
-  dataCli,
+  placeLabelOf,
 } from "../../_mock/orgData";
 import {
   mappingToReview,
@@ -99,9 +98,19 @@ export default function SourceDrawer({
   onReconnect = null,
 }) {
   const source = (envState.sources || []).find((s) => s.id === sourceId);
+  /* How it's used: two summary lines until Change opens the options. */
+  const [usageOpen, setUsageOpen] = useState(false);
+  /* The file's full text, folded until asked for (or a citation opens it). */
+  const [fullText, setFullText] = useState(false);
+  const [allLines, setAllLines] = useState(false);
+  /* Each source opens folded — the drawer stays mounted between them. */
+  useEffect(() => {
+    setFullText(false);
+    setAllLines(false);
+    setUsageOpen(false);
+  }, [sourceId]);
   const [tabState, setTab] = useState("preview");
   const [plan, setPlan] = useState(null);
-  const [exporting, setExporting] = useState(false);
   const [archiving, setArchiving] = useState(false);
   const [removing, setRemoving] = useState(false);
   /* Supplying missing records opens the same add-source menu, from the button. */
@@ -195,8 +204,6 @@ export default function SourceDrawer({
     );
   };
   const usage = usageOf(source, envState);
-  const views = participantViewsOf([source]);
-  const exp = exportPreviewOf(source);
   const pd = personalDataOf(source);
   const refresh = kbRefreshOf(source);
   const toReview = mappingToReview(source);
@@ -213,7 +220,6 @@ export default function SourceDrawer({
       ? [["mapping", toReview ? `Mapping · ${toReview} to review` : "Mapping"]]
       : []),
     ...(pd.has ? [["privacy", "Sensitive values"]] : []),
-    ["access", "Who sees it"],
     ["usage", "Used by"],
     ["versions", "Versions"],
   ];
@@ -257,84 +263,29 @@ export default function SourceDrawer({
           </IconButton>
         </Stack>
 
-        {/* Role and visibility, always in view: the two choices that decide who reads it. */}
-        <Stack direction="row" spacing={1} sx={{ px: 2.5, pb: 1.25 }}>
-          <Select
-            size="small"
-            value={source.role || ""}
-            renderValue={(v) => (v ? roleLabel(v) : "")}
+        {/* How the file is used and whether the agent reads it — asked as
+            plain questions, every option in view. */}
+        <Box sx={{ px: 2.5, pb: 1.5 }}>
+          <SourceUsage
+            compact={!usageOpen}
+            onToggle={() => setUsageOpen((v) => !v)}
+            role={normalizeRole(source.role)}
+            visibility={source.visibility}
             disabled={readOnly || source.status === "unsupported"}
-            onChange={(e) =>
+            onRole={(id) =>
               edit(
-                { role: e.target.value },
-                `${source.name} is now ${roleLabel(e.target.value)}`,
+                { role: id, visibility: defaultVisibility(id) },
+                `${source.name} is now ${roleLabel(id)}`,
               )
             }
-            sx={{ typography: "s2", minWidth: 200 }}
-          >
-            {ROLES.map((r) => (
-              <MenuItem
-                key={r.id}
-                value={r.id}
-                sx={{ typography: "s2", display: "block", maxWidth: 360 }}
-              >
-                {r.label}
-                <Typography
-                  component="span"
-                  sx={{
-                    display: "block",
-                    typography: "s3",
-                    color: "text.tertiary",
-                    whiteSpace: "normal",
-                  }}
-                >
-                  {r.note}
-                </Typography>
-              </MenuItem>
-            ))}
-          </Select>
-          <Select
-            size="small"
-            value={source.visibility || ""}
-            renderValue={(v) => (v ? visibilityLabel(v) : "")}
-            disabled={readOnly || source.status === "unsupported"}
-            onChange={(e) =>
+            onVisibility={(id) =>
               edit(
-                { visibility: e.target.value },
-                `${source.name} is now ${visibilityLabel(e.target.value)}`,
+                { visibility: id },
+                `${source.name} is now ${visibilityLabel(id)}`,
               )
             }
-            sx={{ typography: "s2", minWidth: 160 }}
-          >
-            {VISIBILITY.map((v) => (
-              <MenuItem
-                key={v.id}
-                value={v.id}
-                sx={{ typography: "s2", display: "block", maxWidth: 360 }}
-              >
-                {v.label}
-                <Typography
-                  component="span"
-                  sx={{
-                    display: "block",
-                    typography: "s3",
-                    color: "text.tertiary",
-                    whiteSpace: "normal",
-                  }}
-                >
-                  {v.note}
-                </Typography>
-              </MenuItem>
-            ))}
-          </Select>
-        </Stack>
-        {source.role && (
-          <Typography
-            sx={{ typography: "s3", color: "text.tertiary", px: 2.5, pb: 1 }}
-          >
-            {ROLES.find((r) => r.id === source.role)?.note}
-          </Typography>
-        )}
+          />
+        </Box>
         {source.revoked && (
           <Stack
             direction="row"
@@ -389,29 +340,170 @@ export default function SourceDrawer({
                 {source.statusNote}
               </Typography>
             ) : p.kind === "text" ? (
-              <Stack spacing={1}>
-                {p.passages.map((x) => (
-                  <Box
-                    key={x.id}
-                    ref={(el) =>
-                      el &&
-                      x.id === focusAt &&
-                      el.scrollIntoView({ block: "center" })
-                    }
-                    sx={{
-                      p: 1.25,
-                      border: "1px solid",
+              <Stack spacing={1.5}>
+                {/* What the builder took from the file comes first (data.md §2:
+                    "show which policy statements become scenario rules"); the
+                    full text stays folded unless asked for or cited. */}
+                {(() => {
+                  const taken = p.passages.filter((x) => x.rule);
+                  const showFull = fullText || !!focusAt;
+                  const paged = ["pdf", "docx"].includes(source.ext);
+                  const units = new Set(p.passages.map((x) => x.page)).size;
+                  const rows = showFull
+                    ? allLines
+                      ? p.passages
+                      : p.passages.slice(0, 20)
+                    : [];
+                  const line = (x, n, list) => {
+                    const first = n === 0 || list[n - 1].page !== x.page;
+                    const lit = x.id === focusAt;
+                    const cell = {
+                      py: 0.75,
+                      borderBottom: "1px solid",
                       borderColor: "divider",
-                      borderRadius: 1,
-                      ...(x.id === focusAt && { bgcolor: "action.selected" }),
-                    }}
-                  >
-                    <Typography
-                      sx={{ typography: "s3", color: "text.tertiary" }}
-                    >{`Page ${x.page}${x.rule ? " · cited by a rule" : ""}${x.id === focusAt ? " · the change came from here" : ""}`}</Typography>
-                    <Typography sx={{ typography: "s2" }}>{x.text}</Typography>
-                  </Box>
-                ))}
+                      ...(lit && { bgcolor: "action.selected" }),
+                    };
+                    return [
+                      <Typography
+                        key={`${x.id}-w`}
+                        sx={{
+                          ...cell,
+                          typography: "s3",
+                          color: "text.tertiary",
+                          pr: 1,
+                        }}
+                      >
+                        {first ? placeLabelOf(source, x.page) : ""}
+                      </Typography>,
+                      <Box
+                        key={`${x.id}-t`}
+                        ref={(el) =>
+                          el && lit && el.scrollIntoView({ block: "center" })
+                        }
+                        sx={cell}
+                      >
+                        <Typography sx={{ typography: "s1" }}>
+                          {x.text}
+                        </Typography>
+                        {lit && (
+                          <Typography
+                            sx={{ typography: "s3", color: "text.tertiary" }}
+                          >
+                            The change came from here
+                          </Typography>
+                        )}
+                      </Box>,
+                    ];
+                  };
+                  const grid = (list) => (
+                    <Box
+                      sx={{
+                        display: "grid",
+                        gridTemplateColumns: "72px minmax(0, 1fr)",
+                        borderTop: "1px solid",
+                        borderColor: "divider",
+                      }}
+                    >
+                      {list.map((x, n) => line(x, n, list))}
+                    </Box>
+                  );
+                  const link = (label, onClick) => (
+                    <ButtonBase
+                      onClick={onClick}
+                      sx={{
+                        alignSelf: "flex-start",
+                        typography: "s1",
+                        fontWeight: 500,
+                        color: "text.secondary",
+                        textDecoration: "underline",
+                        textUnderlineOffset: 3,
+                      }}
+                    >
+                      {label}
+                    </ButtonBase>
+                  );
+                  return (
+                    <>
+                      <Box>
+                        <Typography
+                          sx={{ typography: "m3", fontWeight: 500, mb: 0.5 }}
+                        >
+                          What the builder took from it
+                          <Box
+                            component="span"
+                            sx={{
+                              color: "text.tertiary",
+                              fontWeight: 400,
+                              ml: 0.75,
+                            }}
+                          >
+                            {taken.length}
+                          </Box>
+                        </Typography>
+                        {taken.length ? (
+                          grid(taken)
+                        ) : (
+                          <Typography
+                            sx={{ typography: "s1", color: "text.tertiary" }}
+                          >
+                            {normalizeRole(source.role) === "policy"
+                              ? "No sentence in it states a rule, so nothing is graded from it."
+                              : "Nothing is graded from it — the agent reads it as background."}
+                          </Typography>
+                        )}
+                      </Box>
+                      <Box>
+                        {showFull ? (
+                          <>
+                            <Typography
+                              sx={{
+                                typography: "m3",
+                                fontWeight: 500,
+                                mb: 0.5,
+                              }}
+                            >
+                              Full text
+                              <Box
+                                component="span"
+                                sx={{
+                                  color: "text.tertiary",
+                                  fontWeight: 400,
+                                  ml: 0.75,
+                                }}
+                              >
+                                {`${units} ${paged ? "pages" : "sections"} · ${p.passages.length} lines`}
+                              </Box>
+                            </Typography>
+                            {grid(rows)}
+                            <Stack
+                              direction="row"
+                              spacing={2}
+                              sx={{ mt: 0.75 }}
+                            >
+                              {p.passages.length > 20 &&
+                                link(
+                                  allLines
+                                    ? "Show fewer lines"
+                                    : `Show all ${p.passages.length} lines`,
+                                  () => setAllLines((v) => !v),
+                                )}
+                              {!focusAt &&
+                                link("Hide the full text", () => {
+                                  setFullText(false);
+                                  setAllLines(false);
+                                })}
+                            </Stack>
+                          </>
+                        ) : (
+                          link(
+                            `Show the full text · ${units} ${paged ? "pages" : "sections"}, ${p.passages.length} lines`,
+                            () => setFullText(true),
+                          )
+                        )}
+                      </Box>
+                    </>
+                  );
+                })()}
                 {source.effectiveFrom && (
                   <Typography
                     sx={{ typography: "s3", color: "text.tertiary" }}
@@ -636,33 +728,6 @@ export default function SourceDrawer({
             </Stack>
           )}
 
-          {tab === "access" && (
-            <Box>
-              {[
-                ["agent", "Agent under test"],
-                ["caller", "Simulated caller"],
-                ["evaluator", "Evaluator"],
-              ].map(([k, label]) => (
-                <KV key={k} label={label}>
-                  {views[k].length ? (
-                    views[k][0].how
-                  ) : (
-                    <Box component="span" sx={{ color: "text.tertiary" }}>
-                      Can&apos;t read it
-                    </Box>
-                  )}
-                </KV>
-              ))}
-              <Typography
-                sx={{ typography: "s3", color: "text.tertiary", mt: 1 }}
-              >
-                {source.visibility === "evaluator"
-                  ? "Coming in through the same chat as other files doesn't give the agent access — it never reaches its context or tools."
-                  : "Change who reads it with the visibility picker above."}
-              </Typography>
-            </Box>
-          )}
-
           {tab === "usage" && (
             <Box>
               <KV label="Rules">
@@ -778,7 +843,9 @@ export default function SourceDrawer({
                       <Box key={c.id} sx={{ mt: 0.75 }}>
                         <Typography
                           sx={{ typography: "s3", color: "text.tertiary" }}
-                        >{`Page ${c.page}`}</Typography>
+                        >
+                          {placeLabelOf(plan.next || source, c.page)}
+                        </Typography>
                         <Typography
                           sx={{
                             typography: "s3",
@@ -853,22 +920,9 @@ export default function SourceDrawer({
             borderColor: "divider",
           }}
         >
-          <CopyCommandButton
-            command={
-              tab === "versions"
-                ? dataCli.refresh(source)
-                : dataCli.show(source)
-            }
-          />
+          {/* Replace (data.md §5, refresh) is the drawer's one action. Export
+              and copy-as-command aren't in the plan for a source. */}
           <Box flex={1} />
-          <Button
-            size="small"
-            variant="outlined"
-            onClick={() => setExporting(true)}
-            sx={{ color: "text.primary", borderColor: "divider" }}
-          >
-            Export
-          </Button>
           {!readOnly &&
             source.inEnv &&
             !source.revoked &&
@@ -901,45 +955,6 @@ export default function SourceDrawer({
         </Stack>
       </Stack>
 
-      <ConfirmDialog
-        open={exporting}
-        onClose={() => setExporting(false)}
-        title={
-          exp.allowed
-            ? `Export ${source.name} v${source.version}?`
-            : "This source can't be exported"
-        }
-        content={
-          exp.allowed
-            ? [
-                exp.masked.length &&
-                  `Masked or replaced: ${exp.masked.join(", ")}.`,
-                exp.left.length && `Left out: ${exp.left.join(", ")}.`,
-                "Restricted and evaluator-only material isn't included.",
-              ]
-                .filter(Boolean)
-                .join(" ")
-            : exp.reason
-        }
-        action={
-          exp.allowed && (
-            <Button
-              size="small"
-              variant="contained"
-              color="primary"
-              onClick={() => {
-                setExporting(false);
-                enqueueSnackbar(
-                  `Exported ${source.name} v${source.version}${exp.masked.length ? ` with ${exp.masked.length} fields masked` : ""}.`,
-                  { variant: "success" },
-                );
-              }}
-            >
-              Export
-            </Button>
-          )
-        }
-      />
       <ConfirmDialog
         open={removing}
         onClose={() => setRemoving(false)}

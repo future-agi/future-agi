@@ -1,6 +1,6 @@
 import PropTypes from "prop-types";
 import { alpha } from "@mui/material/styles";
-import { Box, ButtonBase, Chip, Stack, Typography } from "@mui/material";
+import { Box, Button, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { PLATFORM_LOGOS } from "./connectOptions";
 import { COLOR_LOGO } from "./colorLogos";
@@ -83,14 +83,28 @@ LogoTile.propTypes = {
   muted: PropTypes.bool,
 };
 
+/* Design system Tag: a label, not a control — 11/500 in fg.secondary on
+   bg.selected, no border, so it never reads as a button or a tab. */
 export function QuietTag({ children }) {
   return (
-    <Chip
-      size="small"
-      variant="outlined"
-      label={children}
-      sx={{ flexShrink: 0 }}
-    />
+    <Box
+      component="span"
+      sx={{
+        display: "inline-flex",
+        alignItems: "center",
+        height: 20,
+        px: 0.75,
+        borderRadius: "4px",
+        bgcolor: "action.selected",
+        color: "text.secondary",
+        typography: "s3",
+        fontWeight: 500,
+        whiteSpace: "nowrap",
+        flexShrink: 0,
+      }}
+    >
+      {children}
+    </Box>
   );
 }
 QuietTag.propTypes = { children: PropTypes.node };
@@ -147,31 +161,51 @@ SectionHead.propTypes = {
  * One prebuilt world: name, type, what it is, what's inside. A world for an
  * agent type that's Coming soon (computer use) is shown, named, and inert.
  */
-/* "Train 32 · Test 8", in split order. */
-const splitLine = (sp) =>
-  [
-    ["train", "Train"],
-    ["validation", "Val"],
-    ["test", "Test"],
-  ]
-    .filter(([k]) => sp[k])
-    .map(([k, l]) => `${l} ${sp[k]}`)
-    .join(" · ");
 
-export function WorldCard({ world, onOpen, selected = false, soon = false }) {
+export function WorldCard({
+  world,
+  onOpen,
+  actions = false,
+  selected = false,
+  soon = false,
+}) {
+  /* Ready to use: the two things to do with a world sit on its card (the
+     catalogue's Use with my agent, the builder's Customize). */
+  const actionable =
+    actions && !soon && (!world.readiness || world.readiness === "ready");
+  const count = world.splits
+    ? Object.values(world.splits).reduce((n, v) => n + (Number(v) || 0), 0)
+    : world.scenarios;
+  const open = (tab) => (e) => {
+    e.stopPropagation();
+    onOpen(world, tab);
+  };
   return (
-    <ButtonBase
-      onClick={soon ? undefined : () => onOpen(world)}
-      disabled={soon}
+    <Box
+      role={soon ? undefined : "button"}
+      tabIndex={soon ? -1 : 0}
       aria-pressed={soon ? undefined : selected}
       aria-disabled={soon || undefined}
+      onClick={soon ? undefined : () => onOpen(world)}
+      onKeyDown={(e) => {
+        if (
+          !soon &&
+          e.target === e.currentTarget &&
+          (e.key === "Enter" || e.key === " ")
+        ) {
+          e.preventDefault();
+          onOpen(world);
+        }
+      }}
       sx={{
         ...PANEL_SX,
         p: 1.5,
+        minWidth: 0,
         display: "flex",
         flexDirection: "column",
         alignItems: "stretch",
         textAlign: "left",
+        cursor: soon ? "default" : "pointer",
         borderColor: (t) =>
           selected && !soon
             ? alpha(t.palette.text.primary, 0.5)
@@ -180,8 +214,7 @@ export function WorldCard({ world, onOpen, selected = false, soon = false }) {
         "&:hover": soon
           ? {}
           : { borderColor: (t) => alpha(t.palette.text.primary, 0.3) },
-        "&.Mui-focusVisible": focusRing,
-        "&.Mui-disabled": { cursor: "default", pointerEvents: "auto" },
+        "&:focus-visible": focusRing,
       }}
     >
       <Stack
@@ -203,13 +236,13 @@ export function WorldCard({ world, onOpen, selected = false, soon = false }) {
           {world.name}
         </Typography>
         {soon && <QuietTag>Coming soon</QuietTag>}
-        {/* A task that can't be adopted, or a retired release, says so on the card. */}
         {/* A third-party world says whether it runs here: listing isn't support. */}
         {!soon && world.host && (
           <QuietTag>
             {world.host.support === "runs" ? "Runs here" : "Listed only"}
           </QuietTag>
         )}
+        {/* Only an unusual state is a tag; RL access and versions live in the drawer. */}
         {!soon &&
           !world.host &&
           world.readiness &&
@@ -226,8 +259,6 @@ export function WorldCard({ world, onOpen, selected = false, soon = false }) {
                       : "Withdrawn"}
             </QuietTag>
           )}
-        {/* RL access shown per world (T29). */}
-        {world.rl && <QuietTag>RL</QuietTag>}
         <QuietTag>{world.typeLabel}</QuietTag>
       </Stack>
       <Typography
@@ -246,13 +277,17 @@ export function WorldCard({ world, onOpen, selected = false, soon = false }) {
       </Typography>
       <Stack
         direction="row"
-        justifyContent="space-between"
+        alignItems="center"
         spacing={1}
         sx={{
           mt: "auto",
           pt: 1.25,
           borderTop: "1px solid",
           borderColor: "divider",
+          minHeight: 40,
+          /* In a narrow column the actions drop under the count. */
+          flexWrap: "wrap",
+          rowGap: 0.75,
         }}
       >
         <Typography
@@ -261,38 +296,47 @@ export function WorldCard({ world, onOpen, selected = false, soon = false }) {
             typography: "s2",
             color: "text.secondary",
             fontVariantNumeric: "tabular-nums",
+            flex: "1 1 140px",
+            minWidth: 0,
           }}
         >
           {world.readiness === "access" && world.release?.owner
             ? `Ask ${world.release.owner.name} · ${world.release.owner.role}`
-            : world.catalogueId
-              ? [
-                  world.entry?.benchmark
-                    ? /* A subset of a public benchmark says so (T26). */
-                      `${world.entry.benchmark.name}${world.entry.benchmark.subset ? " subset" : ""}`
-                    : world.host
-                      ? world.host.name
-                      : world.catalogueId,
-                  /* With splits the version waits for the drawer, so the splits fit. */
-                  ...(world.splits
-                    ? [splitLine(world.splits)]
-                    : [world.release.version, `${world.scenarios} cases`]),
-                ].join(" · ")
-              : `${world.tools} tools · ${world.tables} tables · ${world.scenarios} scenarios`}
+            : [count != null && `${count} scenarios`, world.domainLabel]
+                .filter(Boolean)
+                .join(" · ")}
         </Typography>
-        <Typography
-          noWrap
-          sx={{ typography: "s2", color: "text.secondary", flexShrink: 0 }}
-        >
-          {world.domainLabel}
-        </Typography>
+        {/* Their own row under the count, the same on every card. */}
+        {actionable && (
+          <Stack direction="row" spacing={1} sx={{ flexBasis: "100%" }}>
+            <Button
+              size="small"
+              variant="outlined"
+              onClick={open("start")}
+              sx={{ color: "text.primary", borderColor: "divider" }}
+            >
+              Use with my agent
+            </Button>
+            <Button
+              size="small"
+              variant="outlined"
+              onClick={open("customize")}
+              sx={{ color: "text.primary", borderColor: "divider" }}
+            >
+              Customize
+            </Button>
+          </Stack>
+        )}
       </Stack>
-    </ButtonBase>
+    </Box>
   );
 }
 WorldCard.propTypes = {
   world: PropTypes.object.isRequired,
+  /* (world, tab?) — tab is "start" or "customize" from the card's actions. */
   onOpen: PropTypes.func.isRequired,
+  /* Show Use with my agent and Customize on the card. */
+  actions: PropTypes.bool,
   selected: PropTypes.bool,
   soon: PropTypes.bool,
 };

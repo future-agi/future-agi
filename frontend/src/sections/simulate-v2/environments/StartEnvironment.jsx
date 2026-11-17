@@ -7,7 +7,14 @@ import {
   INSTALL_CMD,
 } from "./fromCode";
 import { SegmentedTabs } from "src/components/tabs/tabs";
-import { useContext, useEffect, useMemo, useRef, useState } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useNavigate } from "react-router-dom";
 import { alpha } from "@mui/material/styles";
 import {
@@ -43,6 +50,10 @@ import {
 } from "../agents/connect/preflight";
 import { useConnectBuild } from "../agents/connect/connectSubmit";
 import { envValuesSourceOf } from "../_mock/envValues";
+import { addDesignFilesPatch } from "../_mock/designSources";
+import { takeBuild } from "../_mock/pendingBuildFiles";
+import BuildTestField from "./BuildTestField";
+import BuildFilesField from "./BuildFilesField";
 import { paths } from "src/routes/paths";
 import { SectionCard } from "../components/primitives";
 import { useSimStore, useConnectedAgents } from "../store";
@@ -236,11 +247,17 @@ export default function StartEnvironment({ entry = false }) {
     window.history.replaceState(null, "", url.toString());
     const count = pendingCount;
     setPendingCount(null);
+    /* Files picked on the connect form come with it. */
+    const { files, request } = takeBuild(id);
     const built = {
       ...sourceFromAgentRecord(a),
       scenarioCount: count || scenarioCountOf(DEFAULT_SCENARIOS),
       connectedAgent: a,
       agentVersion: a.production || a.latest,
+      /* The same ending as every build: Review and save (or a clean save). */
+      releaseStep: true,
+      ...(files.length && { files }),
+      ...(request && { testRequest: request }),
     };
     navigate(paths.dashboard.simulate.environmentBuild, {
       state: { presetSource: { ...built, envName: envNameFor(built) } },
@@ -514,7 +531,7 @@ export default function StartEnvironment({ entry = false }) {
                   <Typography sx={{ typography: "m3", fontWeight: 600 }}>
                     {view === "worlds" ? (
                       <>
-                        Prebuilt worlds
+                        Ready environments
                         <Box
                           component="span"
                           sx={{
@@ -532,11 +549,11 @@ export default function StartEnvironment({ entry = false }) {
                   </Typography>
                   <Typography
                     noWrap
-                    sx={{ typography: "s2", color: "text.secondary" }}
+                    sx={{ typography: "s1", color: "text.secondary" }}
                   >
                     {view === "worlds"
                       ? "Tables, tools and rules, as designed. Use one with your agent."
-                      : "Build from your agent's own world, from one of these, or from scratch — the agent can come later."}
+                      : "Build for an agent you've connected, connect a new one, or start without one."}
                   </Typography>
                 </Box>
                 {/* No agent yet, or rather start from the world: describe it
@@ -909,7 +926,7 @@ function TemplateHeroCard({ option, selected, onClick }) {
       title={option.title}
       tag="Fastest"
       description={
-        "Prebuilt worlds with seeded state, tools and rules. Pick one, then wire your agent."
+        "Ready environments with seeded state, tools and rules. Pick one, then use it with your agent."
       }
       chips={HERO_TEMPLATES}
       moreLabel="+ 10 more"
@@ -1156,6 +1173,18 @@ export function FlowPanel({ choice, prefill = null, bare = false }) {
     [connect, ownName],
   );
   const asksName = CONNECT_AGENT_OPTIONS.includes(choice);
+  /* Files for the environment it builds — every way in, like Build from scratch. */
+  const [files, setFiles] = useState([]);
+  const [testRequest, setTestRequest] = useState("");
+  const filesCtx = useMemo(
+    () => ({
+      files,
+      setFiles,
+      request: testRequest,
+      setRequest: setTestRequest,
+    }),
+    [files, testRequest],
+  );
   return (
     <Shell
       bare={bare}
@@ -1182,7 +1211,9 @@ export function FlowPanel({ choice, prefill = null, bare = false }) {
             </ConnectModeContext.Provider>
           ) : (
             <RuntimeContext.Provider value={runtimeCtx}>
-              <Body />
+              <BuildFilesContext.Provider value={filesCtx}>
+                <Body />
+              </BuildFilesContext.Provider>
             </RuntimeContext.Provider>
           )}
         </PrefillContext.Provider>
@@ -1223,9 +1254,13 @@ FlowPanel.propTypes = {
   intentionally does NOT dispatch adoptEnvironment so we don't create
   a half-built row that the chat is still filling in.
 */
+/* Files for the environment a panel builds, shared by every panel. */
+const BuildFilesContext = createContext(null);
+
 function useBuildEnvironment() {
   const navigate = useNavigate();
   const connect = useContext(ConnectModeContext);
+  const buildFiles = useContext(BuildFilesContext);
   const rt = useContext(RuntimeContext);
   const naming = useContext(AgentNameContext);
   return (source) => {
@@ -1244,6 +1279,11 @@ function useBuildEnvironment() {
       ...(runLocation && { runLocation }),
       ...(endpoint && { runtime: { endpoint, ...(tokenRef && { tokenRef }) } }),
       ...(typedName && { name: typedName }),
+      releaseStep: true,
+      ...(buildFiles?.files.length && { files: buildFiles.files }),
+      ...(buildFiles?.request.trim() && {
+        testRequest: buildFiles.request.trim(),
+      }),
     };
     navigate(paths.dashboard.simulate.environmentBuild, {
       state: { presetSource: { ...built, envName: envNameFor(built) } },
@@ -2900,21 +2940,52 @@ function PanelScratch() {
   const buildBlank = () => {
     if (!canGo) return;
     const envId = `env-scratch-${Date.now().toString(36)}`;
-    const finalName = name.trim() || deriveScratchName(flowText, attachments);
-    /* Derive the environment's world from the flow description so the
-       review layout has real material to show — the user described
-       what the agent does; we materialise that into rules, scenarios,
-       and suggested evals. Tools stay empty because we intentionally
-       have no agent connected yet; Overview shows its
-       empty state and the way to connect one. */
-    /* The builder proposes the whole world from the description — records,
-       tools, rules, scenario coverage — and waits for approval: nothing is
-       built until the person approves (builder.md §3). Questions it can't
-       answer from the description are asked first, one at a time (§2). */
-    const design = scratchDesignOf(flowText);
+    /* The attached files are read first: what they say counts toward the
+       design as much as the description does (builder.md §1). A CSV's
+       table and a policy's rules come in through the design's sources,
+       each citing its file; here their words only help propose the name,
+       the tools and the scenarios. */
+    const fileSources = attachments.length
+      ? addDesignFilesPatch({}, attachments).sources
+      : [];
+    const fileTables = new Set(
+      fileSources
+        .filter((f) => f.parsed?.kind === "table")
+        .map((f) => f.parsed.table),
+    );
+    /* Only what a file asserts shapes the design: a data file's table and
+       a policy's text. Reference material (a README, a guide) is for the
+       agent to read, not a spec of the world. */
+    const fileText = fileSources
+      .filter(
+        (f) =>
+          f.parsed?.kind === "table" ||
+          f.role === "policy" ||
+          /* Words read from the file itself describe the use case too. */
+          f.parsed?.read,
+      )
+      .map((f) =>
+        f.parsed?.kind === "table"
+          ? `${f.parsed.table} records`
+          : (f.parsed?.passages || []).map((x) => x.text).join(". "),
+      )
+      .join(". ");
+    const readText = [flowText, fileText].filter((x) => x.trim()).join("\n");
+    const finalName = name.trim() || deriveScratchName(readText);
+    /* The builder proposes the whole world — records, tools, rules,
+       scenario coverage — and waits for approval: nothing is built until
+       the person approves (builder.md §3). Questions it can't answer are
+       asked first, one at a time (§2). */
+    const proposed = scratchDesignOf(readText);
+    const design = {
+      ...proposed,
+      /* A table a file seeds isn't proposed a second time, empty. */
+      tables: proposed.tables.filter((t) => !fileTables.has(t.name)),
+    };
+    /* Rules come from the description; a file's rules arrive cited. */
     const derivedRules = deriveScratchRules(flowText);
     const derivedScenarios = deriveScratchScenarios(
-      flowText,
+      readText,
       finalName,
       design.tools,
     );
@@ -2969,6 +3040,10 @@ function PanelScratch() {
       envId,
       patch: {
         designQuestions: design.questions.map((q) => ({ ...q, answer: null })),
+        /* Files attached here are read into the design like ones added on
+           it: a CSV proposes records, a policy proposes rules, each citing
+           its file — and they join v1 on approval (builder.md §1). */
+        ...(fileSources.length && { sources: fileSources }),
         /* Only the people the description and its answers call for — not a
            default cast picked by channel. */
         actors: [],
@@ -3041,7 +3116,8 @@ function PanelScratch() {
           >
             <Stack direction="row" alignItems="center" spacing={0.5}>
               <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-                Personal data in {attachments.length === 1 ? "this file" : "these files"}
+                Personal data in{" "}
+                {attachments.length === 1 ? "this file" : "these files"}
               </Typography>
               <Tooltip
                 arrow
@@ -3071,7 +3147,9 @@ function PanelScratch() {
                   control={<Radio size="small" sx={{ p: 0.5 }} />}
                   sx={{ m: 0, gap: 0.25 }}
                   label={
-                    <Typography sx={{ typography: "s2", color: "text.primary" }}>
+                    <Typography
+                      sx={{ typography: "s2", color: "text.primary" }}
+                    >
                       {label}
                     </Typography>
                   }
@@ -3238,7 +3316,7 @@ function PanelNotImplemented() {
 
 /* ── shared bits ───────────────────────────────────────────────────────── */
 
-export function Label({ children }) {
+export function Label({ children, required = false }) {
   return (
     <Typography
       sx={{
@@ -3250,10 +3328,20 @@ export function Label({ children }) {
       }}
     >
       {children}
+      {/* The form's one mark for "can't be left empty". */}
+      {required && (
+        <Box
+          component="span"
+          aria-label="required"
+          sx={{ color: "error.main", ml: 0.5 }}
+        >
+          *
+        </Box>
+      )}
     </Typography>
   );
 }
-Label.propTypes = { children: PropTypes.node };
+Label.propTypes = { children: PropTypes.node, required: PropTypes.bool };
 
 export function Field({
   label,
@@ -3595,7 +3683,28 @@ ToggleRow.propTypes = {
 const MAX_SCENARIOS = 1000;
 const DEFAULT_SCENARIOS = "10";
 
-function ScenarioCountRow({ value: ownValue, onChange: ownOnChange }) {
+function ScenarioCountRow(props) {
+  const buildFiles = useContext(BuildFilesContext);
+  /* Every panel that builds shows its files with the count. */
+  return buildFiles ? (
+    <Stack spacing={1.25}>
+      <BuildTestField
+        optional
+        value={buildFiles.request}
+        onChange={buildFiles.setRequest}
+      />
+      <ScenarioCountBox {...props} />
+      <BuildFilesField
+        files={buildFiles.files}
+        onChange={buildFiles.setFiles}
+      />
+    </Stack>
+  ) : (
+    <ScenarioCountBox {...props} />
+  );
+}
+
+function ScenarioCountBox({ value: ownValue, onChange: ownOnChange }) {
   const connect = useContext(ConnectModeContext);
   /* Connecting an agent to build an environment: the count is the connect form's. */
   const buildCtx = useConnectBuild();
@@ -3622,6 +3731,13 @@ function ScenarioCountRow({ value: ownValue, onChange: ownOnChange }) {
     >
       <Typography sx={{ typography: "s2", fontWeight: 600 }}>
         Scenarios to generate
+        <Box
+          component="span"
+          aria-label="required"
+          sx={{ color: "error.main", ml: 0.5 }}
+        >
+          *
+        </Box>
       </Typography>
       <Stack
         direction={{ xs: "column", sm: "row" }}
@@ -3670,7 +3786,7 @@ function ScenarioCountRow({ value: ownValue, onChange: ownOnChange }) {
     </Box>
   );
 }
-ScenarioCountRow.propTypes = {
+ScenarioCountBox.propTypes = {
   value: PropTypes.string,
   onChange: PropTypes.func,
 };
@@ -3903,7 +4019,7 @@ const OPTIONS = [
     title: "Prebuilt Environments",
     icon: "solar:widget-linear",
     blurb:
-      "Skip world setup — pick a prebuilt world, then connect your agent to it.",
+      "Skip world setup — pick a ready environment, then use it with your agent.",
     setupSubtitle:
       "Prebuilt environments you can adapt in minutes — pick one, then wire your agent.",
   },
@@ -4052,13 +4168,14 @@ function deriveScratchRules(flowText) {
     .filter(Boolean);
   const constraintish =
     /(escalat|must|never|always|require|only|if\b|unless|before|after|approve|reject|forbid|deny|need|not allowed|when the|when a)/i;
-  const rules = sentences.filter((s) => constraintish.test(s)).slice(0, 4);
-  /* Ensure at least one rule so the Contract tab isn't empty. If the
-     description had none, fall back to a generic "task is done when"
-     rule pulled from the last sentence. */
-  if (rules.length === 0 && sentences.length) {
-    rules.push(sentences[sentences.length - 1]);
-  }
+  /* "Test my agent before launch" is the ask, not a rule the agent follows. */
+  const aboutTheTest =
+    /^(test|check|evaluate|try|validate|assess)\b.*\b(agent|bot|assistant)\b/i;
+  const rules = sentences
+    .filter((s) => constraintish.test(s) && !aboutTheTest.test(s))
+    .slice(0, 4);
+  /* No fallback: a sentence that isn't a rule is never graded as one — the
+     builder asks for the detail instead (builder.md §2). */
   return rules;
 }
 
@@ -4431,7 +4548,7 @@ function deriveScratchEvals(flowText) {
   intake for common domain terms and produce a short, human name.
   Falls back to a generic "Scratch environment" so we never mint a blank one.
 */
-function deriveScratchName(flowText, attachments) {
+function deriveScratchName(flowText) {
   const t = String(flowText || "").toLowerCase();
   const has = (...needles) => needles.some((n) => t.includes(n));
 
@@ -4469,9 +4586,8 @@ function deriveScratchName(flowText, attachments) {
   if (has("call", "voice", "phone", "sip", "telephony"))
     return "Voice agent environment";
 
-  if (attachments?.length)
-    return `Scratch environment · ${attachments.length} file${attachments.length === 1 ? "" : "s"}`;
-  return "Scratch environment";
+  /* A file count isn't a name — the files show in the design's Brief. */
+  return "Untitled environment";
 }
 
 function formatSize(bytes) {

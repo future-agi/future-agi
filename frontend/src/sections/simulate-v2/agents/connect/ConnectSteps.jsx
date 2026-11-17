@@ -11,9 +11,15 @@ import {
 import Iconify from "src/components/iconify";
 import { InDrawerContext } from "../../environments/connectMode";
 import ConnectPreflight from "./ConnectPreflight";
-import { MAX_BUILD_SCENARIOS, useConnectBuild } from "./connectSubmit";
+import {
+  BUILD_TEST_MIN,
+  MAX_BUILD_SCENARIOS,
+  useConnectBuild,
+} from "./connectSubmit";
+import BuildTestField from "../../environments/BuildTestField";
 import { buildCreditsCheck } from "../../_mock/metering";
 import useCreditBalance from "../../usage/useCreditBalance";
+import BuildFilesField from "../../environments/BuildFilesField";
 
 /**
  * The frame every New agent flow walks through: where you are, the step
@@ -45,30 +51,38 @@ export default function ConnectSteps({
   const credits =
     build && countOk ? buildCreditsCheck(count, creditBalance) : null;
   const waitsForPreflight = !!build && !!preflight && !preflight.state.ready;
+  const testOk =
+    !build?.setRequest || (build.request || "").trim().length >= BUILD_TEST_MIN;
   const next = asked.disabled
     ? asked
-    : !countOk
+    : !testOk
       ? {
           ...asked,
           disabled: true,
-          hint: `Scenarios to generate: 1 to ${MAX_BUILD_SCENARIOS.toLocaleString()}`,
+          hint: "Say what this environment should test",
         }
-      : credits && !credits.ok
+      : !countOk
         ? {
             ...asked,
             disabled: true,
-            hint: "Over your AI credits — build fewer scenarios",
+            hint: `Scenarios to generate: 1 to ${MAX_BUILD_SCENARIOS.toLocaleString()}`,
           }
-        : waitsForPreflight
+        : credits && !credits.ok
           ? {
               ...asked,
               disabled: true,
-              hint:
-                preflight.state.status === "done"
-                  ? "Fix what preflight found, then run it again"
-                  : "Run preflight first",
+              hint: "Over your AI credits — build fewer scenarios",
             }
-          : asked;
+          : waitsForPreflight
+            ? {
+                ...asked,
+                disabled: true,
+                hint:
+                  preflight.state.status === "done"
+                    ? "Fix what preflight found, then run it again"
+                    : "Run preflight first",
+              }
+            : asked;
   /* One step is no journey — no strip, and in a drawer no header at all. */
   const single = steps.length <= 1;
   const showHead = !(inDrawer && single);
@@ -149,6 +163,14 @@ export default function ConnectSteps({
         {children}
         {(build || preflight) && (
           <Stack spacing={1.25} sx={{ mt: 1.75 }}>
+            {/* The same build section everywhere: what to test, how many
+                scenarios, your files, then preflight. */}
+            {build?.setRequest && (
+              <BuildTestField
+                value={build.request}
+                onChange={build.setRequest}
+              />
+            )}
             {build && (
               <ScenarioCount
                 value={build.scenarioCount}
@@ -156,6 +178,11 @@ export default function ConnectSteps({
                 ok={countOk}
                 credits={credits}
               />
+            )}
+            {/* Files for the environment it builds — the same as Build from
+                scratch: your policy and records instead of generated ones. */}
+            {build?.setFiles && (
+              <BuildFilesField files={build.files} onChange={build.setFiles} />
             )}
             {preflight && (
               <ConnectPreflight
@@ -273,6 +300,13 @@ function ScenarioCount({ value, onChange, ok, credits = null }) {
         <Box flex={1} minWidth={0}>
           <Typography sx={{ typography: "s2", fontWeight: 600 }}>
             Scenarios to generate
+            <Box
+              component="span"
+              aria-label="required"
+              sx={{ color: "error.main", ml: 0.5 }}
+            >
+              *
+            </Box>
           </Typography>
           <Typography
             sx={{

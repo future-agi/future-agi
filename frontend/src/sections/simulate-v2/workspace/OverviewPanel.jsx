@@ -2067,13 +2067,23 @@ function NextStepsChecklist({ env, envState, onGo }) {
   const runCount = envState?.runs?.length || 0;
 
   const steps = [
-    {
-      id: "created",
-      title: "Environment created",
-      body: `${env.name} is set up and ready for configuration.`,
-      done: true,
-      action: null,
-    },
+    /* Built from scratch, it exists once it's saved (builder.md §5) — until
+       then the first step is Save, on the card at the top. */
+    env?.builtFrom?.releaseStep && !env?.releaseSavedAt
+      ? {
+          id: "created",
+          title: "Save the environment",
+          body: "Built and checked. Save it as v1 from the card at the top to keep it.",
+          done: false,
+          action: null,
+        }
+      : {
+          id: "created",
+          title: "Environment created",
+          body: `${env.name} is set up and ready for configuration.`,
+          done: true,
+          action: null,
+        },
     {
       id: "agent",
       title: "Connect an agent",

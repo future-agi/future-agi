@@ -4,6 +4,7 @@ import {
   Box,
   Button,
   ButtonBase,
+  IconButton,
   Checkbox,
   Stack,
   TextField,
@@ -47,7 +48,7 @@ const KIND = {
   actor: { icon: "solar:users-group-rounded-linear", label: "Actor" },
   tool: { icon: "solar:widget-4-linear", label: "Tool" },
   state: { icon: "solar:database-linear", label: "Starting state" },
-  reference: { icon: "solar:book-linear", label: "Reference" },
+  reference: { icon: "solar:book-linear", label: "Background" },
   personal: { icon: "solar:shield-user-linear", label: "Personal data" },
 };
 
@@ -58,7 +59,7 @@ const GROUPS = [
   { label: "Tools", kinds: ["tool"] },
   { label: "Actors", kinds: ["actor"] },
   { label: "Scenarios", kinds: ["scenario"] },
-  { label: "Reference material", kinds: ["reference"] },
+  { label: "Background for the agent", kinds: ["reference"] },
   { label: "Personal data — your choice", kinds: ["personal"] },
   { label: "Who sees what, and problems", kinds: ["hidden", "unreadable"] },
 ];
@@ -117,6 +118,12 @@ export default function DataProposalCard({
   const inPlace = editsLandInPlace(envState);
   const current =
     currentEnvVersion(env, envState)?.label || "the current version";
+  /* A single pickable change needs no checkbox beside Add / Reject. */
+  const onlyOne =
+    proposal.items.filter(
+      (i) =>
+        !i.blocking && !["hidden", "unreadable", "personal"].includes(i.kind),
+    ).length === 1;
   const pickable = (i) =>
     !i.blocking && !["hidden", "unreadable", "personal"].includes(i.kind);
   /* Each source with personal data needs a choice before anything is accepted. */
@@ -268,15 +275,28 @@ export default function DataProposalCard({
   const renderItem = (i) => {
     const k = KIND[i.kind];
     const on = picked.includes(i.id);
+    /* A whole file joining as reference: facts, then what it says. */
+    if (i.kind === "reference")
+      return (
+        <ReferenceItem
+          key={i.id}
+          item={i}
+          inset={drawer ? 2.5 : 1.5}
+          onOpen={() => onOpenSource?.(i.cite?.sourceId)}
+        />
+      );
     return (
       <Stack
         key={i.id}
         direction="row"
-        spacing={1}
+        spacing={1.25}
         sx={{
-          px: drawer ? 2.25 : 1,
-          py: 1,
-          "& + &": { borderTop: "1px solid", borderColor: "divider" },
+          px: drawer ? 2.5 : 1.5,
+          py: 1.25,
+          borderTop: "1px solid",
+          borderColor: "divider",
+          "& .pi-actions": { opacity: editing === i.id ? 1 : 0 },
+          "&:hover .pi-actions, &:focus-within .pi-actions": { opacity: 1 },
         }}
       >
         <Checkbox
@@ -290,24 +310,33 @@ export default function DataProposalCard({
           }
           sx={{
             ...neutralCheckboxSx,
-            p: 0.25,
+            p: 0,
+            mt: "1px",
             alignSelf: "flex-start",
-            ...(i.kind === "personal" && { visibility: "hidden" }),
+            /* A choice, or a whole file joining as reference — neither is a
+               change to pick; Add / Reject decide it. */
+            ...(["personal", "reference"].includes(i.kind) && {
+              visibility: "hidden",
+            }),
+            /* One change only: Add / Reject already decide it. */
+            ...(onlyOne && { display: "none" }),
           }}
         />
         <Box sx={{ flex: 1, minWidth: 0 }}>
-          <Stack direction="row" spacing={0.75} alignItems="center">
-            <Iconify
-              icon={k.icon}
-              width={14}
-              sx={{
-                color: i.blocking ? "status.warning.fg" : "text.tertiary",
-                flexShrink: 0,
-              }}
-            />
-            <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-              {i.kind === "rule" && edits[i.id] != null
-                ? `Rule: ${edits[i.id]}`
+          <Stack direction="row" spacing={0.75} alignItems="flex-start">
+            {i.blocking && (
+              <Iconify
+                icon={k.icon}
+                width={14}
+                sx={{ color: "status.warning.fg", flexShrink: 0, mt: "2px" }}
+              />
+            )}
+            {/* The group heading names the kind, so a rule reads as the rule. */}
+            <Typography
+              sx={{ typography: "s1", fontWeight: 500, flex: 1, minWidth: 0 }}
+            >
+              {i.kind === "rule"
+                ? edits[i.id] ?? i.rule ?? i.title.replace(/^Rule:\s*/, "")
                 : i.title}
             </Typography>
             {(i.kind === "rule" || i.editable) && pickable(i) && (
@@ -320,18 +349,39 @@ export default function DataProposalCard({
                     : "Changes what we'll add. The file stays as it is."
                 }
               >
-                <Button
-                  size="small"
-                  variant="outlined"
-                  onClick={() => setEditing(editing === i.id ? null : i.id)}
-                  sx={{ minWidth: 0, py: 0, px: 0.75, typography: "s3" }}
-                >
-                  {editing === i.id
-                    ? "Done"
-                    : i.kind === "rule"
-                      ? "Edit rule"
-                      : "Edit"}
-                </Button>
+                {editing === i.id ? (
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    onClick={() => setEditing(null)}
+                    sx={{
+                      minWidth: 0,
+                      py: 0,
+                      px: 1,
+                      typography: "s3",
+                      color: "text.primary",
+                      borderColor: "divider",
+                      flexShrink: 0,
+                    }}
+                  >
+                    Done
+                  </Button>
+                ) : (
+                  <IconButton
+                    size="small"
+                    className="pi-actions"
+                    aria-label={i.kind === "rule" ? "Edit rule" : "Edit"}
+                    onClick={() => setEditing(i.id)}
+                    sx={{
+                      p: 0.25,
+                      color: "text.tertiary",
+                      flexShrink: 0,
+                      "&:hover": { color: "text.primary" },
+                    }}
+                  >
+                    <Iconify icon="solar:pen-linear" width={14} />
+                  </IconButton>
+                )}
               </Tooltip>
             )}
             {i.inferred && (
@@ -400,11 +450,23 @@ export default function DataProposalCard({
               </Typography>
             )}
           {i.cite && (
-            <Tooltip
-              title={i.cite.excerpt ? `“${i.cite.excerpt}”` : ""}
-              arrow
-              placement="bottom-start"
-            >
+            <>
+              {i.cite.excerpt &&
+                i.cite.excerpt.trim() !== String(i.rule || "").trim() &&
+                i.kind !== "table" && (
+                  <Typography
+                    sx={{
+                      mt: 0.5,
+                      pl: 1,
+                      borderLeft: "1px solid",
+                      borderColor: "divider",
+                      typography: "s3",
+                      color: "text.secondary",
+                    }}
+                  >
+                    {`“${i.cite.excerpt}”`}
+                  </Typography>
+                )}
               <ButtonBase
                 onClick={() => onOpenSource?.(i.cite.sourceId)}
                 sx={{
@@ -413,17 +475,15 @@ export default function DataProposalCard({
                   color: "text.tertiary",
                   textAlign: "left",
                   display: "block",
-                  "&:hover": { color: "text.primary" },
+                  "&:hover": {
+                    color: "text.primary",
+                    textDecoration: "underline",
+                  },
                 }}
               >
-                <Iconify
-                  icon="solar:link-minimalistic-linear"
-                  width={12}
-                  sx={{ mr: 0.5, verticalAlign: "-2px" }}
-                />
-                {i.cite.ref}
+                {`From ${i.cite.ref}`}
               </ButtonBase>
-            </Tooltip>
+            </>
           )}
           {i.kind === "conflict" && (
             <Stack spacing={0.5} sx={{ mt: 0.75 }} role="radiogroup">
@@ -571,24 +631,35 @@ export default function DataProposalCard({
       <Box
         sx={drawer ? { flex: 1, minHeight: 0, overflowY: "auto" } : undefined}
       >
-        {GROUPS.flatMap((g) => {
+        {GROUPS.filter((g) =>
+          proposal.items.some((x) => g.kinds.includes(x.kind)),
+        ).flatMap((g, gi) => {
           const items = proposal.items.filter((x) => g.kinds.includes(x.kind));
-          if (!items.length) return [];
           return [
+            /* Design system section heading: 13/500 with the count; one
+               hairline between groups, none under the drawer's own header. */
             <Typography
               key={`h-${g.label}`}
               sx={{
-                typography: "s3",
-                fontWeight: 600,
-                color: "text.tertiary",
+                typography: "m3",
+                fontWeight: 500,
+                color: "text.primary",
                 px: drawer ? 2.5 : 1.5,
-                pt: 1,
-                pb: 0.25,
-                borderTop: "1px solid",
-                borderColor: "divider",
+                pt: gi ? 2 : 1.5,
+                pb: 0.75,
+                ...(gi > 0 && {
+                  borderTop: "1px solid",
+                  borderColor: "divider",
+                }),
               }}
             >
-              {`${g.label} · ${items.length}`}
+              {g.label}
+              <Box
+                component="span"
+                sx={{ color: "text.tertiary", fontWeight: 400, ml: 0.75 }}
+              >
+                {items.length}
+              </Box>
             </Typography>,
             ...items.map((x) => renderItem(x)),
           ];
@@ -659,4 +730,137 @@ DataProposalCard.propTypes = {
   sourceIds: PropTypes.array.isRequired,
   onOpenSource: PropTypes.func,
   layout: PropTypes.oneOf(["card", "drawer"]),
+};
+
+/* A file joining as reference material (data.md "Policy vs reference vs
+   records"): a key-value spec — file, how it's used, rules, how much was
+   read — then the text itself as a hairline table, each section named once.
+   No checkbox: Add / Reject below decide it. */
+function ReferenceItem({ item, inset, onOpen }) {
+  const [all, setAll] = useState(false);
+  const read = item.read || { sections: 0, words: 0, passages: [] };
+  const rows = all ? read.passages : read.passages.slice(0, 6);
+  const facts = [
+    [
+      "File",
+      <ButtonBase
+        key="f"
+        onClick={onOpen}
+        sx={{
+          typography: "s1",
+          fontWeight: 500,
+          color: "text.primary",
+          textDecoration: "underline",
+          textUnderlineOffset: 3,
+          textDecorationColor: (t) => t.palette.text.disabled,
+          "&:hover": { textDecorationColor: "currentColor" },
+        }}
+      >
+        {item.cite?.ref}
+      </ButtonBase>,
+    ],
+    ["Used as", "Background — the agent can look things up in it"],
+    ["Rules", "None stated, so nothing is graded from it"],
+    [
+      "Read",
+      read.passages.length
+        ? `${read.sections} section${read.sections === 1 ? "" : "s"} · ${read.words.toLocaleString()} words`
+        : "No readable text",
+    ],
+  ];
+  return (
+    <Box sx={{ px: inset, pb: 2 }}>
+      <Box component="table" sx={{ borderCollapse: "collapse", mb: 1.5 }}>
+        <Box component="tbody">
+          {facts.map(([k, v]) => (
+            <Box component="tr" key={k}>
+              <Box
+                component="td"
+                sx={{
+                  typography: "s1",
+                  color: "text.tertiary",
+                  width: 88,
+                  py: 0.5,
+                  pr: 1.5,
+                  verticalAlign: "top",
+                }}
+              >
+                {k}
+              </Box>
+              <Box
+                component="td"
+                sx={{ typography: "s1", color: "text.primary", py: 0.5 }}
+              >
+                {v}
+              </Box>
+            </Box>
+          ))}
+        </Box>
+      </Box>
+      {read.passages.length > 0 && (
+        <>
+          <Box
+            sx={{
+              display: "grid",
+              gridTemplateColumns: "80px minmax(0, 1fr)",
+              borderTop: "1px solid",
+              borderColor: "divider",
+              "& > *": {
+                borderBottom: "1px solid",
+                borderColor: "divider",
+                py: 0.75,
+              },
+            }}
+          >
+            <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+              Section
+            </Typography>
+            <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+              What it says
+            </Typography>
+            {rows.map((x, n) => [
+              <Typography
+                key={`${x.id}-w`}
+                sx={{
+                  typography: "s1",
+                  color: "text.tertiary",
+                  fontVariantNumeric: "tabular-nums",
+                }}
+              >
+                {n === 0 || rows[n - 1].where !== x.where
+                  ? x.where.replace(/^section /, "")
+                  : ""}
+              </Typography>,
+              <Typography
+                key={`${x.id}-t`}
+                sx={{ typography: "s1", color: "text.secondary" }}
+              >
+                {x.text}
+              </Typography>,
+            ])}
+          </Box>
+          {read.passages.length > 6 && (
+            <ButtonBase
+              onClick={() => setAll((v) => !v)}
+              sx={{
+                mt: 0.75,
+                typography: "s1",
+                fontWeight: 500,
+                color: "text.secondary",
+                textDecoration: "underline",
+                textUnderlineOffset: 3,
+              }}
+            >
+              {all ? "Show fewer" : `Show all ${read.passages.length} lines`}
+            </ButtonBase>
+          )}
+        </>
+      )}
+    </Box>
+  );
+}
+ReferenceItem.propTypes = {
+  item: PropTypes.object.isRequired,
+  inset: PropTypes.number,
+  onOpen: PropTypes.func,
 };

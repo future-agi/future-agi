@@ -64,7 +64,13 @@ export default function ReleasePanel({ env, envState, patch, onCopy, onGo }) {
   const shown = (label) => envLabelOf(env, envState, label);
   const [runningHere, setRunning] = useState(false);
   /* The environment page starts them by itself on a new version. */
-  const running = runningHere || envState?.releaseChecksRunning === st.version;
+  const running =
+    runningHere ||
+    envState?.releaseChecksRunning === st.version ||
+    /* A first build runs them as its last step. */
+    !!envState?.versionBuild?.first;
+  /* Built from scratch and not saved yet: Save comes first, then Lock. */
+  const unsaved = !!env?.builtFrom?.releaseStep && !env?.releaseSavedAt;
   const [confirmLock, setConfirmLock] = useState(false);
   const [split, setSplit] = useState("train");
   useEffect(() => {
@@ -81,9 +87,14 @@ export default function ReleasePanel({ env, envState, patch, onCopy, onGo }) {
 
   const status = locked
     ? { label: "Locked", role: "neutral" }
-    : st.ready
-      ? { label: "Ready", role: "success" }
-      : { label: "Checks pending", role: "warning" };
+    : running
+      ? { label: "Checking", role: "neutral" }
+      : st.ready
+        ? /* Ready means saved and checked — never before Save. */
+          unsaved
+          ? { label: "Passed · not saved", role: "warning" }
+          : { label: "Ready", role: "success" }
+        : { label: "Checks pending", role: "warning" };
 
   const cell = { typography: "s2", py: 1, px: 1.5 };
   const head = {
@@ -241,7 +252,9 @@ export default function ReleasePanel({ env, envState, patch, onCopy, onGo }) {
               : running
                 ? `Checking ${shown(st.version)} — this takes a few seconds and runs by itself for every new version.`
                 : st.ready
-                  ? "All passed. Lock to freeze tasks, splits and the scorer."
+                  ? unsaved
+                    ? `All passed. Save it as ${shown(st.version)} above — a saved release can then be locked.`
+                    : "All passed. Lock to freeze tasks, splits and the scorer."
                   : failed.length
                     ? `${failed.length} check${failed.length === 1 ? "" : "s"} failed — fix ${failed.length === 1 ? "it" : "them"}, then run the checks again.`
                     : "The checks run by themselves once this version is built. Nothing is shown as Ready until all five pass."}
@@ -278,32 +291,34 @@ export default function ReleasePanel({ env, envState, patch, onCopy, onGo }) {
               {st.checkedVersion ? "Run checks again" : "Run checks"}
             </Button>
             {/* Disabled says why: a release locks only once all five pass. */}
-            <Tooltip
-              arrow
-              title={
-                !st.ready && !running
-                  ? st.stale
-                    ? `The checks passed on ${shown(st.checkedVersion)}, not this version. Run them again; all five must pass to lock.`
-                    : "Run the checks first — all five must pass before this release can be locked."
-                  : ""
-              }
-            >
-              <span>
-                <Button
-                  size="small"
-                  variant="contained"
-                  color="primary"
-                  disabled={!patch || !st.ready || running}
-                  onClick={() => setConfirmLock(true)}
-                  startIcon={
-                    <Iconify icon="solar:lock-keyhole-linear" width={14} />
-                  }
-                  sx={{ flexShrink: 0 }}
-                >
-                  Lock this release
-                </Button>
-              </span>
-            </Tooltip>
+            {!unsaved && (
+              <Tooltip
+                arrow
+                title={
+                  !st.ready && !running
+                    ? st.stale
+                      ? `The checks passed on ${shown(st.checkedVersion)}, not this version. Run them again; all five must pass to lock.`
+                      : "Run the checks first — all five must pass before this release can be locked."
+                    : ""
+                }
+              >
+                <span>
+                  <Button
+                    size="small"
+                    variant="contained"
+                    color="primary"
+                    disabled={!patch || !st.ready || running}
+                    onClick={() => setConfirmLock(true)}
+                    startIcon={
+                      <Iconify icon="solar:lock-keyhole-linear" width={14} />
+                    }
+                    sx={{ flexShrink: 0 }}
+                  >
+                    Lock this release
+                  </Button>
+                </span>
+              </Tooltip>
+            )}
           </>
         )}
       </Stack>
@@ -315,7 +330,9 @@ export default function ReleasePanel({ env, envState, patch, onCopy, onGo }) {
         </Typography>
         {!locked ? (
           <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-            Lock this release first, so rewards stay comparable.
+            {unsaved
+              ? "Save this release, then lock it, so rewards stay comparable."
+              : "Lock this release first, so rewards stay comparable."}
           </Typography>
         ) : (
           <RlAccess

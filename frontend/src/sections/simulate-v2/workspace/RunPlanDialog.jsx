@@ -639,8 +639,9 @@ export default function RunPlanDialog({
                 const entry = catalogueOfEnv(env);
                 if (!entry) return undefined;
                 const pack =
-                  { starter: "Starter pack", full: "Full world" }[env?.pack] ||
-                  (env?.pack ? "A named pack" : null);
+                  { starter: "Starter suite", full: "All scenarios" }[
+                    env?.pack
+                  ] || (env?.pack ? "A named pack" : null);
                 return [
                   `${entry.id} · ${entry.task}`,
                   `release ${envReleaseOf(env, entry)}`,

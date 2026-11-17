@@ -27,8 +27,7 @@ import { SaasSandboxCard } from "./SaasSandbox";
 import { QuietTag, WorldCard } from "./LandingBits";
 import { AGENT_TYPES } from "./connectOptions";
 import WorldDrawer from "./WorldDrawer";
-import CopyCommandButton from "../components/CopyCommandButton";
-import { CATALOGUE_CLI, READINESS, SOURCES } from "../_mock/catalogue";
+import { READINESS, SOURCES } from "../_mock/catalogue";
 
 /* Splits a world can offer (catalogue.md: train and test at least). */
 const SPLITS = [
@@ -59,6 +58,8 @@ export default function PrebuiltWorldsView({
   const [split, setSplit] = useState("all");
   const [source, setSource] = useState("all");
   const [open, setOpen] = useState(null);
+  /* Which drawer tab a card opened: the world, Use with my agent or Customize. */
+  const [openTab, setOpenTab] = useState("world");
   const shown = useMemo(
     () =>
       filterWorlds(worlds, { query, type, domain, readiness, split, source }),
@@ -151,7 +152,7 @@ export default function PrebuiltWorldsView({
               component="h2"
               sx={{ typography: "m2", fontWeight: 600 }}
             >
-              Prebuilt worlds
+              Ready environments
               <Box
                 component="span"
                 sx={{ color: "text.secondary", fontWeight: 500, ml: 0.75 }}
@@ -359,8 +360,6 @@ export default function PrebuiltWorldsView({
         >
           {`${listed.length + (withSandbox ? 1 : 0)} of ${total} worlds`}
         </Typography>
-        {/* The same list from the CLI. */}
-        <CopyCommandButton command={CATALOGUE_CLI} label="CLI" />
       </Stack>
 
       {listed.length || withSandbox ? (
@@ -370,7 +369,11 @@ export default function PrebuiltWorldsView({
             <WorldCard
               key={w.id}
               world={w}
-              onOpen={setOpen}
+              onOpen={(world, tab) => {
+                setOpenTab(tab || "world");
+                setOpen(world);
+              }}
+              actions
               selected={open?.id === w.id}
               soon={soonTypes.has(w.type)}
             />
@@ -427,6 +430,7 @@ export default function PrebuiltWorldsView({
 
       <WorldDrawer
         world={open}
+        initialTab={openTab}
         onClose={() => setOpen(null)}
         onOpenWorld={(id) =>
           setOpen(worlds.find((w) => w.catalogueId === id) || null)

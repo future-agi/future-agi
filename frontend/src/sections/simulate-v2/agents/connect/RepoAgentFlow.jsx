@@ -358,11 +358,17 @@ export default function RepoAgentFlow({
           : envRefOf(name);
         /* A secret connected without a value: the connection check's
            start fails on it, with the fix next to it. */
+        /* Read with a default: the process starts without it. */
+        const optional = (detected.credentialKeys.optional || []).includes(
+          name,
+        );
         return {
           name,
+          ...(optional && { optional: true }),
           ...(ref
             ? { ref }
-            : /KEY|TOKEN|SECRET|PASSWORD|DSN/i.test(name) && { unset: true }),
+            : !optional &&
+              /KEY|TOKEN|SECRET|PASSWORD|DSN/i.test(name) && { unset: true }),
         };
       }),
       fagiPrompts: detected.fagiPrompts.value,
@@ -432,12 +438,18 @@ export default function RepoAgentFlow({
     const r = readAgentFolder({ repo, folder: dir, branch, entryId });
     const d = repoDetectionOf({ repo, folder: dir, branch, found: r });
     const keys = d.credentialKeys.value || [];
+    const optional = d.credentialKeys.optional || [];
     const files = 40 + ((`${repo.name}/${dir}`.length * 37) % 180);
     const connectors = [...new Set(keys.map(connectorOfKey).filter(Boolean))];
-    return { files, keys, connectors };
+    return { files, keys, optional, connectors };
   }, [ready, repo?.name, folder, branch, entryId]); // eslint-disable-line react-hooks/exhaustive-deps
-  const secretKeys = (scan?.keys || []).filter((k) =>
-    /KEY|TOKEN|SECRET|PASSWORD|DSN|_URL$/i.test(k),
+  /* Preflight checks the keys the code can't run without; an optional one
+     (read with a default) is checked only once it's set. */
+  const optionalKeys = scan?.optional || [];
+  const secretKeys = (scan?.keys || []).filter(
+    (k) =>
+      /KEY|TOKEN|SECRET|PASSWORD|DSN|_URL$/i.test(k) &&
+      (!optionalKeys.includes(k) || envValues.some((v) => v.name === k)),
   );
   const preflight = usePreflight(
     [
@@ -1019,6 +1031,7 @@ export default function RepoAgentFlow({
             files={credFiles}
             onFiles={setCredFiles}
             expectedNames={agentKeys}
+            optionalNames={detected?.credentialKeys.optional || optionalKeys}
             egress={egressText}
             onEgress={setEgressText}
           />

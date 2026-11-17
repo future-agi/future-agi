@@ -196,10 +196,10 @@ export const AGENT_CONNECT_GROUPS = [
     items: [
       {
         id: "upload",
-        name: "Upload a folder",
+        name: "Upload your code",
         fix: "Patch",
         icon: "solar:upload-minimalistic-linear",
-        need: "Folder or .zip, up to 200 MB",
+        need: "A folder or .zip, up to 200 MB — no repository needed",
         kind: "upload",
       },
       /* LiveKit Agents is a code framework (under Repo and SDK); a running
@@ -294,7 +294,13 @@ export const newAgentChoicesFor = (channel) => {
         /* Two kinds of code way in, said once each: where the code lives, or
            our SDK beside a framework — whose rows then say only what's
            distinctive (Graph, Crew), not the same step seventeen times. */
-        const ordered = upload ? [first, upload, ...rest] : g.items;
+        /* Upload sits with the repositories — "your code", either way in —
+           right after the git hosts, so nobody has to scroll to find it. */
+        const hosts = rest.filter(
+          (it) => it.kind === "repo" && !it.initial?.direct,
+        );
+        const others = rest.filter((it) => !hosts.includes(it));
+        const ordered = upload ? [first, ...hosts, upload, ...others] : g.items;
         return {
           ...g,
           title: "Code",
@@ -316,12 +322,10 @@ export const newAgentChoicesFor = (channel) => {
                   }
                 : {
                     ...it,
-                    section:
-                      it.kind === "upload"
-                        ? "upload"
-                        : it.kind === "coding"
-                          ? "coding"
-                          : "repo",
+                    section: it.kind === "coding" ? "coding" : "repo",
+                    ...(it.kind === "upload" && {
+                      short: "Folder or .zip · no repository needed",
+                    }),
                   },
             ),
         };
@@ -446,9 +450,9 @@ const withNext = (it) => ({
 /* The Code tab's two parts, each with its step said once. */
 const CODE_SECTIONS = {
   repo: {
-    title: "From a repository",
+    title: "From your code",
     reach:
-      "Connect where the code lives — we read it and work out the framework.",
+      "Connect the repository, or upload the code — we read it and work out the framework.",
   },
   /* Coding agents are agents, not places code lives: their own group. */
   coding: {
@@ -460,11 +464,5 @@ const CODE_SECTIONS = {
     title: "Through our SDK",
     reach:
       "Add a few lines where the agent runs — no repository access needed.",
-  },
-  /* Code that isn't in a repository: read once, fixed by a patch — the fallback, so last. */
-  upload: {
-    title: "Without a repository",
-    reach: "We read it once, and fixes come back as a patch to apply.",
-    dropzone: true,
   },
 };

@@ -215,7 +215,7 @@ export const runConnectionCheck = (agent, spec, tools = []) => {
   /* A secret the code reads that was left unset at connect: the process
      exits on start. connect.md: show the exit and a redacted log excerpt. */
   const unsetKey = (definitionOf(agent)?.credentialKeys || []).find(
-    (k) => k && typeof k === "object" && k.unset && !k.ref,
+    (k) => k && typeof k === "object" && k.unset && !k.ref && !k.optional,
   )?.name;
   const addStop = (declared, okDetail, noneDetail) => {
     if (!declared) return add("cancel", "unavailable", noneDetail);

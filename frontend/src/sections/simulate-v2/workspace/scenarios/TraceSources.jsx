@@ -5,7 +5,6 @@ import { Box, Button, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { paths } from "src/routes/paths";
 import { StatusDot } from "../../components/primitives";
-import CopyCommandButton from "../../components/CopyCommandButton";
 import { rebuildRun } from "../../_mock/comparison";
 import { runPlanHref } from "../../_mock/runPlanLink";
 import { productionTracesOf, TRACE_GOALS } from "../../_mock/traceImport";
@@ -292,12 +291,6 @@ export default function TraceSources({ row, env, envState }) {
               : `Still ${RESULT[chain[chain.length - 1].status]?.toLowerCase() || "open"} on agent ${chain[chain.length - 1].run.agentVersion}.`}
           </Typography>
         )}
-      </Box>
-      <Box>
-        <CopyCommandButton
-          command={`fi sim scenarios show ${row.name || row.id}`}
-          label="Copy as command"
-        />
       </Box>
     </Stack>
   );

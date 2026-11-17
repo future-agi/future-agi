@@ -111,7 +111,15 @@ export const isFinishedRun = (r) =>
    the name, version, size and parallel worlds picked in BuildEnvironmentDialog. */
 export const buildPresetFor = (
   agent,
-  { name, version, count, parallel = null, channel = null, request = "" },
+  {
+    name,
+    version,
+    count,
+    parallel = null,
+    channel = null,
+    request = "",
+    files = [],
+  },
 ) => ({
   ...sourceFromAgentRecord(agent),
   /* Built for one of its channels — the world is that channel's. */
@@ -125,6 +133,8 @@ export const buildPresetFor = (
   agentName: agent.name,
   /* What the environment should test (builder.md: Build from my agent). */
   ...(request && { testRequest: request }),
+  /* A policy or records to build the world from — reviewed in its design. */
+  ...(files.length && { files }),
   /* builder.md §4: Save release → Run readiness — the build ends on a
      release to save, never on a run. */
   releaseStep: true,

@@ -45,6 +45,7 @@ export default function EnvironmentValues({
   files,
   onFiles,
   expectedNames = [],
+  optionalNames = [],
   egress = null,
   onEgress = null,
 }) {
@@ -66,6 +67,11 @@ export default function EnvironmentValues({
     ...new Set([...expectedNames, ...values.map((v) => v.name), ...extraNames]),
   ];
   const missing = names.filter((n) => !byName.has(n));
+  /* The code reads these with no fallback — a run can't start without them.
+     Optional ones are read with a default; the code runs without them. */
+  const isOptional = (n) => optionalNames.includes(n);
+  const required = names.filter((n) => !isOptional(n));
+  const requiredMissing = required.filter((n) => !byName.has(n));
   const fromOthers = [
     ...new Set(values.filter((v) => v.from).map((v) => v.from)),
   ];
@@ -193,9 +199,14 @@ export default function EnvironmentValues({
                 fontVariantNumeric: "tabular-nums",
               }}
             >
-              {missing.length
-                ? `${names.length - missing.length} of ${names.length} set`
-                : "all set"}
+              {[
+                required.length &&
+                  (requiredMissing.length
+                    ? `${required.length - requiredMissing.length} of ${required.length} required set`
+                    : "all required set"),
+              ]
+                .filter(Boolean)
+                .join(" · ")}
             </Box>
           )}
         </Typography>
@@ -361,6 +372,16 @@ export default function EnvironmentValues({
                     }}
                   >
                     {name}
+                    {/* Required: the code reads it with no default. */}
+                    {!isOptional(name) && (
+                      <Box
+                        component="span"
+                        aria-label="required"
+                        sx={{ color: "error.main", ml: 0.25 }}
+                      >
+                        *
+                      </Box>
+                    )}
                   </Typography>
                   {secret && (
                     <Tooltip
@@ -416,7 +437,7 @@ export default function EnvironmentValues({
                     textAlign: { sm: "right" },
                   }}
                 >
-                  {v?.from ? `from ${v.from}` : v ? "" : "Not set"}
+                  {v?.from ? `from ${v.from}` : ""}
                 </Typography>
                 {expected ? (
                   <Box
@@ -614,6 +635,8 @@ EnvironmentValues.propTypes = {
   onFiles: PropTypes.func.isRequired,
   /* Names the agent's code is known to read — each a row to fill. */
   expectedNames: PropTypes.arrayOf(PropTypes.string),
+  /* Names the code reads with a default — it runs without them. */
+  optionalNames: PropTypes.arrayOf(PropTypes.string),
   /* The egress allow-list as typed, and its setter — shown only when given. */
   egress: PropTypes.string,
   onEgress: PropTypes.func,

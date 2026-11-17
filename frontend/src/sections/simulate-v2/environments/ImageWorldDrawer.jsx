@@ -12,7 +12,11 @@ import {
   Tooltip,
   Typography,
 } from "@mui/material";
+import { useNavigate } from "react-router-dom";
 import Iconify from "src/components/iconify";
+import { paths } from "src/routes/paths";
+import { useSimStore } from "../store";
+import { RELEASE_CHECKS, checksStateOf } from "../_mock/release";
 import SideDrawer from "../components/SideDrawer";
 import {
   IMAGE_CHECKS,
@@ -134,6 +138,8 @@ export default function ImageWorldDrawer({ open, onClose }) {
   const [pii, setPii] = useState({});
   const [checks, setChecks] = useState("idle");
   const [published, setPublished] = useState(false);
+  const { commit } = useSimStore();
+  const navigate = useNavigate();
   const found = inspect === "done" ? inspectionOf() : null;
   const pinned = isPinnedImage(image);
   /* What's still to review, by name, so the next step is never a guess. */
@@ -145,6 +151,65 @@ export default function ImageWorldDrawer({ open, onClose }) {
   const run = (set, after) => {
     set("running");
     setTimeout(() => set(after), 1400);
+  };
+  /* Publishing makes the private environment — saved as v1, since its
+     checks just passed — and opens it. */
+  const publish = () => {
+    const now = new Date().toISOString();
+    const id = `env-image-${Date.now().toString(36)}`;
+    const repo = image.split("@")[0];
+    const short = repo.split("/").pop().replace(/[-_]+/g, " ");
+    const runtimeLabel =
+      IMAGE_RUNTIMES.find((r) => r.id === runtime)?.label || runtime;
+    const env = {
+      id,
+      agentType: null,
+      name: `${short.charAt(0).toUpperCase()}${short.slice(1)} world`,
+      surface: "chat",
+      domain: "custom",
+      tagline: "From your container image",
+      description: `Built from ${repo}, pinned by digest, on ${runtimeLabel}.`,
+      difficulty: "Balanced",
+      popularity: 1,
+      custom: true,
+      builtFrom: {
+        kind: "image",
+        image,
+        runtime,
+        personalData: pii,
+        releaseStep: true,
+      },
+      seed: {
+        tables: found.tables.map((t) => ({
+          name: t.name,
+          rows: t.rows,
+          note: `${t.columns} columns`,
+        })),
+      },
+      tools: found.tools.map((t) => ({ name: t.name, desc: t.effect })),
+      actors: [],
+      rules: [],
+      buildStatus: "ready",
+      releaseSavedAt: now,
+      starterScenarios: [],
+    };
+    commit({ type: "adoptEnvironment", env, now });
+    commit({
+      type: "patchEnvState",
+      envId: id,
+      patch: {
+        releaseChecks: {
+          version: checksStateOf(env, {}).version,
+          at: now,
+          results: Object.fromEntries(
+            RELEASE_CHECKS.map((c) => [c.id, "passed"]),
+          ),
+        },
+      },
+    });
+    setPublished(true);
+    onClose();
+    navigate(paths.dashboard.simulate.environmentDetail(id));
   };
   const imageError = !image.trim()
     ? null
@@ -451,7 +516,7 @@ export default function ImageWorldDrawer({ open, onClose }) {
             variant="contained"
             color="primary"
             disabled={checks !== "passed" || published}
-            onClick={() => setPublished(true)}
+            onClick={publish}
           >
             {published ? "Published" : "Publish private release"}
           </Button>

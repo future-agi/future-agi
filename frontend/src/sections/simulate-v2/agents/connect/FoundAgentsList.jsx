@@ -61,6 +61,16 @@ export default function FoundAgentsList({
           (agents.length === 1
             ? "We found 1 agent"
             : `We found ${agents.length} agents — which one do you mean?`)}
+        {/* Several found: picking one is required. */}
+        {agents.length > 1 && (
+          <Box
+            component="span"
+            aria-label="required"
+            sx={{ color: "error.main", ml: 0.5 }}
+          >
+            *
+          </Box>
+        )}
       </Typography>
 
       <Box

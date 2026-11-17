@@ -180,7 +180,7 @@ export const scenarioGroupsOf = (env, draftCount = 0) => {
     : specificScenarioSeeds(env?.tools || []);
   const by = {};
   rows.forEach((r) => {
-    const k = r.branch || "core";
+    const k = r.useCase || r.branchCategory || r.branch || "core";
     by[k] = (by[k] || 0) + 1;
   });
   const groups = Object.entries(by).map(([label, n]) => ({ label, n }));
@@ -290,3 +290,115 @@ export const specificScenarioSeeds = (tools) => {
     });
   return out;
 };
+
+/* Sentences that read as a rule the agent is graded on. */
+const RULEISH =
+  /(escalat|must|never|always|require|only|if\b|unless|before|after|approv|reject|forbid|deny|need|not allowed|when the|when a|up to|over \$?\d)/i;
+
+/**
+ * More detail typed to the builder while the design waits (builder.md §2):
+ * the records, tools and rules it names join the proposal — nothing else is
+ * guessed. Returns { envPatch, added: { tables, tools, rules }, questions },
+ * or null when the text names nothing the builder can use.
+ */
+export const designDetailPatch = (env, text) => {
+  const flow = [env?.builtFrom?.intake?.flow, text].filter(Boolean).join("\n");
+  const next = scratchDesignOf(flow);
+  const haveT = new Set((env?.seed?.tables || []).map((t) => t.name));
+  const haveTools = new Set((env?.tools || []).map((t) => t.name));
+  const tables = next.tables.filter((t) => !haveT.has(t.name));
+  const tools = next.tools.filter((t) => !haveTools.has(t.name));
+  const haveRules = new Set(env?.rules || []);
+  const rules = String(text)
+    .split(/[.!?;\n]\s*/)
+    .map((x) => x.trim())
+    .filter((x) => x && RULEISH.test(x) && !haveRules.has(x))
+    .slice(0, 4);
+  if (!tables.length && !tools.length && !rules.length) return null;
+  return {
+    envPatch: {
+      seed: {
+        ...(env?.seed || {}),
+        tables: [...(env?.seed?.tables || []), ...tables],
+      },
+      tools: [...(env?.tools || []), ...tools],
+      rules: [...(env?.rules || []), ...rules],
+      builtFrom: {
+        ...env.builtFrom,
+        intake: { ...(env.builtFrom?.intake || {}), flow },
+      },
+    },
+    added: { tables, tools, rules },
+    questions: next.questions,
+  };
+};
+
+const USE_CASE = {
+  core: "The flow as described",
+  "edge case": "Edge cases",
+  adversarial: "Callers who push",
+  "failure mode": "When a tool fails",
+};
+const PERSONAS = ["Ellie Marsh", "Marcus Reid", "Aditi Rao", "Harper Lang", "Priya Shah", "Kevin Delaney"];
+
+/**
+ * What new sources add to a waiting design (data.md §3, "source-backed
+ * changes"): the records and tools their words call for that the design
+ * doesn't have yet, and the cases for those tools. Additive — anything the
+ * person removed stays removed, and a file's own rules and tables arrive
+ * through its source, cited. Null when they add nothing.
+ */
+export const designFromSourcesPatch = (env, fresh) => {
+  const text = fresh
+    .filter((f) => f.parsed?.kind === "table" || f.role === "policy" || f.parsed?.read)
+    .map((f) =>
+      f.parsed?.kind === "table"
+        ? `${f.parsed.table} records`
+        : (f.parsed?.passages || []).map((x) => x.text).join(". "),
+    )
+    .join(". ");
+  if (!text.trim()) return null;
+  const next = scratchDesignOf(text);
+  const fileTables = new Set(
+    fresh.filter((f) => f.parsed?.kind === "table").map((f) => f.parsed.table),
+  );
+  const haveT = new Set((env?.seed?.tables || []).map((t) => t.name));
+  const haveTools = new Set((env?.tools || []).map((t) => t.name));
+  const tables = next.tables.filter((t) => !haveT.has(t.name) && !fileTables.has(t.name));
+  const tools = next.tools.filter((t) => !haveTools.has(t.name));
+  const allTools = [...(env?.tools || []), ...tools];
+  const haveCases = new Set((env?.starterScenarios || []).map((r) => r.key || r.id));
+  const short = String(env?.name || "flow").toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 24);
+  const cases = specificScenarioSeeds(allTools)
+    .filter((c) => !haveCases.has(c.key) && !haveCases.has(`sc-scratch-${short}-${c.key}`))
+    .map((c, i) => ({
+      id: `sc-scratch-${short}-${c.key}`,
+      key: c.key,
+      name: `${short}-${c.key}`,
+      title: c.situation,
+      summary: c.task,
+      task: c.task,
+      situation: c.situation,
+      useCase: USE_CASE[c.branch] || "The flow as described",
+      expected: c.task,
+      outcome: c.task,
+      fromDescription: true,
+      subTasks: c.subTasks.map((label, j) => ({ id: `${c.key}-${j}`, label })),
+      persona: { name: PERSONAS[i % PERSONAS.length], role: "user", gender: null, ageGroup: null, traits: [] },
+      branchCategory: c.branch,
+    }));
+  if (!tables.length && !tools.length && !cases.length) return null;
+  return {
+    envPatch: {
+      seed: { ...(env?.seed || {}), tables: [...(env?.seed?.tables || []), ...tables] },
+      tools: allTools,
+      starterScenarios: [...cases, ...(env?.starterScenarios || [])],
+      builtFrom: {
+        ...env.builtFrom,
+        scenarioCount: (env.builtFrom?.scenarioCount || 0) + cases.length,
+      },
+    },
+    added: { tables, tools, cases },
+  };
+};
+

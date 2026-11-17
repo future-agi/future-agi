@@ -7,7 +7,8 @@ import { createContext, useContext } from "react";
 */
 export const CONNECT_LABEL = "Connect agent";
 export const ConnectSubmitContext = createContext(CONNECT_LABEL);
-export const useConnectSubmitLabel = () => useContext(ConnectSubmitContext) || CONNECT_LABEL;
+export const useConnectSubmitLabel = () =>
+  useContext(ConnectSubmitContext) || CONNECT_LABEL;
 
 /*
   Set while the agent is being connected for a new environment: the build
@@ -20,3 +21,5 @@ export const ConnectBuildContext = createContext(null);
 export const useConnectBuild = () => useContext(ConnectBuildContext);
 export const DEFAULT_BUILD_SCENARIOS = 10;
 export const MAX_BUILD_SCENARIOS = 1000;
+/* "What should this environment test?" — long enough to say something. */
+export const BUILD_TEST_MIN = 10;

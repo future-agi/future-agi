@@ -83,11 +83,13 @@ import DerivedPanels from "./DerivedPanels";
 import AddEvalsDrawer from "../workspace/evals/AddEvalsDrawer";
 import AgentReadReceipt from "./AgentReadReceipt";
 import DesignReview from "./DesignReview";
+import useReleaseAutoSave from "../workspace/useReleaseAutoSave";
 import {
   addDesignFilesPatch,
   addDesignOrgPatch,
   designSourcesPatch,
   designSourcesSummary,
+  mergeDesignFiles,
 } from "../_mock/designSources";
 import { getBuilderMode, subscribeBuilderMode } from "../_mock/builderModeBus";
 
@@ -878,6 +880,26 @@ export default function BuildFromAgent() {
 
   /* Live envState for whichever env has been primed. Feeds the panels below. */
   const { envState, patch: envPatch } = useEnvState(env?.id);
+  /* The build ends like every other: checks, then saved as v1 when clean. */
+  const release = useReleaseAutoSave({
+    env: storeState.myEnvironments?.find((e) => e.id === env?.id) || null,
+    envState,
+    dispatch,
+    hydrated,
+    runChecks: true,
+  });
+  /* Files picked where the agent was connected (a policy, a CSV of records)
+     join the design once, before it's approved — reviewed like any file
+     added here (builder.md §1, data.md §2–3). */
+  const filesApplied = useRef(null);
+  useEffect(() => {
+    const files = presetSource?.files;
+    if (!files?.length || !env?.id || !envPatch || !hydrated) return;
+    if (filesApplied.current === env.id) return;
+    filesApplied.current = env.id;
+    envPatch({ sources: mergeDesignFiles(envState, files).sources });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [env?.id, hydrated, presetSource]);
   /* What kind of copy this build runs against — recorded on the environment
      so every result can say where it came from. A provider clone is created
      here, labelled fagi-sim-<env>-<build>. */
@@ -1129,11 +1151,10 @@ export default function BuildFromAgent() {
   useEffect(() => {
     if (!env?.id || !hydrated) return;
     const understandDone = done.includes("understand");
-    /* The derived evals land in the environment's state (its preset); ones
-       added here by hand are in evalIds. Either counts. */
-    const readyToAdopt =
-      understandDone &&
-      ((evalIds?.length || 0) > 0 || (envState.evals?.length || 0) > 0);
+    /* In My environments once the agent is understood. Not gated on
+       evaluations: a new build starts with none selected (evals.md), and
+       waiting on one kept agent builds out of the list entirely. */
+    const readyToAdopt = understandDone;
     const allDone = STAGE_ORDER.every((s) => done.includes(s));
     const buildProgress = { done: done.length, total: STAGE_ORDER.length };
     /* Waiting on design approval is its own state: opening the environment
@@ -1481,6 +1502,7 @@ export default function BuildFromAgent() {
         halt={halt}
         onCancel={building ? () => setCancelAsk(true) : null}
         awaitingApproval={!!awaitApproval}
+        release={release}
       />
 
       {halt && (
@@ -1787,6 +1809,7 @@ function Header({
   halt = null,
   onCancel = null,
   awaitingApproval = false,
+  release = null,
 }) {
   const [promptOpen, setPromptOpen] = useState(false);
   const navigate = useNavigate();
@@ -2178,6 +2201,63 @@ function Header({
                       );
                     }
 
+                    /* Built, not saved yet: the release checks are running, or the
+                build needs a review — saved builds alone read Ready. */
+                    if (release?.unsaved) {
+                      const review = !release.checking;
+                      return (
+                        <Tooltip
+                          arrow
+                          title={
+                            review
+                              ? "Review it and save it as v1 on its page"
+                              : ""
+                          }
+                        >
+                          <Stack
+                            direction="row"
+                            alignItems="center"
+                            spacing={0.75}
+                            {...(review &&
+                              clickable(() =>
+                                navigate(
+                                  paths.dashboard.simulate.environmentDetail(
+                                    env.id,
+                                  ),
+                                ),
+                              ))}
+                            sx={{
+                              ...focusRing,
+                              px: 1.125,
+                              py: 0.5,
+                              borderRadius: 999,
+                              border: "1px solid",
+                              borderColor: "divider",
+                              cursor: review ? "pointer" : "default",
+                            }}
+                          >
+                            <Box
+                              sx={{
+                                width: 6,
+                                height: 6,
+                                borderRadius: "50%",
+                                bgcolor: review
+                                  ? "status.warning.solid"
+                                  : "primary.main",
+                              }}
+                            />
+                            <Typography
+                              sx={{ typography: "s2", fontWeight: 600 }}
+                            >
+                              {review
+                                ? "Built · not saved"
+                                : "Running the five release checks"}
+                            </Typography>
+                          </Stack>
+                        </Tooltip>
+                      );
+                    }
+
                     /*
                 Just the pill. The "N need your input" chip lived here too, but
                 the dedicated Needs-your-input tab already carries that count in
@@ -2402,6 +2482,10 @@ RunButton.propTypes = {
 
 Header.propTypes = {
   awaitingApproval: PropTypes.bool,
+  release: PropTypes.shape({
+    unsaved: PropTypes.bool,
+    checking: PropTypes.bool,
+  }),
   /* A build stopped part-way ({ kind: "canceled" | "failed", … }), and how to stop one. */
   halt: PropTypes.object,
   onCancel: PropTypes.func,

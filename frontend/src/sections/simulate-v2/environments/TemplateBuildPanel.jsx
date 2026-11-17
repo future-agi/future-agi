@@ -6,8 +6,9 @@ import {
   Stack,
   Typography,
   Button,
+  ButtonBase,
+  Menu,
   MenuItem,
-  Select,
   TextField,
   Tooltip,
 } from "@mui/material";
@@ -16,8 +17,6 @@ import Iconify from "src/components/iconify";
 import { getSurface } from "../_mock/surfaces";
 import { useConnectedAgents } from "../store";
 import { SectionCard } from "../components/primitives";
-import BuildEnvironmentDialog from "../agents/BuildEnvironmentDialog";
-import { HintLine } from "../agents/connect/replicationBits";
 import WorldAgentPicker from "./AgentChoice";
 import WorldFitReport from "./WorldFitReport";
 import { worldFitOf } from "../_mock/worldFit";
@@ -53,29 +52,28 @@ export default function TemplateBuildPanel({
   showName = false,
   entry = null,
   blocked = null,
+  /* "use" (the default) or "customize" — which path the drawer's tab shows. */
+  mode = "use",
 }) {
   const navigate = useNavigate();
-  /* Starter pack by default; a named pack or the full world on request. */
+  /* The starter suite by default; a named group or all scenarios on request. */
+  const [suiteAnchor, setSuiteAnchor] = useState(null);
   const [pack, setPack] = useState("starter");
   const { agents: all } = useConnectedAgents();
   const agents = useMemo(() => buildableAgentsOf(all), [all]);
   const [agentId, setAgentId] = useState(null);
   const agent = agents.find((a) => a.id === agentId) || null;
-  const [dialogOpen, setDialogOpen] = useState(false);
   const build = useBuildForAgent();
   /* The tool binding the person reviewed; null until they change one. */
   const [binding, setBinding] = useState(null);
   /* Adapting writes scenarios for the agent: a fork that doesn't compare. */
-  const [adapt, setAdapt] = useState(false);
   /* What to change when customizing without an agent. */
   const [changes, setChanges] = useState("");
-  /* Mappings whose differences someone reviewed, and the measurable-only choice. */
+  /* Mappings whose differences someone reviewed. */
   const [reviewed, setReviewed] = useState([]);
-  const [measurableOk, setMeasurableOk] = useState(false);
   useEffect(() => {
     setBinding(null);
     setReviewed([]);
-    setMeasurableOk(false);
   }, [agentId]);
   const fit = useMemo(
     () =>
@@ -90,18 +88,29 @@ export default function TemplateBuildPanel({
         : null,
     [template, agent, binding, pack, reviewed],
   );
-  const startBuild = (choice) =>
-    build(agent, choice, {
-      ...templateWorldSource(template),
-      /* The fixed suite: this pack, this release, the reviewed binding. */
-      pack,
-      ...(entry && { release: entry.release.version, catalogueId: entry.id }),
-      ...(fit && {
-        binding: fit.binding,
-        unmeasured: fit.unmeasured.map((x) => x.id),
-      }),
-      ...(adapt && { adapt: true }),
-    });
+  /* Everything the build needs is already chosen here — agent, suite, fit —
+     so Run builds straight away; no second dialog asks again. */
+  const startBuild = (withAdapt) =>
+    build(
+      agent,
+      {
+        name: `${template.name} · ${agent.name}`,
+        version: agent.production || agent.latest,
+        /* Read at click time: the suite picked below. */
+        count: scenarioCount,
+      },
+      {
+        ...templateWorldSource(template),
+        /* The fixed suite: this pack, this release, the reviewed binding. */
+        pack,
+        ...(entry && { release: entry.release.version, catalogueId: entry.id }),
+        ...(fit && {
+          binding: fit.binding,
+          unmeasured: fit.unmeasured.map((x) => x.id),
+        }),
+        ...(withAdapt && { adapt: true }),
+      },
+    );
 
   if (!template) return null;
   const env = template;
@@ -144,321 +153,258 @@ export default function TemplateBuildPanel({
         </Box>
       )}
 
-      <SectionCard
-        title="Use it with your agent"
-        subtitle="The world is the starting point; the agent is what's tested."
-      >
-        <Stack sx={{ p: 2.5 }} spacing={2}>
-          <WorldAgentPicker
-            value={agentId}
-            onChange={setAgentId}
-            surface={worldChannelOf(template)}
-          />
-          {/* Review fit: the suite stays fixed; tools bind to the agent's. */}
-          {agent && fit && (
-            <WorldFitReport
-              template={template}
-              agent={agent}
-              fit={fit}
-              onBind={(w, a) =>
-                setBinding({ ...(binding || fit.binding), [w]: a })
-              }
-              onReview={(w, on) =>
-                setReviewed((r) =>
-                  on ? [...new Set([...r, w])] : r.filter((x) => x !== w),
-                )
-              }
-              measurableOk={measurableOk}
-              onMeasurable={setMeasurableOk}
-              onOtherWorld={() =>
-                navigate(`${paths.dashboard.simulate.environments}?view=worlds`)
-              }
-            />
-          )}
-          {agent && replicationOf(agent).proofLabel === "Live" && (
+      {/* Use and Customize are separate tabs of the world's drawer — each
+          shows only its own path. */}
+      {mode !== "customize" && (
+        <>
+          <SectionCard title="Use it with your agent">
+            <Stack sx={{ p: 2.5 }} spacing={2}>
+              <WorldAgentPicker
+                value={agentId}
+                onChange={setAgentId}
+                surface={worldChannelOf(template)}
+              />
+              {/* Review fit: the suite stays fixed; tools bind to the agent's. */}
+              {agent && fit && (
+                <WorldFitReport
+                  template={template}
+                  agent={agent}
+                  fit={fit}
+                  onBind={(w, a) =>
+                    setBinding({ ...(binding || fit.binding), [w]: a })
+                  }
+                  onReview={(w, on) =>
+                    setReviewed((r) =>
+                      on ? [...new Set([...r, w])] : r.filter((x) => x !== w),
+                    )
+                  }
+                  onOtherWorld={() =>
+                    navigate(
+                      `${paths.dashboard.simulate.environments}?view=worlds`,
+                    )
+                  }
+                />
+              )}
+              {agent && replicationOf(agent).proofLabel === "Live" && (
+                <Stack
+                  direction="row"
+                  spacing={1.25}
+                  alignItems="flex-start"
+                  sx={{
+                    px: 1.5,
+                    py: 1.25,
+                    borderRadius: 1,
+                    border: "1px solid",
+                    borderColor: "divider",
+                    bgcolor: "background.neutral",
+                  }}
+                >
+                  <Iconify
+                    icon="solar:info-circle-linear"
+                    width={16}
+                    sx={{ color: "text.secondary", flexShrink: 0, mt: "1px" }}
+                  />
+                  <Typography
+                    sx={{ typography: "s2", color: "text.secondary" }}
+                  >
+                    {`${agent.name} is tested live and calls its own tools; this world only grades it. Test a simulated copy for simulated tools.`}
+                  </Typography>
+                </Stack>
+              )}
+              {/* The copy, read before it's made. */}
+              <Stack
+                spacing={0.75}
+                sx={{ pt: 1.5, borderTop: "1px solid", borderColor: "divider" }}
+              >
+                <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+                  Review before you adopt
+                </Typography>
+                {/* catalogue.md step 3: copied data and scenarios, source
+                    version, visibility — in two lines. */}
+                <Line
+                  label="Copied"
+                  value={`${rows.toLocaleString()} seeded rows · ${scenarioCount} scenarios · ${
+                    entry ? `release ${entry.release.version}` : env.name
+                  }`}
+                />
+                <Line
+                  label="Visibility"
+                  value="Private to this workspace — the release stays unchanged"
+                />
+              </Stack>
+            </Stack>
             <Stack
               direction="row"
-              spacing={1.25}
-              alignItems="flex-start"
+              alignItems="center"
+              spacing={1.5}
               sx={{
-                px: 1.5,
-                py: 1.25,
-                borderRadius: 1,
-                border: "1px solid",
+                px: 2.5,
+                py: 2,
+                borderTop: "1px solid",
                 borderColor: "divider",
-                bgcolor: "background.neutral",
               }}
             >
-              <Iconify
-                icon="solar:info-circle-linear"
-                width={16}
-                sx={{ color: "text.secondary", flexShrink: 0, mt: "1px" }}
-              />
+              {/* Which of the world's scenarios come along (a suite, in the
+                  plan's words) — the starter set unless changed. */}
               <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-                {`${agent.name} is tested live and calls its own tools; this world only grades it. Test a simulated copy for simulated tools.`}
-              </Typography>
-            </Stack>
-          )}
-          <Stack spacing={1.25}>
-            {[
-              {
-                icon: "solar:box-minimalistic-linear",
-                text: "Seeded with this world's tables, tools and hard rules.",
-              },
-              {
-                icon: "solar:user-speak-rounded-linear",
-                text: "Your agent is read and its tools are checked against the world.",
-                hint: "A tool the world doesn't answer is named before anything runs.",
-              },
-              {
-                icon: "solar:play-circle-linear",
-                text: `The world's ${scenarioCount} proven scenarios come over unchanged. Run them once to see where your agent stands.`,
-              },
-            ].map((row) => (
-              <Stack
-                key={row.text}
-                direction="row"
-                spacing={1.25}
-                alignItems="flex-start"
-              >
-                <Iconify
-                  icon={row.icon}
-                  width={16}
-                  sx={{ color: "text.subtitle", flexShrink: 0, mt: "1px" }}
-                />
-                <Typography
-                  component="div"
-                  sx={{ typography: "s2", color: "text.secondary" }}
+                <Box
+                  component="span"
+                  sx={{ color: "text.primary", fontWeight: 500 }}
                 >
-                  {row.hint ? (
-                    <HintLine hint={row.hint}>{row.text}</HintLine>
-                  ) : (
-                    row.text
-                  )}
-                </Typography>
-              </Stack>
-            ))}
-          </Stack>
-          {/* The copy, read before it's made. */}
-          <Stack
-            spacing={0.75}
-            sx={{ pt: 1.5, borderTop: "1px solid", borderColor: "divider" }}
-          >
-            <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-              Review before you adopt
-            </Typography>
-            <Line
-              label="Copied"
-              value={`${rows.toLocaleString()} seeded rows · ${scenarioCount} scenarios`}
-            />
-            <Line
-              label="Source"
-              value={
-                entry
-                  ? `${entry.id} · release ${entry.release.version}`
-                  : env.name
-              }
-            />
-            <Line label="Visibility" value="Private to this workspace" />
-            <Line label="Catalogue" value="The release stays unchanged" />
-          </Stack>
-        </Stack>
-        <Stack
-          direction="row"
-          alignItems="center"
-          spacing={1.5}
-          sx={{
-            px: 2.5,
-            py: 2,
-            borderTop: "1px solid",
-            borderColor: "divider",
-          }}
-        >
-          <Select
-            size="small"
-            value={pack}
-            onChange={(e) => setPack(e.target.value)}
-            inputProps={{ "aria-label": "Scenario pack" }}
-            sx={{ typography: "s2", minWidth: 170 }}
-          >
-            {packs.map((p) => (
-              <MenuItem key={p.id} value={p.id} sx={{ typography: "s2" }}>
-                {`${p.name} · ${p.count}`}
-              </MenuItem>
-            ))}
-          </Select>
-          <Box flex={1} />
-          {/* The other way: write scenarios for this agent — a fork that doesn't compare. */}
-          <Button
-            variant="outlined"
-            size="small"
-            color="inherit"
-            disabled={!agent || !!blocked}
-            onClick={() => {
-              setAdapt(true);
-              setDialogOpen(true);
-            }}
-            sx={{ whiteSpace: "nowrap" }}
-          >
-            Adapt scenarios to my agent
-          </Button>
-          {/* Needs input waits for the reviewed mappings; Partial for the measurable-only choice. */}
-          <Tooltip
-            arrow
-            title={
-              fit?.verdict === "needs_input"
-                ? "Review the mappings that need input first"
-                : fit?.verdict === "partial" &&
-                    fit.unmeasured.length &&
-                    !measurableOk
-                  ? "Choose to run the measurable cases, or repair the fit"
-                  : ""
-            }
-          >
-            <span>
+                  {`${packs.find((p) => p.id === pack)?.count ?? 0} scenarios`}
+                </Box>
+                {` · ${packs.find((p) => p.id === pack)?.name || ""} · `}
+                <ButtonBase
+                  onClick={(e) => setSuiteAnchor(e.currentTarget)}
+                  sx={{
+                    typography: "s2",
+                    fontWeight: 500,
+                    color: "text.primary",
+                    textDecoration: "underline",
+                    textUnderlineOffset: 3,
+                    verticalAlign: "baseline",
+                  }}
+                >
+                  Change
+                </ButtonBase>
+              </Typography>
+              <Menu
+                anchorEl={suiteAnchor}
+                open={!!suiteAnchor}
+                onClose={() => setSuiteAnchor(null)}
+              >
+                {packs.map((p) => (
+                  <MenuItem
+                    key={p.id}
+                    selected={p.id === pack}
+                    onClick={() => {
+                      setPack(p.id);
+                      setSuiteAnchor(null);
+                    }}
+                    sx={{ typography: "s2", gap: 2 }}
+                  >
+                    <Box component="span" sx={{ flex: 1 }}>
+                      {p.name}
+                    </Box>
+                    <Box
+                      component="span"
+                      sx={{
+                        color: "text.tertiary",
+                        fontVariantNumeric: "tabular-nums",
+                      }}
+                    >
+                      {p.count}
+                    </Box>
+                  </MenuItem>
+                ))}
+              </Menu>
+              <Box flex={1} />
+              {/* The other way: write scenarios for this agent — a fork that doesn't compare. */}
               <Button
-                variant="contained"
-                color="primary"
-                disabled={
-                  !agent ||
-                  !!blocked ||
-                  fit?.verdict === "needs_input" ||
-                  (fit?.verdict === "partial" &&
-                    fit.unmeasured.length > 0 &&
-                    !measurableOk)
-                }
-                onClick={() => {
-                  setAdapt(false);
-                  setDialogOpen(true);
-                }}
-                startIcon={<Iconify icon="solar:play-bold" width={16} />}
+                variant="outlined"
+                size="small"
+                color="inherit"
+                disabled={!agent || !!blocked}
+                onClick={() => startBuild(true)}
                 sx={{ whiteSpace: "nowrap" }}
               >
-                {fit?.verdict === "partial" && fit.unmeasured.length
-                  ? `Run the ${fit.total - fit.unmeasured.length} measurable cases`
-                  : "Run the same cases"}
+                Adapt to my agent
               </Button>
-            </span>
-          </Tooltip>
-        </Stack>
-      </SectionCard>
-
-      {/* Customize a ready environment (plan builder §1, T02): no agent is
+              {/* Needs input waits for the reviewed mappings; Partial for the measurable-only choice. */}
+              <Tooltip
+                arrow
+                title={
+                  fit?.verdict === "needs_input"
+                    ? "Review the mappings that need input first"
+                    : ""
+                }
+              >
+                <span>
+                  <Button
+                    variant="contained"
+                    color="primary"
+                    disabled={
+                      !agent || !!blocked || fit?.verdict === "needs_input"
+                    }
+                    onClick={() => startBuild(false)}
+                    startIcon={<Iconify icon="solar:play-bold" width={16} />}
+                    sx={{ whiteSpace: "nowrap" }}
+                  >
+                    {fit?.verdict === "partial" && fit.unmeasured.length
+                      ? `Run the ${fit.total - fit.unmeasured.length} measurable cases`
+                      : "Run the same cases"}
+                  </Button>
+                </span>
+              </Tooltip>
+            </Stack>
+          </SectionCard>
+        </>
+      )}
+      {mode === "customize" && (
+        <>
+          {/* Customize a ready environment (plan builder §1, T02): no agent is
           needed to design — a private copy with the changes asked for,
           reviewed before it's built. */}
-      <SectionCard
-        title="Customize it first"
-        subtitle="No agent needed. Say what to change; you review the design before a private copy is built."
-      >
-        <Stack sx={{ p: 2.5 }} spacing={1.25}>
-          <TextField
-            multiline
-            minRows={2}
-            size="small"
-            placeholder="For example: add a loyalty tier table, and refunds over $500 need a supervisor"
-            value={changes}
-            onChange={(e) => setChanges(e.target.value)}
-            disabled={!!blocked}
-          />
-          <Stack direction="row" justifyContent="flex-end">
-            <Button
-              variant="outlined"
-              size="small"
-              color="inherit"
-              disabled={!!blocked || changes.trim().length < 5}
-              onClick={() =>
-                navigate(paths.dashboard.simulate.environmentBuild, {
-                  state: {
-                    presetSource: {
-                      worldSource: { ...templateWorldSource(template), pack },
-                      ...(entry && {
-                        release: entry.release.version,
-                        catalogueId: entry.id,
-                      }),
-                      scenarioCount,
-                      envName: `${template.name} · copy`,
-                      request: changes.trim(),
-                    },
-                  },
-                })
-              }
-              startIcon={
-                <Iconify icon="solar:pen-new-square-linear" width={16} />
-              }
-            >
-              Customize without an agent
-            </Button>
-          </Stack>
-        </Stack>
-      </SectionCard>
-
-      <SectionCard title="What this world gives you">
-        <Stack sx={{ px: 2.5, py: 2 }} spacing={1.25}>
-          <Line label="World" value={`${rows.toLocaleString()} seeded rows`} />
-          <Line
-            label="Tools"
-            value={`${env.tools?.length || 0} the world answers`}
-          />
-          <Line
-            label="Rules"
-            value={`${env.rules?.length || 0} graded on every run`}
-          />
-          <Line
-            label="Agent"
-            value={agent ? agent.name : "Not picked yet"}
-            muted={!agent}
-          />
-          <Line label="Runs" value="In Future AGI" />
-          {/* Cloud only for now (clarified plan); local runs are a later ALK direction. */}
-          <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-            Running a world on your own machine is coming soon with ALK, our
-            open-source toolkit.
-          </Typography>
-        </Stack>
-      </SectionCard>
-
-      <Box
-        sx={{
-          p: 2,
-          borderRadius: "8px",
-          border: "1px solid",
-          borderColor: "status.success.border",
-          bgcolor: "status.success.bg",
-        }}
-      >
-        <Stack direction="row" spacing={1.25} alignItems="flex-start">
-          <Iconify
-            icon="solar:shield-keyhole-linear"
-            width={16}
-            sx={{ color: "status.success.fg", flexShrink: 0, mt: "1px" }}
-          />
-          <Typography
-            component="div"
-            sx={{ typography: "s2", fontWeight: 600, color: "text.primary" }}
+          <SectionCard
+            title="Customize a private copy"
+            subtitle={
+              entry
+                ? "Your own editable copy — its scores won't compare with this release."
+                : "Your own editable copy — the original stays as it is."
+            }
           >
-            <HintLine hint="The world's tools answer from seeded data in a sandbox.">
-              The world never touches production.
-            </HintLine>
-          </Typography>
-        </Stack>
-      </Box>
-
-      {agent && (
-        <BuildEnvironmentDialog
-          open={dialogOpen}
-          onClose={() => setDialogOpen(false)}
-          agent={agent}
-          defaultVersion={agent.production || agent.latest}
-          onBuild={(choice) => {
-            setDialogOpen(false);
-            startBuild(choice);
-          }}
-        />
+            <Stack sx={{ p: 2.5 }} spacing={1.25}>
+              <TextField
+                multiline
+                minRows={2}
+                size="small"
+                placeholder="For example: add a loyalty tier table, and refunds over $500 need a supervisor"
+                value={changes}
+                onChange={(e) => setChanges(e.target.value)}
+                disabled={!!blocked}
+              />
+              <Stack direction="row" justifyContent="flex-end">
+                <Button
+                  variant="outlined"
+                  size="small"
+                  color="inherit"
+                  disabled={!!blocked || changes.trim().length < 5}
+                  onClick={() =>
+                    navigate(paths.dashboard.simulate.environmentBuild, {
+                      state: {
+                        presetSource: {
+                          worldSource: {
+                            ...templateWorldSource(template),
+                            pack,
+                          },
+                          ...(entry && {
+                            release: entry.release.version,
+                            catalogueId: entry.id,
+                          }),
+                          scenarioCount,
+                          envName: `${template.name} · copy`,
+                          request: changes.trim(),
+                        },
+                      },
+                    })
+                  }
+                  startIcon={
+                    <Iconify icon="solar:pen-new-square-linear" width={16} />
+                  }
+                >
+                  Build my copy
+                </Button>
+              </Stack>
+            </Stack>
+          </SectionCard>
+        </>
       )}
+      {mode !== "customize" && <></>}
     </Stack>
   );
 }
 TemplateBuildPanel.propTypes = {
+  mode: PropTypes.oneOf(["use", "customize"]),
   template: PropTypes.object,
   showName: PropTypes.bool,
   /* The catalogue task (V01…M10): release and readiness. */

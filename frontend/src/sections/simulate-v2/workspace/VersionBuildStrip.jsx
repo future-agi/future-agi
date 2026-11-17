@@ -10,6 +10,7 @@ import {
   versionNewsOf,
 } from "../_mock/versionBuild";
 import { envLabelOf } from "../_mock/envVersionKinds";
+import { checksStateOf, runChecksPatch } from "../_mock/release";
 import useVersionChange from "./useVersionChange";
 
 /*
@@ -37,6 +38,41 @@ export default function VersionBuildStrip({ env, envState, patch, onGo }) {
   useEffect(() => {
     if (!build || !prog?.done || finished.current === build.at) return;
     finished.current = build.at;
+    /* A first build ran the release checks as its last step: their results
+       land with it, and the next thing to do is Review and save. */
+    if (build.first) {
+      const checked = {
+        ...runChecksPatch(env, envState),
+        releaseChecksRunning: null,
+      };
+      patch?.({ versionBuild: null, versionNews: null, ...checked });
+      const passed = checksStateOf(env, { ...envState, ...checked }).ready;
+      /* A clean build saves itself; the page says so with its own notice. */
+      if (passed && build.autoSave) return;
+      enqueueSnackbar(
+        passed
+          ? `Environment ${label} is built and all five checks passed. Review and save it.`
+          : `Environment ${label} is built, but a release check failed. See Overview.`,
+        {
+          variant: passed ? "success" : "warning",
+          autoHideDuration: 8000,
+          action: (snack) =>
+            createElement(
+              Button,
+              {
+                size: "small",
+                color: "inherit",
+                onClick: () => {
+                  closeSnackbar(snack);
+                  onGo?.("overview");
+                },
+              },
+              passed ? "Review and save" : "See the checks",
+            ),
+        },
+      );
+      return;
+    }
     /* What changed keeps a "New in vN" label until its tab is looked at. */
     patch?.({ versionBuild: null, versionNews: versionNewsOf(build) });
     enqueueSnackbar(`Environment ${label} is ready`, {
@@ -70,7 +106,7 @@ export default function VersionBuildStrip({ env, envState, patch, onGo }) {
         );
       },
     });
-  }, [build, prog?.done, label, patch, enqueueSnackbar, closeSnackbar, onGo]);
+  }, [build, prog?.done, label, patch, enqueueSnackbar, closeSnackbar, onGo]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!build || prog.done) return null;
   const secs = Math.ceil(prog.leftMs / 1000);
@@ -88,53 +124,66 @@ export default function VersionBuildStrip({ env, envState, patch, onGo }) {
       >
         <Stack direction="row" alignItems="center" spacing={1}>
           <BuildStreamNote
-            label={`Building environment ${label}`}
+            label={
+              build.first
+                ? /* One line: the tabs show each part as it's written, so
+                     only where the whole build is says anything new. */
+                  `Building environment ${label} · ${stepLabel(build.steps[prog.step])}`
+                : `Building environment ${label}`
+            }
             count={prog.step + 1}
             total={build.steps.length}
             sx={{ mb: 0, flex: 1 }}
           />
           <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-            {`Runs start once it's ready · about ${secs} s left`}
+            {build.first
+              ? build.autoSave
+                ? `Saved as v1 when the checks pass · about ${secs} s left`
+                : `Then you review and save it · about ${secs} s left`
+              : `Runs start once it's ready · about ${secs} s left`}
           </Typography>
         </Stack>
-        <Stack spacing={0.5} sx={{ mt: 1, pl: 0.5 }}>
-          {build.steps.map((step, i) => {
-            const s = stepLabel(step);
-            const state =
-              i < prog.step ? "done" : i === prog.step ? "now" : "next";
-            return (
-              <Stack key={s} direction="row" alignItems="center" spacing={1}>
-                <Iconify
-                  icon={
-                    state === "done"
-                      ? "solar:check-circle-linear"
-                      : state === "now"
-                        ? "solar:refresh-linear"
-                        : "solar:clock-circle-linear"
-                  }
-                  width={14}
-                  sx={{
-                    flexShrink: 0,
-                    color:
+        {!build.first && (
+          <Stack spacing={0.5} sx={{ mt: 1, pl: 0.5 }}>
+            {build.steps.map((step, i) => {
+              const s = stepLabel(step);
+              const state =
+                i < prog.step ? "done" : i === prog.step ? "now" : "next";
+              return (
+                <Stack key={s} direction="row" alignItems="center" spacing={1}>
+                  <Iconify
+                    icon={
                       state === "done"
-                        ? "status.success.fg"
+                        ? "solar:check-circle-linear"
                         : state === "now"
-                          ? "text.primary"
-                          : "text.tertiary",
-                  }}
-                />
-                <Typography
-                  sx={{
-                    typography: "s2",
-                    color: state === "next" ? "text.tertiary" : "text.primary",
-                  }}
-                >
-                  {s}
-                </Typography>
-              </Stack>
-            );
-          })}
-        </Stack>
+                          ? "solar:refresh-linear"
+                          : "solar:clock-circle-linear"
+                    }
+                    width={14}
+                    sx={{
+                      flexShrink: 0,
+                      color:
+                        state === "done"
+                          ? "status.success.fg"
+                          : state === "now"
+                            ? "text.primary"
+                            : "text.tertiary",
+                    }}
+                  />
+                  <Typography
+                    sx={{
+                      typography: "s2",
+                      color:
+                        state === "next" ? "text.tertiary" : "text.primary",
+                    }}
+                  >
+                    {s}
+                  </Typography>
+                </Stack>
+              );
+            })}
+          </Stack>
+        )}
       </Box>
     </Box>
   );

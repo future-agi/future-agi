@@ -198,7 +198,7 @@ export default function ClosedPlatformFlow({
 
         {way === "phone" && (
           <Box>
-            <Label>Phone number</Label>
+            <Label required>Phone number</Label>
             <Stack direction="row" spacing={1} sx={{ mt: 0.75 }}>
               <Select
                 size="small"

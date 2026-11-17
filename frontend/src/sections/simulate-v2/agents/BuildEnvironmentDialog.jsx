@@ -31,10 +31,11 @@ import ConnectPreflight from "./connect/ConnectPreflight";
 import { credentialCheck, factCheck, usePreflight } from "./connect/preflight";
 import CopyCommandButton from "../components/CopyCommandButton";
 import ClosableDialog from "../components/ClosableDialog";
+import BuildFilesField from "../environments/BuildFilesField";
+import BuildTestField from "../environments/BuildTestField";
 
 const MONO = "ui-monospace, Menlo, monospace";
-/* Quick picks; any count from 1 to 1,000 can be typed — the range the build accepts. */
-const SIZES = [10, 25, 50, 100];
+/* Any count from 1 to 1,000 can be typed — the range the build accepts. */
 const MIN_SCENARIOS = 1;
 const MAX_SCENARIOS = 1000;
 
@@ -48,8 +49,10 @@ const buildChecks = (agent, worlds, version) => {
   const ver = (agent?.versions || []).find((x) => x.label === version);
   const ref = isGitAgent(agent) && ver ? codeRefOf(agent, ver) : null;
   const kind = sourceKindOf(agent);
+  /* Preflight checks the keys the code can't start without; an optional
+     one (read with a default) only once it's set. */
   const keys = (definitionOf(agent)?.credentialKeys || []).filter(
-    (k) => k && typeof k === "object" && k.name,
+    (k) => k && typeof k === "object" && k.name && (!k.optional || k.ref),
   );
   const sourceRows = [
     ...(ref || kind === "upload"
@@ -168,6 +171,7 @@ export default function BuildEnvironmentDialog({
   const [name, setName] = useState("");
   /* builder.md: the behaviour to test — the proposal is built from it. */
   const [request, setRequest] = useState("");
+  const [files, setFiles] = useState([]);
   const envs = useOptionalSimStore()?.state?.myEnvironments || [];
   const [version, setVersion] = useState(defaultVersion);
   /* Held as typed, so a half-typed number isn't snapped mid-edit. */
@@ -253,15 +257,14 @@ export default function BuildEnvironmentDialog({
     >
       <Box sx={{ px: 3, pt: 2.5, pb: 1 }}>
         <Typography sx={{ typography: "m3", fontWeight: 600 }}>
-          {channel ? `Build a ${channel} environment` : "Build environment"}
-        </Typography>
-        <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.25 }}>
-          {`We read ${agent.name} and build its environment — simulated tools, seeded data, rules and scenarios.`}
+          {channel
+            ? `Build a ${channel} environment for ${agent.name}`
+            : `Build an environment for ${agent.name}`}
         </Typography>
       </Box>
       <Stack spacing={2} sx={{ px: 3, py: 2 }}>
         <Box>
-          <Label>Name</Label>
+          <Label required>Name</Label>
           <TextField
             size="small"
             fullWidth
@@ -270,19 +273,8 @@ export default function BuildEnvironmentDialog({
             InputProps={{ sx: { typography: "s2" } }}
           />
         </Box>
-        <Box>
-          <Label>What should this environment test?</Label>
-          <TextField
-            size="small"
-            fullWidth
-            multiline
-            minRows={2}
-            value={request}
-            onChange={(e) => setRequest(e.target.value)}
-            placeholder="e.g. Refunds inside and outside the 30-day window, and when a manager must approve"
-            InputProps={{ sx: { typography: "s2" } }}
-          />
-        </Box>
+        {/* The same field every build from an agent asks first. */}
+        <BuildTestField value={request} onChange={setRequest} />
         <Stack direction="row" spacing={1.5}>
           <Box flex={1}>
             <Label>
@@ -322,7 +314,7 @@ export default function BuildEnvironmentDialog({
             </Select>
           </Box>
           <Box flex={1}>
-            <Label>Scenarios to start with</Label>
+            <Label required>Scenarios to start with</Label>
             <TextField
               size="small"
               fullWidth
@@ -350,32 +342,21 @@ export default function BuildEnvironmentDialog({
           spacing={0.75}
           sx={{ mt: -1 }}
         >
-          {SIZES.map((n) => (
-            <Pick
-              key={n}
-              on={countOk && typed === n}
-              onClick={() => setCountText(String(n))}
-            >
-              {n}
-            </Pick>
-          ))}
           <Typography
             sx={{
               typography: "s3",
               color: countOk ? "text.subtitle" : "error.main",
-              ml: 0.5,
+              ml: "auto",
             }}
           >
             {countOk
-              ? `${MIN_SCENARIOS} to ${MAX_SCENARIOS.toLocaleString()} · writing ${count} ≈ ${(credits?.need || 0).toLocaleString()} credits`
-              : `Pick ${MIN_SCENARIOS} to ${MAX_SCENARIOS.toLocaleString()}`}
+              ? `≈ ${(credits?.need || 0).toLocaleString()} credits`
+              : `${MIN_SCENARIOS} to ${MAX_SCENARIOS.toLocaleString()}`}
           </Typography>
         </Stack>
-        <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-          The environment tests this version first. You can add scenarios and
-          switch versions afterwards. Running them is priced separately, in the
-          run plan.
-        </Typography>
+        {/* Your policy and records, like Build from scratch — reviewed in the
+            design before anything is built. */}
+        <BuildFilesField files={files} onChange={setFiles} />
         {/* Out of credits for this many: said before the build, with the most that fits. */}
         {credits && !credits.ok && (
           <Stack
@@ -422,27 +403,6 @@ export default function BuildEnvironmentDialog({
         )}
         <ConnectPreflight preflight={preflight} required />
         {/* When another environment is the right call (RSI PRD). */}
-        <Stack
-          direction="row"
-          spacing={0.75}
-          alignItems="flex-start"
-          sx={{
-            px: 1.25,
-            py: 1,
-            borderRadius: 1,
-            bgcolor: "background.neutral",
-          }}
-        >
-          <Iconify
-            icon="solar:info-circle-linear"
-            width={14}
-            sx={{ color: "text.subtitle", flexShrink: 0, mt: "2px" }}
-          />
-          <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-            One environment per materially different setup — data or systems,
-            channel, market, language or product line. Not one per version.
-          </Typography>
-        </Stack>
       </Stack>
       <Stack
         direction="row"
@@ -474,6 +434,7 @@ export default function BuildEnvironmentDialog({
                       count,
                       parallel: worlds,
                       request: request.trim(),
+                      files,
                     })
                   : enqueueSnackbar(gates.runReason, { variant: "info" })
               }
@@ -500,43 +461,7 @@ BuildEnvironmentDialog.propTypes = {
 };
 
 /* A quick-pick chip — scenario sizes, parallel worlds. */
-function Pick({ on, onClick, label, children }) {
-  return (
-    <Box
-      component="button"
-      type="button"
-      aria-pressed={on}
-      aria-label={label}
-      onClick={onClick}
-      sx={{
-        px: 1,
-        minWidth: 28,
-        height: 22,
-        borderRadius: "4px",
-        font: "inherit",
-        cursor: "pointer",
-        border: "1px solid",
-        borderColor: on ? "text.disabled" : "divider",
-        bgcolor: on ? "action.selected" : "transparent",
-        typography: "s3",
-        fontWeight: on ? 600 : 500,
-        fontVariantNumeric: "tabular-nums",
-        color: on ? "text.primary" : "text.secondary",
-        "&:hover": { color: "text.primary" },
-      }}
-    >
-      {children}
-    </Box>
-  );
-}
-Pick.propTypes = {
-  on: PropTypes.bool,
-  onClick: PropTypes.func,
-  label: PropTypes.string,
-  children: PropTypes.node,
-};
-
-function Label({ children }) {
+function Label({ children, required = false }) {
   return (
     <Typography
       sx={{
@@ -549,7 +474,16 @@ function Label({ children }) {
       }}
     >
       {children}
+      {required && (
+        <Box
+          component="span"
+          aria-label="required"
+          sx={{ color: "error.main", ml: 0.5 }}
+        >
+          *
+        </Box>
+      )}
     </Typography>
   );
 }
-Label.propTypes = { children: PropTypes.node };
+Label.propTypes = { children: PropTypes.node, required: PropTypes.bool };

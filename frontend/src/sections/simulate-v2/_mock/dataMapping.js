@@ -257,7 +257,8 @@ export const personalDataOf = (source) => {
     .map((c) => c.name);
   const has =
     columns.length > 0 ||
-    (source?.parsed?.kind === "text" && source?.role === "example");
+    (source?.parsed?.kind === "text" &&
+      (source?.transcript || source?.role === "example"));
   return {
     has,
     columns,

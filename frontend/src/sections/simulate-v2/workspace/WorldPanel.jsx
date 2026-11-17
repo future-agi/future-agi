@@ -112,9 +112,8 @@ export default function WorldPanel({
      once its handler is written, the rest once the world is done. */
   const inBuild = Array.isArray(buildDone) && !buildDone.includes("build");
   const [graphOpen, setGraphOpen] = useState(false);
-  /* The add-tools drawer: opened from the summary line up here, or from the tools further down. */
+  /* The add-tools drawer, opened from the Tools section further down. */
   const [mcp, setMcp] = useState(null);
-  const canAddTools = !inBuild && !locked && !!patch;
   const read = !!buildDone?.includes("understand");
   const fit = toolFit(env, envState);
   const since = toolSince(env, envState);
@@ -235,9 +234,11 @@ export default function WorldPanel({
             {summaryText}
           </Typography>
         )}
-        {canAddTools && (
+        {/* Adding MCP tools lives in the Tools section below (its button
+            or its last row), not repeated here. */}
+        {fit.world.length > 0 && (
           <ButtonBase
-            onClick={() => setMcp({ prefill: null })}
+            onClick={() => setSandbox(true)}
             sx={{
               ...focusRing,
               typography: "s2",
@@ -251,26 +252,9 @@ export default function WorldPanel({
               "&:hover": { textDecorationColor: "currentColor" },
             }}
           >
-            Add tools from an MCP server
+            Try the tools yourself
           </ButtonBase>
         )}
-        <ButtonBase
-          onClick={() => setSandbox(true)}
-          sx={{
-            ...focusRing,
-            typography: "s2",
-            fontWeight: 600,
-            color: "text.primary",
-            textDecoration: "underline",
-            textUnderlineOffset: 3,
-            textDecorationColor: (t) => t.palette.text.disabled,
-            borderRadius: "4px",
-            flexShrink: 0,
-            "&:hover": { textDecorationColor: "currentColor" },
-          }}
-        >
-          Try the tools yourself
-        </ButtonBase>
         <Box flex={1} />
         <EnvironmentKindNote env={env} envState={envState} compact />
         {origin && (

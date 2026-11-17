@@ -35,55 +35,59 @@ export { ORG_SOURCES };
 
 /* ── what a file is for, and who can read it ────────────────────────────── */
 
+/* One vocabulary everywhere — table, notices, the file's own drawer: what
+   happens to the file, not our internal names. `label` is the short form for
+   tables and notices; `option` and `note` are the drawer's question. */
 export const ROLES = [
   {
     id: "policy",
-    label: "Policy",
-    note: "Policy text suggests rules the agent must follow",
+    label: "Rules",
+    option: "Rules to grade against",
+    note: "Sentences like “refunds over $200 need approval” become rules checked on every run.",
   },
   {
     id: "reference",
-    label: "Reference",
-    note: "Reference material the agent can read; it makes no rules",
+    label: "Background",
+    option: "Background for the agent",
+    note: "The agent can look things up in it. Nothing is graded from it.",
   },
   {
     id: "seed",
-    label: "Seed records",
-    note: "Rows that fill the world's tables — the data the agent's tools return",
-  },
-  {
-    id: "task-input",
-    label: "Task input",
-    note: "What a caller brings to the conversation",
-  },
-  {
-    id: "example",
-    label: "Example conversation",
-    note: "How a real exchange went",
+    label: "Records",
+    option: "Records for the world",
+    note: "Its rows fill the world's tables — what the agent's tools return.",
   },
   {
     id: "evaluation-reference",
-    label: "Hidden evaluation reference",
-    note: "Expected answers — the grader's only",
+    label: "Grader answers",
+    option: "Answers for the grader",
+    note: "Expected answers. Hidden from the agent and the simulated customer.",
   },
 ];
-export const roleLabel = (id) => ROLES.find((r) => r.id === id)?.label || id;
+/* The roles data.md names: policy, reference, records, evaluator-only.
+   Files saved earlier as "task input" or "example conversation" read as
+   reference — transcripts become scenarios through Observe (evidence.md),
+   not through a file's role. */
+export const normalizeRole = (id) =>
+  id === "task-input" || id === "example" ? "reference" : id;
+export const roleLabel = (id) =>
+  ROLES.find((r) => r.id === normalizeRole(id))?.label || id;
 
 export const VISIBILITY = [
   {
     id: "agent",
-    label: "Agent reads it",
-    note: "The agent reads it directly, like part of its instructions",
+    label: "The agent, directly",
+    note: "The agent reads the file itself, like background it can look up.",
   },
   {
     id: "tool",
     label: "Through tools only",
-    note: "The agent never sees the file — only what the world's tools return from it",
+    note: "The agent never sees the file — only what the world's tools return from it.",
   },
   {
     id: "evaluator",
-    label: "Evaluator only",
-    note: "Used to grade; never reaches the agent or the caller",
+    label: "Grader only",
+    note: "Used to grade; never reaches the agent or the customer.",
   },
 ];
 export const visibilityLabel = (id) =>
@@ -93,7 +97,7 @@ export const visibilityLabel = (id) =>
 export const defaultVisibility = (role) =>
   role === "evaluation-reference"
     ? "evaluator"
-    : role === "task-input" || role === "example" || role === "reference"
+    : normalizeRole(role) === "reference"
       ? "agent"
       : "tool";
 
@@ -145,6 +149,15 @@ export const UNAVAILABLE_CONNECTORS = [
   { id: "salesforce", name: "Salesforce", icon: "logos:salesforce" },
 ];
 
+/* Where in a file a passage is: a page in a paged document, a section in
+   text files, which have no pages. */
+export const placeOf = (source, n) =>
+  ["pdf", "docx"].includes(source?.ext) ? `p.${n}` : `section ${n}`;
+
+/** The same, as a label: "Page 2" in a paged file, "Section 2" otherwise. */
+export const placeLabelOf = (source, n) =>
+  ["pdf", "docx"].includes(source?.ext) ? `Page ${n}` : `Section ${n}`;
+
 const extOf = (name) =>
   String(name || "")
     .split(".")
@@ -153,6 +166,55 @@ const extOf = (name) =>
 const isTable = (ext) => ["csv", "tsv", "json", "jsonl", "xlsx"].includes(ext);
 
 /* ── reading a file (mock) ──────────────────────────────────────────────── */
+
+/* A sentence that states a rule the agent is graded on — strict, so setup
+   notes ("if you use npm…") don't become rules. */
+const RULE_SENTENCE =
+  /\b(must|never|always|may only|can only|only (?:if|when|after|before|one)|requires? (?:a |an )?(?:approval|sign-?off)|not allowed|cannot|can't|up to \$\d|over \$\d|within \d+ (?:days?|hours?))\b/i;
+/* A rule is a sentence: words, not markup, a table cell or a label. */
+const isSentence = (x) =>
+  x.split(/\s+/).length >= 5 && !/[<>{}|]/.test(x) && /[a-z]/.test(x);
+
+/* Real text, as passages by section: headings start a section; code blocks,
+   links and list markers are stripped. Ids start with "t" so they never
+   pair with a mock policy's return window. */
+const passagesOfText = (raw) => {
+  const text = String(raw || "").replace(/```[\s\S]*?```/g, " ");
+  const out = [];
+  let section = 1;
+  let seenHeading = false;
+  text.split(/\n/).forEach((line) => {
+    /* Table rows and HTML lines are layout, not sentences. */
+    if (/^\s*\|/.test(line) || /^\s*</.test(line)) return;
+    if (/^\s*#{1,6}\s/.test(line)) {
+      if (seenHeading) section += 1;
+      seenHeading = true;
+      return;
+    }
+    const clean = line
+      .replace(/<[^>]*>?/g, " ")
+      .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+      .replace(/^\s*([-*+]|\d+[.)])\s+/, "")
+      .replace(/[`*_>]/g, "")
+      .trim();
+    if (!clean) return;
+    clean
+      .split(/(?<=[.!?])\s+/)
+      .map((x) => x.trim())
+      .filter((x) => x.length > 3)
+      .forEach((sentence) =>
+        out.push({
+          id: `t${out.length + 1}`,
+          page: section,
+          text: sentence,
+          ...(RULE_SENTENCE.test(sentence) &&
+            isSentence(sentence) &&
+            sentence.length <= 200 && { rule: sentence.replace(/\s+/g, " ") }),
+        }),
+      );
+  });
+  return out.slice(0, 400);
+};
 
 const POLICY_PASSAGES = (days, { approval = 500, extra = false } = {}) => [
   {
@@ -402,6 +464,23 @@ export const readFile = (file) => {
       status: "unsupported",
       statusNote: `Can't read .${ext} files. Supported: ${SUPPORTED_NAMES}.`,
     };
+  /* A text file whose words were read: its sentences, by section. One that
+     states rules is a policy, each rule cited where it says it; one that
+     doesn't is reference material — nothing is made up from its name. */
+  if (
+    typeof file?.text === "string" &&
+    ["md", "markdown", "txt"].includes(ext)
+  ) {
+    const passages = passagesOfText(file.text);
+    const rules = passages.filter((x) => x.rule);
+    return {
+      ...base,
+      role: rules.length ? "policy" : "reference",
+      visibility: rules.length ? "tool" : "agent",
+      status: "ready",
+      parsed: { kind: "text", passages, read: true },
+    };
+  }
   if (/scan/.test(lower))
     return {
       ...base,
@@ -476,14 +555,27 @@ export const readFile = (file) => {
     };
   }
   const days = (lower.match(/(\d{2})/) || [])[1] || "30";
-  const role = /chat|conversation|transcript/.test(lower)
-    ? "example"
-    : /guide|faq|handbook|reference|catalog|macro|manual/.test(lower)
+  /* Only a document that reads as a policy gives rules. A README, notes or
+     a plain .md/.txt without policy words is reference material — the
+     builder never turns it into rules it doesn't contain. */
+  const policyish =
+    /polic|terms|rule|sop|procedure|guideline|sla|returns?|refund/.test(lower);
+  const plain = ["md", "txt"].includes(ext);
+  /* A transcript is background here; turning conversations into scenarios
+     is Observe's import (evidence.md). It still asks about personal data. */
+  const transcript = /chat|conversation|transcript/.test(lower);
+  const role = transcript
+    ? "reference"
+    : /guide|faq|handbook|reference|catalog|macro|manual|readme|notes?\b|changelog|license|contributing/.test(
+          lower,
+        ) ||
+        (plain && !policyish)
       ? "reference"
       : "policy";
   return {
     ...base,
     role,
+    ...(transcript && { transcript: true }),
     visibility: role === "reference" ? "agent" : "tool",
     status: "ready",
     parsed: {
@@ -590,8 +682,6 @@ export const participantViewsOf = (sources) => {
       view.agent.push({ source: s, how: "In its context" });
     if (s.visibility === "tool")
       view.agent.push({ source: s, how: "Only through the world's tools" });
-    if (s.role === "task-input")
-      view.caller.push({ source: s, how: "What the caller brings" });
     view.evaluator.push({
       source: s,
       how:
@@ -655,7 +745,7 @@ export const dataProposalOf = (
           title: `Rule: ${p.rule}`,
           cite: {
             sourceId: s.id,
-            ref: `${s.name} · p.${p.page}`,
+            ref: `${s.name} · ${placeOf(s, p.page)}`,
             excerpt: p.text,
             at: p.id,
           },
@@ -718,7 +808,7 @@ export const dataProposalOf = (
       detail: `Day ${days} is refunded; day ${Number(days) + 1} is refused with the window explained.`,
       cite: {
         sourceId: policies[0].id,
-        ref: `${policies[0].name} · p.${window.page}`,
+        ref: `${policies[0].name} · ${placeOf(policies[0], window.page)}`,
         excerpt: window.text,
       },
       inferred: true,
@@ -749,7 +839,7 @@ export const dataProposalOf = (
         : "Needs a refunds table — attach one to unblock it.",
       cite: {
         sourceId: retry.s.id,
-        ref: `${retry.s.name} · p.${retry.p.page}`,
+        ref: `${retry.s.name} · ${placeOf(retry.s, retry.p.page)}`,
         excerpt: retry.p.text,
       },
       blocking: !hasRefunds,
@@ -771,7 +861,7 @@ export const dataProposalOf = (
     const { s, p } = approval;
     const cite = {
       sourceId: s.id,
-      ref: `${s.name} · p.${p.page}`,
+      ref: `${s.name} · ${placeOf(s, p.page)}`,
       excerpt: p.text,
     };
     const scope = `Refunds over $${p.approval.above}`;
@@ -857,12 +947,26 @@ export const dataProposalOf = (
       items.push({
         id: `reference-${s.id}`,
         kind: "reference",
-        title: `${s.name} becomes reference material`,
+        title: `${s.name} becomes background for the agent`,
         detail:
           s.visibility === "agent"
-            ? "The agent can read it when it needs background. It adds no rules."
-            : "Kept as reference material. It adds no rules.",
+            ? "The agent can read it when it needs background. It states no rules, so nothing is graded from it."
+            : "Kept as reference material. It states no rules, so nothing is graded from it.",
         cite: { sourceId: s.id, ref: s.name },
+        /* What was read, so the review shows the words, not just the name
+           (data.md §3: "inspect linked source excerpts"). */
+        read: {
+          sections: new Set((s.parsed?.passages || []).map((x) => x.page)).size,
+          words: (s.parsed?.passages || []).reduce(
+            (n, x) => n + String(x.text).split(/\s+/).filter(Boolean).length,
+            0,
+          ),
+          passages: (s.parsed?.passages || []).slice(0, 60).map((x) => ({
+            id: x.id,
+            where: placeOf(s, x.page),
+            text: x.text,
+          })),
+        },
       }),
     );
   /* Personal data is a choice, made by the person — never by the builder. */

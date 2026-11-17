@@ -15,8 +15,13 @@ const STEP_MS = 3500;
 export const CHANGE_TAB = {
   rules: "contract",
   tables: "world",
+  tools: "world",
   scenarios: "scenarios",
 };
+
+/* The tab a first build shows while each step runs — it follows the build
+   until the person picks a tab (builder.md §4 "Inspect the build"). */
+export const FOLLOW_TAB = { ...CHANGE_TAB, release: "overview" };
 
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
@@ -63,6 +68,68 @@ export function versionBuildOf({
     },
     scenarios: scenarios.length,
   };
+}
+
+/**
+ * The first build of an approved design (builder.md §3–4): everything is new,
+ * so every part streams in — records, tools, rules, scenarios — and the five
+ * release checks run as its last step, before Save is offered (§4: "validates
+ * them before offering Save release"). `first` keeps it apart from a later
+ * version's build: no "New in v1" labels, no "what changed".
+ */
+export function firstBuildOf({
+  tables = [],
+  tools = [],
+  rules = [],
+  scenarios = [],
+  now,
+}) {
+  const rowsTotal = tables.reduce((n, t) => n + (t.rows || 0), 0);
+  const steps = [
+    tables.length && {
+      kind: "tables",
+      label: `Writing the world · ${plural(tables.length, "table")}, ${rowsTotal.toLocaleString()} rows`,
+      total: rowsTotal || tables.length,
+    },
+    tools.length && {
+      kind: "tools",
+      label: `Writing ${plural(tools.length, "tool")} the world answers`,
+      total: tools.length,
+    },
+    rules.length && {
+      kind: "rules",
+      label: `Writing ${plural(rules.length, "rule")} into the contract`,
+      total: rules.length,
+    },
+    scenarios.length && {
+      kind: "scenarios",
+      label: `Writing and checking ${plural(scenarios.length, "scenario")}`,
+      total: scenarios.length,
+    },
+    { kind: "release", label: "Running the five release checks", total: 5 },
+  ].filter(Boolean);
+  return {
+    first: true,
+    label: "v1",
+    shownLabel: "v1",
+    from: null,
+    at: now || Date.now(),
+    steps,
+    changes: {
+      rules,
+      tables: tables.map(({ name, rows }) => ({ name, rows })),
+      tools: tools.map((t) => t.name),
+      scenarios,
+    },
+    scenarios: scenarios.length,
+  };
+}
+
+/** The kind of step a build is on now, or null once it's done. */
+export function stepKindNow(build, now = Date.now()) {
+  const prog = versionBuildProgress(build, now);
+  if (!prog || prog.done) return null;
+  return build.steps[prog.step]?.kind || null;
 }
 
 /** A step's words — older stored builds kept plain strings. */
@@ -125,6 +192,8 @@ export function changeOf(build, kind, now = Date.now()) {
 
 /** What a finished build leaves to point out: { label, rules, tables, scenarios, unseen }. */
 export function versionNewsOf(build) {
+  /* A first build made everything — nothing to point out as new. */
+  if (build?.first) return null;
   const c = build?.changes;
   if (!c) return null;
   const kinds = ["rules", "tables", "scenarios"].filter((k) => c[k]?.length);

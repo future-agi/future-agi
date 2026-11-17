@@ -103,3 +103,25 @@ describe("personal data", () => {
     expect(s.parsed.passages[0].text).toContain("30 days");
   });
 });
+
+describe("readFile — a text file read for real", () => {
+  it("cites the rules a README states, by section, and nothing else", () => {
+    const s = readFile({
+      name: "README.md",
+      text: "# Refund bot\nHandles refund requests for orders.\n\n## Policy\n- Refunds over $200 must be escalated to a human.\n- Never refund an order twice.\n\n```\nnpm install\n```\n",
+    });
+    expect(s.role).toBe("policy");
+    const rules = s.parsed.passages.filter((p) => p.rule);
+    expect(rules.map((p) => p.rule)).toEqual([
+      "Refunds over $200 must be escalated to a human.",
+      "Never refund an order twice.",
+    ]);
+    expect(rules.every((p) => p.page === 2)).toBe(true);
+  });
+
+  it("treats setup notes as reference — no rules made up from the name", () => {
+    const s = readFile({ name: "README.md", text: "# Support bot\nSetup notes.\nIf you use npm, run npm i." });
+    expect(s.role).toBe("reference");
+    expect(s.parsed.passages.some((p) => p.rule)).toBe(false);
+  });
+});

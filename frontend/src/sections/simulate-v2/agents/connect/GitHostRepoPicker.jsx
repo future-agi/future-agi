@@ -74,6 +74,13 @@ export default function GitHostRepoPicker({ host, repo, onPick, onManual }) {
         >
           <Typography sx={{ typography: "s3", fontWeight: 600 }}>
             Repository
+            <Box
+              component="span"
+              aria-label="required"
+              sx={{ color: "error.main", ml: 0.5 }}
+            >
+              *
+            </Box>
           </Typography>
           <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
             {`· from ${meta.label} (${gitHostAccountsLabel(host, integrations)})${current ? ` · ${gitHostAccountOf(host, current.name, integrations)?.access === "write" ? "read and write" : "read only"}` : ""}`}

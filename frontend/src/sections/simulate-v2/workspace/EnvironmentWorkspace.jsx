@@ -78,10 +78,17 @@ import NextStepBanner from "./NextStepBanner";
 import VersionBuildStrip, { VersionChangeNote } from "./VersionBuildStrip";
 import { onFocusChat, openReviewChanges } from "./reviewChangesBus";
 import { reviewCountsOf } from "../_mock/editReview";
-import { changedTabsOf } from "../_mock/versionBuild";
 import {
-  addDesignFilesPatch,
+  changedTabsOf,
+  FOLLOW_TAB,
+  firstBuildOf,
+  stepKindNow,
+} from "../_mock/versionBuild";
+import {
   addDesignOrgPatch,
+  mergeDesignFiles,
+  readDesignFiles,
+  designIsEmpty,
   designSourcesPatch,
   designSourcesSummary,
 } from "../_mock/designSources";
@@ -165,10 +172,13 @@ import PrivateUpdateBanner from "./PrivateUpdateBanner";
 import { privateUpdateOf } from "../_mock/envCopy";
 import DesignReview from "../environments/DesignReview";
 import { checksStateOf, runChecksPatch } from "../_mock/release";
+import useReleaseAutoSave from "./useReleaseAutoSave";
 import { useRebuildForAgent } from "./useRebuildForAgent";
 import SaveFirstRelease from "../environments/SaveFirstRelease";
 import {
   applyScratchAnswer,
+  designDetailPatch,
+  designFromSourcesPatch,
   specificScenarioSeeds,
 } from "../_mock/scratchDesign";
 import { affectedScenarios, validateWorld } from "../_mock/buildPipeline";
@@ -176,7 +186,7 @@ import NeedsRepairStrip from "../environments/NeedsRepairStrip";
 import { DESIGN_PARK_MS } from "../_mock/builder";
 import { getBuilderMode } from "../_mock/builderModeBus";
 import { envLabelOf } from "../_mock/envVersionKinds";
-import { isConnectOnly } from "../_mock/envModel";
+import { isConnectOnly, rulesOf } from "../_mock/envModel";
 import { currentEnvSnapshot } from "../_mock/envSnapshot";
 import { EmptyState } from "../components/primitives";
 import { ProvisioningPanel } from "../components/loading";
@@ -452,6 +462,12 @@ export default function EnvironmentWorkspace() {
     )
       setUnseenTurns((n) => n + 1);
   }, [turns, builderCollapsed]);
+  /* While a design waits, the builder is how it changes — more detail,
+     files, answers (builder.md §2) — so it opens on arrival, whatever was
+     folded last time. Folding it here still works for this visit. */
+  useEffect(() => {
+    if (env?.buildStatus === "awaiting_approval") setBuilderCollapsed(false);
+  }, [env?.id, env?.buildStatus]); // eslint-disable-line react-hooks/exhaustive-deps
   /* "Edit with builder" pins a chip in the composer — that's a request to
      use the builder, so it opens. */
   useEffect(() => subscribeComposerScaffold(() => setCollapsed(false)), []);
@@ -517,6 +533,8 @@ export default function EnvironmentWorkspace() {
   const missingRate = searchParams.get("price") === "missing";
   /* `?build=fk` shows a failed foreign-key check once (builder.md example). */
   const fkDemoUsed = useRef(false);
+  /* While a first build runs, the tabs follow it until a tab is picked. */
+  const followBuild = useRef(null);
   /* Approve the design: validate the world first (builder.md: a failed
      foreign-key check keeps the design in Needs repair, never a fake
      runnable release), then finish the build. `next` carries a repair. */
@@ -549,6 +567,27 @@ export default function EnvironmentWorkspace() {
       envState,
     );
     if (!fin) return;
+    /* The build is shown as it happens (builder.md §4): each part streams
+       into its tab, the tabs follow it, and the five release checks run as
+       its last step — only then is Save offered. */
+    const before = new Set((envState.scenarios || []).map((r) => r.id));
+    const firstBuild = {
+      ...firstBuildOf({
+        tables: next.seed?.tables || [],
+        tools: next.tools || [],
+        rules: rulesOf(next, envState).map((r) => r.id),
+        scenarios: (fin.statePatch.scenarios || [])
+          .filter((r) => !before.has(r.id))
+          .map((r) => r.id),
+      }),
+      /* Built from scratch with nothing left to answer: if all five checks
+         pass, the build is exactly the design that was approved, so it is
+         saved for you (Approve was the yes). Anything open stops at Review
+         and save instead. */
+      autoSave:
+        !!next.builtFrom?.releaseStep &&
+        !designSourcesSummary(next, envState).needsInput,
+    };
     dispatch({
       type: "patchEnvState",
       envId: next.id,
@@ -556,8 +595,11 @@ export default function EnvironmentWorkspace() {
       patch: {
         ...fin.statePatch,
         ...(designSourcesPatch(next, envState) || {}),
+        versionBuild: firstBuild,
+        releaseChecks: null,
       },
     });
+    followBuild.current = true;
     dispatch({
       type: "patchEnvironment",
       envId: next.id,
@@ -568,6 +610,11 @@ export default function EnvironmentWorkspace() {
         designPendingAt: null,
       },
     });
+    const firstTab = FOLLOW_TAB[firstBuild.steps[0]?.kind];
+    if (firstTab)
+      navigate(paths.dashboard.simulate.environmentStep(next.id, firstTab), {
+        replace: true,
+      });
   };
   /* A Run or Re-run elsewhere links here with the plan prefilled. */
   useEffect(() => {
@@ -634,7 +681,7 @@ export default function EnvironmentWorkspace() {
   /* The run plan's in-place rebuild for this environment's own agent. */
   const rebuildForAgent = useRebuildForAgent(worldEnv, envState, patch);
   const { agents: connectedAgents, setAgentValues } = useConnectedAgents();
-  const { enqueueSnackbar } = useSnackbar();
+  const { enqueueSnackbar, closeSnackbar } = useSnackbar();
   const { viewAs: viewingOlder } = useEnvViewAs(env, envState);
 
   /* Release checks run by themselves, once per environment version, as soon
@@ -647,6 +694,8 @@ export default function EnvironmentWorkspace() {
     state.hydrated &&
     /* Built: seeded environments carry no status, only builds in flight do. */
     !["building", "awaiting_approval"].includes(env.buildStatus) &&
+    /* A first build runs them as its own last step. */
+    !envState.versionBuild?.first &&
     !readOnlyEnv &&
     !viewingOlder &&
     gates.canEdit &&
@@ -712,7 +761,7 @@ export default function EnvironmentWorkspace() {
         steps: [
           {
             kind: "note",
-            text: `${res.reply} Approve the design above when it looks right — nothing is built before that.`,
+            text: `${res.reply} Approve the design on the right when it looks right — nothing is built before that.`,
           },
         ],
       },
@@ -747,12 +796,16 @@ export default function EnvironmentWorkspace() {
                 {
                   kind: "note",
                   text: openQ
-                    ? `I drafted ${env.name} from your description — the design is above. One question first: ${openQ.why}`
-                    : env.buildStatus === "awaiting_approval"
-                      ? `${env.name}'s design is waiting for your approval — review it above. Nothing is built until you approve.`
-                      : env.buildStatus === "building"
-                        ? `${env.name} is still building. Once it's ready, ask me to add scenarios, change a rule, or add an evaluation — or edit directly on the right.`
-                        : `${env.name} is ready. Ask me to add scenarios, change a rule, or add an evaluation — or edit directly on the right.`,
+                    ? `I drafted ${env.name} from your description — the design is on the right. One question first: ${openQ.why}`
+                    : env.buildStatus === "awaiting_approval" &&
+                        env.builtFrom?.kind === "scratch" &&
+                        designIsEmpty(env, latestEnvState.current)
+                      ? emptyDesignGreeting(env, latestEnvState.current)
+                      : env.buildStatus === "awaiting_approval"
+                        ? `${env.name}'s design is waiting for your approval — it's on the right. Nothing is built until you approve.`
+                        : env.buildStatus === "building"
+                          ? `${env.name} is still building. Once it's ready, ask me to add scenarios, change a rule, or add an evaluation — or edit directly on the right.`
+                          : `${env.name} is ready. Ask me to add scenarios, change a rule, or add an evaluation — or edit directly on the right.`,
                 },
                 ...(openQ
                   ? [
@@ -789,7 +842,9 @@ export default function EnvironmentWorkspace() {
               steps: [
                 {
                   ...t.steps[0],
-                  text: `${env.name} is ready. Ask me to add scenarios, change a rule, or add an evaluation — or edit directly on the right.`,
+                  text: latestEnvState.current?.versionBuild?.first
+                    ? `Building ${env.name} from the design you approved. Each part shows on the right as it's written, then the release checks run and you review and save it as v1.`
+                    : `${env.name} is ready. Ask me to add scenarios, change a rule, or add an evaluation — or edit directly on the right.`,
                 },
                 ...t.steps.slice(1),
               ],
@@ -889,6 +944,88 @@ export default function EnvironmentWorkspace() {
     [turns],
   );
 
+  /* A first build (builder.md §4): the page follows what it's writing —
+     World, Contract, Scenarios, then Overview for the release checks — until
+     the person picks a tab themselves. */
+  const firstBuildAt = envState?.versionBuild?.first
+    ? envState.versionBuild.at
+    : null;
+  const stepRef = useRef(step);
+  stepRef.current = step;
+  useEffect(() => {
+    if (!firstBuildAt) return undefined;
+    if (followBuild.current === null) followBuild.current = true;
+    const tick = () => {
+      if (!followBuild.current) return;
+      const tab = FOLLOW_TAB[stepKindNow(latestEnvState.current?.versionBuild)];
+      if (tab && tab !== stepRef.current)
+        navigate(paths.dashboard.simulate.environmentStep(envId, tab), {
+          replace: true,
+        });
+    };
+    tick();
+    const t = setInterval(tick, 400);
+    return () => clearInterval(t);
+  }, [firstBuildAt, envId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /* The first build done: the builder's note moves on to Review and save. */
+  const prevFirstBuild = useRef(firstBuildAt);
+  const lastFirstBuild = useRef(null);
+  if (envState?.versionBuild?.first)
+    lastFirstBuild.current = envState.versionBuild;
+  useEffect(() => {
+    const was = prevFirstBuild.current;
+    prevFirstBuild.current = firstBuildAt;
+    if (!was || firstBuildAt || !env) return;
+    const build = lastFirstBuild.current;
+    const passed = checksStateOf(env, latestEnvState.current).ready;
+    /* A clean build of the approved design saves itself, with Undo. */
+    const saved = !!build?.autoSave && passed && !env.releaseSavedAt;
+    setTurns((prev) =>
+      prev.map((t) =>
+        t.id === "ws-greet"
+          ? {
+              ...t,
+              steps: [
+                {
+                  ...t.steps[0],
+                  text: saved
+                    ? `${env.name} is built, all five checks passed, and it's saved as v1 — it's exactly the design you approved. Connect your agent from Overview to run it, or ask me to change something.`
+                    : `${env.name} is built and its release checks ran. Review it and save it as v1 from the card at the top — then connect your agent.`,
+                },
+                ...t.steps.slice(1),
+              ],
+            }
+          : t,
+      ),
+    );
+  }, [firstBuildAt]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /* One ending for every build: clean → saved as v1 with Undo (shared with
+     the agent build page). The checks run above, on this page. */
+  useReleaseAutoSave({ env, envState, dispatch, hydrated: state.hydrated });
+
+  /* Saved: the note moves on to connecting an agent. */
+  useEffect(() => {
+    if (!env?.releaseSavedAt || !env.builtFrom?.releaseStep) return;
+    setTurns((prev) =>
+      prev.map((t) =>
+        t.id === "ws-greet" && /save it as v1/.test(t.steps?.[0]?.text || "")
+          ? {
+              ...t,
+              steps: [
+                {
+                  ...t.steps[0],
+                  text: `${env.name} v1 is saved, private to this workspace. Connect your agent from Overview to run it — or ask me to add scenarios, change a rule, or add an evaluation.`,
+                },
+                ...t.steps.slice(1),
+              ],
+            }
+          : t,
+      ),
+    );
+  }, [env?.releaseSavedAt]); // eslint-disable-line react-hooks/exhaustive-deps
+
   /* "New in vN" labels clear once their tab has been looked at: leaving a
      tab that showed them marks it seen. */
   const lastStep = useRef(step);
@@ -949,6 +1086,15 @@ export default function EnvironmentWorkspace() {
   */
   const envLive = env.buildStatus !== "building";
   const awaitingApproval = env.buildStatus === "awaiting_approval";
+  /* The design waiting, with no repair to make first: it is the page. */
+  const designPage = awaitingApproval && !env.repairCheck;
+  /* Built from scratch and checked, not saved yet (builder.md §7 "Ready to
+     save"): never shown as Ready until the person saves it. */
+  const unsavedFirst =
+    !!env.builtFrom?.releaseStep &&
+    env.buildStatus === "ready" &&
+    !env.releaseSavedAt &&
+    !envState.versionBuild;
   /* A new version building after approved changes (a source's proposal). */
   const versionBuilding = !!envState.versionBuild;
   /* Tabs with a part of a new version building, or new and not yet seen. */
@@ -1823,12 +1969,16 @@ export default function EnvironmentWorkspace() {
      Fork sits beside Run simulation. */
 
   /* A copy customized without an agent leads with the changes asked for. */
-  const chips = [
-    ...(envState?.customizeRequest && !envState?.customizeApplied
-      ? [`Apply the changes: ${envState.customizeRequest}`]
-      : []),
-    ...(CHIPS_BY_TAB[activeTab] || CHIPS_BY_TAB.overview),
-  ];
+  /* While the design waits there's no environment to ask about yet — the
+     builder takes detail and files instead, so no canned questions. */
+  const chips = awaitingApproval
+    ? []
+    : [
+        ...(envState?.customizeRequest && !envState?.customizeApplied
+          ? [`Apply the changes: ${envState.customizeRequest}`]
+          : []),
+        ...(CHIPS_BY_TAB[activeTab] || CHIPS_BY_TAB.overview),
+      ];
   /* A source opened from a citation: World & tools, with it open. */
   const openSource = (id) =>
     navigate(
@@ -1909,31 +2059,139 @@ export default function EnvironmentWorkspace() {
     ]);
   };
 
+  /* Files added while the design waits (builder.md §1, data.md §1–3):
+     they add up; the same name with new contents replaces its earlier copy;
+     an identical copy is skipped. Each new or changed file then updates
+     the design below — the records, tools and cases its words call for —
+     and the builder says exactly what changed. */
+  const addFilesToDesign = async (files, typed = "") => {
+    const read = await readDesignFiles(files);
+    const latest = latestEnvState.current;
+    const merged = mergeDesignFiles(latest, read);
+    patch({ sources: merged.sources });
+    const res = designFromSourcesPatch(env, merged.fresh);
+    if (res)
+      dispatch({
+        type: "patchEnvironment",
+        envId: env.id,
+        patch: res.envPatch,
+      });
+    const fileRules = merged.fresh.reduce(
+      (n, f) => n + (f.parsed?.passages || []).filter((x) => x.rule).length,
+      0,
+    );
+    const list = (xs) => xs.join(", ");
+    const parts = [
+      res?.added.tables.length &&
+        `${res.added.tables.length} table${res.added.tables.length === 1 ? "" : "s"} (${list(res.added.tables.map((t) => t.name))})`,
+      res?.added.tools.length &&
+        `${res.added.tools.length} tool${res.added.tools.length === 1 ? "" : "s"} (${list(res.added.tools.map((t) => t.name))})`,
+      fileRules && `${fileRules} rule${fileRules === 1 ? "" : "s"}, cited`,
+      res?.added.cases.length &&
+        `${res.added.cases.length} scenario${res.added.cases.length === 1 ? "" : "s"}`,
+    ].filter(Boolean);
+    const lines = [
+      merged.added.length && `Added ${list(merged.added)}.`,
+      merged.replaced.length &&
+        `Replaced the earlier ${list(merged.replaced)} with this copy.`,
+      merged.skipped.length &&
+        `${list(merged.skipped)} ${merged.skipped.length === 1 ? "is" : "are"} already in the design — skipped.`,
+      merged.fresh.length &&
+        (parts.length
+          ? `The design now has ${parts.join(", ")} more.`
+          : "Nothing new for the design from it — it reads as background for the agent."),
+      "Nothing is built until you approve.",
+    ].filter(Boolean);
+    setTurns((prev) => [
+      ...prev,
+      {
+        id: `u-${Date.now()}`,
+        role: "user",
+        text: typed || read.map((f) => f.name).join(", "),
+      },
+      {
+        id: `a-${Date.now()}`,
+        role: "assistant",
+        steps: [{ kind: "note", text: lines.join(" ") }],
+      },
+    ]);
+    setCollapsed(false);
+  };
+
   const sendChat = (text, files = []) => {
     const trimmed = (text || "").trim();
     /* While the design waits, files join the design (the first version),
        not a proposal for a next one. */
     if (files?.length && awaitingApproval) {
-      patch(addDesignFilesPatch(envState, files));
-      const names = files.map((f) => f.name).join(", ");
+      addFilesToDesign(files, trimmed);
+      return undefined;
+    }
+    if (files?.length) return sendFiles(trimmed, files);
+    if (!trimmed) return;
+    /* While the design waits (builder.md §2), more detail goes into the
+       design: the records, tools and rules it names join the proposal on the
+       right. Nothing is guessed, and nothing is built before approval. */
+    if (
+      awaitingApproval &&
+      !(latestEnvState.current.designQuestions || []).some((q) => !q.answer)
+    ) {
+      const res = designDetailPatch(env, trimmed);
+      const asked = new Set(
+        (latestEnvState.current.designQuestions || []).map((q) => q.id),
+      );
+      const fresh = res ? res.questions.filter((q) => !asked.has(q.id)) : [];
+      if (res) {
+        dispatch({
+          type: "patchEnvironment",
+          envId: env.id,
+          patch: res.envPatch,
+        });
+        if (fresh.length)
+          patch({
+            designQuestions: [
+              ...(latestEnvState.current.designQuestions || []),
+              ...fresh.map((q) => ({ ...q, answer: null })),
+            ],
+          });
+      }
+      const { tables = [], tools = [], rules = [] } = res?.added || {};
+      const parts = [
+        tables.length &&
+          `${tables.length === 1 ? "a table" : `${tables.length} tables`} (${tables.map((t) => t.name).join(", ")})`,
+        tools.length &&
+          `${tools.length === 1 ? "a tool" : `${tools.length} tools`} (${tools.map((t) => t.name).join(", ")})`,
+        rules.length &&
+          `${rules.length === 1 ? "a rule" : `${rules.length} rules`}`,
+      ].filter(Boolean);
       setTurns((prev) => [
         ...prev,
-        { id: `u-${Date.now()}`, role: "user", text: trimmed || names },
+        { id: `u-${Date.now()}`, role: "user", text: trimmed },
         {
           id: `a-${Date.now()}`,
           role: "assistant",
           steps: [
             {
               kind: "note",
-              text: `Added ${names} to the design. Nothing is built until you approve.`,
+              text: res
+                ? `Added ${parts.join(", ")} to the design on the right.${fresh.length ? " One question about it first:" : " Approve it when it looks right — nothing is built before that."}`
+                : "I couldn't find records or actions in that, so the design is unchanged. Name what the agent works with (customers, orders, bookings…) and what it can do (look up, refund, book, cancel).",
             },
+            ...fresh.slice(0, 1).map((q) => ({
+              kind: "ask",
+              question: {
+                step: 1,
+                total: 1,
+                prompt: q.prompt,
+                multiSelect: false,
+                options: q.options,
+              },
+              onSubmit: (answer) => answerDesignQuestion(q, answer),
+            })),
           ],
         },
       ]);
       return undefined;
     }
-    if (files?.length) return sendFiles(trimmed, files);
-    if (!trimmed) return;
     /*
       Snapshot the selection at the moment of send. If the user has
       rows checked on the Scenarios tab, treat the message as a bulk
@@ -2255,11 +2513,13 @@ export default function EnvironmentWorkspace() {
               title={
                 awaitingApproval
                   ? "The design is waiting for your approval. Nothing is built until you approve it."
-                  : versionBuilding
-                    ? "A new version is building from the changes you approved. Runs start once it's ready."
-                    : chipLive
-                      ? "Environment is ready. You can edit via the builder or inline."
-                      : "Environment is still being built. Editing resumes when it's ready."
+                  : unsavedFirst
+                    ? "Built and checked, but not saved. Save it as v1 to keep it and connect an agent."
+                    : versionBuilding
+                      ? "A new version is building from the changes you approved. Runs start once it's ready."
+                      : chipLive
+                        ? "Environment is ready. You can edit via the builder or inline."
+                        : "Environment is still being built. Editing resumes when it's ready."
               }
             >
               <Stack
@@ -2275,25 +2535,28 @@ export default function EnvironmentWorkspace() {
                   whiteSpace: "nowrap",
                   /* Ready is the quiet default — it steps out on narrow screens. */
                   display:
-                    chipLive && !awaitingApproval
+                    chipLive && !awaitingApproval && !unsavedFirst
                       ? { xs: "none", lg: "flex" }
                       : "flex",
-                  color: awaitingApproval
-                    ? "status.warning.fg"
-                    : chipLive
-                      ? "status.success.fg"
-                      : "primary.main",
-                  bgcolor: awaitingApproval
-                    ? "status.warning.bg"
-                    : chipLive
-                      ? "status.success.bg"
-                      : "status.discovery.bg",
+                  color:
+                    awaitingApproval || unsavedFirst
+                      ? "status.warning.fg"
+                      : chipLive
+                        ? "status.success.fg"
+                        : "primary.main",
+                  bgcolor:
+                    awaitingApproval || unsavedFirst
+                      ? "status.warning.bg"
+                      : chipLive
+                        ? "status.success.bg"
+                        : "status.discovery.bg",
                   border: "1px solid",
-                  borderColor: awaitingApproval
-                    ? "status.warning.border"
-                    : chipLive
-                      ? "status.success.border"
-                      : "status.discovery.border",
+                  borderColor:
+                    awaitingApproval || unsavedFirst
+                      ? "status.warning.border"
+                      : chipLive
+                        ? "status.success.border"
+                        : "status.discovery.border",
                 }}
               >
                 <Box
@@ -2301,11 +2564,12 @@ export default function EnvironmentWorkspace() {
                     width: 6,
                     height: 6,
                     borderRadius: "50%",
-                    bgcolor: awaitingApproval
-                      ? "status.warning.solid"
-                      : chipLive
-                        ? "status.success.solid"
-                        : "primary.main",
+                    bgcolor:
+                      awaitingApproval || unsavedFirst
+                        ? "status.warning.solid"
+                        : chipLive
+                          ? "status.success.solid"
+                          : "primary.main",
                     animation: chipLive
                       ? undefined
                       : "env-pulse 1.4s ease-in-out infinite",
@@ -2319,11 +2583,13 @@ export default function EnvironmentWorkspace() {
                 <Typography sx={{ typography: "s3", fontWeight: 600 }}>
                   {awaitingApproval
                     ? "Awaiting approval"
-                    : versionBuilding
-                      ? `Building ${envState.versionBuild.shownLabel || envLabelOf(env, envState, envState.versionBuild.label)}`
-                      : chipLive
-                        ? "Ready"
-                        : "Building"}
+                    : unsavedFirst
+                      ? "Built · not saved"
+                      : versionBuilding
+                        ? `Building ${envState.versionBuild.shownLabel || envLabelOf(env, envState, envState.versionBuild.label)}`
+                        : chipLive
+                          ? "Ready"
+                          : "Building"}
                 </Typography>
               </Stack>
             </Tooltip>
@@ -2708,6 +2974,9 @@ export default function EnvironmentWorkspace() {
               )}
             </Stack>
           );
+          /* Before approval nothing exists to run or to fill in — the
+             design is the whole page, so the header has no run controls. */
+          if (awaitingApproval) return null;
           /* An agent change is one card here (and its scenario step one
              more) — counted as such, never as the changes inside it. */
           const agentCard = versionCardOf(envState);
@@ -3852,96 +4121,53 @@ export default function EnvironmentWorkspace() {
           }
         />
       )}
-      {env.buildStatus === "awaiting_approval" && !env.repairCheck && (
-        <DesignReview
-          framed
+      {/* Built from scratch: the build is checked, then saved as a private
+          release before an agent is connected (builder.md §5). */}
+      {unsavedFirst && (
+        <SaveFirstRelease
           env={env}
-          sources={designSourcesSummary(env, envState)}
-          onAddFiles={(files) =>
-            files?.length && patch(addDesignFilesPatch(envState, files))
-          }
-          onAddOrg={(o) => {
-            const p = addDesignOrgPatch(envState, o);
-            if (p) patch(p);
-            else
-              enqueueSnackbar(
-                `You don't have access to ${o.name}. Asked the ${o.owner} for it — you'll get a notification.`,
-                { variant: "info" },
-              );
-          }}
-          draftCount={env.builtFrom?.scenarioCount || 10}
-          /* Edits to the proposal (remove a tool, rule or person, reword a
-             rule, simulate an unsupported behavior) land on the environment
-             before anything is built. */
-          onChange={(p) => {
-            dispatch({ type: "patchEnvironment", envId: env.id, patch: p });
-            if (p.actors) patch({ actors: p.actors });
-          }}
-          question={
-            (envState.designQuestions || []).find((q) => !q.answer)?.prompt ||
-            null
-          }
-          waiting
-          parked={
-            Date.now() - (env.designPendingAt || Date.now()) > DESIGN_PARK_MS
-          }
-          since={env.designPendingAt || Date.now()}
-          autoMode={getBuilderMode() === "auto"}
-          onApprove={() => approveDesign(env)}
-          onContinue={() =>
+          envState={envState}
+          label={envState.activeEnvVersion || "v1"}
+          onSave={() => {
             dispatch({
               type: "patchEnvironment",
               envId: env.id,
-              patch: { designPendingAt: Date.now() },
-            })
+              patch: { releaseSavedAt: new Date().toISOString() },
+            });
+            /* The "built — review and save" notice has done its job. */
+            closeSnackbar();
+            enqueueSnackbar(
+              envState.agent
+                ? `Saved environment ${envState.activeEnvVersion || "v1"} — private to this workspace. Run setup checks it's ready for ${envState.agent.name}.`
+                : `Saved environment ${envState.activeEnvVersion || "v1"}. Connect your agent from Overview to run it.`,
+              { variant: "success" },
+            );
+          }}
+          /* Save, then the same Connect agent picker Overview's button opens.
+               Built from an agent, it's already bound — no connect step. */
+          onSaveAndConnect={
+            envState.agent
+              ? undefined
+              : () => {
+                  dispatch({
+                    type: "patchEnvironment",
+                    envId: env.id,
+                    patch: { releaseSavedAt: new Date().toISOString() },
+                  });
+                  /* The "built — review and save" notice has done its job. */
+                  closeSnackbar();
+                  enqueueSnackbar(
+                    `Saved environment ${envState.activeEnvVersion || "v1"} — private to this workspace. Connect your agent to run it.`,
+                    { variant: "success" },
+                  );
+                  navigate(
+                    `${paths.dashboard.simulate.environmentStep(envId, "overview")}?connect=agent`,
+                  );
+                  setConnectKey((k) => k + 1);
+                }
           }
         />
       )}
-      {/* Built from scratch: the build is checked, then saved as a private
-          release before an agent is connected (builder.md §5). */}
-      {env.builtFrom?.releaseStep &&
-        env.buildStatus === "ready" &&
-        !env.releaseSavedAt && (
-          <SaveFirstRelease
-            env={env}
-            envState={envState}
-            label={envState.activeEnvVersion || "v1"}
-            onSave={() => {
-              dispatch({
-                type: "patchEnvironment",
-                envId: env.id,
-                patch: { releaseSavedAt: new Date().toISOString() },
-              });
-              enqueueSnackbar(
-                envState.agent
-                  ? `Saved environment ${envState.activeEnvVersion || "v1"} — private to this workspace. Run setup checks it's ready for ${envState.agent.name}.`
-                  : `Saved environment ${envState.activeEnvVersion || "v1"}. Connect your agent from Overview to run it.`,
-                { variant: "success" },
-              );
-            }}
-            /* Save, then the same Connect agent picker Overview's button opens.
-               Built from an agent, it's already bound — no connect step. */
-            onSaveAndConnect={
-              envState.agent
-                ? undefined
-                : () => {
-                    dispatch({
-                      type: "patchEnvironment",
-                      envId: env.id,
-                      patch: { releaseSavedAt: new Date().toISOString() },
-                    });
-                    enqueueSnackbar(
-                      `Saved environment ${envState.activeEnvVersion || "v1"} — private to this workspace. Connect your agent to run it.`,
-                      { variant: "success" },
-                    );
-                    navigate(
-                      `${paths.dashboard.simulate.environmentStep(envId, "overview")}?connect=agent`,
-                    );
-                    setConnectKey((k) => k + 1);
-                  }
-            }
-          />
-        )}
       <VersionBuildStrip
         env={env}
         envState={envState}
@@ -4042,19 +4268,21 @@ export default function EnvironmentWorkspace() {
 
       {/* ── body: rail + panel ── */}
       {/* A run is a pairing — this environment version × that agent version. */}
-      <VersionBar
-        env={env}
-        envState={envState}
-        patch={patch}
-        locked={readOnlyEnv}
-        thenRun={!!runAfterSave}
-        onReviewClose={() => setRunAfterSave(null)}
-        onSave={(note) => {
-          const after = runAfterSave;
-          setRunAfterSave(null);
-          requestSave(after, note);
-        }}
-      />
+      {!awaitingApproval && (
+        <VersionBar
+          env={env}
+          envState={envState}
+          patch={patch}
+          locked={readOnlyEnv}
+          thenRun={!!runAfterSave}
+          onReviewClose={() => setRunAfterSave(null)}
+          onSave={(note) => {
+            const after = runAfterSave;
+            setRunAfterSave(null);
+            requestSave(after, note);
+          }}
+        />
+      )}
       {/* On Overview its own Connect card says the same thing. */}
       {nextStep &&
         !(
@@ -4169,167 +4397,232 @@ export default function EnvironmentWorkspace() {
             overflow: "hidden",
           }}
         >
-          <Box
-            sx={{
-              flexShrink: 0,
-              borderBottom: "1px solid",
-              borderColor: "divider",
-            }}
-          >
-            <Box sx={{ px: 2.5 }}>
-              <CustomTabs
-                value={activeTab}
-                onChange={(_, v) => go(v)}
-                variant="scrollable"
-                scrollButtons={false}
-                /* The full-width border above draws the rail. */
-                sx={{ boxShadow: "none" }}
-              >
-                {/* The Tooltip forwards the props Tabs clones onto its child
+          {!designPage && (
+            <Box
+              sx={{
+                flexShrink: 0,
+                borderBottom: "1px solid",
+                borderColor: "divider",
+              }}
+            >
+              <Box sx={{ px: 2.5 }}>
+                <CustomTabs
+                  value={activeTab}
+                  onChange={(_, v) => {
+                    /* Picking a tab stops the page following a first build. */
+                    followBuild.current = false;
+                    go(v);
+                  }}
+                  variant="scrollable"
+                  scrollButtons={false}
+                  /* The full-width border above draws the rail. */
+                  sx={{ boxShadow: "none" }}
+                >
+                  {/* The Tooltip forwards the props Tabs clones onto its child
                   (value, selected, onChange…) to the Tab inside it. */}
-                {visibleTabs.map((t) => (
-                  <Tooltip
-                    classes={{ tooltip: "ds-hovercard" }}
-                    key={t.id}
-                    value={t.id}
-                    arrow
-                    placement="bottom"
-                    enterDelay={400}
-                    enterNextDelay={200}
-                    title={
-                      tabHintOf(t.id, worldEnv) || gapsByStep[t.id]?.length ? (
-                        <TabHint
-                          hint={tabHintOf(t.id, worldEnv)}
-                          gaps={gapsByStep[t.id]}
-                        />
-                      ) : (
-                        ""
-                      )
-                    }
-                    slotProps={{ tooltip: { sx: { maxWidth: 320 } } }}
-                  >
-                    <Tab
-                      label={
-                        <TabLabel
-                          tab={t}
-                          counts={counts}
-                          gaps={gapsByStep[t.id]}
-                          changed={changedTabs.has(t.id)}
-                        />
+                  {visibleTabs.map((t) => (
+                    <Tooltip
+                      classes={{ tooltip: "ds-hovercard" }}
+                      key={t.id}
+                      value={t.id}
+                      arrow
+                      placement="bottom"
+                      enterDelay={400}
+                      enterNextDelay={200}
+                      title={
+                        tabHintOf(t.id, worldEnv) ||
+                        gapsByStep[t.id]?.length ? (
+                          <TabHint
+                            hint={tabHintOf(t.id, worldEnv)}
+                            gaps={gapsByStep[t.id]}
+                          />
+                        ) : (
+                          ""
+                        )
                       }
-                    />
-                  </Tooltip>
-                ))}
-              </CustomTabs>
+                      slotProps={{ tooltip: { sx: { maxWidth: 320 } } }}
+                    >
+                      <Tab
+                        label={
+                          <TabLabel
+                            tab={t}
+                            counts={counts}
+                            gaps={gapsByStep[t.id]}
+                            changed={changedTabs.has(t.id)}
+                          />
+                        }
+                      />
+                    </Tooltip>
+                  ))}
+                </CustomTabs>
+              </Box>
             </Box>
-          </Box>
+          )}
 
           {/*
             Fall back to Overview for an unrecognised step rather than rendering
             an empty pane — a bad link should land somewhere, not nowhere.
           */}
           <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, overflow: "auto" }}>
-            {panel === "scenarios" && (
-              <VersionChangeNote
-                env={env}
-                envState={envState}
-                kind="scenarios"
-              />
-            )}
-            {panel === "scenarios" ? (
-              <ScenariosStep
-                env={worldEnv}
-                envState={envState}
-                patch={patch}
-                onGo={go}
-                onBuilderPrompt={sendChat}
-                onStartRun={startRun}
-                groupCandidates={runGroup.candidates}
-                locked={readOnlyEnv}
-                onFork={() => setCopyOpen({})}
-                selectionRun={{
-                  repeats: headerTrials,
-                  onRepeats: setHeaderTrials,
-                  unit: env.surface === "voice" ? "call" : "conversation",
-                  disabledReason: !runEnabled
-                    ? runBlockedReason || "Not ready to run"
-                    : null,
-                }}
-              />
-            ) : panel === "evals" ? (
-              <EvalsStep
-                env={worldEnv}
-                envState={envState}
-                patch={patch}
-                onGo={go}
-                locked={readOnlyEnv}
-                onFork={() => setCopyOpen({})}
-                repeats={Number(headerTrials) || 3}
-              />
-            ) : panel === "runs" ? (
-              <RunsPanel env={worldEnv} envState={envState} onGo={go} />
-            ) : panel === "world" ? (
-              <WorldPanel
-                env={worldEnv}
-                envState={envState}
-                patch={patch}
-                onGo={go}
-                locked={readOnlyEnv || !!viewingOlder}
-              />
-            ) : panel === "contract" ? (
-              <RlContractPanel
-                env={worldEnv}
-                envState={envState}
-                patch={patch}
-                onGo={go}
-                locked={readOnlyEnv || !!viewingOlder}
-                onFork={() => setCopyOpen({})}
-              />
-            ) : panel === "actors" ? (
-              <ActorsPanel
-                env={worldEnv}
-                envState={envState}
-                patch={patch}
-                locked={readOnlyEnv || !!viewingOlder}
-              />
-            ) : panel === "analytics" ? (
-              <AnalyticsPanel env={worldEnv} envState={envState} />
-            ) : panel === "history" ? (
-              <HistoryPage
-                env={worldEnv}
-                envState={envState}
-                patch={patch}
-                readOnly={readOnlyEnv}
-                onCopy={(label) => setCopyOpen({ version: label })}
-              />
-            ) : panel === "settings" ? (
-              <SettingsPanel
-                env={worldEnv}
-                envState={envState}
-                patch={patch}
-                locked={readOnlyEnv}
-                onFork={() => setCopyOpen({})}
-                onDelete={
-                  isSeededTemplate ? undefined : () => setConfirmDelete(env)
-                }
-              />
-            ) : panel === "build" ? (
-              <BuildRecordPanel
-                env={worldEnv}
-                envState={envState}
-                patch={patch}
-              />
+            {/* Before approval the proposal is the whole page: no tabs, no
+                Overview of an environment that doesn't exist yet. */}
+            {designPage ? (
+              <Box>
+                <DesignReview
+                  page
+                  onOpenChat={() => setCollapsed(false)}
+                  env={env}
+                  sources={designSourcesSummary(env, envState)}
+                  onAddFiles={(files) =>
+                    files?.length && addFilesToDesign(files)
+                  }
+                  onAddOrg={(o) => {
+                    const p = addDesignOrgPatch(envState, o);
+                    if (p) patch(p);
+                    else
+                      enqueueSnackbar(
+                        `You don't have access to ${o.name}. Asked the ${o.owner} for it — you'll get a notification.`,
+                        { variant: "info" },
+                      );
+                  }}
+                  draftCount={env.builtFrom?.scenarioCount || 10}
+                  /* Edits to the proposal (remove a tool, rule or person, reword a
+                       rule, simulate an unsupported behavior) land on the environment
+                       before anything is built. */
+                  onChange={(p) => {
+                    dispatch({
+                      type: "patchEnvironment",
+                      envId: env.id,
+                      patch: p,
+                    });
+                    if (p.actors) patch({ actors: p.actors });
+                  }}
+                  question={
+                    (envState.designQuestions || []).find((q) => !q.answer)
+                      ?.prompt || null
+                  }
+                  waiting
+                  parked={
+                    Date.now() - (env.designPendingAt || Date.now()) >
+                    DESIGN_PARK_MS
+                  }
+                  since={env.designPendingAt || Date.now()}
+                  autoMode={getBuilderMode() === "auto"}
+                  onApprove={() => approveDesign(env)}
+                  onContinue={() =>
+                    dispatch({
+                      type: "patchEnvironment",
+                      envId: env.id,
+                      patch: { designPendingAt: Date.now() },
+                    })
+                  }
+                />
+              </Box>
             ) : (
-              <OverviewPanel
-                key={connectKey}
-                env={worldEnv}
-                envState={envState}
-                patch={patch}
-                onGo={go}
-                agentConnected={!!envState.agent}
-                locked={readOnlyEnv}
-                onFork={() => setCopyOpen({})}
-              />
+              <>
+                {panel === "scenarios" && (
+                  <VersionChangeNote
+                    env={env}
+                    envState={envState}
+                    kind="scenarios"
+                  />
+                )}
+                {panel === "scenarios" ? (
+                  <ScenariosStep
+                    env={worldEnv}
+                    envState={envState}
+                    patch={patch}
+                    onGo={go}
+                    onBuilderPrompt={sendChat}
+                    onStartRun={startRun}
+                    groupCandidates={runGroup.candidates}
+                    locked={readOnlyEnv}
+                    onFork={() => setCopyOpen({})}
+                    selectionRun={{
+                      repeats: headerTrials,
+                      onRepeats: setHeaderTrials,
+                      unit: env.surface === "voice" ? "call" : "conversation",
+                      disabledReason: !runEnabled
+                        ? runBlockedReason || "Not ready to run"
+                        : null,
+                    }}
+                  />
+                ) : panel === "evals" ? (
+                  <EvalsStep
+                    env={worldEnv}
+                    envState={envState}
+                    patch={patch}
+                    onGo={go}
+                    locked={readOnlyEnv}
+                    onFork={() => setCopyOpen({})}
+                    repeats={Number(headerTrials) || 3}
+                  />
+                ) : panel === "runs" ? (
+                  <RunsPanel env={worldEnv} envState={envState} onGo={go} />
+                ) : panel === "world" ? (
+                  <WorldPanel
+                    env={worldEnv}
+                    envState={envState}
+                    patch={patch}
+                    onGo={go}
+                    locked={readOnlyEnv || !!viewingOlder}
+                  />
+                ) : panel === "contract" ? (
+                  <RlContractPanel
+                    env={worldEnv}
+                    envState={envState}
+                    patch={patch}
+                    onGo={go}
+                    locked={readOnlyEnv || !!viewingOlder}
+                    onFork={() => setCopyOpen({})}
+                  />
+                ) : panel === "actors" ? (
+                  <ActorsPanel
+                    env={worldEnv}
+                    envState={envState}
+                    patch={patch}
+                    locked={readOnlyEnv || !!viewingOlder}
+                  />
+                ) : panel === "analytics" ? (
+                  <AnalyticsPanel env={worldEnv} envState={envState} />
+                ) : panel === "history" ? (
+                  <HistoryPage
+                    env={worldEnv}
+                    envState={envState}
+                    patch={patch}
+                    readOnly={readOnlyEnv}
+                    onCopy={(label) => setCopyOpen({ version: label })}
+                  />
+                ) : panel === "settings" ? (
+                  <SettingsPanel
+                    env={worldEnv}
+                    envState={envState}
+                    patch={patch}
+                    locked={readOnlyEnv}
+                    onFork={() => setCopyOpen({})}
+                    onDelete={
+                      isSeededTemplate ? undefined : () => setConfirmDelete(env)
+                    }
+                  />
+                ) : panel === "build" ? (
+                  <BuildRecordPanel
+                    env={worldEnv}
+                    envState={envState}
+                    patch={patch}
+                  />
+                ) : (
+                  <OverviewPanel
+                    key={connectKey}
+                    env={worldEnv}
+                    envState={envState}
+                    patch={patch}
+                    onGo={go}
+                    agentConnected={!!envState.agent}
+                    locked={readOnlyEnv}
+                    onFork={() => setCopyOpen({})}
+                  />
+                )}
+              </>
             )}
           </Box>
         </Box>
@@ -4676,3 +4969,19 @@ SystemBanners.propTypes = {
   envState: PropTypes.object.isRequired,
   patch: PropTypes.func.isRequired,
 };
+
+/* The builder's first note on a design with nothing to build: what it read
+   from the attached files, if anything, then the one thing it needs. */
+function emptyDesignGreeting(env, envState) {
+  const f = designSourcesSummary(env, envState);
+  const ask =
+    "What does the agent work with, and what can it do? For example: “customers and their orders; it can look up an order and refund up to $200.”";
+  const unread = f.unusable.length
+    ? ` I couldn't read ${f.unusable.map((x) => x.name).join(", ")}.`
+    : "";
+  if (f.ruleItems.length)
+    return `I read ${f.sources.map((x) => x.name).join(", ")} — it gives ${f.ruleItems.length} rule${f.ruleItems.length === 1 ? "" : "s"}, now in the design.${unread} It doesn't say what the agent works with, so there's nothing to build yet. ${ask}`;
+  if (f.sources.length)
+    return `I read ${f.sources.map((x) => x.name).join(", ")}, but it doesn't name records or actions for the agent.${unread} ${ask}`;
+  return `Your description doesn't name any records or actions yet, so there's nothing to build.${unread} ${ask}`;
+}

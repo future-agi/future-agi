@@ -107,12 +107,12 @@ export const worldPacksOf = (template) => {
   return [
     {
       id: "starter",
-      name: "Starter pack",
-      blurb: "One case from each pack — the default.",
+      name: "Starter suite",
+      blurb: "One case from each group — the default.",
       count: Math.min(5, full),
     },
     ...packs.filter((p) => p.count),
-    { id: "full", name: "Full world", blurb: "Every pack.", count: full },
+    { id: "full", name: "All scenarios", blurb: "Every group.", count: full },
   ];
 };
 

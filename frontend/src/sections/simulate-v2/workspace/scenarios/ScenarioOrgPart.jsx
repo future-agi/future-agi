@@ -16,7 +16,7 @@ import { enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
 import CopyCommandButton from "../../components/CopyCommandButton";
 import AddSourceMenu from "../data/AddSourceMenu";
-import { readFile, sourceFromOrg } from "../../_mock/orgData";
+import { placeOf, readFile, sourceFromOrg } from "../../_mock/orgData";
 import {
   acceptRuleFix,
   addCheckFix,
@@ -156,7 +156,7 @@ export default function ScenarioOrgPart({ env, row, locked = false }) {
       groundPatch(envState, live.id, {
         sourceId: src?.id || null,
         ref: src
-          ? `${src.name}${passage ? ` · p.${passage.page}` : ""}`
+          ? `${src.name}${passage ? ` · ${placeOf(src, passage.page)}` : ""}`
           : citing.ref,
         excerpt: passage?.text || citing.excerpt,
         supports: citing.supports,

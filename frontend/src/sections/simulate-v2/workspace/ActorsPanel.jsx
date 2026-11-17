@@ -7,6 +7,7 @@ import {
   Stack,
   Typography,
   Button,
+  ButtonBase,
   IconButton,
   Tooltip,
   Collapse,
@@ -15,8 +16,7 @@ import {
   Chip,
   Menu,
 } from "@mui/material";
-import CopyCommandButton from "../components/CopyCommandButton";
-import { ConfirmDialog } from "src/components/custom-dialog";
+import PersonasInUseDrawer from "./PersonasInUseDrawer";
 import { useSimStore } from "../store";
 import { enqueueSnackbar } from "notistack";
 import { personaFor } from "../_mock/scenarios";
@@ -42,7 +42,6 @@ import {
   getEntry,
   createActorPatch,
   relationsOf,
-  actorCli,
   actorKindOf,
   primaryActorOf,
   actorEditPatch,
@@ -65,26 +64,19 @@ import { clickable, focusRing } from "../components/clickable";
 export default function ActorsPanel({ env, envState, patch, locked = false }) {
   const navigate = useNavigate();
   const [editing, setEditing] = useState(null);
+  /* The personas the customer plays here, from this environment's scenarios. */
+  const [personasOpen, setPersonasOpen] = useState(false);
+  const liveScenarios = (envState?.scenarios || []).filter(
+    (x) => !x.archived && !x.proposed,
+  );
+  const personaCount = new Set(
+    liveScenarios.map((x) => x.persona?.name || "Unnamed caller"),
+  ).size;
   const cast = actorsOf(env, envState);
-  /* The shared library: built-in actors, then the ones your team saved. */
-  const { state: simState, dispatch } = useSimStore();
-  const teamLibrary = simState.libraryActors || [];
-  const library = [
-    ...ACTOR_LIBRARY,
-    ...teamLibrary.filter((a) => !ACTOR_LIBRARY.some((b) => b.id === a.id)),
-  ];
-  /* How many environments have a saved actor in their cast. */
-  const usedIn = (id) =>
-    Object.values(simState.byEnv || {}).filter((es) =>
-      (es?.actors || []).includes(id),
-    ).length;
-  const saveToLibrary = (a) => {
-    dispatch({ type: "saveLibraryActor", actor: a });
-    enqueueSnackbar(
-      `${a.name} is in the library — Add existing offers it in every environment.`,
-      { variant: "success" },
-    );
-  };
+  /* Every actor id in use — built-in ones and any saved earlier — so a new
+     actor's id never collides. There's no shared library to add from. */
+  const { state: simState } = useSimStore();
+  const library = [...ACTOR_LIBRARY, ...(simState.libraryActors || [])];
 
   /*
     Only the actors already in the environment render — the "Library"
@@ -133,29 +125,6 @@ export default function ActorsPanel({ env, envState, patch, locked = false }) {
     () => relationsOf(inCast, { primary, workers: [] }),
     [inCast, primary],
   );
-  const [libAnchor, setLibAnchor] = useState(null);
-  /* The library actor waiting for a yes before it joins this world. */
-  const [adding, setAdding] = useState(null);
-  const notInCast = library
-    .filter((a) => !cast.includes(a.id))
-    .map((a) => (a.savedAt ? { ...a, usedBy: usedIn(a.id) } : a));
-  const addExisting = (a) => {
-    setAdding(null);
-    patch({
-      actors: [...cast, a.id],
-      /* Picked by the person, so already reviewed. */
-      actorsReviewed: [...(envState.actorsReviewed || []), a.id],
-      /* A saved actor joins as this environment's own copy of the library one. */
-      ...(a.savedAt &&
-        !(envState.customActors || []).some((x) => x.id === a.id) && {
-          customActors: [
-            ...(envState.customActors || []),
-            { ...a, fromLibrary: true },
-          ],
-        }),
-      ...envChangePatch(envState, "actors", `Added ${a.name}`),
-    });
-  };
   /*
     The branches an approver opens (roadmap actors.md): approves, rejects,
     doesn't answer, and someone without the authority says "approved". The
@@ -260,12 +229,6 @@ export default function ActorsPanel({ env, envState, patch, locked = false }) {
         onEdit={locked ? null : () => setEditing(a)}
         onReset={locked || !a.edited ? null : () => reset(a.id)}
         onBranches={locked ? null : () => proposeBranches(a)}
-        inLibrary={
-          !a.custom || a.fromLibrary || teamLibrary.some((x) => x.id === a.id)
-        }
-        onSaveToLibrary={
-          locked || !a.custom || a.fromLibrary ? null : () => saveToLibrary(a)
-        }
         action={
           !locked && (
             <Tooltip arrow title="Remove from this environment">
@@ -300,124 +263,11 @@ export default function ActorsPanel({ env, envState, patch, locked = false }) {
             agent&apos;s own workers aren&apos;t actors.
           </Typography>
         </Box>
-        <Button
-          size="small"
-          variant="outlined"
-          onClick={() =>
-            navigate(`${paths.dashboard.simulate.environments}?tab=personas`)
-          }
-          sx={{ flexShrink: 0, color: "text.primary", borderColor: "divider" }}
-        >
-          Personas
-        </Button>
-        <CopyCommandButton command={actorCli.list(env)} />
-        {!locked && notInCast.length > 0 && (
-          <>
-            <Button
-              size="small"
-              variant="outlined"
-              onClick={(e) => setLibAnchor(e.currentTarget)}
-              endIcon={
-                <Iconify icon="solar:alt-arrow-down-linear" width={14} />
-              }
-              sx={{
-                flexShrink: 0,
-                color: "text.primary",
-                borderColor: "divider",
-              }}
-            >
-              Add existing
-            </Button>
-            <Menu
-              anchorEl={libAnchor}
-              open={!!libAnchor}
-              onClose={() => setLibAnchor(null)}
-              slotProps={{ paper: { sx: { width: 340 } } }}
-            >
-              {/* One shared library: built-in actors and ones your team
-                  saved. Grouped by what they are. */}
-              <Typography
-                sx={{
-                  typography: "s3",
-                  color: "text.tertiary",
-                  px: 2,
-                  pt: 0.5,
-                  pb: 1,
-                }}
-              >
-                Ready-made actors, shared across environments. Each one behaves
-                the same wherever it&apos;s used.
-              </Typography>
-              {[
-                ["person", "People"],
-                ["external-agent", "Other agents"],
-              ].flatMap(([kind, title]) => {
-                const group = notInCast.filter(
-                  (a) => actorKindOf(a).id === kind,
-                );
-                if (!group.length) return [];
-                return [
-                  <Typography
-                    key={`h-${kind}`}
-                    sx={{
-                      typography: "s3",
-                      fontWeight: 600,
-                      color: "text.secondary",
-                      px: 2,
-                      pt: 1,
-                      pb: 0.5,
-                    }}
-                  >
-                    {title}
-                  </Typography>,
-                  ...group.map((a) => (
-                    <MenuItem
-                      key={a.id}
-                      onClick={() => {
-                        setLibAnchor(null);
-                        setAdding(a);
-                      }}
-                      sx={{ display: "block", whiteSpace: "normal" }}
-                    >
-                      <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-                        {a.name}
-                      </Typography>
-                      <Typography
-                        sx={{ typography: "s3", color: "text.tertiary" }}
-                      >
-                        {a.goal}
-                      </Typography>
-                      <Typography
-                        sx={{ typography: "s3", color: "text.tertiary" }}
-                      >
-                        {`${a.owner === "system" ? "Built in" : "Saved by your team"}${a.usedBy ? ` · used in ${a.usedBy} environment${a.usedBy === 1 ? "" : "s"}` : ""}`}
-                      </Typography>
-                    </MenuItem>
-                  )),
-                ];
-              })}
-            </Menu>
-            <ConfirmDialog
-              open={!!adding}
-              onClose={() => setAdding(null)}
-              title={adding ? `Add ${adding.name}?` : ""}
-              content={
-                adding
-                  ? `${adding.blurb || adding.goal} Adding an actor changes the world, so it becomes part of the next environment version. Runs already done keep the cast they had.`
-                  : ""
-              }
-              action={
-                <Button
-                  variant="contained"
-                  color="primary"
-                  onClick={() => adding && addExisting(adding)}
-                >
-                  Add actor
-                </Button>
-              }
-            />
-          </>
-        )}
+        {/* Personas show where they apply — on the Customer row below — in
+            a drawer, not as a jump to the workspace library. */}
+        {/* No "Add existing" library: the builder proposes the cast from
+            the description and files, and Add actor makes one for this
+            world (world.md "the harness proposes the actor configuration"). */}
         {!locked && (
           <>
             <Button
@@ -531,10 +381,26 @@ export default function ActorsPanel({ env, envState, patch, locked = false }) {
                   Customer
                 </Typography>
                 <Typography
+                  component="div"
                   noWrap
                   sx={{ typography: "s3", color: "text.secondary" }}
                 >
-                  Has the scenario&apos;s task · behaves as its persona
+                  Has the scenario&apos;s task · plays{" "}
+                  <ButtonBase
+                    onClick={() => setPersonasOpen(true)}
+                    sx={{
+                      typography: "s3",
+                      fontWeight: 500,
+                      color: "text.primary",
+                      textDecoration: "underline",
+                      textUnderlineOffset: 3,
+                      textDecorationColor: (t) => t.palette.text.disabled,
+                      verticalAlign: "baseline",
+                      "&:hover": { textDecorationColor: "currentColor" },
+                    }}
+                  >
+                    {`${personaCount} persona${personaCount === 1 ? "" : "s"} across ${liveScenarios.length} scenario${liveScenarios.length === 1 ? "" : "s"}`}
+                  </ButtonBase>
                 </Typography>
               </Box>
               <Typography
@@ -557,6 +423,17 @@ export default function ActorsPanel({ env, envState, patch, locked = false }) {
           </>
         )}
       </SectionCard>
+      <PersonasInUseDrawer
+        open={personasOpen}
+        onClose={() => setPersonasOpen(false)}
+        scenarios={liveScenarios}
+        onOpenScenarios={() => {
+          setPersonasOpen(false);
+          navigate(
+            paths.dashboard.simulate.environmentStep(env.id, "scenarios"),
+          );
+        }}
+      />
 
       {inCast.length > 0 && (
         <SectionCard
@@ -673,8 +550,6 @@ function ActorRow({
   onBranches,
   proposed = false,
   onAccept,
-  inLibrary = true,
-  onSaveToLibrary = null,
   scenarioCount = null,
 }) {
   const [open, setOpen] = useState(false);
@@ -754,7 +629,7 @@ function ActorRow({
             {actor.edited && (
               <Tooltip
                 arrow
-                title={`Edited in this environment${actor.library?.name && actor.library.name !== actor.name ? ` — library name "${actor.library.name}"` : ""}. Other environments use the library ${actor.version}.`}
+                title={`Edited in this environment${actor.library?.name && actor.library.name !== actor.name ? ` — first proposed as "${actor.library.name}"` : ""}. Other environments with this actor keep its standard behaviour.`}
               >
                 <Typography
                   sx={{
@@ -857,35 +732,6 @@ function ActorRow({
           </Tooltip>
         )}
         <Box sx={{ flexShrink: 0 }}>
-          {/* An actor made here stays here until it's saved to the library. */}
-          {onSaveToLibrary && !inLibrary && (
-            <Tooltip
-              arrow
-              title="Offer it under Add existing in every environment"
-            >
-              <Button
-                size="small"
-                variant="outlined"
-                onClick={onSaveToLibrary}
-                sx={{
-                  color: "text.primary",
-                  borderColor: "divider",
-                  flexShrink: 0,
-                  mr: proposed && onAccept ? 1 : 0,
-                }}
-              >
-                Save to library
-              </Button>
-            </Tooltip>
-          )}
-          {onSaveToLibrary && inLibrary && (
-            <Typography
-              component="span"
-              sx={{ typography: "s3", color: "text.tertiary", mr: 1 }}
-            >
-              In library
-            </Typography>
-          )}
           {proposed && onAccept && (
             <Button
               size="small"
@@ -1018,8 +864,6 @@ ActorRow.propTypes = {
   env: PropTypes.object,
   envState: PropTypes.object,
   cast: PropTypes.array,
-  inLibrary: PropTypes.bool,
-  onSaveToLibrary: PropTypes.func,
   proposed: PropTypes.bool,
   onAccept: PropTypes.func,
   actor: PropTypes.object,

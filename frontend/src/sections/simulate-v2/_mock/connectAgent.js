@@ -999,7 +999,10 @@ export const repoDetectionOf = ({ repo, folder, branch, found }) => {
         : `Model hard-coded in ${file}`,
     },
     credentialKeys: {
-      value: [...new Set(keys)],
+      value: [...new Set([...keys, ts ? "SENTRY_DSN" : "SENTRY_DSN"])],
+      /* Read with a fallback (os.getenv("SENTRY_DSN", "")) — the code runs
+         without it. Everything else is read with no default: required. */
+      optional: ["SENTRY_DSN"],
       from: `${ts ? ".env.example" : ".env.example and os.environ reads"} · names only, we never read the values`,
     },
     fagiPrompts: {

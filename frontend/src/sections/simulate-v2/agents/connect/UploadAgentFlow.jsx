@@ -58,8 +58,8 @@ export default function UploadAgentFlow({ title, onSave, initial = null }) {
 
   /* What the upload's code reads, from its entry file — names only. */
   const file = entry.trim().split(":")[0];
-  const expectedNames = useMemo(() => {
-    if (!files.length || !file) return [];
+  const detectedKeys = useMemo(() => {
+    if (!files.length || !file) return { value: [], optional: [] };
     const folder = file.includes("/") ? file.replace(/\/[^/]*$/, "") : ".";
     const language = /\.(ts|tsx|js|mjs)$/.test(file) ? "TypeScript" : "Python";
     return repoDetectionOf({
@@ -67,9 +67,11 @@ export default function UploadAgentFlow({ title, onSave, initial = null }) {
       folder,
       branch: "upload",
       found: null,
-    }).credentialKeys.value;
+    }).credentialKeys;
   }, [files, file]);
 
+  const expectedNames = detectedKeys.value || [];
+  const optionalNames = detectedKeys.optional || [];
   const ready = files.length > 0 && !!entry.trim();
   const preflight = usePreflight(
     [
@@ -84,6 +86,11 @@ export default function UploadAgentFlow({ title, onSave, initial = null }) {
       }),
       ...expectedNames
         .filter((n) => /KEY|TOKEN|SECRET|PASSWORD|DSN/i.test(n))
+        /* Optional keys (read with a default) only once they're set. */
+        .filter(
+          (n) =>
+            !optionalNames.includes(n) || envValues.some((v) => v.name === n),
+        )
         .map((n) =>
           credentialCheck({
             id: `env:${n}`,
@@ -289,6 +296,7 @@ export default function UploadAgentFlow({ title, onSave, initial = null }) {
             files={credFiles}
             onFiles={setCredFiles}
             expectedNames={expectedNames}
+            optionalNames={optionalNames}
             egress={egressText}
             onEgress={setEgressText}
           />

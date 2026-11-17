@@ -128,8 +128,16 @@ export default function GithubRepoPicker({
             spacing={0.75}
             sx={{ mb: 0.5 }}
           >
+            {/* Every form that picks a repository needs one. */}
             <Typography sx={{ typography: "s3", fontWeight: 600 }}>
               Repository
+              <Box
+                component="span"
+                aria-label="required"
+                sx={{ color: "error.main", ml: 0.5 }}
+              >
+                *
+              </Box>
             </Typography>
             <Typography
               sx={{ typography: "s3", color: "text.subtitle" }}

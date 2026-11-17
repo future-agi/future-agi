@@ -1,3 +1,4 @@
+import { readDesignFiles } from "../../_mock/designSources";
 import PropTypes from "prop-types";
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
@@ -18,6 +19,7 @@ import {
   readFile,
   sourceFromOrg,
   ROLES,
+  normalizeRole,
   VISIBILITY,
   roleLabel,
   visibilityLabel,
@@ -110,8 +112,9 @@ export default function SourcesSection({
   /* Before the first build, files join the design under review instead of
      proposing a next version. */
   const designing = env.buildStatus === "awaiting_approval";
-  const addFiles = (files) => {
-    const read = files.map(readFile);
+  const addFiles = async (files) => {
+    /* Text files are read for their words, not guessed from their name. */
+    const read = (await readDesignFiles(files)).map(readFile);
     patch({ sources: [...(envState.sources || []), ...read] });
     const usable = read.filter((s) => s.status !== "unsupported");
     if (usable.length && !designing) setReview(usable.map((s) => s.id));
@@ -226,7 +229,7 @@ export default function SourcesSection({
             {[
               "Source",
               "Type",
-              "Role",
+              "Used as",
               "Who reads it",
               "State",
               "Version",
@@ -304,7 +307,10 @@ export default function SourcesSection({
                   </Typography>
                   <Tooltip
                     arrow
-                    title={ROLES.find((r) => r.id === s.role)?.note || ""}
+                    title={
+                      ROLES.find((r) => r.id === normalizeRole(s.role))?.note ||
+                      ""
+                    }
                   >
                     <Typography noWrap sx={{ typography: "s2" }}>
                       {s.role ? roleLabel(s.role) : "—"}
@@ -485,7 +491,7 @@ export default function SourcesSection({
                     ([k, label]) =>
                       `${label}: ${views[k].length ? views[k].map((v) => `${v.source.name} (${v.how.toLowerCase()})`).join(", ") : "none"}`,
                   ),
-                  "From each file's Who reads it — set by its role, changeable on the file.",
+                  "From each file's Who reads it — set by how it's used, changeable on the file.",
                 ].join("\n")}
                 componentsProps={{
                   tooltip: { sx: { whiteSpace: "pre-line" } },

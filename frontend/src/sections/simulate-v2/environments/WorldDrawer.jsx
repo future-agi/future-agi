@@ -23,11 +23,17 @@ import {
   soon, Withdrawn) says why and can't be started; a retired release can
   still be used, with a notice.
 */
-export default function WorldDrawer({ world, onClose, onOpenWorld }) {
-  const [tab, setTab] = useState("world");
+export default function WorldDrawer({
+  world,
+  onClose,
+  onOpenWorld,
+  /* Opened from a card's action: "start" (Use with my agent) or "customize". */
+  initialTab = "world",
+}) {
+  const [tab, setTab] = useState(initialTab);
   /* Access asked for, by world — the request goes to the owner named on it. */
   const [asked, setAsked] = useState({});
-  useEffect(() => setTab("world"), [world?.id]);
+  useEffect(() => setTab(initialTab), [world?.id, initialTab]);
   const entry = world?.entry || null;
   const blocked = adoptBlockOf(entry);
   const replacement = entry?.release?.replacement
@@ -181,6 +187,8 @@ export default function WorldDrawer({ world, onClose, onOpenWorld }) {
           >
             <Tab value="world" label="World" />
             <Tab value="start" label="Use with my agent" />
+            {/* builder.md "Customize a ready environment": a private copy. */}
+            <Tab value="customize" label="Customize" />
             {/* rl.md step 1: a trainer starts from the catalogue. */}
             {entry && <Tab value="rl" label="RL access" />}
             {/* T26: a public benchmark proves its scores match its own grader. */}
@@ -192,6 +200,15 @@ export default function WorldDrawer({ world, onClose, onOpenWorld }) {
             {tab === "world" && <WorldPreview world={world} />}
             {tab === "rl" && <WorldRlAccess world={world} />}
             {tab === "parity" && <WorldParity entry={entry} />}
+            {tab === "customize" && (
+              <TemplateBuildPanel
+                key={`${world.id}-customize`}
+                mode="customize"
+                template={world.template}
+                entry={entry}
+                blocked={blocked}
+              />
+            )}
             {tab === "start" && (
               <TemplateBuildPanel
                 key={world.id}
@@ -238,4 +255,5 @@ WorldDrawer.propTypes = {
   onClose: PropTypes.func.isRequired,
   /* Open another catalogue task (a withdrawn task's replacement). */
   onOpenWorld: PropTypes.func,
+  initialTab: PropTypes.oneOf(["world", "start", "customize", "rl", "parity"]),
 };

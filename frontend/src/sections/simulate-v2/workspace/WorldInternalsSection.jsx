@@ -54,7 +54,6 @@ import { SecretRefText } from "./SecretRefControls";
 import { useSimStore } from "../store";
 import { clickable, focusRing } from "../components/clickable";
 import ToolTryPanel from "./ToolTryPanel";
-import CopyCommandButton from "../components/CopyCommandButton";
 import useVersionChange from "./useVersionChange";
 
 /**
@@ -444,9 +443,6 @@ function ToolImplsCard({ env, tools, envState, patch, onAddMcp, onRemove }) {
       }
       action={
         <Stack direction="row" spacing={1} alignItems="center">
-          <CopyCommandButton
-            command={`fi api tool list --environment ${env?.id || "<env>"}`}
-          />
           {patch && onAddMcp && (
             <Button
               size="small"

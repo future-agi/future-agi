@@ -12,6 +12,7 @@ import { detectedRequestOf } from "./connect/detectedRequest";
 import { useSaveConnectedAgent } from "./connect/useSaveConnectedAgent";
 import { TextLink } from "./connect/connectBits";
 import { ConnectSubmitContext, CONNECT_LABEL } from "./connect/connectSubmit";
+import { holdBuild } from "../_mock/pendingBuildFiles";
 
 /* Only a path inside the app — never another site. */
 const safeReturn = (url) =>
@@ -100,8 +101,11 @@ export default function ConnectAgentPage() {
 
   const saveAgent = useSaveConnectedAgent();
   const onConnect = useCallback(
-    (source) => {
+    (rawSource) => {
+      /* Files ride to the build it starts, not onto the agent record. */
+      const { buildFiles, buildRequest, ...source } = rawSource;
       const { id, exists } = saveAgent(source);
+      if (returnTo) holdBuild(id, { files: buildFiles, request: buildRequest });
       if (returnTo) {
         /* Back to build an environment: the scenario count asked on the form comes too. */
         const to = returnTo.replace("{agent}", encodeURIComponent(id));

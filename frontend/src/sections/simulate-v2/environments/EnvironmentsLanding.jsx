@@ -14,13 +14,14 @@ import { newAgentChoicesFor } from "../agents/connect/agentConnectData";
 import ConnectCatalog from "../agents/connect/ConnectCatalog";
 import { SectionHead, WorldCard } from "./LandingBits";
 import { OUTLINE_BTN, focusRing } from "./landingStyles";
+import { clickable } from "../components/clickable";
 import WorldDrawer from "./WorldDrawer";
 import ImageWorldDrawer from "./ImageWorldDrawer";
 import SaasSandboxRow from "./SaasSandbox";
 import { ConnectSubmitContext } from "../agents/connect/connectSubmit";
 import { useSaveConnectedAgent } from "../agents/connect/useSaveConnectedAgent";
-import { clickable } from "../components/clickable";
 import { YourAgentsSection } from "./AgentChoice";
+import { holdBuild } from "../_mock/pendingBuildFiles";
 
 /*
   The Environments landing screen — every way in, in the order people reach
@@ -96,7 +97,10 @@ export default function EnvironmentsLanding({
     });
   };
   const onConnected = (source) => {
-    const { id } = saveAgent(source);
+    /* Files ride to the build, not onto the agent record. */
+    const { buildFiles, buildRequest, ...agent } = source;
+    const { id } = saveAgent(agent);
+    holdBuild(id, { files: buildFiles, request: buildRequest });
     onAgentConnected?.(id, source.scenarioCount);
   };
   /* Prebuilt worlds sit where the ready-made examples were. */
@@ -134,17 +138,15 @@ export default function EnvironmentsLanding({
           >
             Build from code
           </Typography>
-          <Typography
-            sx={{ fontSize: 13, lineHeight: "20px", color: "text.tertiary" }}
-          >
+          <Typography sx={{ typography: "s1", color: "text.secondary" }}>
             Use the CLI, Python or your coding agent. Environments you build
             this way show up here, managed in code.
           </Typography>
         </Box>
         <Button
           size="small"
-          variant="contained"
-          color="primary"
+          variant="outlined"
+          sx={OUTLINE_BTN}
           onClick={() =>
             onPick("local", null, "landing", "local", {
               name: "From code",
@@ -184,9 +186,7 @@ export default function EnvironmentsLanding({
           >
             From your container image
           </Typography>
-          <Typography
-            sx={{ fontSize: 13, lineHeight: "20px", color: "text.tertiary" }}
-          >
+          <Typography sx={{ typography: "s1", color: "text.secondary" }}>
             A pinned image on a supported runtime. We inspect it, you review
             what we found, and it becomes a private world.
           </Typography>
@@ -312,7 +312,7 @@ function ConnectSection({
     <Box ref={sectionRef} sx={{ scrollMarginTop: 16 }}>
       <SectionHead
         title="Connect your agent"
-        subtitle="Pick where it runs today — it joins Agents, then you build its environment here."
+        subtitle="Connect it where it runs, or upload its code — it joins Agents, then you build its environment here."
       />
       <ConnectCatalog
         groups={groups}
@@ -373,11 +373,13 @@ function PrebuiltSection({ sectionRef, onBrowse }) {
     return [...firsts, ...open.filter((w) => !firsts.includes(w))].slice(0, 3);
   }, [worlds]);
   const [open, setOpen] = useState(null);
+  /* Which drawer tab a card opened: the world, Use with my agent or Customize. */
+  const [openTab, setOpenTab] = useState("world");
   return (
     <Box ref={sectionRef} sx={{ scrollMarginTop: 16 }}>
       <SectionHead
-        title="Use a prebuilt world"
-        subtitle="Tables, tools and rules, as designed. Use one with your agent."
+        title="Start from a ready environment"
+        subtitle="Tables, tools, rules and scenarios, ready made. Use one with your agent, or customize a copy."
         action={
           <Button
             size="small"
@@ -404,7 +406,11 @@ function PrebuiltSection({ sectionRef, onBrowse }) {
           <WorldCard
             key={w.id}
             world={w}
-            onOpen={setOpen}
+            onOpen={(world, tab) => {
+              setOpenTab(tab || "world");
+              setOpen(world);
+            }}
+            actions
             selected={open?.id === w.id}
           />
         ))}
@@ -413,7 +419,11 @@ function PrebuiltSection({ sectionRef, onBrowse }) {
       <Box sx={{ mt: 1.5 }}>
         <SaasSandboxRow />
       </Box>
-      <WorldDrawer world={open} onClose={() => setOpen(null)} />
+      <WorldDrawer
+        world={open}
+        initialTab={openTab}
+        onClose={() => setOpen(null)}
+      />
     </Box>
   );
 }

@@ -186,7 +186,9 @@ export default function PhoneAgentFlow({ title, onSave, initial = null }) {
         </Box>
 
         <Box>
-          <Label>{outbound ? "Number it calls from" : "Number to call"}</Label>
+          <Label required>
+            {outbound ? "Number it calls from" : "Number to call"}
+          </Label>
           <Stack direction="row" spacing={1} sx={{ mt: 0.75 }}>
             <Select
               size="small"
