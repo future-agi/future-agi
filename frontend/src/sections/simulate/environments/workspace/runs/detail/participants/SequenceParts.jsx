@@ -64,7 +64,12 @@ export function Toggle({ on, onClick, children, disabled }) {
           : { bgcolor: on ? "action.selected" : "action.hover" },
       }}
     >
-      {on && <Iconify icon="solar:check-read-linear" width={14} />}
+      {/* The tick keeps its space when off, so the button never changes width on click. */}
+      <Iconify
+        icon="solar:check-read-linear"
+        width={14}
+        sx={{ visibility: on ? "visible" : "hidden" }}
+      />
       {children}
     </Box>
   );
