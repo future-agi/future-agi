@@ -51687,6 +51687,123 @@
             },
             "parameters": []
         },
+        "/simulate/api/certification-campaigns/": {
+            "get": {
+                "operationId": "simulate_api_certification-campaigns_list",
+                "summary": "Production certification campaign admission/read/cancel.",
+                "description": "A campaign orchestrates ordinary hosted harness jobs against deployed\nproduction agents; creation is idempotent on\n(organization, deployment_id, suite_digest) and returns the existing\ncampaign on retries.",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": ""
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ]
+            },
+            "post": {
+                "operationId": "simulate_api_certification-campaigns_create",
+                "summary": "Production certification campaign admission/read/cancel.",
+                "description": "A campaign orchestrates ordinary hosted harness jobs against deployed\nproduction agents; creation is idempotent on\n(organization, deployment_id, suite_digest) and returns the existing\ncampaign on retries.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/CertificationCampaignCreate"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/CertificationCampaignRead"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
+        "/simulate/api/certification-campaigns/{id}/": {
+            "get": {
+                "operationId": "simulate_api_certification-campaigns_read",
+                "summary": "Production certification campaign admission/read/cancel.",
+                "description": "A campaign orchestrates ordinary hosted harness jobs against deployed\nproduction agents; creation is idempotent on\n(organization, deployment_id, suite_digest) and returns the existing\ncampaign on retries.",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": ""
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ]
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/certification-campaigns/{id}/cancel/": {
+            "post": {
+                "operationId": "simulate_api_certification-campaigns_cancel",
+                "summary": "Production certification campaign admission/read/cancel.",
+                "description": "A campaign orchestrates ordinary hosted harness jobs against deployed\nproduction agents; creation is idempotent on\n(organization, deployment_id, suite_digest) and returns the existing\ncampaign on retries.",
+                "parameters": [],
+                "responses": {
+                    "201": {
+                        "description": ""
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ]
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/simulate/api/harness-environments/": {
             "get": {
                 "operationId": "simulate_api_harness-environments_list",
@@ -140857,6 +140974,225 @@
                 }
             }
         },
+        "CertificationCampaignCreate": {
+            "required": [
+                "deployment_id"
+            ],
+            "type": "object",
+            "properties": {
+                "deployment_id": {
+                    "title": "Deployment id",
+                    "type": "string",
+                    "maxLength": 128,
+                    "minLength": 1
+                },
+                "deployment_identity": {
+                    "title": "Deployment identity",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "x-nullable": true
+                    },
+                    "default": {}
+                },
+                "suite_key": {
+                    "title": "Suite key",
+                    "type": "string",
+                    "default": "production_agents_v1",
+                    "maxLength": 64,
+                    "minLength": 1
+                },
+                "tier": {
+                    "title": "Tier",
+                    "type": "string",
+                    "enum": [
+                        "quick",
+                        "full"
+                    ],
+                    "default": "full"
+                }
+            }
+        },
+        "CertificationCaseRead": {
+            "required": [
+                "id",
+                "case_key",
+                "sequence",
+                "state",
+                "failure_class",
+                "hosted_harness_job_id",
+                "run_job_id",
+                "reconciliation",
+                "started_at",
+                "finished_at"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "case_key": {
+                    "title": "Case key",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "sequence": {
+                    "title": "Sequence",
+                    "type": "integer"
+                },
+                "state": {
+                    "title": "State",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "failure_class": {
+                    "title": "Failure class",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "hosted_harness_job_id": {
+                    "title": "Hosted harness job id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "run_job_id": {
+                    "title": "Run job id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "reconciliation": {
+                    "title": "Reconciliation",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "x-nullable": true
+                    },
+                    "x-nullable": true
+                },
+                "started_at": {
+                    "title": "Started at",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                },
+                "finished_at": {
+                    "title": "Finished at",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                }
+            }
+        },
+        "CertificationCampaignRead": {
+            "required": [
+                "id",
+                "state",
+                "suite_key",
+                "suite_digest",
+                "deployment_id",
+                "deployment_identity",
+                "cases_total",
+                "cases_completed",
+                "cases_failed",
+                "result",
+                "created_at",
+                "started_at",
+                "finished_at",
+                "cancel_requested_at",
+                "cases"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "state": {
+                    "title": "State",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "suite_key": {
+                    "title": "Suite key",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "suite_digest": {
+                    "title": "Suite digest",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "deployment_id": {
+                    "title": "Deployment id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "deployment_identity": {
+                    "title": "Deployment identity",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "x-nullable": true
+                    }
+                },
+                "cases_total": {
+                    "title": "Cases total",
+                    "type": "integer"
+                },
+                "cases_completed": {
+                    "title": "Cases completed",
+                    "type": "integer"
+                },
+                "cases_failed": {
+                    "title": "Cases failed",
+                    "type": "integer"
+                },
+                "result": {
+                    "title": "Result",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "x-nullable": true
+                    },
+                    "x-nullable": true
+                },
+                "created_at": {
+                    "title": "Created at",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "started_at": {
+                    "title": "Started at",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                },
+                "finished_at": {
+                    "title": "Finished at",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                },
+                "cancel_requested_at": {
+                    "title": "Cancel requested at",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                },
+                "cases": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/CertificationCaseRead"
+                    }
+                }
+            }
+        },
         "HarnessEnvironment": {
             "required": [
                 "id",
@@ -145972,6 +146308,13 @@
                         "private"
                     ],
                     "default": "public"
+                },
+                "path": {
+                    "title": "Path",
+                    "type": "string",
+                    "maxLength": 1024,
+                    "minLength": 1,
+                    "x-nullable": true
                 },
                 "environment_values": {
                     "title": "Environment values",
