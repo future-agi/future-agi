@@ -972,8 +972,17 @@ export const observeFilterJourneys = [
         typeof codeExample === "string",
         "User code example response must unwrap to a string.",
       );
+      const projectNameLines = codeExample
+        .split("\n")
+        .filter((line) => line.trimStart().startsWith("project_name="));
       assert(
-        codeExample.includes(`project_name="${project.name}"`),
+        projectNameLines.length === 1 &&
+          decodePythonStringLiteral(
+            projectNameLines[0]
+              .trim()
+              .replace(/^project_name=/, "")
+              .replace(/,$/, ""),
+          ) === project.name,
         "User code example did not include the scoped observe project name.",
       );
       assert(
@@ -7883,6 +7892,29 @@ function assertSortedObserveProjectNames(projects, direction) {
     JSON.stringify(names) === JSON.stringify(sorted),
     `Observe projects were not sorted by name ${direction}.`,
   );
+}
+
+// The Users setup example spells project_name as a double-quoted Python
+// literal: JSON escapes plus Python's \xNN / \uNNNN / \UNNNNNNNN for
+// non-ASCII characters. Rewrite the Python-only escapes as JSON escapes and
+// parse the result; the backslash-pair alternative keeps "\\x41" literal.
+function decodePythonStringLiteral(literal) {
+  const json = literal.replace(
+    /\\(?:x([0-9a-fA-F]{2})|U([0-9a-fA-F]{8})|[\s\S])/g,
+    (match, hex, wide) => {
+      if (hex) return `\\u00${hex}`;
+      if (wide) {
+        return String.fromCodePoint(parseInt(wide, 16))
+          .split("")
+          .map(
+            (unit) => `\\u${unit.charCodeAt(0).toString(16).padStart(4, "0")}`,
+          )
+          .join("");
+      }
+      return match;
+    },
+  );
+  return JSON.parse(json);
 }
 
 function assertObserveSdkCodeUsesPlaceholders(payload) {

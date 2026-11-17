@@ -362,6 +362,19 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         """Keep explicit non-native sources out of name-based session routing."""
         return [item for item in self.filters if not self._is_non_native_filter(item)]
 
+    # Session filters answered by the child-aware member usage roll-up.
+    SESSION_USAGE_FILTER_COLUMNS = frozenset({"total_cost", "total_tokens"})
+
+    @classmethod
+    def filters_need_session_usage(cls, filters: list[dict[str, Any]]) -> bool:
+        """True when a native filter reads the session's usage totals."""
+        return any(
+            not cls._is_non_native_filter(item)
+            and (item.get("column_id") or item.get("columnId"))
+            in cls.SESSION_USAGE_FILTER_COLUMNS
+            for item in filters
+        )
+
     @classmethod
     def bounded_datetime_exclusion_sql(
         cls,
@@ -3175,7 +3188,9 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         identity_names = self._physical_identity_names_sql()
         group_by = self._physical_group_by_sql()
         resolved_session = resolved_id_expr("latest_trace_session_id", "member_remap")
-        coverage = usage_coverage_sql(attrs=self._COST_ATTRIBUTE_MAP, include_summary=True)
+        coverage = usage_coverage_sql(
+            attrs=self._COST_ATTRIBUTE_MAP, include_summary=True
+        )
         message_length = (
             f", argMax(tuple({self._INPUT_LENGTH_SQL}), _peerdb_version).1 AS latest_input_length"
             if include_messages
@@ -3201,6 +3216,11 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                     message_rank < 3) AS trace_message_key"""
             if include_messages
             else ""
+        )
+        member_trace_usage = self._member_trace_usage_select(
+            "session_members",
+            include_messages=include_messages,
+            message_aggregates=message_aggregates,
         )
         return f"""
         member_session_scope AS (
@@ -3266,7 +3286,25 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                   SELECT project_id, session_id FROM member_session_scope
               )
         ),
-        member_trace_usage AS (
+        member_trace_usage AS ({member_trace_usage})
+        """
+
+    @staticmethod
+    def _member_trace_usage_select(
+        source: str,
+        *,
+        include_messages: bool = False,
+        message_aggregates: str = "",
+    ) -> str:
+        """Reduce latest live member spans to one usage row per session trace.
+
+        ``source`` projects project_id, member_session_id, trace_id and the
+        ``latest_`` usage columns, coverage tuple and source-summary witness.
+        The list replays them from storage; sampling reads them from its frozen
+        snapshot. Sharing this reducer keeps wrapper summaries, nonadditive
+        spans and unknown cost identical on both paths.
+        """
+        return f"""
             SELECT project_id, member_session_id, trace_id,
                 usage_metrics.1 AS usage_cost_unknown,
                 usage_metrics.2 AS usage_cost,
@@ -3280,12 +3318,21 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                 SELECT project_id, member_session_id, trace_id,
                     {usage_aggregate_sql(prefix="latest_", coverage="latest_usage_coverage", source_summary="latest_source_summary_present", materialized=True)}
                     {message_aggregates}
-                FROM session_members
+                FROM {source}
                 GROUP BY project_id, member_session_id, trace_id
             ) AS member_trace_usage_state
             ARRAY JOIN trace_usage_metrics AS usage_metrics
-        )
         """
+
+    @staticmethod
+    def _session_usage_rollup_select(source: str, *, session_alias: str) -> str:
+        """Session usage from per-trace rows: unknown cost in any trace is NULL."""
+        return f"""SELECT project_id, member_session_id AS {session_alias},
+                    if(countIf(isNull(usage_cost)) > 0,
+                       CAST(NULL, 'Nullable(Float64)'), sum(usage_cost)) AS session_usage_cost,
+                    sum(usage_total_tokens) AS session_usage_tokens
+                FROM {source}
+                GROUP BY project_id, member_session_id"""
 
     def build_page_hydration_query(
         self, session_ids: list[str]
@@ -3674,10 +3721,22 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             scope_usage_to_request_window=created_at_floor is None,
         )
 
+        # Usage totals always mean the list's child-aware roll-up. Sampling
+        # reads nothing else from this statement, so without a usage filter it
+        # skips the roll-up (and its extra snapshot read) instead of projecting
+        # totals no predicate uses.
+        aggregates = (
+            "min(start_time) AS session_start, max(end_time) AS session_end, "
+            "dateDiff('second', min(start_time), max(end_time)) AS duration, "
+            "uniqExact(trace_id) AS traces_count"
+            if self.TABLE == "sampling_source"
+            and not self.filters_need_session_usage(self.filters)
+            else self._AGGREGATE_SELECT
+        )
         query = f"""
         SELECT
             trace_session_id AS session_id,
-            {self._AGGREGATE_SELECT}
+            {aggregates}
             {message_select}
         {from_where}
         GROUP BY trace_session_id
@@ -4154,12 +4213,51 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             c for c in (resolved_session_clause, user_membership_clause) if c
         ]
         where_clause = f"WHERE {' AND '.join(outer_clauses)}" if outer_clauses else ""
+        # Sampling supplies an already deduplicated CTE, not a MergeTree table.
+        # ClickHouse rejects FINAL on that CTE; ordinary session reads keep FINAL.
+        table_source = (
+            self.TABLE if self.TABLE == "sampling_source" else f"{self.TABLE} FINAL"
+        )
+        if self.TABLE == "sampling_source":
+            # The canonical sampling CTE already freezes one winner per span.
+            # The list's physical member replay recursively inlines that CTE
+            # through its scope/witness joins, exhausting bounded sampling reads.
+            # Roots come from one bounded scan of the snapshot. Only a usage
+            # filter adds the member roll-up, from one more snapshot read.
+            remap = remap_left_join(
+                "rs.trace_session_id", "trace_session_id_remap", "ts_remap"
+            )
+            roots_from = f"""FROM (SELECT {", ".join(scan_cols)} FROM {self.TABLE} {base_predicates}) AS rs
+                {remap}"""
+            if not (include_usage and self.filters_need_session_usage(self.filters)):
+                return f"""FROM (
+                SELECT {", ".join(outer_select)}
+                {roots_from}
+            ) {where_clause}"""
+            usage = self._snapshot_session_usage_select(
+                params, scope_usage_to_request_window=scope_usage_to_request_window
+            )
+            # Join on the snapshot's own canonical session id: the members
+            # carry exactly that id, whatever the survivor map resolves.
+            return f"""FROM (
+                SELECT roots.*,
+                    snapshot_usage.session_usage_cost AS session_usage_cost,
+                    snapshot_usage.session_usage_tokens AS session_usage_tokens
+                FROM (
+                    SELECT {", ".join(outer_select)},
+                        rs.trace_session_id AS snapshot_session_id
+                    {roots_from}
+                ) AS roots
+                LEFT JOIN ({usage}) AS snapshot_usage
+                    ON roots.project_id = snapshot_usage.project_id
+                    AND roots.snapshot_session_id = snapshot_usage.snapshot_session_id
+            ) {where_clause}"""
         if not include_usage:
             return f"""FROM (
                 SELECT {", ".join(outer_select)}
                 FROM (
                     SELECT {", ".join(scan_cols)}
-                    FROM {self.TABLE} FINAL
+                    FROM {table_source}
                     {base_predicates}
                 ) AS rs
                 {remap_left_join("rs.trace_session_id", "trace_session_id_remap", "ts_remap")}
@@ -4182,7 +4280,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                 SELECT {", ".join(outer_select)}
                 FROM (
                     SELECT {", ".join(scan_cols)}
-                    FROM {self.TABLE} FINAL
+                    FROM {table_source}
                     {base_predicates}
                 ) AS rs
                 LEFT JOIN ts_survivor_map AS ts_remap
@@ -4195,18 +4293,64 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             ),
             {member_ctes},
             legacy_usage AS (
-                SELECT project_id, member_session_id AS trace_session_id,
-                    if(countIf(isNull(usage_cost)) > 0,
-                       CAST(NULL, 'Nullable(Float64)'), sum(usage_cost)) AS session_usage_cost,
-                    sum(usage_total_tokens) AS session_usage_tokens
-                FROM member_trace_usage
-                GROUP BY project_id, member_session_id
+                {self._session_usage_rollup_select("member_trace_usage", session_alias="trace_session_id")}
             )
             SELECT roots.*, session_usage_cost, session_usage_tokens
             FROM legacy_roots AS roots
             LEFT JOIN legacy_usage USING (project_id, trace_session_id)
             {where_clause}
         )"""
+
+    def _snapshot_session_usage_select(
+        self, params: dict[str, Any], *, scope_usage_to_request_window: bool
+    ) -> str:
+        """The list's child-aware session usage, over the sampling snapshot.
+
+        The snapshot already holds one latest, live, canonical row per span,
+        so no physical replay is needed: every member span in the request
+        window is read with ONE more snapshot reference (no semi-join back to
+        the roots, which would inline the snapshot again), then reduced by the
+        list's own per-trace reducer and session roll-up. Usage therefore
+        includes child spans, drops wrapper summaries equal to their LLM calls
+        and nonadditive spans, and is NULL when any trace's cost is unknown.
+        """
+        time_scope = ""
+        if scope_usage_to_request_window:
+            time_scope = (
+                "\n                  AND start_time >= fromUnixTimestamp64Micro(%(start_date_us)s, 'UTC')"
+                "\n                  AND start_time < fromUnixTimestamp64Micro(%(end_date_us)s, 'UTC')"
+            )
+            exclusion, exclusion_params = self.bounded_datetime_exclusion_sql(
+                self.filters,
+                column="start_time",
+                param_prefix="session_snapshot_member_time",
+            )
+            params.update(exclusion_params)
+            if exclusion:
+                time_scope += f"\n                  AND {exclusion}"
+        attrs = self._COST_ATTRIBUTE_MAP
+        members = f"""(
+                SELECT project_id, trace_session_id AS member_session_id, trace_id,
+                    id AS latest_id,
+                    parent_span_id AS latest_parent_span_id,
+                    name AS latest_name,
+                    observation_type AS latest_observation_type,
+                    ifNull(prompt_tokens, 0) AS latest_prompt_tokens,
+                    ifNull(completion_tokens, 0) AS latest_completion_tokens,
+                    ifNull(cost, 0) AS latest_cost,
+                    ifNull(total_tokens, 0) AS latest_total_tokens,
+                    {usage_coverage_sql(attrs=attrs, include_summary=True)} AS latest_usage_coverage,
+                    {source_summary_sql(attrs=attrs)} AS latest_source_summary_present
+                FROM {self.TABLE}
+                {self.project_where()}
+                  AND trace_session_id IS NOT NULL
+                  AND trace_session_id != toUUID('{NIL_UUID}'){time_scope}
+            ) AS snapshot_members"""
+        trace_usage = self._member_trace_usage_select(members)
+        return self._session_usage_rollup_select(
+            f"({trace_usage}) AS snapshot_trace_usage",
+            session_alias="snapshot_session_id",
+        )
 
     def _build_having_clauses(self, *, params: dict[str, Any] | None = None) -> str:
         """Build HAVING clause fragments for aggregate-level filters."""

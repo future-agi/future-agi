@@ -289,6 +289,51 @@ class TestAgentccProviderCredentialOrganizationIsolation:
         # PUT goes through partial_update, so it pushes to the gateway too.
         assert mock_push.call_count == 1
 
+    @pytest.mark.parametrize("method", ["put", "patch"])
+    def test_update_other_org_credential_returns_404_without_writes_or_gateway_push(
+        self, user, secondary_org_client, method
+    ):
+        original = CredentialManager.encrypt({"api_key": "sk-synthetic-unchanged"})
+        cred = AgentccProviderCredential.no_workspace_objects.create(
+            organization=user.organization,
+            provider_name="openai",
+            display_name="Unchanged",
+            encrypted_credentials=original,
+            api_format="openai",
+        )
+        with patch(
+            "agentcc.views.provider_credential.AgentccProviderCredentialViewSet._push_config_to_gateway"
+        ) as mock_push:
+            response = getattr(secondary_org_client, method)(
+                f"/agentcc/provider-credentials/{cred.id}/",
+                {"display_name": "Not allowed"},
+                format="json",
+            )
+
+        cred.refresh_from_db()
+        assert cred.display_name == "Unchanged"
+        assert bytes(cred.encrypted_credentials) == bytes(original)
+        mock_push.assert_not_called()
+        assert response.status_code == 404, response.json()
+
+    @pytest.mark.parametrize("method", ["put", "patch"])
+    def test_update_missing_credential_returns_404_without_gateway_push(
+        self, secondary_org_client, method
+    ):
+        from uuid import uuid4
+
+        with patch(
+            "agentcc.views.provider_credential.AgentccProviderCredentialViewSet._push_config_to_gateway"
+        ) as mock_push:
+            response = getattr(secondary_org_client, method)(
+                f"/agentcc/provider-credentials/{uuid4()}/",
+                {"display_name": "Missing"},
+                format="json",
+            )
+
+        mock_push.assert_not_called()
+        assert response.status_code == 404, response.json()
+
     def test_patch_updates_single_field_leaving_others_intact(
         self, secondary_org_context, secondary_org_client
     ):
@@ -419,9 +464,7 @@ class TestAgentccProviderCredentialOrganizationIsolation:
             f"/agentcc/provider-credentials/{credential.id}/"
         )
         assert read_response.status_code == 200, read_response.json()
-        assert read_response.json()["result"]["extra_config"] == {
-            "api_path_prefix": ""
-        }
+        assert read_response.json()["result"]["extra_config"] == {"api_path_prefix": ""}
 
         with patch(
             "agentcc.views.provider_credential.AgentccProviderCredentialViewSet._push_config_to_gateway",

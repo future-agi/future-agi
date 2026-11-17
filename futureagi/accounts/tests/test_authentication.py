@@ -17,6 +17,13 @@ from rest_framework import status
 from accounts.authentication import generate_encrypted_message
 from accounts.models.auth_token import AuthToken, AuthTokenType
 
+
+def _wrapped_timeout():
+    error = ConnectionInterrupted(connection=None)
+    error.__cause__ = RedisTimeoutError("Timeout reading from socket")
+    return error
+
+
 AUTH_REQUIRED_STATUS_CODES = (
     status.HTTP_401_UNAUTHORIZED,
     status.HTTP_403_FORBIDDEN,
@@ -268,12 +275,14 @@ class TestAuthenticatedEndpoints:
         "error",
         [
             RedisTimeoutError("Timeout reading from socket"),
-            ConnectionInterrupted(connection=None),
+            _wrapped_timeout(),
         ],
         ids=["redis", "django_redis"],
     )
-    def test_token_store_timeout_is_503_not_401(self, api_client, user, error):
-        """A cache that times out says nothing about the token: retry, not log in again."""
+    def test_token_store_timeout_authenticates_when_database_confirms_token(
+        self, api_client, user, error
+    ):
+        """Cache transport failure does not invalidate a DB-confirmed session."""
         access_token = api_client.post(
             "/accounts/token/",
             {"email": user.email, "password": "testpassword123"},
@@ -285,5 +294,8 @@ class TestAuthenticatedEndpoints:
             token_store.get.side_effect = error
             response = api_client.get("/accounts/user-info/")
 
-        assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
-        assert response.json()["code"] == "service_unavailable"
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["email"] == user.email
+        token_store.get.assert_called_once()
+        token_store.set.assert_not_called()
+        token_store.delete.assert_not_called()
