@@ -983,6 +983,12 @@ class TestTestExecutionRerunView:
         turns, left_behind = _snapshot_actor_turns(call_execution)
         assert turns == [("actor", "Rowan", "friend")]
         assert not left_behind
+        # The bulk path keeps the closed attempt's record on the call too, by its snapshot's id.
+        from simulate.services.harness_worker_states import ATTEMPTS_KEY
+
+        call_execution.refresh_from_db()
+        snapshot = CallExecutionSnapshot.objects.get(call_execution=call_execution)
+        assert list(call_execution.call_metadata[ATTEMPTS_KEY]) == [str(snapshot.id)]
 
     def test_rerun_missing_params(self, auth_client, run_test):
         """Test rerun with neither select_all nor test_execution_ids."""

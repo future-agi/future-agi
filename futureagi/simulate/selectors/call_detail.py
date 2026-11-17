@@ -17,7 +17,7 @@ from simulate.services.harness_actor_labels import (
     FallbackView,
     fallback_of,
 )
-from simulate.services.harness_worker_states import stopped_workers_of
+from simulate.services.harness_worker_states import attempt_metadata, stopped_workers_of
 from simulate.services.hosted_harness_ingestion import (
     UPLOAD_BUCKET_NAME,
     get_object_url,
@@ -1139,22 +1139,23 @@ def earlier_attempts(call: CallExecution) -> list[EarlierAttempt]:
         key=lambda one: one.snapshot_timestamp,
         reverse=True,
     )
+    kept = {str(one.id): attempt_metadata(call, one) for one in snapshots}
     return [
         {
             "attempt": str(one.id),
             # Counted from the first attempt, 1.
             "number": len(snapshots) - index,
             "rerun_at": one.snapshot_timestamp,
-            "kept": one.call_metadata is not None,
+            "kept": kept[str(one.id)] is not None,
             "trial_state": (
                 trial_state(
                     call,
                     calls=tagged_function_calls(
-                        recorded_calls(one.provider_call_data, one.call_metadata)
+                        recorded_calls(one.provider_call_data, kept[str(one.id)])
                     ),
-                    metadata=one.call_metadata,
+                    metadata=kept[str(one.id)],
                 )
-                if isinstance(one.call_metadata, dict)
+                if kept[str(one.id)] is not None
                 else None
             ),
         }

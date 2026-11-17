@@ -15,6 +15,7 @@ from simulate.constants.hosted_harness import HAND_OFFS_INCOMPLETE, TRIAL_STATE_
 from simulate.models import CallExecution, HostedHarnessJob, TestExecution
 from simulate.models.test_execution import CallExecutionSnapshot
 from simulate.services.harness_worker_states import (
+    attempt_metadata,
     job_for_call,
     served_workers,
     stopped_by_user,
@@ -109,17 +110,18 @@ def call_workers(
             call.snapshots.filter(
                 id=attempt, rerun_type=CallExecutionSnapshot.RerunType.CALL_AND_EVAL
             )
-            .only("call_metadata", "status", "snapshot_timestamp")
+            .only("status", "snapshot_timestamp", "completed_at")
             .first()
         )
         if snapshot is None:
             raise Http404
-        if snapshot.call_metadata is None:
-            # Snapshotted before snapshots kept the call's metadata: its record, if any, was not kept.
+        kept = attempt_metadata(call, snapshot)
+        if kept is None:
+            # Rerun before attempts were kept, or one of the oldest no longer kept: its record, if any, is gone.
             return _stated("not_kept", now.isoformat(), now)
-        return _answer(
-            call, snapshot.call_metadata, now, attempt=snapshot
-        ) or WorkersReply(status.HTTP_204_NO_CONTENT)
+        return _answer(call, kept, now, attempt=snapshot) or WorkersReply(
+            status.HTTP_204_NO_CONTENT
+        )
     metadata = call.call_metadata if isinstance(call.call_metadata, dict) else {}
     answer = _answer(call, metadata, now, attempt=None)
     if answer is not None:
