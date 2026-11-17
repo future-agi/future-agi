@@ -777,12 +777,38 @@ def record_sandbox_runtime(
         observation["seconds"] = max(0.0, (now - began).total_seconds())
         observation["observed_at"] = now.isoformat()
         if final:
-            observation["ended_at"] = now.isoformat()
+            # Billing stops at the ask to delete, when there was one: a delete that did
+            # not complete is not billed past it.
+            asked = observation.get("delete_requested_at")
+            ended = min(now, parse_datetime(asked)) if asked else now
+            observation["ended_at"] = ended.isoformat()
             if retried:
                 # The platform will run the job again: an expiry of this attempt is free.
                 observation["retried"] = True
         current.sandbox_runtime = observation
         current.save(update_fields=["sandbox_runtime", "updated_at"])
+
+
+def note_sandbox_delete_request(attempt: HostedHarnessAttempt) -> None:
+    """Keep the moment the attempt's sandbox is first asked to be deleted, in its own short
+    transaction so it survives a delete that raises. The first ask is kept, never moved."""
+    try:
+        with transaction.atomic():
+            current = HostedHarnessAttempt.no_workspace_objects.select_for_update().get(
+                id=attempt.id
+            )
+            observation = dict(current.sandbox_runtime or {})
+            if (
+                not observation
+                or observation.get("ended_at")
+                or observation.get("delete_requested_at")
+            ):
+                return
+            observation["delete_requested_at"] = timezone.now().isoformat()
+            current.sandbox_runtime = observation
+            current.save(update_fields=["sandbox_runtime", "updated_at"])
+    except Exception:  # noqa: BLE001 - metering never fails a delete
+        logger.exception("sandbox delete request not recorded attempt=%s", attempt.id)
 
 
 def rearm_sandbox_runtime(

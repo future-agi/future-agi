@@ -7,7 +7,8 @@ from uuid import UUID, uuid5
 
 import structlog
 from django.conf import settings
-from django.db import DatabaseError, transaction
+from django.db import Error as DbError
+from django.db import transaction
 from django.utils import timezone
 
 from simulate.models import (
@@ -62,7 +63,7 @@ def open_sandbox_lifetime(
                     + timedelta(seconds=int(lifetime_seconds)),
                 },
             )
-    except DatabaseError:
+    except DbError:
         # Metering never fails a create; a programming error still does.
         logger.exception("sandbox_lifetime_not_opened", kind=kind, owner=str(owner_id))
 
@@ -97,7 +98,7 @@ def rearm_sandbox_lifetime(
                     "updated_at",
                 ]
             )
-    except DatabaseError:
+    except DbError:
         # Metering never fails a renewal; a programming error still does.
         logger.exception("sandbox_lifetime_not_rearmed", provider_ref=provider_ref)
 
@@ -170,7 +171,7 @@ def record_sandbox_end_reason(
             if delete_requested:
                 fields += _note_delete_request(row, now)
             row.save(update_fields=fields)
-    except DatabaseError:
+    except DbError:
         # Metering never fails a delete; a programming error still does.
         logger.exception("sandbox_lifetime_not_updated", provider_ref=provider_ref)
         return False
@@ -211,7 +212,7 @@ def close_sandbox_lifetime(
             row.save(update_fields=fields)
             row_id = str(row.id)
             transaction.on_commit(lambda: schedule_sandbox_lifetime_seal(row_id))
-    except DatabaseError:
+    except DbError:
         # Metering never fails a delete; a programming error still does.
         logger.exception("sandbox_lifetime_not_closed", provider_ref=provider_ref)
 
@@ -233,15 +234,58 @@ def _billed_end(row: HostedSandboxLifetime):
     return min(row.ended_at, row.delete_requested_at)
 
 
+def _decide_minutes(row: HostedSandboxLifetime, now):
+    """The minutes a closed sandbox bills, or None while a rebuild turn that ran in it is
+    still to be settled. Notes on the row, unsaved, why a sandbox that was ours to lose is
+    free."""
+    from simulate.services.harness_versioning import rebuild
+
+    billed_end = _billed_end(row)
+    domains, excluded = [row.failure_domain or None], ()
+    if row.kind == HostedSandboxLifetime.Kind.PLATFORM_CHECK:
+        # Started by the platform to check its own build, not asked for by the customer.
+        domains.append("infrastructure")
+    if row.kind == HostedSandboxLifetime.Kind.CHAT:
+        turns = rebuild.failed_turn_intervals(
+            conversation_id=row.owner_id,
+            provider_ref=row.provider_ref,
+            # It lived to its lifetime limit: a rebuild turn running then was cut off.
+            # Decided from the real end, not the billed one: a delete asked for before
+            # the limit stops the minutes, not the sandbox's life.
+            cut_off_at=(
+                row.lifetime_ends_at if row.ended_at >= row.lifetime_ends_at else None
+            ),
+        )
+        if turns.pending and row.ended_at > now - TURN_WAIT:
+            # Moves the row behind the others in the sweep's queue.
+            row.save(update_fields=["updated_at"])
+            return None
+        excluded = turns.intervals
+        # Whoever closed the row recorded an expiry only after the last-seen test
+        # (the retire, the abandon, or the sweep's expire pass below).
+        if turns.sandbox_failed_at is not None and row.end_reason != LIFETIME_ELAPSED:
+            # The rebuild running in it was lost: the whole sandbox is free, and the
+            # row says why.
+            domains.append("infrastructure")
+            row.end_reason, row.failure_domain = "rebuild_stuck", "infrastructure"
+    return billable_sandbox_minutes(
+        provider=row.provider,
+        failure_domains=domains,
+        started_at=row.started_at,
+        ended_at=billed_end,
+        armed_at=row.armed_at,
+        lifetime_seconds=row.lifetime_seconds,
+        excluded=excluded,
+    )
+
+
 def seal_sandbox_lifetime(lifetime_id: str) -> str:
     """Bill one ended sandbox, once. Returns "settled", "waiting" or "skipped".
 
     Three steps, none holding the row's lock while the charge is sent: decide and save
     the minutes; send the charge; mark the row settled. A charge that could not be sent
-    leaves the row unsettled, and the sweep decides and sends it again under the same
-    event id."""
-    from simulate.services.harness_versioning import rebuild
-
+    leaves the row unsettled, and the sweep sends it again under the same event id and
+    with the same minutes: once saved, the amount is not decided again."""
     with transaction.atomic():
         row = (
             HostedSandboxLifetime.no_workspace_objects.select_for_update()
@@ -251,44 +295,14 @@ def seal_sandbox_lifetime(lifetime_id: str) -> str:
         if row is None or row.ended_at is None or row.settled_at is not None:
             return "skipped"
         now = timezone.now()
-        billed_end = _billed_end(row)
-        domains, excluded = [row.failure_domain or None], ()
-        if row.kind == HostedSandboxLifetime.Kind.PLATFORM_CHECK:
-            # Started by the platform to check its own build, not asked for by the customer.
-            domains.append("infrastructure")
-        if row.kind == HostedSandboxLifetime.Kind.CHAT:
-            turns = rebuild.failed_turn_intervals(
-                conversation_id=row.owner_id,
-                provider_ref=row.provider_ref,
-                # It ran to its lifetime limit: a rebuild turn running then was cut off.
-                cut_off_at=(
-                    row.lifetime_ends_at if billed_end >= row.lifetime_ends_at else None
-                ),
-            )
-            if turns.pending and row.ended_at > now - TURN_WAIT:
-                # Moves the row behind the others in the sweep's queue.
-                row.save(update_fields=["updated_at"])
+        if row.billed_minutes is not None:
+            # An earlier try saved this charge and could not send it: the ledger may
+            # already hold it under this row's event id.
+            minutes = row.billed_minutes
+        else:
+            minutes = _decide_minutes(row, now)
+            if minutes is None:
                 return "waiting"
-            excluded = turns.intervals
-            # Whoever closed the row recorded an expiry only after the last-seen test
-            # (the retire, the abandon, or the sweep's expire pass below).
-            if (
-                turns.sandbox_failed_at is not None
-                and row.end_reason != LIFETIME_ELAPSED
-            ):
-                # The rebuild running in it was lost: the whole sandbox is free, and the
-                # row says why.
-                domains.append("infrastructure")
-                row.end_reason, row.failure_domain = "rebuild_stuck", "infrastructure"
-        minutes = billable_sandbox_minutes(
-            provider=row.provider,
-            failure_domains=domains,
-            started_at=row.started_at,
-            ended_at=billed_end,
-            armed_at=row.armed_at,
-            lifetime_seconds=row.lifetime_seconds,
-            excluded=excluded,
-        )
         row.billed_minutes = minutes
         needs_send = bool(minutes) and not is_oss()
         # With nothing to send, the charge and the settling land together.

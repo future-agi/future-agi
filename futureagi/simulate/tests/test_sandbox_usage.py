@@ -10,7 +10,7 @@ from unittest.mock import MagicMock
 from uuid import UUID, uuid4, uuid5
 
 import pytest
-from django.db import OperationalError, connection, transaction
+from django.db import InterfaceError, OperationalError, connection, transaction
 from django.db.utils import DataError
 from django.utils import timezone as django_timezone
 from rest_framework.test import APIClient
@@ -594,6 +594,36 @@ def test_lifecycle_failures_never_raise(organization, cloud, monkeypatch, step):
     organization.refresh_from_db()
     assert organization.name == "still writable"
     log.exception.assert_called_once()
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("step", list(LIFECYCLE))
+@pytest.mark.parametrize(
+    "error", [InterfaceError("connection already closed"), RuntimeError("generic")]
+)
+def test_a_dropped_connection_never_fails_the_lifecycle(
+    organization, cloud, monkeypatch, step, error
+):
+    """``InterfaceError`` is not a ``DatabaseError`` (PEP 249), and a dropped connection
+    raises it; only the driver's own errors are metering's to swallow."""
+    row = _row(organization, start=_now() - 5 * MINUTE)
+
+    def dropped(*args, **kwargs):
+        raise error
+
+    manager = HostedSandboxLifetime.no_workspace_objects
+    monkeypatch.setattr(manager, "get_or_create", dropped)
+    monkeypatch.setattr(sandbox_usage, "_open_row", dropped)
+    log = MagicMock()
+    monkeypatch.setattr(sandbox_usage, "logger", log)
+
+    if isinstance(error, InterfaceError):
+        LIFECYCLE[step](row)
+        log.exception.assert_called_once()
+    else:
+        # A programming error is still raised.
+        with pytest.raises(RuntimeError):
+            LIFECYCLE[step](row)
 
 
 @pytest.mark.django_db
@@ -1764,7 +1794,11 @@ def test_rebuild_turn_to_seal_end_to_end(
     row = _seal(HostedSandboxLifetime.no_workspace_objects.get(provider_ref=ref))
 
     # The sandbox's own time, less the 15 minutes of the failed turn.
-    seconds = (row.ended_at - row.started_at).total_seconds() - 15 * 60
+    # Billing stops at the delete request, a few ms before the close.
+    assert (
+        row.delete_requested_at is not None and row.delete_requested_at <= row.ended_at
+    )
+    seconds = (row.delete_requested_at - row.started_at).total_seconds() - 15 * 60
     expected = (Decimal(str(seconds)) / Decimal(60)).quantize(Decimal("0.0001"))
     assert row.end_reason == "deleted"
     assert abs(row.billed_minutes - expected) <= Decimal("0.0001")
@@ -1915,10 +1949,12 @@ def test_the_charge_is_sent_with_no_transaction_open(organization, cloud, monkey
     monkeypatch.setattr(emitter, "emit", emit)
     start = _now() - 41 * MINUTE
     row = _row(organization, start=start, ended=start + 10 * MINUTE)
+    # Whatever the test's own transaction already holds, the seal adds none while sending.
+    baseline = list(connection.savepoint_ids)
 
     row = _seal(row)
 
-    assert open_savepoints == [[]]
+    assert open_savepoints == [baseline]
     assert (row.billed_minutes, row.settled_at is not None) == (
         Decimal("10.0000"),
         True,
@@ -1960,3 +1996,71 @@ def test_a_failed_send_leaves_the_charge_saved_and_the_row_unsettled(
     assert [(event.event_id, event.amount) for event in sent] == [
         (str(uuid5(UUID(str(row.id)), "sandbox_runtime")), 10.0)
     ]
+
+
+@pytest.mark.django_db
+def test_a_resend_keeps_the_amount_the_first_try_saved(
+    organization, cloud, monkeypatch
+):
+    emitter = pytest.importorskip("ee.usage.services.emitter")
+    sent = []
+    failures = [RuntimeError("the stream is unavailable")]
+
+    def emit(event, *, raise_on_failure=False):
+        if failures:
+            raise failures.pop()
+        sent.append(event)
+
+    monkeypatch.setattr(emitter, "emit", emit)
+    t0 = _now() - timedelta(hours=5)
+    job, conversation = _environment(organization)
+    row = _thirty_minute_row(organization, conversation, t0)
+
+    assert sandbox_usage.sweep_sandbox_lifetimes()["errors"] == 1
+    row.refresh_from_db()
+    assert (row.billed_minutes, row.settled_at) == (Decimal("30.0000"), None)
+
+    # A turn of the rebuild that ran in it closes failed after the first try: a recompute
+    # would now take 10 minutes off.
+    _rebuild(
+        job, _turn([row.provider_ref], "turn_failed", t0 + 5 * MINUTE, t0 + 15 * MINUTE)
+    )
+    sandbox_usage.sweep_sandbox_lifetimes()
+
+    row.refresh_from_db()
+    assert row.settled_at is not None
+    assert row.billed_minutes == Decimal("30.0000")
+    assert [(event.event_id, event.amount) for event in sent] == [
+        (str(uuid5(UUID(str(row.id)), "sandbox_runtime")), 30.0)
+    ]
+
+
+@pytest.mark.django_db
+def test_a_sandbox_swept_at_its_cap_still_cuts_off_a_turn_running_at_the_cap(
+    organization, billed
+):
+    """The delete was asked for at minute 10 and never completed; the sweep closed the
+    sandbox past its 30-minute limit. Minutes stop at 10, but the sandbox did live to its
+    limit, so a rebuild turn running at the limit was cut off by it."""
+    t0 = _now() - timedelta(hours=5)
+    job, conversation = _environment(organization)
+    row = _row(
+        organization,
+        start=t0,
+        ended=t0 + 40 * MINUTE,
+        owner_id=conversation.id,
+        end_reason="agent_changed",
+    )
+    HostedSandboxLifetime.no_workspace_objects.filter(id=row.id).update(
+        delete_requested_at=t0 + 10 * MINUTE
+    )
+    # Started at minute 5, still running when the limit was reached.
+    _rebuild(
+        job, _turn([row.provider_ref], "applied", t0 + 5 * MINUTE, t0 + 45 * MINUTE)
+    )
+
+    row = _seal(row)
+
+    # Ten minutes to the ask, less the five of the cut-off turn inside them.
+    assert row.billed_minutes == Decimal("5.0000")
+    assert _amounts(billed) == [5.0]

@@ -317,6 +317,119 @@ def test_final_observation_records_a_platform_retry(hosted_attempt, clock, retri
     assert attempt.sandbox_runtime.get("retried", False) is retried
 
 
+class _RunClient:
+    """A provider whose sandbox for a run is there until it is deleted or has expired."""
+
+    name = "daytona"
+
+    def __init__(self, *, delete_raises):
+        self.alive = True
+        self.delete_raises = delete_raises
+        self.deletes = 0
+
+    def get(self, ref, request_timeout=None):
+        if not self.alive:
+            raise SandboxNotFoundError("sandbox not found", status_code=404)
+        return SimpleNamespace(id=ref)
+
+    def delete(self, sandbox, **kwargs):
+        self.deletes += 1
+        if self.delete_raises:
+            raise RuntimeError("provider unavailable")
+        self.alive = False
+        return True
+
+
+def _run_cleanup(attempt, client, monkeypatch):
+    from simulate.services import hosted_harness_gateway as gateway
+
+    for name in ("_read_harness_spend", "_read_harness_usage"):
+        monkeypatch.setattr(gateway, name, lambda *_: None)
+    driver = gateway.HostedHarnessGateway.__new__(gateway.HostedHarnessGateway)
+    driver.client = client
+    monkeypatch.setattr(driver, "_capture_diagnostics", lambda *a, **k: None)
+    attempt.refresh_from_db()
+    attempt.provider_ref = "run-sandbox"
+    return driver._delete_and_record(attempt)
+
+
+@pytest.mark.django_db
+def test_a_run_delete_that_keeps_failing_is_billed_to_the_ask(
+    hosted_attempt, clock, monkeypatch
+):
+    attempt = hosted_attempt.attempt
+    t0 = clock[0]
+    harness_usage.record_sandbox_runtime(
+        attempt, started=True, provider="daytona", lifetime_seconds=3600
+    )
+    client = _RunClient(delete_raises=True)
+    clock[0] = t0 + timedelta(minutes=5)
+    with pytest.raises(RuntimeError):
+        _run_cleanup(attempt, client, monkeypatch)
+    attempt.refresh_from_db()
+    assert attempt.sandbox_runtime["delete_requested_at"] == clock[0].isoformat()
+
+    # The provider expires the sandbox on its own; the next try finds it gone.
+    client.alive = False
+    clock[0] = t0 + timedelta(minutes=55)
+    job = _run_cleanup(attempt, client, monkeypatch)
+
+    attempt.refresh_from_db()
+    assert (
+        attempt.sandbox_runtime["delete_requested_at"]
+        == (t0 + timedelta(minutes=5)).isoformat()
+    )
+    minutes, ended = harness_usage._run_sandbox_charge(attempt, job)
+    assert minutes == Decimal(5)
+    assert ended == t0 + timedelta(minutes=5)
+
+
+@pytest.mark.django_db
+def test_a_run_delete_that_succeeds_is_billed_to_the_ask(
+    hosted_attempt, clock, monkeypatch
+):
+    attempt = hosted_attempt.attempt
+    t0 = clock[0]
+    harness_usage.record_sandbox_runtime(
+        attempt, started=True, provider="daytona", lifetime_seconds=3600
+    )
+    client = _RunClient(delete_raises=False)
+    clock[0] = t0 + timedelta(minutes=5)
+    original_delete = client.delete
+
+    def slow_delete(sandbox, **kwargs):
+        clock[0] += timedelta(seconds=30)
+        return original_delete(sandbox, **kwargs)
+
+    client.delete = slow_delete
+    job = _run_cleanup(attempt, client, monkeypatch)
+
+    attempt.refresh_from_db()
+    minutes, ended = harness_usage._run_sandbox_charge(attempt, job)
+    assert minutes == Decimal(5)
+    assert ended == t0 + timedelta(minutes=5)
+
+
+@pytest.mark.django_db
+def test_a_run_sandbox_found_gone_without_a_delete_is_billed_to_the_find(
+    hosted_attempt, clock, monkeypatch
+):
+    attempt = hosted_attempt.attempt
+    t0 = clock[0]
+    harness_usage.record_sandbox_runtime(
+        attempt, started=True, provider="daytona", lifetime_seconds=3600
+    )
+    client = _RunClient(delete_raises=False)
+    client.alive = False
+    clock[0] = t0 + timedelta(minutes=20)
+    job = _run_cleanup(attempt, client, monkeypatch)
+
+    attempt.refresh_from_db()
+    assert "delete_requested_at" not in attempt.sandbox_runtime
+    minutes, _ended = harness_usage._run_sandbox_charge(attempt, job)
+    assert minutes == Decimal(20)
+
+
 def _start_then_renew(attempt, clock, *, provider):
     t0 = clock[0]
     harness_usage.record_sandbox_runtime(
@@ -966,8 +1079,9 @@ def test_require_sandbox_create_allows_when_billing_cannot_load(
 
 @pytest.mark.django_db
 @pytest.mark.requires_ee
+@pytest.mark.parametrize("error", ["connection", "generic"])
 def test_require_sandbox_create_fails_when_the_usage_store_is_unreachable(
-    metered_attempt, monkeypatch
+    metered_attempt, monkeypatch, error
 ):
     import redis
 
@@ -975,13 +1089,18 @@ def test_require_sandbox_create_fails_when_the_usage_store_is_unreachable(
 
     capability, _ = metered_attempt
     attempt = capability.attempt
+    failure = (
+        redis.ConnectionError("the usage store is unreachable")
+        if error == "connection"
+        else RuntimeError("the usage check broke")
+    )
 
     def check_usage(*args, **kwargs):
-        raise redis.ConnectionError("the usage store is unreachable")
+        raise failure
 
     monkeypatch.setattr(metering, "check_usage", check_usage)
 
-    with pytest.raises(redis.ConnectionError):
+    with pytest.raises(type(failure)):
         harness_usage.require_sandbox_create(
             str(attempt.job.organization_id), attempt=attempt
         )

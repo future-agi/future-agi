@@ -5003,7 +5003,13 @@ class HostedHarnessGateway:
                         "conversation sandbox deletion failed conversation=%s",
                         conversation.id,
                     )
-                    return
+                    absent = False
+        if not absent and not ending and not provider_ref.startswith("pending:"):
+            # The delete was asked for and did not complete: billing stopped at the ask,
+            # so nothing may keep using that sandbox.
+            lease.state = HostedHarnessConversationLease.State.EXPIRED
+            lease.save(update_fields=["state", "updated_at"])
+            return
         if absent:
             lease.state = HostedHarnessConversationLease.State.EXPIRED
             lease.save(update_fields=["state", "updated_at"])
@@ -5041,6 +5047,10 @@ class HostedHarnessGateway:
             # The last moment the ledger exists: after the delete there is nothing to ask.
             _read_harness_spend(attempt, sandbox)
             _read_harness_usage(attempt, sandbox)
+            from simulate.services.harness_usage import note_sandbox_delete_request
+
+            # Billing stops at this ask, even when the delete raises or never completes.
+            note_sandbox_delete_request(attempt)
             absent = self.client.delete(sandbox, timeout=120, wait=True)
             if not absent:
                 try:

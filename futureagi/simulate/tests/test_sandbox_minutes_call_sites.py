@@ -1196,6 +1196,51 @@ def test_run_cleanup_closes_the_chat_row(organization, metering, chat_gateway):
     assert (row.end_reason, row.failure_domain) == ("deleted", "")
 
 
+@pytest.mark.parametrize("how", ["raises", "unconfirmed"])
+def test_a_failed_cleanup_delete_ends_the_chat_sandbox_for_good(
+    how, organization, clock, metering, create_checks, chat_gateway
+):
+    """A delete that was asked for and did not complete leaves nothing allowed to keep using
+    that sandbox: the chat gets a new one, and the old one is billed to the ask."""
+    job, conversation = _finished_job(organization)
+    client = _Provider(clock, kill_returns_false=how == "unconfirmed")
+    client.gone_after_kill = False
+    gateway = chat_gateway(client)
+    started = clock.now
+    _start_chat(gateway, job, conversation)
+    _report_alive(conversation, clock.now)
+    lease = HostedHarnessConversationLease.no_workspace_objects.get(
+        conversation=conversation
+    )
+    assert (lease.control_only, lease.attempt_id) == (True, None)
+    working_delete = client.delete
+
+    def failing_delete(sandbox, **kwargs):
+        if how == "raises":
+            raise RuntimeError("provider unavailable")
+        return working_delete(sandbox, **kwargs)
+
+    client.delete = failing_delete
+    clock.advance(2 * 60)
+
+    gateway._cleanup_conversation_runtime(job)
+
+    lease.refresh_from_db()
+    assert lease.state == HostedHarnessConversationLease.State.EXPIRED
+    assert _row("sandbox-1").delete_requested_at == started + timedelta(minutes=2)
+    # The chat comes back at minute 20 and is not given the stamped sandbox again.
+    client.delete = working_delete
+    client.gone_after_kill = True
+    clock.advance(18 * 60)
+    _start_chat(gateway, job, conversation)
+    assert client.created == ["sandbox-1", "sandbox-2"]
+    clock.advance(5 * 60)
+    row = _row("sandbox-1")
+    assert row.ended_at is not None
+    sandbox_usage.seal_sandbox_lifetime(str(row.id))
+    assert metering == [(row.id, Decimal("2.0000"))]
+
+
 # --- rebuilds ---------------------------------------------------------------------------
 
 
@@ -1974,6 +2019,34 @@ def test_a_stop_records_its_ending_before_the_release(
     assert metering == [(row.id, Decimal(minutes))]
 
 
+def test_a_fix_release_whose_delete_raises_bills_up_to_the_ask(
+    user, workspace, clock, metering, create_checks, fix_settings, monkeypatch
+):
+    provider = _fix_provider(monkeypatch, _FixProvider(clock))
+    fix_run = _new_fix(user, workspace)
+    t0 = clock.now
+    agent_fix_sandbox.launch(str(fix_run.id))
+    _set_fix(fix_run, state=_STATE.READY, finished_at=t0 + timedelta(minutes=3))
+
+    def refuse(_sandbox, **_kwargs):
+        raise RuntimeError("provider unavailable")
+
+    provider.delete = refuse
+    clock.now = t0 + timedelta(minutes=3)
+    with pytest.raises(RuntimeError):
+        agent_fix_sandbox.release(str(fix_run.id))
+
+    row = _row("sandbox-1")
+    assert row.ended_at is None
+    assert row.delete_requested_at == t0 + timedelta(minutes=3)
+    # Nothing closes it until the sweep, long after: still billed to the ask.
+    clock.now = row.lifetime_ends_at + sandbox_usage.SWEEP_GRACE + timedelta(minutes=1)
+    sandbox_usage.sweep_sandbox_lifetimes()
+    row = _row("sandbox-1")
+    assert row.ended_at is not None
+    assert metering == [(row.id, Decimal("3.0000"))]
+
+
 # The fix's watch was down past the sandbox's limit (the runner's workers were out), so
 # the lifetime sweep reaches the sandbox before the fix's own release does.
 @pytest.mark.parametrize(
@@ -2695,44 +2768,79 @@ def _calls_of(path, function):
     ]
 
 
+_ENDING_CALLS = {"record_sandbox_end_reason", "close_sandbox_lifetime"}
+
+
+def _name_of(call):
+    """The called name, whether spelt bare or as an attribute (``usage.record_...``)."""
+    if isinstance(call.func, ast.Name):
+        return call.func.id
+    if isinstance(call.func, ast.Attribute):
+        return call.func.attr
+    return None
+
+
+def _is_sandbox_delete(call):
+    return (
+        isinstance(call.func, ast.Attribute)
+        and call.func.attr == "delete"
+        and ast.unparse(call.func.value) in {"self.client", "provider"}
+    )
+
+
+def _ending_problems(label, node):
+    """What is wrong with how one function records a sandbox's ending around its delete:
+    every ending call asks for the delete, and the record comes before the delete."""
+    calls = [sub for sub in ast.walk(node) if isinstance(sub, ast.Call)]
+    deletes = [call for call in calls if _is_sandbox_delete(call)]
+    ending = [call for call in calls if _name_of(call) in _ENDING_CALLS]
+    if not (deletes and ending):
+        return None
+    problems = []
+    for call in ending:
+        asked = {keyword.arg: keyword.value for keyword in call.keywords}.get(
+            "delete_requested"
+        )
+        # Present, and never a literal False (one path decides it by whether the
+        # sandbox was found gone before any delete was asked for).
+        if asked is None or (isinstance(asked, ast.Constant) and asked.value is False):
+            problems.append(f"{label} line {call.lineno}: delete_requested not set")
+    first_delete = min(call.lineno for call in deletes)
+    records = [call for call in ending if _name_of(call) == "record_sandbox_end_reason"]
+    if not records or min(call.lineno for call in records) >= first_delete:
+        problems.append(f"{label}: the ending is not recorded before the delete")
+    return problems
+
+
 def test_every_ending_recorded_before_a_delete_notes_the_delete_request():
     """A function that records a sandbox's ending and then deletes the sandbox says so in
     the record and in the close that follows, so a delete that never completes is not
-    billed past the moment it was asked for."""
+    billed past the moment it was asked for; and it records before it deletes."""
     checked = set()
     for path, tree in _sources():
         for owner, node in _owners(tree):
-            calls = [sub for sub in ast.walk(node) if isinstance(sub, ast.Call)]
-            deletes = any(
-                isinstance(call.func, ast.Attribute)
-                and call.func.attr == "delete"
-                and ast.unparse(call.func.value) in {"self.client", "provider"}
-                for call in calls
-            )
-            ending = [
-                call
-                for call in calls
-                if getattr(call.func, "id", None)
-                in {"record_sandbox_end_reason", "close_sandbox_lifetime"}
-            ]
-            if not (deletes and ending):
+            problems = _ending_problems(f"{path}::{owner}", node)
+            if problems is None:
                 continue
             checked.add(f"{path}::{owner}")
-            for call in ending:
-                asked = {keyword.arg: keyword.value for keyword in call.keywords}.get(
-                    "delete_requested"
-                )
-                # Present, and never a literal False (one path decides it by whether the
-                # sandbox was found gone before any delete was asked for).
-                assert asked is not None and not (
-                    isinstance(asked, ast.Constant) and asked.value is False
-                ), f"{path}::{owner} line {call.lineno}"
+            assert not problems, problems
     assert checked == {
         "services/hosted_harness_gateway.py::_cleanup_conversation_runtime",
         "services/hosted_harness_gateway.py::_delete_chat_sandbox",
         "services/hosted_harness_gateway.py::_start_chat_sandbox",
         "services/agent_fix_sandbox.py::release",
     }
+
+
+def test_a_run_sandbox_notes_its_delete_request_before_the_delete():
+    """The run's sandbox keeps the moment of the first ask in the attempt, before the
+    delete that may raise."""
+    tree = ast.parse((SIMULATE / "services/hosted_harness_gateway.py").read_text())
+    [node] = [n for owner, n in _owners(tree) if owner == "_delete_and_record"]
+    calls = [sub for sub in ast.walk(node) if isinstance(sub, ast.Call)]
+    notes = [c.lineno for c in calls if _name_of(c) == "note_sandbox_delete_request"]
+    deletes = [c.lineno for c in calls if _is_sandbox_delete(c)]
+    assert notes and deletes and min(notes) < min(deletes)
 
 
 def test_only_four_functions_create_a_sandbox():
