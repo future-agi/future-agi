@@ -3,7 +3,10 @@
 from django.urls import path
 
 from model_hub.views.skills_hub_runtime import (
-    SkillFilterValuesView, SkillLoadsView, SkillRuntimeUsageView, SkillRuntimeComparisonView,
+    SkillFilterValuesView,
+    SkillLoadsView,
+    SkillRuntimeComparisonView,
+    SkillRuntimeUsageView,
 )
 
 urlpatterns = [

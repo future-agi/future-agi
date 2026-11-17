@@ -13,7 +13,9 @@ from uuid import UUID
 
 from tracer.services.clickhouse.read_budget import ReadDeadline, WallCappedAnalytics
 from tracer.services.clickhouse.v2.query_builders._rewrite import V2RewriteMixin
-from tracer.services.clickhouse.v2.query_builders.filters import ClickHouseFilterBuilderV2
+from tracer.services.clickhouse.v2.query_builders.filters import (
+    ClickHouseFilterBuilderV2,
+)
 
 
 class RuntimeDependencyUnavailable(RuntimeError):

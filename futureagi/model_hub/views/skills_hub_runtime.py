@@ -3,8 +3,14 @@
 from model_hub.selectors.skills_hub_v12 import get_resource
 from model_hub.serializers.skills_hub import SkillsError
 from model_hub.serializers.skills_hub_runtime import (
-    LatestLoadQuery, LatestLoadResult, RuntimeFilterValuesQuery, RuntimeFilterValuesResult,
-    RuntimeUsageQuery, RuntimeUsageResult, RuntimeComparisonQuery, RuntimeComparisonResult,
+    LatestLoadQuery,
+    LatestLoadResult,
+    RuntimeComparisonQuery,
+    RuntimeComparisonResult,
+    RuntimeFilterValuesQuery,
+    RuntimeFilterValuesResult,
+    RuntimeUsageQuery,
+    RuntimeUsageResult,
 )
 from model_hub.services.skills_hub.errors import SkillsHubError
 from model_hub.services.skills_hub.runtime_loads import latest_load
@@ -20,6 +26,7 @@ def invalid_runtime_request(errors):
 
 class SkillRuntimeUsageView(SkillsView):
     @contract(RuntimeUsageResult, query=RuntimeUsageQuery,
+              operation_id="model-hub_skills_runtime_usage_list",
               responses={503: SkillsError}, validation_error_response=invalid_runtime_request)
     def get(self, request):
         """Shared, cursor-paged runtime cohorts; loads never imply use."""
@@ -33,6 +40,7 @@ class SkillRuntimeUsageView(SkillsView):
 
 class SkillRuntimeComparisonView(SkillsView):
     @contract(RuntimeComparisonResult, query=RuntimeComparisonQuery,
+              operation_id="model-hub_skills_runtime_comparison_list",
               responses={503: SkillsError}, validation_error_response=invalid_runtime_request)
     def get(self, request):
         """Compare a label move or two explicit windows, same agents first."""

@@ -11,11 +11,15 @@ from rest_framework.test import APIRequestFactory, force_authenticate
 
 from model_hub.models.skills_hub import HubSkillLabelEvent
 from model_hub.services.skills_hub import runtime_api
-from model_hub.tests.skills_hub.test_runtime_usage import START, END, runtime_ch, span  # noqa: F401 - shared CH fixture
+from model_hub.tests.skills_hub.test_runtime_usage import END, START, span
+from model_hub.tests.skills_hub.test_runtime_usage import (
+    runtime_ch as shared_runtime_ch,
+)
 from tracer.models.project import Project
 from tracer.tests._ch_seed import seed_ch_spans
 
 pytestmark = [pytest.mark.django_db, pytest.mark.integration]
+runtime_ch = shared_runtime_ch
 
 
 @pytest.fixture

@@ -7,7 +7,7 @@ version/agent aggregates. Postgres supplies every navigable catalogue identity.
 
 import json
 from collections import Counter, defaultdict
-from datetime import timedelta, timezone as datetime_timezone
+from datetime import UTC, timedelta
 from math import isfinite
 
 from django.utils import timezone
@@ -17,17 +17,32 @@ from model_hub.models.skills_hub_v12 import HubSkillContextDependency
 from model_hub.selectors.skills_hub_v12 import get_resource, resources_for_scope
 from model_hub.services.skills_hub.errors import SkillsHubError
 from model_hub.services.skills_hub.runtime_reads import (
-    CATALOG_LIMIT, cursor_after, next_cursor, projects_in_scope, query_identity,
+    CATALOG_LIMIT,
+    cursor_after,
+    next_cursor,
+    projects_in_scope,
+    query_identity,
 )
 from model_hub.services.skills_hub.runtime_usage import (
-    MIN_EVALUATED, MIN_TRACES, TOTALS_NOTE, ProjectScope, adoption_state,
-    agent_identity, closure_diff, move_windows, read_runtime_statement,
-    regression_verdict, runtime_diagnosis,
+    MIN_EVALUATED,
+    MIN_TRACES,
+    TOTALS_NOTE,
+    ProjectScope,
+    adoption_state,
+    agent_identity,
+    closure_diff,
+    move_windows,
+    read_runtime_statement,
+    regression_verdict,
+    runtime_diagnosis,
 )
 from model_hub.services.skills_hub.usage import can_record
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.services.clickhouse.read_budget import ReadDeadline
-from tracer.services.clickhouse.v2.query_builders.skill_runtime import RuntimeReadSession, SkillRuntimeQueryBuilder
+from tracer.services.clickhouse.v2.query_builders.skill_runtime import (
+    RuntimeReadSession,
+    SkillRuntimeQueryBuilder,
+)
 from tracer.services.clickhouse.v2.query_service import V2AnalyticsQueryService
 
 FACT_LIMIT = 20000
@@ -38,7 +53,7 @@ def utc_row(row):
     # Make that storage timezone explicit before comparing to HTTP windows.
     value = row.get("start_time")
     if value is not None and timezone.is_naive(value):
-        return {**row, "start_time": value.replace(tzinfo=datetime_timezone.utc)}
+        return {**row, "start_time": value.replace(tzinfo=UTC)}
     return row
 
 
@@ -118,8 +133,8 @@ class RuntimeFacts:
         identities = [(str(v.skill_id), str(v.pk), v.digest) for v in self.versions.values()
                       if not self.query.get("version_ids") or str(v.pk) in self.query["version_ids"]]
         agent = (str(self.query["project_id"]), self.query.get("service", ""), self.query.get("agent", "")) if "service" in self.query or "agent" in self.query else None
-        options = dict(identities=identities, skill_names=[s.name for s in self.skills.values()], label=self.query.get("label"),
-                       context_id=self.resource.pk if self.resource is not None and self.resource.kind == "agent_context" else None, agent=agent)
+        options = {"identities": identities, "skill_names": [s.name for s in self.skills.values()], "label": self.query.get("label"),
+                   "context_id": self.resource.pk if self.resource is not None and self.resource.kind == "agent_context" else None, "agent": agent}
         if not self.query.get("_context_comparison"):
             self.loads = read_runtime_statement(self.session, builder.build_usage_loads(**options), max_rows=FACT_LIMIT)
             self.failed = read_runtime_statement(self.session, builder.build_usage_loads(**options, failed=True), max_rows=FACT_LIMIT)
