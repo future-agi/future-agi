@@ -896,3 +896,26 @@ def test_oss_call_and_source_usage_checks_never_refuse(hosted_attempt, monkeypat
     assert harness_usage.check_harness_action(organization_id, "voice_call") == {
         "allowed": True
     }
+
+
+def test_a_post_build_turn_is_priced_at_the_time_its_billing_event_carries(monkeypatch):
+    """A builder turn's tokens are priced when the turn was recorded, the time its event carries."""
+    seen = []
+
+    def fake_record(item, *, at):
+        seen.append(at)
+        return {"stage": item["stage"]}
+
+    monkeypatch.setattr(harness_usage, "is_oss", lambda: False)
+    monkeypatch.setattr(harness_usage, "_authoring_stage_record", fake_record)
+    recorded = datetime(2026, 12, 31, 23, 59, tzinfo=UTC)
+    turn = SimpleNamespace(
+        usage={"tokens_in": 10, "tokens_out": 5, "models": ["gemini-3.7-flash"]},
+        command_message_id="command-1",
+        created_at=recorded,
+    )
+
+    report = harness_usage._builder_turn_report(turn)
+
+    assert report is not None
+    assert seen == [recorded]

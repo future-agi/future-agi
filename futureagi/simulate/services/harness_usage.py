@@ -605,7 +605,9 @@ def _builder_turn_report(turn: HostedHarnessBuilderTurnUsage) -> dict | None:
                 "tokens_out": usage.get("tokens_out", 0),
                 "tokens_cached": usage.get("tokens_cached", 0),
                 "models": usage.get("models") or [],
-            }
+            },
+            # Priced when the turn was recorded, the time its billing event carries.
+            at=turn.created_at,
         )
     except HostedHarnessError as exc:
         # As a build stage that cannot be priced: the usage is kept, nothing is billed.
