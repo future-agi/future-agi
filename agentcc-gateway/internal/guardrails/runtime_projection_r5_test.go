@@ -26,7 +26,7 @@ func TestRuntimeR5LegacyCheckInputPrecedence(t *testing.T) {
 		}
 		selected := selectedCheckInput(rc, withResponse)
 		if selected.Request != rc.SelectedGuardrailRequest || !selected.InspectionOnly || (withResponse && selected.Response != rc.SelectedGuardrailResponse) {
-			t.Fatal("selected view leaked into legacy or lost complete output")
+			t.Fatal("selected view differs from legacy complete output")
 		}
 	}
 	// Without a separately owned selected view, selected inspection still uses

@@ -14,9 +14,8 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/tenant"
 )
 
-// Expected old-source failures: empty arrays bypass minimum and required-pattern
-// checks; adding the exact validation leaf to the selected adapter preserves one
-// text per message, including empty messages. No test execution is claimed.
+// Selected validation preserves one text value per message, including empty
+// messages, for length and pattern checks.
 func TestSelectedValidationR5MessageRules(t *testing.T) {
 	for _, tc := range []struct {
 		name     string

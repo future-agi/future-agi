@@ -35,6 +35,29 @@ func usesSelectedTextView(g Guardrail) bool {
 	return false
 }
 
+// selectedTextJoin is how a check's selected text view joins a message's text
+// parts. Validation keeps its legacy contract (non-empty parts joined with a
+// space, as validation.extractContentText does) so patterns and lengths match
+// the org rule; the selected view only adds one text value for a message whose
+// parts are all empty. The other text checks join every part with a newline.
+type selectedTextJoin struct {
+	sep       string
+	skipEmpty bool
+}
+
+var (
+	selectedTextNewline    = selectedTextJoin{sep: "\n"}
+	selectedTextValidation = selectedTextJoin{sep: " ", skipEmpty: true}
+)
+
+func selectedTextJoinFor(g Guardrail) selectedTextJoin {
+	typ := reflect.TypeOf(g)
+	if typ != nil && typ.Kind() == reflect.Pointer && typ.Elem().PkgPath()+"."+typ.Elem().Name() == "github.com/futureagi/agentcc-gateway/internal/guardrails/validation.ValidationGuardrail" {
+		return selectedTextValidation
+	}
+	return selectedTextNewline
+}
+
 // Selected inspection projections must not change the legacy view consumed by
 // org/static guardrails. They are immutable projections, never wire remediation.
 func selectedCheckInput(rc *models.RequestContext, withResponse bool) *CheckInput {
@@ -95,7 +118,7 @@ func preserveSelectedProjection(rc *models.RequestContext, stage Stage) {
 type selectedTextCheck struct{ Guardrail }
 
 func (g selectedTextCheck) Check(ctx context.Context, input *CheckInput) *CheckResult {
-	view, err := selectedTextView(input, g.Stage())
+	view, err := selectedTextView(input, g.Stage(), selectedTextJoinFor(g.Guardrail))
 	if err != nil {
 		return &CheckResult{Err: err}
 	}
@@ -107,14 +130,14 @@ func (g selectedTextCheck) Check(ctx context.Context, input *CheckInput) *CheckR
 // usual checker snapshot isolation also applies to parallel and timed-out work.
 // Only content is projected: roles, names, evaluator/user/context fields, choice
 // indices and usage survive unchanged. Non-text shapes are never partially read.
-func selectedTextView(input *CheckInput, stage Stage) (*CheckInput, error) {
+func selectedTextView(input *CheckInput, stage Stage, join selectedTextJoin) (*CheckInput, error) {
 	view, err := cloneCheckInput(input)
 	if err != nil {
 		return nil, err
 	}
 	if stage == StagePre && view.Request != nil {
 		for i := range view.Request.Messages {
-			content, err := selectedTextContent(view.Request.Messages[i].Content)
+			content, err := selectedTextContent(view.Request.Messages[i].Content, join)
 			if err != nil {
 				return nil, err
 			}
@@ -123,7 +146,7 @@ func selectedTextView(input *CheckInput, stage Stage) (*CheckInput, error) {
 	}
 	if stage == StagePost && view.Response != nil {
 		for i := range view.Response.Choices {
-			content, err := selectedTextContent(view.Response.Choices[i].Message.Content)
+			content, err := selectedTextContent(view.Response.Choices[i].Message.Content, join)
 			if err != nil {
 				return nil, err
 			}
@@ -134,7 +157,7 @@ func selectedTextView(input *CheckInput, stage Stage) (*CheckInput, error) {
 	return view, nil
 }
 
-func selectedTextContent(raw json.RawMessage) (json.RawMessage, error) {
+func selectedTextContent(raw json.RawMessage, join selectedTextJoin) (json.RawMessage, error) {
 	var text string
 	if strings.HasPrefix(strings.TrimSpace(string(raw)), `"`) && json.Unmarshal(raw, &text) == nil {
 		return raw, nil
@@ -149,9 +172,12 @@ func selectedTextContent(raw json.RawMessage) (json.RawMessage, error) {
 		if len(part) != 2 || json.Unmarshal(part["type"], &kind) != nil || kind != "text" || !strings.HasPrefix(strings.TrimSpace(string(part["text"])), `"`) || json.Unmarshal(part["text"], &text) != nil {
 			return nil, fmt.Errorf("selected text view requires exclusively text parts")
 		}
+		if text == "" && join.skipEmpty {
+			continue
+		}
 		texts = append(texts, text)
 	}
-	return json.Marshal(strings.Join(texts, "\n"))
+	return json.Marshal(strings.Join(texts, join.sep))
 }
 
 // The existing receipt continues to retain and fingerprint the ORIGINAL payload
@@ -165,30 +191,47 @@ func selectedTextPolicyRevision(resolved *resolvedKeyPolicies, rc *models.Reques
 	if revision == "" {
 		return ""
 	}
-	needed := false
-	for _, entry := range resolved.policies {
-		for _, c := range entry.checks {
-			if selectedCheckStage(rc, c.g) == stage && usesSelectedTextView(c.g) {
-				needed = true
+	// Bind every projection a check at this stage actually inspects.
+	uses := func(join selectedTextJoin) bool {
+		for _, entry := range resolved.policies {
+			for _, c := range entry.checks {
+				if selectedCheckStage(rc, c.g) == stage && usesSelectedTextView(c.g) && selectedTextJoinFor(c.g) == join {
+					return true
+				}
 			}
 		}
+		return false
 	}
-	if !needed {
+	var joins []selectedTextJoin
+	for _, join := range []selectedTextJoin{selectedTextNewline, selectedTextValidation} {
+		if uses(join) {
+			joins = append(joins, join)
+		}
+	}
+	if len(joins) == 0 {
 		return revision
 	}
-	view, err := selectedTextView(selectedCheckInput(rc, stage == StagePost), stage)
-	if err != nil {
-		return ""
-	}
-	var payload interface{} = view.Request
-	if stage == StagePost {
-		payload = view.Response
+	checked := make([]interface{}, 0, len(joins))
+	for _, join := range joins {
+		view, err := selectedTextView(selectedCheckInput(rc, stage == StagePost), stage, join)
+		if err != nil {
+			return ""
+		}
+		var payload interface{} = view.Request
+		if stage == StagePost {
+			payload = view.Response
+		}
+		checked = append(checked, struct {
+			Separator string
+			SkipEmpty bool
+			View      interface{}
+		}{join.sep, join.skipEmpty, payload})
 	}
 	body, err := json.Marshal(struct {
 		Version string
 		Policy  []byte
 		Checked interface{}
-	}{"selected-text-v1", []byte(revision), payload})
+	}{"selected-text-v2", []byte(revision), checked})
 	if err != nil {
 		return ""
 	}

@@ -20,6 +20,7 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/guardrails/leakage"
 	"github.com/futureagi/agentcc-gateway/internal/guardrails/sysprompt"
 	"github.com/futureagi/agentcc-gateway/internal/guardrails/topic"
+	"github.com/futureagi/agentcc-gateway/internal/guardrails/validation"
 	"github.com/futureagi/agentcc-gateway/internal/pipeline"
 	authplugin "github.com/futureagi/agentcc-gateway/internal/plugins/auth"
 	"github.com/futureagi/agentcc-gateway/internal/providers"
@@ -38,6 +39,8 @@ func textViewR4Factory(name string, cfg map[string]interface{}) guardrails.Guard
 		return leakage.New(cfg)
 	case "hallucination-detection":
 		return hallucination.New(cfg)
+	case "input-validation":
+		return validation.New(cfg)
 	}
 	return nil
 }
@@ -353,5 +356,52 @@ func TestSelectedTextViewR4LegacyAndUnsupportedRealHTTP(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// Selected input validation sees a multipart message as the org rule does:
+// non-empty text parts joined by a single space, so a literal-space pattern
+// matches the parts "hello" and "world" exactly as it matches "hello world".
+func TestSelectedValidationMultipartSpacingRealHTTP(t *testing.T) {
+	cfg := map[string]interface{}{"require_patterns": []interface{}{"^hello world$"}}
+	for _, tc := range []struct {
+		name    string
+		content interface{}
+		want    int
+	}{
+		{"string", "hello world", 200},
+		{"multipart", textViewR4Parts("hello", "world"), 200},
+		{"multipart-with-empty-part", textViewR4Parts("hello", "", "world"), 200},
+		{"multipart-mismatch", textViewR4Parts("hello", "there"), 403},
+		{"empty-array", []interface{}{}, 403},
+	} {
+		for _, mode := range []string{"sequential", "parallel"} {
+			t.Run(tc.name+"/selected/"+mode, func(t *testing.T) {
+				policy := runtimePolicy("input-validation", "enforce", "block", true, cfg)
+				gr := &tenant.GuardrailConfig{PipelineMode: mode, KeyPolicies: []*tenant.KeyGuardrailPolicy{policy}}
+				f := newTextViewR4Fixture(t, gr, textViewR4Reply("safe reply"))
+				status, body, bodies := f.send(t, "selected", tc.content)
+				calls := 1
+				if tc.want != 200 {
+					calls = 0
+				}
+				if status != tc.want || len(bodies) != calls {
+					t.Fatalf("selected validation status=%d calls=%d, want %d/%d: %s", status, len(bodies), tc.want, calls, body)
+				}
+				if tc.want == 403 && !strings.Contains(string(body), "content_blocked") {
+					t.Fatalf("missing content verdict: %s", body)
+				}
+			})
+		}
+		if tc.name == "empty-array" {
+			continue // the org rule skips empty messages; the selected view counts them
+		}
+		t.Run(tc.name+"/org-rule", func(t *testing.T) {
+			f := newTextViewR4Fixture(t, &tenant.GuardrailConfig{}, textViewR4Reply("safe reply"), config.GuardrailRuleConfig{Name: "input-validation", Stage: "pre", Action: "block", Threshold: .5, Config: cfg})
+			status, body, _ := f.send(t, "unselected", tc.content)
+			if status != tc.want {
+				t.Fatalf("org rule status=%d, want %d: %s", status, tc.want, body)
+			}
+		})
 	}
 }

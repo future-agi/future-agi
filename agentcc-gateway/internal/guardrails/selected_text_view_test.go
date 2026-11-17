@@ -19,13 +19,27 @@ func TestSelectedTextViewR4StrictContent(t *testing.T) {
 		{`[{"type":"text","text":"first"},{"type":"text","text":"second"}]`, `"first\nsecond"`},
 		{`[{"type":"text","text":""}]`, `""`},
 	} {
-		got, err := selectedTextContent(json.RawMessage(tc.raw))
+		got, err := selectedTextContent(json.RawMessage(tc.raw), selectedTextNewline)
 		if err != nil || string(got) != tc.want {
 			t.Fatalf("%s: got=%s err=%v", tc.raw, got, err)
 		}
 	}
+	// Validation keeps its legacy join: non-empty parts separated by a space,
+	// with an all-empty message kept as one empty text value.
+	for _, tc := range []struct{ raw, want string }{
+		{`"plain"`, `"plain"`},
+		{`[]`, `""`},
+		{`[{"type":"text","text":"hello"},{"type":"text","text":"world"}]`, `"hello world"`},
+		{`[{"type":"text","text":"hello"},{"type":"text","text":""},{"type":"text","text":"world"}]`, `"hello world"`},
+		{`[{"type":"text","text":""}]`, `""`},
+	} {
+		got, err := selectedTextContent(json.RawMessage(tc.raw), selectedTextValidation)
+		if err != nil || string(got) != tc.want {
+			t.Fatalf("validation %s: got=%s err=%v", tc.raw, got, err)
+		}
+	}
 	for _, raw := range []string{`null`, `{}`, `42`, `[{"type":"text","text":null}]`, `[{"type":"text","text":7}]`, `[{"type":"text","text":"safe","extra":"hidden"}]`, `[{"type":"text","text":"safe"},{"type":"image_url","image_url":{}}]`, `[{"type":"thinking","text":"hidden"}]`, `[{"type":"tool_use","text":"hidden"}]`} {
-		if got, err := selectedTextContent(json.RawMessage(raw)); err == nil {
+		if got, err := selectedTextContent(json.RawMessage(raw), selectedTextNewline); err == nil {
 			t.Fatalf("unsupported shape normalized: %s => %s", raw, got)
 		}
 	}
@@ -39,7 +53,7 @@ func TestSelectedTextViewR4PreservesContextAndOwnsBytes(t *testing.T) {
 	input := &CheckInput{Request: &request, Metadata: map[string]string{"org_id": "org", "user": "synthetic-user", "evaluation_context": "context"}, Response: &models.ChatCompletionResponse{Model: "synthetic", Usage: &models.Usage{TotalTokens: 8}, Choices: []models.Choice{{Index: 0, Message: models.Message{Role: "assistant", Content: json.RawMessage(`[{"type":"text","text":"response first"}]`)}}, {Index: 1, Message: models.Message{Role: "assistant", Content: json.RawMessage(`[{"type":"text","text":"response second"}]`)}}}}}
 	before, _ := json.Marshal(input)
 	for _, stage := range []Stage{StagePre, StagePost} {
-		view, err := selectedTextView(input, stage)
+		view, err := selectedTextView(input, stage, selectedTextNewline)
 		if err != nil {
 			t.Fatal(err)
 		}

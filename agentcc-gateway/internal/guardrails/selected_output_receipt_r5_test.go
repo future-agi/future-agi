@@ -43,7 +43,7 @@ func TestSelectedOutputR5ReceiptBindsEveryChoice(t *testing.T) {
 	}
 	rc.Inspection.Complete(models.InspectionOutput, rc.SelectedGuardrailResponse)
 	if err := plugin.AdmitSelectedOutput(context.Background(), rc); err == nil || err.Code != "content_blocked" {
-		t.Fatalf("fresh second-choice content escaped inspection: %v", err)
+		t.Fatalf("second-choice content was not inspected: %v", err)
 	}
 	if rc.Inspection.ReleaseError() == nil || rc.Response.Usage.TotalTokens != 8 {
 		t.Fatal("blocked response retained release authority or lost accounting usage")
