@@ -366,6 +366,10 @@ func TestCachedPriceResellerOwnEntryHasNoCachedRate(t *testing.T) {
 			if got := rc.Metadata["cost"]; got != "1.125000" {
 				t.Errorf("cost = %q, want 1.125000", got)
 			}
+			// The reseller's own entry has no cached rate: no discount, no key.
+			if got, set := rc.Metadata[cachedTokensKey]; set {
+				t.Errorf("%s = %q, want it absent", cachedTokensKey, got)
+			}
 		})
 		t.Run("di-gate-closed-"+at.name, func(t *testing.T) {
 			rc := s.run(t, false, true)
@@ -390,6 +394,10 @@ func TestCachedPriceEntryWithoutALowerCachedRate(t *testing.T) {
 			rc := s.run(t, true, true)
 			if got := rc.Metadata["cost"]; got != "0.002000" {
 				t.Errorf("cost = %q, want 0.002000", got)
+			}
+			// No discount was given, so the log claims no cached tokens.
+			if got, set := rc.Metadata[cachedTokensKey]; set {
+				t.Errorf("%s = %q, want it absent", cachedTokensKey, got)
 			}
 		})
 	}

@@ -34,7 +34,7 @@ const (
 )
 
 // cachedTokensKey records how many prompt tokens a chat request was priced
-// at the cached rate for.
+// at the cached rate for. It is absent when no cached discount was given.
 const cachedTokensKey = "cost_cached_tokens"
 
 // Where a chat request priced with Vertex AI's regional uplift records the
@@ -292,15 +292,18 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 		ownKey, keep := resellerPrice(db, model, rc.Provider, table, providerType, opts.At)
 		opts.TablePrice = keep
 		priced := cmp.Or(ownKey, model)
-		cost, ok = db.CalculateCost(priced, usage.PromptTokens, usage.CompletionTokens, opts)
+		var discounted int
+		cost, discounted, ok = db.CalculateCostCached(priced, usage.PromptTokens, usage.CompletionTokens, opts)
 		if !ok && rc.ResolvedModel != "" && rc.Model != "" {
 			fallback := priceKey(db, rc.Model, rc.Provider, table)
 			ownKey, opts.TablePrice = resellerPrice(db, fallback, rc.Provider, table, providerType, opts.At)
 			priced = cmp.Or(ownKey, fallback)
-			cost, ok = db.CalculateCost(priced, usage.PromptTokens, usage.CompletionTokens, opts)
+			cost, discounted, ok = db.CalculateCostCached(priced, usage.PromptTokens, usage.CompletionTokens, opts)
 		}
-		if ok && opts.CachedTokens > 0 {
-			rc.Metadata[cachedTokensKey] = strconv.Itoa(opts.CachedTokens)
+		// Only tokens actually priced at the cached rate are recorded: an entry
+		// with no lower cached rate gave no discount, so the log claims none.
+		if ok && discounted > 0 {
+			rc.Metadata[cachedTokensKey] = strconv.Itoa(discounted)
 		}
 		// Chat completions only: the GenAI routes, /v1/messages and the other
 		// endpoints that fall into this branch keep their price.

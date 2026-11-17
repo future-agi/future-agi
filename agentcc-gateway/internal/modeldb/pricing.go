@@ -42,6 +42,13 @@ type CostOptions struct {
 // tokens cost the cached rate, never more than the input rate. A cached count
 // above the input count is not a part of it, so nothing is discounted.
 func (p *PricingInfo) Calculate(inputTokens, outputTokens int, opts CostOptions) float64 {
+	cost, _ := p.calculate(inputTokens, outputTokens, opts)
+	return cost
+}
+
+// calculate returns the total cost and how many input tokens it priced at the
+// cached rate: zero when no cached discount was given.
+func (p *PricingInfo) calculate(inputTokens, outputTokens int, opts CostOptions) (float64, int) {
 	inputRate := p.InputPerToken
 	outputRate := p.OutputPerToken
 
@@ -55,14 +62,16 @@ func (p *PricingInfo) Calculate(inputTokens, outputTokens int, opts CostOptions)
 	}
 
 	inputCost := float64(inputTokens) * inputRate
+	discounted := 0
 	if cached := opts.CachedTokens; cached > 0 && cached <= inputTokens {
 		if cachedRate := p.CachedInputPerToken; cachedRate > 0 && cachedRate < inputRate {
 			// Subtracting the saving keeps the cost at or below the full
 			// price after rounding.
 			inputCost -= float64(cached) * (inputRate - cachedRate)
+			discounted = cached
 		}
 	}
-	return inputCost + float64(outputTokens)*outputRate
+	return inputCost + float64(outputTokens)*outputRate, discounted
 }
 
 // InputPerMTok returns the input price per million tokens (for display).
