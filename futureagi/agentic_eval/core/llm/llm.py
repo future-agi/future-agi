@@ -645,9 +645,17 @@ class LLM:
         buckets = list(self.__dict__.get("_usage_buckets", {}).values())
         if not buckets:
             return calculate_total_cost(self.model_name, self.token_usage)
-        if len(buckets) == 1:
-            # The one price in force since the session's first call, not "now":
-            # a call with no usage must not reprice what was billed before it.
+        from agentic_eval.core_evals.run_prompt import model_pricing
+
+        rates = [
+            model_pricing.get_model_pricing(self.model_name, at=bucket["at"])
+            for bucket in buckets
+        ]
+        if all(rate == rates[0] for rate in rates):
+            # One price in force for the model in use, however many models the
+            # session went through: price the total once, at the first call's
+            # time, not "now" (a call with no usage must not reprice what was
+            # billed before it). Summing rounded parts could add a micro-dollar.
             return calculate_total_cost(
                 self.model_name, self.token_usage, at=buckets[0]["at"]
             )

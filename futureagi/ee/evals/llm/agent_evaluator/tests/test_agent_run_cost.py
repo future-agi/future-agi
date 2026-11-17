@@ -17,6 +17,8 @@ from ee.evals.llm.agent_evaluator.evaluator import AgentEvaluator
 MODEL = "gemini/gemini-3.7-flash"
 RUN_STARTS = datetime(2026, 12, 31, 23, 58, 0, tzinfo=UTC)
 RUN_ENDS = datetime(2027, 1, 1, 0, 1, 0, tzinfo=UTC)
+LATER_RUN_STARTS = datetime(2027, 1, 1, 0, 1, 0, tzinfo=UTC)
+LATER_RUN_ENDS = datetime(2027, 1, 1, 0, 3, 0, tzinfo=UTC)
 AGENT_RESULT = {
     "content": '{"result": "Pass", "explanation": "ok"}',
     "tool_calls": [],
@@ -25,12 +27,12 @@ AGENT_RESULT = {
 }
 
 
-def _run(monkeypatch, gateway_cost):
-    clock = {"at": RUN_STARTS}
+def _run(monkeypatch, gateway_cost, starts=RUN_STARTS, ends=RUN_ENDS):
+    clock = {"at": starts}
     monkeypatch.setattr(model_pricing, "_utc_now", lambda: clock["at"])
 
     async def run(**kwargs):
-        clock["at"] = RUN_ENDS
+        clock["at"] = ends
         return dict(AGENT_RESULT)
 
     agent = MagicMock()
@@ -71,6 +73,18 @@ def test_a_run_across_a_price_change_is_billed_at_the_rate_it_started_under(
     assert at_start["total_cost"] != at_end["total_cost"]
     assert evaluator.cost["total_cost"] == at_start["total_cost"]
     assert evaluator.cost["total_cost"] == 2.25
+
+
+def test_a_run_that_starts_after_a_price_change_is_billed_at_the_new_rate(
+    monkeypatch,
+):
+    evaluator = _run(
+        monkeypatch, gateway_cost=0, starts=LATER_RUN_STARTS, ends=LATER_RUN_ENDS
+    )
+
+    old = calculate_total_cost(MODEL, evaluator.token_usage, at=RUN_STARTS)
+    assert old["total_cost"] == 2.25
+    assert evaluator.cost["total_cost"] == 4.5
 
 
 def test_a_gateway_reported_cost_is_used_as_it_is(monkeypatch):

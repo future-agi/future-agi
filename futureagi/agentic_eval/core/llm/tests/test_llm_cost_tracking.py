@@ -111,6 +111,31 @@ def test_a_model_with_no_dated_price_costs_what_it_always_did(clock):
     assert llm.cost == calculate_total_cost(UNDATED_MODEL, llm.token_usage)
 
 
+def test_a_session_that_starts_after_a_price_change_is_billed_at_the_new_rate(clock):
+    llm = _session(DATED_MODEL)
+
+    _call(llm, clock, AFTER_MIDNIGHT, 2_000_000, 200_000)
+
+    new = _cost(2_000_000, 200_000, _scheduled_per_1m("2027-01-01"))
+    assert llm.cost["total_cost"] == round(sum(new), 6)
+    assert llm.cost["total_cost"] == pytest.approx(4.5, abs=0.001)
+
+
+def test_a_model_switch_with_no_price_change_costs_what_the_total_costs(clock):
+    llm = _session(UNDATED_MODEL)
+    on_the_day = datetime(2026, 12, 30, 9, 0, 0, tzinfo=UTC)
+
+    # Two models, so two buckets, but the model now in use has one rate all day.
+    _call(llm, clock, on_the_day, 1, 1)
+    llm.model_name = DATED_MODEL
+    _call(llm, clock, on_the_day, 1, 1)
+
+    assert len(llm._usage_buckets) == 2
+    # Rounded bucket by bucket the parts add to 0.00001; the total is 0.000009.
+    assert llm.cost == calculate_total_cost(DATED_MODEL, llm.token_usage, at=on_the_day)
+    assert llm.cost["total_cost"] == 0.000009
+
+
 def test_a_call_with_no_usage_does_not_reprice_the_session(clock):
     llm = _session(DATED_MODEL)
 

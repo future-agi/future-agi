@@ -186,6 +186,11 @@ def _schedule_file(rows):
             ("row 0", "input_cost_per_token_batches", "positive"),
             id="zero-batch-price",
         ),
+        pytest.param(
+            [_row(input_cost_per_token=10**400)],
+            ("row 0", "input_cost_per_token", "positive"),
+            id="huge-integer-price",
+        ),
         pytest.param([], ("no rows",), id="empty-row-list"),
         pytest.param({"from": "2027-01-01"}, ("list of rows",), id="entry-not-a-list"),
         pytest.param(["2027-01-01"], ("row 0", "object"), id="row-not-an-object"),
