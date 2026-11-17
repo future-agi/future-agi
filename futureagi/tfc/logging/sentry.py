@@ -18,6 +18,7 @@ Usage:
 """
 
 import contextlib
+import contextvars
 import os
 import re
 import sys
@@ -223,9 +224,31 @@ def _is_sensitive_key(key: Any) -> bool:
 
 
 def _names_sensitive_key(lowered: str) -> bool:
-    lowered = _COUNT_FIELD.sub(" ", lowered)
-    lowered = _COUNT_PHRASE.sub(" ", lowered)
-    return any(s in lowered for s in SENSITIVE_KEY_SUBSTRINGS)
+    # The count removals only take text out, so a text that names no key before
+    # them names none after. Every count name holds "token".
+    if not any(s in lowered for s in SENSITIVE_KEY_SUBSTRINGS):
+        return False
+    if "token" in lowered:
+        lowered = _COUNT_FIELD.sub(" ", lowered)
+        lowered = _COUNT_PHRASE.sub(" ", lowered)
+        return any(s in lowered for s in SENSITIVE_KEY_SUBSTRINGS)
+    return True
+
+
+# Each regex below runs only when a plain `in` check says it can match: on a
+# long string with no hit that is the whole saving.
+_TOKEN_KEY_LITERALS = ("aws_onboard", "gcp_onboard", "mcp_oauth_")
+
+
+def _redact_token_keys(text: str) -> str:
+    """The text with the token of each cache key that embeds one taken out."""
+    if not any(literal in text for literal in _TOKEN_KEY_LITERALS):
+        return text
+    return _TOKEN_KEY_PREFIX.sub(r"\1:" + _REDACTED, text)
+
+
+def _has_url_password(text: str) -> bool:
+    return "://" in text and _URL_PASSWORD.search(text) is not None
 
 
 _SAML_VALUE_MARKERS = ("<saml:", "<samlp:", "SAMLResponse=", "fai_saml_b_")
@@ -239,7 +262,7 @@ def _is_secret_value(value: str) -> bool:
     lowered = value.lower()
     return (
         any(marker in value for marker in _SECRET_URL_MARKERS)
-        or bool(_URL_PASSWORD.search(value))
+        or _has_url_password(value)
         or any(marker in lowered for marker in _AZURE_VALUE_MARKERS)
     )
 
@@ -247,23 +270,64 @@ def _is_secret_value(value: str) -> bool:
 def _mentions_sensitive_key(text: str) -> bool:
     """True if the text names a sensitive key anywhere, in any format."""
     return (
-        _names_sensitive_key(text.lower())
-        or any(marker in text for marker in _SAML_VALUE_MARKERS)
+        any(marker in text for marker in _SAML_VALUE_MARKERS)
         or any(marker in text for marker in _SECRET_URL_MARKERS)
-        or bool(_URL_PASSWORD.search(text))
+        or _names_sensitive_key(text.lower())
+        or _has_url_password(text)
     )
+
+
+# The most string data the scrub reads for one event, in characters. Past it,
+# each string is replaced unread, so an event cannot hold the raising thread for
+# longer than this much text costs. Direct calls outside a hook have no budget.
+_SCRUB_BUDGET_CHARS = 8 * 1024 * 1024
+_scrub_budget: contextvars.ContextVar = contextvars.ContextVar(
+    "sentry_scrub_budget", default=None
+)
+
+
+@contextlib.contextmanager
+def _budgeted():
+    """The scope of one event's scrub, with its own budget."""
+    token = _scrub_budget.set([_SCRUB_BUDGET_CHARS])
+    try:
+        yield
+    finally:
+        _scrub_budget.reset(token)
+
+
+def _within_budget(text: str) -> bool:
+    """Charge the string to the event's budget; False once it is spent. A string
+    read twice is charged twice."""
+    budget = _scrub_budget.get()
+    if budget is None:
+        return True
+    budget[0] -= len(text)
+    return budget[0] >= 0
 
 
 def _scrub_text(text: str) -> str:
     """Free text: redacted whole when it names a sensitive key, else with any
     token embedded in a cache key taken out."""
+    if not _within_budget(text):
+        return _REDACTED
+    return _scrub_text_read(text)
+
+
+def _scrub_text_read(text: str) -> str:
     if _mentions_sensitive_key(text):
         return _REDACTED
-    return _TOKEN_KEY_PREFIX.sub(r"\1:" + _REDACTED, text)
+    return _redact_token_keys(text)
 
 
 def _scrub_query(query: str) -> str:
     """A query string with the value of each credential parameter replaced."""
+    if not _within_budget(query):
+        return _REDACTED
+    return _scrub_query_read(query)
+
+
+def _scrub_query_read(query: str) -> str:
     # Names are tested as decoded: `api%5Fkey` and `api+key` are `api_key` and
     # `api key` to the server.
     if _mentions_sensitive_key(unquote_plus(query)):
@@ -282,7 +346,13 @@ def _scrub_query(query: str) -> str:
 
 def _scrub_url(url: str) -> str:
     """A URL with token path segments and credential query values replaced."""
-    if _URL_PASSWORD.search(url) or any(m in url for m in _SECRET_URL_MARKERS):
+    if not _within_budget(url):
+        return _REDACTED
+    return _scrub_url_read(url)
+
+
+def _scrub_url_read(url: str) -> str:
+    if _has_url_password(url) or any(m in url for m in _SECRET_URL_MARKERS):
         return _REDACTED
 
     def path_token(match: re.Match) -> str:
@@ -294,7 +364,7 @@ def _scrub_url(url: str) -> str:
     base, mark, rest = url.partition("?")
     if mark:
         query, hash_mark, fragment = rest.partition("#")
-        url = base + "?" + _scrub_query(query) + (hash_mark + fragment)
+        url = base + "?" + _scrub_query_read(query) + (hash_mark + fragment)
     return url
 
 
@@ -322,6 +392,8 @@ def _scrub(value: Any, depth: int = 0) -> Any:
     """Recursively redact values under sensitive keys (defensive, bounded)."""
     if depth > 6:
         return value
+    if isinstance(value, str) and not _within_budget(value):
+        return _REDACTED
     if isinstance(value, str) and any(
         marker in value for marker in _SAML_VALUE_MARKERS
     ):
@@ -366,12 +438,15 @@ def _scrub_strings(value: Any, depth: int = 0) -> Any:
 # line is cut to it too.
 _MAX_FORMATTED = 16_384
 
-# What init_sentry hands the SDK as `max_value_length`. The SDK cuts each string
-# before `before_send` runs, so a limit near the final cap would send the front
-# of a long repr whose key name comes later (a system prompt, then
+# What init_sentry hands the SDK as `max_value_length`. The SDK cuts the strings
+# it serializes (extra, breadcrumbs, frame variables, messages) to this before
+# `before_send` runs, so a limit near the final cap would send the front of a
+# long repr whose key name comes later (a system prompt, then
 # `user_api_key=...`) with nothing in view to match. 256 KB keeps such a name in
 # view for any realistic repr while the scrub's cost per string stays bounded
-# (every check on a string is linear).
+# (every check on a string is linear). Span descriptions are the exception: the
+# SDK passes them on whole (serializer.py), so `_scrub_span_description` cuts
+# them to this itself.
 _SDK_MAX_VALUE_LENGTH = 262_144
 
 # A `%` conversion in a log template, with its optional `(name)` mapping key.
@@ -399,6 +474,8 @@ def _template_text(template: str) -> str:
 
 
 def _names_key_in_template(template: str) -> bool:
+    if not _within_budget(template):
+        return True
     return _mentions_sensitive_key(_template_text(template))
 
 
@@ -410,10 +487,12 @@ def _template_leaks(template: str) -> bool:
     if (
         any(marker in text for marker in _SAML_VALUE_MARKERS)
         or any(marker in text for marker in _SECRET_URL_MARKERS)
-        or _URL_PASSWORD.search(text)
+        or _has_url_password(text)
     ):
         return True
-    lowered = _COUNT_PHRASE.sub(" ", _COUNT_FIELD.sub(" ", text.lower()))
+    lowered = text.lower()
+    if "token" in lowered:
+        lowered = _COUNT_PHRASE.sub(" ", _COUNT_FIELD.sub(" ", lowered))
     # Each mention is read once, and the scan resumes after its label, so a text
     # made of key names cannot make this quadratic.
     position = 0
@@ -428,9 +507,9 @@ def _template_leaks(template: str) -> bool:
 def _scrub_template(template: str) -> str:
     """The template of a log call that has arguments. It is kept whole so events
     group, unless the text itself holds a secret."""
-    if _template_leaks(template):
+    if not _within_budget(template) or _template_leaks(template):
         return _REDACTED
-    return _TOKEN_KEY_PREFIX.sub(r"\1:" + _REDACTED, template)
+    return _redact_token_keys(template)
 
 
 def _redact_all(params: Any) -> Any:
@@ -610,7 +689,7 @@ def _scrub_event(event: dict) -> None:
                 continue
             is_redis = crumb.get("category") == "redis"
             if "data" in crumb:
-                data = _scrub_url_fields(crumb["data"])
+                data = _redact_db_values(_scrub_url_fields(crumb["data"]))
                 if is_redis:
                     data = _cut_redis_commands(data)
                 crumb["data"] = _scrub_strings(data)
@@ -743,9 +822,12 @@ def _report_scrub_failure(exc: Exception) -> None:
     """Say that a scrub failed, by exception class only. It does not go through
     the logging module: Python 3.13.4+ drops a record logged while another record
     on the same thread is being handled, and a hook runs inside the handler of
-    the record that made the event."""
+    the record that made the event. It goes to the process's own stderr: in a
+    Celery worker `sys.stderr` is a proxy that logs what it is given."""
     with contextlib.suppress(Exception):
-        sys.stderr.write(f"sentry_scrub_failed: {type(exc).__name__}\n")
+        stream = sys.__stderr__ if sys.__stderr__ is not None else sys.stderr
+        stream.write(f"sentry_scrub_failed: {type(exc).__name__}\n")
+        stream.flush()
 
 
 def _get_before_send() -> Callable:
@@ -802,7 +884,8 @@ def _get_before_send() -> Callable:
             return None
 
         # 4. Scrub secrets/PII from the surviving event.
-        _scrub_event(event)
+        with _budgeted():
+            _scrub_event(event)
         return _cap_strings(event)
 
     return before_send
@@ -841,11 +924,25 @@ def _cut_redis_commands(data: Any) -> Any:
     return data
 
 
+# Span and breadcrumb data keys that hold the rows of a query: the
+# clickhouse_driver integration records a query's parameters and its result with
+# PII on, and customer data has no key name to match.
+_DB_VALUE_KEYS = ("db.params", "db.result")
+
+
+def _redact_db_values(data: Any) -> Any:
+    """Span or breadcrumb data with the values of `db.params` and `db.result`
+    replaced; the keys stay, so a span still shows that it had them."""
+    if not isinstance(data, dict) or not any(k in data for k in _DB_VALUE_KEYS):
+        return data
+    return {k: (_REDACTED if k in _DB_VALUE_KEYS else v) for k, v in data.items()}
+
+
 def _scrub_span_data(data: Any) -> Any:
     """Span data scrubbed as strings, except the `code.*` keys (`code.function`,
     `code.filepath`, `code.namespace`): they name code, not values, and a
     function called `get_user_from_token` would otherwise match."""
-    data = _cut_redis_commands(_scrub_url_fields(data))
+    data = _cut_redis_commands(_scrub_url_fields(_redact_db_values(data)))
     if not isinstance(data, dict):
         return _scrub_strings(data)
     scrubbed = _scrub_strings({k: v for k, v in data.items() if not _is_code_key(k)})
@@ -856,24 +953,94 @@ def _is_code_key(key: Any) -> bool:
     return isinstance(key, str) and key.startswith("code.")
 
 
+_QUERY_OR_FRAGMENT = re.compile(r"[?#]")
+# Path segments that name a credential, not a resource: the long names match as
+# a substring (`access_token`), the short ones only as a whole word, so
+# `/candidates/42` and `/authors/7` are kept.
+_PATH_KEY_SUBSTRINGS = (
+    "token",
+    "secret",
+    "password",
+    "passwd",
+    "apikey",
+    "api_key",
+    "credential",
+    "signature",
+)
+_PATH_KEY_WORDS = frozenset({"key", "auth", "sig", "code"})
+_PATH_WORD_SPLIT = re.compile(r"[^a-z0-9]+")
+
+
+def _names_credential_segment(segment: str) -> bool:
+    lowered = _COUNT_FIELD.sub(" ", segment.lower())
+    return any(name in lowered for name in _PATH_KEY_SUBSTRINGS) or any(
+        word in _PATH_KEY_WORDS for word in _PATH_WORD_SPLIT.split(lowered)
+    )
+
+
+def _scrub_path_values(url: str) -> str:
+    """A URL, or a `GET <url>` description, with the path segment that follows a
+    segment naming a sensitive key replaced: `/token/<value>`."""
+    cut = _QUERY_OR_FRAGMENT.search(url)
+    head, tail = (url[: cut.start()], url[cut.start() :]) if cut else (url, "")
+    scheme = head.find("://")
+    start = head.find("/", scheme + 3 if scheme != -1 else 0)
+    if start == -1:
+        return url
+    segments = head[start:].split("/")
+    after_key = False
+    for index, segment in enumerate(segments):
+        if not segment:
+            continue
+        if after_key:
+            segments[index] = _REDACTED
+            after_key = False
+        elif _names_credential_segment(segment):
+            after_key = True
+    return head[:start] + "/".join(segments) + tail
+
+
+def _scrub_cache_description(op: str, description: str) -> str:
+    """A redis or cache span description cut to its command and key, with the key
+    read as text: a key that names a sensitive one (`password_reset:<tok>`) is
+    replaced, an ordinary key is kept."""
+    match = _REDIS_COMMAND_AND_KEY.match(description)
+    if match is None:
+        return _REDACTED
+    command, key = match.groups()
+    # A redis span is a command and its key, and only the key is a value. A cache
+    # span has no command: Django's description is the key itself, or the keys
+    # joined by ", ", so each part is read.
+    if op != "db.redis" or key is None:
+        command = _scrub_text_read(command)
+    if key is not None:
+        key = _scrub_text_read(key)
+    return " ".join(part for part in (command, key) if part)
+
+
 def _scrub_span_description(op: Any, description: str) -> str:
     """A span description. Those of db, http, middleware and function spans are
     code paths and parametrized SQL, not values, so they are not matched by key
     name (a query on a `password` column, the CSRF middleware, an OAuth `/token`
     call). The ones that can carry a value are cut by their shape."""
     op = op if isinstance(op, str) else ""
-    if op == "db.redis":
-        description = _redis_command_and_key(description)
+    # The SDK does not cut span descriptions, so this does; what is cut is not
+    # sent, as the final cap is far shorter.
+    description = description[:_SDK_MAX_VALUE_LENGTH]
+    if not _within_budget(description):
+        return _REDACTED
+    if op == "db.redis" or op.startswith("cache."):
+        description = _scrub_cache_description(op, description)
     elif op.startswith("http"):
-        description = _scrub_url(description)
+        description = _scrub_path_values(_scrub_url_read(description))
     elif op == "subprocess":
         # An argv can hold values, so a name in it is read as one.
-        description = _scrub_text(description)
+        description = _scrub_text_read(description)
     if _is_secret_value(description) or any(
         marker in description for marker in _SAML_VALUE_MARKERS
     ):
         return _REDACTED
-    return _TOKEN_KEY_PREFIX.sub(r"\1:" + _REDACTED, description)
+    return _redact_token_keys(description)
 
 
 def _scrub_span(span: dict) -> None:
@@ -894,10 +1061,11 @@ def _get_before_send_transaction() -> Callable:
     def before_send_transaction(event: dict, hint: dict) -> dict | None:
         try:
             event = _scrub_deployment_telemetry_event(event)
-            _scrub_event(event)
-            for span in event.get("spans") or []:
-                if isinstance(span, dict):
-                    _scrub_span(span)
+            with _budgeted():
+                _scrub_event(event)
+                for span in event.get("spans") or []:
+                    if isinstance(span, dict):
+                        _scrub_span(span)
             return _cap_strings(event)
         except Exception as exc:  # noqa: BLE001 - fail closed: drop the event, never send it raw
             _report_scrub_failure(exc)

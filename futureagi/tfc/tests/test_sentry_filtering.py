@@ -12,11 +12,14 @@ that keep the issue stream clean and safe:
 from __future__ import annotations
 
 import contextlib
+import io
 import json
 import logging
 import pickle
+import random
 import secrets
 import signal
+import sys
 import threading
 import time
 import urllib.request
@@ -862,7 +865,7 @@ def _boom(*args, **kwargs):
 
 
 def test_a_failing_scrub_drops_the_event_and_reports_only_the_failure(
-    monkeypatch, capsys, caplog
+    monkeypatch, capfd, caplog
 ):
     secret = secrets.token_hex(16)
     monkeypatch.setattr(sentry_module, "_scrub_strings", _boom)
@@ -876,12 +879,12 @@ def test_a_failing_scrub_drops_the_event_and_reports_only_the_failure(
     # On stderr, not through logging: Python 3.13.4+ drops a record logged
     # while another record on the same thread is being handled, and the hook
     # runs inside the handler of the record that made the event.
-    captured = capsys.readouterr()
+    captured = capfd.readouterr()
     assert captured.err == "sentry_scrub_failed: TypeError\n"
     assert secret not in captured.err + captured.out + caplog.text
 
 
-def test_a_failing_scrub_drops_a_transaction(monkeypatch, capsys):
+def test_a_failing_scrub_drops_a_transaction(monkeypatch, capfd):
     monkeypatch.setattr(sentry_module, "_scrub_strings", _boom)
 
     def action():
@@ -894,16 +897,76 @@ def test_a_failing_scrub_drops_a_transaction(monkeypatch, capsys):
         before_send_transaction=sentry_module._get_before_send_transaction(),
     )
     assert sent == []
-    captured = capsys.readouterr()
+    captured = capfd.readouterr()
     assert captured.err == "sentry_scrub_failed: TypeError\n"
     assert "planted bug" not in captured.err + captured.out
 
 
-def test_a_failing_telemetry_scrub_also_drops_the_event(monkeypatch, capsys):
+def test_a_failing_telemetry_scrub_also_drops_the_event(monkeypatch, capfd):
     monkeypatch.setattr(sentry_module, "_scrub_deployment_telemetry_event", _boom)
     assert before_send({"message": "x"}, {}) is None
     assert sentry_module._get_before_send_transaction()({"type": "t"}, {}) is None
-    assert capsys.readouterr().err == "sentry_scrub_failed: TypeError\n" * 2
+    assert capfd.readouterr().err == "sentry_scrub_failed: TypeError\n" * 2
+
+
+def _failing_hooks(monkeypatch):
+    """The two hooks, with a scrub step that raises."""
+    monkeypatch.setattr(sentry_module, "_scrub_deployment_telemetry_event", _boom)
+    return (
+        lambda: _get_before_send()({"message": "x"}, {}),
+        lambda: sentry_module._get_before_send_transaction()({"type": "t"}, {}),
+    )
+
+
+def test_the_failure_report_goes_to_the_process_stderr_not_sys_stderr(
+    monkeypatch, capfd
+):
+    # In a Celery worker `sys.stderr` is a proxy that logs what it is given, and
+    # the report would go through logging again.
+    proxy = io.StringIO()
+    monkeypatch.setattr(sys, "stderr", proxy)
+    for hook in _failing_hooks(monkeypatch):
+        assert hook() is None
+    assert proxy.getvalue() == ""
+    assert capfd.readouterr().err == "sentry_scrub_failed: TypeError\n" * 2
+
+
+def test_the_failure_report_falls_back_to_sys_stderr_without_an_original(
+    monkeypatch,
+):
+    fallback = io.StringIO()
+    monkeypatch.setattr(sys, "__stderr__", None)
+    monkeypatch.setattr(sys, "stderr", fallback)
+    for hook in _failing_hooks(monkeypatch):
+        assert hook() is None
+    assert fallback.getvalue() == "sentry_scrub_failed: TypeError\n" * 2
+
+
+class _UnwritableStream:
+    def write(self, text):
+        raise OSError("closed")
+
+    def flush(self):
+        raise OSError("closed")
+
+
+@pytest.mark.parametrize(
+    "original, current",
+    [
+        (None, None),
+        (_UnwritableStream(), _UnwritableStream()),
+        (None, _UnwritableStream()),
+        (_UnwritableStream(), None),
+    ],
+    ids=["both-none", "both-raise", "none-then-raise", "raise-then-none"],
+)
+def test_the_hooks_still_drop_the_event_when_the_report_cannot_be_written(
+    monkeypatch, original, current
+):
+    monkeypatch.setattr(sys, "__stderr__", original)
+    monkeypatch.setattr(sys, "stderr", current)
+    for hook in _failing_hooks(monkeypatch):
+        assert hook() is None
 
 
 def _init_sentry_kwargs(monkeypatch):
@@ -1027,7 +1090,10 @@ def test_a_hostile_f_string_error_is_sent_in_linear_time(name):
         logging.getLogger("x").error(f"invalid dataset name {user_text}")
 
     sent = []
-    _seconds_for(lambda: sent.extend(_sent_through_client(action)))
+    # The whole client takes part here (capture, serialize, hooks), so the bound
+    # is looser than the regex-only ones above; quadratic growth on this input
+    # is minutes, and `_seconds_for` aborts it at 8 s.
+    _seconds_for(lambda: sent.extend(_sent_through_client(action)), limit=3)
     assert len(sent) == 1
 
 
@@ -1328,6 +1394,288 @@ def test_a_subprocess_span_description_with_a_secret_is_scrubbed_when_sent():
     [transaction] = [e for e in sent if e.get("type") == "transaction"]
     assert [s["description"] for s in transaction["spans"]] == [_REDACTED]
     assert secret not in json.dumps(sent, default=str)
+
+
+# Keys and paths that name a secret in span descriptions (L1)
+
+
+def _sent_span_descriptions(*spans):
+    out = sentry_module._get_before_send_transaction()(_span_transaction(*spans), {})
+    return [s["description"] for s in out["spans"]]
+
+
+@pytest.mark.parametrize(
+    "op, description, expected",
+    [
+        ("db.redis", "GET 'password_reset:abc'", f"GET {_REDACTED}"),
+        ("cache.get", "GET 'password_reset:abc'", f"GET {_REDACTED}"),
+        ("db.redis", "SET 'api_key:rawvalue' b'x' 'PX' 1000", f"SET {_REDACTED}"),
+        ("cache.get", "api_key:rawvalue", _REDACTED),
+        ("cache.set", "password_reset:abc", _REDACTED),
+        ("db.redis", "GET 'cache:plain'", "GET 'cache:plain'"),
+        ("cache.get", "user:42:profile", "user:42:profile"),
+        ("cache.get", "GET 'feature_flags'", "GET 'feature_flags'"),
+        ("db.redis", "redis.pipeline.execute", "redis.pipeline.execute"),
+    ],
+)
+def test_a_cache_key_that_names_a_secret_is_replaced_and_other_keys_are_kept(
+    op, description, expected
+):
+    assert _sent_span_descriptions({"op": op, "description": description}) == [expected]
+
+
+def test_every_key_of_a_multi_key_cache_span_is_read():
+    secret = secrets.token_hex(16)
+    [description] = _sent_span_descriptions(
+        {"op": "cache.get_many", "description": f"password_reset:{secret}, other:1"}
+    )
+    assert secret not in description
+
+
+@pytest.mark.parametrize(
+    "description, expected",
+    [
+        ("GET https://x/token/abc123", f"GET https://x/token/{_REDACTED}"),
+        (
+            "GET https://x/v1/api_key/abc123/x",
+            f"GET https://x/v1/api_key/{_REDACTED}/x",
+        ),
+        ("GET /secret/abc?z=1", f"GET /secret/{_REDACTED}?z=1"),
+        ("GET https://x/v1/users/42", "GET https://x/v1/users/42"),
+        ("GET https://x/token", "GET https://x/token"),
+        (
+            "POST https://oauth2.googleapis.com/token",
+            "POST https://oauth2.googleapis.com/token",
+        ),
+        ("GET https://x/max_tokens/5", "GET https://x/max_tokens/5"),
+        ("GET https://x/candidates/42", "GET https://x/candidates/42"),
+        ("GET https://x/authors/7", "GET https://x/authors/7"),
+        ("GET https://x/api-key/abc", f"GET https://x/api-key/{_REDACTED}"),
+    ],
+)
+def test_an_http_path_segment_after_a_key_name_is_replaced(description, expected):
+    assert _sent_span_descriptions(
+        {"op": "http.client", "description": description}
+    ) == [expected]
+
+
+# Span descriptions are cut before they are scrubbed (L2)
+
+
+def test_a_huge_span_description_is_cut_before_it_is_scrubbed_and_capped(monkeypatch):
+    secret = secrets.token_hex(16)
+    seen = []
+    real = sentry_module._is_secret_value
+    monkeypatch.setattr(
+        sentry_module, "_is_secret_value", lambda v: seen.append(len(v)) or real(v)
+    )
+    huge = "ok " * 1_000 + f"--api_key={secret}" + " pad" * 500_000
+    plain = "q " * 1_000_000
+    assert len(huge) > 2_000_000 and len(plain) >= 2_000_000
+    event = _span_transaction(
+        {"op": "subprocess", "description": huge},
+        {"op": "db", "description": plain},
+    )
+    started = time.monotonic()
+    out = sentry_module._get_before_send_transaction()(event, {})
+    assert time.monotonic() - started < 1
+    assert seen and max(seen) <= sentry_module._SDK_MAX_VALUE_LENGTH
+    first, second = (s["description"] for s in out["spans"])
+    assert first == _REDACTED
+    assert len(second) == _MAX_FORMATTED
+    assert secret not in json.dumps(out)
+
+
+# The db values of span and breadcrumb data are not sent (L5)
+
+
+def test_the_params_and_result_of_a_db_span_are_replaced_and_their_keys_kept():
+    secret = secrets.token_hex(16)
+    data = {
+        "db.system": "clickhouse",
+        "db.params": [[f"user-{secret}@example.test", 42]],
+        "db.result": [("row", secret)],
+        "query": "SELECT 1",
+    }
+    event = _span_transaction({"op": "db", "description": "q", "data": data})
+    event["breadcrumbs"] = [{"category": "query", "message": "SELECT 1", "data": data}]
+    out = sentry_module._get_before_send_transaction()(event, {})
+    expected = {
+        "db.system": "clickhouse",
+        "db.params": _REDACTED,
+        "db.result": _REDACTED,
+        "query": "SELECT 1",
+    }
+    assert out["spans"][0]["data"] == expected
+    assert out["breadcrumbs"][0]["data"] == expected
+    assert secret not in json.dumps(out)
+
+
+# Cheap guards in the text scrub (L4)
+
+
+class _CountingRegex:
+    def __init__(self, regex):
+        self.regex = regex
+        self.calls = 0
+
+    def sub(self, *args, **kwargs):
+        self.calls += 1
+        return self.regex.sub(*args, **kwargs)
+
+    def search(self, *args, **kwargs):
+        self.calls += 1
+        return self.regex.search(*args, **kwargs)
+
+
+_GUARDED = ("_COUNT_FIELD", "_COUNT_PHRASE", "_TOKEN_KEY_PREFIX", "_URL_PASSWORD")
+
+
+def _count_regex_calls(monkeypatch, action):
+    spies = {name: _CountingRegex(getattr(sentry_module, name)) for name in _GUARDED}
+    for name, spy in spies.items():
+        monkeypatch.setattr(sentry_module, name, spy)
+    action()
+    return {name: spy.calls for name, spy in spies.items()}
+
+
+@pytest.mark.parametrize(
+    "scrub",
+    [sentry_module._scrub_text, sentry_module._template_leaks],
+    ids=["text", "template"],
+)
+def test_text_that_cannot_match_does_not_run_the_regexes(monkeypatch, scrub):
+    calls = _count_regex_calls(
+        monkeypatch, lambda: scrub("prompt text, 12 words " * 50)
+    )
+    assert calls == dict.fromkeys(_GUARDED, 0)
+
+
+@pytest.mark.parametrize(
+    "text, ran",
+    [
+        ("max_tokens is 5", {"_COUNT_FIELD", "_COUNT_PHRASE"}),
+        ("a 5 tokens note", {"_COUNT_FIELD", "_COUNT_PHRASE"}),
+        ("see https://u:pw@h/x", {"_URL_PASSWORD"}),
+        ("key aws_onboard:xyz", {"_TOKEN_KEY_PREFIX"}),
+        ("key mcp_oauth_code:xyz", {"_TOKEN_KEY_PREFIX"}),
+    ],
+)
+def test_the_regexes_still_run_when_a_plain_check_hits(monkeypatch, text, ran):
+    calls = _count_regex_calls(monkeypatch, lambda: sentry_module._scrub_text(text))
+    assert {name for name, n in calls.items() if n} >= ran
+
+
+_FRAGMENTS = [
+    "api", "key", "_", "-", " ", "max_tokens", "12 tokens", "130,000 tokens",
+    "tokens per min", "token", "password", "secret", "://", "u:p@", "h/",
+    "aws_onboard:", "gcp_onboarding:", "mcp_oauth_code:", "mcp_oauth_x:",
+    "hooks.slack.com/services/", "SAMLResponse=", "<saml:", "accountkey=",
+    "Authorization", "PRIVATE", "private", "access", "x", "1", "%s", "=",
+]  # fmt: skip
+
+
+def _reference_names_key(lowered):
+    lowered = sentry_module._COUNT_FIELD.sub(" ", lowered)
+    lowered = sentry_module._COUNT_PHRASE.sub(" ", lowered)
+    return any(s in lowered for s in sentry_module.SENSITIVE_KEY_SUBSTRINGS)
+
+
+def _reference_scrub_text(text):
+    """`_scrub_text` as it was before the guards: every regex on every text."""
+    module = sentry_module
+    if (
+        _reference_names_key(text.lower())
+        or any(m in text for m in module._SAML_VALUE_MARKERS)
+        or any(m in text for m in module._SECRET_URL_MARKERS)
+        or module._URL_PASSWORD.search(text)
+    ):
+        return _REDACTED
+    return module._TOKEN_KEY_PREFIX.sub(r"\1:" + _REDACTED, text)
+
+
+def _reference_template_leaks(template):
+    module = sentry_module
+    text = module._template_text(template)
+    if (
+        any(m in text for m in module._SAML_VALUE_MARKERS)
+        or any(m in text for m in module._SECRET_URL_MARKERS)
+        or module._URL_PASSWORD.search(text)
+    ):
+        return True
+    lowered = module._COUNT_PHRASE.sub(" ", module._COUNT_FIELD.sub(" ", text.lower()))
+    position = 0
+    while (mention := module._KEY_MENTION.search(lowered, position)) is not None:
+        label = module._LABEL_THEN_SPEC.match(lowered, mention.end())
+        if label is None:
+            return True
+        position = label.end()
+    return False
+
+
+def test_the_guards_leave_the_output_of_the_text_checks_unchanged():
+    rng = random.Random(20261117)
+    for _ in range(4_000):
+        text = "".join(rng.choice(_FRAGMENTS) for _ in range(rng.randint(1, 9)))
+        assert sentry_module._scrub_text(text) == _reference_scrub_text(text), text
+        assert sentry_module._template_leaks(text) == _reference_template_leaks(text), (
+            text
+        )
+
+
+def test_sixty_long_strings_in_frame_vars_are_scrubbed_in_time():
+    # Digits among non-ASCII text are the slowest input the regexes meet.
+    text = ("1 你" * 90_000)[:_SDK_LIMIT]
+    assert len(text) == _SDK_LIMIT
+    # Called directly, so no event budget stands in for the guards: all sixty
+    # strings are read.
+    frame = {"vars": {f"v{i}": text for i in range(60)}}
+    _seconds_for(lambda: sentry_module._scrub_frame_vars(frame), limit=2)
+    assert len(frame["vars"]) == 60
+    assert all(len(v) == _SDK_LIMIT for v in frame["vars"].values())
+
+
+# A per-event budget on the string data the scrub reads (L4)
+
+_BUDGET = 8 * 1024 * 1024
+
+
+def test_an_event_past_the_scrub_budget_sends_no_unread_string():
+    size = _SDK_LIMIT
+    kept_count = _BUDGET // size
+    markers = [secrets.token_hex(8) for _ in range(kept_count + 8)]
+    extra = {f"k{i:02d}": m + "x" * (size - len(m)) for i, m in enumerate(markers)}
+    extra["z_small"] = "short"
+    out = _get_before_send()({"extra": extra}, {})["extra"]
+    for i, marker in enumerate(markers[:kept_count]):
+        assert out[f"k{i:02d}"].startswith(marker)
+    for i in range(kept_count, len(markers)):
+        assert out[f"k{i:02d}"] == _REDACTED
+    assert out["z_small"] == _REDACTED
+    assert not any(m in json.dumps(out) for m in markers[kept_count:])
+
+
+def test_the_scrub_budget_covers_span_descriptions_of_a_transaction():
+    size = _SDK_LIMIT
+    kept_count = _BUDGET // size
+    markers = [secrets.token_hex(8) for _ in range(kept_count + 4)]
+    event = _span_transaction(
+        *({"op": "function", "description": m + "x" * (size - len(m))} for m in markers)
+    )
+    out = sentry_module._get_before_send_transaction()(event, {})
+    sent = [s["description"] for s in out["spans"]]
+    assert all(
+        d.startswith(m) for d, m in zip(sent[:kept_count], markers, strict=False)
+    )
+    assert sent[kept_count:] == [_REDACTED] * 4
+
+
+def test_each_event_gets_its_own_scrub_budget():
+    size = _SDK_LIMIT
+    event = {"extra": {f"k{i}": "y" * size for i in range(_BUDGET // size)}}
+    for _ in range(2):
+        out = _get_before_send()(json.loads(json.dumps(event)), {})
+        assert _REDACTED not in out["extra"].values()
 
 
 # Token counts in LLM errors are kept (M1)
