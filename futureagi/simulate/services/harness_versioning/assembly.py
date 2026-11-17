@@ -12,6 +12,7 @@ from __future__ import annotations
 import copy
 import json
 import re
+import tarfile
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import PurePosixPath
@@ -19,6 +20,7 @@ from typing import Any
 
 import structlog
 from django.conf import settings
+from django.core.cache import cache
 from django.db import transaction
 from django.utils import timezone
 from minio.error import S3Error
@@ -256,6 +258,63 @@ def sealed_certificate(sealed: Mapping[str, bytes]) -> dict[str, Any] | None:
     if source_digest:
         safe["source_digest"] = source_digest
     return safe
+
+
+SEALED_CONTRACT = "environment-bundle/contract.json"
+# A bundle's object never changes once ready, so the contract read from it is kept by its key.
+_SEALED_CONTRACT_CACHE = "harness_sealed_contract:"
+_SEALED_CONTRACT_SECONDS = 7 * 24 * 60 * 60
+_SEALED_CONTRACT_MAX_BYTES = 8 * 1024 * 1024
+
+
+def sealed_contract(environment_version: Any) -> dict[str, Any] | None:
+    """The contract the version's latest ready bundle was sealed and certified with; None when it has no ready
+    bundle or the bundle cannot be read.
+
+    A build can amend the authored contract while it builds, and a version recorded before its documents carried
+    the sealed contract still holds the authored one: the bundle is what its runs replay."""
+    key = (
+        HarnessAssembledBundle._base_manager.filter(
+            environment_version_id=environment_version.id,
+            state=HarnessAssembledBundle.State.READY,
+            deleted=False,
+        )
+        .exclude(object_key__isnull=True)
+        .exclude(object_key="")
+        .order_by("-updated_at")
+        .values_list("object_key", flat=True)
+        .first()
+    )
+    if not key:
+        return None
+    cached = cache.get(_SEALED_CONTRACT_CACHE + key)
+    if cached is not None:
+        return cached or None
+    try:
+        found = archives.read_members(
+            archives.get_archive(key), {SEALED_CONTRACT}, _SEALED_CONTRACT_MAX_BYTES
+        )
+        contract = (
+            json.loads(found[SEALED_CONTRACT]) if SEALED_CONTRACT in found else {}
+        )
+    except (
+        S3Error,
+        HTTPError,
+        HostedHarnessError,
+        ValueError,
+        OSError,
+        tarfile.TarError,
+    ):
+        # Unreadable now: the version's own documents stand in, and the next read tries again.
+        logger.warning(
+            "harness_sealed_contract_unreadable",
+            environment_version_id=str(environment_version.id),
+            exc_info=True,
+        )
+        return None
+    contract = contract if isinstance(contract, dict) else {}
+    cache.set(_SEALED_CONTRACT_CACHE + key, contract, _SEALED_CONTRACT_SECONDS)
+    return contract or None
 
 
 def seed_ready_bundle(
