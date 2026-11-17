@@ -264,10 +264,27 @@ class HubSkillUsageDaily(models.Model):
     day = models.DateField()
     channel = models.CharField(
         max_length=16,
-        choices=[("api", "api"), ("download", "download"), ("mcp", "mcp")],
+        choices=[
+            ("api", "api"),
+            ("download", "download"),
+            ("mcp", "mcp"),
+            ("sdk", "sdk"),
+        ],
     )
     consumer_key = models.CharField(max_length=80)
     consumer_label = models.CharField(max_length=200)
+    sdk_version = models.CharField(max_length=32, null=True)
+    tracing_mode = models.CharField(
+        # load_only is nine characters; an eight-character column rejects it.
+        max_length=9,
+        null=True,
+        choices=[
+            ("on", "on"),
+            ("load_only", "load_only"),
+            ("off", "off"),
+            ("no_otel", "no_otel"),
+        ],
+    )
     count = models.PositiveIntegerField()
     last_at = models.DateTimeField()
 

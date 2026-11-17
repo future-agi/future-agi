@@ -159,6 +159,14 @@ class ConsumptionResolveView(ConsumptionView):
         response = self.output(s.ConsumptionManifest, result)
         response["ETag"] = f'"{result["digest"]}"'
         response["Cache-Control"] = "private, no-store"
+        from model_hub.services.skills_hub.usage import record_consumption_fetch
+
+        record_consumption_fetch(
+            principal=request.auth,
+            kind=self.resource_kind,
+            resolution_id=result["resolution_id"],
+            headers=request.headers,
+        )
         return response
 
 
