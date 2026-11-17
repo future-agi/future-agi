@@ -11,6 +11,7 @@ import { paths } from 'src/routes/paths';
 import ObjectHeader from '../components/ObjectHeader';
 import IdentityChip from '../components/IdentityChip';
 import { reviewComposerUrl } from '../utils/review-links';
+import { requestReleaseFor } from '../utils/terms';
 import { useSkillsAccess } from '../utils/access';
 import ActionReason, { reasonProps } from '../components/ActionReason';
 import FileTree from '../components/FileTree';
@@ -70,7 +71,7 @@ function Detail({ scopeKey, query, versionQuery, fileQuery, selectedPath = 'AGEN
         {query.data.ownDraft && onReviewDraft && <Button variant="outlined" onClick={onReviewDraft}>Review saved draft</Button>}
         {noRelease && !query.data.ownDraft && <Button color="primary" variant="contained" disabled={cannotEdit || !onStartDraft} onClick={onStartDraft}>Start draft</Button>}
         {!noRelease && <Button color="primary" variant="outlined" {...reasonProps("context-edit-reason", editReason)} disabled={editBlocked || !viewed} onClick={editLatest}>{viewed ? `Edit latest v${context.latestVersion}` : 'Edit latest version'}</Button>}
-        {headerRelease && <Button component={RouterLink} color="primary" variant="outlined" to={reviewComposerUrl({ kind: 'agent_context', subjectId: context.id, name: context.name, candidateId: latest.id, number: latest.number, digest: latest.digest, label: 'production' })}>Request release review for v{latest.number}</Button>}
+        {headerRelease && <Button component={RouterLink} color="primary" variant="outlined" to={reviewComposerUrl({ kind: 'agent_context', subjectId: context.id, name: context.name, candidateId: latest.id, number: latest.number, digest: latest.digest, label: 'production' })}>{requestReleaseFor(latest.number)}</Button>}
       </Stack>}
       identity={<Stack spacing={1}>
         <ActionReason id="context-edit-reason" reason={editReason} sx={{ flexBasis: 'auto' }} />
@@ -96,12 +97,12 @@ function Detail({ scopeKey, query, versionQuery, fileQuery, selectedPath = 'AGEN
           <Stack spacing={1.5} sx={{ flex: 1, minWidth: 0 }}>
             <Typography variant="m3" sx={{ overflowWrap: 'anywhere' }}>{selectedPath}</Typography>
             {selected?.origin?.kind === 'linked' && <Stack direction="row" useFlexGap spacing={1} sx={{ flexWrap: 'wrap' }}><Typography variant="s3" color="text.secondary">Read-only linked content · locked source version</Typography><IdentityChip value={selected.origin.versionId} kind="id" label="Source version" /></Stack>}
-            {selected?.origin?.kind === 'generated' && <Typography variant="s3" color="text.secondary">Generated file · read-only. Records the update policies and locked skill versions.</Typography>}
+            {selected?.origin?.kind === 'generated' && <Typography variant="s3" color="text.secondary">Generated file · read-only. Records the update rules and locked skill versions.</Typography>}
             {/\.(md|markdown)$/i.test(selectedPath) && <SegmentedTabs value={fileMode} onChange={(_, value) => { setFileMode(value); try { localStorage.setItem('context-file-view', value); } catch { /* Viewer preference is optional. */ } }} aria-label="Context file view"><Tab value="source" label="Source" /><Tab value="preview" label="Preview" /></SegmentedTabs>}
             {fileQuery.isLoading ? <ContentSkeleton variant="panel" /> : fileQuery.error ? <ErrorState title="File unavailable" onRetry={fileQuery.refetch} /> : content == null ? <Typography variant="s3">Select a retained file. No content from another release is shown.</Typography> : fileMode === 'preview' && /\.(md|markdown)$/i.test(selectedPath) ? <SkillMarkdownPreview literal content={content} currentPath={selectedPath} onOpenPath={openFile} /> : <Box component="pre" tabIndex={0} aria-label={`${selectedPath} read-only source`} sx={{ m: 0, p: 1.5, bgcolor: 'background.paper', border: 1, borderColor: 'divider', borderRadius: 1, typography: 's1', fontFamily: 'monospace', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{content}</Box>}
           </Stack>
         </Stack>}
-        {tab === 'links' && <ContextLinksPanel scopeKey={`${scopeKey}:${viewed?.id}`} readOnly session={{ contextSpec: { links: (descriptor?.links || []).map((link) => ({ skillId: link.skillId, selector: link.requested })) }, resolvedLock: { links: descriptor?.links || [] } }} />}
+        {tab === 'links' && <ContextLinksPanel scopeKey={`${scopeKey}:${viewed?.id}`} readOnly rowOpensSkill session={{ contextSpec: { links: (descriptor?.links || []).map((link) => ({ skillId: link.skillId, selector: link.requested })) }, resolvedLock: { links: descriptor?.links || [] } }} />}
         {sections[tab]}
       </>}
     </Box>

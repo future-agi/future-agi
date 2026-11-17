@@ -116,7 +116,7 @@ describe("Skills library", () => {
     expect(screen.getByText("v3")).toBeInTheDocument();
     expect(screen.getByText(/82 skills/)).toBeInTheDocument();
     expect(screen.getByText(/42 in production/)).toBeInTheDocument();
-    expect(screen.getByText(/719 uses in 7 days/)).toBeInTheDocument();
+    expect(screen.getByText(/719 fetches in 7 days/)).toBeInTheDocument();
     expect(screen.getByText(/17 drafts/)).toBeInTheDocument();
     expect(screen.getByText(/drafts/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("link", { name: "support-policy" }));
@@ -140,7 +140,7 @@ describe("Skills library", () => {
     api.list.mockReturnValue(listResult({ results: [], count: 0 }));
     renderLibrary("?search=missing&tag=support&label=production&page=3&sort=name&order=asc&keep=yes");
     expect(screen.getByText("No skills match these filters.")).toBeInTheDocument();
-    expect(screen.getByText(/719 uses in 7 days/)).toBeInTheDocument();
+    expect(screen.getByText(/719 fetches in 7 days/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Write from scratch" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Clear filters/i }));
     expect(new URLSearchParams(window.location.search).get("search")).toBeNull();
@@ -303,10 +303,14 @@ describe("Skills library", () => {
     expect(dialog.queryByText(/contact support/)).not.toBeInTheDocument();
   });
 
-  it("names the usage column by what it counts", () => {
+  it("names the fetch column by what it counts: a server fetch, never a use (UX-18)", () => {
     renderLibrary();
-    expect(screen.getAllByText("Used (7 days)").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Fetched (7 days)").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Used (7 days)")).not.toBeInTheDocument();
     expect(screen.queryByText("Fetches (7 days)")).not.toBeInTheDocument();
+    // The runtime column is a separate, flagged change; nothing here claims a load.
+    expect(screen.queryByText("Loaded (7 days)")).not.toBeInTheDocument();
+    expect(screen.queryByText(/\buses? in 7 days/)).not.toBeInTheDocument();
   });
 
   it("keeps inapplicable row actions visible but disabled", () => {
