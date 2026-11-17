@@ -187,11 +187,12 @@ export default function SourcesPanel({ env, locked }) {
       },
       {
         onSuccess: (result) => {
+          const affected = result.validation?.affected_scenarios?.length || 0;
           setPrepared(null);
           setMessage(
             `Source added to the Environment draft. Validation: ${
               result.validation?.status || "not reported"
-            }. Use Save to create a version.`,
+            }. ${affected} affected scenario${affected === 1 ? "" : "s"} were not executed. Use Save to create a version.`,
           );
         },
       },
@@ -417,7 +418,9 @@ export default function SourcesPanel({ env, locked }) {
                     key={proposal.statement_id}
                     control={
                       <Checkbox
-                        checked={acceptedRuleIds.includes(proposal.statement_id)}
+                        checked={acceptedRuleIds.includes(
+                          proposal.statement_id,
+                        )}
                         disabled={proposal.status !== "supported"}
                         onChange={(event) =>
                           setAcceptedRuleIds((current) =>

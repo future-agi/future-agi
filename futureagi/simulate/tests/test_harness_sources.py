@@ -125,6 +125,21 @@ def test_kb_reference_import_writes_private_snapshot_and_environment_draft(
     }
     accepted = harness_sources.accept_source_import(request, environment, **accept_args)
     assert accepted["draft"]["revision"] == 1
+    assert accepted["validation"] == {
+        "status": "structural_only",
+        "affected_scenarios": [
+            {
+                "scenario_key": "book-ride-airport",
+                "name": "book_ride_airport",
+                "executed": False,
+            },
+            {
+                "scenario_key": "cancel-active-ride",
+                "name": "cancel_active_ride",
+                "executed": False,
+            },
+        ],
+    }
     assert (
         harness_sources.accept_source_import(request, environment, **accept_args)[
             "draft"

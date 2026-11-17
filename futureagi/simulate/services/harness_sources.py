@@ -24,7 +24,7 @@ from model_hub.services.kb_snapshot import (
 )
 from model_hub.utils.kb_download import authorized_knowledge_base_file
 from simulate.services.alk_source_bridge import execute_source_request
-from simulate.services.harness_versioning import archives, drafts
+from simulate.services.harness_versioning import archives, drafts, versions
 from simulate.services.hosted_harness import HostedHarnessError
 from tfc.settings.settings import UPLOAD_BUCKET_NAME
 from tfc.utils.storage_client import ensure_bucket, get_storage_client
@@ -88,6 +88,20 @@ def _ref_value(ref: drafts.DraftRef) -> dict[str, Any]:
 
 def _ref_from(value: dict[str, Any]) -> drafts.DraftRef:
     return drafts.DraftRef(value.get("id"), int(value.get("revision", 0)))
+
+
+def _scenario_validation(suite_files: dict[str, bytes]) -> dict[str, Any]:
+    affected = [
+        {
+            "scenario_key": str(
+                scenario.get("scenario_key") or scenario.get("name") or ""
+            ),
+            "name": str(scenario.get("name") or ""),
+            "executed": False,
+        }
+        for scenario in versions.suite_documents(suite_files)
+    ]
+    return {"status": "structural_only", "affected_scenarios": affected}
 
 
 def _put_private(key: str, body: bytes) -> None:
@@ -556,6 +570,7 @@ def accept_source_import(
     suite_version = drafts.fresh_draft(head, "suite") or head.suite_version
     environment_files = drafts._piece_files(head, "environment", environment_version)
     suite_files = drafts._piece_files(head, "suite", suite_version)
+    validation = _scenario_validation(suite_files)
     try:
         existing_manifest = json.loads(
             environment_files.get("sources/manifest.json", b"null").decode()
@@ -683,7 +698,7 @@ def accept_source_import(
             "snapshot_digest": aggregate_digest,
             "sources": manifest["sources"],
             "diagnostics": snapshot["data"].get("diagnostics", []),
-            "validation": {"status": "structural_only", "affected_scenarios": []},
+            "validation": validation,
         }
     body = archives.pack_archive(archives.compose(environment_files, suite_files))
     expected = {"environment": _ref_from(staged["draft"])}
@@ -714,5 +729,5 @@ def accept_source_import(
         "snapshot_digest": aggregate_digest,
         "sources": manifest["sources"],
         "diagnostics": snapshot["data"].get("diagnostics", []),
-        "validation": {"status": "structural_only", "affected_scenarios": []},
+        "validation": validation,
     }
