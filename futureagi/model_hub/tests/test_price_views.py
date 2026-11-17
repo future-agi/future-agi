@@ -1,9 +1,10 @@
 """The model list and the dataset views show the price that is billed, on its date.
 
 ``listed_pricing`` gives a model-list row the price billed now. ``cell_token_cost``
-prices a run-prompt column's cells each at the price in force on the date the cell
-was created (not last saved), so a column run before and after a price change costs the sum of
-both. The tests that need the database build a small dataset; the rest read the
+prices a run-prompt column's cells each at the price in force when the run that
+wrote its tokens started (``column_metadata["run_started_at"]``, falling back to
+``created_at`` for a cell without it; never ``updated_at``), so a column run before
+and after a price change, or rerun after one, costs the sum of both. The tests that need the database build a small dataset; the rest read the
 price tables.
 """
 
@@ -148,7 +149,7 @@ def prompt_column(organization, workspace):
     return dataset, run_prompter, column
 
 
-def _cell(dataset, column, order, created_at, updated_at=None):
+def _cell(dataset, column, order, created_at, updated_at=None, run_started_at=None):
     row = Row.objects.create(dataset=dataset, order=order)
     cell = Cell.objects.create(
         dataset=dataset,
@@ -164,6 +165,10 @@ def _cell(dataset, column, order, created_at, updated_at=None):
     Cell.objects.filter(id=cell.id).update(
         created_at=created_at, updated_at=updated_at or created_at
     )
+    if run_started_at is not None:
+        Cell.objects.filter(id=cell.id).update(
+            column_metadata={"run_started_at": run_started_at.isoformat()}
+        )
     return cell
 
 
@@ -202,6 +207,67 @@ def test_a_cell_saved_again_after_a_price_change_keeps_its_old_price(prompt_colu
 
     # 1M in at 0.75 and 1M out at 3.75; at the 2027 rates it would be 9.0.
     assert stats["cost"] == 4.5
+
+
+@pytest.mark.django_db
+def test_a_cell_rerun_after_a_price_change_is_priced_at_the_rerun(prompt_column):
+    dataset, run_prompter, column = prompt_column
+    # First run before the change; the rerun reuses the cell and rewrites its
+    # tokens after it, so the run that wrote them started after the change.
+    _cell(dataset, column, 0, BEFORE_2027, run_started_at=AFTER_2027)
+
+    stats = cell_token_cost(Cell.objects.filter(column=column), run_prompter.model)
+
+    # 1M in at 1.5 and 1M out at 7.5; at the first run's rates it would be 4.5.
+    assert stats["cost"] == 9.0
+
+
+@pytest.mark.django_db
+def test_a_cell_run_before_a_change_and_edited_after_keeps_the_old_price(
+    prompt_column,
+):
+    dataset, run_prompter, column = prompt_column
+    _cell(
+        dataset,
+        column,
+        0,
+        BEFORE_2027,
+        updated_at=AFTER_2027,
+        run_started_at=BEFORE_2027,
+    )
+
+    stats = cell_token_cost(Cell.objects.filter(column=column), run_prompter.model)
+
+    assert stats["cost"] == 4.5
+
+
+@pytest.mark.django_db
+def test_a_cell_with_no_run_start_is_priced_at_its_creation(prompt_column):
+    dataset, run_prompter, column = prompt_column
+    # Written before run_started_at existed: created before the change, saved after.
+    legacy = _cell(dataset, column, 0, BEFORE_2027, updated_at=AFTER_2027)
+    audio = _cell(dataset, column, 1, AFTER_2027)
+    Cell.objects.filter(id=audio.id).update(
+        column_metadata={"audio_duration_seconds": 3.0}
+    )
+
+    assert Cell.objects.get(id=legacy.id).column_metadata == {}
+    stats = cell_token_cost(Cell.objects.filter(column=column), run_prompter.model)
+
+    # 4.5 for the first cell (its creation), 9.0 for the second.
+    assert stats["cost"] == 13.5
+
+
+@pytest.mark.django_db
+def test_a_cell_can_be_saved_with_only_the_run_start(prompt_column):
+    dataset, _, column = prompt_column
+    cell = _cell(dataset, column, 0, BEFORE_2027)
+
+    cell.column_metadata = {"run_started_at": AFTER_2027.isoformat()}
+    cell.save()  # full_clean runs the column_metadata validator
+
+    cell.refresh_from_db()
+    assert cell.column_metadata == {"run_started_at": AFTER_2027.isoformat()}
 
 
 @pytest.mark.django_db
@@ -287,7 +353,90 @@ def test_the_parts_are_priced_just_before_each_date_and_on_it(
     ]
 
 
-# --- The cell writers leave updated_at and the token counts alone
+# --- Every run writes the instant it started with the tokens
+
+
+def _run_row(monkeypatch, run_prompter, column, row, now, edit_mode):
+    """Run ``RunPrompts.process_row`` once with the model call stubbed."""
+    from model_hub.views import run_prompt as run_prompt_view
+
+    value_info = {
+        "data": {"response": "new"},
+        "metadata": {
+            "usage": {"prompt_tokens": 1_000_000, "completion_tokens": 1_000_000},
+            "response_time": 2.0,
+        },
+    }
+
+    class StubRunPrompt:
+        def __init__(self, **kwargs):
+            pass
+
+        def litellm_response(self):
+            return "new", value_info
+
+    monkeypatch.setattr(run_prompt_view, "RunPrompt", StubRunPrompt)
+    monkeypatch.setattr(run_prompt_view, "log_and_deduct_cost_for_api_request", None)
+    monkeypatch.setattr(run_prompt_view, "close_old_connections", lambda: None)
+    monkeypatch.setattr(
+        run_prompt_view, "populate_placeholders", lambda messages, **kwargs: messages
+    )
+    monkeypatch.setattr(run_prompt_view, "_utc_now", lambda: now)
+
+    runner = run_prompt_view.RunPrompts(run_prompter.id)
+    runner.load_run_prompt_id()
+    runner.is_editing = False  # run_prompt() sets it before it calls process_row
+    runner.process_row(row, column, edit_mode=edit_mode)
+    return Cell.objects.get(row=row, column=column)
+
+
+@pytest.mark.django_db
+def test_a_first_run_writes_its_start_with_the_tokens(prompt_column, monkeypatch):
+    dataset, run_prompter, column = prompt_column
+    row = Row.objects.create(dataset=dataset, order=0)
+
+    cell = _run_row(monkeypatch, run_prompter, column, row, AFTER_2027, False)
+
+    assert cell.column_metadata == {"run_started_at": AFTER_2027.isoformat()}
+    assert cell.prompt_tokens == 1_000_000
+    stats = cell_token_cost(Cell.objects.filter(column=column), run_prompter.model)
+    assert stats["cost"] == 9.0
+
+
+@pytest.mark.django_db
+def test_a_rerun_of_a_cell_writes_the_start_of_the_rerun(prompt_column, monkeypatch):
+    dataset, run_prompter, column = prompt_column
+    old = _cell(dataset, column, 0, BEFORE_2027, run_started_at=BEFORE_2027)
+    Cell.objects.filter(id=old.id).update(
+        column_metadata={
+            "run_started_at": BEFORE_2027.isoformat(),
+            "audio_duration_seconds": 3.0,
+        }
+    )
+
+    cell = _run_row(monkeypatch, run_prompter, column, old.row, AFTER_2027, True)
+
+    assert cell.id == old.id
+    assert cell.column_metadata == {
+        "run_started_at": AFTER_2027.isoformat(),
+        "audio_duration_seconds": 3.0,
+    }
+    stats = cell_token_cost(Cell.objects.filter(column=column), run_prompter.model)
+    # The first run's rates would give 4.5.
+    assert stats["cost"] == 9.0
+
+
+@pytest.mark.django_db
+def test_a_cell_made_by_an_edit_mode_run_writes_its_start(prompt_column, monkeypatch):
+    dataset, run_prompter, column = prompt_column
+    row = Row.objects.create(dataset=dataset, order=0)
+
+    cell = _run_row(monkeypatch, run_prompter, column, row, BEFORE_2027, True)
+
+    assert cell.column_metadata == {"run_started_at": BEFORE_2027.isoformat()}
+
+
+# --- The cell writers leave the token counts and the run start alone
 
 
 def _function(tree, name, within=None):
@@ -352,7 +501,7 @@ def test_a_rerun_resets_cells_with_a_queryset_update_of_three_fields(
     for node, keywords in writers:
         assert keywords is not None, (
             f"{function_name} line {node.lineno}: Cell.objects is used other than as "
-            ".filter(...).update(...), which would set updated_at"
+            ".filter(...).update(...)"
         )
         assert keywords <= {"value", "value_infos", "status"}, (
             f"{function_name} line {node.lineno}: update() sets {sorted(keywords)}"
@@ -376,9 +525,9 @@ def test_a_rerun_resets_cells_with_a_queryset_update_of_three_fields(
 
 
 @pytest.mark.django_db
-def test_a_queryset_reset_keeps_updated_at_and_the_token_counts(prompt_column):
+def test_a_queryset_reset_keeps_the_token_counts_and_the_run_start(prompt_column):
     dataset, _, column = prompt_column
-    cell = _cell(dataset, column, 0, BEFORE_2027)
+    cell = _cell(dataset, column, 0, BEFORE_2027, run_started_at=BEFORE_2027)
 
     Cell.objects.filter(column=column).update(
         value="",
@@ -387,7 +536,7 @@ def test_a_queryset_reset_keeps_updated_at_and_the_token_counts(prompt_column):
     )
 
     cell.refresh_from_db()
-    assert cell.updated_at == BEFORE_2027
+    assert cell.column_metadata == {"run_started_at": BEFORE_2027.isoformat()}
     assert cell.prompt_tokens == 1_000_000
     assert cell.completion_tokens == 1_000_000
     assert cell.status == CellStatus.RUNNING.value

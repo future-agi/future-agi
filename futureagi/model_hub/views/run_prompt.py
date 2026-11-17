@@ -5,6 +5,7 @@ import re
 import traceback
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import UTC, datetime
 from typing import Any
 
 import chevron
@@ -1152,6 +1153,20 @@ class LitellmAPIView(CreateAPIView):
         return self._gm.success_response("success")
 
 
+def _utc_now():
+    return datetime.now(UTC)
+
+
+def _with_run_started_at(column_metadata, started_at):
+    """The cell's ``column_metadata`` with the instant its run started.
+
+    The price of a cell's tokens is the price in force at that instant (see
+    ``tfc.utils.functions.cell_token_cost``), so it is written wherever a run
+    writes tokens. Other keys (an audio duration) are kept.
+    """
+    return {**(column_metadata or {}), "run_started_at": started_at.isoformat()}
+
+
 class RunPrompts:
     def __init__(self, run_prompt_id):
         self.run_prompt_id = run_prompt_id
@@ -1325,6 +1340,8 @@ class RunPrompts:
 
     def process_row(self, row, column, edit_mode=False):
         row_id = str(row.id)
+        # The run starts here, before the call; its tokens are priced at this instant.
+        run_started_at = _utc_now()
         logger.info(
             "RunPrompts_process_row_started",
             run_prompt_id=str(self.run_prompt_id),
@@ -1574,6 +1591,9 @@ class RunPrompts:
                         cell.response_time = value_info.get("metadata", {}).get(
                             "response_time", None
                         )
+                        cell.column_metadata = _with_run_started_at(
+                            cell.column_metadata, run_started_at
+                        )
 
                     cell.save()
                     logger.info(
@@ -1620,6 +1640,7 @@ class RunPrompts:
                         prompt_tokens=prompt_tokens,
                         completion_tokens=completion_tokens,
                         response_time=response_time,
+                        column_metadata=_with_run_started_at({}, run_started_at),
                     )
                     logger.info(
                         "cell_created_in_edit_mode",
@@ -1666,6 +1687,7 @@ class RunPrompts:
                     prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
                     response_time=response_time,
+                    column_metadata=_with_run_started_at({}, run_started_at),
                 )
                 logger.info(
                     "cell_created",

@@ -1,5 +1,6 @@
 import json
 import uuid
+from typing import Optional
 
 import pydantic
 import structlog
@@ -266,7 +267,10 @@ def validate_cell_choice(value):
 
 # Pydantic schema for column metadata
 class ColumnMetadataSchema(pydantic.BaseModel):
-    audio_duration_seconds: float = pydantic.Field(..., ge=0.0)
+    # Both keys are optional: an audio cell carries the duration, a run-prompt cell
+    # carries the instant its run started (ISO, UTC), which dates its price.
+    audio_duration_seconds: Optional[float] = pydantic.Field(default=None, ge=0.0)
+    run_started_at: Optional[str] = None
 
 
 def validate_column_metadata(value):
