@@ -41,7 +41,7 @@ export const SEQUENCE_COPY = {
   step: (n) => `Step ${n}`,
   stepsRange: (first, last) => `Steps ${first}–${last}`,
   refusedLine: (tool, reason, times) =>
-    `${tool} refused${reason ? ` · ${reason}` : ""}${times > 1 ? ` · ${times} times` : ""}`,
+    `${tool} refused${times > 1 ? ` ${times} times` : ""}${reason ? ` · ${reason}` : ""}`,
   pickHint:
     "Pick a step to see the exact message and what came back. ↑ ↓ move between steps; click a name to follow that participant.",
 };

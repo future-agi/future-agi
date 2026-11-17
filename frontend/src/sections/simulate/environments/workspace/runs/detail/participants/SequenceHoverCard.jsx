@@ -1,6 +1,6 @@
 import PropTypes from "prop-types";
 import { Box, Typography } from "@mui/material";
-import { KIND_WORDS, SLOW_SEC, kindOf, took } from "./sequenceLayout";
+import { KIND_WORDS, SLOW_SEC, kindOf, readable, took } from "./sequenceLayout";
 
 const MAX_LINES = 8;
 
@@ -20,12 +20,13 @@ export default function HoverCard({ seq, row: r, step: s }) {
       : reply
         ? `${seq.nameOf(s.to)} → ${seq.nameOf(r.type === "took" ? seq.lanes[0].id : s.from)}`
         : `${seq.nameOf(s.from)} → ${seq.nameOf(s.to)}`;
-  const words =
+  const words = readable(
     r.type === "tool"
       ? `${s.result || "No result"}`
       : reply
         ? s.answer?.full || s.answer?.label
-        : s.full || s.label;
+        : s.full || s.label,
+  );
   const state = closedLoop
     ? `Repeated ${r.loop.times} times. Click to see every round`
     : r.type === "none"
@@ -65,6 +66,9 @@ export default function HoverCard({ seq, row: r, step: s }) {
             mt: 0.5,
             whiteSpace: "pre-wrap",
             wordBreak: "break-word",
+            ...(r.type === "tool" && {
+              fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+            }),
             // A long message is cut here; the step panel shows it in full.
             display: "-webkit-box",
             WebkitLineClamp: MAX_LINES,

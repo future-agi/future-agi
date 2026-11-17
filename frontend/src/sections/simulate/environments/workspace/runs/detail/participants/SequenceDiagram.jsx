@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import PropTypes from "prop-types";
-import { Box, Stack, Typography } from "@mui/material";
+import { Box, Stack, Tooltip, Typography } from "@mui/material";
 import { alpha, useTheme } from "@mui/material/styles";
-import CustomTooltip from "src/components/tooltip";
 import { SEQUENCE_COPY as C } from "./sequence.constants";
 import {
   CH,
@@ -368,10 +367,7 @@ export default function SequenceDiagram({
     const words = `${name} · ${g.label ? `“${cut(g.text || g.label, 46)}”` : `${seq.nameOf(seq.lanes[1]?.id)} follows up`} · ${g.steps.length} ${g.steps.length === 1 ? "step" : "steps"}${who.length ? ` · ${who.join(", ")}` : ""}`;
     const toggle = () => setTurnOpen((was) => ({ ...was, [g.turn]: !open }));
     return (
-      <CustomTooltip
-        show
-        size="small"
-        card
+      <Tooltip
         key={`turn-${g.turn}`}
         followCursor
         placement="top"
@@ -436,7 +432,7 @@ export default function SequenceDiagram({
             </text>
           )}
         </g>
-      </CustomTooltip>
+      </Tooltip>
     );
   };
 
@@ -722,10 +718,7 @@ export default function SequenceDiagram({
         );
     }
     return (
-      <CustomTooltip
-        show
-        size="small"
-        card
+      <Tooltip
         key={`${r.type}-${r.n}`}
         title={<HoverCard seq={seq} row={r} step={s} />}
         followCursor
@@ -737,7 +730,7 @@ export default function SequenceDiagram({
           {bandOf(r, svgW, on)}
           {items}
         </g>
-      </CustomTooltip>
+      </Tooltip>
     );
   };
 

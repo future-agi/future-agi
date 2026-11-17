@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import PropTypes from "prop-types";
 import { Box, Button, Stack } from "@mui/material";
 import { useQueryClient } from "@tanstack/react-query";
@@ -61,6 +61,7 @@ const VOICE_IMAGINE_PROMPTS = [
 const VoiceDetailDrawerV2 = ({
   data,
   headerLeading = null,
+  wide = false,
   onClose,
   onPrev,
   onNext,
@@ -91,7 +92,9 @@ const VoiceDetailDrawerV2 = ({
   const projectId = observeId || data?.project_id;
   const shareResource = shareResourceFor(data);
 
-  const [leftPanelWidth, setLeftPanelWidth] = useState(50); // percentage
+  // A multi-agent call opens wider, with more room on the left; other calls keep the usual size.
+  const sizeOf = (big) => ({ drawer: big ? 82 : 60, left: big ? 62 : 50 });
+  const [leftPanelWidth, setLeftPanelWidth] = useState(() => sizeOf(wide).left); // percentage
   const [isFullscreen, setIsFullscreen] = useState(initialFullscreen);
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
   const [tagsAnchorEl, setTagsAnchorEl] = useState(null);
@@ -99,7 +102,14 @@ const VoiceDetailDrawerV2 = ({
   const [datasetDrawerOpen, setDatasetDrawerOpen] = useState(false);
   const [deleteTabId, setDeleteTabId] = useState(null); // for confirm dialog
   // Outer drawer width (vw). Matches trace drawer default and is draggable.
-  const [drawerWidth, setDrawerWidth] = useState(60);
+  const [drawerWidth, setDrawerWidth] = useState(() => sizeOf(wide).drawer);
+  // Moving between a multi-agent call and another resets the size; a dragged width stays otherwise.
+  useEffect(() => {
+    const size = sizeOf(wide);
+    setDrawerWidth(size.drawer);
+    setLeftPanelWidth(size.left);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wide]);
   const handleClose = useCallback(() => {
     removeEvalFocus();
     onClose();
@@ -636,6 +646,8 @@ VoiceDetailDrawerV2.propTypes = {
   data: PropTypes.object,
   // Shown in the header before the call ID, e.g. a trial picker.
   headerLeading: PropTypes.node,
+  // A multi-agent call: open wider, with more room on the left.
+  wide: PropTypes.bool,
   onClose: PropTypes.func.isRequired,
   onPrev: PropTypes.func,
   onNext: PropTypes.func,

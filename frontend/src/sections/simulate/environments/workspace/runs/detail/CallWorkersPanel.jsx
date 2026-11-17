@@ -119,6 +119,15 @@ export default function CallWorkersPanel({
     <Stack spacing={1.25} sx={{ p: 1.5 }}>
       <ParticipantsHeader
         summary={handOffs ? C.handOffSummary(data.counts) : null}
+        notes={[
+          data.spans_received === false &&
+            data.collection !== "no_evidence" &&
+            data.collection !== "partial" &&
+            data.collection !== "unavailable" &&
+            C.sandboxOnly,
+          data.workers.length && C.supportedBoundary,
+          data.workers.length && data.beyond_boundary && C.beyondBoundary,
+        ].filter(Boolean)}
         seq={seq}
         onPick={setSelected}
       />
@@ -141,21 +150,6 @@ export default function CallWorkersPanel({
           {data.collection === "partial"
             ? C.partialCollection
             : C.unavailableCollection}
-        </Typography>
-      ) : data.spans_received === false ? (
-        <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-          {C.sandboxOnly}
-        </Typography>
-      ) : null}
-      {data.workers.length ? (
-        <Typography
-          data-testid="supported-boundary"
-          sx={{ typography: "s3", color: "text.subtitle" }}
-        >
-          {C.supportedBoundary}
-          {data.beyond_boundary ? (
-            <span data-testid="beyond-boundary"> {C.beyondBoundary}</span>
-          ) : null}
         </Typography>
       ) : null}
       {seq?.steps.length ? (

@@ -1,9 +1,8 @@
 import { useState } from "react";
 import PropTypes from "prop-types";
-import { Box, IconButton, Stack, Typography } from "@mui/material";
+import { Box, IconButton, Stack, Tooltip, Typography } from "@mui/material";
 import { alpha, useTheme } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
-import CustomTooltip from "src/components/tooltip";
 import { SEQUENCE_COPY as C } from "./sequence.constants";
 
 export function Pill({ n, bad, refused }) {
@@ -204,12 +203,7 @@ export function CopyLink({ url }) {
     }
   };
   return (
-    <CustomTooltip
-      show
-      size="small"
-      arrow
-      title={copied ? C.linkCopied : C.copyLink}
-    >
+    <Tooltip title={copied ? C.linkCopied : C.copyLink} arrow>
       <IconButton
         size="small"
         onClick={copy}
@@ -227,7 +221,7 @@ export function CopyLink({ url }) {
           width={14}
         />
       </IconButton>
-    </CustomTooltip>
+    </Tooltip>
   );
 }
 CopyLink.propTypes = { url: PropTypes.string.isRequired };

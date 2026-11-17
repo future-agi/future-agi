@@ -87,12 +87,28 @@ export const KIND_WORDS = {
 
 export const TAG_W = (k) => (k ? k.length * 6.2 + 6 : 0);
 
-export const json = (v) =>
-  v == null ? null : typeof v === "string" ? v : JSON.stringify(v, null, 2);
-
 export const smallBtn = {
   height: 24,
   px: 1,
   typography: "s3",
   whiteSpace: "nowrap",
+};
+
+// Text printed from a message object keeps its line breaks escaped; show them as breaks.
+export const readable = (text) => {
+  const s = String(text ?? "");
+  return s.includes("\\n") && !s.includes("\n")
+    ? s.replaceAll("\\n", "\n").replaceAll("\\'", "'")
+    : s;
+};
+
+// A text the API marks as data or prose, as the markdown that shows it.
+export const asMarkdown = (shown) => {
+  if (shown.format !== "code") return shown.text;
+  const longest = Math.max(
+    0,
+    ...(shown.text.match(/`+/g) ?? []).map((run) => run.length),
+  );
+  const fence = "`".repeat(Math.max(3, longest + 1));
+  return `${fence}\n${shown.text}\n${fence}`;
 };

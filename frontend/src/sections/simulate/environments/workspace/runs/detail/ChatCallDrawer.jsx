@@ -93,6 +93,7 @@ export default function ChatCallDrawer({
   onTracePanelMountedChange,
   trials = null,
   onPickTrial,
+  wide = false,
 }) {
   const [shareOpen, setShareOpen] = useState(false);
   useEffect(() => {
@@ -269,7 +270,8 @@ export default function ChatCallDrawer({
         {/* left: the artifact */}
         <Stack
           sx={{
-            flex: 1.15,
+            // About 62% of a wide multi-agent drawer goes to the artifact.
+            flex: wide ? 1.63 : 1.15,
             minWidth: 0,
             borderRight: { md: "1px solid" },
             borderColor: { md: "divider" },
@@ -556,6 +558,8 @@ ChatCallDrawer.propTypes = {
   // Trials of this call's scenario, for the picker in the header.
   trials: PropTypes.arrayOf(PropTypes.object),
   onPickTrial: PropTypes.func,
+  // A multi-agent call: more of the drawer goes to the artifact.
+  wide: PropTypes.bool,
   task: PropTypes.shape({
     id: PropTypes.string,
     scenario: PropTypes.string,

@@ -1,6 +1,7 @@
 import PropTypes from "prop-types";
 import { Drawer } from "@mui/material";
 import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
+import { useHasWorkers } from "src/api/simulate-environments/runDetail";
 
 import ChatCallDrawer from "./ChatCallDrawer";
 import VoiceCallDrawer from "./VoiceCallDrawer";
@@ -28,6 +29,8 @@ export default function CallDrawer({
 }) {
   const open = !!task;
   const voice = isVoiceCall(task, agentType);
+  // A multi-agent call opens wider so its participants sequence has room.
+  const wide = useHasWorkers(task?.id, task?.status) === true;
   const { traceOpen, onTracePanelMountedChange } = useCallTraceOpen();
   const covered = useDrawerCovered(open);
 
@@ -41,7 +44,7 @@ export default function CallDrawer({
         sx: {
           // Voice lets `VoiceDetailDrawerV2` drive its own (draggable) width; the
           // two-pane chat drawer wants a wide fixed pane.
-          width: voice ? "auto" : { xs: "100%", md: "64vw" },
+          width: voice ? "auto" : { xs: "100%", md: wide ? "82vw" : "64vw" },
           maxWidth: "100vw",
           height: "100vh",
           backgroundColor: "background.default",
@@ -70,6 +73,7 @@ export default function CallDrawer({
             onTracePanelMountedChange={onTracePanelMountedChange}
             trials={trials}
             onPickTrial={onPickTrial}
+            wide={wide}
           />
         ) : (
           <ChatCallDrawer
@@ -84,6 +88,7 @@ export default function CallDrawer({
             onTracePanelMountedChange={onTracePanelMountedChange}
             trials={trials}
             onPickTrial={onPickTrial}
+            wide={wide}
           />
         ))}
     </Drawer>
@@ -93,6 +98,7 @@ CallDrawer.propTypes = {
   task: PropTypes.shape({
     id: PropTypes.string,
     simulationCallType: PropTypes.string,
+    status: PropTypes.string,
   }),
   executionId: PropTypes.string,
   agentType: PropTypes.string,

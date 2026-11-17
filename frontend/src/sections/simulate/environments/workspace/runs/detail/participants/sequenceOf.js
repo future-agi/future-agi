@@ -1,4 +1,5 @@
 import { SEQUENCE_COPY as C } from "./sequence.constants";
+import { readable } from "./sequenceLayout";
 
 /*
   A call's participants as a sequence: one lane per participant (caller,
@@ -20,7 +21,7 @@ const outputText = (call) => {
   if (call.refused) return C.refused(call.reason);
   const output = call.output;
   if (output == null) return C.noResponse;
-  if (typeof output !== "object") return String(output);
+  if (typeof output !== "object") return readable(output);
   return Object.entries(output)
     .map(([k, v]) => `${k}: ${typeof v === "object" ? JSON.stringify(v) : v}`)
     .join(" · ");
@@ -73,6 +74,7 @@ const answerOf = (w, start, turnEnd) => {
     at: w.endedAt,
     label: oneLine(w.result),
     full: w.result,
+    fullShown: w.resultShown,
   };
 };
 
@@ -91,6 +93,7 @@ const stepsOfTurn = (t, coord, laneInfo, push) => {
       at: t.at,
       label: oneLine(t.request),
       full: t.request,
+      fullShown: t.requestShown,
       turn: t.n,
       key: `turn-${t.n}`,
       alone,
@@ -100,6 +103,7 @@ const stepsOfTurn = (t, coord, laneInfo, push) => {
             at: turnEnd ?? start,
             label: oneLine(t.reply),
             full: t.reply,
+            fullShown: t.replyShown,
           }
         : {
             kind: "none",
@@ -141,6 +145,7 @@ const stepsOfTurn = (t, coord, laneInfo, push) => {
       at: w.delegatedAt,
       label: oneLine(w.task) || C.noTaskText,
       full: w.task || null,
+      fullShown: w.taskShown,
       turn: t.n,
       key: w.key,
       spanId: w.spanId,
@@ -178,9 +183,12 @@ const foldQuietTurns = (sorted) => {
       prev.full = prev.turnTexts
         .map((x, i) => C.turnLine(prev.turnNums[i], x))
         .join("\n");
+      // Several turns are one text of ours, not one the API formatted.
+      prev.fullShown = null;
       prev.answer = {
         ...s.answer,
         label: oneLine(s.answer.full),
+        fullShown: null,
         full: prev.replyTexts
           .map((x, i) => C.turnLine(prev.turnNums[i], x))
           .join("\n"),

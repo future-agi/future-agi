@@ -1,6 +1,5 @@
 import PropTypes from "prop-types";
-import { Box, ButtonBase, Stack, Typography } from "@mui/material";
-import CustomTooltip from "src/components/tooltip";
+import { Box, ButtonBase, Stack, Tooltip, Typography } from "@mui/material";
 import { STATUS_META } from "../runs.constants";
 import { TRIAL_PICKER_COPY as C } from "./callTraces.constants";
 
@@ -28,10 +27,8 @@ export default function TrialPicker({ trials, currentId, onPick }) {
         const meta = STATUS_META[trial.status] || STATUS_META.unmeasured;
         const on = trial.id === currentId;
         return (
-          <CustomTooltip
+          <Tooltip
             key={trial.id}
-            show
-            size="small"
             arrow
             title={C.tooltip(trial.trialIndex, meta.label)}
           >
@@ -61,7 +58,7 @@ export default function TrialPicker({ trials, currentId, onPick }) {
               />
               {trial.trialIndex}
             </ButtonBase>
-          </CustomTooltip>
+          </Tooltip>
         );
       })}
     </Stack>
