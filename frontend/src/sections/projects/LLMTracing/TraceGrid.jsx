@@ -79,12 +79,20 @@ import {
   dispatchObservePageChanged,
   OBSERVE_LIST_REFRESH_EVENT,
 } from "../observeEvents";
+import { getRandomId } from "src/utils/utils";
+import { useSkillTracesEnabled } from "src/sections/skills/runtime/skillTracesFlag";
+import { SKILLS_COLUMN_ID } from "./defaultColumns";
+import {
+  skillsColumnDef,
+  TracePageSkillsProbe,
+} from "./Renderers/SkillsCell";
 
 const traceRowIdentity = (row) => {
   const id = row?.trace_id || row?.id;
   return id ? `${row?.project_id || ""}:${id}` : null;
 };
 const EMPTY_EXTRA_FILTERS = [];
+const IDLE_TRACE_SKILLS = Object.freeze({ status: "idle", byTrace: {} });
 const loadTraceObservePage = (params, signal) =>
   readQuery(endpoints.project.getTracesForObserveProject(), {
     params,
@@ -116,6 +124,10 @@ const TraceGrid = React.forwardRef(
       compareType,
       // Only the visible grid of a primary/compare pair renders the drawer.
       hideDetailDrawer = false,
+      // Called with the list response's skill-load probe for the first page
+      // (SKILL-TRACES §7.1: the Skills column is shown by default only when
+      // the project has loads in the window).
+      onSkillLinksExist,
     },
     gridRef,
   ) => {
@@ -159,6 +171,22 @@ const TraceGrid = React.forwardRef(
     const [openQuickFilter, setOpenQuickFilter] = useState(null);
     const [selectedAll, setSelectedAll] = useState(false);
     const [usageSort, setUsageSort] = useState([]);
+    // Skill traces (SKILL-TRACES §7.1, lane ST9): the Skills column reads the
+    // loads of the traces on the shown page in one bounded request.
+    const skillTracesEnabled = useSkillTracesEnabled();
+    const [pageTraceIds, setPageTraceIds] = useState([]);
+    const showSkillsColumn =
+      skillTracesEnabled &&
+      (columns || []).some(
+        (column) =>
+          column?.id === SKILLS_COLUMN_ID && column?.isVisible !== false,
+      );
+    const [traceSkillsState, setTraceSkillsState] = useState(null);
+    const traceSkills = showSkillsColumn && traceSkillsState
+      ? traceSkillsState
+      : IDLE_TRACE_SKILLS;
+    const onSkillLinksExistRef = useRef(onSkillLinksExist);
+    onSkillLinksExistRef.current = onSkillLinksExist;
     const canUsageSort = supportsUsageSort(
       projectId,
       toBackendFilters([
@@ -385,10 +413,35 @@ const TraceGrid = React.forwardRef(
     );
     // Tells cell renderers (e.g. TagsCell) they are on the trace grid (so tag
     // edits target the trace, not its root span) and whether the role may edit.
-    const gridContext = useMemo(
-      () => ({ entityType: "trace", canEditTags }),
-      [canEditTags],
+    const addSkillFilters = useCallback(
+      (build) =>
+        setExtraFilters?.((previous) => {
+          const current = previous || [];
+          const additions = build(current).map((item) => ({
+            ...item,
+            id: getRandomId(),
+          }));
+          return additions.length ? [...current, ...additions] : current;
+        }),
+      [setExtraFilters],
     );
+    const gridContext = useMemo(
+      () => ({
+        entityType: "trace",
+        canEditTags,
+        traceSkills,
+        onAddSkillFilters: addSkillFilters,
+      }),
+      [canEditTags, traceSkills, addSkillFilters],
+    );
+    // Cell renderers read the page's skills from the grid context; redraw the
+    // Skills cells when that hydration settles.
+    useEffect(() => {
+      if (!showSkillsColumn) return;
+      withLiveGridApi(gridRef?.current?.api, (api) =>
+        api.refreshCells?.({ columns: [SKILLS_COLUMN_ID], force: true }),
+      );
+    }, [gridRef, showSkillsColumn, traceSkills.status, traceSkills.byTrace]);
 
     const dataSource = useMemo(
       () => {
@@ -599,6 +652,16 @@ const TraceGrid = React.forwardRef(
                 rowData: rows,
                 rowCount: discoveredRowCount,
               });
+              setPageTraceIds(
+                rows.map((row) => row?.trace_id).filter(Boolean),
+              );
+              if (pageNumber === 0 && metadata) {
+                // `skill_links_exist` is the list's cheap probe for skill
+                // loads in the window (provisional name, SKILL-TRACES §7.1).
+                onSkillLinksExistRef.current?.(
+                  metadata.skill_links_exist === true,
+                );
+              }
               pageLoadSucceeded = true;
               pageLoadRowCount = rows.length;
               setContinuationNotice(null);
@@ -739,6 +802,11 @@ const TraceGrid = React.forwardRef(
       for (const c of columns) {
         if (c?.groupBy === "Annotation Metrics") continue;
         bottomRowObj[c?.id] = c?.average ? `${c?.average}` : null;
+        if (c?.id === SKILLS_COLUMN_ID && c?.groupBy === "Custom Columns") {
+          // Shown only while skillTraces is on; never an attribute column.
+          if (skillTracesEnabled) columnDefsResult.push(skillsColumnDef(c));
+          continue;
+        }
         if (c?.groupBy === "Custom Columns") {
           const colDef = getTraceListColumnDefs(c);
           columnDefsResult.push({ ...colDef, minWidth: 200, flex: 1 });
@@ -770,7 +838,7 @@ const TraceGrid = React.forwardRef(
           },
         ],
       };
-    }, [columns, showMetricsIds, canUsageSort]);
+    }, [columns, showMetricsIds, canUsageSort, skillTracesEnabled]);
 
     useEffect(() => {
       return () => resetMetricIds();
@@ -925,6 +993,13 @@ const TraceGrid = React.forwardRef(
             {readMessage}
           </Box>
         )}
+        {showSkillsColumn && enabled && projectId && (
+          <TracePageSkillsProbe
+            projectId={projectId}
+            traceIds={pageTraceIds}
+            onChange={setTraceSkillsState}
+          />
+        )}
         <ListCursorContinuationNotice
           pending={Boolean(continuationNotice)}
           onContinue={continueCursorSearch}
@@ -1054,6 +1129,7 @@ TraceGrid.displayName = "TraceGrid";
 
 TraceGrid.propTypes = {
   filters: PropTypes.array,
+  onSkillLinksExist: PropTypes.func,
   columns: PropTypes.array,
   setColumns: PropTypes.func,
   setFilters: PropTypes.func,

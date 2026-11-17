@@ -13,8 +13,10 @@ import {
   removeCustomColumnsFromTab,
   resetColumnsForTab,
   restoreCanonicalColumnVisibility,
+  SKILL_TRACE_COLUMNS,
   SPAN_BUILT_IN_COLUMNS,
   TRACE_BUILT_IN_COLUMNS,
+  withDefaultSkillsColumn,
 } from "../defaultColumns";
 import {
   mergePersistedCustomColumns,
@@ -462,5 +464,42 @@ describe("tracing built-in column fallbacks", () => {
         );
       },
     );
+  });
+});
+
+describe("Skills column default (SKILL-TRACES §7.1)", () => {
+  it("adds a visible Skills column to the trace tab when loads exist", () => {
+    const initial = createInitialTracingColumns();
+    const next = withDefaultSkillsColumn(initial, { exists: true });
+    expect(next["primary-trace"].at(-1)).toEqual({
+      id: "skills",
+      name: "Skills",
+      isVisible: true,
+      groupBy: "Custom Columns",
+    });
+    expect(next["compare-trace"].some((column) => column.id === "skills")).toBe(true);
+    expect(next["primary-spans"]).toBe(initial["primary-spans"]);
+  });
+
+  it("changes nothing without loads, in a saved view, or once offered", () => {
+    const initial = createInitialTracingColumns();
+    expect(withDefaultSkillsColumn(initial, { exists: false })).toBe(initial);
+    expect(withDefaultSkillsColumn(initial, { exists: true, savedView: true })).toBe(initial);
+    expect(withDefaultSkillsColumn(initial, { exists: true, alreadyOffered: true })).toBe(initial);
+  });
+
+  it("keeps a Skills column the person hid", () => {
+    const hidden = addCustomColumnsToTab(createInitialTracingColumns(), "trace", [
+      { id: "skills", name: "Skills", isVisible: false, groupBy: "Custom Columns" },
+    ]);
+    expect(withDefaultSkillsColumn(hidden, { exists: true })).toBe(hidden);
+  });
+
+  it("offers Skills, Agent and Context, adding only Skills by default", () => {
+    expect(SKILL_TRACE_COLUMNS.map((column) => [column.id, column.name])).toEqual([
+      ["skills", "Skills"],
+      ["gen_ai.agent.name", "Agent"],
+      ["fi.context.name", "Context"],
+    ]);
   });
 });

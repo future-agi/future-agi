@@ -246,7 +246,7 @@ describe("skillGroupChipText", () => {
   it("shows failed loads and failed requests in their words", () => {
     expect(skillGroupChipText([item("skill.id", "equals", SKILL), item("skill.load_result", "equals", "failed")], labels).text)
       .toBe("refund-policy · load failed");
-    expect(skillGroupChipText([item("skill.version_id", "equals", V3, { display_name: "refund-policy v3" }), item("skill.root_status", "equals", "error")]).text)
+    expect(skillGroupChipText([item("skill.id", "equals", SKILL, { display_name: "refund-policy" }), item("skill.version_id", "equals", V3, { display_name: "v3" }), item("skill.root_status", "equals", "error")]).text)
       .toBe("refund-policy v3 · failed requests");
   });
 
@@ -296,7 +296,7 @@ describe("chipFilterItems", () => {
     const items = chipFilterItems({ skill_id: SKILL, version_id: V3, version: 3, name: "refund-policy" }, existing);
     expect(items.map((entry) => [entry.column_id, entry.group, entry.display_name])).toEqual([
       ["skill.id", 1, "refund-policy"],
-      ["skill.version_id", 1, "refund-policy v3"],
+      ["skill.version_id", 1, "v3"],
     ]);
   });
 

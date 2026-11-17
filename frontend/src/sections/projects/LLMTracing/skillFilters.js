@@ -591,7 +591,7 @@ export function chipFilterItems(skill, existingFilters = []) {
   const name = skill.name || OBSERVE_SKILL_COPY.unknownSkill;
   return items.map((item) =>
     item.column_id === "skill.version_id"
-      ? { ...item, display_name: `${name} ${versionName(skill.version)}` }
+      ? { ...item, display_name: versionName(skill.version) }
       : item.column_id === "skill.id"
         ? { ...item, display_name: name }
         : item,

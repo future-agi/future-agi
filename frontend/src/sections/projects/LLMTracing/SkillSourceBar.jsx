@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect, useMemo } from "react";
 import PropTypes from "prop-types";
 import { Link as RouterLink } from "react-router-dom";
 import { Box, Button, Skeleton, Stack, Typography } from "@mui/material";
@@ -8,7 +8,13 @@ import { useContextDetail } from "src/api/skills/context-authoring";
 import { useSkillComparison } from "src/api/skills/runtime";
 import { buildSkillTraceLink, runtimeTabUrl } from "src/sections/skills/utils/traces";
 import { versionName } from "src/sections/skills/runtime/runtimeCopy";
-import { OBSERVE_SKILL_COPY, comparisonMetricKey, sourceMetricPhrase } from "./skillFilters";
+import {
+  OBSERVE_SKILL_COPY,
+  comparisonMetricKey,
+  isSkillFilterItem,
+  isUuid,
+  sourceMetricPhrase,
+} from "./skillFilters";
 
 // The Observe source bar (SKILL-TRACES §7.1, UX-02, lane ST9). A link from a
 // skill or context surface carries a `skillSource` parameter; this bar says
@@ -63,6 +69,62 @@ export function otherSideLink({ source, move }) {
     label: other === "before" ? COPY.compareBefore(version) : COPY.compareAfter(version),
   };
 }
+
+const firstSkillId = (filters, source) => {
+  if (source?.skillId) return source.skillId;
+  const item = (filters || []).find(
+    (filter) => isSkillFilterItem(filter) && filter.column_id === "skill.id",
+  );
+  const value = item?.filter_config?.filter_value;
+  const id = Array.isArray(value) ? value[0] : value;
+  return isUuid(id) ? id : null;
+};
+
+/**
+ * Chip labels for `SKILL` filters (FilterChips `fieldLabelMap` shape:
+ * column_id → { value: label }). Resolves the linked skill's name and its
+ * version numbers from the Skills API, in the caller's workspace; ids it
+ * cannot resolve stay short ids. Reads nothing when `enabled` is false.
+ */
+export function useSkillFilterLabels(filters, { source, enabled = true } = {}) {
+  const skillId = enabled ? firstSkillId(filters, source) : null;
+  const skill = useSkill(skillId);
+  const versions = useSkillVersions(skillId, { pageSize: 100 });
+  const name = skill.data?.name;
+  const results = versions.data?.results;
+  return useMemo(() => {
+    if (!skillId) return {};
+    const versionLabels = Object.fromEntries(
+      (results || []).map((version) => [version.id, versionName(version.number)]),
+    );
+    return {
+      "skill.id": name ? { [skillId]: name } : {},
+      "skill.version_id": versionLabels,
+      "skill.in_scope": versionLabels,
+    };
+  }, [skillId, name, results]);
+}
+
+/**
+ * Renders nothing; reports `useSkillFilterLabels` to `onChange`. Mounted by
+ * the list view only while `skillTraces` is on and a Skill filter is applied,
+ * so no Skills read runs for anyone else.
+ */
+export function SkillFilterLabelsProbe({ filters, source, onChange }) {
+  const labels = useSkillFilterLabels(filters, { source });
+  const key = JSON.stringify(labels);
+  useEffect(() => {
+    onChange(JSON.parse(key));
+  }, [key, onChange]);
+  useEffect(() => () => onChange(null), [onChange]);
+  return null;
+}
+
+SkillFilterLabelsProbe.propTypes = {
+  filters: PropTypes.array,
+  source: PropTypes.object,
+  onChange: PropTypes.func.isRequired,
+};
 
 export default function SkillSourceBar({ source, sortNotApplied = false, linkUnreadable = false }) {
   const skillId = source?.skillId ?? null;

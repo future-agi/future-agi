@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import PropTypes from "prop-types";
 import { Link as RouterLink } from "react-router-dom";
 import { Box, Chip, Menu, MenuItem, Skeleton, Tooltip, Typography } from "@mui/material";
@@ -33,6 +33,7 @@ export const TRACE_SKILLS_PAGE_LIMIT = 100;
 // ---------------------------------------------------------------------------
 // Data: endpoint 6, page-scoped.
 
+const NO_TRACES = Object.freeze({});
 const traceIdsKey = (traceIds) =>
   [...new Set((traceIds || []).filter((id) => typeof id === "string" && id))]
     .slice(0, TRACE_SKILLS_PAGE_LIMIT)
@@ -89,11 +90,31 @@ export function useTracePageSkills({ projectId, traceIds, enabled = true }) {
   else if (query.data) status = "ready";
   return {
     status,
-    byTrace: query.data || {},
+    byTrace: query.data || NO_TRACES,
     errorKind: query.isError ? runtimeErrorKind(query.error) : null,
     retry: query.refetch,
   };
 }
+
+/**
+ * Renders nothing; runs `useTracePageSkills` and reports its result to
+ * `onChange`. The grid mounts it only while the Skills column is shown, so
+ * no read (and no React Query dependency) exists for anyone else.
+ */
+export function TracePageSkillsProbe({ projectId, traceIds, onChange }) {
+  const { status, byTrace, errorKind, retry } = useTracePageSkills({ projectId, traceIds });
+  useEffect(() => {
+    onChange({ status, byTrace, errorKind, retry });
+  }, [status, byTrace, errorKind, retry, onChange]);
+  useEffect(() => () => onChange(null), [onChange]);
+  return null;
+}
+
+TracePageSkillsProbe.propTypes = {
+  projectId: PropTypes.string,
+  traceIds: PropTypes.array,
+  onChange: PropTypes.func.isRequired,
+};
 
 // ---------------------------------------------------------------------------
 // Presentation model (pure, tested).

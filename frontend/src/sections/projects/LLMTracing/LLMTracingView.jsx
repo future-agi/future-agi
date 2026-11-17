@@ -181,8 +181,10 @@ import {
   removeCustomColumnsFromTab,
   resetColumnsForTab,
   restoreCanonicalColumnVisibility,
+  SKILL_TRACE_COLUMNS,
   SPAN_BUILT_IN_COLUMNS,
   TRACE_BUILT_IN_COLUMNS,
+  withDefaultSkillsColumn,
 } from "./defaultColumns";
 import TracingControls from "./TracingControls";
 import ObserveToolbar from "./ObserveToolbar";
@@ -201,6 +203,19 @@ import { normalizeVoiceCallSavedFilters } from "./voiceCallFilterFields";
 import { serializeTraceFiltersForPersistence } from "./filter_persistence";
 import useProjectFilterField from "../UsersView/useProjectFilterField";
 import FilterChips from "./FilterChips";
+import {
+  filtersSignature,
+  hasSkillFilter,
+  hydrateFiltersWithSkills,
+  parseLinkSort,
+  parseSkillSource,
+  reconcileSkillItems,
+} from "./skillFilters";
+import { useSkillTracesEnabled } from "src/sections/skills/runtime/skillTracesFlag";
+import {
+  OBSERVE_LINK_SORT_PARAM,
+  SKILL_SOURCE_PARAM,
+} from "src/sections/skills/utils/traces";
 import { useDashboardFilterValues } from "src/hooks/useDashboards";
 import {
   getPickerOptionLabel,
@@ -274,6 +289,15 @@ import ContentSkeleton from "src/components/content-skeleton";
 
 // Lazy load graph components — only loaded when viewMode changes
 const PrimaryGraph = lazy(() => import("./GraphSection/PrimaryGraph"));
+// Skill traces (SKILL-TRACES §7.1) load only when the skillTraces flag is on
+// and a skill link or filter is present, so Observe pays nothing otherwise.
+const SkillSourceBar = lazy(() => import("./SkillSourceBar"));
+const SkillFilterLabelsProbe = lazy(() =>
+  import("./SkillSourceBar").then((module) => ({
+    default: module.SkillFilterLabelsProbe,
+  })),
+);
+const SkillCohortStrip = lazy(() => import("./SkillCohortStrip"));
 const AgentGraph = lazy(() => import("./GraphSection/AgentGraph"));
 const AgentPath = lazy(() => import("./GraphSection/AgentPath"));
 
@@ -755,6 +779,27 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
   });
   const [openCustomColumn, setOpenCustomColumn] = useState(false);
   const [extraFilters, setExtraFiltersRaw] = useState([]);
+  // A link from a skill surface (SKILL-TRACES §7.1 source bar, UX-02): its
+  // source object and sort from the URL, the signature of the filters it
+  // applied (the bar hides once the person edits them), and whether its
+  // SKILL filters could be read at all.
+  const skillTracesEnabled = useSkillTracesEnabled();
+  // Names for Skill chips, resolved by SkillFilterLabelsProbe (mounted only
+  // while the flag is on and a Skill filter is applied).
+  const [skillFilterLabels, setSkillFilterLabels] = useState(null);
+  const [skillLink, setSkillLink] = useState(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      return {
+        source: parseSkillSource(params.get(SKILL_SOURCE_PARAM)),
+        sort: parseLinkSort(params.get(OBSERVE_LINK_SORT_PARAM)),
+        signature: null,
+        unreadable: false,
+      };
+    } catch {
+      return { source: null, sort: null, signature: null, unreadable: false };
+    }
+  });
   const [compareExtraFilters, setCompareExtraFiltersRaw] = useState([]);
   const [filterChipsSaved, setFilterChipsSaved] = useState(false);
   // Track which graph the filter panel targets in compare mode: "primary" | "compare"
@@ -767,6 +812,27 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     setCompareExtraFiltersRaw(val);
     setFilterChipsSaved(false);
   }, []);
+  // The filter panel rebuilds every item from its rows, which would drop a
+  // SKILL item's correlation group and may change its operator. Restore the
+  // items the person did not change (skillFilters.reconcileSkillItems).
+  const applyPanelExtraFilters = useCallback(
+    (next) =>
+      setExtraFilters((prev) =>
+        reconcileSkillItems(prev, next, {
+          grain: selectedTab === "spans" ? "span" : "trace",
+        }),
+      ),
+    [setExtraFilters, selectedTab],
+  );
+  const applyPanelCompareExtraFilters = useCallback(
+    (next) =>
+      setCompareExtraFilters((prev) =>
+        reconcileSkillItems(prev, next, {
+          grain: selectedTab === "spans" ? "span" : "trace",
+        }),
+      ),
+    [setCompareExtraFilters, selectedTab],
+  );
   const metricFilters = useMemo(() => {
     const mf = [];
     if (showErrors) mf.push(FILTER_FOR_ERRORS);
@@ -1158,7 +1224,13 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
 
   const hydrateProjectFilterList = useCallback(
     (filters, createId) => {
-      const hydrated = hydrateStoredFilterList(filters, createId);
+      // SKILL items (SKILL-TRACES §6.3) are validated by skillFilters: the
+      // shared hydrator would drop a grouped one, which changes the cohort.
+      const { rows: hydrated } = hydrateFiltersWithSkills(filters, {
+        createId,
+        hydrateOthers: hydrateStoredFilterList,
+        grain: "span",
+      });
       return projectSource === PROJECT_SOURCE.SIMULATOR
         ? normalizeVoiceCallSavedFilters(hydrated)
         : hydrated;
@@ -2617,8 +2689,31 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     );
     if (!raw) return;
     try {
-      const rows = hydrateProjectFilterList(JSON.parse(raw), getRandomId);
+      const parsed = JSON.parse(raw);
+      // A link from a skill surface must land on exactly the traces its
+      // number counted (SKILL-TRACES UX-02). If any of its SKILL items can't
+      // be read, apply none of its filters and say so, rather than widen it.
+      const { rows: linkRows, rejected } = hydrateFiltersWithSkills(parsed, {
+        createId: getRandomId,
+        hydrateOthers: hydrateStoredFilterList,
+        grain: "trace",
+        strict: true,
+      });
+      if (rejected > 0) {
+        setSkillLink((prev) => ({ ...prev, unreadable: true }));
+        return;
+      }
+      const rows =
+        projectSource === PROJECT_SOURCE.SIMULATOR
+          ? normalizeVoiceCallSavedFilters(linkRows)
+          : linkRows;
       if (rows.length > 0) {
+        if (hasSkillFilter(rows)) {
+          setSkillLink((prev) => ({
+            ...prev,
+            signature: filtersSignature(toBackendFilters(rows)),
+          }));
+        }
         // Leave filterChipsSaved false so the chip strip renders: unlike the
         // localStorage restore below, a link's scope has never been saved, and
         // the strip is what makes it visible and dismissable on arrival.
@@ -3303,6 +3398,96 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     return null;
   }, [selectedGraph, selectedTab]);
 
+  // Skill traces in Observe (SKILL-TRACES §7.1, lane ST9), behind skillTraces.
+  // The cohort strip counts exactly the request the trace list sends.
+  const primaryTraceListFilters = useMemo(
+    () =>
+      toBackendFilters([
+        ...primaryTraceValidatedFilters,
+        ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
+        ...extraFilters,
+        ...metricFilters,
+      ]),
+    [primaryTraceValidatedFilters, hasEvalFilter, extraFilters, metricFilters],
+  );
+  const skillCohortWindow = useMemo(() => {
+    const [start, end] = primaryTraceDateFilter?.dateFilter || [];
+    const from = start ? new Date(start) : null;
+    const to = end ? new Date(end) : null;
+    if (!from || !to || Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
+      return null;
+    }
+    return { from: from.toISOString(), to: to.toISOString() };
+  }, [primaryTraceDateFilter]);
+  const extraFiltersSignature = useMemo(
+    () => filtersSignature(toBackendFilters(extraFilters)),
+    [extraFilters],
+  );
+  // The source bar is presentational: it shows while the list still holds
+  // exactly the filters the link applied, and disappears once they change.
+  const showSkillSourceBar =
+    skillTracesEnabled &&
+    !showCompare &&
+    (skillLink.unreadable ||
+      Boolean(
+        skillLink.source &&
+          skillLink.signature &&
+          skillLink.signature === extraFiltersSignature,
+      ));
+  // The Skills column is shown by default only when the project has skill
+  // loads in the window, once per project in this browser, and never inside
+  // a saved view (SKILL-TRACES §7.1, UX-12).
+  const handleSkillLinksExist = useCallback(
+    (exists) => {
+      if (!exists || !skillTracesEnabled || activeViewTabId || !observeId) {
+        return;
+      }
+      const offeredKey = `observe-skills-column-offered:${observeId}`;
+      let alreadyOffered = false;
+      try {
+        alreadyOffered = localStorage.getItem(offeredKey) === "1";
+      } catch {
+        alreadyOffered = false;
+      }
+      if (alreadyOffered) return;
+      setColumns((prev) =>
+        withDefaultSkillsColumn(prev, {
+          exists,
+          savedView: Boolean(activeViewTabId),
+          alreadyOffered,
+        }),
+      );
+      try {
+        localStorage.setItem(offeredKey, "1");
+      } catch {
+        /* per-browser convenience only */
+      }
+    },
+    [activeViewTabId, observeId, skillTracesEnabled],
+  );
+  const skillColumnChoices =
+    skillTracesEnabled && selectedTab === "trace"
+      ? SKILL_TRACE_COLUMNS
+      : undefined;
+  const resolveSkillChipLabels =
+    skillTracesEnabled && hasSkillFilter(extraFilters);
+  const chipLabelMap = useMemo(
+    () =>
+      resolveSkillChipLabels &&
+      skillFilterLabels &&
+      Object.keys(skillFilterLabels).length
+        ? { ...filterChipLabelMap, ...skillFilterLabels }
+        : filterChipLabelMap,
+    [filterChipLabelMap, resolveSkillChipLabels, skillFilterLabels],
+  );
+  const showSkillCohortStrip =
+    skillTracesEnabled &&
+    !showCompare &&
+    !isUserMode &&
+    selectedTab === "trace" &&
+    Boolean(observeId && skillCohortWindow) &&
+    hasSkillFilter(primaryTraceListFilters);
+
   return (
     <Box sx={{ paddingX: theme.spacing(2) }}>
       <Helmet>
@@ -3649,6 +3834,30 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
           )}
         </Box>
       </Box>
+      <Suspense fallback={null}>
+        {resolveSkillChipLabels && (
+          <SkillFilterLabelsProbe
+            filters={extraFilters}
+            source={skillLink.source}
+            onChange={setSkillFilterLabels}
+          />
+        )}
+        {showSkillSourceBar && (
+          <SkillSourceBar
+            source={skillLink.unreadable ? null : skillLink.source}
+            sortNotApplied={Boolean(skillLink.sort)}
+            linkUnreadable={skillLink.unreadable}
+          />
+        )}
+        {showSkillCohortStrip && (
+          <SkillCohortStrip
+            projectId={observeId}
+            filters={primaryTraceListFilters}
+            from={skillCohortWindow.from}
+            to={skillCohortWindow.to}
+          />
+        )}
+      </Suspense>
       {/* Active filter chips — in compare mode, only show Clear/Save at top (chips are inline on each graph) */}
       {!filterChipsSaved && !showCompare && (
         <FilterChips
@@ -3659,13 +3868,19 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
               primaryFilterDefinition?.find((c) => c.propertyId === f.column_id)
                 ?.propertyName,
           }))}
-          fieldLabelMap={filterChipLabelMap}
+          fieldLabelMap={chipLabelMap}
           onRemoveFilter={(idx) => {
             // Chips are keyed by array index, so any removal re-mounts the
             // later chips and invalidates a chip-anchored popover ref.
             // Clear it so the popover falls back to the toolbar button anchor.
             setExternalFilterAnchor(null);
             setExtraFilters((prev) => prev.filter((_, i) => i !== idx));
+          }}
+          onRemoveFilters={(indices) => {
+            // A Skill chip is one correlation group of several items.
+            const remove = new Set(indices);
+            setExternalFilterAnchor(null);
+            setExtraFilters((prev) => prev.filter((_, i) => !remove.has(i)));
           }}
           onClearAll={() => {
             setExternalFilterAnchor(null);
@@ -4147,7 +4362,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                 setExternalFilterAnchor(null);
                 setIsPrimaryFilterOpen(!isPrimaryFilterOpen);
               }}
-              onApplyExtraFilters={setExtraFilters}
+              onApplyExtraFilters={applyPanelExtraFilters}
               onClearExtraFilters={clearPrimaryExtraFilters}
               graphFilters={selectPanelGraphFilters(
                 filterTarget,
@@ -4157,7 +4372,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
               isFilterOpen={isPrimaryFilterOpen}
               externalFilterAnchor={externalFilterAnchor}
               filterTarget={filterTarget}
-              onApplyCompareExtraFilters={setCompareExtraFilters}
+              onApplyCompareExtraFilters={applyPanelCompareExtraFilters}
               onClearCompareExtraFilters={clearCompareExtraFilters}
               filters={
                 selectedTab === "trace"
@@ -5018,6 +5233,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
               onRemoveColumns={handleRemoveCustomColumns}
               onAttributeSearchChange={setCustomAttributeSearch}
               inventoryControlProps={inventoryControlProps}
+              skillColumns={skillColumnChoices}
             />
             <Box sx={{ paddingTop: 2 }}>
               <SelectAllBanner
@@ -5079,6 +5295,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                       selectedTab === "trace" &&
                       selectedGraph === "primary"
                     }
+                    onSkillLinksExist={handleSkillLinksExist}
                   />
                 </Suspense>
               </Box>

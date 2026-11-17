@@ -49,6 +49,52 @@ export const SPAN_BUILT_IN_COLUMNS = [
 
 const cloneColumns = (columns) => columns.map((column) => ({ ...column }));
 
+// Skill-trace columns (SKILL-TRACES §7.1, UX-12), offered in the column
+// chooser under "Skills" while the skillTraces flag is on. Skills is the one
+// shown by default, and only when the project has loads in the window. Agent
+// and Context are never added by default. They are custom columns: Skills is
+// hydrated per page from the trace-skills read (never the attribute path);
+// Agent and Context read the span attributes `gen_ai.agent.name` and
+// `fi.context.name` through the normal attribute hydration.
+export const SKILLS_COLUMN_ID = "skills";
+export const SKILL_AGENT_COLUMN_ID = "gen_ai.agent.name";
+export const SKILL_CONTEXT_COLUMN_ID = "fi.context.name";
+export const SKILL_TRACE_COLUMNS = Object.freeze([
+  Object.freeze({ id: SKILLS_COLUMN_ID, name: "Skills" }),
+  Object.freeze({ id: SKILL_AGENT_COLUMN_ID, name: "Agent" }),
+  Object.freeze({ id: SKILL_CONTEXT_COLUMN_ID, name: "Context" }),
+]);
+/** Column ids that are not span attributes and must never be requested as attribute keys. */
+export const NON_ATTRIBUTE_CUSTOM_COLUMN_IDS = Object.freeze([SKILLS_COLUMN_ID]);
+
+const hasColumn = (columnsBySlot, slotKey, id) =>
+  (columnsBySlot?.[slotKey] || []).some((column) => column?.id === id);
+
+/**
+ * Add the Skills column to the trace tab, visible, when the list reports that
+ * the project has skill loads in the window (`exists`). It is added once: a
+ * column the person hid stays hidden, one they removed is not re-added while
+ * `alreadyOffered` is true, and a saved view's columns are never changed.
+ * Returns the same reference when nothing changes.
+ */
+export const withDefaultSkillsColumn = (
+  columnsBySlot,
+  { exists = false, savedView = false, alreadyOffered = false } = {},
+) => {
+  if (!exists || savedView || alreadyOffered) return columnsBySlot;
+  if (hasColumn(columnsBySlot, "primary-trace", SKILLS_COLUMN_ID)) {
+    return columnsBySlot;
+  }
+  return addCustomColumnsToTab(columnsBySlot, "trace", [
+    {
+      id: SKILLS_COLUMN_ID,
+      name: "Skills",
+      isVisible: true,
+      groupBy: "Custom Columns",
+    },
+  ]);
+};
+
 const tabSlotKeys = (tab) => {
   const suffix = tab === "spans" ? "spans" : "trace";
   return [`primary-${suffix}`, `compare-${suffix}`];
