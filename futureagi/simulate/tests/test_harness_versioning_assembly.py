@@ -917,6 +917,50 @@ class TestLaunchMiss:
             == (storage.objects[default_pair])
         )
 
+    @pytest.mark.parametrize(
+        "sealed, outcome",
+        [({}, "miss"), ({"environment-bundle/actors.json": CAST}, "miss_fallback")],
+        ids=["sealed before the cast", "sealed with the cast"],
+    )
+    def test_a_default_pair_miss_whose_seal_predates_the_cast_certifies_with_it(
+        self, sealed, outcome, user, workspace, storage, gateway, settings
+    ):
+        settings.HARNESS_BUNDLE_CERTIFY_ENABLED = True
+        environment = _environment(
+            user,
+            workspace,
+            f"asm-fallback-cast-{outcome}",
+            storage,
+            body=_sealed_authoring(**{"actors.json": CAST, **sealed}),
+        )
+        _uncache(environment)
+        run = _run(environment)
+
+        with capture_logs() as logs:
+            _launch(gateway, run)
+
+        outcomes = [one["outcome"] for one in logs if "outcome" in one]
+        assert outcome in outcomes
+        # Certified in the run's own sandbox, with the cast, instead of replaying a seal without it.
+        assert ("--certify-only" in _command(gateway)) == (outcome == "miss")
+
+    def test_of_two_misses_on_one_row_only_one_certifies_it_for_the_cast(
+        self, user, workspace, storage, settings
+    ):
+        settings.HARNESS_BUNDLE_CERTIFY_ENABLED = True
+        environment = _environment(
+            user,
+            workspace,
+            "asm-fallback-cast-race",
+            storage,
+            body=_sealed_authoring(**{"actors.json": CAST}),
+        )
+        _uncache(environment)
+        seen_by_one, seen_by_other = _row(environment), _row(environment)
+
+        assert assembly._claim_cast(seen_by_one, "sha256:cast") is True
+        assert assembly._claim_cast(seen_by_other, "sha256:cast") is False
+
     def test_certifying_is_off_so_other_pins_cannot_run(self, user, workspace, storage):
         environment = _environment(user, workspace, "asm-fallback-pinned", storage)
         _uncache(environment)
