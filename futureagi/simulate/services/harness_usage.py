@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime
 from decimal import Decimal
 from uuid import UUID, uuid5
 
@@ -300,7 +301,8 @@ def emit_harness_usage(
         )
 
 
-def _authoring_stage_record(item: dict) -> dict | None:
+def _authoring_stage_record(item: dict, *, at: datetime) -> dict | None:
+    """Price one authoring stage at the rates in force at ``at``, when its usage happened."""
     from agentic_eval.core_evals.fi_utils.token_count_helper import (
         calculate_total_cost,
     )
@@ -359,6 +361,7 @@ def _authoring_stage_record(item: dict) -> dict | None:
             "completion_tokens": counts["tokens_out"],
             "cached_input_tokens": counts["tokens_cached"],
         },
+        at=at,
     )
     if cost["pricing_source"] != "available_models":
         raise HostedHarnessError(
@@ -379,10 +382,11 @@ def record_harness_authoring_usage(attempt: HostedHarnessAttempt, spend: dict) -
     """Price sealed authoring stages on the platform and persist replay evidence."""
     if is_oss():
         return
+    # Priced as of the attempt's start, the time its billing event carries, not the seal's.
     records = [
         record
         for item in spend.get("stages") or []
-        if (record := _authoring_stage_record(item)) is not None
+        if (record := _authoring_stage_record(item, at=attempt.created_at)) is not None
     ]
     if not records:
         return
@@ -606,7 +610,7 @@ def harness_consumption(job: HostedHarnessJob) -> dict | None:
                     continue
                 spend = authoring_spend.get(str(attempt.attempt_number)) or {}
                 for stage in spend.get("stages") or []:
-                    record = _authoring_stage_record(stage)
+                    record = _authoring_stage_record(stage, at=attempt.created_at)
                     if record is not None:
                         consumption["ai_credits"] += record["credits"]
         except HostedHarnessError:

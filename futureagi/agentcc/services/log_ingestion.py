@@ -1,6 +1,6 @@
 import json
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 
 import structlog
@@ -272,6 +272,11 @@ def _compute_cost(entry):
     from agentic_eval.core_evals.fi_utils.token_count_helper import calculate_total_cost
     from agentic_eval.core_evals.run_prompt.model_pricing import get_model_info
 
+    # Priced as of the request, not of ingestion, which can lag behind it.
+    usage_time = _parse_datetime(entry.get("timestamp") or entry.get("started_at"))
+    if usage_time is not None and usage_time.tzinfo is None:
+        usage_time = usage_time.replace(tzinfo=UTC)
+
     for model in [entry.get("resolved_model"), entry.get("model")]:
         if not model:
             continue
@@ -305,7 +310,7 @@ def _compute_cost(entry):
             token_usage["quality"] = quality
 
         try:
-            result = calculate_total_cost(model, token_usage)
+            result = calculate_total_cost(model, token_usage, at=usage_time)
             total = result.get("total_cost", 0)
             if total:
                 return total
