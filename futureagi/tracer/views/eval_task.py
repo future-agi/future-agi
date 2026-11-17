@@ -113,6 +113,28 @@ from tracer.views.eval_sampling import SamplingPreviewMixin
 logger = structlog.get_logger(__name__)
 
 
+class _EvalTaskCreateFailure(Exception):
+    """Local create/start failure carrying only a bounded exception type name."""
+
+    def __init__(self, error_type: str):
+        self.error_type = error_type[:80]
+        super().__init__(self.error_type)
+
+
+@contextmanager
+def _normalize_eval_task_create_failure(*, preserve_validation_errors: bool):
+    """Expose only bounded failure metadata to create's local handlers."""
+    try:
+        yield
+    except Exception as exc:
+        # Validation remains client-facing only in the precommit path.
+        if preserve_validation_errors and isinstance(
+            exc, (ValidationError, FilterPrincipalContextError)
+        ):
+            raise
+        raise _EvalTaskCreateFailure(type(exc).__name__) from None
+
+
 class _RegexpReplace(Func):
     """
     PostgreSQL `regexp_replace(string, pattern, replacement, flags)`.
@@ -1915,58 +1937,60 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
     )
     def create(self, request, *args, **kwargs):
         try:
-            data = request.data.copy()
-            data["status"] = EvalTaskStatus.PENDING
-            filters = data.get("filters") or {}
-            project_id = data.get("project")
-            if (
-                project_id
-                and not self._scope_project_queryset(Project.objects.all())
-                .filter(id=project_id)
-                .exists()
-            ):
-                return self._gm.bad_request("Project not found")
-            if project_id:
-                filters["project_id"] = project_id
-            data["filters"] = filters
+            with _normalize_eval_task_create_failure(preserve_validation_errors=True):
+                data = request.data.copy()
+                data["status"] = EvalTaskStatus.PENDING
+                filters = data.get("filters") or {}
+                project_id = data.get("project")
+                if (
+                    project_id
+                    and not self._scope_project_queryset(Project.objects.all())
+                    .filter(id=project_id)
+                    .exists()
+                ):
+                    return self._gm.bad_request("Project not found")
+                if project_id:
+                    filters["project_id"] = project_id
+                data["filters"] = filters
 
-            data["last_run"] = datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-            serializer = self.get_serializer(data=data)
-            serializer.is_valid(raise_exception=True)
-            invalid_eval_ids = self._invalid_eval_ids_for_project(
-                [eval_config.id for eval_config in serializer.validated_data["evals"]],
-                project_id,
-            )
-            if invalid_eval_ids:
-                return self._gm.bad_request(
-                    "Eval configs not found for project: " + ", ".join(invalid_eval_ids)
+                data["last_run"] = datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+                serializer = self.get_serializer(data=data)
+                serializer.is_valid(raise_exception=True)
+                invalid_eval_ids = self._invalid_eval_ids_for_project(
+                    [eval_config.id for eval_config in serializer.validated_data["evals"]],
+                    project_id,
                 )
-            # DRF saves the row before assigning its M2M relations. Both must
-            # roll back together if any part of persistence fails.
-            with transaction.atomic(using="default"):
-                eval_task = serializer.save()
+                if invalid_eval_ids:
+                    return self._gm.bad_request(
+                        "Eval configs not found for project: " + ", ".join(invalid_eval_ids)
+                    )
+                # DRF saves the row before assigning its M2M relations. Both must
+                # roll back together if any part of persistence fails.
+                with transaction.atomic(using="default"):
+                    eval_task = serializer.save()
 
         except ValidationError as exc:
             return self._gm.bad_request(exc.detail)
         except FilterPrincipalContextError as exc:
             return self._gm.bad_request(str(exc))
-        except Exception as exc:
+        except _EvalTaskCreateFailure as failure:
             logger.warning(
                 "eval_task.create_failed",
-                error_type=type(exc).__name__[:80],
+                error_type=failure.error_type,
                 exc_info=False,
             )
             return self._gm.bad_request("Evaluation task could not be created")
 
         def dispatch_saved_task():
             try:
-                # Initial, non-replacing start only. An uncertain acknowledgement
-                # cannot justify a second start or any saved-state compensation.
-                start_eval_task_workflow_sync(eval_task)
-            except Exception as exc:
+                with _normalize_eval_task_create_failure(preserve_validation_errors=False):
+                    # Initial, non-replacing start only. An uncertain acknowledgement
+                    # cannot justify a second start or any saved-state compensation.
+                    start_eval_task_workflow_sync(eval_task)
+            except _EvalTaskCreateFailure as failure:
                 logger.warning(
                     "eval_task.create_start_unconfirmed",
-                    error_type=type(exc).__name__[:80],
+                    error_type=failure.error_type,
                     exc_info=False,
                 )
 

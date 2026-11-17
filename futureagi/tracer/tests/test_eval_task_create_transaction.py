@@ -4,9 +4,11 @@ Real PostgreSQL commits/rollbacks are exercised; Temporal transport and worker
 mutations are test doubles, not evidence of real Temporal acceptance semantics.
 """
 
+from traceback import format_exception
 from unittest.mock import Mock
 
 import pytest
+import structlog
 from django.db import connections, transaction
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
@@ -14,6 +16,10 @@ from rest_framework.exceptions import ValidationError
 from tracer.models.eval_task import EvalTask, EvalTaskLogger, EvalTaskStatus, RunType
 from tracer.models.observation_span import EvalEntryStatus, EvalLogger
 from tracer.services.filter_principal_context import FilterPrincipalContextError
+from tracer.views.eval_task import (
+    _EvalTaskCreateFailure,
+    _normalize_eval_task_create_failure,
+)
 
 pytestmark = [
     pytest.mark.integration,
@@ -47,6 +53,36 @@ def task_snapshot(task_id):
     return EvalTask.all_objects.using("default").filter(pk=task_id).values().get()
 
 
+def assert_safe_failure_log(caplog, event, failure_type, private_payload):
+    # conftest configures the real application processors. Inspect the emitted
+    # stdlib record too: a formatter can hide exc_info from rendered output while
+    # another handler (including Sentry) still receives the original exception.
+    records = [
+        record
+        for record in caplog.records
+        if record.name == "tracer.views.eval_task"
+    ]
+    assert len(records) == 1
+    record = records[0]
+    assert record.levelname == "WARNING"
+    assert record.msg["event"] == event
+    assert record.msg["error_type"] == failure_type.__name__[:80]
+    assert len(record.msg["error_type"]) <= 80
+    assert not record.args
+    assert not record.exc_info
+    assert record.exc_text is None
+    assert record.stack_info is None
+    assert not {"exception", "exc_info", "stack_info"}.intersection(record.msg)
+    for renderer in (
+        structlog.processors.JSONRenderer(),
+        structlog.dev.ConsoleRenderer(colors=False),
+    ):
+        formatter = structlog.stdlib.ProcessorFormatter(processor=renderer)
+        rendered = formatter.format(record)
+        assert private_payload not in rendered
+        assert "Traceback (most recent call last)" not in rendered
+
+
 def assert_saved(response, starter):
     assert response.status_code == 200, response.content
     assert response.json()["status"] is True
@@ -58,12 +94,42 @@ def assert_saved(response, starter):
     return task_id
 
 
+@pytest.mark.parametrize(
+    "failure_type",
+    [
+        RuntimeError,
+        ValidationError,
+        FilterPrincipalContextError,
+        type("ProviderFailure" * 8, (RuntimeError,), {}),
+    ],
+)
+def test_create_failure_normalization_keeps_only_bounded_type_metadata(failure_type):
+    private_payload = "synthetic private failure payload must not be retained"
+    with pytest.raises(_EvalTaskCreateFailure) as raised:
+        with _normalize_eval_task_create_failure(preserve_validation_errors=False):
+            raise failure_type(private_payload)
+
+    failure = raised.value
+    expected_type = failure_type.__name__[:80]
+    assert type(failure) is _EvalTaskCreateFailure
+    assert not isinstance(failure, (ValidationError, FilterPrincipalContextError))
+    assert vars(failure) == {"error_type": expected_type}
+    assert failure.args == (expected_type,)
+    assert failure.__cause__ is None
+    assert failure.__suppress_context__ is True
+    assert private_payload not in "".join(format_exception(failure))
+
+
 @pytest.mark.parametrize("failure_stage", ["task_write", "relations_write"])
-@pytest.mark.parametrize("failure_type", [RuntimeError, ValidationError])
+@pytest.mark.parametrize(
+    "failure_type", [RuntimeError, ValidationError, FilterPrincipalContextError]
+)
 def test_partial_task_or_relation_write_rolls_back_without_dispatch(
     auth_client, project, custom_eval_config, monkeypatch, starter,
-    failure_stage, failure_type,
+    failure_stage, failure_type, caplog,
 ):
+    caplog.set_level("WARNING", logger="tracer.views.eval_task")
+    private_payload = "synthetic private persistence payload must not be logged"
     before_tasks = set(
         EvalTask.all_objects.using("default").values_list("pk", flat=True)
     )
@@ -76,7 +142,7 @@ def test_partial_task_or_relation_write_rolls_back_without_dispatch(
         def fail_after_write(task, *args, **kwargs):
             original(task, *args, **kwargs)
             wrote.append(task.pk)
-            raise failure_type("synthetic persistence failure")
+            raise failure_type(private_payload)
 
         monkeypatch.setattr(EvalTask, "save", fail_after_write)
     else:
@@ -87,7 +153,7 @@ def test_partial_task_or_relation_write_rolls_back_without_dispatch(
             original(manager, *args, **kwargs)
             wrote.append(manager.instance.pk)
             assert manager.using("default").count() == 1
-            raise failure_type("synthetic persistence failure")
+            raise failure_type(private_payload)
 
         monkeypatch.setattr(manager_class, "set", fail_after_write)
 
@@ -106,6 +172,17 @@ def test_partial_task_or_relation_write_rolls_back_without_dispatch(
         == before_relations
     )
     starter.assert_not_called()
+    if failure_type is RuntimeError:
+        assert_safe_failure_log(
+            caplog, "eval_task.create_failed", failure_type, private_payload
+        )
+        assert private_payload not in response.content.decode()
+    else:
+        # The same classes raised by the starter below must not take this path.
+        assert private_payload in response.content.decode()
+        assert not [
+            record for record in caplog.records if record.name == "tracer.views.eval_task"
+        ]
 
 
 def test_invalid_create_does_not_persist_or_dispatch(
@@ -179,16 +256,16 @@ def test_initial_dispatch_sees_committed_task_and_relations_from_another_connect
     "failure_type", [RuntimeError, ValidationError, FilterPrincipalContextError]
 )
 def test_start_failure_before_acknowledgement_keeps_saved_pending_and_safe_logs(
-    auth_client, project, custom_eval_config, monkeypatch, starter, failure_type,
-    outer_transaction,
+    auth_client, project, custom_eval_config, starter, failure_type,
+    outer_transaction, caplog,
 ):
+    caplog.set_level("WARNING", logger="tracer.views.eval_task")
+    private_payload = "synthetic private provider payload must not be logged"
     before = {}
-    log = Mock()
-    monkeypatch.setattr("tracer.views.eval_task.logger", log)
 
     def unavailable(task):
         before.update(task_snapshot(task.pk))
-        raise failure_type("synthetic private provider payload must not be logged")
+        raise failure_type(private_payload)
 
     starter.side_effect = unavailable
     if outer_transaction:
@@ -211,13 +288,10 @@ def test_start_failure_before_acknowledgement_keeps_saved_pending_and_safe_logs(
         .evals.using("default")
         .values_list("pk", flat=True)
     ) == [custom_eval_config.pk]
-    log.warning.assert_called_once_with(
-        "eval_task.create_start_unconfirmed",
-        error_type=failure_type.__name__,
-        exc_info=False,
+    assert_safe_failure_log(
+        caplog, "eval_task.create_start_unconfirmed", failure_type, private_payload
     )
-    log.exception.assert_not_called()
-    assert "synthetic private provider" not in response.content.decode()
+    assert private_payload not in response.content.decode()
 
 
 @pytest.mark.parametrize(
