@@ -58,6 +58,7 @@ OPERATOR_STARTUP_MUTATION_COMMANDS = frozenset(
         "requeue_investigations",
         "register_temporal_schedules",
         "seed_system_evals",
+        "sync_disposable_domains",
         "purge_sql_results",
     }
 )

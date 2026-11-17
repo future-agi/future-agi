@@ -5,6 +5,10 @@ name: Refresh disposable-email-domains
 # the list moved. We vendor the list instead of depending on the package at
 # runtime, so this is what keeps it from going stale — nobody has to notice
 # a new release and bump a pin by hand. TH-7620.
+#
+# Once the PR merges and deploys, the bootstrap job's
+# `manage.py sync_disposable_domains` loads the list into the
+# BlockedEmailDomain table, next to the domains the team blocks in admin.
 
 on:
   schedule:
