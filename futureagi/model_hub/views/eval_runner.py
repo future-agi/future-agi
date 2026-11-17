@@ -1498,9 +1498,9 @@ class EvaluationRunner:
                 # Not reachable: this method reads the metric's config before
                 # the try. Without the metric there is no reason cell to close.
                 raise
-            wants_reason = bool(
-                self.experiment_dataset
-            ) or user_eval_metric.config.get("reason_column")
+            wants_reason = bool(self.experiment_dataset) or user_eval_metric.config.get(
+                "reason_column"
+            )
             if wants_reason and not self.optimize:
                 reason_column = self._create_reason_column(
                     self.dataset, f"{user_eval_metric.name}-reason"
