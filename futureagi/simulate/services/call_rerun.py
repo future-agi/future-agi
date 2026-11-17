@@ -1,5 +1,8 @@
+import json
 from typing import Any
 
+import structlog
+from django.db import transaction
 from django.utils import timezone
 
 from simulate.constants.hosted_harness import TRIAL_STATE_KEY
@@ -14,14 +17,34 @@ from simulate.services.harness_worker_states import (
 from simulate.services.harness_workers import READ_KEY, WORKERS_KEY, attempt_end
 from simulate.services.hosted_harness_ingestion import WORLD_ACTIONS_KEY
 
-# What an earlier attempt's worker record and its trial are read from, kept per attempt (`keep_attempt`).
-_ATTEMPT_KEYS = (
-    WORKERS_KEY,
-    READ_KEY,
-    TRIAL_STATE_KEY,
-    WORLD_ACTIONS_KEY,
-    "hosted_harness_receipt",
-)
+logger = structlog.get_logger(__name__)
+
+# What an earlier attempt's worker answer and its trial view read, kept per attempt (`keep_attempt`); the receipt and
+# the world's actions only in the fields they read.
+_ATTEMPT_KEYS = (WORKERS_KEY, READ_KEY, TRIAL_STATE_KEY, "sub_goals")
+_RECEIPT_FIELDS = ("sub_goals", "failure")
+_WORLD_ACTION_FIELDS = ("actor_id", "action", "name", "refusal_code", "handoff")
+# A record past this is not kept (its attempt then reads `not_kept`): the call row is read on every list and detail.
+MAX_KEPT_ATTEMPT_BYTES = 64 * 1024
+
+
+def _attempt_record(metadata: dict[str, Any]) -> dict[str, Any]:
+    record: dict[str, Any] = {
+        key: metadata[key] for key in _ATTEMPT_KEYS if key in metadata
+    }
+    receipt = metadata.get("hosted_harness_receipt")
+    if isinstance(receipt, dict):
+        record["hosted_harness_receipt"] = {
+            key: receipt[key] for key in _RECEIPT_FIELDS if key in receipt
+        }
+    actions = metadata.get(WORLD_ACTIONS_KEY)
+    if isinstance(actions, list):
+        record[WORLD_ACTIONS_KEY] = [
+            {key: one[key] for key in _WORLD_ACTION_FIELDS if key in one}
+            for one in actions
+            if isinstance(one, dict)
+        ]
+    return record
 
 
 def transcript_snapshot(call_execution: CallExecution) -> list[dict]:
@@ -50,18 +73,23 @@ def keep_attempt(
         if isinstance(call_execution.call_metadata, dict)
         else {}
     )
-    record: dict[str, Any] = {
-        key: metadata[key] for key in _ATTEMPT_KEYS if key in metadata
-    }
+    record = _attempt_record(metadata)
     ending = attempt_end(call_execution)
     if ending is not None:
         record[ATTEMPT_END_KEY] = ending
     record["kept_at"] = timezone.now().isoformat()
     earlier = metadata.get(ATTEMPTS_KEY)
-    attempts = {
-        **(earlier if isinstance(earlier, dict) else {}),
-        str(snapshot.id): record,
-    }
+    attempts = dict(earlier if isinstance(earlier, dict) else {})
+    size = len(json.dumps(record, default=str))
+    if size > MAX_KEPT_ATTEMPT_BYTES:
+        logger.warning(
+            "harness_attempt_not_kept",
+            call_execution_id=str(call_execution.id),
+            snapshot_id=str(snapshot.id),
+            bytes=size,
+        )
+    else:
+        attempts[str(snapshot.id)] = record
     # Stored as jsonb, which keeps no key order: the oldest go by when they were kept.
     latest = sorted(
         attempts, key=lambda key: str(attempts[key].get("kept_at") or ""), reverse=True
@@ -145,6 +173,22 @@ def clear_call_for_rerun(
 
     ``clear_metadata`` drops ``call_metadata`` except ``row_id`` and ``keep_metadata_keys``; without it, only the worker
     record and its read note go."""
+    with transaction.atomic():
+        # A worker read or a receipt may write the row's metadata meanwhile: read it under the lock, then reset.
+        locked = (
+            CallExecution.objects.select_for_update()
+            .only("call_metadata")
+            .get(pk=call_execution.pk)
+        )
+        call_execution.call_metadata = locked.call_metadata
+        _reset(call_execution, keep_metadata_keys, clear_metadata)
+
+
+def _reset(
+    call_execution: CallExecution,
+    keep_metadata_keys: tuple[str, ...],
+    clear_metadata: bool,
+) -> None:
     call_snapshot(call_execution).save()
     call_execution.transcripts.all().delete()
     call_execution.reset_to_default(save=False)
