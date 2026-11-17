@@ -27,8 +27,12 @@ class Command(BaseCommand):
         "and simulation-runner pod is on the new version, and again about a day later, "
         "to strip what old pods or edit screens opened before the release wrote back "
         "after 0114 ran. --dry-run only counts. --restore / --restore-all put back the "
-        "honoured keys the strip copied (run it only after the last strip), and a "
-        "restored row is never stripped again."
+        "honoured keys the strip copied. A restored row keeps the keys its restore "
+        "handled on later strips; api_key and the leak's other keys still go. Run a "
+        "restore only after the last clean-up run, and never at the same time as one "
+        "(or as another restore). Prefer --restore <id> over --restore-all, which also "
+        "brings back stale grading text. A row that shows the leak again is reported "
+        "as leaked and left alone: strip it first."
     )
 
     def add_arguments(self, parser):
@@ -71,13 +75,25 @@ class Command(BaseCommand):
                 ids=ids,
                 keys=keys,
             )
-            self.stdout.write(
-                " ".join(
-                    f"{label}={len(report[label])}"
-                    for label in ("restored", "missing", "raced", "skipped", "none")
-                )
+            labels = (
+                "restored",
+                "missing",
+                "raced",
+                "skipped",
+                "leaked",
+                "nothing_to_apply",
+                "closed_without_applying",
+                "none",
             )
-            for label in ("missing", "raced", "skipped", "none"):
+            counts = [f"{label}={len(report[label])}" for label in labels]
+            counts.append(
+                f"applied_keys={sum(len(k) for k in report['applied'].values())}"
+            )
+            counts.append(
+                f"present_keys={sum(len(k) for k in report['present'].values())}"
+            )
+            self.stdout.write(" ".join(counts))
+            for label in labels[1:]:
                 for eval_config_id in report[label]:
                     self.stdout.write(f"{label}: {eval_config_id}")
             return

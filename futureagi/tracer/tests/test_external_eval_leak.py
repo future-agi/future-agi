@@ -182,6 +182,33 @@ def test_a_run_leaves_the_rows_settings_free_of_the_evaluators_keys(config):
     assert WRITTEN_KEYS.isdisjoint(config.config)
 
 
+def test_a_run_writes_no_billing_marker_into_the_rows_settings(config):
+    with patch.object(external_eval_module, "_send_eval_result"):
+        external_eval_module._execute_evaluation_on_external_platform(config)
+
+    assert "is_futureagi_eval" not in config.config
+    assert "is_futureagi_eval" not in _reload(config).config
+    assert config.config == USER_CONFIG
+
+
+def test_the_billing_log_still_carries_the_marker(config):
+    logged = []
+    real = external_eval_module.log_and_deduct_cost_for_api_request
+
+    def _spy(*args, **kwargs):
+        logged.append(dict(kwargs.get("config") or {}))
+        return real(*args, **kwargs)
+
+    with (
+        patch.object(external_eval_module, "log_and_deduct_cost_for_api_request", _spy),
+        patch.object(external_eval_module, "_send_eval_result"),
+    ):
+        external_eval_module._execute_evaluation_on_external_platform(config)
+
+    assert logged
+    assert "is_futureagi_eval" in logged[-1]
+
+
 def test_a_second_run_takes_the_text_from_the_template_again(config, template):
     with patch.object(external_eval_module, "_send_eval_result"):
         external_eval_module._execute_evaluation_on_external_platform(config)

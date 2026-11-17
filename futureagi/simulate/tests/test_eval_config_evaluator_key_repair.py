@@ -20,7 +20,7 @@ import pytest
 from django.core.management import CommandError, call_command
 from django.db import connection
 from django.db.migrations.loader import MigrationLoader
-from django.db.models import JSONField, QuerySet, Value
+from django.db.models import JSONField, Value
 from django.test import override_settings
 from django.utils import timezone
 
@@ -287,6 +287,42 @@ def _reload(row):
     return SimulateEvalConfig.all_objects.get(id=row.id)
 
 
+def _before_the_restore_writes(monkeypatch, action):
+    """Run ``action`` once, after ``restore`` has read and before its write transaction.
+
+    The write happens outside that transaction, so a rollback of it cannot undo it.
+    """
+    real_atomic = eval_config_repair.transaction.atomic
+    fired = []
+
+    def atomic(*args, **kwargs):
+        if not fired:
+            fired.append(1)
+            action()
+        return real_atomic(*args, **kwargs)
+
+    monkeypatch.setattr(eval_config_repair.transaction, "atomic", atomic)
+    return fired
+
+
+def _report(**changes):
+    """What ``restore`` returns when nothing happened, with the given buckets filled in."""
+    report = {
+        "restored": [],
+        "missing": [],
+        "raced": [],
+        "skipped": [],
+        "leaked": [],
+        "nothing_to_apply": [],
+        "closed_without_applying": [],
+        "none": [],
+        "applied": {},
+        "present": {},
+    }
+    report.update(changes)
+    return report
+
+
 def _copies(row):
     return list(SimulateEvalConfigRemovedKeys.objects.filter(eval_config_id=row.id))
 
@@ -382,9 +418,11 @@ class TestStrip:
 
     @pytest.mark.parametrize(
         "shape",
-        [None, "x", "config", ["config"], {"run_config": {}}, {"config": "not-a-dict"}],
+        [None, "x", "config", ["config"], {"run_config": {}}, {"config": "not-a-dict"},
+         {"config": ["api_key"]}, {"config": "x api_key y"}],
         ids=["null", "string", "string-matching-has-key", "array-matching-has-key",
-             "no-nested-key", "nested-not-a-dict"],
+             "no-nested-key", "nested-not-a-dict", "nested-array-holding-api_key",
+             "nested-string-holding-api_key"],
     )  # fmt: skip
     def test_rows_without_a_nested_dict_are_untouched(
         self, copy_under_test, make_row, shape
@@ -528,6 +566,79 @@ class TestStrip:
 
         assert _reload(row).config == {"config": {"rule_prompt": "mine"}}
 
+    def test_a_narrowed_restore_protects_only_the_keys_it_handled(self, make_row):
+        row = make_row(
+            {
+                "config": {
+                    "pass_threshold": 0.5,
+                    "model": "m",
+                    "rule_prompt": "r",
+                    "choices": ["a"],
+                }
+            }
+        )
+        strip_rows(SimulateEvalConfig, SimulateEvalConfigRemovedKeys)
+        restore(SimulateEvalConfig, SimulateEvalConfigRemovedKeys, keys=["choices"])
+        assert _copies(row)[0].restored_keys == ["choices"]
+
+        # The row leaks again, with a grading text the restore never handled.
+        SimulateEvalConfig.all_objects.filter(pk=row.pk).update(
+            config={
+                "config": {
+                    "choices": ["a"],
+                    "rule_prompt": "stale",
+                    "pass_threshold": 0.5,
+                    "model": "m",
+                }
+            }
+        )
+        strip_rows(SimulateEvalConfig, SimulateEvalConfigRemovedKeys)
+
+        assert _reload(row).config == {"config": {"choices": ["a"]}}
+
+    def test_a_copy_closed_because_the_row_held_every_key_protects_them_later(
+        self, make_row
+    ):
+        row = make_row(
+            {"config": {"pass_threshold": 0.5, "model": "m", "rule_prompt": "old"}}
+        )
+        strip_rows(SimulateEvalConfig, SimulateEvalConfigRemovedKeys)
+        SimulateEvalConfig.all_objects.filter(pk=row.pk).update(
+            config={"config": {"rule_prompt": "new"}}
+        )
+        restore(SimulateEvalConfig, SimulateEvalConfigRemovedKeys)
+        assert _copies(row)[0].restored_at is not None
+
+        SimulateEvalConfig.all_objects.filter(pk=row.pk).update(
+            config={
+                "config": {
+                    "rule_prompt": "new",
+                    "pass_threshold": 0.5,
+                    "model": "m",
+                    "api_key": "sk-leak",
+                }
+            }
+        )
+        strip_rows(SimulateEvalConfig, SimulateEvalConfigRemovedKeys)
+
+        assert _reload(row).config == {"config": {"rule_prompt": "new"}}
+
+    def test_restored_ids_are_the_union_of_every_copys_restored_keys(self, make_row):
+        row = make_row({"config": {}})
+        for keys in (["choices"], ["rule_prompt"]):
+            SimulateEvalConfigRemovedKeys.objects.create(
+                eval_config_id=row.id,
+                removed={"choices": ["a"], "rule_prompt": "r"},
+                restored_keys=keys,
+            )
+        SimulateEvalConfigRemovedKeys.objects.create(
+            eval_config_id=uuid.uuid4(), removed={"rule_prompt": "r"}
+        )
+
+        assert eval_config_repair._restored_ids(
+            SimulateEvalConfigRemovedKeys, "default"
+        ) == {row.id: {"choices", "rule_prompt"}}
+
 
 @pytest.mark.unit
 @pytest.mark.django_db
@@ -555,13 +666,9 @@ class TestRestore:
 
         report = restore(SimulateEvalConfig, SimulateEvalConfigRemovedKeys)
 
-        assert report == {
-            "restored": [row.id],
-            "missing": [],
-            "raced": [],
-            "skipped": [],
-            "none": [],
-        }
+        assert report == _report(
+            restored=[row.id], applied={row.id: ["choices", "rule_prompt"]}
+        )
         assert _reload(row).config == {
             "config": {"rule_prompt": "text", "choices": ["a"]}
         }
@@ -618,13 +725,7 @@ class TestRestore:
 
         report = restore(SimulateEvalConfig, SimulateEvalConfigRemovedKeys)
 
-        assert report == {
-            "restored": [],
-            "missing": [gone],
-            "raced": [],
-            "skipped": [],
-            "none": [],
-        }
+        assert report == _report(missing=[gone])
 
     def test_a_soft_deleted_row_is_restored_and_a_missing_nested_dict_created(
         self, make_row
@@ -642,26 +743,24 @@ class TestRestore:
         row = self._stripped(
             make_row, {"pass_threshold": 0.5, "model": "m", "rule_prompt": "t"}
         )
-        real_update = QuerySet.update
-        edited = []
-
-        def edit_before_the_write(queryset, **kwargs):
-            if "config" in kwargs and not edited:
-                edited.append(1)
-                real_update(
-                    SimulateEvalConfig.all_objects.filter(pk=row.pk),
-                    config={"config": {}, "run_config": {"x": 1}},
-                )
-            return real_update(queryset, **kwargs)
-
-        monkeypatch.setattr(QuerySet, "update", edit_before_the_write)
+        edited = {"config": {}, "run_config": {"x": 1}}
+        _before_the_restore_writes(
+            monkeypatch,
+            lambda: SimulateEvalConfig.all_objects.filter(pk=row.pk).update(
+                config=edited
+            ),
+        )
         first = restore(SimulateEvalConfig, SimulateEvalConfigRemovedKeys)
         monkeypatch.undo()
+        assert _reload(row).config == edited
         second = restore(SimulateEvalConfig, SimulateEvalConfigRemovedKeys)
 
         assert first["raced"] == [row.id]
         assert second["restored"] == [row.id]
-        assert _reload(row).config["config"] == {"rule_prompt": "t"}
+        assert _reload(row).config == {
+            "config": {"rule_prompt": "t"},
+            "run_config": {"x": 1},
+        }
 
     def test_restore_then_strip_leaves_the_row_unchanged(self, make_row):
         row = self._stripped(
@@ -731,7 +830,7 @@ class TestRestore:
         )
         [copy_row] = _copies(row)
 
-        assert report["restored"] == []
+        assert report == _report(nothing_to_apply=[row.id])
         assert copy_row.restored_at is None
         assert not copy_row.restored_keys
         assert _reload(row).config == {"config": {}}
@@ -759,8 +858,11 @@ class TestRestore:
         report = restore(SimulateEvalConfig, SimulateEvalConfigRemovedKeys)
         [copy_row] = _copies(row)
 
-        assert report["restored"] == []
+        assert report == _report(
+            closed_without_applying=[row.id], present={row.id: ["rule_prompt"]}
+        )
         assert copy_row.restored_at is not None
+        assert copy_row.restored_keys == ["rule_prompt"]
 
     def test_a_bad_key_raises(self, make_row):
         with pytest.raises(ValueError):
@@ -834,6 +936,155 @@ class TestRestore:
         assert _reload(row).config == {"config": nested, "run_config": {}}
         assert _copies(row)[0].restored_at is None
 
+    def test_a_string_id_restores(self, make_row):
+        row = self._stripped(
+            make_row, {"pass_threshold": 0.5, "model": "m", "rule_prompt": "t"}
+        )
+
+        report = restore(
+            SimulateEvalConfig, SimulateEvalConfigRemovedKeys, ids=[str(row.id)]
+        )
+
+        assert report == _report(restored=[row.id], applied={row.id: ["rule_prompt"]})
+        assert _reload(row).config == {"config": {"rule_prompt": "t"}}
+
+    def test_a_row_that_shows_the_leak_again_is_skipped_and_nothing_is_marked(
+        self, make_row
+    ):
+        row = self._stripped(
+            make_row, {"pass_threshold": 0.5, "model": "m", "rule_prompt": "t"}
+        )
+        leaked = {"config": {"pass_threshold": 0.5, "model": "m"}}
+        SimulateEvalConfig.all_objects.filter(pk=row.pk).update(config=leaked)
+
+        report = restore(SimulateEvalConfig, SimulateEvalConfigRemovedKeys)
+        [copy_row] = _copies(row)
+
+        assert report == _report(leaked=[row.id])
+        assert _reload(row).config == leaked
+        assert copy_row.restored_at is None
+        assert copy_row.restored_keys is None
+
+    def test_a_requested_key_no_open_copy_holds_is_reported(self, make_row):
+        row = self._stripped(
+            make_row, {"pass_threshold": 0.5, "model": "m", "rule_prompt": "t"}
+        )
+
+        report = restore(
+            SimulateEvalConfig, SimulateEvalConfigRemovedKeys, keys=["choices"]
+        )
+
+        assert report == _report(nothing_to_apply=[row.id])
+        assert _reload(row).config == {"config": {}}
+        assert _copies(row)[0].restored_keys is None
+
+    def test_a_copy_closed_without_applying_is_reported(self, make_row):
+        row = self._stripped(
+            make_row, {"pass_threshold": 0.5, "model": "m", "rule_prompt": "old"}
+        )
+        SimulateEvalConfig.all_objects.filter(pk=row.pk).update(
+            config={"config": {"rule_prompt": "new"}}
+        )
+
+        report = restore(SimulateEvalConfig, SimulateEvalConfigRemovedKeys)
+
+        assert report["closed_without_applying"] == [row.id]
+        assert report["restored"] == []
+        assert report["present"] == {row.id: ["rule_prompt"]}
+        assert report["applied"] == {}
+
+    def test_present_keys_are_recorded_beside_the_applied_ones(self, make_row):
+        row = self._stripped(
+            make_row,
+            {"pass_threshold": 0.5, "model": "m", "rule_prompt": "r", "choices": ["a"]},
+        )
+        SimulateEvalConfig.all_objects.filter(pk=row.pk).update(
+            config={"config": {"rule_prompt": "new"}}
+        )
+
+        report = restore(SimulateEvalConfig, SimulateEvalConfigRemovedKeys)
+
+        assert report == _report(
+            restored=[row.id],
+            applied={row.id: ["choices"]},
+            present={row.id: ["rule_prompt"]},
+        )
+        assert _copies(row)[0].restored_keys == ["choices", "rule_prompt"]
+
+    def test_a_copy_marked_concurrently_is_raced_and_nothing_is_overwritten(
+        self, make_row, monkeypatch
+    ):
+        row = self._stripped(
+            make_row, {"pass_threshold": 0.5, "model": "m", "rule_prompt": "t"}
+        )
+        fired = _before_the_restore_writes(
+            monkeypatch,
+            lambda: SimulateEvalConfigRemovedKeys.objects.filter(
+                eval_config_id=row.id
+            ).update(restored_at=timezone.now(), restored_keys=["choices"]),
+        )
+
+        report = restore(SimulateEvalConfig, SimulateEvalConfigRemovedKeys)
+        monkeypatch.undo()
+        [copy_row] = _copies(row)
+
+        assert fired
+        assert report == _report(raced=[row.id])
+        assert _reload(row).config == {"config": {}}
+        assert copy_row.restored_keys == ["choices"]
+        assert copy_row.restored_at is not None
+
+    def test_a_row_edited_before_a_copy_is_closed_without_applying_is_raced(
+        self, make_row, monkeypatch
+    ):
+        row = self._stripped(
+            make_row, {"pass_threshold": 0.5, "model": "m", "rule_prompt": "old"}
+        )
+        SimulateEvalConfig.all_objects.filter(pk=row.pk).update(
+            config={"config": {"rule_prompt": "new"}}
+        )
+        edited = {"config": {}, "run_config": {"x": 1}}
+        fired = _before_the_restore_writes(
+            monkeypatch,
+            lambda: SimulateEvalConfig.all_objects.filter(pk=row.pk).update(
+                config=edited
+            ),
+        )
+
+        report = restore(SimulateEvalConfig, SimulateEvalConfigRemovedKeys)
+        monkeypatch.undo()
+        [copy_row] = _copies(row)
+
+        assert fired
+        assert report == _report(raced=[row.id])
+        assert _reload(row).config == edited
+        assert copy_row.restored_at is None
+        assert copy_row.restored_keys is None
+
+    def test_a_sql_null_config_written_meanwhile_is_raced_and_kept(
+        self, make_row, monkeypatch
+    ):
+        row = make_row({"config": {}})
+        SimulateEvalConfig.all_objects.filter(pk=row.pk).update(config=None)
+        SimulateEvalConfigRemovedKeys.objects.create(
+            eval_config_id=row.id, removed={"rule_prompt": "x"}
+        )
+        concurrent = {"config": {"rule_prompt": "mine"}}
+        fired = _before_the_restore_writes(
+            monkeypatch,
+            lambda: SimulateEvalConfig.all_objects.filter(pk=row.pk).update(
+                config=concurrent
+            ),
+        )
+
+        report = restore(SimulateEvalConfig, SimulateEvalConfigRemovedKeys)
+        monkeypatch.undo()
+
+        assert fired
+        assert report == _report(raced=[row.id])
+        assert _reload(row).config == concurrent
+        assert _copies(row)[0].restored_at is None
+
 
 @pytest.mark.unit
 @pytest.mark.django_db
@@ -862,7 +1113,12 @@ class TestCommand:
             "missing=0",
             "raced=0",
             "skipped=0",
+            "leaked=0",
+            "nothing_to_apply=0",
+            "closed_without_applying=0",
             "none=0",
+            "applied_keys=1",
+            "present_keys=0",
         ]
         assert _reload(row).config == {"config": {"rule_prompt": "t"}}
 
@@ -946,6 +1202,63 @@ class TestCommand:
 
         assert f"none: {row.id}" in out.getvalue().splitlines()
         assert "restored=0" in out.getvalue().split()
+
+    def test_every_bucket_is_printed(self, make_row):
+        leaked = make_row({"config": {"pass_threshold": 0.5, "model": "m"}})
+        idle = make_row({"config": {}})
+        closed = make_row({"config": {"rule_prompt": "held"}})
+        for made in (leaked, idle, closed):
+            SimulateEvalConfigRemovedKeys.objects.create(
+                eval_config_id=made.id, removed={"rule_prompt": "x"}
+            )
+        out = StringIO()
+
+        call_command("strip_eval_config_evaluator_keys", "--restore-all", stdout=out)
+        lines = out.getvalue().splitlines()
+
+        assert lines[0].split() == [
+            "restored=1",
+            "missing=0",
+            "raced=0",
+            "skipped=0",
+            "leaked=1",
+            "nothing_to_apply=0",
+            "closed_without_applying=1",
+            "none=0",
+            "applied_keys=1",
+            "present_keys=1",
+        ]
+        assert f"leaked: {leaked.id}" in lines
+        assert f"closed_without_applying: {closed.id}" in lines
+
+    def test_a_request_nothing_holds_is_printed(self, make_row):
+        row = make_row({"config": {}})
+        SimulateEvalConfigRemovedKeys.objects.create(
+            eval_config_id=row.id, removed={"rule_prompt": "x"}
+        )
+        out = StringIO()
+
+        call_command(
+            "strip_eval_config_evaluator_keys",
+            "--restore",
+            str(row.id),
+            "--keys",
+            "choices",
+            stdout=out,
+        )
+
+        assert f"nothing_to_apply: {row.id}" in out.getvalue().splitlines()
+
+    def test_the_help_says_how_to_run_a_restore_safely(self):
+        from simulate.management.commands.strip_eval_config_evaluator_keys import (
+            Command,
+        )
+
+        text = " ".join(Command.help.split())
+        assert "keeps the keys its restore handled" in text
+        assert "only after the last clean-up run" in text
+        assert "never at the same time" in text
+        assert "Prefer --restore <id> over --restore-all" in text
 
 
 @pytest.mark.unit

@@ -9,6 +9,8 @@ Migration 0114 carries its own frozen copy of the strip rule and imports none of
 keep the two in step on purpose, and let the golden tests tell you when they differ.
 """
 
+import uuid
+
 import structlog
 from django.db import transaction
 from django.utils import timezone
@@ -109,20 +111,20 @@ def removable_keys(nested: dict, template_config) -> list[str]:
     )
 
 
-def keys_to_remove(nested: dict, template_config, restored: bool = False) -> list[str]:
+def keys_to_remove(
+    nested: dict, template_config, protected: frozenset | set = frozenset()
+) -> list[str]:
     """What the clean-up takes out of one nested dict.
 
-    ``api_key`` always goes. Everything else goes only when the dict shows the leak. On a
-    row that has had keys restored, the keys a restore may bring back stay, so only
-    ``api_key`` and the signal and derived keys go.
+    ``api_key`` always goes. Everything else goes only when the dict shows the leak.
+    ``protected`` is the keys a restore handled on this row; they stay.
     """
     removed = set()
     if "api_key" in nested:
         removed.add("api_key")
     if has_leak_signal(nested):
         removed.update(removable_keys(nested, template_config))
-    if restored:
-        removed -= RESTORABLE_KEYS
+    removed -= set(protected)
     return sorted(removed)
 
 
@@ -146,15 +148,17 @@ def _read_page(model, after_pk, using):
     )
 
 
-def _restored_ids(removed_model, using):
-    """Ids of rows with a copy from which some key has been restored."""
-    return {
-        eval_config_id
-        for eval_config_id, restored_keys in removed_model.objects.using(using)
+def _restored_ids(removed_model, using) -> dict:
+    """``{eval_config_id: keys a restore handled}``, the union over that row's copies."""
+    protected: dict = {}
+    for eval_config_id, restored_keys in (
+        removed_model.objects.using(using)
         .filter(restored_keys__isnull=False)
         .values_list("eval_config_id", "restored_keys")
-        if restored_keys
-    }
+    ):
+        if restored_keys:
+            protected.setdefault(eval_config_id, set()).update(restored_keys)
+    return protected
 
 
 def strip_rows(
@@ -168,13 +172,13 @@ def strip_rows(
     transaction: a conditional update of ``config`` only when the row still holds what was
     read (so ``updated_at`` is not bumped and an edit saved meanwhile is never
     overwritten; the next run gets it), then the copy row. On a row with a restored copy
-    only ``api_key`` and the signal and derived keys are removed, so a restore sticks and
-    the provider key never stays. With ``dry_run`` nothing is written and the second count
+    the keys its restore handled stay (the union of its copies' ``restored_keys``), so a
+    restore sticks; everything else the rule removes still goes, ``api_key`` always. With ``dry_run`` nothing is written and the second count
     is the rows that would change.
 
     Returns ``(scanned, changed)``: rows holding a nested dict, and rows rewritten.
     """
-    restored_ids = _restored_ids(removed_model, using)
+    protected_by_row = _restored_ids(removed_model, using)
     scanned = 0
     changed = 0
     last_pk = None
@@ -190,7 +194,9 @@ def strip_rows(
                 continue
             scanned += 1
             removed = keys_to_remove(
-                nested, row.eval_template.config, restored=row.pk in restored_ids
+                nested,
+                row.eval_template.config,
+                protected=protected_by_row.get(row.pk, frozenset()),
             )
             if not removed:
                 continue
@@ -223,6 +229,10 @@ def strip_rows(
     return scanned, changed
 
 
+class _Raced(Exception):
+    """A row or a copy changed between the read and the write of one restore."""
+
+
 def restore(
     model,
     removed_model,
@@ -233,22 +243,31 @@ def restore(
 ) -> dict:
     """Put the copied keys back into the attachments they were removed from.
 
-    ``ids`` limits it to those eval config ids; ``None`` means every unrestored copy.
-    ``keys`` must be a non-empty subset of ``RESTORABLE_KEYS``, or ``ValueError`` is
-    raised. A copy's restorable keys are the ones it holds that are in
+    ``ids`` limits it to those eval config ids (UUIDs or their strings); ``None`` means
+    every unrestored copy. ``keys`` must be a non-empty subset of ``RESTORABLE_KEYS``, or
+    ``ValueError`` is raised. A copy's restorable keys are the ones it holds that are in
     ``RESTORABLE_KEYS``; a copy with none is never marked and its row is never reported.
     A row's copies are applied oldest first and a key the row holds now is never
     overwritten. In each run a key is handled when it was applied or the row already held
-    it; ``restored_keys`` accumulates the applied keys, and ``restored_at`` is set only
-    when every restorable key of the copy is handled, so a narrowed restore leaves the
-    copy open for a later one. Rows are read through ``_base_manager``, so soft-deleted
-    ones are found. The write is a conditional update inside one transaction that also
-    marks the copies; a lost race is reported and can be retried. A row whose config or
-    nested ``config`` is present but not a dict is skipped, never replaced.
+    it; ``restored_keys`` accumulates every handled key (the strip keeps exactly those on
+    that row), and ``restored_at`` is set only when every restorable key of the copy is
+    handled, so a narrowed restore leaves the copy open for a later one. Rows are read
+    through ``_base_manager``, so soft-deleted ones are found.
 
-    Returns ``{"restored": [...], "missing": [...], "raced": [...], "skipped": [...],
-    "none": [...]}`` of eval config ids. ``restored`` holds rows where a key was applied;
-    ``none`` holds requested ids with no unrestored copy that has a restorable key.
+    A row whose nested dict shows the leak signal now is skipped (``leaked``): strip it
+    first. A row whose config or nested ``config`` is present but not a dict is skipped
+    (``skipped``), never replaced. Whatever has to be written (the row's config, even when
+    only the copies are closed, and each copy's mark) is a conditional update inside one
+    transaction: the row must still hold the config as read and each copy must still be
+    unmarked with the ``restored_keys`` as read. If any of them changed, the whole row is
+    rolled back and reported ``raced``; it can be retried.
+
+    Returns a dict of eval config id lists: ``restored`` (a key was applied), ``missing``,
+    ``raced``, ``skipped``, ``leaked``, ``nothing_to_apply`` (none of the requested keys is
+    left in any open copy of the row), ``closed_without_applying`` (a copy was closed
+    because every key was already there), ``none`` (requested ids with no unrestored copy
+    that has a restorable key); and ``applied`` and ``present``, each ``{id: sorted keys}``
+    for the keys written and the keys the row already held.
     """
     keys = frozenset(keys or ())
     if not keys:
@@ -259,7 +278,7 @@ def restore(
 
     copies = removed_model.objects.using(using).filter(restored_at__isnull=True)
     if ids is not None:
-        ids = list(ids)
+        ids = [uuid.UUID(str(i)) for i in ids]
         copies = copies.filter(eval_config_id__in=ids)
     by_row: dict = {}
     for copy_row in copies.order_by("created_at", "pk"):
@@ -273,7 +292,12 @@ def restore(
         "missing": [],
         "raced": [],
         "skipped": [],
+        "leaked": [],
+        "nothing_to_apply": [],
+        "closed_without_applying": [],
         "none": [i for i in (ids or []) if i not in by_row],
+        "applied": {},
+        "present": {},
     }
     for eval_config_id, row_copies in by_row.items():
         row = (
@@ -298,42 +322,78 @@ def restore(
             report["skipped"].append(eval_config_id)
             continue
         nested = dict(config.get("config") or {})
+        if has_leak_signal(nested):
+            report["leaked"].append(eval_config_id)
+            continue
+        if not any(
+            (copy_row.removed.keys() & keys) - set(copy_row.restored_keys or ())
+            for copy_row in row_copies
+        ):
+            report["nothing_to_apply"].append(eval_config_id)
+            continue
 
-        row_applied = False
+        applied_keys: set = set()
+        present_keys: set = set()
+        closed_without_applying = False
         marks = []
         for copy_row in row_copies:
             restorable = copy_row.removed.keys() & RESTORABLE_KEYS
             earlier = set(copy_row.restored_keys or [])
-            applied = []
+            applied = set()
             handled = set(earlier)
             for key in sorted(restorable - earlier):
                 if key in nested:
+                    present_keys.add(key)
                     handled.add(key)
                 elif key in keys:
                     nested[key] = copy_row.removed[key]
-                    applied.append(key)
+                    applied.add(key)
                     handled.add(key)
+            applied_keys |= applied
             done = restorable <= handled
-            if applied or done:
-                marks.append((copy_row, sorted(earlier | set(applied)), done))
-            row_applied = row_applied or bool(applied)
+            if handled != earlier or done:
+                marks.append((copy_row, sorted(handled), done))
+            closed_without_applying = closed_without_applying or (done and not applied)
         if not marks:
             continue
-        with transaction.atomic(using=using):
-            if row_applied:
+
+        new_config = {**config, "config": nested} if applied_keys else row.config
+        try:
+            with transaction.atomic(using=using):
+                # Run even when nothing is applied: the copies are closed on what the row
+                # held when it was read, so the row must still hold it.
                 written = (
                     model._base_manager.using(using)
                     .filter(pk=row.pk, **row_filter)
-                    .update(config={**config, "config": nested})
+                    .update(config=new_config)
                 )
                 if not written:
-                    report["raced"].append(eval_config_id)
-                    continue
-            now = timezone.now()
-            for copy_row, restored_keys, done in marks:
-                removed_model.objects.using(using).filter(pk=copy_row.pk).update(
-                    restored_at=now if done else None, restored_keys=restored_keys
-                )
-        if row_applied:
+                    raise _Raced
+                now = timezone.now()
+                for copy_row, handled_keys, done in marks:
+                    as_read = (
+                        {"restored_keys__isnull": True}
+                        if copy_row.restored_keys is None
+                        else {"restored_keys": copy_row.restored_keys}
+                    )
+                    marked = (
+                        removed_model.objects.using(using)
+                        .filter(pk=copy_row.pk, restored_at__isnull=True, **as_read)
+                        .update(
+                            restored_at=now if done else None,
+                            restored_keys=handled_keys,
+                        )
+                    )
+                    if not marked:
+                        raise _Raced
+        except _Raced:
+            report["raced"].append(eval_config_id)
+            continue
+        if applied_keys:
             report["restored"].append(eval_config_id)
+            report["applied"][eval_config_id] = sorted(applied_keys)
+        if present_keys:
+            report["present"][eval_config_id] = sorted(present_keys)
+        if closed_without_applying:
+            report["closed_without_applying"].append(eval_config_id)
     return report

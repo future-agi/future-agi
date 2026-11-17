@@ -52,7 +52,7 @@ def _run_external_platform_evaluation(
 def _log_and_deduct_cost_for_external_eval(
     config: ExternalEvalConfig, is_futureagi_eval: bool, emit_usage: bool = True
 ):
-    log_config = config.config if config.config else {}
+    log_config = dict(config.config or {})
     log_config["is_futureagi_eval"] = is_futureagi_eval
 
     api_call_type = _get_api_call_type(
