@@ -69,8 +69,9 @@ export const RUNTIME_ROUTES = Object.freeze({
   filterValues: '/model-hub/skills/runtime/filter-values/', // 5: Observe pickers (ST9)
   agentUsage: '/model-hub/skills/runtime/agent/', // 8: agent panel
   contextComparison: '/model-hub/skills/contexts/{context_id}/runtime/release-move/', // 9
-  skillLatestLoad: '/model-hub/skills/{skill_id}/runtime/latest-load/', // 10
-  contextLatestLoad: '/model-hub/skills/contexts/{context_id}/runtime/latest-load/', // 10, contexts
+  // One mounted load projection serves both resource kinds.
+  skillLatestLoad: '/model-hub/skills/loads/',
+  contextLatestLoad: '/model-hub/skills/loads/',
 });
 
 export const RUNTIME_ROUTE_PENDING = 'runtime_route_pending';

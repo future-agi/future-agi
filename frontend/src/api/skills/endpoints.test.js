@@ -48,6 +48,11 @@ describe('integrated Skills routes', () => {
 // (SKILLS-API-REVIEW.md). Both states are checked against the real registry.
 describe('skill-trace runtime routes', () => {
   const params = { skill_id: 'skill-id', context_id: 'context-id' };
+  it('shares a contracted load projection for skills and contexts', () => {
+    expect(isContractedApiPath('/model-hub/skills/loads/')).toBe(true);
+    expect(runtimeEndpoint('skillLatestLoad', params)).toBe('/model-hub/skills/loads/');
+    expect(runtimeEndpoint('contextLatestLoad', params)).toBe('/model-hub/skills/loads/');
+  });
   it.each(Object.entries(RUNTIME_ROUTES))('%s resolves only when the generated contract has it', (name, template) => {
     if (isContractedApiPath(template)) {
       expect(getContractedApiMethods(template).map((method) => method.toLowerCase())).toContain('get');

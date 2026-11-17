@@ -226,3 +226,23 @@ def test_empty_cohort_returns_null_rates_not_nan(runtime_ch):
     assert row["failed_requests"] == {"count": 0, "rate": None}
     assert row["latency_ms"] == {"p50": None, "p95": None}
     assert row["cached_share"] is None and row["in_scope_cost"] is None
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("kind", ["skill", "agent_context"])
+def test_latest_load_replays_corrections_and_ignores_stamped_children(runtime_ch, kind):
+    project, foreign = str(uuid4()), str(uuid4())
+    prefix = "fi.skill" if kind == "skill" else "fi.context"
+    name = "skill.load" if kind == "skill" else "context.load"
+    attrs = {f"{prefix}.id": SKILL, f"{prefix}.version_id": VERSION}
+    load = span(project, uuid4().hex, name=name, span_attributes=attrs)
+    newer_child = span(project, uuid4().hex, name="llm.chat", span_attributes=attrs, start_time=START + timedelta(minutes=1))
+    foreign_load = span(foreign, uuid4().hex, name=name, span_attributes=attrs, start_time=START + timedelta(minutes=2))
+    unknown_version = span(project, uuid4().hex, name=name, span_attributes={**attrs, f"{prefix}.version_id": str(uuid4())}, start_time=START + timedelta(minutes=3))
+    seed_ch_spans([load, newer_child, foreign_load, unknown_version], client=runtime_ch, version_from_created_at=True)
+    statement = builder(project).build_latest_load(resource_id=SKILL, kind=kind, version_ids=[VERSION])
+    rows = execute(runtime_ch, statement)
+    assert len(rows) == 1 and rows[0]["version_id"] == VERSION
+    assert rows[0]["start_time"] == START
+    seed_ch_spans([{**load, "deleted": True, "created_at": END + timedelta(seconds=1), "span_attributes": {}}], client=runtime_ch, version_from_created_at=True)
+    assert execute(runtime_ch, statement) == []

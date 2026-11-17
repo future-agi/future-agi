@@ -205,7 +205,7 @@ export function useLatestLoad({ kind = 'skill', id, since, active = false } = {}
     queryKey: skillsKeys.v11(access.scope, ...(context ? ['contexts', id] : [id]), 'latestLoad', since || null),
     queryFn: async ({ signal }) => {
       const url = runtimeEndpoint(context ? 'contextLatestLoad' : 'skillLatestLoad', context ? { context_id: id } : { skill_id: id });
-      const response = await axios.get(url, { params: { since }, signal, headers: access.headers });
+      const response = await axios.get(url, { params: { resource_id: id, kind: context ? 'agent_context' : 'skill', since }, signal, headers: access.headers });
       if (signal.aborted || access.queryIdentity.current !== access.identity) throw new Error('The Skills scope changed.');
       return camelizeRuntime(skillV11Result(response)) ?? { load: null, fetch: null };
     },

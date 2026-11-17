@@ -86,6 +86,55 @@ class SkillRuntimeQueryBuilder(V2RewriteMixin):
             ORDER BY start_time, span_id LIMIT 10001
         """, params
 
+    def build_latest_load(self, *, resource_id, kind, version_ids):
+        """Newest live load, not a fetch, a context link or a stamped child.
+
+        Contexts use spans directly: a context with no skill loads must still
+        be detectable. Replay before filtering attributes so a correction or
+        attribute-less tombstone cannot resurrect an older load.
+        """
+        if kind not in {"skill", "agent_context"}:
+            raise ValueError("Unknown runtime resource kind")
+        params = {
+            **self.params, "resource_id": str(UUID(str(resource_id))),
+            "version_ids": tuple(str(UUID(str(value))) for value in version_ids),
+        }
+        if kind == "skill":
+            return f"""
+                SELECT project_id, skill_version_id AS version_id, start_time,
+                       service_name, agent_name
+                FROM ({self._live_source()})
+                WHERE skill_id = %(resource_id)s AND status != 'ERROR'
+                  AND skill_version_id IN %(version_ids)s
+                ORDER BY start_time DESC, span_id DESC LIMIT 1
+            """, params
+        return """
+            SELECT project_id, state.4['fi.context.version_id'] AS version_id,
+                   state.2 AS start_time, state.5 AS service_name,
+                   if(state.4['gen_ai.agent.name'] != '', state.4['gen_ai.agent.name'],
+                      state.4['fi.context.name']) AS agent_name
+            FROM (
+                SELECT project_id, trace_id, id,
+                       argMax(tuple(name, start_time, status, attrs_string,
+                                    service_name, is_deleted), _version) AS state
+                FROM spans
+                WHERE project_id IN %(project_ids)s
+                  AND (project_id, trace_id, id) IN (
+                      SELECT project_id, trace_id, id FROM spans
+                      WHERE project_id IN %(project_ids)s
+                        AND start_time >= %(start_date)s AND start_time < %(end_date)s
+                        AND name = 'context.load'
+                        AND attrs_string['fi.context.id'] = %(resource_id)s
+                  )
+                GROUP BY project_id, trace_id, id
+            )
+            WHERE state.6 = 0 AND state.1 = 'context.load' AND state.3 != 'ERROR'
+              AND state.4['fi.context.id'] = %(resource_id)s
+              AND state.4['fi.context.version_id'] IN %(version_ids)s
+              AND state.2 >= %(start_date)s AND state.2 < %(end_date)s
+            ORDER BY start_time DESC, id DESC LIMIT 1
+        """, params
+
     def build_cohort_metrics(self, *, skill_id, version_id, digest, agent=None):
         """Exact core metrics for ONE verified version, optionally one agent.
 

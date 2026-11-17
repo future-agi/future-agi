@@ -139,7 +139,7 @@ describe('runtime hooks', () => {
     axios.get.mockResolvedValue({ data: { result: { load: null, fetch: { sdk_version: '0.9.2', tracing_mode: 'on', can_record: false } } } });
     rerender({ id: 'skill-a', since: '2026-11-17T12:00:00Z', active: true });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(axios.get).toHaveBeenCalledWith('/runtime/skillLatestLoad/skill-a', expect.objectContaining({ params: { since: '2026-11-17T12:00:00Z' }, headers }));
+    expect(axios.get).toHaveBeenCalledWith('/runtime/skillLatestLoad/skill-a', expect.objectContaining({ params: { resource_id: 'skill-a', kind: 'skill', since: '2026-11-17T12:00:00Z' }, headers }));
     expect(result.current.data.fetch).toEqual({ sdkVersion: '0.9.2', tracingMode: 'on', canRecord: false });
   });
 });

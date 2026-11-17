@@ -5,6 +5,7 @@ from django.urls import include, path
 from model_hub.views import skills_hub as views
 
 urlpatterns = [
+    path("", include("model_hub.urls_skills_hub_runtime")),
     path("", include("model_hub.urls_skills_context_foundation")),
     path("", include("model_hub.urls_skills_context_authoring")),
     path("", include("model_hub.urls_skills_release_requests")),
