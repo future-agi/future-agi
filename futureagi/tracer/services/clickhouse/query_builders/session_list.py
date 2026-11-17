@@ -356,6 +356,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             "SPAN_ATTRIBUTE",
             "EVAL_METRIC",
             "ANNOTATION",
+            "SKILL",
         }
 
     def _native_session_filters(self) -> list[dict[str, Any]]:
@@ -523,7 +524,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         self._bounded_has_eval_values(has_eval_filters)
 
         allowed_keys = {"annotator", "has_annotation", "my_annotations"}
-        allowed_types = {"ANNOTATION", "EVAL_METRIC"}
+        allowed_types = {"ANNOTATION", "EVAL_METRIC", "SKILL"}
         for item in generic_filters:
             column_id = item.get("column_id") or item.get("columnId")
             config = item.get("filter_config") or item.get("filterConfig")
@@ -583,7 +584,15 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         needs_session_score_cte = False
         org_scope = self.project_ids is not None
         branch_projects = self.project_ids if org_scope else [self.project_id]
-        predicates_by_leaf: list[list[str]] = [[] for _ in relational_filters]
+        from tracer.services.clickhouse.query_builders.filters import is_skill_filter
+
+        # All SKILL groups must be witnessed by one trace in the session, and
+        # all positive leaves of a group by one load within that trace.
+        skill_items = [item for item in relational_filters if is_skill_filter(item)]
+        filter_batches = [[item] for item in relational_filters if not is_skill_filter(item)]
+        if skill_items:
+            filter_batches.append(skill_items)
+        predicates_by_leaf: list[list[str]] = [[] for _ in filter_batches]
 
         for branch_index, branch_project_id in enumerate(branch_projects):
             if not branch_project_id:
@@ -601,7 +610,8 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                 branch_label_set_known = True
 
             leaf_predicates: list[str] = []
-            for leaf_index, item in enumerate(relational_filters):
+            for leaf_index, batch in enumerate(filter_batches):
+                item = batch[0]
                 filter_builder = self._FILTER_BUILDER_CLS(
                     table=self.TABLE,
                     annotation_label_ids=branch_label_ids,
@@ -628,7 +638,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                         self.eval_filter_metadata if not org_scope else None
                     ),
                 )
-                predicate, leaf_params = filter_builder.translate([item])
+                predicate, leaf_params = filter_builder.translate(batch)
                 needs_session_score_cte |= (
                     "candidate_relational_session_traces" in predicate
                 )
