@@ -303,7 +303,7 @@ export default function ChatCallDrawer({
             {...ownsArrowKeys}
             sx={{ flex: 1, minHeight: 0, overflow: "auto", outline: "none" }}
           >
-            {/* Hidden, not unmounted, on another tab, so its open rows and Raw events survive a visit to Traces. */}
+            {/* Hidden, not unmounted, on another tab, so its picked step survives a visit to Traces. */}
             {showWorkers ? (
               <Box sx={{ display: artifact === "workers" ? "block" : "none" }}>
                 <CallWorkersPanel

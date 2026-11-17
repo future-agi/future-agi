@@ -26,10 +26,8 @@ export const CALL_WORKERS_COPY = {
     "Only part of this call's traces could be read, so some steps may be missing.",
   unavailableCollection:
     "This call's traces could not be read, so its steps may be missing.",
-  openInTraces: "Open in Traces",
   eventsOmitted: (count) =>
     `${count} more step${count === 1 ? "" : "s"} not shown: this call's record reached its size limit`,
-  noReply: "No reply recorded",
   sandboxOnly:
     "Built from the sandbox's record of this call; the app sent no traces, so the Traces tab is empty.",
   // What multi-agent testing covers, said on every multi-agent call, so nothing reads as more than it is.
@@ -38,8 +36,6 @@ export const CALL_WORKERS_COPY = {
   // Added where a call went past it.
   beyondBoundary:
     "This call also had nested, parallel or background hand-offs: they are shown as recorded, outside that support.",
-  input: "Input",
-  caller: "Caller",
   // The API's counts of how the call's hand-offs ended.
   handOffSummary: ({
     hand_offs: handOffs,

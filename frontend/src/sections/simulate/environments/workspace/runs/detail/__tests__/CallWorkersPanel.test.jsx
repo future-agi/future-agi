@@ -16,13 +16,9 @@ const { CALL_WORKERS_COPY: C } = await import("../callTraces.constants");
 
 import {
   handOffStep,
-  oneTurn,
   counts,
   WORKERS,
-  REQUEST,
-  RESPONSE,
   DELEGATED,
-  LOOKUP,
   timeline,
 } from "../participants/__fixtures__/workerRecord";
 
@@ -99,41 +95,6 @@ describe("CallWorkersPanel", () => {
   });
 
   describe("turns, placement and usage", () => {
-    const call = LOOKUP;
-    const tracedCall = () => ({
-      data: {
-        ...TIMELINE,
-        steps: [
-          {
-            key: 9,
-            kind: "tool_call",
-            parent: null,
-            depth: 0,
-            worker_id: call.worker_id,
-            call: { ...call, trace_id: "tr-1", span_id: "sp-1" },
-            turn: 1,
-            order: 1,
-            relationship: "observed",
-          },
-        ],
-        turns: oneTurn(REQUEST, RESPONSE, [9], 1),
-        counts: counts(0, 0),
-      },
-      isLoading: false,
-      isError: false,
-    });
-    it("offers no Open in Traces for a trace the Traces tab does not list", () => {
-      result = tracedCall();
-      render(
-        <CallWorkersPanel
-          callExecutionId="c1"
-          onOpenTrace={vi.fn()}
-          traceIds={["tr-other"]}
-        />,
-      );
-      expect(screen.queryByRole("button", { name: C.openInTraces })).toBeNull();
-    });
-
     it("says a worker took part with no end recorded, never that it completed", () => {
       result = {
         data: {
