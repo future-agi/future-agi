@@ -1,4 +1,4 @@
-import { apiPath } from 'src/api/contracts/api-surface';
+import { apiPath, isContractedApiPath } from 'src/api/contracts/api-surface';
 
 // Kept inside this feature's ownership boundary. Like utils/axios endpoints,
 // every path is checked against the generated backend contract, lazily at use.
@@ -50,3 +50,43 @@ export const endpoints = {
   labelProtectionHistory: (skill_id) => apiPath('/model-hub/skills/{skill_id}/label-protection/history/', { skill_id }),
   adoption: (skill_id) => apiPath('/model-hub/skills/{skill_id}/adoption/', { skill_id }),
 };
+
+// Skill-trace runtime reads (SKILL-TRACES §6.6 endpoints 1–5 and 8–10, lane
+// ST10). PROVISIONAL: SKILLS-API-REVIEW.md replaces the proposed /runtime/
+// routes with the shared usage, comparison and load projections, and its
+// migration map is not written yet. These templates are the §6.6 paths as
+// placeholders, named by what they read. When the lean map lands, only this
+// table changes; hooks in runtime.js call `runtimeEndpoint(name, params)`.
+//
+// A template is used only once the generated contract has it. Until then the
+// read fails with the typed code `runtime_route_pending` (the screens show
+// their error state), so nothing calls a route the backend does not serve.
+export const RUNTIME_ROUTES = Object.freeze({
+  skillUsage: '/model-hub/skills/{skill_id}/runtime/', // 1: Loaded by, summary, diagnosis
+  skillSeries: '/model-hub/skills/{skill_id}/runtime/timeseries/', // 2
+  skillComparison: '/model-hub/skills/{skill_id}/runtime/label-move/', // 3: move card and header chip
+  contextUsage: '/model-hub/skills/contexts/{context_id}/runtime-skills/', // 4
+  filterValues: '/model-hub/skills/runtime/filter-values/', // 5: Observe pickers (ST9)
+  agentUsage: '/model-hub/skills/runtime/agent/', // 8: agent panel
+  contextComparison: '/model-hub/skills/contexts/{context_id}/runtime/release-move/', // 9
+  skillLatestLoad: '/model-hub/skills/{skill_id}/runtime/latest-load/', // 10
+  contextLatestLoad: '/model-hub/skills/contexts/{context_id}/runtime/latest-load/', // 10, contexts
+});
+
+export const RUNTIME_ROUTE_PENDING = 'runtime_route_pending';
+
+/** Resolve one runtime read. Throws a typed error until the route is contracted. */
+export function runtimeEndpoint(name, params = {}) {
+  const template = RUNTIME_ROUTES[name];
+  if (!template) throw new Error(`Unknown Skills runtime route: ${name}`);
+  if (!isContractedApiPath(template)) {
+    const error = new Error('This runtime read is not available on this server yet.');
+    error.code = RUNTIME_ROUTE_PENDING;
+    throw error;
+  }
+  return template.replace(/\{([^}]+)\}/g, (_, key) => {
+    const value = params[key];
+    if (value === undefined || value === null || value === '') throw new Error(`Missing runtime path param "${key}"`);
+    return encodeURIComponent(String(value));
+  });
+}

@@ -13,7 +13,14 @@ import { dsPalette, dsTypography } from "src/theme/ds-tokens";
 import { formatDate } from "src/utils/report-utils";
 import AdoptionPanel from "../governance/AdoptionPanel";
 import LabelProtectionDialog from "../governance/LabelProtectionDialog";
-import { buildSkillTraceLink } from "./traces";
+import {
+  OBSERVE_LINK_SORT_PARAM,
+  SKILL_SOURCE_PARAM,
+  buildContextBindingTraceLink,
+  buildSkillTraceLink,
+  runtimeTabUrl,
+} from "./traces";
+import { setSkillTracesOverride } from "../runtime/skillTracesFlag";
 
 const mocks = vi.hoisted(() => ({
   adoption: vi.fn(),
@@ -123,6 +130,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
+  setSkillTracesOverride(null);
 });
 
 describe("immutable skill trace links", () => {
@@ -185,12 +193,133 @@ describe("immutable skill trace links", () => {
   });
 });
 
+// §6.6 link objects (UX-02): the server builds the §6.3 items; the client
+// passes them through unchanged so the list lands on exactly the counted cohort.
+const sourceObject = {
+  skill_id: "skill-a",
+  version_id: versionId,
+  agent_key: null,
+  metric: "failed_requests",
+  event_id: "event-a",
+  side: "after",
+};
+const failedLink = {
+  project_id: "project-a",
+  from: start,
+  to: end,
+  filters: [
+    {
+      column_id: "skill.version_id",
+      filter_config: { col_type: "SKILL", filter_type: "text", filter_op: "equals", filter_value: versionId },
+    },
+    {
+      column_id: "skill.root_status",
+      filter_config: { col_type: "SKILL", filter_type: "text", filter_op: "equals", filter_value: "error" },
+    },
+  ],
+  source: sourceObject,
+};
+const slowestLink = {
+  ...failedLink,
+  filters: [failedLink.filters[0]],
+  sort: { column_id: "latency", direction: "desc" },
+  source: { ...sourceObject, metric: "latency_p95" },
+};
+const params = (link) => new URL(link, "https://example.invalid").searchParams;
+
+describe("runtime trace links with skillTraces on", () => {
+  it("passes the server's SKILL items through unchanged, with the window and source bar", () => {
+    const link = buildSkillTraceLink({ link: failedLink, kind: "failed", skillTraces: true });
+    expect(new URL(link, "https://example.invalid").pathname).toBe("/dashboard/observe/project-a/llm-tracing");
+    expect(JSON.parse(params(link).get("observeLinkFilter"))).toEqual(failedLink.filters);
+    expect(JSON.parse(params(link).get(SKILL_SOURCE_PARAM))).toEqual(sourceObject);
+    expect(JSON.parse(params(link).get("primaryTraceDateFilter")).dateFilter).toEqual([
+      formatDate(new Date(start)),
+      formatDate(new Date(end)),
+    ]);
+    expect(params(link).has(OBSERVE_LINK_SORT_PARAM)).toBe(false);
+  });
+  it("adds the slowest-first sort for the p95 link", () => {
+    const link = buildSkillTraceLink({ link: slowestLink, kind: "slowest", skillTraces: true });
+    expect(JSON.parse(params(link).get(OBSERVE_LINK_SORT_PARAM))).toEqual({ column_id: "latency", direction: "desc" });
+  });
+  it("opens the project chosen in the project menu for a multi-project version row", () => {
+    const link = buildSkillTraceLink({
+      link: { ...failedLink, project_id: null },
+      kind: "all",
+      projectId: "project-b",
+      skillTraces: true,
+    });
+    expect(link).toMatch(/^\/dashboard\/observe\/project-b\/llm-tracing\?/);
+    expect(buildSkillTraceLink({ link: { ...failedLink, project_id: null }, kind: "all", skillTraces: true })).toBeNull();
+  });
+  it("uses a SKILL version item for the version-only call shape", () => {
+    const link = buildSkillTraceLink({ projectId: "project-a", versionId, windowStart: start, windowEnd: end, skillTraces: true });
+    expect(JSON.parse(params(link).get("observeLinkFilter"))).toEqual([
+      {
+        column_id: "skill.version_id",
+        filter_config: { col_type: "SKILL", filter_type: "text", filter_op: "equals", filter_value: versionId },
+      },
+    ]);
+  });
+  it.each([
+    [{ link: { ...failedLink, filters: [] } }],
+    [{ link: { ...failedLink, filters: [{ column_id: "x" }] } }],
+    [{ link: failedLink, kind: "random" }],
+    [{ link: { ...failedLink, from: end, to: start } }],
+  ])("rejects a malformed link %#", (override) => {
+    expect(buildSkillTraceLink({ kind: "failed", skillTraces: true, ...override })).toBeNull();
+  });
+  it("reads the flag when no explicit mode is given", () => {
+    setSkillTracesOverride(true);
+    const link = buildSkillTraceLink({ link: failedLink, kind: "failed" });
+    expect(JSON.parse(params(link).get("observeLinkFilter"))[0].filter_config.col_type).toBe("SKILL");
+  });
+});
+
+describe("runtime trace links with skillTraces off", () => {
+  it("keeps only the all link, as the original scalar version filter", () => {
+    const link = buildSkillTraceLink({ link: failedLink, kind: "all", skillTraces: false });
+    expect(JSON.parse(params(link).get("observeLinkFilter"))).toEqual([
+      {
+        column_id: "fi.skill.version_id",
+        filter_config: { col_type: "SPAN_ATTRIBUTE", filter_type: "text", filter_op: "equals", filter_value: versionId },
+      },
+    ]);
+    expect(params(link).has(SKILL_SOURCE_PARAM)).toBe(false);
+    expect(params(link).has(OBSERVE_LINK_SORT_PARAM)).toBe(false);
+  });
+  it.each(["failed", "slowest", "eval_failed"])("has no %s link", (kind) => {
+    expect(buildSkillTraceLink({ link: failedLink, kind, skillTraces: false })).toBeNull();
+  });
+});
+
+describe("context binding and runtime tab links", () => {
+  const contextId = "cccccccc-1111-4222-8333-444444444444";
+  const bindingId = "bbbbbbbb-1111-4222-8333-444444444444";
+  it("filters by context and binding when skillTraces is on", () => {
+    const link = buildContextBindingTraceLink({ projectId: "project-a", contextId, bindingId, windowStart: start, windowEnd: end, skillTraces: true });
+    expect(JSON.parse(params(link).get("observeLinkFilter")).map((item) => [item.column_id, item.filter_config.col_type, item.filter_config.filter_value])).toEqual([
+      ["skill.context_id", "SKILL", contextId],
+      ["skill.binding_id", "SKILL", bindingId],
+    ]);
+  });
+  it("has no binding link when skillTraces is off", () => {
+    expect(buildContextBindingTraceLink({ projectId: "project-a", contextId, bindingId, skillTraces: false })).toBeNull();
+  });
+  it("builds the stable move-card URL", () => {
+    expect(runtimeTabUrl({ id: "skill-a", eventId: "event-a" })).toBe("/dashboard/skills/skill-a?tab=runtime&move=event-a&window=24h");
+    expect(runtimeTabUrl({ kind: "agent_context", id: "ctx-a" })).toBe("/dashboard/skills/contexts/ctx-a?tab=runtime");
+    expect(runtimeTabUrl({ id: "" })).toBeNull();
+  });
+});
+
 describe("observed adoption", () => {
   it.each(["light", "dark"])(
     "shows mixed exact versions without an outdated/fleet claim in %s",
     (mode) => {
       show(AdoptionPanel, { skill }, { mode });
-      expect(screen.getByText("Who is using v1")).toBeInTheDocument();
+      expect(screen.getByText("Fetch adoption after a label move")).toBeInTheDocument();
       // The first line answers the question; the row names the versions the consumer received.
       expect(screen.getByText("1 consumer still received v3 after production moved.")).toBeInTheDocument();
       expect(screen.getByText("v1 and v3")).toBeInTheDocument();
