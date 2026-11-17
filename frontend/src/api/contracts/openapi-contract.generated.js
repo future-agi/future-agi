@@ -97345,6 +97345,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "allowed_tools",
         "tools_shown",
         "binding",
+        "enforcement",
+        "enforcement_label",
       ],
       type: "object",
       properties: {
@@ -97388,6 +97390,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Binding",
           type: "string",
           enum: ["separate", "shared", "not_declared"],
+        },
+        enforcement: {
+          title: "Enforcement",
+          type: "string",
+          enum: ["held_at_world", "not_enforced", "bypassed"],
+        },
+        enforcement_label: {
+          title: "Enforcement label",
+          type: "string",
+          minLength: 1,
         },
         address_env: {
           title: "Address env",
@@ -99336,6 +99348,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
           items: {
             $ref: "#/definitions/WorkerCheck",
           },
+        },
+        enforcement: {
+          title: "Enforcement",
+          description:
+            "How the world held it to its limits in this trial: on its own channel, not at all, or bypassed.",
+          type: "string",
+          enum: ["held_at_world", "not_enforced", "bypassed"],
+        },
+        enforcement_label: {
+          title: "Enforcement label",
+          type: "string",
+          minLength: 1,
         },
         channel_bypassed: {
           title: "Channel bypassed",

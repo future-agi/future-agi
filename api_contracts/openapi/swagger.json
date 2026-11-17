@@ -136857,7 +136857,9 @@
                 "tools",
                 "allowed_tools",
                 "tools_shown",
-                "binding"
+                "binding",
+                "enforcement",
+                "enforcement_label"
             ],
             "type": "object",
             "properties": {
@@ -136905,6 +136907,20 @@
                         "shared",
                         "not_declared"
                     ]
+                },
+                "enforcement": {
+                    "title": "Enforcement",
+                    "type": "string",
+                    "enum": [
+                        "held_at_world",
+                        "not_enforced",
+                        "bypassed"
+                    ]
+                },
+                "enforcement_label": {
+                    "title": "Enforcement label",
+                    "type": "string",
+                    "minLength": 1
                 },
                 "address_env": {
                     "title": "Address env",
@@ -163085,6 +163101,21 @@
                     "items": {
                         "$ref": "#/definitions/WorkerCheck"
                     }
+                },
+                "enforcement": {
+                    "title": "Enforcement",
+                    "description": "How the world held it to its limits in this trial: on its own channel, not at all, or bypassed.",
+                    "type": "string",
+                    "enum": [
+                        "held_at_world",
+                        "not_enforced",
+                        "bypassed"
+                    ]
+                },
+                "enforcement_label": {
+                    "title": "Enforcement label",
+                    "type": "string",
+                    "minLength": 1
                 },
                 "channel_bypassed": {
                     "title": "Channel bypassed",
