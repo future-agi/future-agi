@@ -9,9 +9,11 @@
 #   nginx:1.31.6-alpine-slim -> the served image: 5.8 MB gzip, vs 26.3 MB for
 #     nginx:alpine (amd64, Docker Hub, 2026-09-25). nginx.conf uses only core
 #     http directives (gzip, expires, add_header, try_files) and
-#     docker-entrypoint.sh below needs only busybox sh/printenv/sed, so none of
-#     the modules alpine-slim leaves out (njs, geoip, image-filter, xslt, acme)
-#     nor nginx:alpine's curl are used.
+#     docker-entrypoint.sh and the healthcheck use busybox sh/printenv/sed/
+#     cat/md5sum/sleep/kill/wget, and awk/tr/base64/od/date to read a
+#     certificate's expiry (plus the base image's ssl_client for HTTPS), so
+#     none of the modules alpine-slim leaves out (njs, geoip, image-filter,
+#     xslt, acme) nor nginx:alpine's curl are used.
 ARG NODE_IMAGE=futureagi/frontend-base:v1.1.0-dev@sha256:bc90d2229b7155ed6ba69c47f3e5a634a0cd85fafab1e8f6c6609f0c1762e2ad
 ARG NGINX_IMAGE=nginx:1.31.6-alpine-slim@sha256:f761b94f2cb9e8e05e2943d5f773609596113ef69b54e2433a996d109a8f78b7
 
@@ -81,6 +83,7 @@ COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY security-headers.conf /etc/nginx/security-headers.conf
 
 COPY --chmod=755 docker-entrypoint.sh /docker-entrypoint.sh
+COPY --chmod=755 frontend-healthcheck.sh /usr/local/bin/frontend-healthcheck
 
 EXPOSE 80
 EXPOSE 443
@@ -94,9 +97,10 @@ EXPOSE 443
 USER root
 # nginx: SIGQUIT finishes the requests in flight, SIGTERM drops them.
 STOPSIGNAL SIGQUIT
-# busybox wget; -Y off ignores any HTTP(S)_PROXY in the environment.
+# Probes the HTTP listener, or the HTTPS one when HTTP is off
+# (FRONTEND_HTTP_ENABLED=false); see frontend-healthcheck.sh.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD ["wget", "-q", "-Y", "off", "-T", "5", "-O", "/dev/null", "http://127.0.0.1/"]
+    CMD ["/usr/local/bin/frontend-healthcheck"]
 ENTRYPOINT ["/docker-entrypoint.sh"]
 CMD ["nginx", "-g", "daemon off;"]
 

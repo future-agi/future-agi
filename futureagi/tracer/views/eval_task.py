@@ -113,6 +113,28 @@ from tracer.views.eval_sampling import SamplingPreviewMixin
 logger = structlog.get_logger(__name__)
 
 
+class _EvalTaskCreateFailure(Exception):
+    """Local create/start failure carrying only a bounded exception type name."""
+
+    def __init__(self, error_type: str):
+        self.error_type = error_type[:80]
+        super().__init__(self.error_type)
+
+
+@contextmanager
+def _normalize_eval_task_create_failure(*, preserve_validation_errors: bool):
+    """Expose only bounded failure metadata to create's local handlers."""
+    try:
+        yield
+    except Exception as exc:
+        # Validation remains client-facing only in the precommit path.
+        if preserve_validation_errors and isinstance(
+            exc, (ValidationError, FilterPrincipalContextError)
+        ):
+            raise
+        raise _EvalTaskCreateFailure(type(exc).__name__) from None
+
+
 class _RegexpReplace(Func):
     """
     PostgreSQL `regexp_replace(string, pattern, replacement, flags)`.
@@ -1915,50 +1937,74 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
     )
     def create(self, request, *args, **kwargs):
         try:
-            data = request.data.copy()
-            data["status"] = EvalTaskStatus.PENDING
-            filters = data.get("filters") or {}
-            project_id = data.get("project")
-            if (
-                project_id
-                and not self._scope_project_queryset(Project.objects.all())
-                .filter(id=project_id)
-                .exists()
-            ):
-                return self._gm.bad_request("Project not found")
-            if project_id:
-                filters["project_id"] = project_id
-            data["filters"] = filters
+            with _normalize_eval_task_create_failure(preserve_validation_errors=True):
+                data = request.data.copy()
+                data["status"] = EvalTaskStatus.PENDING
+                filters = data.get("filters") or {}
+                project_id = data.get("project")
+                if (
+                    project_id
+                    and not self._scope_project_queryset(Project.objects.all())
+                    .filter(id=project_id)
+                    .exists()
+                ):
+                    return self._gm.bad_request("Project not found")
+                if project_id:
+                    filters["project_id"] = project_id
+                data["filters"] = filters
 
-            data["last_run"] = datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-            serializer = self.get_serializer(data=data)
-            serializer.is_valid(raise_exception=True)
-            invalid_eval_ids = self._invalid_eval_ids_for_project(
-                [eval_config.id for eval_config in serializer.validated_data["evals"]],
-                project_id,
-            )
-            if invalid_eval_ids:
-                return self._gm.bad_request(
-                    "Eval configs not found for project: " + ", ".join(invalid_eval_ids)
+                data["last_run"] = datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+                serializer = self.get_serializer(data=data)
+                serializer.is_valid(raise_exception=True)
+                invalid_eval_ids = self._invalid_eval_ids_for_project(
+                    [
+                        eval_config.id
+                        for eval_config in serializer.validated_data["evals"]
+                    ],
+                    project_id,
                 )
-            eval_task = serializer.save()
-
-            # The workflow's first step materializes entries, so create returns
-            # immediately even for large tasks.
-            start_eval_task_workflow_sync(eval_task)
-
-            return self._gm.success_response({"id": eval_task.id})
+                if invalid_eval_ids:
+                    return self._gm.bad_request(
+                        "Eval configs not found for project: "
+                        + ", ".join(invalid_eval_ids)
+                    )
+                # DRF saves the row before assigning its M2M relations. Both must
+                # roll back together if any part of persistence fails.
+                with transaction.atomic(using="default"):
+                    eval_task = serializer.save()
 
         except ValidationError as exc:
             return self._gm.bad_request(exc.detail)
         except FilterPrincipalContextError as exc:
             return self._gm.bad_request(str(exc))
-        except Exception as exc:
-            logger.exception(
+        except _EvalTaskCreateFailure as failure:
+            logger.warning(
                 "eval_task.create_failed",
-                error_type=type(exc).__name__,
+                error_type=failure.error_type,
+                exc_info=False,
             )
             return self._gm.bad_request("Evaluation task could not be created")
+
+        def dispatch_saved_task():
+            try:
+                with _normalize_eval_task_create_failure(
+                    preserve_validation_errors=False
+                ):
+                    # Initial, non-replacing start only. An uncertain acknowledgement
+                    # cannot justify a second start or any saved-state compensation.
+                    start_eval_task_workflow_sync(eval_task)
+            except _EvalTaskCreateFailure as failure:
+                logger.warning(
+                    "eval_task.create_start_unconfirmed",
+                    error_type=failure.error_type,
+                    exc_info=False,
+                )
+
+        # Outside the failed-create boundary: dispatch must see the actual
+        # primary commit, including any outer transaction. An outer rollback
+        # discards this callback. HTTP 200 acknowledges saving, not running.
+        transaction.on_commit(dispatch_saved_task, using="default", robust=True)
+        return self._gm.success_response({"id": eval_task.id})
 
     @action(detail=False, methods=["get"], pagination_class=None)
     @validated_request(
@@ -2828,7 +2874,7 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
                 )
 
             eval_task.status = EvalTaskStatus.PAUSED
-            eval_task.save()
+            eval_task.save(update_fields=["status", "updated_at"])
 
             # Nudge the running workflow to stop launching new evals immediately.
             # Best-effort: the paused status above is the durable signal the
@@ -3174,10 +3220,21 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
                     # rows older than the overlap may newly match (or stop
                     # matching). Reset inside this locked transaction so the
                     # next reconcile performs a complete start-time proof.
-                    EvalTask.objects.filter(id=eval_task.id).update(
-                        continuous_cursor=None
-                    )
-                    eval_task.continuous_cursor = None
+                    reset = {"continuous_cursor": None}
+                    if original_run_type == RunType.CONTINUOUS:
+                        # This explicit rerun re-activates coverage now, so
+                        # its proof starts here. Keeping the original floor
+                        # would re-evaluate, and bill, every row since the
+                        # task first activated. A conversion has already
+                        # persisted its own new floor. This edit accepts the
+                        # coverage, so it also stamps last_run, which the
+                        # serializer keeps at the floor for edits that don't.
+                        reset["start_time"] = reset["last_run"] = update_fields[
+                            "last_run"
+                        ]
+                    EvalTask.objects.filter(id=eval_task.id).update(**reset)
+                    for field, value in reset.items():
+                        setattr(eval_task, field, value)
 
                 # Delete & rerun wipes live entries first; the workflow then
                 # reconciles (materialize/diff) and drains for both cases, so the

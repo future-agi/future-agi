@@ -1,4 +1,4 @@
-"""Complete 51/56-pending-migration A9 intersection regression, without Django.
+"""Complete 60/65-pending-migration A9 intersection regression, without Django.
 
 Run the shipped touched()/inbound() resolver against AST-derived operation and
 ModelState doubles. No migration module, RunPython, SQL or app is executed.
@@ -40,6 +40,15 @@ LATEST = (
     ("tracer", "0130_observationspan_internal_type"),
     ("simulate", "0102_agent_fix_engine_notes"),
     ("simulate", "0103_harness_job_verify_of"),
+    ("simulate", "0104_agent_fix_variations"),
+    ("simulate", "0105_harness_job_fix_eval_cost"),
+    ("simulate", "0106_harness_job_graded_for"),
+    ("simulate", "0107_builder_turn_usage"),
+    ("simulate", "0108_evidence_import"),
+    ("simulate", "0109_evidence_import_transcript"),
+    ("simulate", "0110_evidence_import_dataset"),
+    ("simulate", "0111_evidence_import_case_discarded"),
+    ("simulate", "0112_evidence_import_case_duplicate"),
     ("tracer", "0098_useralertmonitor_webhook_url"),
     ("tracer", "0131_merge_alert_webhook"),
     ("tracer", "0132_merge_alert_webhook_and_sql_workbench"),
@@ -93,8 +102,8 @@ FLOOR_ONLY = (
     ("tracer", "0120_alert_issue_state_occurrences_high_water"),
 )
 INVENTORIES = (
-    (REVISIONS[1], LATEST, 51),
-    (REVISIONS[0], LATEST + FLOOR_ONLY, 56),
+    (REVISIONS[1], LATEST, 60),
+    (REVISIONS[0], LATEST + FLOOR_ONLY, 65),
 )
 
 
@@ -216,6 +225,7 @@ class Operation:
                 "AddIndexConcurrently",
                 "RemoveIndex",
                 "AddConstraint",
+                "RemoveConstraint",
             )
 
 
@@ -229,6 +239,7 @@ def operation_types():
         "AddIndex",
         "RemoveIndex",
         "AddConstraint",
+        "RemoveConstraint",
         "RunPython",
         "RunSQL",
         "SeparateDatabaseAndState",
@@ -915,7 +926,7 @@ operations = _build_ops()
             ),
             self.assertRaises(AssertionError),
         ):
-            self.assert_complete_inventory(REVISIONS[1], LATEST, 51)
+            self.assert_complete_inventory(REVISIONS[1], LATEST, 60)
 
     def test_sampling_layer_has_exact_table_scopes(self):
         expected = {
