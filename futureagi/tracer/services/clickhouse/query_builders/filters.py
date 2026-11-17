@@ -1898,15 +1898,26 @@ class ClickHouseFilterBuilder:
             param = self._next_param("skill_root_status")
             self._params[param] = "ERROR"
             operator = "=" if status == "error" else "!="
+            # The load window chooses traces, not roots. Replay all spans of
+            # candidate traces first (including key-only tombstones), then use
+            # the same canonical root as runtime metrics: earliest (time, id).
+            # An existential ERROR root can disagree with the canonical root
+            # when malformed telemetry contains more than one root.
             conditions.append(
                 f"{trace_identity} IN (SELECT project_id, trace_id FROM ("
+                "SELECT project_id, trace_id, "
+                "countIf(root_state.1 = '') AS roots, "
+                "argMinIf(tuple(root_state.2), tuple(root_state.4, id), "
+                "root_state.1 = '') AS canonical_root FROM ("
                 "SELECT project_id, trace_id, id, "
-                "argMax(tuple(parent_span_id, status, is_deleted), _version) AS root_state "
+                "argMax(tuple(parent_span_id, status, is_deleted, start_time), _version) AS root_state "
                 "FROM spans WHERE " + self._project_scope_predicate()
-                + " AND start_time >= %(start_date)s AND start_time < %(end_date)s "
-                "GROUP BY project_id, trace_id, id) "
-                "WHERE root_state.3 = 0 AND ifNull(root_state.1, '') = '' "
-                f"AND root_state.2 {operator} %({param})s)"
+                + " AND (project_id, trace_id) IN (SELECT project_id, trace_id FROM spans WHERE "
+                + self._project_scope_predicate()
+                + " AND start_time >= %(start_date)s AND start_time < %(end_date)s) "
+                "GROUP BY project_id, trace_id, id) WHERE root_state.3 = 0 "
+                "GROUP BY project_id, trace_id) "
+                f"WHERE roots > 0 AND canonical_root.1 {operator} %({param})s)"
             )
         return conditions
 

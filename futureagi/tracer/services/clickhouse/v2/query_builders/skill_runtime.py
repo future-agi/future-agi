@@ -140,9 +140,9 @@ class SkillRuntimeQueryBuilder(V2RewriteMixin):
 
         Loads select the cohort in the half-open load window; all live spans of
         those traces contribute cost, including roots started before the load.
-        Do not wire Observe links until ST6's root-window landing discrepancy
-        is resolved. Eval aggregation intentionally remains a separate adapter
-        pending V8's any-span join and per-trace reduction contract.
+        Observe's skill.root_status uses this same canonical-root rule, without
+        clipping roots to the load window. Eval aggregation remains a separate
+        adapter pending V8's any-span join and per-trace reduction contract.
         """
         params = {**self.params, "skill_id": str(skill_id), "version_id": str(version_id), "digest": digest}
         agent_where = ""

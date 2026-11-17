@@ -319,6 +319,48 @@ def test_live_correlation_negative_groups_failed_and_root_status(skill_query_cli
 
 
 @pytest.mark.integration
+def test_root_status_matches_runtime_canonical_root_across_window_and_replays(skill_query_client):
+    from tracer.services.clickhouse.v2.query_builders.skill_runtime import SkillRuntimeQueryBuilder
+
+    client = skill_query_client
+    project = str(uuid4())
+    early = START - timedelta(minutes=5)
+    labels = ("early-error", "early-ok", "tie", "deleted-root", "corrected-root", "missing-root")
+
+    def root(trace, status, **kwargs):
+        return span_row(project, trace, name="request", parent_span_id="", status=status,
+                        span_attributes={}, **kwargs)
+
+    deleted = root("deleted-root", "ERROR", start_time=early)
+    corrected = root("corrected-root", "ERROR", start_time=early)
+    rows = [span_row(project, label) for label in labels] + [
+        root("early-error", "ERROR", start_time=early), root("early-error", "OK"),
+        root("early-ok", "OK", start_time=early), root("early-ok", "ERROR"),
+        root("tie", "OK", id="0000000000000001"),
+        root("tie", "ERROR", id="0000000000000002"),
+        deleted, {**deleted, "is_deleted": 1, "created_at": END, "span_attributes": {}},
+        root("deleted-root", "OK"),
+        corrected, {**corrected, "status": "OK", "created_at": END},
+        # A foreign root for the missing-root trace must not complete it.
+        {**root("missing-root", "ERROR"), "project_id": str(uuid4())},
+    ]
+    insert_rows(client, rows)
+    selected = [skill("version_id", VERSION)]
+    failed = matching_traces(client, project, selected + [skill("root_status", "error")])
+    ok = matching_traces(client, project, selected + [skill("root_status", "ok")])
+    assert failed == trace_ids("early-error")
+    assert ok == trace_ids("early-ok", "tie", "deleted-root", "corrected-root")
+    sql, params = SkillRuntimeQueryBuilder(project_ids=[project], start=START, end=END).build_cohort_metrics(
+        skill_id=SKILL, version_id=VERSION, digest=DIGEST,
+    )
+    metrics, = client.query(sql, parameters=params).named_results()
+    assert metrics["traces"] == len(labels)
+    assert metrics["incomplete"] == 1
+    assert metrics["failed_count"] == len(failed)
+    assert metrics["failed_rate"] == len(failed) / (len(failed) + len(ok))
+
+
+@pytest.mark.integration
 def test_live_bounded_trace_and_span_readers_keep_group_correlation(skill_query_client):
     from tracer.services.clickhouse.v2.query_builders.span_list import SpanListQueryBuilderV2
 
