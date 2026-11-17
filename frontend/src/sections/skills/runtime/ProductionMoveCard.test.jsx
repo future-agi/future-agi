@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, screen } from '@testing-library/react';
 import ProductionMoveCard from './ProductionMoveCard';
 import { setSkillTracesOverride } from './skillTracesFlag';
-import { MOVE, NOW, SKILL, failure, pending, renderRuntime, success } from './testFixtures';
+import { MOVE, NOW, SKILL, failure, pending, renderRuntime, success } from './__tests__/fixtures';
 
 const hooks = vi.hoisted(() => ({ comparison: vi.fn(), series: vi.fn() }));
 vi.mock('src/api/skills/runtime', async (importOriginal) => ({
@@ -11,7 +11,7 @@ vi.mock('src/api/skills/runtime', async (importOriginal) => ({
   useSkillRuntimeSeries: hooks.series,
 }));
 vi.mock('src/components/iconify', () => ({ default: () => null }));
-vi.mock('notistack', () => ({ enqueueSnackbar: vi.fn() }));
+vi.mock('notistack', async (load) => ({ ...(await load()), enqueueSnackbar: vi.fn() }));
 
 const show = (data, props = {}) => {
   hooks.comparison.mockReturnValue(data && data.isPending !== undefined ? data : success(data));

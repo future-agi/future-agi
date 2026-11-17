@@ -1109,8 +1109,8 @@ const TraceGrid = React.forwardRef(
             );
           }}
           onCellClicked={handleCellClick}
-          onViewportChanged={({ api }) => syncShownTraceIds(api)}
-          onPaginationChanged={({ api }) => syncShownTraceIds(api)}
+          onViewportChanged={skillTracesEnabled ? ({ api }) => syncShownTraceIds(api) : undefined}
+          onPaginationChanged={skillTracesEnabled ? ({ api }) => syncShownTraceIds(api) : undefined}
           onSelectionChanged={onSelectionChanged}
           onColumnMoved={onColumnMoved}
           onColumnHeaderClicked={(event) => {

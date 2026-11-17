@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, screen, within } from '@testing-library/react';
 import AgentPanel, { agentPanelInput } from './AgentPanel';
 import { setSkillTracesOverride } from './skillTracesFlag';
-import { ROWS, V4, agent, failure, links, pending, renderRuntime, success } from './testFixtures';
+import { ROWS, V4, agent, failure, links, pending, renderRuntime, success } from './__tests__/fixtures';
 
 const hooks = vi.hoisted(() => ({ agent: vi.fn() }));
 vi.mock('src/api/skills/runtime', async (importOriginal) => ({ ...(await importOriginal()), useRuntimeAgent: hooks.agent }));

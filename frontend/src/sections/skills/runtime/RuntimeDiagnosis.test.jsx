@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, screen } from '@testing-library/react';
 import RuntimeDiagnosis, { RuntimeNotes } from './RuntimeDiagnosis';
-import { SKILL, renderRuntime } from './testFixtures';
+import { SKILL, renderRuntime } from './__tests__/fixtures';
 
 vi.mock('src/components/iconify', () => ({ default: () => null }));
 

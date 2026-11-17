@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, screen, within } from '@testing-library/react';
 import ContextRuntimeView from './ContextRuntimeView';
 import { setSkillTracesOverride } from './skillTracesFlag';
-import { MOVE, NOW, ROWS, RUNTIME, V3, V4, failure, pending, renderRuntime, success } from './testFixtures';
+import { MOVE, NOW, ROWS, RUNTIME, V3, V4, failure, pending, renderRuntime, success } from './__tests__/fixtures';
 
 const hooks = vi.hoisted(() => ({ context: vi.fn(), comparison: vi.fn(), agent: vi.fn() }));
 vi.mock('src/api/skills/runtime', async (importOriginal) => ({
@@ -16,7 +16,7 @@ vi.mock('src/sections/skills/governance/AdoptionPanel', () => ({
   AuthorizedProjectPicker: ({ label }) => <div role="group" aria-label={label} />,
 }));
 vi.mock('src/components/iconify', () => ({ default: () => null }));
-vi.mock('notistack', () => ({ enqueueSnackbar: vi.fn() }));
+vi.mock('notistack', async (load) => ({ ...(await load()), enqueueSnackbar: vi.fn() }));
 
 const CONTEXT = { id: 'ctx-1', name: 'support-agent' };
 const withSkill = (row) => ({ ...row, skillId: 'skill-a', skillName: 'refund-policy' });

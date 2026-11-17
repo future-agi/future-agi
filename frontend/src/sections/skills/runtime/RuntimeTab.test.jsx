@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, screen, within } from '@testing-library/react';
 import RuntimeTab from './RuntimeTab';
 import { setSkillTracesOverride } from './skillTracesFlag';
-import { MOVE, NOW, RUNTIME, SKILL, failure, pending, renderRuntime, success } from './testFixtures';
+import { MOVE, NOW, RUNTIME, SKILL, failure, pending, renderRuntime, success } from './__tests__/fixtures';
 
 const hooks = vi.hoisted(() => ({ runtime: vi.fn(), comparison: vi.fn(), series: vi.fn(), agent: vi.fn() }));
 vi.mock('src/api/skills/runtime', async (importOriginal) => ({
@@ -17,7 +17,7 @@ vi.mock('src/sections/skills/governance/AdoptionPanel', () => ({
   AuthorizedProjectPicker: ({ label }) => <div role="group" aria-label={label} />,
 }));
 vi.mock('src/components/iconify', () => ({ default: () => null }));
-vi.mock('notistack', () => ({ enqueueSnackbar: vi.fn() }));
+vi.mock('notistack', async (load) => ({ ...(await load()), enqueueSnackbar: vi.fn() }));
 
 const show = (options) => renderRuntime(<RuntimeTab skill={SKILL} productionVersion={4} viewingVersion={4} />, options);
 const before = (a, b) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);

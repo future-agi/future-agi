@@ -9,7 +9,7 @@ import { RETIRED_TERMS } from '../utils/terms';
 // sub-tabs (Results, Run a test, Cases). Each part owns its loading and error states; none hides another.
 const h = vi.hoisted(() => ({ optionsError: false, suiteError: false, runtime: true, retry: () => {}, targets: [], answerRuns: [], run: {}, results: {}, preview: null, cases: null, previews: [], created: [], suiteRevision: 1 }));
 const idle = vi.hoisted(() => () => ({ mutate: () => {}, mutateAsync: async () => {}, reset: () => {}, isPending: false }));
-const savedCase = { id: 'refund', title: 'Refund failure', prompt: 'Refund order 7', reviewed: true, checks: [{}] };
+const savedCase = { id: 'refund', title: 'Refund failure', prompt: 'Refund order 7', reviewed: true, checks: [{ id: "answer", kind: "contains", config: { text: "Refunded", caseSensitive: false } }], fixtures: [] };
 vi.mock('src/api/skills/r3-spend', () => ({ useSkillsSpendPolicy: () => ({}) }));
 vi.mock('src/api/skills/testing', () => ({
   useSkillV11Scope: () => ({ identity: 'org:workspace:author' }),

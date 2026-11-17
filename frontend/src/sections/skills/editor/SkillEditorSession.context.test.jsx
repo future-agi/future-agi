@@ -141,7 +141,7 @@ it('keeps linked skills and settings in a closed summary row above the editor', 
   expect(row).toHaveTextContent('0 linked skills · Purpose');
   // Closed means hidden, not unmounted: the panels keep their state and the editor never moves into them.
   expect(screen.queryByRole('region', { name: 'Linked skills and settings' })).not.toBeInTheDocument();
-  expect(screen.getByRole('region', { name: 'Linked skills and settings', hidden: true })).toContainElement(screen.getByLabelText('Context purpose', { selector: 'input' }));
+  expect(document.getElementById('context-details-panel')).toContainElement(screen.getByLabelText('Context purpose', { selector: 'input' }));
   expect(screen.getByLabelText('Context file source')).toBeVisible();
 });
 

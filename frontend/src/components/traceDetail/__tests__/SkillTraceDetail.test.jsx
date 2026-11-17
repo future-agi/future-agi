@@ -15,7 +15,7 @@ import { SkillSpanSection } from "../SpanDetailPane";
 import { TraceSkillsStrip } from "../TraceDetailDrawerV2";
 
 vi.mock("src/components/iconify", () => ({ default: () => null }));
-vi.mock("notistack", () => ({ enqueueSnackbar: vi.fn() }));
+vi.mock("notistack", async (load) => ({ ...(await load()), enqueueSnackbar: vi.fn() }));
 
 const SKILL = "11111111-1111-4111-8111-111111111111";
 const V3 = "33333333-3333-4333-8333-333333333333";

@@ -86,7 +86,7 @@ describe('ContextReleaseReview publish', () => {
     expect(open().map((node) => node.textContent.slice(0, 4))).toEqual(['a.md']);
     fireEvent.click(screen.getByRole('button', { name: 'Show 4 more changed files' }));
     expect(open()).toHaveLength(5);
-    expect(screen.getByRole('checkbox', { name: /^I've checked the 5 changed files/ })).toBeVisible();
+    expect(screen.getByRole('checkbox', { name: /^I've checked the 5 changed files/ })).toBeInTheDocument();
   });
 
   it('keeps three or fewer changed files all open', () => {

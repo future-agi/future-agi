@@ -29,7 +29,7 @@ vi.mock("src/routes/hooks", () => ({
   useParams: () => ({ skillId: "skill-1" }),
   useRouter: () => ({ push: mocks.push }),
 }));
-vi.mock("notistack", () => ({ enqueueSnackbar: vi.fn() }));
+vi.mock("notistack", async (load) => ({ ...(await load()), enqueueSnackbar: vi.fn() }));
 vi.mock("src/components/iconify", () => ({ default: () => null }));
 vi.mock("src/sections/skills/components/VersionSelect", () => {
   function VersionSelect({ value, onChange }) {

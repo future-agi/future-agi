@@ -2,10 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, screen, within } from '@testing-library/react';
 import LoadedByTable from './LoadedByTable';
 import { setSkillTracesOverride } from './skillTracesFlag';
-import { ROWS, SKILL, V3, V4, renderRuntime } from './testFixtures';
+import { ROWS, SKILL, V3, V4, renderRuntime } from './__tests__/fixtures';
 
 vi.mock('src/components/iconify', () => ({ default: () => null }));
-vi.mock('notistack', () => ({ enqueueSnackbar: vi.fn() }));
+vi.mock('notistack', async (load) => ({ ...(await load()), enqueueSnackbar: vi.fn() }));
 
 const show = (props = {}) => renderRuntime(<LoadedByTable skill={SKILL} rows={ROWS} productionVersion={4} {...props} />);
 const href = (element) => new URL(element.getAttribute('href'), 'https://example.invalid');

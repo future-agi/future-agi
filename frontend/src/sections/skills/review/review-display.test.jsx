@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import ReleaseRequestComposer, { ShareAllEvidence } from './ReleaseRequestComposer';
+import ReleaseRequestComposer, { ShareConsentDialog } from './ReleaseRequestComposer';
 import ReleaseReviewBody from './ReleaseReviewBody';
 import ReleaseRenewalDialog from './ReleaseRenewalDialog';
 import { useReviewOptions } from 'src/api/skills/review-authoring';
@@ -95,8 +95,7 @@ it('keeps one evidence ID consistent across selection, consent, review, paused r
   composer.unmount();
 
   // One private result is shared from its own row; the bulk button needs two or more.
-  const consent = render(<ShareAllEvidence row packet={packet} evidence={[{ ...ref, visibility: 'private' }]} onShare={vi.fn()} onShared={vi.fn()} />);
-  fireEvent.click(screen.getByRole('button', { name: 'Share and attach' }));
+  const consent = render(<ShareConsentDialog open share={[{ ...ref, visibility: 'private' }]} onShare={vi.fn()} onShared={vi.fn()} onClose={vi.fn()} />);
   expect(within(screen.getByRole('dialog')).getByText('Share 1 private result with the workspace?')).toBeVisible();
   expect(within(screen.getByRole('dialog')).getByText('Passed on test cases')).toBeVisible();
   expect(within(screen.getByRole('dialog')).getByText('1 case tested · 2 runs graded · 0 regressions')).toBeVisible();

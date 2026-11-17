@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, screen } from '@testing-library/react';
 import CheckTracing from './CheckTracing';
-import { NOW, failure, renderRuntime, success } from './testFixtures';
+import { NOW, failure, renderRuntime, success } from './__tests__/fixtures';
 
 const hooks = vi.hoisted(() => ({ latest: vi.fn() }));
 vi.mock('src/api/skills/runtime', async (importOriginal) => ({ ...(await importOriginal()), useLatestLoad: hooks.latest }));

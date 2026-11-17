@@ -285,7 +285,7 @@ export const DIAGNOSIS = Object.freeze({
     `Fetched ${fetches ? `${plural(fetches, "time")} ` : ""}through ${channels}. Loads are recorded only from the Python or TypeScript SDK.`,
   awaiting: "Consumers can record loads, but none arrived in this window.",
   partial: ({ agents, others, kind }) =>
-    `Loads recorded from ${plural(agents, "agent")}. ${plural(others, "other consumer")} fetched this ${kind} and can't record loads.`,
+    `${agents > 0 ? `Loads recorded from ${plural(agents, "agent")}` : "Some consumers can record loads"}. ${plural(others, "other consumer")} fetched this ${kind} and can't record loads.`,
   noReadableProjects: (kind) => `You can't open the projects where this ${kind} is loaded. Ask a workspace admin for access.`,
   unknown: "Loads haven't been recorded here yet, and the reason couldn't be worked out from the fetches.",
   linkedNotRead: "Other skills in this context recorded loads in this window. No app read this one.",

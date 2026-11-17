@@ -881,13 +881,16 @@ it('never collapses a changed file, even when more than six files differ', () =>
   render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
   fireEvent.click(screen.getByRole('button', { name: 'Choose v1' }));
   const files = screen.getByRole('table', { name: 'Recovery closure files' });
+  // The initial view already contains every changed file.
+  expect(within(files).getAllByRole('row')).toHaveLength(9);
+  fireEvent.click(screen.getByRole('button', { name: 'Show 3 unchanged files' }));
   expect(within(files).getAllByRole('row')).toHaveLength(12);
-  fireEvent.click(screen.getByRole('button', { name: 'Show fewer files' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Hide unchanged files' }));
   // 8 changed rows plus the header; only unchanged files may be collapsed.
   expect(within(files).getAllByRole('row')).toHaveLength(9);
   changed.forEach((row) => expect(within(files).getByRole('cell', { name: row.path, exact: true })).toBeVisible());
   expect(within(files).queryByRole('cell', { name: 'skills/s-0/SKILL.md', exact: true })).toBeNull();
-  fireEvent.click(screen.getByRole('button', { name: 'Show 3 more files' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Show 3 unchanged files' }));
   expect(within(files).getAllByRole('row')).toHaveLength(12);
 });
 

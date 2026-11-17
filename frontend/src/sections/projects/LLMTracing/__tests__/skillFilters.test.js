@@ -82,7 +82,7 @@ describe("normalizeSkillItem", () => {
   });
 
   it("reads the panel's string version as a number", () => {
-    expect(normalizeSkillItem(item("skill.version", "in", ["3"])).filter_config).toMatchObject({ filter_op: "equals", filter_value: 3 });
+    expect(normalizeSkillItem(item("skill.version", "in", ["3"])).filter_config).toMatchObject({ filter_op: "in", filter_value: [3] });
   });
 
   it("allows Ran after loading only at span grain", () => {
@@ -229,7 +229,7 @@ describe("reconcileSkillItems", () => {
     const previous = [item("skill.version_id", "equals", V3, { group: 1 }), item("skill.id", "equals", SKILL, { group: 1 })];
     const fromPanel = [item("skill.version_id", "not_in", [V3]), item("skill.id", "in", [SKILL])];
     expect(reconcileSkillItems(previous, fromPanel)).toEqual([
-      { ...item("skill.version_id", "not_equals", V3), group: 1 },
+      { ...item("skill.version_id", "not_in", [V3]), group: 1 },
       previous[1],
     ]);
   });

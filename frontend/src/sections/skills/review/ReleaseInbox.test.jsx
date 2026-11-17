@@ -1,5 +1,6 @@
+import { render } from 'src/utils/test-utils';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import ReleaseInbox from './ReleaseInbox';
 import { RETIRED_TERMS } from '../utils/terms';
 

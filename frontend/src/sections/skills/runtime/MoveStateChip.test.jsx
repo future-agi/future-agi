@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, screen } from '@testing-library/react';
 import HeaderMoveChip, { MoveStateChip, moveTiming } from './MoveStateChip';
-import { MOVE, NOW, SKILL, failure, pending, renderRuntime, success } from './testFixtures';
+import { MOVE, NOW, SKILL, failure, pending, renderRuntime, success } from './__tests__/fixtures';
 
 const hooks = vi.hoisted(() => ({ comparison: vi.fn() }));
 vi.mock('src/api/skills/runtime', async (importOriginal) => ({ ...(await importOriginal()), useSkillComparison: hooks.comparison }));

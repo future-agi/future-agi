@@ -16,7 +16,7 @@ import ReceiptLoadsLine from './ReceiptLoadsLine';
 import RuntimeDiagnosis, { RuntimeNotes } from './RuntimeDiagnosis';
 import RuntimeTab from './RuntimeTab';
 import { setSkillTracesOverride } from './skillTracesFlag';
-import { MOVE, NOW, ROWS, RUNTIME, SKILL, renderRuntime, success } from './testFixtures';
+import { MOVE, NOW, ROWS, RUNTIME, SKILL, renderRuntime, success } from './__tests__/fixtures';
 
 const hooks = vi.hoisted(() => ({
   runtime: vi.fn(), comparison: vi.fn(), series: vi.fn(), agent: vi.fn(), context: vi.fn(), contextComparison: vi.fn(), latest: vi.fn(),
@@ -35,7 +35,7 @@ vi.mock('src/sections/skills/governance/AdoptionPanel', () => ({
   AuthorizedProjectPicker: ({ label }) => h('div', { role: 'group', 'aria-label': label }),
 }));
 vi.mock('src/components/iconify', () => ({ default: () => null }));
-vi.mock('notistack', () => ({ enqueueSnackbar: vi.fn() }));
+vi.mock('notistack', async (load) => ({ ...(await load()), enqueueSnackbar: vi.fn() }));
 
 // §9.1 runtimeCopy.test.js (UX-06): the new components render only §2.1
 // strings. These words must never appear in their rendered text.

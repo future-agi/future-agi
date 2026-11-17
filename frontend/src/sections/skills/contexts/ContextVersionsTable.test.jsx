@@ -125,6 +125,7 @@ it('opens the version from anywhere on the row and keeps View and Compare, in th
   expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual(['View', 'Compare']);
   expect(onSelectVersion).toHaveBeenCalledTimes(2);
   // No outlined button and no lone chevron in any row: the release request is the one inline (ghost) action.
+  await user.keyboard('{Escape}');
   expect(screen.getByRole('table', { name: 'Context versions' }).querySelectorAll('tbody .MuiButton-outlined')).toHaveLength(0);
   expect(screen.queryByText('View', { selector: 'tbody button' })).not.toBeInTheDocument();
 });

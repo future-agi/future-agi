@@ -202,7 +202,8 @@ describe("no command or snippet needs the full API keys", () => {
     openDisclosure("Without Python");
     const script = [...container.querySelectorAll("pre")].map((node) => node.textContent).join("\n");
     expect(script).toContain("Authorization: Context $FI_CONTEXT_CREDENTIAL");
-    expect(script).toContain("/model-hub/skills/consumption/resolve/");
+    expect(script).toContain('/model-hub/skills/consumption"');
+    expect(script).toContain('"$base/resolve/"');
     expect(script).toContain("X-Context-Resolution: $lease");
     expect(script).toContain("dir='.claude/skills/support-policy'");
     expect(script).not.toMatch(FULL_KEYS);

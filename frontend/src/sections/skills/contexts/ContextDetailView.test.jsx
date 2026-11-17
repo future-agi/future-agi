@@ -52,7 +52,7 @@ it('names the header action "Request release for v2" and keeps its exact candida
   const url = new URL(release.href);
   expect(url.searchParams.get('candidate')).toBe('v2');
   expect(url.searchParams.get('digest')).toBe(v2.digest);
-  expect(screen.queryByText(/Request release review/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/Request release/)).not.toBeInTheDocument();
 });
 
 it('offers the first release by the same name before production exists', () => {
@@ -63,7 +63,7 @@ it('offers the first release by the same name before production exists', () => {
 
 it('keeps the tab URL values and order, with no Runtime or Activity tab unflagged', () => {
   show();
-  expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['Instructions', 'Linked skills', 'Tests', 'Versions', 'Connected apps', 'Rollback', 'Install']);
+  expect(within(screen.getByRole('tablist', { name: 'Context detail sections' })).getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['Instructions', 'Linked skills', 'Tests', 'Versions', 'Connected apps', 'Rollback', 'Install']);
   fireEvent.click(screen.getByRole('tab', { name: 'Linked skills' }));
   expect(screen.getByLabelText('Location')).toHaveTextContent('tab=links');
   fireEvent.click(screen.getByRole('tab', { name: 'Connected apps' }));
@@ -93,7 +93,7 @@ const traceSections = (props = detail()) => ({ ...props, sections: { ...props.se
 it('orders the context tabs like the skill page when skillTraces is on', () => {
   setSkillTracesOverride(true);
   show(traceSections());
-  expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['Instructions', 'Linked skills', 'Tests', 'Runtime', 'Versions', 'Connected apps', 'Rollback', 'Activity', 'Install']);
+  expect(within(screen.getByRole('tablist', { name: 'Context detail sections' })).getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['Instructions', 'Linked skills', 'Tests', 'Runtime', 'Versions', 'Connected apps', 'Rollback', 'Activity', 'Install']);
   fireEvent.click(screen.getByRole('tab', { name: 'Runtime' }));
   expect(screen.getByLabelText('Location')).toHaveTextContent('tab=runtime');
   expect(screen.getByText('Context runtime')).toBeVisible();

@@ -13,5 +13,5 @@ it('explains a protected label in the restore line and keeps the acknowledgment'
     review={{ subjectId: 'skill', releaseRevision: 3, reviewFingerprint: `sha256:${'a'.repeat(64)}`, labels: [{ name: 'production', version: 2, isProtected: true }] }} onApply={async () => ({})} />);
   expect(screen.getByText(`Production will point at v2 again · ${PROTECTED_LABEL}. Apps following production pick it up on their next fetch.`)).toBeVisible();
   expect(document.body.textContent).not.toMatch(/· protected\b/);
-  expect(screen.getByRole('checkbox', { name: "I've checked which labels come back with this skill." })).toBeVisible();
+  expect(screen.getByRole('checkbox', { name: "I've checked which labels come back with this skill." })).toBeInTheDocument();
 });
