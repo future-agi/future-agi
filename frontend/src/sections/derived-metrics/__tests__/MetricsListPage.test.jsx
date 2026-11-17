@@ -497,3 +497,49 @@ it("shows a window past calculated values as not calculated yet, never a load er
     cells.queryByText("Could not load metric value"),
   ).not.toBeInTheDocument();
 });
+
+it.each([
+  [
+    "too large",
+    {
+      reason: "too_large",
+      since: "2026-11-13T09:00:00Z",
+      rows: 12500000,
+      limit: 10000000,
+    },
+    "Calculation paused: this project stores 12,500,000 metric rows, above the limit of 10,000,000.",
+  ],
+  [
+    "too busy",
+    {
+      reason: "too_busy",
+      since: "2026-11-17T00:00:00Z",
+      rows: null,
+      limit: 10000000,
+      work: { owners: 3200, captures: 100, head_generation: 4 },
+    },
+    "Calculation paused: one 15-minute period in this project has too much activity to calculate in a single pass.",
+  ],
+])(
+  "badges a project paused as %s and says why on hover, keeping calculated values",
+  async (_name, calculationPaused, why) => {
+    list = {
+      results: [{ ...conversation, calculation_paused: calculationPaused }],
+      next_cursor: null,
+    };
+    mount();
+    const row = await screen.findByRole("button", { name: conversation.name });
+    const cells = within(row.closest('[role="row"]'));
+    const badge = await cells.findByText("Paused");
+    expect(badge).toBeVisible();
+    // Values calculated before the pause still show in the Value column.
+    expect(await cells.findByText("0")).toBeVisible();
+    fireEvent.mouseOver(badge);
+    const tooltip = await screen.findByRole("tooltip");
+    expect(tooltip).toHaveTextContent(why);
+    expect(tooltip).toHaveTextContent(
+      "Values calculated so far stay available",
+    );
+    expect(cells.queryByText("Values unavailable")).not.toBeInTheDocument();
+  },
+);

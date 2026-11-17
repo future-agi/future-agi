@@ -68,9 +68,14 @@ export const calculatedThroughCopy = (through) =>
   `Final through ${formatMetricTime(through)}. Later values are not calculated yet or still settling.`;
 
 /** Why a project's metrics stopped calculating (calculation_paused). Values
- * already calculated stay; nothing new is calculated until the limit is
- * raised. */
+ * already calculated stay; nothing new is calculated until the row limit is
+ * raised (too_large), or until Run now retries or processing capacity is
+ * raised (too_busy: one 15-minute period cannot finish in a single pass). A
+ * busy pause has no row count, and its limit is the row limit, so neither is
+ * shown for it. */
 export const calculationPausedCopy = (paused) => {
+  if (paused?.reason === "too_busy")
+    return "Calculation paused: one 15-minute period in this project has too much activity to calculate in a single pass. Values calculated so far stay available; newer data is not calculated until Run now retries it or processing capacity is raised.";
   if (paused?.reason !== "too_large") return "";
   const rows = Number(paused.rows).toLocaleString("en-US");
   const limit = Number(paused.limit).toLocaleString("en-US");
@@ -79,18 +84,20 @@ export const calculationPausedCopy = (paused) => {
 
 /** A window with no final values yet: past where values are calculated
  * (not_calculated), calculated but still holding open conversations
- * (settling), or past where a paused project stopped (too_large). ``through``
- * is where final values stop. */
+ * (settling), or past where a paused project stopped (too_large, too_busy).
+ * ``through`` is where final values stop. */
 export const windowNotCalculatedYetCopy = (through, reason) => {
   const why =
     reason === "settling"
       ? "Not final yet: conversations in this window are still open."
       : reason === "too_large"
         ? "Not calculated: this project's metrics are paused because it is too large."
-        : "Not calculated yet.";
-  // A paused project has no next calculation until its limit is raised.
+        : reason === "too_busy"
+          ? "Not calculated: this project's metrics are paused because one 15-minute period has too much activity."
+          : "Not calculated yet.";
+  // A paused project has no scheduled next calculation.
   const next =
-    reason === "too_large"
+    reason === "too_large" || reason === "too_busy"
       ? "Choose an earlier window."
       : "Choose an earlier window or check back after the next calculation.";
   return through
