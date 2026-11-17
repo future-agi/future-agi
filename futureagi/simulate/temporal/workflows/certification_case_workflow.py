@@ -4,6 +4,7 @@ from datetime import timedelta
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
+from temporalio.exceptions import ActivityError, ApplicationError
 
 from simulate.temporal.constants import QUEUE_RUNNER
 from simulate.temporal.types.certification import (
@@ -36,26 +37,69 @@ class CertificationCaseWorkflow:
 
     @workflow.run
     async def run(self, input: CertificationCaseInput) -> str:
-        await workflow.execute_activity(
-            "certification_submit_case",
-            input,
-            task_queue=QUEUE_RUNNER,
-            start_to_close_timeout=timedelta(minutes=5),
-            retry_policy=_ACTIVITY_RETRY,
-            result_type=CertificationSubmitOutput,
-        )
+        try:
+            await workflow.execute_activity(
+                "certification_submit_case",
+                input,
+                task_queue=QUEUE_RUNNER,
+                start_to_close_timeout=timedelta(minutes=5),
+                retry_policy=_ACTIVITY_RETRY,
+                result_type=CertificationSubmitOutput,
+            )
+        except ActivityError as exc:
+            if not (
+                isinstance(exc.cause, ApplicationError)
+                and exc.cause.type == "CertificationConfigurationError"
+            ):
+                raise
+            await workflow.execute_activity(
+                "certification_record_case_result",
+                CertificationResultInput(
+                    case_id=input.case_id,
+                    outcome="failed",
+                    failure_class="configuration",
+                    failure_detail={"reason": "submission_refused"},
+                ),
+                task_queue=QUEUE_RUNNER,
+                start_to_close_timeout=timedelta(minutes=2),
+                retry_policy=_ACTIVITY_RETRY,
+            )
+            return "failed"
         deadline = workflow.now() + timedelta(seconds=input.max_duration_seconds)
         cancel_signaled = False
         while True:
             deadline_exceeded = workflow.now() >= deadline
+            poll = await workflow.execute_activity(
+                "certification_poll_case",
+                input,
+                task_queue=QUEUE_RUNNER,
+                start_to_close_timeout=timedelta(minutes=2),
+                retry_policy=_ACTIVITY_RETRY,
+                result_type=CertificationPollOutput,
+            )
+            if poll.done:
+                break
             if (self.cancel_requested or deadline_exceeded) and not cancel_signaled:
-                await workflow.execute_activity(
-                    "certification_cancel_case",
-                    input,
-                    task_queue=QUEUE_RUNNER,
-                    start_to_close_timeout=timedelta(minutes=4),
-                    retry_policy=_ACTIVITY_RETRY,
-                )
+                try:
+                    await workflow.execute_activity(
+                        "certification_cancel_case",
+                        input,
+                        task_queue=QUEUE_RUNNER,
+                        start_to_close_timeout=timedelta(minutes=4),
+                        retry_policy=_ACTIVITY_RETRY,
+                    )
+                except ActivityError:
+                    poll = await workflow.execute_activity(
+                        "certification_poll_case",
+                        input,
+                        task_queue=QUEUE_RUNNER,
+                        start_to_close_timeout=timedelta(minutes=2),
+                        retry_policy=_ACTIVITY_RETRY,
+                        result_type=CertificationPollOutput,
+                    )
+                    if not poll.done:
+                        raise
+                    break
                 cancel_signaled = True
             if deadline_exceeded:
                 await workflow.execute_activity(
@@ -71,19 +115,18 @@ class CertificationCaseWorkflow:
                     retry_policy=_ACTIVITY_RETRY,
                 )
                 return "failed"
-            poll = await workflow.execute_activity(
-                "certification_poll_case",
-                input,
-                task_queue=QUEUE_RUNNER,
-                start_to_close_timeout=timedelta(minutes=2),
-                retry_policy=_ACTIVITY_RETRY,
-                result_type=CertificationPollOutput,
-            )
-            if poll.done:
-                break
-            await workflow.sleep(timedelta(seconds=_CASE_POLL_SECONDS))
+            if cancel_signaled:
+                await workflow.sleep(timedelta(seconds=_CASE_POLL_SECONDS))
+            else:
+                try:
+                    await workflow.wait_condition(
+                        lambda: self.cancel_requested,
+                        timeout=timedelta(seconds=_CASE_POLL_SECONDS),
+                    )
+                except TimeoutError:
+                    pass
 
-        expected_terminal = "canceled" if cancel_signaled else "completed"
+        expected_terminal = "canceled" if poll.job_state == "canceled" else "completed"
         reconcile = await workflow.execute_activity(
             "certification_reconcile_case",
             CertificationCaseInput(

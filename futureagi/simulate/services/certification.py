@@ -282,12 +282,25 @@ def request_campaign_cancel(campaign) -> None:
         start_certification_workflow,
     )
 
-    campaign.cancel_requested_at = timezone.now()
-    if campaign.state in (CertificationState.RUNNING, CertificationState.PENDING):
-        campaign.state = CertificationState.CANCELING
-    campaign.save(
-        update_fields=["cancel_requested_at", "state", "finished_at", "updated_at"]
+    requested_at = timezone.now()
+    updated = (
+        type(campaign)
+        .no_workspace_objects.filter(
+            id=campaign.id,
+            state__in=(
+                CertificationState.PENDING,
+                CertificationState.RUNNING,
+                CertificationState.CANCELING,
+            ),
+        )
+        .update(
+            cancel_requested_at=requested_at,
+            state=CertificationState.CANCELING,
+            updated_at=requested_at,
+        )
     )
+    if not updated:
+        return
     start_certification_workflow(str(campaign.id))
     cancel_certification_workflow(str(campaign.id))
 
@@ -691,7 +704,6 @@ def detect_exploratory_failures(case) -> list[dict]:
             "receipt_id": failure["receipt_id"],
             "evaluation": failure["evaluation"],
             "status": failure["status"],
-            "exploratory": False,
         }
         for failure in _failed_receipt_sub_goals(case)
         if failure["evaluation"] not in stable

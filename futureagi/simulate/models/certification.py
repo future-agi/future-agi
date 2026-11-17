@@ -188,6 +188,10 @@ class CertificationNotification(BaseModel):
             "stable_assertion_failure",
             "Stable assertion failure",
         )
+        EXPLORATORY_EVALUATION_FAILURE = (
+            "exploratory_evaluation_failure",
+            "Exploratory evaluation failure",
+        )
         CAMPAIGN_COMPLETED = "campaign_completed", "Campaign completed"
 
     class State(models.TextChoices):

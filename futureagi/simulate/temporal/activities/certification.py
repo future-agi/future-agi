@@ -9,6 +9,7 @@ behavior even across retries.
 from __future__ import annotations
 
 from temporalio import activity
+from temporalio.exceptions import ApplicationError
 
 from simulate.temporal.activities.hosted_runner import _run_db
 from simulate.temporal.types.certification import (
@@ -138,7 +139,20 @@ async def certification_submit_case(
         )
         return CertificationSubmitOutput(hosted_harness_job_id=str(job.id))
 
-    return await _run_db(_submit)
+    try:
+        return await _run_db(_submit)
+    except Exception as exc:
+        from simulate.services.harness_usage import usage_limit_error
+        from simulate.services.hosted_harness import HostedHarnessError
+
+        refusal = exc if isinstance(exc, HostedHarnessError) else usage_limit_error(exc)
+        if refusal is None or refusal.retryable:
+            raise
+        raise ApplicationError(
+            refusal.message,
+            type="CertificationConfigurationError",
+            non_retryable=True,
+        ) from exc
 
 
 @activity.defn(name="certification_poll_case")
@@ -292,7 +306,7 @@ async def certification_record_case_result(
                 enqueue_notification(
                     campaign,
                     case,
-                    CertificationNotification.EventKind.STABLE_ASSERTION_FAILURE,
+                    CertificationNotification.EventKind.EXPLORATORY_EVALUATION_FAILURE,
                     {
                         "case_key": case.case_key,
                         "exploratory": True,
