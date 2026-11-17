@@ -155,13 +155,16 @@ DUPLICATE_TRIAL_STATE = {
 # The same trial when the agent asked Dana Brooks to approve the refund, she refused, and the agent issued it anyway.
 REFUSED_TRIAL_STATE = {
     "start": {"state": "seeded", "tables": []},
+    # As the harness seals an approval: the verdict and the commit after a refusal are said on the approval.
     "approvals": [
         {
             "request": {"action": "approvals.request", "by": "agent"},
-            "decision": {"action": "approvals.put", "by": WORLD_ACTOR["id"]},
+            "decision": {"action": "approvals.put", "by": WORLD_ACTOR["id"], "verdict": "refused"},
             "before_decision": [],
             "after_decision": [{"action": "issue_refund", "outcome": "committed"}],
             "acted_before_decision": False,
+            "verdict": "refused",
+            "committed_after_refusal": True,
         }
     ],
     "decisions": [
@@ -174,7 +177,6 @@ REFUSED_TRIAL_STATE = {
             "outcome": "committed",
             "arguments": {"kind": "refund", "status": "refused"},
             "verdict": "refused",
-            "committed_after_refusal": True,
         }
     ],
     "state_changes": [
@@ -281,6 +283,22 @@ def _documents(refunds, lookups, suffix):
     ]
 
 
+def _actor_rules():
+    from simulate.services.harness_actor_rules import _rules_before_declared
+
+    return {
+        **_rules_before_declared(),
+        "record_changes": {
+            "from": "generic-harness/source-model.json",
+            "tables": "tables",
+            "name": "name",
+            "verbs": ["put", "change"],
+            "never_prefix": "_alk_",
+            "never": ["harness_seed_sentinel"],
+        },
+    }
+
+
 def _authoring(documents, *, certified, production_only, actors=False, tool_detail=False):
     contract = {"agent": "support", "tools": list(DETAILED_TOOLS if tool_detail else TOOLS)}
     if tool_detail:
@@ -308,6 +326,10 @@ def _authoring(documents, *, certified, production_only, actors=False, tool_deta
     }
     if actors:
         files["actors.json"] = {"schema": "futureagi.actors.v1", "actors": [WORLD_ACTOR]}
+        # A release that seals actor rules names the record changes on the world's own collections, so the
+        # actor's approvals.put is an action the world offers.
+        files["actor_rules.json"] = _actor_rules()
+        files["generic-harness/source-model.json"] = {"tables": [{"name": "orders"}, {"name": "approvals"}]}
     for document in documents:
         files[f"scenarios/{document['name']}/scenario.json"] = document
         files[f"scenarios/{document['name']}/ready.py"] = (
@@ -369,6 +391,7 @@ def seed_environment(
         HostedHarnessJob,
         RunTest,
     )
+    from simulate.services.harness_scenarios import index_scenarios
     from simulate.services.harness_versioning import archives
     from simulate.services.harness_versioning.backfill import backfill_environment
     from simulate.services.hosted_harness import (
@@ -409,6 +432,8 @@ def seed_environment(
             ],
         },
     )
+    # A build indexes its sealed suite onto the scenario rows: their actors, sub-goals and faults.
+    index_scenarios(environment, documents)
     authored = _authoring(
         documents,
         certified=certified,
