@@ -84,7 +84,7 @@ describe("accepted dependency review", () => {
     expect(screen.getByText("v9 available")).toBeVisible();
     expect(screen.getByText("v8", { exact: true })).toBeVisible();
     expect(preview).not.toHaveBeenCalled();
-    check("Check update for refunds"); click("Preview dependency changes");
+    check("Check for update: refunds"); click("Preview dependency changes");
     await screen.findByText(/Compiled candidate/);
     expect(preview).toHaveBeenCalledWith({ revision: 12, links: session.contextSpec.links, refreshSkillIds: ["child"] });
     check("Accept these skill versions and update rules into 1 context draft."); click("Apply selected updates to draft");
@@ -151,7 +151,7 @@ describe("lifecycle authority and exact consequences", () => {
   const review = { subjectId: "original-uuid", releaseRevision: 7, reviewFingerprint: digest, labels: [{ name: "production", version: 4, isProtected: true }] };
   it("denies recovery without current authority and displays retained protected labels", () => {
     render(<ContextSafetyDialog scopeKey={scopeKey} open onClose={vi.fn()} action="unarchive" resource={resource} review={review} onApply={vi.fn()} />);
-    expect(screen.getByText("Production will point at v4 again · protected. Apps following production pick it up on their next fetch.")).toBeVisible();
+    expect(screen.getByText(/Production will point at v4 again/)).toHaveTextContent("Protected label (only admins can move it)");
     expect(button("Restore skill")).toBeDisabled();
   });
   it("explains a restore in plain words, with the ID folded away and no required note", async () => {

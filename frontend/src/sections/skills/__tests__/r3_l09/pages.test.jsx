@@ -83,7 +83,7 @@ describe("route wrappers and unavailable integration boundary", () => {
 });
 
 
-const REVIEWED = 'I reviewed these changes against the current published version.';
+const REVIEWED = /I've checked the.* against v/;
 const publishProps = (extra = {}) => ({ scopeKey: 'scope', state: 'ready', canPublish: true, onPublish: vi.fn().mockResolvedValue({}), onPublishAndRequest: vi.fn().mockResolvedValue({}), onRefresh: vi.fn(), ...extra });
 
 it('has no separate confirm step: ticking the review box enables both publish buttons', () => {
@@ -92,12 +92,12 @@ it('has no separate confirm step: ticking the review box enables both publish bu
   expect(screen.queryByText('Review confirmed')).not.toBeInTheDocument();
   expect(screen.queryByText(/Confirm the review above/)).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Publish version' })).toBeDisabled();
-  expect(screen.getByRole('button', { name: 'Publish version' })).toHaveAccessibleDescription('Tick the review box to publish.');
-  expect(screen.getByRole('button', { name: 'Publish and request review' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Publish version' })).toHaveAccessibleDescription('Tick the box to publish.');
+  expect(screen.getByRole('button', { name: 'Publish and request release' })).toBeDisabled();
   fireEvent.click(screen.getByRole('checkbox', { name: REVIEWED }));
   expect(screen.getByRole('button', { name: 'Publish version' })).toBeEnabled();
-  expect(screen.getByRole('button', { name: 'Publish and request review' })).toBeEnabled();
-  expect(screen.queryByText('Tick the review box to publish.')).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Publish and request release' })).toBeEnabled();
+  expect(screen.queryByText('Tick the box to publish.')).not.toBeInTheDocument();
 });
 
 it('publishes with one click that carries the unacknowledged head and the ticks, and survives the reload remount', async () => {
@@ -122,11 +122,11 @@ it('unticks the boxes and says the draft changed when the acknowledgment loses i
   const warned = { ...draftReview, headAcknowledged: false, checks: { items: [], summary: { errors: 0, warnings: 1, infos: 0 }, tokens: {} } };
   render(<MemoryRouter><ContextReleaseReview {...publishProps({ onPublish, onRefresh })} draftReview={warned} /></MemoryRouter>);
   fireEvent.click(screen.getByRole('checkbox', { name: REVIEWED }));
-  fireEvent.click(screen.getByRole('checkbox', { name: "I've read the check warnings for this version." }));
   fireEvent.click(screen.getByRole('button', { name: 'Publish version' }));
   expect(await screen.findByText('The draft changed since you reviewed it. Review the changes again.')).toBeVisible();
   expect(screen.getByRole('checkbox', { name: REVIEWED })).not.toBeChecked();
-  expect(screen.getByRole('checkbox', { name: "I've read the check warnings for this version." })).not.toBeChecked();
+  expect(screen.getAllByRole("checkbox")).toHaveLength(1);
+  expect(onPublish.mock.calls[0][0].acknowledgeWarnings).toBe(true);
   expect(onRefresh).toHaveBeenCalled();
   expect(screen.getByRole('button', { name: 'Publish version' })).toBeDisabled();
   expect(onPublish).toHaveBeenCalledTimes(1);
@@ -169,11 +169,11 @@ it('shows one sticky decision bar: checkbox, reason, outlined Publish version, t
   expect(screen.queryByText(/Locks this review to the current draft/)).not.toBeInTheDocument();
   const group = screen.getByRole('group', { name: 'Review acknowledgments' });
   const checkbox = within(group).getByRole('checkbox', { name: REVIEWED });
-  const reason = screen.getByText('Tick the review box to publish.');
-  expect(screen.getAllByText('Tick the review box to publish.')).toHaveLength(1);
+  const reason = screen.getByText('Tick the box to publish.');
+  expect(screen.getAllByText('Tick the box to publish.')).toHaveLength(1);
   expect(reason).toHaveAttribute('id', 'publish-review-reason');
   const publish = screen.getByRole('button', { name: 'Publish version' });
-  const request = screen.getByRole('button', { name: 'Publish and request review' });
+  const request = screen.getByRole('button', { name: 'Publish and request release' });
   const follows = (a, b) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
   expect(follows(checkbox, reason)).toBe(true);
   expect(follows(reason, publish)).toBe(true);
@@ -192,8 +192,8 @@ it('shows one sticky decision bar: checkbox, reason, outlined Publish version, t
   expect(reload.parentElement).toContainElement(screen.getByRole('status'));
   // After the box is ticked the reason goes away; nothing else waits.
   fireEvent.click(checkbox);
-  expect(screen.queryByText('Tick the review box to publish.')).not.toBeInTheDocument();
-  expect(publish).not.toHaveAccessibleDescription('Tick the review box to publish.');
+  expect(screen.queryByText('Tick the box to publish.')).not.toBeInTheDocument();
+  expect(publish).not.toHaveAccessibleDescription('Tick the box to publish.');
 });
 
 it('leads with one line (the version it creates, what changes, where production stays) and renames the engineer sections', () => {

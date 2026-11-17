@@ -131,9 +131,10 @@ describe('independent observations and availability', () => {
     render(<ContextCampaignList query={{ data: { count: 2, results: rows }, refetch: vi.fn() }} enabled onOpen={onOpen} page={1} onPageChange={vi.fn()} />);
     expect(screen.getByText(/Follows an earlier rollout/)).toBeInTheDocument();
     expect(screen.queryByText(/Reverse campaign/)).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Review Synthetic policy rollout, revision 40' }));
+    screen.getAllByRole('button', { name: 'Rollout details' }).forEach((button) => fireEvent.click(button));
+    fireEvent.click(screen.getByText('Revision 40').closest('tr'));
     expect(onOpen).toHaveBeenCalledWith('replacement');
-    expect(screen.getByRole('button', { name: 'Review Synthetic policy rollout, revision 37' })).toBeInTheDocument();
+    expect(within(screen.getByText('Revision 37').closest('tr')).getByRole('button', { name: 'Actions for Synthetic policy rollout' })).toBeInTheDocument();
   });
 });
 

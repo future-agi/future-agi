@@ -39,10 +39,15 @@ const labelPreview = { fingerprint: 'packet', packet: { candidate_version_id: ve
 beforeEach(() => { state.isViewer = false; vi.clearAllMocks(); window.localStorage.clear(); state.identity = 'org:workspace:author'; state.prepare.mockResolvedValue(preview); state.create.mockResolvedValue({ id: 'run' }); state.previewLabel.mockResolvedValue(labelPreview); state.submitLabel.mockResolvedValue({ id: 'request' }); });
 afterEach(cleanup);
 const mount = (element) => render(<MemoryRouter>{element}</MemoryRouter>);
+function openAnswerCheck() {
+  fireEvent.click(screen.getByRole('tab', { name: 'Run a test' }));
+  fireEvent.click(screen.getByRole('radio', { name: /^Check answers with this context/ }));
+}
 async function prepare() {
+  openAnswerCheck();
   fireEvent.change(screen.getByRole('textbox', { name: 'Test request' }), { target: { value: 'Describe purchasing policy' } });
   fireEvent.change(screen.getByRole('textbox', { name: 'Expected answer contains' }), { target: { value: 'approved' } });
-  fireEvent.click(screen.getByRole('checkbox', { name: 'I reviewed this request and its expected answer.' }));
+  fireEvent.click(screen.getByRole('checkbox', { name: 'I checked this request and its expected answer.' }));
   fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Task model' }));
   fireEvent.click(await screen.findByRole('option', { name: 'gpt-4o-mini' }));
   fireEvent.change(screen.getByRole('textbox', { name: 'Maximum estimated cost (USD)' }), { target: { value: '1' } });
@@ -50,10 +55,9 @@ async function prepare() {
   await screen.findByRole('button', { name: 'Run answer check' });
 }
 function reviewInventory() {
-  fireEvent.click(screen.getByRole('checkbox', { name: 'The files sent to the model contain no answer keys or grading material.' }));
-  fireEvent.click(screen.getByRole('checkbox', { name: 'I reviewed every file and input that will be sent to the model.' }));
-  fireEvent.click(screen.getByRole('checkbox', { name: 'I acknowledge provider processing of this reviewed context and test request.' }));
+  fireEvent.click(screen.getByRole('checkbox', { name: /^Send / }));
 }
+
 it('uses context semantics, a required without-context baseline, and explicit reviewed provider processing', async () => {
   mount(<ContextTestsPanel contextId="parent" draft={{ revision: 5, digest }} />);
   await prepare();
@@ -86,6 +90,7 @@ it('recovers an uncertain admission using the identical body and key, without a 
 it('does not carry the last test request across logins', () => {
   window.localStorage.setItem('skills.contextTest.last:org:workspace:someone-else', JSON.stringify({ prompt: 'private request' }));
   mount(<ContextTestsPanel contextId="parent" version={version} />);
+  openAnswerCheck();
   expect(screen.getByRole('textbox', { name: 'Test request' })).toHaveValue('');
   window.localStorage.clear();
 });
@@ -105,7 +110,7 @@ it('labels delivered sessions with their exact release number, never a guessed o
   expect(screen.getByTitle('foreign-version')).toBeVisible();
   expect(screen.queryByText('v1')).not.toBeInTheDocument();
   expect(screen.getAllByText('Old thread retained')).toHaveLength(2);
-  fireEvent.click(screen.getByRole('button', { name: 'Inspect runtime-known' }));
+  fireEvent.click(screen.getByText('runtime-known').closest('tr'));
   fireEvent.click(screen.getByRole('button', { name: 'Details', exact: true }));
   expect(screen.getByTitle('fresh-session')).toBeVisible();
 });

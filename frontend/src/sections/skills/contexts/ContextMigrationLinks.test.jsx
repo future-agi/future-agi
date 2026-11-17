@@ -34,11 +34,13 @@ it("seeds an empty draft with migration proposals pinned to exact versions, appl
 });
 
 it("never replaces already accepted links with proposals", async () => {
-  render(<ContextLinksPanel scopeKey="scope" session={session([{ skillId: "kept", selector: { label: "production" } }])} proposedLinks={[{ skillId: "one", version: 1 }]} />);
+  render(<ContextLinksPanel scopeKey="scope" session={session([{ skillId: "kept", selector: { label: "production" } }])} proposedLinks={[{ skillId: "one", version: 1 }]} availableSkills={[{ id: "kept", name: "kept", latestVersion: 1 }]} />);
   expect(screen.queryByText(/from your migration are proposed/)).not.toBeInTheDocument();
   // Only the accepted link is listed: its own refresh choice, and no proposed row beside it.
-  expect(await screen.findByRole('checkbox', { name: 'Check update for kept' })).toBeInTheDocument();
-  expect(screen.getAllByRole('button', { name: 'Remove from context' })).toHaveLength(1);
+  expect(await screen.findByText('kept', { exact: true })).toBeInTheDocument();
+  expect(screen.queryByText('one', { exact: true })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Actions for kept' }));
+  expect(screen.getAllByRole('menuitem', { name: 'Remove from context' })).toHaveLength(1);
 });
 
 it("tells the author which migration skills will be proposed before creating the draft", () => {

@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import ContextTraceCaptureAction from './ContextTraceCaptureAction';
@@ -99,16 +99,19 @@ it('does not grant capture rights from a context list entry alone', () => {
 });
 it('renders context cases while clearly withholding native reproduction and release claims', () => {
   render(<MemoryRouter><ContextTestsPanel contextId="context" version={{ number: 4 }} canWrite /></MemoryRouter>);
-  expect(screen.getByText('Test cases')).toBeVisible();
+  fireEvent.click(screen.getByRole('tab', { name: 'Cases' }));
+  expect(within(screen.getByRole('tabpanel')).getByText('Test cases')).toBeVisible();
+  expect(within(screen.getByRole('tabpanel')).getByText('No test cases yet')).toBeVisible();
+  fireEvent.click(screen.getByRole('tab', { name: 'Run a test' }));
   fireEvent.click(screen.getByRole('radio', { name: /^Test on the application/ }));
   expect(screen.getByText('Application tests are off')).toBeVisible();
   expect(screen.queryByText(/Application verification is off/)).not.toBeInTheDocument();
-  expect(screen.getByText('No test cases yet')).toBeVisible();
 });
 it('offers the application test only when the deployment has a hosted runtime', () => {
   state.runtime = true;
   render(<MemoryRouter><ContextTestsPanel contextId="context" version={{ number: 4 }} versions={[{ number: 4 }]} canWrite /></MemoryRouter>);
   expect(screen.queryByText(/Application tests are off/)).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('tab', { name: 'Run a test' }));
   fireEvent.click(screen.getByRole('radio', { name: /^Test on the application/ }));
   expect(screen.getByText('Application target')).toBeVisible();
   expect(screen.getByRole('button', { name: 'Add application target' })).toBeEnabled();
@@ -118,6 +121,7 @@ it('offers the application test only when the deployment has a hosted runtime', 
 it('does not turn an inaccessible suite into empty successful coverage', () => {
   state.suiteError = true;
   render(<MemoryRouter><ContextTestsPanel contextId="context" canWrite /></MemoryRouter>);
-  expect(screen.getByText("Couldn't load test cases")).toBeVisible();
+  fireEvent.click(screen.getByRole("tab", { name: "Cases" }));
+  expect(within(screen.getByRole("tabpanel")).getByText("Couldn't load test cases")).toBeVisible();
   expect(screen.queryByText('No test cases yet')).not.toBeInTheDocument();
 });

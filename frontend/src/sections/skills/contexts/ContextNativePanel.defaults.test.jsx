@@ -119,7 +119,7 @@ it('opens an attempt from its row with the keyboard, shows disagreement scope an
   expect(screen.getByText('Applies to this run only: version tested v6 · Refund · run 1')).toBeVisible();
   expect(screen.queryByText(/whole run/)).not.toBeInTheDocument();
   expect(screen.getByText('Version tested v6 · Run 1 of 1')).toBeVisible();
-  expect(screen.getByText('Human check')).toBeVisible();
+  expect(screen.getAllByText('Human check').some((node) => node.closest('[role=dialog]'))).toBe(true);
   expect(screen.getByText("Your assessment is added next to the automatic result; it doesn't change it.")).toBeVisible();
   expect(screen.getByText('Disagrees')).toBeVisible();
   expect(screen.getByText('Wrong business action')).toBeVisible();
@@ -466,7 +466,7 @@ it('puts the result and History on Results, the setup on Run a test and the case
   expect(screen.queryByRole('radio', { name: /^Test on the application/ })).not.toBeInTheDocument();
   expect(screen.queryByText('Cases table')).not.toBeVisible();
   showRun();
-  expect(within(visiblePanel()).getByRole('radio', { name: /^Test on the application/ })).toBeVisible();
+  expect(within(visiblePanel()).getByRole('radio', { name: /^Test on the application/ })).toBeInTheDocument();
   showTab('Cases');
   expect(within(visiblePanel()).getByText('Cases table')).toBeVisible();
   expect(screen.queryByRole('button', { name: 'Show setup' })).not.toBeInTheDocument();

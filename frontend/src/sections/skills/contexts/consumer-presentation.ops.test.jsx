@@ -14,14 +14,14 @@ const renderConsumers = (value = data) => render(<ContextConsumersView scopeKey=
 
 it('uses one calm summary and one waiting message for an unreported app', () => {
   renderConsumers();
-  expect(screen.getByText('1 of 1 connected consumer needs a delivery report to confirm the version received.')).toBeVisible();
+  expect(screen.getByText('1 app follows this context. It hasn\'t reported which version it received yet.')).toBeVisible();
   expect(screen.queryByRole('alert')).toBeNull();
   const table = screen.getByRole('table', { name: 'Context delivery observations' });
   expect(within(table).getByRole('columnheader', { name: 'Kind' })).toBeVisible();
   expect(within(table).getByText('App')).toBeVisible();
   // Nothing has reported, so the list says so once and each row carries the short tag.
-  expect(screen.getByText('No app has reported a version yet.')).toBeVisible();
-  expect(within(table).getByText('No report')).toBeVisible();
+  expect(screen.getByText('No report yet')).toBeVisible();
+  expect(within(table).queryByText('No report')).toBeNull();
   expect(within(table).queryByText('No report from this app yet')).toBeNull();
   expect(within(table).getByRole('columnheader', { name: 'App or repository' })).toBeVisible();
   expect(within(table).queryByRole('columnheader', { name: 'Consumer' })).toBeNull();
@@ -46,7 +46,7 @@ it('keeps the long tag when some apps have reported, so rows stay distinguishabl
 it('keeps pin and stale evidence distinct and pluralizes the delivery summary', () => {
   const repository = { ...row, binding: { ...row.binding, id: 'repo', name: 'Support repository', kind: 'repository' }, states: ['pinned_as_intended', 'stale_observation', 'unknown'], observationAgeSeconds: 3600 };
   renderConsumers({ ...data, count: 2, results: [row, repository] });
-  expect(screen.getByText('2 of 2 connected consumers need a delivery report to confirm the version received.')).toBeVisible();
+  expect(screen.getByText('2 apps follow this context. 2 of 2 still need a delivery report to confirm the version received.')).toBeVisible();
   expect(screen.getByText('Pinned as intended')).toBeVisible();
   expect(screen.getByText('Stale observation')).toBeVisible();
   const table = screen.getByRole('table', { name: 'Context delivery observations' });

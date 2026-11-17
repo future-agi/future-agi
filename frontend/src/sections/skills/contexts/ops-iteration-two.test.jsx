@@ -16,12 +16,12 @@ it('hides empty-consumer filters and makes registration the primary without chan
   const data = { results: [], count: 0, page: 1, pageSize: 25 };
   const action = <ContextTargetRegistration contextId="ctx" canRegister />;
   const view = render(<ContextConsumersView onWindowChange={vi.fn()} onPageChange={vi.fn()} scopeKey="workspace" state="ready" data={data} registrationAction={action} />);
-  expect(screen.queryByLabelText('Search consumers')).toBeNull();
+  expect(screen.queryByLabelText('Search apps')).toBeNull();
   expect(screen.queryByLabelText('Verification')).toBeNull();
   expect(screen.queryByLabelText('Observation window')).toBeNull();
   expect(screen.getByRole('button', { name: 'Connect an app' })).toHaveClass('MuiButton-contained');
   view.rerender(<ContextConsumersView onWindowChange={vi.fn()} onPageChange={vi.fn()} scopeKey="workspace" state="ready" data={{ ...data, count: 1, results: [{ binding: { id: 'app', name: 'Support app', kind: 'runtime', selector: { label: 'production' } }, states: ['unknown'] }] }} registrationAction={action} />);
-  expect(screen.getByLabelText('Search consumers')).toBeVisible();
+  expect(screen.getByLabelText('Search apps')).toBeVisible();
   expect(screen.getByRole('button', { name: 'Connect an app' })).toHaveClass('MuiButton-outlined');
 });
 
