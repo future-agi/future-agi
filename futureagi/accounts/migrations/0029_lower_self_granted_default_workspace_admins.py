@@ -22,6 +22,9 @@ UPDATE_SAFETY = {
         "no longer match, so a re-run is a no-op; the reverse is a noop. Nothing "
         "is written to ClickHouse."
     ),
+    "reviewer": "khushalsonawat",
+    "review": "https://github.com/future-agi/future-agi/pull/3700#discussion_r4596026037",
+    "large_volume_rehearsal": True,
 }
 
 
