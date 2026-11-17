@@ -2502,3 +2502,61 @@ def test_platform_eval_job_after_a_silent_ingest_keeps_the_call_inconclusive(
     rows, _ = build_call_rows(call.test_execution, [call], [], set())
     assert rows[0]["outcome"] == "inconclusive"
     assert rows[0]["harness_outcome_status"] is None
+
+
+@pytest.mark.django_db
+def test_hosted_scenario_count_scopes_its_silent_filter_to_the_run(
+    organization, workspace
+):
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    from simulate.models import RunTest, Scenarios, TestExecution
+    from simulate.services.hosted_harness import update_execution_counts
+
+    job, capability, scenario_id = _begin_hosted_scenario(
+        organization, workspace, key="hosted-silent-scope", modality="text"
+    )
+    digest, content = _store_transcript_artifact(job, _ANSWERED)
+    receipt = _hosted_receipt(
+        job, capability, scenario_id, modality="text", transcript=f"sha256:{digest}"
+    )
+    answered = _ingest_hosted(job, capability, receipt, content)
+    assert answered.call_metadata.get("harness_verdict_withheld") is not True
+    assert job.completed_count == 1
+
+    # Withheld calls of another run, in the same organization, must not matter.
+    other_run = RunTest.objects.create(
+        name="Other run", organization=organization, workspace=workspace
+    )
+    other_execution = TestExecution.objects.create(
+        run_test=other_run, status=TestExecution.ExecutionStatus.COMPLETED
+    )
+    other_scenario = Scenarios.objects.create(
+        name="Other scenario",
+        source="test",
+        scenario_type=Scenarios.ScenarioTypes.SCRIPT,
+        organization=organization,
+        workspace=workspace,
+    )
+    for _ in range(3):
+        CallExecution.objects.create(
+            test_execution=other_execution,
+            scenario=other_scenario,
+            status="completed",
+            call_metadata={"harness_verdict_withheld": True},
+            eval_outputs={},
+        )
+
+    with CaptureQueriesContext(connection) as queries:
+        update_execution_counts(job)
+
+    job.refresh_from_db()
+    assert job.completed_count == 1
+    (silent,) = [
+        q["sql"] for q in queries if "harness_verdict_withheld" in q["sql"].lower()
+    ]
+    # The filter reaches calls only through this run's receipts: no subquery selects
+    # from the call table, so the plan never scans the other runs' calls.
+    assert 'FROM "simulate_call_execution"' not in silent
+    assert job.id.hex in silent.replace("-", "")

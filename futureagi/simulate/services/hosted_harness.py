@@ -3038,12 +3038,10 @@ def update_execution_counts(job: HostedHarnessJob) -> None:
         # completed, playable call with a failed behavioural/evidence verdict is not reported as a
         # failed call.
         # A call the agent never answered holds no verdict, whatever its receipt sealed.
-        silent_calls = CallExecution.no_workspace_objects.filter(
-            **{f"call_metadata__{HARNESS_VERDICT_WITHHELD_KEY}": True}
-        )
+        # Reached through this run's receipts, never as a subquery over the call table.
+        withheld = f"call_execution__call_metadata__{HARNESS_VERDICT_WITHHELD_KEY}"
         silent_receipts = receipts.filter(
-            Q(execution__call_execution__in=silent_calls)
-            | Q(scenario__call_execution__in=silent_calls)
+            Q(**{f"execution__{withheld}": True}) | Q(**{f"scenario__{withheld}": True})
         ).values("id")
         scenario_completed = (
             receipts.filter(status="passed").exclude(id__in=silent_receipts).count()
