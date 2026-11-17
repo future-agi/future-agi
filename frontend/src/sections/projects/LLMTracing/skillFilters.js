@@ -479,10 +479,10 @@ export function hydrateFiltersWithSkills(
 }
 
 /**
- * Persist filters. `SKILL` items are written here, exactly, keeping their
- * `group` (the shared serializer does not know that key, and refuses the
- * `gte`/`lte` version operators); every other item goes through
- * `serializeOthers`. Order within each kind is kept.
+ * Persist filters. Validate `SKILL` items against their per-column contract
+ * and keep their exact cohort values and correlation groups. Other items go
+ * through `serializeOthers`. The shared API serializer also preserves this
+ * shape when the saved-view request is sent. Order within each kind is kept.
  */
 export function serializeFiltersWithSkills(filters, serializeOthers) {
   const list = filters || [];
@@ -551,23 +551,6 @@ export function reconcileSkillItems(previous = [], next = [], { grain = "trace" 
   });
   return out;
 }
-
-const SAVED_VIEW_FILTER_KEYS = ["filters", "extra_filters", "compare_filters", "compare_extra_filters"];
-
-/**
- * True when a saved-view config holds `SKILL` items the shared saved-view
- * serializer (src/api/project/saved-views.js, not this lane's) cannot write
- * yet: a correlation `group` other than 0, or the `gte`/`lte` version range.
- * The view's save handlers check this first and say so, instead of failing.
- */
-export const savedViewNeedsSkillContract = (config) =>
-  SAVED_VIEW_FILTER_KEYS.some((key) =>
-    (Array.isArray(config?.[key]) ? config[key] : []).some(
-      (item) =>
-        isSkillFilterItem(item) &&
-        (skillGroupOf(item) > 0 || ["gte", "lte"].includes(opOf(item))),
-    ),
-  );
 
 /** A stable signature of the `SKILL` and other API items, used to hide the source bar once the person edits. */
 export const filtersSignature = (filters = []) =>

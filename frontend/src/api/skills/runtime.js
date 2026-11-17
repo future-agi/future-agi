@@ -49,7 +49,8 @@ export function normalizeMoveWindow(value) {
 }
 
 const projectParam = (projectIds) => (Array.isArray(projectIds) && projectIds.length ? projectIds.map(String).join(',') : undefined);
-const clean = (params) => Object.fromEntries(Object.entries(params).filter(([, value]) => value !== undefined && value !== null && value !== ''));
+// Blank agent/service values are part of the runtime agent key, not omissions.
+const clean = (params) => Object.fromEntries(Object.entries(params).filter(([key, value]) => value !== undefined && value !== null && (value !== '' || key === 'agent' || key === 'service')));
 
 function runtimeRead({ route, path = {}, params = () => ({}), mapper = camelizeRuntime }) {
   return async (config) => {

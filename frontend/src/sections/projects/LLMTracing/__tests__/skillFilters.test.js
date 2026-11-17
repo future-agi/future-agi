@@ -354,6 +354,7 @@ describe("URL parameters", () => {
     expect(parseSkillSource(JSON.stringify({ skill_id: SKILL, version_id: V4, agent_key: ["p1", "svc", "refund-agent"], metric: "failed_requests", event_id: EVENT, side: "after" })))
       .toEqual({ skillId: SKILL, versionId: V4, contextId: null, bindingId: null, eventId: EVENT, metric: "failed_requests", side: "after", agentKey: ["p1", "svc", "refund-agent"], window: null });
     expect(parseSkillSource(JSON.stringify({ context_id: CTX, binding_id: EVENT, metric: "all" }))).toMatchObject({ contextId: CTX, bindingId: EVENT, skillId: null });
+    // eslint-disable-next-line no-script-url -- Untrusted input must not become a link.
     expect(parseSkillSource(JSON.stringify({ skill_id: "javascript:alert(1)" }))).toBeNull();
     expect(parseSkillSource(JSON.stringify({ version_id: V3 }))).toBeNull();
     expect(parseSkillSource("{not json")).toBeNull();

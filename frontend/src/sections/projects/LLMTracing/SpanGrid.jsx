@@ -129,7 +129,7 @@ export const RanAfterLoadingCell = ({ value }) => {
           key={ref.ref}
           size="small"
           label={ranAfterLoadingChip(ref)}
-          sx={{ height: 20, bgcolor: "background.neutral" }}
+          sx={{ bgcolor: "background.neutral" }}
         />
       ))}
       {parsed.length > visible.length && (

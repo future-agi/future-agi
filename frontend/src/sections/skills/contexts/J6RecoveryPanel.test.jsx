@@ -1,3 +1,4 @@
+/* eslint-disable react/prop-types -- Test doubles mirror the real component props. */
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { enqueueSnackbar } from "notistack";

@@ -239,7 +239,6 @@ function SkillChip({ chip, onAddFilter }) {
           ) : undefined}
           sx={{
             maxWidth: 180,
-            height: 22,
             bgcolor: failed ? "transparent" : "background.neutral",
             "& .MuiChip-label": { px: 0.75, overflow: "hidden", textOverflow: "ellipsis" },
           }}

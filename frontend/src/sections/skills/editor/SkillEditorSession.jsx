@@ -310,7 +310,7 @@ function EditorSession({ skill, initialDraft, refetchDraft, kind = 'skill', reso
 
 const propTypes = {
   skill: PropTypes.shape({ id: PropTypes.string.isRequired, name: PropTypes.string.isRequired, latestVersion: PropTypes.number, permissions: PropTypes.object }).isRequired,
-  initialDraft: PropTypes.shape({ files: PropTypes.array.isRequired, note: PropTypes.string.isRequired, revision: PropTypes.number.isRequired, baseVersion: PropTypes.number }).isRequired,
+  initialDraft: PropTypes.shape({ files: PropTypes.array.isRequired, note: PropTypes.string.isRequired, revision: PropTypes.number.isRequired, baseVersion: PropTypes.number, contextSpec: PropTypes.shape({ links: PropTypes.array }) }).isRequired,
   refetchDraft: PropTypes.func.isRequired, kind: PropTypes.oneOf(['skill', 'agent_context']), resourceApi: PropTypes.object,
   scopeKey: PropTypes.string, contextControls: PropTypes.object, readOnlyFiles: PropTypes.array,
   readOnlyFileQuery: PropTypes.object, onSelectReadOnlyFile: PropTypes.func, onDraftRevisionChange: PropTypes.func, onReview: PropTypes.func,

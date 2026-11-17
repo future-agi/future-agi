@@ -212,7 +212,6 @@ import {
   parseLinkSort,
   parseSkillSource,
   reconcileSkillItems,
-  savedViewNeedsSkillContract,
   validateSkillGroups,
 } from "./skillFilters";
 import { formatDate } from "src/utils/report-utils";
@@ -2955,10 +2954,6 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
   const handleSaveView = useCallback(() => {
     if (!activeViewTabId) return;
     const config = buildViewConfig();
-    if (savedViewNeedsSkillContract(config)) {
-      enqueueSnackbar(OBSERVE_SKILL_COPY.savedViewBlocked, { variant: "info" });
-      return;
-    }
     const mutate = isUserMode ? updateWorkspaceSavedView : updateSavedView;
     mutate(
       { id: activeViewTabId, config },
@@ -2984,10 +2979,6 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
   // Save view from staying visible for changes that were just saved.
   const saveFiltersToActiveView = useCallback(() => {
     const config = buildViewConfig();
-    if (savedViewNeedsSkillContract(config)) {
-      enqueueSnackbar(OBSERVE_SKILL_COPY.savedViewBlocked, { variant: "info" });
-      return;
-    }
     updateSavedView(
       { id: activeViewTabId, config },
       {
@@ -3172,10 +3163,6 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
 
   const handleSetDefaultView = useCallback(() => {
     const configPayload = buildViewConfig();
-    if (savedViewNeedsSkillContract(configPayload)) {
-      enqueueSnackbar(OBSERVE_SKILL_COPY.savedViewBlocked, { variant: "info" });
-      return;
-    }
     const onDone = {
       onSuccess: () =>
         enqueueSnackbar("View set as default for everyone", {

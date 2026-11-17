@@ -1,11 +1,12 @@
 import { createElement } from 'react';
+import PropTypes from 'prop-types';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderHook, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import axios from 'src/utils/axios';
 import {
   camelizeRuntime, normalizeMoveWindow, runtimeErrorKind, runtimeWindow,
-  useContextLinkLoads, useLatestLoad, useSkillComparison, useSkillRuntime,
+  useContextLinkLoads, useLatestLoad, useSkillComparison, useSkillRuntime, useRuntimeAgent,
 } from './runtime';
 
 const routes = vi.hoisted(() => ({ pending: false }));
@@ -38,7 +39,9 @@ const wire = {
 };
 const wrapper = () => {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
-  return ({ children }) => createElement(QueryClientProvider, { client }, children);
+  function QueryWrapper({ children }) { return createElement(QueryClientProvider, { client }, children); }
+  QueryWrapper.propTypes = { children: PropTypes.node };
+  return QueryWrapper;
 };
 
 beforeEach(() => {
@@ -107,6 +110,12 @@ describe('runtime hooks', () => {
     await waitFor(() => expect(result.current.isError).toBe(true));
     expect(runtimeErrorKind(result.current.error)).toBe('unavailable');
     expect(axios.get).not.toHaveBeenCalled();
+  });
+
+  it('keeps empty agent and service identities instead of widening the query', async () => {
+    const { result } = renderHook(() => useRuntimeAgent({ projectId: 'p1', agent: '', service: '' }), { wrapper: wrapper() });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(axios.get.mock.calls[0][1].params).toMatchObject({ project_id: 'p1', agent: '', service: '' });
   });
 
   it('asks for one move by event id and window', async () => {

@@ -1897,7 +1897,7 @@ export function SkillSpanSection({ span, projectId, beforeFirstLoad }) {
                 key={ref.ref}
                 size="small"
                 label={ranAfterLoadingChip(ref)}
-                sx={{ height: 20, bgcolor: "background.neutral" }}
+                sx={{ bgcolor: "background.neutral" }}
               />
             ))}
           </Stack>

@@ -322,14 +322,14 @@ export function TraceSkillsStrip({ query, onSelectSpan }) {
                 <Typography variant="caption" sx={{ fontWeight: 600 }}>
                   {row.name || OBSERVE_SKILL_COPY.unknownSkill}
                 </Typography>
-                <Chip size="small" label={versionName(row.version)} sx={{ height: 18 }} />
-                {asked && <Chip size="small" variant="outlined" label={asked} sx={{ height: 18 }} />}
+                <Chip size="small" label={versionName(row.version)} />
+                {asked && <Chip size="small" variant="outlined" label={asked} />}
                 {row.evidence && (
                   <Chip
                     size="small"
                     variant="outlined"
                     label={EVIDENCE[row.evidence] || row.evidence}
-                    sx={{ height: 18 }}
+
                   />
                 )}
                 {row.agent &&
@@ -467,7 +467,7 @@ export function TraceSkillsStrip({ query, onSelectSpan }) {
                 size="small"
                 variant="outlined"
                 label={`${OBSERVE_SKILL_COPY.connectedApp}: ${detail.context.bindingName || OBSERVE_SKILL_COPY.shortId(detail.context.bindingId)}`}
-                sx={{ height: 18 }}
+
               />
             )}
           </Stack>

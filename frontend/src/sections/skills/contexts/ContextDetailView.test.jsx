@@ -1,3 +1,4 @@
+/* eslint-disable react/prop-types -- Test doubles mirror the real component props. */
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
