@@ -13,6 +13,7 @@ import { dsPalette, dsTypography } from "src/theme/ds-tokens";
 import { downloadVersionZip, useArchiveSkill, useSkill } from "src/api/skills";
 import { enqueueSnackbar } from "notistack";
 import VersionsTab from "../versions/VersionsTab";
+import { setSkillTracesOverride } from "../runtime/skillTracesFlag";
 import SkillDetailView from "./SkillDetailView";
 
 const access = vi.hoisted(() => ({ isViewer: false, archivedReady: false, canAdmin: true }));
@@ -23,6 +24,7 @@ vi.mock("src/api/skills", () => ({
   useSkill: vi.fn(),
   useSkillVersion: () => ({ data: { digest: "sha256:" + "a".repeat(64) } }),
   useArchiveSkill: vi.fn(),
+  useSkillVersions: vi.fn(() => ({ data: { results: [{ id: "version-1", number: 1 }, { id: "version-2", number: 2 }] } })),
   archivedSkillsReady: () => access.archivedReady,
   downloadVersionZip: vi.fn(),
   getSkillErrorCode: (error) => error?.code,
@@ -37,6 +39,18 @@ vi.mock("./UsageTab", () => ({ default: () => <p>Usage view</p> }));
 vi.mock("./UseSkillPanel", () => ({ default: () => <p>Install commands</p> }));
 vi.mock("../versions/VersionsTab", () => ({
   default: vi.fn(() => <p>Version history</p>),
+}));
+// Stream A components (lane ST10) are stand-ins here: this suite checks only where the shell
+// places them and what it hands them (SKILL-TRACES §10 UXF5 commit 2).
+const runtime = vi.hoisted(() => ({ tab: vi.fn(), chip: vi.fn(), check: vi.fn() }));
+vi.mock("../runtime/RuntimeTab", () => ({
+  default: (props) => { runtime.tab(props); return <section aria-label="Runtime view"><button type="button" onClick={() => props.onRollback(1)}>Roll back to v1</button><button type="button" onClick={props.onCheckTracing}>Check tracing from diagnosis</button></section>; },
+}));
+vi.mock("../runtime/MoveStateChip", () => ({
+  default: (props) => { runtime.chip(props); return <span>Watching v2 · 18 h left</span>; },
+}));
+vi.mock("../runtime/CheckTracing", () => ({
+  default: (props) => { runtime.check(props); return <section aria-label="Check tracing">{props.canCheck ? "can check" : "viewer"}</section>; },
 }));
 const skill = {
   id: "skill-a",
@@ -100,7 +114,7 @@ beforeEach(() => {
     value: { writeText: vi.fn().mockResolvedValue(undefined) },
   });
 });
-afterEach(cleanup);
+afterEach(() => { cleanup(); setSkillTracesOverride(null); });
 
 describe("Skill detail route", () => {
   it('archives with the release revision reviewed when confirmation opened', async () => {
@@ -444,5 +458,77 @@ describe("header button weight (UX iteration 5, LIB2)", () => {
     show(`?tab=${tab}`);
     expect(edit()).toHaveClass("MuiButton-outlined");
     expect(edit()).not.toHaveClass("MuiButton-contained");
+  });
+});
+
+// SKILL-TRACES §7.3 and §10 UXF5 commit 2, with `skillTraces` on: the Runtime tab between Linked
+// contexts and Versions (URL value "runtime"), the header move chip, and Check tracing on Install.
+describe("Stream A wiring with skillTraces on", () => {
+  beforeEach(() => setSkillTracesOverride(true));
+
+  it("orders the tabs Files, Tests, Linked contexts, Runtime, Versions, Activity, Install", () => {
+    show();
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Files", "Tests", "Linked contexts", "Runtime", "Versions", "Activity", "Install"]);
+    fireEvent.click(screen.getByRole("tab", { name: "Runtime" }));
+    expect(screen.getByLabelText("URL")).toHaveTextContent("?tab=runtime");
+    expect(screen.getByRole("region", { name: "Runtime view" })).toBeInTheDocument();
+  });
+
+  it("hands the Runtime tab the skill, its versions, production and the viewed version", () => {
+    show("?tab=runtime&version=1");
+    const props = runtime.tab.mock.calls.at(-1)[0];
+    expect(props.skill).toEqual({ id: "skill-a", name: "support-policy" });
+    expect(props.versions).toEqual([{ id: "version-1", number: 1 }, { id: "version-2", number: 2 }]);
+    expect(props.productionVersion).toBe(2);
+    expect(props.viewingVersion).toBe(1);
+  });
+
+  it("opens the existing Versions flow for a rollback and never moves a label from the card", () => {
+    show("?tab=runtime&move=event-1&window=24h");
+    fireEvent.click(screen.getByRole("button", { name: "Roll back to v1" }));
+    const url = screen.getByLabelText("URL").textContent;
+    expect(url).toContain("tab=versions");
+    expect(url).toContain("version=1");
+    expect(url).not.toContain("move=");
+    expect(screen.getByText("Version history")).toBeInTheDocument();
+  });
+
+  it("sends Check tracing from the diagnosis to Install", () => {
+    show("?tab=runtime");
+    fireEvent.click(screen.getByRole("button", { name: "Check tracing from diagnosis" }));
+    expect(screen.getByLabelText("URL")).toHaveTextContent("?tab=use");
+  });
+
+  it("shows the move chip beside the production and latest chips", () => {
+    show();
+    expect(screen.getByText("Watching v2 · 18 h left")).toBeInTheDocument();
+    expect(runtime.chip).toHaveBeenCalledWith({ skillId: "skill-a" });
+  });
+
+  it("puts Check tracing below the install instructions, disabled for viewers", () => {
+    show("?tab=use");
+    expect(screen.getByText("Install commands")).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Check tracing" })).toHaveTextContent("can check");
+    expect(runtime.check.mock.calls.at(-1)[0]).toMatchObject({ kind: "skill", id: "skill-a", name: "support-policy" });
+    cleanup();
+    access.isViewer = true;
+    show("?tab=use");
+    expect(screen.getByRole("region", { name: "Check tracing" })).toHaveTextContent("viewer");
+  });
+});
+
+describe("with skillTraces off, nothing from runtime/ renders", () => {
+  beforeEach(() => setSkillTracesOverride(false));
+  it("has no Runtime tab, chip or Check tracing, and ?tab=runtime falls back to Files", () => {
+    show("?tab=runtime");
+    expect(screen.queryByRole("tab", { name: "Runtime" })).not.toBeInTheDocument();
+    expect(screen.getByText("Published file viewer")).toBeInTheDocument();
+    expect(runtime.tab).not.toHaveBeenCalled();
+    expect(runtime.chip).not.toHaveBeenCalled();
+    cleanup();
+    show("?tab=use");
+    expect(screen.getByText("Install commands")).toBeInTheDocument();
+    expect(runtime.check).not.toHaveBeenCalled();
+    expect(screen.queryByRole("region", { name: "Check tracing" })).not.toBeInTheDocument();
   });
 });

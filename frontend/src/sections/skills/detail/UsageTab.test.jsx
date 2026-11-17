@@ -232,3 +232,40 @@ it("keeps About this data open when the usage it describes finishes loading", ()
   expect(screen.getByRole("button", { name: "About this data" })).toHaveAttribute("aria-expanded", "true");
   expect(screen.getByText(/A fetch doesn.t prove an agent used it\./)).toBeVisible();
 });
+
+// SKILL-TRACES §7.4 "Activity tab" and §16 UXF-07 (UXF5 commit 2): the context Activity tab is
+// this component with kind "agent_context". It reads the shared usage route and has no
+// label-move fetch adoption.
+describe("agent context Activity", () => {
+  const context = { id: "context-a", name: "support-agent", latestVersion: 3 };
+  const showContext = () => render(
+    <ThemeProvider theme={createTheme({ palette: dsPalette("light"), typography: dsTypography })}>
+      <MemoryRouter initialEntries={["/"]}>
+        <UsageTab kind="agent_context" skill={context} />
+      </MemoryRouter>
+    </ThemeProvider>,
+  );
+
+  it("shows the context's fetches without the skill adoption panel", () => {
+    useSkillUsage.mockReturnValue(success({ ...usage, consumers: [{ ...usage.consumers[0], channel: "sdk", sdkVersion: "1.4.0" }] }));
+    showContext();
+    expect(useSkillUsage).toHaveBeenLastCalledWith("context-a", 30);
+    expect(screen.getByText("Retrieval (fetches)")).toBeInTheDocument();
+    expect(screen.queryByText("Adoption panel")).not.toBeInTheDocument();
+    const consumers = within(screen.getByRole("table", { name: "Agent context consumers" }));
+    expect(consumers.getByText("SDK · 1.4.0")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "About this data" }));
+    expect(screen.getByText("Counts requests that fetched this agent context. A fetch doesn't prove an agent used it.")).toBeVisible();
+    expect(screen.queryByText(/fetched this skill/)).not.toBeInTheDocument();
+  });
+
+  it("names the context in the empty and error states", () => {
+    useSkillUsage.mockReturnValue(success({ ...usage, total: 0 }));
+    const view = showContext();
+    expect(screen.getByText("Fetches appear when someone resolves, downloads or reads this agent context through the API, the SDK or MCP.")).toBeInTheDocument();
+    view.unmount();
+    useSkillUsage.mockReturnValue({ isError: true, refetch: vi.fn() });
+    showContext();
+    expect(screen.getByText("Your agent context and versions are unchanged.")).toBeInTheDocument();
+  });
+});

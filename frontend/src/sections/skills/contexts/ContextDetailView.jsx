@@ -16,17 +16,36 @@ import { useSkillsAccess } from '../utils/access';
 import ActionReason, { reasonProps } from '../components/ActionReason';
 import FileTree from '../components/FileTree';
 import SkillMarkdownPreview from '../components/SkillMarkdownPreview';
+import { useSkillTracesEnabled } from '../runtime/skillTracesFlag';
+import { LoadedNotLinkedList, useLinkedLoadsColumn } from '../runtime/LinkedLoadsCell';
 import ContextIdentityStrip from './ContextIdentityStrip';
 import ContextLinksPanel from './ContextLinksPanel';
 
 // URL owns section identity; version/file loading never replaces the object shell.
-const TABS = [['context', 'Instructions'], ['links', 'Linked skills'], ['tests', 'Tests'], ['versions', 'Versions'], ['consumers', 'Connected apps'], ['recovery', 'Rollback'], ['use', 'Install']];
+// The order mirrors the skill page (SKILL-TRACES §7.4, §15 D5). Runtime and Activity
+// exist only with `skillTraces` on and when the controller supplies them (§16 UXF-07);
+// their URL values are "runtime" (as runtimeTabUrl builds) and "usage" (as on skills).
+const TABS = [['context', 'Instructions'], ['links', 'Linked skills'], ['tests', 'Tests'], ['runtime', 'Runtime'], ['versions', 'Versions'], ['consumers', 'Connected apps'], ['recovery', 'Rollback'], ['usage', 'Activity'], ['use', 'Install']];
+const FLAGGED_TABS = ['runtime', 'usage'];
+
+// Linked skills with the flagged "Loaded (7 days)" column (§7.4, UX-09), and the loads of
+// skills outside the links under the table. Mounted only with `skillTraces` on, so the
+// unflagged read view makes no runtime read.
+function LinkedSkillsWithLoads({ contextId, versionId, ...panel }) {
+  const loads = useLinkedLoadsColumn(contextId, versionId, { enabled: Boolean(versionId) });
+  return <Stack spacing={1.5} sx={{ minWidth: 0 }}>
+    <ContextLinksPanel {...panel} extraColumn={loads.column} />
+    <LoadedNotLinkedList items={loads.loadedNotLinked} />
+  </Stack>;
+}
+LinkedSkillsWithLoads.propTypes = { contextId: PropTypes.string.isRequired, versionId: PropTypes.string };
 function Detail({ scopeKey, query, versionQuery, fileQuery, selectedPath = 'AGENTS.md', onSelectPath, onSelectVersion, versions = [], onEditViewed, onResumeDraft, onReviewDraft, onPreserveDraft, onStartDraft, sections = {}, state, initialTab }) {
   const [params, setParams] = useSearchParams();
   const { isViewer, canWrite, ready } = useSkillsAccess();
+  const traces = useSkillTracesEnabled();
   const [fileMode, setFileMode] = useState(() => { try { return localStorage.getItem('context-file-view') === 'source' ? 'source' : 'preview'; } catch { return 'preview'; } });
   const unpublished = query.data?.context?.latestVersion == null && !params.get('version');
-  const tabs = TABS.filter(([value]) => unpublished ? value === 'context' : ['context', 'links'].includes(value) || sections[value]);
+  const tabs = TABS.filter(([value]) => (traces || !FLAGGED_TABS.includes(value)) && (unpublished ? value === 'context' : ['context', 'links'].includes(value) || sections[value]));
   const requestedTab = params.get('tab') || initialTab || 'context';
   const available = tabs.some(([value]) => value === requestedTab);
   const tab = available ? requestedTab : 'context';
@@ -64,6 +83,8 @@ function Detail({ scopeKey, query, versionQuery, fileQuery, selectedPath = 'AGEN
   const editBlocked = cannotEdit || !onEditViewed || (Boolean(query.data.ownDraft) && !onPreserveDraft) || versionQuery.isLoading || Boolean(versionQuery.error);
   // The editor route reads only the version number, so the latest needs nothing else.
   const editLatest = () => editFrom(latest ?? { number: context.latestVersion });
+  // The read-only Linked skills view of the viewed version.
+  const linksPanel = { scopeKey: `${scopeKey}:${viewed?.id}`, readOnly: true, rowOpensSkill: true, session: { contextSpec: { links: (descriptor?.links || []).map((link) => ({ skillId: link.skillId, selector: link.requested })) }, resolvedLock: { links: descriptor?.links || [] } } };
   return <Stack spacing={{ xs: 0.5, sm: 1.5 }} sx={{ minWidth: 0 }}>
     <ObjectHeader crumbs={[{ label: 'Agent contexts', to: paths.dashboard.skills.contexts }, { label: context.name }]} title={context.name} purpose={descriptor?.description || context.description}
       actions={<Stack direction="row" useFlexGap spacing={1} sx={{ flexWrap: 'wrap', justifyContent: { xs: 'flex-end', sm: 'flex-start' } }}>
@@ -102,7 +123,7 @@ function Detail({ scopeKey, query, versionQuery, fileQuery, selectedPath = 'AGEN
             {fileQuery.isLoading ? <ContentSkeleton variant="panel" /> : fileQuery.error ? <ErrorState title="File unavailable" onRetry={fileQuery.refetch} /> : content == null ? <Typography variant="s3">Select a retained file. No content from another release is shown.</Typography> : fileMode === 'preview' && /\.(md|markdown)$/i.test(selectedPath) ? <SkillMarkdownPreview literal content={content} currentPath={selectedPath} onOpenPath={openFile} /> : <Box component="pre" tabIndex={0} aria-label={`${selectedPath} read-only source`} sx={{ m: 0, p: 1.5, bgcolor: 'background.paper', border: 1, borderColor: 'divider', borderRadius: 1, typography: 's1', fontFamily: 'monospace', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{content}</Box>}
           </Stack>
         </Stack>}
-        {tab === 'links' && <ContextLinksPanel scopeKey={`${scopeKey}:${viewed?.id}`} readOnly rowOpensSkill session={{ contextSpec: { links: (descriptor?.links || []).map((link) => ({ skillId: link.skillId, selector: link.requested })) }, resolvedLock: { links: descriptor?.links || [] } }} />}
+        {tab === 'links' && (traces ? <LinkedSkillsWithLoads contextId={context.id} versionId={viewed?.id} {...linksPanel} /> : <ContextLinksPanel {...linksPanel} />)}
         {sections[tab]}
       </>}
     </Box>
