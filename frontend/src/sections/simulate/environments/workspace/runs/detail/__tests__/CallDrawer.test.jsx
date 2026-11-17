@@ -41,9 +41,11 @@ vi.mock("src/components/VoiceDetailDrawerV2", () => ({
     leftPanelTabs,
     leftPanelTab,
     onLeftPanelTabChange,
+    wide,
   }) => (
     <div
       data-testid="voice-drawer"
+      data-wide={String(!!wide)}
       data-left-tabs={(leftPanelTabs ?? []).map((tab) => tab.label).join(",")}
       data-hide-path-tabs={String(!!hidePathTabs)}
       data-show-fix-with-falcon={String(showFixWithFalcon)}
@@ -586,6 +588,38 @@ describe("CallDrawer — chat evals that have no verdict", () => {
 });
 
 describe("CallDrawer — voice branch", () => {
+  it("keeps a multi-agent call's width while the next call's record loads", () => {
+    useCallExecutionV3Detail.mockReturnValue({
+      data: { id: "v1", transcript: [], evaluations: [] },
+      isPending: false,
+    });
+    useHasWorkers.mockReturnValue(true);
+    const { rerender } = render(
+      <CallDrawer
+        task={{ id: "v1", simulationCallType: "voice" }}
+        agentType="voice"
+        onClose={() => {}}
+      />,
+    );
+    expect(screen.getByTestId("voice-drawer")).toHaveAttribute(
+      "data-wide",
+      "true",
+    );
+    useHasWorkers.mockReturnValue(undefined);
+    rerender(
+      <CallDrawer
+        task={{ id: "v2", simulationCallType: "voice" }}
+        agentType="voice"
+        onClose={() => {}}
+      />,
+    );
+    expect(screen.getByTestId("voice-drawer")).toHaveAttribute(
+      "data-wide",
+      "true",
+    );
+    useHasWorkers.mockReturnValue(true);
+  });
+
   it("says why a held voice trial was not graded above the voice drawer", () => {
     useCallExecutionV3Detail.mockReturnValue({
       data: { id: "voice-held", transcript: [], evaluations: [] },

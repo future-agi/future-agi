@@ -346,12 +346,16 @@ describe("CallWorkersPanel", () => {
       });
     });
 
-    it("a step link carries the API's step key and reopens that step", () => {
+    it("a step link carries the API's step key, reopens that step once, and a refetch keeps the user's pick", () => {
       window.history.replaceState({}, "", "/run?participantsStep=1");
-      render(<CallWorkersPanel callExecutionId="c1" />);
+      const { rerender } = render(<CallWorkersPanel callExecutionId="c1" />);
       expect(screen.getByTestId("step-detail")).toHaveTextContent(
         "inspect order 1042",
       );
+      fireEvent.click(document.querySelector('[data-row="3"]'));
+      result = { ...result, data: { ...TIMELINE } };
+      rerender(<CallWorkersPanel callExecutionId="c1" />);
+      expect(screen.getByTestId("step-detail")).toHaveTextContent("get_order");
       window.history.replaceState({}, "", "/");
     });
   });

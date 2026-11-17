@@ -126,6 +126,7 @@ export default function ChatCallDrawer({
     setTraceCallId(task.id);
     setOpenStep(null);
     setAttempt(null);
+    setFocusTurn(null);
   }
   const openTrace = (traceId, spanId) => {
     setOpenStep({ traceId, spanId });

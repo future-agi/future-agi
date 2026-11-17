@@ -7,6 +7,7 @@ import {
   useRunCalls,
 } from "src/api/simulate-environments/runCalls";
 import { useCallExecutionV3Detail } from "src/api/simulate-environments/runDetail";
+import { STEP_PARAM } from "./participants/stepLink";
 
 const ROW_PARAM = "rowId";
 const NOT_FOUND = new Set([400, 403, 404]);
@@ -53,6 +54,8 @@ export default function useOpenCallParam({
       setSearchParams(
         (prev) => {
           const next = new URLSearchParams(prev);
+          // A step link belongs to its own call: gone once another call opens, or none.
+          if (prev.get(ROW_PARAM) !== id) next.delete(STEP_PARAM);
           if (id) next.set(ROW_PARAM, id);
           else next.delete(ROW_PARAM);
           return next;

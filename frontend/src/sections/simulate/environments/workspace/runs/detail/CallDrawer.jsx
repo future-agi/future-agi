@@ -1,4 +1,5 @@
 import PropTypes from "prop-types";
+import { useState } from "react";
 import { Drawer } from "@mui/material";
 import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 import { useHasWorkers } from "src/api/simulate-environments/runDetail";
@@ -29,8 +30,11 @@ export default function CallDrawer({
 }) {
   const open = !!task;
   const voice = isVoiceCall(task, agentType);
-  // A multi-agent call opens wider so its participants sequence has room.
-  const wide = useHasWorkers(task?.id, task?.status) === true;
+  // A multi-agent call opens wider so its participants sequence has room; the
+  // width holds while the next call's record loads, so the drawer doesn't jump.
+  const hasWorkers = useHasWorkers(task?.id, task?.status);
+  const [wide, setWide] = useState(false);
+  if (hasWorkers !== undefined && hasWorkers !== wide) setWide(hasWorkers);
   const { traceOpen, onTracePanelMountedChange } = useCallTraceOpen();
   const covered = useDrawerCovered(open);
 

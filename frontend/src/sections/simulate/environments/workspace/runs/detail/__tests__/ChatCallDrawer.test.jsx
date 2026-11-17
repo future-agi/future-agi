@@ -342,7 +342,7 @@ describe("ChatCallDrawer Participants", () => {
         { role: "customer", text: "Second ask" },
       ],
     };
-    render(
+    const { rerender } = render(
       <ChatCallDrawer
         task={{ id: "c1", status: "completed" }}
         onClose={vi.fn()}
@@ -359,6 +359,14 @@ describe("ChatCallDrawer Participants", () => {
     expect(
       screen.getByText("Second ask").closest("[data-focused]"),
     ).toHaveAttribute("data-focused", "true");
+    // The next call's transcript opens unmarked.
+    rerender(
+      <ChatCallDrawer
+        task={{ id: "c2", status: "completed" }}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(document.querySelector('[data-focused="true"]')).toBeNull();
     mocks.hasWorkers = false;
     mocks.callDetail = null;
   });

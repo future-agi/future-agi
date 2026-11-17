@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { CircularProgress, Stack, Typography } from "@mui/material";
 import { useCallWorkers } from "src/api/simulate-environments/runDetail";
 import { fDateTime } from "src/utils/format-time";
@@ -37,13 +37,15 @@ export default function CallWorkersPanel({
         : null,
     [data, callerName],
   );
-  // A link to a step names the API's own step key, which stays put when the record is read again.
+  // A link to a step names the API's own step key. It opens that step once per call, so a refetch keeps the user's pick.
+  const linkedFor = useRef(null);
   useEffect(() => {
-    if (!seq) return;
+    if (!seq || linkedFor.current === callExecutionId) return;
+    linkedFor.current = callExecutionId;
     const key = linkedStepKey();
     const step = key && seq.steps.find((one) => String(one.key) === key);
     if (step) setSelected(step.n);
-  }, [seq]);
+  }, [seq, callExecutionId]);
   // A failed refetch keeps the tree it has. A call known to have no record never gets here: the drawers drop the tab.
   if (!data)
     return isError ? (

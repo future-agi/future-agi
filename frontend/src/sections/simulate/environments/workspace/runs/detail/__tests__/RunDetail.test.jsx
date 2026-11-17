@@ -1855,6 +1855,23 @@ describe("RunDetail ?rowId=", () => {
     expect(locationText()).toBe("?foo=1|REPLACE");
   });
 
+  it("keeps a step link while its call opens and drops it on another call", async () => {
+    detailFor("x1", { data: CHAT_DETAIL, error: null });
+    renderDetail({ initialEntries: ["/?rowId=x1&participantsStep=3"] });
+
+    expect(await screen.findByText("drawer:x1")).toBeInTheDocument();
+    expect(locationText()).toContain("participantsStep=3");
+
+    act(() =>
+      navArgs().onStep({
+        task: { id: "c51", simulationCallType: "voice" },
+        source: "table",
+        page: 2,
+      }),
+    );
+    expect(locationText()).toBe("?rowId=c51|REPLACE");
+  });
+
   it("writes a row opened from Analytics to the URL", async () => {
     const user = userEvent.setup();
     renderDetail();
