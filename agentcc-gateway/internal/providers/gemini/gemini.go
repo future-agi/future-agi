@@ -113,7 +113,7 @@ func (p *Provider) PriceTableName() string {
 func (p *Provider) CachedTokensInPrompt() bool { return true }
 
 // VertexLocation is the Vertex AI location requests are sent to, in lower
-// case: the base URL's locations/<name> path segment, else its
+// case: the <name> in the base URL's projects/<id>/locations/<name> path, else its
 // <name>-aiplatform.googleapis.com host; "" off Vertex AI or when the URL
 // names neither. Only the URL counts: a location header the URL does not
 // carry does not change where requests go.
@@ -126,9 +126,12 @@ func (p *Provider) VertexLocation() string {
 		return ""
 	}
 	segments := strings.Split(u.Path, "/")
-	for i := 0; i+1 < len(segments); i++ {
-		if strings.EqualFold(segments[i], "locations") && segments[i+1] != "" {
-			return strings.ToLower(segments[i+1])
+	// The location is the segment after projects/<id>/locations, the sequence
+	// the API's own paths use. The last such sequence counts, so a proxy prefix
+	// in front of it, or a project named "locations", does not change the answer.
+	for i := len(segments) - 4; i >= 0; i-- {
+		if strings.EqualFold(segments[i], "projects") && strings.EqualFold(segments[i+2], "locations") && segments[i+3] != "" {
+			return strings.ToLower(segments[i+3])
 		}
 	}
 	host := strings.ToLower(u.Hostname())

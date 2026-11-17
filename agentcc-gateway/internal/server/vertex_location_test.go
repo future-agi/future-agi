@@ -6,8 +6,10 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/futureagi/agentcc-gateway/internal/config"
@@ -300,4 +302,168 @@ func TestVertexUpliftFollowsTheInstanceThatServed(t *testing.T) {
 			t.Fatalf("streamed cost = %v, want 0.003146 (not the un-uplifted 0.00286)", got)
 		}
 	})
+}
+
+// vertexInstance is one Vertex AI provider of vertexRoutingServer: its id, the
+// location in its base URL and the models it lists.
+type vertexInstance struct {
+	id, location string
+	models       []string
+}
+
+// vertexRoutingUpstream answers like vertexUpstream, except that it fails with
+// a 503 whenever fail(instance id, call number) says so. The instance id is the
+// first path segment, which the base URLs of vertexRoutingServer carry. The
+// returned function lists the ids of the instances that answered with success.
+func vertexRoutingUpstream(t *testing.T, fail func(id string, call int) bool) (*httptest.Server, func() []string) {
+	t.Helper()
+	var mu sync.Mutex
+	calls := 0
+	var served []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, ":generateContent") {
+			// The gateway's start-up connectivity check is not a request.
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		id := strings.SplitN(strings.TrimPrefix(r.URL.Path, "/"), "/", 2)[0]
+		mu.Lock()
+		calls++
+		failed := fail(id, calls)
+		if !failed {
+			served = append(served, id)
+		}
+		mu.Unlock()
+		if failed {
+			http.Error(w, `{"error":{"code":503,"message":"unavailable","status":"UNAVAILABLE"}}`, http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"candidates":[{"content":{"role":"model","parts":[{"text":"hi"}]},"finishReason":"STOP"}],"usageMetadata":` + vertexServedUsage + `}`))
+	}))
+	return srv, func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), served...)
+	}
+}
+
+// vertexRoutingServer serves the given Vertex AI instances from upstream, each
+// at its own location, with the cost plugin wired as main wires it. Failover is
+// on for 503; routing sets the targets and the model fallbacks.
+func vertexRoutingServer(t *testing.T, upstreamURL string, instances []vertexInstance, routing func(r *config.RoutingConfig)) *Server {
+	t.Helper()
+	db := testModelDBPtr()
+	cfg := config.DefaultConfig()
+	cfg.Auth.Enabled = true
+	cfg.Auth.Keys = []config.AuthKeyConfig{{Name: "vertex-location", Key: "sk-agentcc-vertex-location", Owner: "test-org", KeyType: "internal"}}
+	off := false
+	for _, in := range instances {
+		cfg.Providers[in.id] = config.ProviderConfig{
+			BaseURL:      upstreamURL + "/" + in.id + "/aiplatform.googleapis.com/v1/projects/p/locations/" + in.location,
+			APIKey:       "config-vertex-key",
+			APIFormat:    "gemini",
+			Models:       in.models,
+			AutoDiscover: &off,
+		}
+	}
+	cfg.Routing.DefaultStrategy = "round-robin"
+	cfg.Routing.Failover = config.FailoverConfig{Enabled: true, MaxAttempts: 2, OnStatusCodes: []int{http.StatusBadGateway, http.StatusServiceUnavailable}}
+	routing(&cfg.Routing)
+	registry, err := providers.NewRegistry(cfg)
+	if err != nil {
+		t.Fatalf("creating registry: %v", err)
+	}
+	cost := costplugin.New(true, db.Load, nil, nil)
+	srv := New(cfg, "", registry, pipeline.NewEngine(cost), nil, nil, nil, nil, db, tenant.NewStore(), nil)
+	cost.SetPriceTables(srv.PriceTableName)
+	cost.SetCachedTokensInPrompt(srv.CachedTokensInPrompt)
+	srv.ready.Store(true)
+	return srv
+}
+
+// The uplift follows the instance that served after a model fallback, after a
+// provider failover and after both, whichever locations the instances that
+// failed were at.
+func TestVertexUpliftFollowsTheFallbackAndFailoverThatServed(t *testing.T) {
+	const (
+		primaryModel  = "gemini-4-argon"
+		fallbackModel = "gemini-4-argon-cyber-permissive"
+		body          = `{"model":"gemini-4-argon","messages":[{"role":"user","content":"hi"}]}`
+		// What vertexServedUsage costs at each model's price, without and with
+		// the regional uplift. The fallback model's price is twice the primary's.
+		primaryFlat, primaryUplifted   = 0.002860, 0.003146
+		fallbackFlat, fallbackUplifted = 0.005720, 0.006292
+	)
+	primary := func(id, location string) vertexInstance {
+		return vertexInstance{id: id, location: location, models: []string{primaryModel}}
+	}
+	fallback := func(id, location string) vertexInstance {
+		return vertexInstance{id: id, location: location, models: []string{fallbackModel}}
+	}
+	fallbackChain := func(r *config.RoutingConfig) {
+		r.ModelFallbacks = map[string][]string{primaryModel: {fallbackModel}}
+	}
+	targetsAB := func(r *config.RoutingConfig) {
+		fallbackChain(r)
+		r.Targets = map[string][]config.RoutingTargetConfig{primaryModel: {{Provider: "a", Weight: 1}, {Provider: "b", Weight: 1}}}
+	}
+	failIDs := func(ids ...string) func(string, int) bool {
+		return func(id string, _ int) bool { return slices.Contains(ids, id) }
+	}
+	// The first call fails, whichever instance takes it, so the instance that
+	// serves is the one failover moves to.
+	firstCallFails := func(_ string, call int) bool { return call == 1 }
+
+	for _, tc := range []struct {
+		name      string
+		instances []vertexInstance
+		routing   func(r *config.RoutingConfig)
+		fail      func(id string, call int) bool
+		want      float64
+	}{
+		{"model fallback: regional primary fails, global fallback serves",
+			[]vertexInstance{primary("primary", "us-central1"), fallback("fb", "global")}, fallbackChain, failIDs("primary"), fallbackFlat},
+		{"model fallback: global primary fails, regional fallback serves",
+			[]vertexInstance{primary("primary", "global"), fallback("fb", "us-central1")}, fallbackChain, failIDs("primary"), fallbackUplifted},
+		{"failover: regional target a, global target b",
+			[]vertexInstance{primary("a", "us-central1"), primary("b", "global")}, targetsAB, firstCallFails, 0},
+		{"failover: global target a, regional target b",
+			[]vertexInstance{primary("a", "global"), primary("b", "us-central1")}, targetsAB, firstCallFails, 0},
+		{"failover then model fallback: regional targets fail, global fallback serves",
+			[]vertexInstance{primary("a", "us-central1"), primary("b", "us-central1"), fallback("fb", "global")}, targetsAB, failIDs("a", "b"), fallbackFlat},
+		{"failover then model fallback: global targets fail, regional fallback serves",
+			[]vertexInstance{primary("a", "global"), primary("b", "global"), fallback("fb", "us-central1")}, targetsAB, failIDs("a", "b"), fallbackUplifted},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			upstream, served := vertexRoutingUpstream(t, tc.fail)
+			defer upstream.Close()
+			srv := vertexRoutingServer(t, upstream.URL, tc.instances, tc.routing)
+			w := postVertexChat(srv, body, nil)
+			if w.Code != http.StatusOK {
+				t.Fatalf("status %d: %s", w.Code, w.Body.String())
+			}
+			ids := served()
+			if len(ids) != 1 {
+				t.Fatalf("instances that served = %v, want exactly one", ids)
+			}
+			want := tc.want
+			if want == 0 {
+				// A failover between the two primary instances: the one that
+				// serves decides, so look its location up.
+				for _, in := range tc.instances {
+					if in.id == ids[0] {
+						want = primaryFlat
+						if in.location != "global" {
+							want = primaryUplifted
+						}
+					}
+				}
+			}
+			got, err := strconv.ParseFloat(strings.TrimSpace(w.Header().Get("x-agentcc-cost")), 64)
+			if err != nil || math.Abs(got-want) > 5e-7 {
+				t.Fatalf("x-agentcc-cost = %q, want %.6f (served by %s)", w.Header().Get("x-agentcc-cost"), want, ids[0])
+			}
+		})
+	}
 }
