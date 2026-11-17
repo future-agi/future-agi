@@ -295,7 +295,12 @@ def retire_chat_runtime(
     conversation: HostedHarnessConversation | None = None,
 ) -> int:
     """Expire the idle chat sandboxes of one conversation or of all the environment's,
-    so the next turn starts from the current files. A running turn keeps its sandbox."""
+    so the next turn starts from the current files, and delete each running one after
+    commit. A running turn keeps its sandbox."""
+    from simulate.services.hosted_harness_conversation import (
+        stop_chat_sandboxes_after_commit,
+    )
+
     conversations = (
         HostedHarnessConversation.no_workspace_objects.filter(id=conversation.id)
         if conversation is not None
@@ -304,17 +309,32 @@ def retire_chat_runtime(
     idle = [one.id for one in conversations if not _in_flight(one)]
     if not idle:
         return 0
-    return HostedHarnessConversationLease.no_workspace_objects.filter(
+    State = HostedHarnessConversationLease.State
+    now = timezone.now()
+    own = HostedHarnessConversationLease.no_workspace_objects.filter(
         conversation_id__in=idle,
         attempt__isnull=True,
-        state__in=(
-            HostedHarnessConversationLease.State.STARTING,
-            HostedHarnessConversationLease.State.ACTIVE,
-        ),
-    ).update(
-        state=HostedHarnessConversationLease.State.EXPIRED,
-        updated_at=timezone.now(),
+        state__in=(State.STARTING, State.ACTIVE),
     )
+    running = list(
+        own.filter(state=State.ACTIVE)
+        .exclude(provider_ref__startswith="pending:")
+        .values_list("id", "conversation_id", "provider_ref")
+    )
+    expired = 0
+    stops = []
+    for lease_id, conversation_id, ref in running:
+        # Only the lease as it was read: one restarted meanwhile is left alone.
+        if HostedHarnessConversationLease.no_workspace_objects.filter(
+            id=lease_id, state=State.ACTIVE, provider_ref=ref
+        ).update(state=State.EXPIRED, updated_at=now):
+            expired += 1
+            stops.append((conversation_id, ref))
+    stop_chat_sandboxes_after_commit(stops)
+    expired += own.exclude(id__in=[lease_id for lease_id, _, _ in running]).update(
+        state=State.EXPIRED, updated_at=now
+    )
+    return expired
 
 
 # --- archives -----------------------------------------------------------------------

@@ -543,6 +543,14 @@ def _abandon_outstanding(conversation_id) -> int:
                 and lease.heartbeat_at > oldest.created_at
             )
         )
+        if (
+            lease is not None
+            and lease.attempt_id is None
+            and lease.state == HostedHarnessConversationLease.State.ACTIVE
+            and not lease.provider_ref.startswith("pending:")
+        ):
+            # Its process stopped answering; the sandbox is not left to idle.
+            stop_chat_sandbox_after_commit(conversation.id, lease.provider_ref)
         return _fail_outstanding(
             conversation,
             state=HostedHarnessConversation.State.DEGRADED,
@@ -555,6 +563,40 @@ def _abandon_outstanding(conversation_id) -> int:
                 "delivered. Send it again to retry."
             ),
         )
+
+
+def stop_chat_sandbox_after_commit(conversation_id, provider_ref: str) -> None:
+    """Delete a chat's own sandbox once this transaction commits; at once in autocommit.
+    A failure to schedule is logged and dropped, so it never fails the caller."""
+    stop_chat_sandboxes_after_commit([(conversation_id, provider_ref)])
+
+
+def stop_chat_sandboxes_after_commit(stops) -> None:
+    """Delete several chat sandboxes once this transaction commits, in one hook.
+
+    The first schedule that fails ends the hook: Temporal is slow or down, and each
+    further attempt would hold the request for its dispatch deadline again. The
+    sandboxes not scheduled fall back to their idle limit; the failure is logged
+    once, with how many were skipped."""
+    pending = [(str(conversation_id), ref) for conversation_id, ref in stops]
+    if not pending:
+        return
+
+    def stop_chat_sandboxes() -> None:
+        from simulate.tasks import harness_nudges as nudge_tasks
+
+        for index, (conversation_id, provider_ref) in enumerate(pending):
+            try:
+                nudge_tasks.schedule_sandbox_stop(conversation_id, provider_ref)
+            except Exception:  # noqa: BLE001 - the sandbox still dies at its idle limit
+                logger.exception(
+                    "stop_chat_sandboxes_failed conversation=%s skipped=%d",
+                    conversation_id,
+                    len(pending) - index - 1,
+                )
+                return
+
+    transaction.on_commit(stop_chat_sandboxes, robust=True)
 
 
 def _fail_outstanding(

@@ -2304,3 +2304,65 @@ class TestReconcileHooks:
             (built.id,),
             (extended.id,),
         ]
+
+
+def test_a_sandbox_stop_is_scheduled_with_a_short_dispatch_deadline(monkeypatch):
+    # The stop is scheduled from a draft save's on-commit hook, inside the
+    # request. Without a deadline a slow Temporal frontend would hold a save
+    # that already committed.
+    from temporalio.common import WorkflowIDConflictPolicy
+
+    seen = {}
+
+    def record(**kwargs):
+        seen.update(kwargs)
+
+    monkeypatch.setattr(nudge_tasks.stop_harness_nudge_sandbox, "apply_async", record)
+
+    nudge_tasks.schedule_sandbox_stop("conversation-1", "sandbox-1")
+
+    assert seen["task_id"] == "harness-nudge-sandbox-stop-sandbox-1"
+    assert seen["args"] == ["conversation-1", "sandbox-1"]
+    assert seen["dispatch_timeout_seconds"] == 2
+    assert seen["id_conflict_policy"] is WorkflowIDConflictPolicy.USE_EXISTING
+
+
+@pytest.mark.parametrize(
+    "schedule, task, call",
+    [
+        (
+            nudge_tasks.schedule_nudge_check_task,
+            nudge_tasks.check_harness_nudges,
+            ("environment-1",),
+        ),
+        (
+            nudge_tasks.schedule_finish_turn,
+            nudge_tasks.finish_harness_nudge_turn,
+            ("conversation-1", 3),
+        ),
+    ],
+)
+def test_request_path_schedules_carry_the_short_dispatch_deadline(
+    monkeypatch, schedule, task, call
+):
+    # Both are reachable from the turn-event on-commit hook.
+    seen = {}
+    monkeypatch.setattr(task, "apply_async", lambda **kwargs: seen.update(kwargs))
+
+    schedule(*call)
+
+    assert seen["dispatch_timeout_seconds"] == 2
+
+
+def test_a_schedule_without_a_deadline_hands_none_to_apply_async(monkeypatch):
+    # None is "no deadline" to apply_async; it is passed straight through.
+    seen = {}
+    monkeypatch.setattr(
+        nudge_tasks.reconcile_harness_environment_nudges,
+        "apply_async",
+        lambda **kwargs: seen.update(kwargs),
+    )
+
+    nudge_tasks.schedule_reconcile_task("environment-1")
+
+    assert seen["dispatch_timeout_seconds"] is None
