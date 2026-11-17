@@ -168,7 +168,7 @@ func defaultPatterns() map[string]string {
 		// Modern keys use a URL-safe alphabet; a trailing word boundary would
 		// truncate a valid '-' suffix and leave part of the credential unmatched.
 		"openai_key":     `\bsk-(?:(?:proj-|svcacct-)[A-Za-z0-9_-]{20,}|[A-Za-z0-9]{20,}\b)`,
-		"private_key":    `-----BEGIN\s+(?:RSA|EC|DSA|OPENSSH|PGP)?\s*PRIVATE\s+KEY-----`,
+		"private_key":    `-----BEGIN\s+(?:(?:RSA|EC|DSA|OPENSSH|PGP|ENCRYPTED)\s+)?PRIVATE\s+KEY(?:\s+BLOCK)?-----`,
 		"connection_string": `(?:mongodb|postgres|postgresql|mysql|redis|amqp)://[^\s]+:[^\s@]+@[^\s]+`,
 		"jwt":            `\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b`,
 		"password_assign": `(?i)(?:password|passwd|pwd|secret)\s*[=:]\s*[^\s,;]{8,}`,
