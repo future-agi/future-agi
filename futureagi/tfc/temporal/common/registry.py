@@ -32,6 +32,11 @@ TEMPORAL_ACTIVITY_MODULES = [
     "tfc.temporal.background_tasks.activities",
     # agentcc gateway alert emails
     "agentcc.services.email_sender",
+    # agentcc gateway outbound webhooks: delivery and event housekeeping
+    "agentcc.services.webhook_delivery",
+    "agentcc.services.webhook_hygiene",
+    # agentcc gateway Request Logs retention
+    "agentcc.services.request_log_retention",
     # agentcc gateway config re-sync after a health check on a cold sync cache
     "agentcc.services.config_push",
     # model_hub tasks

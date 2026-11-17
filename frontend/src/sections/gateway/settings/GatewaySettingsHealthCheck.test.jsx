@@ -33,6 +33,7 @@ import GatewaySettingsSection from "./GatewaySettingsSection";
 // Keep the real button, mutation, Axios interceptors, gateway query/normalizer,
 // and snackbar. Only unrelated Settings panels are omitted.
 vi.mock("./EmailAlertsCard", () => ({ default: () => null }));
+vi.mock("./RequestLogRetentionCard", () => ({ default: () => null }));
 vi.mock("./OrgConfigSection", () => ({ default: () => null }));
 
 const server = setupServer();

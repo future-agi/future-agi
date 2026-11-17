@@ -2079,6 +2079,7 @@ export const endpoints = {
     revokeApiKey: (id) => apiPath("/agentcc/api-keys/{id}/revoke/", { id: id }),
     syncApiKeys: apiPath("/agentcc/api-keys/sync/"),
     requestLogs: apiPath("/agentcc/request-logs/"),
+    requestLogRetention: apiPath("/agentcc/request-log-retention/"),
     requestLogDetail: (id) =>
       apiPath("/agentcc/request-logs/{id}/", { id: id }),
     requestLogSearch: apiPath("/agentcc/request-logs/search/"),
