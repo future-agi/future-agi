@@ -125,7 +125,11 @@ def reach_as_built(
         )
     )
     reached = [
-        built[tool]
+        # Only how the tool is reached comes from the build; the rest of the entry (its effect, say) is this one's.
+        {
+            **one,
+            **{field: built[tool][field] for field in _CARRIED if field in built[tool]},
+        }
         if isinstance(one, dict)
         and (tool := one.get("tool")) in built
         and _reach(own.get(tool)) == _reach(one) == _reach(before.get(tool))
@@ -148,15 +152,23 @@ _REACH_FIELDS = (
 )
 
 
+_CARRIED = (*_REACH_FIELDS, "door_unreached")
+# What an entry that leaves a field empty means by it, as the harness reads the contract.
+_REACH_DEFAULTS = {"mode": "unreachable", "method": "POST"}
+
+
 def _reach(entry: Any) -> tuple[Any, ...] | None:
-    """How a tool entry reaches its tool, with an empty or absent field read alike: a seal can drop the keys an
-    authored entry leaves empty. Whether the door is said not to reach it counts only as yes or no."""
+    """How a tool entry reaches its tool, with an empty or absent field read as its default: a seal can drop the
+    keys an authored entry leaves empty, or write out a default it left out. Whether the door is said not to reach
+    it counts only as yes or no."""
     if not isinstance(entry, dict):
         return None
-    return (
-        *(entry.get(field) or "" for field in _REACH_FIELDS),
-        bool(entry.get("door_unreached")),
-    )
+    read = {
+        field: entry.get(field) or _REACH_DEFAULTS.get(field, "")
+        for field in _REACH_FIELDS
+    }
+    read["method"] = str(read["method"]).upper()
+    return (*read.values(), bool(entry.get("door_unreached")))
 
 
 def _by_tool(contract: Any) -> dict[Any, dict[str, Any]]:

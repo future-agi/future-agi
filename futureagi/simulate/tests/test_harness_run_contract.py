@@ -785,10 +785,10 @@ class TestVersionRecordedBeforeItsSealedContract:
         assert blocked == []
         assert statuses == {one["tool"]: one["status"] for one in tool_status(SEALED)}
 
-    def _builder_saved(self, environment, version, run_entries):
-        """A builder's save over ``version``: authored entries as the author writes them, empty keys and all, and the
-        entries its reseal recorded."""
-        full = [
+    def _builder_saved(self, environment, version, run_entries, written=None):
+        """A builder's save over ``version``: authored entries as the author writes them (``written``, else with
+        empty keys and all), and the entries its reseal recorded."""
+        full = written or [
             {**one, "factory": "", "first_arg": "", "door_unreached": "", "notes": ""}
             for one in AUTHORED["tool_entrypoints"]
         ]
@@ -838,6 +838,57 @@ class TestVersionRecordedBeforeItsSealedContract:
 
         # get_order now reaches the shared ledger itself, so every tool on it is held, as on dev.
         assert blocked == sorted(TOOLS)
+
+    def test_a_seal_that_writes_out_a_default_the_author_left_out_still_reaches_the_tools_as_built(
+        self, user, workspace, monkeypatch, auth_client
+    ):
+        environment, version, storage = self._version(
+            user, workspace, "rc-defaults", monkeypatch
+        )
+        self._bundle(environment, version, storage)
+        self._builder_saved(
+            environment,
+            version,
+            # The reseal wrote the default method out, in lower case.
+            [{**one, "method": "post"} for one in AUTHORED["tool_entrypoints"]],
+            # The author left the method out.
+            written=[
+                {key: value for key, value in one.items() if key != "method"}
+                for one in AUTHORED["tool_entrypoints"]
+            ],
+        )
+
+        blocked, statuses = self._through_the_views(auth_client, environment)
+
+        assert blocked == []
+        assert statuses == {one["tool"]: one["status"] for one in tool_status(SEALED)}
+
+    def test_an_edit_to_a_tool_s_effect_keeps_its_effect_and_takes_the_base_s_reach(
+        self, user, workspace, monkeypatch, auth_client
+    ):
+        from simulate.selectors.environment_documents import version_contract
+
+        environment, version, storage = self._version(
+            user, workspace, "rc-effect", monkeypatch
+        )
+        self._bundle(environment, version, storage)
+        edited = {
+            **AUTHORED,
+            "tool_entrypoints": [
+                {**one, "effect": "write"} if one["tool"] == "get_order" else one
+                for one in AUTHORED["tool_entrypoints"]
+            ],
+        }
+        self._saved_edit(environment, version, edited)
+
+        reached = {
+            one["tool"]: one
+            for one in version_contract(environment)["tool_entrypoints"]
+        }
+        sealed = {one["tool"]: one for one in SEALED["tool_entrypoints"]}
+        assert reached["get_order"] == {**sealed["get_order"], "effect": "write"}
+        blocked, _ = self._through_the_views(auth_client, environment)
+        assert blocked == []
 
 
 def test_a_builder_save_that_seals_the_authored_entries_again_runs_as_the_first_build(
