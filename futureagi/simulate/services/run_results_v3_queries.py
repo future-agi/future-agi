@@ -918,12 +918,12 @@ def run_calls_queryset(
             ),
             When(status__in=list(ERRORED_CALL_STATUSES), then=Value("error")),
             When(~Q(status="completed"), then=Value("inconclusive")),
-            When(call_metadata__processing_skipped=True, then=Value("inconclusive")),
             When(
                 call_metadata__harness_outcome_status__in=list(HARNESS_FAILED),
                 then=Value("failed"),
             ),
             When(failed_eval, then=Value("failed")),
+            When(_SILENT_AGENT_SKIP, then=Value("inconclusive")),
             When(errored_eval, then=Value("inconclusive")),
             When(
                 call_metadata__harness_outcome_status__in=list(HARNESS_INCONCLUSIVE),

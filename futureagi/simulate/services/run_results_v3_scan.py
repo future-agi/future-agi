@@ -54,6 +54,7 @@ from simulate.services.run_results_v3_scoring import (
     score_tokens,
 )
 from simulate.services.scoring_status import SCORING_ROW_FIELDS, scoring_values
+from simulate.utils.processing_outcomes import SILENT_AGENT_SKIP_REASON
 
 # The orderings the scan reproduces, as ``apply_run_call_query`` writes them.
 ORDERINGS = {
@@ -455,7 +456,7 @@ _HARNESS_PASSED = frozenset(HARNESS_PASSED)
 def _outcome(
     status: str,
     harness_status: str | None,
-    skipped: bool,
+    skip_reason: str | None,
     failed: Truth,
     errored: Truth,
     passed: Truth,
@@ -467,10 +468,13 @@ def _outcome(
         return "in_progress"
     if harness_status in _HARNESS_ERROR or status in ERRORED_CALL_STATUSES:
         return "error"
-    if status != "completed" or skipped:
+    if status != "completed":
         return "inconclusive"
     if harness_status in _HARNESS_FAILED or failed is True:
         return "failed"
+    # A call the agent never answered holds no pass, whatever the harness said.
+    if skip_reason == SILENT_AGENT_SKIP_REASON:
+        return "inconclusive"
     if errored is True or harness_status in _HARNESS_INCONCLUSIVE:
         return "inconclusive"
     if harness_status in _HARNESS_PASSED or passed is True:
@@ -626,7 +630,8 @@ SELECT ce.id, ce.status, ce.duration_seconds,
   ce.avg_stop_time_after_interruption_ms, ce.ai_interruption_count, ce.row_id,
   CASE WHEN jsonb_typeof(ce.call_metadata -> 'harness_outcome_status') = 'string'
     THEN ce.call_metadata ->> 'harness_outcome_status' END,
-  COALESCE(ce.call_metadata -> 'processing_skipped' = 'true'::jsonb, false),
+  CASE WHEN ce.call_metadata -> 'processing_skipped' = 'true'::jsonb
+    THEN ce.call_metadata ->> 'processing_skip_reason' END,
   NULLIF(ce.call_metadata ->> 'harness_scenario_key', ''),
   NULLIF(ce.call_metadata ->> 'use_case', ''),
   NULLIF(ce.call_metadata ->> 'goal', ''),
@@ -797,7 +802,7 @@ def scan_call_values(
                 ai_interruptions,
                 row_id,
                 harness_status,
-                skipped,
+                skip_reason,
                 scenario_key,
                 *metadata_goals,
                 metric_latency,
@@ -843,7 +848,7 @@ def scan_call_values(
                     "result_attack": UNGROUPED,
                     "result_task": UNGROUPED,
                     "result_outcome": _outcome(
-                        status, harness_status, skipped, failed, errored, passed
+                        status, harness_status, skip_reason, failed, errored, passed
                     ),
                     "scores": scores,
                 }
@@ -907,7 +912,9 @@ def scan_call_values(
         values = (
             _member_values(members[key])
             if key in members
-            else None if scenario is None else scenario._asdict()
+            else None
+            if scenario is None
+            else scenario._asdict()
         )
         if values is not None:
             row["result_sub_goal"] = (

@@ -37,6 +37,7 @@ from simulate.services.run_results_v3_queries import (
 )
 from simulate.services.run_results_v3_scan import scan_call_values
 from simulate.services.scoring_status import SCORING_ROW_FIELDS
+from simulate.utils.processing_outcomes import SILENT_AGENT_SKIP_REASON
 from simulate.views.run_results_v3 import RunCallsV3QuerySerializer
 
 
@@ -1007,12 +1008,60 @@ def test_a_skipped_call_with_a_harness_pass_is_inconclusive_in_all_three_copies(
     metadata = {"harness_outcome_status": "passed"}
     if skipped is not None:
         metadata["processing_skipped"] = skipped
+        metadata["processing_skip_reason"] = SILENT_AGENT_SKIP_REASON
     call = CallExecution.objects.create(
         test_execution=execution,
         scenario=scenario,
         status="completed",
         started_at=timezone.now(),
         call_metadata=metadata,
+        eval_outputs={},
+    )
+    scanned = scan_call_values(execution, [], "-started_at")
+    assert [row["result_outcome"] for row in scanned] == [expected]
+    orm = _orm_rows(execution, [], "-started_at")
+    assert [row["result_outcome"] for row in orm] == [expected]
+    _assert_identical(scanned, orm)
+    assert call_outcome(call, {}) == expected
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("reason", "harness_status", "expected"),
+    [
+        # The agent never answered: a harness failure still reads failed, a pass never does.
+        (SILENT_AGENT_SKIP_REASON, "failed", "failed"),
+        (SILENT_AGENT_SKIP_REASON, "passed", "inconclusive"),
+        # The executor's own skips never override the harness verdict.
+        (
+            "We could not find enough customer conversation to process this call.",
+            "failed",
+            "failed",
+        ),
+        (
+            "We could not find enough customer conversation to process this call.",
+            "passed",
+            "passed",
+        ),
+        ("Call too short to process.", "failed", "failed"),
+        (None, "failed", "failed"),
+        (None, "passed", "passed"),
+    ],
+)
+def test_a_skip_never_hides_a_harness_failure_in_all_three_copies(
+    run, reason, harness_status, expected
+):
+    execution, scenario = run
+    call = CallExecution.objects.create(
+        test_execution=execution,
+        scenario=scenario,
+        status="completed",
+        started_at=timezone.now(),
+        call_metadata={
+            "harness_outcome_status": harness_status,
+            "processing_skipped": True,
+            "processing_skip_reason": reason,
+        },
         eval_outputs={},
     )
     scanned = scan_call_values(execution, [], "-started_at")

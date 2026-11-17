@@ -202,9 +202,6 @@ def call_outcome(
         return "error"
     if call.status != CallExecution.CallStatus.COMPLETED:
         return "inconclusive"
-    # A call the platform declined to process holds no verdict, whatever the harness said.
-    if metadata.get("processing_skipped") is True:
-        return "inconclusive"
 
     verdicts = [
         verdict
@@ -216,6 +213,9 @@ def call_outcome(
     ]
     if harness_outcome in HARNESS_FAILED or "failed" in verdicts:
         return "failed"
+    # A call the agent never answered holds no pass, whatever the harness said.
+    if is_silent_agent_skip(metadata):
+        return "inconclusive"
     if "error" in verdicts:
         return "inconclusive"
     if harness_outcome in HARNESS_INCONCLUSIVE:
