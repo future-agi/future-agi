@@ -13,16 +13,19 @@ from __future__ import annotations
 
 import json
 import logging
+import pickle
 import secrets
 import threading
 import time
 import urllib.request
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from dataclasses import dataclass
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
+import redis
 import sentry_sdk
 from sentry_sdk.integrations.logging import LoggingIntegration, ignore_logger
+from sentry_sdk.integrations.redis import RedisIntegration
 from sentry_sdk.integrations.stdlib import StdlibIntegration
 from sentry_sdk.scope import ScopeType, use_isolation_scope, use_scope
 from sentry_sdk.transport import Transport
@@ -739,6 +742,7 @@ def test_a_sampled_transaction_leaks_no_secret_in_span_data_or_extra():
         )
     finally:
         server.shutdown()
+        server.server_close()
     [transaction] = [e for e in sent if e.get("type") == "transaction"]
     assert transaction["spans"], "the outbound call should be a span"
     assert any("http.query" in (s.get("data") or {}) for s in transaction["spans"])
@@ -754,6 +758,11 @@ def test_the_transaction_hook_scrubs_the_same_places_as_error_events():
         "breadcrumbs": [{"data": {"customer_api_key": "leak"}}],
         "spans": [
             {"data": {"http.query": "access_token=leak", "http.method": "GET"}},
+            {
+                "op": "db.redis",
+                "description": "SET 'cache:k' b'\\x80leak' 'PX' 1000",
+                "tags": {"redis.key": "aws_onboard:leak", "redis.command": "SET"},
+            },
             {"data": "unexpected-shape"},
             {"op": "no data"},
             "unexpected-span",
@@ -766,6 +775,12 @@ def test_the_transaction_hook_scrubs_the_same_places_as_error_events():
         "http.method": "GET",
     }
     assert out["extra"]["n"] == 1
+    redis_span = out["spans"][1]
+    assert redis_span["description"] == "SET 'cache:k'"
+    assert redis_span["tags"] == {
+        "redis.key": f"aws_onboard:{_REDACTED}",
+        "redis.command": "SET",
+    }
 
 
 # Exception values and the message (4597165450)
@@ -857,9 +872,7 @@ def test_a_failing_scrub_drops_the_event_and_logs_only_the_failure(
     assert secret not in caplog.text
 
 
-def test_a_failing_scrub_drops_a_transaction(
-    monkeypatch, caplog, scrub_logger_ignored
-):
+def test_a_failing_scrub_drops_a_transaction(monkeypatch, caplog, scrub_logger_ignored):
     monkeypatch.setattr(sentry_module, "_scrub_strings", _boom)
 
     def action():
@@ -890,9 +903,10 @@ def _init_sentry_kwargs(monkeypatch):
     monkeypatch.setattr(sentry_module, "SENTRY_DSN", "http://k@localhost.invalid/1")
     monkeypatch.setattr(sentry_module, "_initialized_components", set())
     monkeypatch.setattr(sentry_sdk, "init", lambda **kw: seen.update(kw))
-    monkeypatch.setattr(
-        "sentry_sdk.integrations.logging.ignore_logger", ignored.append
-    )
+    monkeypatch.setattr("sentry_sdk.integrations.logging.ignore_logger", ignored.append)
+    # init_sentry tags the global scope; keep that out of the other tests.
+    monkeypatch.setattr(sentry_sdk, "set_tags", lambda *a, **kw: None)
+    monkeypatch.setattr(sentry_sdk, "set_tag", lambda *a, **kw: None)
     assert sentry_module.init_sentry(component="temporal")
     return seen, ignored
 
@@ -959,3 +973,498 @@ def test_celery_job_extras_are_scrubbed_as_strings():
     event = {"extra": {"celery-job": {"args": ["Input(customer_api_key='k')"]}}}
     _scrub_event(event)
     assert event["extra"]["celery-job"]["args"] == [_REDACTED]
+
+
+# Transaction spans: description and tags
+
+
+def _span_transaction(*spans):
+    return {"type": "transaction", "spans": list(spans)}
+
+
+def test_a_redis_span_description_leaks_no_secret():
+    secret = secrets.token_hex(16)
+    value_secret = secrets.token_hex(16)
+    pickled = pickle.dumps({"token": secret})
+
+    def action():
+        with sentry_sdk.start_transaction(name="t", op="task"):
+            with sentry_sdk.start_span(
+                op="db.redis",
+                name=f"SET 'aws_onboard:{value_secret}' {pickled!r} 'PX' 1000",
+            ) as span:
+                span.set_tag("redis.key", f"aws_onboard:{value_secret}")
+
+    sent = _sent_through_client(
+        action,
+        traces_sample_rate=1.0,
+        before_send_transaction=sentry_module._get_before_send_transaction(),
+    )
+    [transaction] = [e for e in sent if e.get("type") == "transaction"]
+    [span] = [s for s in transaction["spans"] if s.get("op") == "db.redis"]
+    assert span["description"] == f"SET 'aws_onboard:{_REDACTED}'"
+    assert span["tags"]["redis.key"] == f"aws_onboard:{_REDACTED}"
+    assert secret not in json.dumps(sent, default=str)
+    assert value_secret not in json.dumps(sent, default=str)
+
+
+def test_a_real_redis_write_leaks_no_secret_in_the_sent_transaction(monkeypatch):
+    # The default RedisIntegration, with PII on, writes every argument of a
+    # command into the span description and the key into a tag.
+    secret = secrets.token_hex(16)
+    key_secret = secrets.token_hex(16)
+    monkeypatch.setattr(redis.Redis, "_execute_command", lambda self, *a, **kw: True)
+
+    def action():
+        with sentry_sdk.start_transaction(name="t", op="task"):
+            redis.Redis().set(
+                f"mcp_oauth_code:{key_secret}", pickle.dumps({"token": secret}), px=1000
+            )
+            redis.Redis().set("cache:plain", pickle.dumps({"n": 1}), px=1000)
+
+    sent = _sent_through_client(
+        action,
+        integrations=[RedisIntegration()],
+        traces_sample_rate=1.0,
+        before_send_transaction=sentry_module._get_before_send_transaction(),
+    )
+    [transaction] = [e for e in sent if e.get("type") == "transaction"]
+    spans = [s for s in transaction["spans"] if s.get("op") == "db.redis"]
+    assert [s["description"] for s in spans] == [
+        f"SET 'mcp_oauth_code:{_REDACTED}'",
+        "SET 'cache:plain'",
+    ]
+    assert spans[0]["tags"]["redis.key"] == f"mcp_oauth_code:{_REDACTED}"
+    assert spans[1]["tags"]["redis.key"] == "cache:plain"
+    assert secret not in json.dumps(sent, default=str)
+    assert key_secret not in json.dumps(sent, default=str)
+
+
+@pytest.mark.parametrize(
+    "prefix",
+    ["aws_onboard", "gcp_onboard", "gcp_onboarding", "mcp_oauth_code"]
+    + ["mcp_oauth_approve", "mcp_oauth_access", "mcp_oauth_refresh"],
+)
+def test_a_cache_key_that_embeds_a_token_is_redacted_everywhere_it_is_sent(prefix):
+    secret = secrets.token_hex(16)
+    key = f"{prefix}:{secret}"
+    event = {
+        "type": "transaction",
+        "spans": [
+            {"op": "cache.get", "description": key, "data": {"cache.key": [key]}},
+            {
+                "op": "db.redis",
+                "description": f"GET '{key}'",
+                "tags": {"redis.key": key},
+            },
+        ],
+        "breadcrumbs": [{"message": f"GET '{key}'", "data": {"key": key}}],
+    }
+    out = sentry_module._get_before_send_transaction()(event, {})
+    assert secret not in json.dumps(out)
+    assert out["spans"][0]["description"] == f"{prefix}:{_REDACTED}"
+    assert out["spans"][1]["tags"] == {"redis.key": f"{prefix}:{_REDACTED}"}
+
+
+def test_a_redis_pipeline_span_keeps_only_command_and_key():
+    secret = secrets.token_hex(16)
+    event = _span_transaction(
+        {
+            "op": "db.redis",
+            "description": "redis.pipeline.execute",
+            "data": {
+                "redis.commands": {
+                    "count": 2,
+                    "first_ten": [
+                        f"SET 'cache:a' b'{secret}' 'PX' 1000",
+                        "GET 'cache:b'",
+                    ],
+                }
+            },
+        }
+    )
+    out = sentry_module._get_before_send_transaction()(event, {})
+    [span] = out["spans"]
+    assert span["data"]["redis.commands"]["first_ten"] == [
+        "SET 'cache:a'",
+        "GET 'cache:b'",
+    ]
+    assert secret not in json.dumps(out)
+
+
+def test_other_span_descriptions_and_tags_are_scrubbed_as_strings():
+    secret = secrets.token_hex(16)
+    event = _span_transaction(
+        {
+            "op": "subprocess",
+            "description": f"curl -H 'Authorization: Bearer {secret}' http://h/",
+        },
+        {"op": "http.client", "description": f"GET https://user:{secret}@h/path"},
+        {
+            "op": "http.client",
+            "description": "POST https://hooks.slack.com/services/T0/B0/" + secret,
+            "tags": {"http.url": f"https://u:{secret}@h/", "plain": "ok"},
+        },
+        {"op": "http.client", "description": "GET https://example.test/path"},
+    )
+    out = sentry_module._get_before_send_transaction()(event, {})
+    assert secret not in json.dumps(out)
+    assert [s["description"] for s in out["spans"]] == [
+        _REDACTED,
+        _REDACTED,
+        _REDACTED,
+        "GET https://example.test/path",
+    ]
+    assert out["spans"][2]["tags"] == {"http.url": _REDACTED, "plain": "ok"}
+
+
+def test_a_subprocess_span_description_with_a_secret_is_scrubbed_when_sent():
+    secret = secrets.token_hex(16)
+
+    def action():
+        with sentry_sdk.start_transaction(name="t", op="task"):
+            with sentry_sdk.start_span(
+                op="subprocess", name=f"deploy --api_key={secret}"
+            ) as span:
+                span.set_tag("cmd", f"deploy --api_key={secret}")
+
+    sent = _sent_through_client(
+        action,
+        traces_sample_rate=1.0,
+        before_send_transaction=sentry_module._get_before_send_transaction(),
+    )
+    [transaction] = [e for e in sent if e.get("type") == "transaction"]
+    assert [s["description"] for s in transaction["spans"]] == [_REDACTED]
+    assert secret not in json.dumps(sent, default=str)
+
+
+# Token counts in LLM errors are kept (M1)
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "This model's maximum context length is 128000 tokens. However, you "
+        "requested 130000 tokens (120,000 in the messages, 10000 in the completion).",
+        "prompt is too long: 210000 tokens > 200000 maximum",
+        "Rate limit reached for gpt-4o on tokens per min (TPM): Limit 30000, "
+        "Used 28000, Requested 5000.",
+        "Rate limit reached on tokens per minute: Limit 30000",
+        "The input is 128000 input tokens, over the 100000 output tokens limit",
+    ],
+)
+def test_an_llm_error_that_quotes_token_counts_is_kept(message):
+    event = {
+        "message": message,
+        "exception": {"values": [{"type": "BadRequestError", "value": message}]},
+    }
+    _scrub_event(event)
+    assert event["message"] == message
+    assert event["exception"]["values"][0]["value"] == message
+    assert _scrub_strings(message) == message
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "prompt is too long: 210000 tokens (api_key=sk-x)",
+        "maximum context length is 128000 tokens; client_secret rejected",
+        "Rate limit on tokens per min (TPM) for Bearer access_token abc",
+        "128000 input tokens, password=hunter2",
+    ],
+)
+def test_a_token_count_message_that_also_names_a_key_is_still_redacted(message):
+    event = {
+        "message": message,
+        "exception": {"values": [{"type": "E", "value": message}]},
+    }
+    _scrub_event(event)
+    assert event["message"] == _REDACTED
+    assert event["exception"]["values"][0]["value"] == _REDACTED
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "1" * 300_000 + " tokens",
+        "1," * 150_000,
+        "tokens per " * 50_000,
+        "a1 " * 100_000,
+    ],
+)
+def test_the_token_count_removal_stays_linear_on_long_strings(text):
+    started = time.monotonic()
+    _scrub_strings(text)
+    assert time.monotonic() - started < 2
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["max_tokens_api_key", "prompt_tokensecret", "xmax_tokens", "total_tokens2"],
+)
+def test_a_count_name_is_removed_only_as_a_whole_word(name):
+    assert _is_sensitive_key(name)
+    assert _scrub_strings(f"{name}=1") == _REDACTED
+
+
+# request.url (M2)
+
+
+_F = _REDACTED
+
+
+@pytest.mark.parametrize(
+    "url, expected",
+    [
+        ("https://a.test/tracer/shared/TOK/", f"https://a.test/tracer/shared/{_F}/"),
+        ("/tracer/shared/TOK/sidebar/", f"/tracer/shared/{_F}/sidebar/"),
+        (
+            "/tracer/shared/TOK/traces/abc-1/?page=2",
+            f"/tracer/shared/{_F}/traces/abc-1/?page=2",
+        ),
+        ("/accounts/activate/MQ/c1-TOK/", f"/accounts/activate/{_F}/{_F}/"),
+        (
+            "/accounts/password-reset-confirm/MQ/c1-TOK/",
+            f"/accounts/password-reset-confirm/{_F}/{_F}/",
+        ),
+        (
+            "/accounts/accept-invitation/MQ/c1-TOK/",
+            f"/accounts/accept-invitation/{_F}/{_F}/",
+        ),
+        (
+            "/simulate/api/harness/ingress/TOK/",
+            f"/simulate/api/harness/ingress/{_F}/",
+        ),
+        (
+            "/simulate/api/harness/ingress/TOK/a/b",
+            f"/simulate/api/harness/ingress/{_F}/a/b",
+        ),
+        ("/tracer/shared/TOK/?sig=zz&a=1", f"/tracer/shared/{_F}/?sig={_F}&a=1"),
+        ("/accounts/user/deactivate/", "/accounts/user/deactivate/"),
+        (
+            "/simulate/agent-definitions/1/versions/2/activate/",
+            "/simulate/agent-definitions/1/versions/2/activate/",
+        ),
+        ("https://a.test:8443/path?x=1", "https://a.test:8443/path?x=1"),
+    ],
+)
+def test_the_request_url_hides_token_path_segments(url, expected):
+    errors = {"request": {"url": url}}
+    _scrub_event(errors)
+    assert errors["request"]["url"] == expected
+    transaction = {"type": "transaction", "request": {"url": url}}
+    out = sentry_module._get_before_send_transaction()(transaction, {})
+    assert out["request"]["url"] == expected
+
+
+def test_the_request_url_is_redacted_when_it_carries_a_password():
+    event = {"request": {"url": "https://user:hunter2@host/path"}}
+    _scrub_event(event)
+    assert event["request"]["url"] == _REDACTED
+
+
+# Connection strings, webhooks and key-less query credentials (M3, M4)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "connection_string",
+        "AZURE_STORAGE_CONNECTION_STRING",
+        "connectionString",
+        "accountKey",
+        "SharedAccessKey",
+        "SharedAccessSignature",
+        "webhook_url",
+        "slack_webhook_url",
+    ],
+)
+def test_connection_string_and_webhook_names_are_sensitive(name):
+    assert _is_sensitive_key(name)
+    assert _scrub_strings({name: "v"}) == {name: _REDACTED}
+    assert _scrub_strings(f"{name}=v") == _REDACTED
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "DefaultEndpointsProtocol=https;AccountName=a;AccountKey=SECRET;"
+        "EndpointSuffix=core.windows.net",
+        "BlobEndpoint=https://a.blob.core.windows.net/;"
+        "SharedAccessSignature=sv=1&sig=SECRET",
+        "Endpoint=sb://a.servicebus.windows.net/;SharedAccessKeyName=n;"
+        "SharedAccessKey=SECRET",
+    ],
+)
+def test_an_azure_connection_string_under_a_neutral_key_is_redacted(value):
+    assert _scrub_strings({"storage": value}) == {"storage": _REDACTED}
+    event = {"extra": {"storage": value}, "message": value}
+    _scrub_event(event)
+    assert "SECRET" not in json.dumps(event)
+
+
+def test_a_slack_webhook_url_is_redacted_wherever_it_appears():
+    url = "https://hooks.slack.com/services/T000/B000/XXXXXXXX"
+    assert _scrub_strings(url) == _REDACTED
+    assert _scrub_strings(f"POST {url} failed") == _REDACTED
+    assert _scrub_strings({"url": url, "n": 1}) == {"url": _REDACTED, "n": 1}
+    other = "https://hooks.slack.com/other"
+    assert _scrub_strings(other) == other
+    event = {
+        "type": "transaction",
+        "spans": [
+            {"op": "http.client", "data": {"url": url}, "description": f"POST {url}"}
+        ],
+        "breadcrumbs": [{"data": {"url": url}, "message": f"POST {url}"}],
+    }
+    out = sentry_module._get_before_send_transaction()(event, {})
+    assert "XXXXXXXX" not in json.dumps(out)
+
+
+def test_query_credentials_without_a_key_name_are_redacted_in_the_query_string():
+    event = {
+        "request": {
+            "query_string": "a=1&key=K1&sig=S1&Signature=S2&X-Amz-Signature=S3"
+            "&x-goog-signature=S4&code=C1&state=T1&max_tokens=5"
+        }
+    }
+    _scrub_event(event)
+    assert event["request"]["query_string"] == (
+        f"a=1&key={_F}&sig={_F}&Signature={_F}&X-Amz-Signature={_F}"
+        f"&x-goog-signature={_F}&code={_F}&state={_F}&max_tokens=5"
+    )
+
+
+def test_query_credentials_without_a_key_name_are_redacted_in_urls_and_span_data():
+    event = {
+        "type": "transaction",
+        "request": {"url": "https://a.test/cb?code=C1&state=T1&page=2"},
+        "spans": [
+            {
+                "op": "http.client",
+                "data": {
+                    "url": "https://s3.test/b/o?X-Amz-Signature=S3&x=1",
+                    "http.query": "key=K1&x=1",
+                    "http.fragment": "state=T1",
+                },
+            }
+        ],
+        "breadcrumbs": [
+            {
+                "data": {
+                    "url": "https://g.test/o?x-goog-signature=S4",
+                    "http.query": "sig=S",
+                }
+            }
+        ],
+    }
+    out = sentry_module._get_before_send_transaction()(event, {})
+    assert "S3" not in json.dumps(out) and "K1" not in json.dumps(out)
+    assert out["request"]["url"] == f"https://a.test/cb?code={_F}&state={_F}&page=2"
+    assert out["spans"][0]["data"] == {
+        "url": f"https://s3.test/b/o?X-Amz-Signature={_F}&x=1",
+        "http.query": f"key={_F}&x=1",
+        "http.fragment": f"state={_F}",
+    }
+    assert out["breadcrumbs"][0]["data"] == {
+        "url": f"https://g.test/o?x-goog-signature={_F}",
+        "http.query": f"sig={_F}",
+    }
+
+
+def test_the_query_parameter_rule_does_not_touch_general_text():
+    text = "press a key to continue; state=ok, code of conduct, signature page"
+    assert _scrub_strings(text) == text
+    assert _scrub_strings({"note": "key=1&sig=2"}) == {"note": "key=1&sig=2"}
+
+
+# Lows
+
+
+def test_saml_markers_make_free_text_sensitive():
+    assert sentry_module._mentions_sensitive_key("<saml:Assertion ID='x'>")
+    assert sentry_module._mentions_sensitive_key("body SAMLResponse=PHNhbWw")
+    event = {
+        "message": "<samlp:Response>x</samlp:Response>",
+        "exception": {"values": [{"type": "E", "value": "bad <saml:Assertion>"}]},
+        "breadcrumbs": [{"message": "got <saml:Assertion>"}],
+        "logentry": {"formatted": "<saml:Assertion>", "message": "<saml:Assertion>"},
+    }
+    _scrub_event(event)
+    assert event["message"] == _REDACTED
+    assert event["exception"]["values"][0]["value"] == _REDACTED
+    assert event["breadcrumbs"][0]["message"] == _REDACTED
+    assert event["logentry"] == {"formatted": _REDACTED, "message": _REDACTED}
+
+
+def test_the_query_string_uses_the_same_name_matching_as_other_text():
+    event = {"request": {"query_string": "x=1&client_secret=2"}}
+    _scrub_event(event)
+    assert event["request"]["query_string"] == _REDACTED
+    # Count names are kept, as they are in other text.
+    event = {"request": {"query_string": "max_tokens=5&page=2"}}
+    _scrub_event(event)
+    assert event["request"]["query_string"] == "max_tokens=5&page=2"
+    event = {"request": {"query_string": "u=postgres://a:pw@h/db"}}
+    _scrub_event(event)
+    assert event["request"]["query_string"] == _REDACTED
+
+
+@pytest.mark.parametrize(
+    "body, expected",
+    [
+        (["Input(customer_api_key='k')", "ok"], [_REDACTED, "ok"]),
+        ("customer_api_key=k&x=1", _REDACTED),
+        ([{"password": "p", "n": 1}], [{"password": _REDACTED, "n": 1}]),
+        ("plain text body", "plain text body"),
+    ],
+)
+def test_a_request_body_that_is_a_list_or_a_string_is_scrubbed(body, expected):
+    event = {"request": {"data": body}}
+    _scrub_event(event)
+    assert event["request"]["data"] == expected
+
+
+@pytest.mark.parametrize(
+    "event",
+    [
+        {"exception": "x"},
+        {"exception": {"values": [{"stacktrace": "x"}, 3, {"stacktrace": {}}]}},
+        {"exception": {"values": [{"stacktrace": {"frames": "x"}}]}},
+        {"exception": {"values": [{"stacktrace": {"frames": [3, {"vars": 1}]}}]}},
+        {"threads": "x"},
+        {"threads": {"values": [3, {"stacktrace": ["a"]}]}},
+        {"stacktrace": ["a"]},
+        {"stacktrace": {"frames": [None]}},
+    ],
+)
+def test_odd_stack_trace_shapes_do_not_raise(event):
+    _scrub_event(event)
+
+
+def test_frames_are_still_scrubbed_in_every_stack_trace_the_event_holds():
+    def frames():
+        return {"frames": [{"vars": {"v": "Input(customer_api_key='k')"}}]}
+
+    event = {
+        "exception": {"values": [{"stacktrace": frames()}]},
+        "threads": {"values": [{"stacktrace": frames()}]},
+        "stacktrace": frames(),
+    }
+    _scrub_event(event)
+    assert "customer_api_key" not in json.dumps(event)
+
+
+def test_the_dynamic_sampling_context_keeps_the_transaction_name():
+    dsc = {"transaction": "/api/token/refresh/", "public_key": "pk", "trace_id": "t"}
+    event = {
+        "type": "transaction",
+        "contexts": {
+            "trace": {"trace_id": "t", "dynamic_sampling_context": dict(dsc)},
+            "c": {"password": "leak"},
+        },
+    }
+    out = sentry_module._get_before_send_transaction()(event, {})
+    assert out["contexts"]["trace"]["dynamic_sampling_context"] == dsc
+    assert out["contexts"]["trace"]["trace_id"] == "t"
+    assert out["contexts"]["c"] == {"password": _REDACTED}

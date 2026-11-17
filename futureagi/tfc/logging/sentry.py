@@ -22,6 +22,7 @@ import os
 import re
 from collections.abc import Callable
 from typing import Any
+from urllib.parse import unquote_plus
 
 # Environment detection
 ENV_TYPE = os.getenv("ENV_TYPE", "local")
@@ -128,12 +129,21 @@ SENSITIVE_KEY_SUBSTRINGS = (
     # A rerun's changed credential values, and an agent version check's.
     "environment_values",
     "credential_values",
+    # Cloud storage connection strings and their account keys.
+    "connection_string",
+    "connectionstring",
+    "accountkey",
+    "sharedaccesskey",
+    "sharedaccesssignature",
+    # A Slack webhook URL is itself the credential.
+    "webhook_url",
 )
 _REDACTED = "[Filtered]"
 
 # Count fields that name tokens but carry no secret. They are removed from the
 # lowered text before the substring test, so `max_tokens` is kept while a text
-# that also names `api_key` or `secret` is still caught.
+# that also names `api_key` or `secret` is still caught. A name is removed only
+# as a whole word, so it cannot eat part of a neighbouring one.
 _COUNT_FIELD_NAMES = (
     "max_tokens",
     "prompt_tokens",
@@ -142,6 +152,47 @@ _COUNT_FIELD_NAMES = (
     "token_count",
     "tokens_used",
     "num_tokens",
+)
+_COUNT_FIELD = re.compile(
+    r"(?<![a-z0-9])(?:" + "|".join(_COUNT_FIELD_NAMES) + r")(?![a-z0-9])"
+)
+# Counts quoted in LLM errors: "130000 tokens", "128000 input tokens", and the
+# "tokens per min" of a rate limit. Linear: a number is only tried at its first
+# digit.
+_COUNT_PHRASE = re.compile(
+    r"(?<![\d,])\d[\d,]*\s+(?:(?:input|output|prompt|completion)\s+)?tokens\b"
+    r"|(?<![a-z0-9_])tokens per min(?:ute)?\b"
+)
+
+# Cache keys that embed a one-time token or code after a neutral prefix, so the
+# key can be sent as the prefix alone.
+_TOKEN_KEY_PREFIX = re.compile(
+    r"\b(aws_onboard|gcp_onboard(?:ing)?|mcp_oauth_(?:code|approve|access|refresh)):"
+    r"[^\s'\"]+"
+)
+
+# Slack incoming-webhook URLs are the credential themselves.
+_SECRET_URL_MARKERS = ("hooks.slack.com/services/",)
+
+# Query parameters that carry a credential under a name that does not say so.
+_SENSITIVE_QUERY_PARAMS = frozenset(
+    {
+        "key",
+        "sig",
+        "signature",
+        "x-amz-signature",
+        "x-goog-signature",
+        "code",
+        "state",
+    }
+)
+
+# Routes with a token in the path (tracer/urls.py shared links, accounts/urls.py
+# activation, password reset and invitation, simulate/urls.py harness ingress).
+_URL_TOKEN_SEGMENT = re.compile(
+    r"(?P<one>/(?:shared|api/harness/ingress)/)[^/?#\s]+"
+    r"|(?P<two>/(?:activate|password-reset-confirm|accept-invitation)/)"
+    r"[^/?#\s]+/[^/?#\s]+"
 )
 
 # A URL that carries a password, such as a database or broker connection string.
@@ -173,8 +224,8 @@ def _is_sensitive_key(key: Any) -> bool:
 
 
 def _names_sensitive_key(lowered: str) -> bool:
-    for name in _COUNT_FIELD_NAMES:
-        lowered = lowered.replace(name, "")
+    lowered = _COUNT_FIELD.sub(" ", lowered)
+    lowered = _COUNT_PHRASE.sub(" ", lowered)
     return any(s in lowered for s in SENSITIVE_KEY_SUBSTRINGS)
 
 
@@ -183,7 +234,71 @@ _SAML_VALUE_MARKERS = ("<saml:", "<samlp:", "SAMLResponse=", "fai_saml_b_")
 
 def _mentions_sensitive_key(text: str) -> bool:
     """True if the text names a sensitive key anywhere, in any format."""
-    return _names_sensitive_key(text.lower()) or bool(_URL_PASSWORD.search(text))
+    return (
+        _names_sensitive_key(text.lower())
+        or any(marker in text for marker in _SAML_VALUE_MARKERS)
+        or any(marker in text for marker in _SECRET_URL_MARKERS)
+        or bool(_URL_PASSWORD.search(text))
+    )
+
+
+def _scrub_text(text: str) -> str:
+    """Free text: redacted whole when it names a sensitive key, else with any
+    token embedded in a cache key taken out."""
+    if _mentions_sensitive_key(text):
+        return _REDACTED
+    return _TOKEN_KEY_PREFIX.sub(r"\1:" + _REDACTED, text)
+
+
+def _scrub_query(query: str) -> str:
+    """A query string with the value of each credential parameter replaced."""
+    if _mentions_sensitive_key(query):
+        return _REDACTED
+    parts = []
+    for part in query.split("&"):
+        name, sep, _value = part.partition("=")
+        if sep and unquote_plus(name).lower() in _SENSITIVE_QUERY_PARAMS:
+            part = f"{name}={_REDACTED}"
+        parts.append(part)
+    return "&".join(parts)
+
+
+def _scrub_url(url: str) -> str:
+    """A URL with token path segments and credential query values replaced."""
+    if _URL_PASSWORD.search(url) or any(m in url for m in _SECRET_URL_MARKERS):
+        return _REDACTED
+
+    def path_token(match: re.Match) -> str:
+        if match.group("one"):
+            return f"{match.group('one')}{_REDACTED}"
+        return f"{match.group('two')}{_REDACTED}/{_REDACTED}"
+
+    url = _URL_TOKEN_SEGMENT.sub(path_token, url)
+    base, mark, rest = url.partition("?")
+    if mark:
+        query, hash_mark, fragment = rest.partition("#")
+        url = base + "?" + _scrub_query(query) + (hash_mark + fragment)
+    return url
+
+
+# Data keys that hold a URL, or its query, as recorded by the HTTP integrations.
+_URL_DATA_KEYS = ("url", "http.url")
+_QUERY_DATA_KEYS = ("http.query", "http.fragment")
+
+
+def _scrub_url_fields(data: Any) -> Any:
+    """Scrub the URL and query fields of span or breadcrumb data by their shape;
+    everything else is left for `_scrub_strings`."""
+    if not isinstance(data, dict):
+        return data
+    out = dict(data)
+    for key in _URL_DATA_KEYS:
+        if isinstance(out.get(key), str):
+            out[key] = _scrub_url(out[key])
+    for key in _QUERY_DATA_KEYS:
+        if isinstance(out.get(key), str):
+            out[key] = _scrub_query(out[key])
+    return out
 
 
 def _scrub(value: Any, depth: int = 0) -> Any:
@@ -216,9 +331,7 @@ def _scrub_strings(value: Any, depth: int = 0) -> Any:
         # Too deep to check: drop it rather than send it unread.
         return _REDACTED
     if isinstance(value, str):
-        if any(marker in value for marker in _SAML_VALUE_MARKERS):
-            return _REDACTED
-        return _REDACTED if _mentions_sensitive_key(value) else value
+        return _scrub_text(value)
     if isinstance(value, dict):
         return {
             k: (_REDACTED if _is_sensitive_key(k) else _scrub_strings(v, depth + 1))
@@ -257,32 +370,42 @@ def _scrub_event(event: dict) -> None:
         for section in ("headers", "data", "env"):
             if isinstance(request.get(section), dict):
                 request[section] = _scrub(request[section])
-        # Strip query-string credentials wholesale rather than parse them.
-        if isinstance(request.get("query_string"), str) and any(
-            s in request["query_string"].lower() for s in SENSITIVE_KEY_SUBSTRINGS
-        ):
-            request["query_string"] = _REDACTED
+        # A body that is a list or a string has no key to match on: read it as text.
+        if isinstance(request.get("data"), (list, str)):
+            request["data"] = _scrub_strings(request["data"])
+        # A query string that names a credential goes whole; in the rest, the
+        # value of a parameter that is one by its name alone is replaced.
+        if isinstance(request.get("query_string"), str):
+            request["query_string"] = _scrub_query(request["query_string"])
+        if isinstance(request.get("url"), str):
+            request["url"] = _scrub_url(request["url"])
 
     # The message and each exception's value are free text, often `str(exc)`.
-    if isinstance(event.get("message"), str) and _mentions_sensitive_key(
-        event["message"]
-    ):
-        event["message"] = _REDACTED
+    if isinstance(event.get("message"), str):
+        event["message"] = _scrub_text(event["message"])
     exception = event.get("exception")
     if isinstance(exception, dict) and isinstance(exception.get("values"), list):
         for exc in exception["values"]:
-            if (
-                isinstance(exc, dict)
-                and isinstance(exc.get("value"), str)
-                and _mentions_sensitive_key(exc["value"])
-            ):
-                exc["value"] = _REDACTED
+            if isinstance(exc, dict) and isinstance(exc.get("value"), str):
+                exc["value"] = _scrub_text(exc["value"])
 
     if isinstance(event.get("extra"), dict):
         event["extra"] = _scrub_strings(event["extra"])
     contexts = event.get("contexts")
     if isinstance(contexts, dict):
+        # The trace's dynamic sampling context is the SDK's own (the transaction
+        # name, release, public key) and a later hop reads it back as it was.
+        trace = contexts.get("trace")
+        sampling = (
+            trace.pop("dynamic_sampling_context", None)
+            if isinstance(trace, dict)
+            else None
+        )
         event["contexts"] = _scrub_strings(contexts)
+        if sampling is not None:
+            trace["dynamic_sampling_context"] = sampling
+            if isinstance(event["contexts"].get("trace"), dict):
+                event["contexts"]["trace"]["dynamic_sampling_context"] = sampling
     # A log call's arguments, such as an activity input passed to `%s`, and the
     # message formatted from them, which is rebuilt from the scrubbed arguments.
     logentry = event.get("logentry")
@@ -319,20 +442,44 @@ def _scrub_event(event: dict) -> None:
             if not isinstance(crumb, dict):
                 continue
             if "data" in crumb:
-                crumb["data"] = _scrub_strings(crumb["data"])
+                crumb["data"] = _scrub_strings(_scrub_url_fields(crumb["data"]))
             message = crumb.get("message")
-            if isinstance(message, str) and _mentions_sensitive_key(message):
-                crumb["message"] = _REDACTED
+            if isinstance(message, str):
+                crumb["message"] = _scrub_text(message)
 
     # Sentry captures local variables (include_local_variables=True), as reprs
     # of the objects. Redact them in every stack trace the event holds
     # (exception, threads and a top-level stacktrace). This also covers the
     # ACS candidate-store path, which leaves the raw assertion in a view frame.
-    from sentry_sdk.utils import iter_event_frames
-
-    for frame in iter_event_frames(event):
-        if isinstance(frame, dict) and isinstance(frame.get("vars"), dict):
+    for frame in _event_frames(event):
+        if isinstance(frame.get("vars"), dict):
             frame["vars"] = _scrub_strings(frame["vars"])
+
+
+def _event_frames(event: dict) -> list:
+    """Every stack frame the event holds, tolerating odd shapes.
+
+    The SDK's `iter_event_frames` assumes the shapes it builds itself; a hook
+    must not raise on any other, so each level is checked here.
+    """
+    from sentry_sdk.utils import AnnotatedValue
+
+    stacktraces = [event.get("stacktrace")]
+    for key in ("threads", "exception"):
+        container = event.get(key)
+        if isinstance(container, dict) and isinstance(container.get("values"), list):
+            stacktraces.extend(
+                item.get("stacktrace")
+                for item in container["values"]
+                if isinstance(item, dict)
+            )
+    frames = []
+    for stacktrace in stacktraces:
+        if isinstance(stacktrace, AnnotatedValue):
+            stacktrace = stacktrace.value
+        if isinstance(stacktrace, dict) and isinstance(stacktrace.get("frames"), list):
+            frames.extend(f for f in stacktrace["frames"] if isinstance(f, dict))
+    return frames
 
 
 def _event_scrubber() -> Any:
@@ -477,6 +624,46 @@ def _get_before_send() -> Callable:
     return before_send
 
 
+_REDIS_COMMAND_AND_KEY = re.compile(
+    r"\s*(\S+)(?:\s+(b?'(?:[^'\\]|\\.)*'|b?\"(?:[^\"\\]|\\.)*\"|\S+))?"
+)
+
+
+def _redis_command_and_key(description: str) -> str:
+    """A redis span description cut back to the command and its key.
+
+    With default PII on, the SDK writes every argument into the description,
+    including the (pickled) value a cache write stores.
+    """
+    match = _REDIS_COMMAND_AND_KEY.match(description)
+    if match is None:
+        return _REDACTED
+    return " ".join(part for part in match.groups() if part)
+
+
+def _scrub_span(span: dict) -> None:
+    """Scrub one transaction span: its data, its tags and its description."""
+    if "data" in span:
+        data = _scrub_url_fields(span["data"])
+        if isinstance(data, dict) and isinstance(data.get("redis.commands"), dict):
+            commands = dict(data["redis.commands"])
+            first = commands.get("first_ten")
+            if isinstance(first, list):
+                commands["first_ten"] = [
+                    _redis_command_and_key(c) if isinstance(c, str) else _REDACTED
+                    for c in first
+                ]
+            data["redis.commands"] = commands
+        span["data"] = _scrub_strings(data)
+    if "tags" in span:
+        span["tags"] = _scrub_strings(span["tags"])
+    description = span.get("description")
+    if isinstance(description, str):
+        if span.get("op") == "db.redis":
+            description = _redis_command_and_key(description)
+        span["description"] = _scrub_text(description)
+
+
 def _get_before_send_transaction() -> Callable:
     """The before_send_transaction hook: the same scrub as error events, plus
     every span's data (an outbound call's `http.query` lands there)."""
@@ -486,8 +673,8 @@ def _get_before_send_transaction() -> Callable:
             event = _scrub_deployment_telemetry_event(event)
             _scrub_event(event)
             for span in event.get("spans") or []:
-                if isinstance(span, dict) and "data" in span:
-                    span["data"] = _scrub_strings(span["data"])
+                if isinstance(span, dict):
+                    _scrub_span(span)
             return event
         except Exception as exc:
             _scrub_logger.error("sentry_scrub_failed: %s", type(exc).__name__)
