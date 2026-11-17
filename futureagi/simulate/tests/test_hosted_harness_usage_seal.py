@@ -22,10 +22,14 @@ from simulate.services.hosted_harness import (
 )
 from simulate.tasks import hosted_harness_usage as usage_tasks
 from simulate.tests.test_harness_usage import (
+    AT_EACH_PRICE,
+    STARTED_IN_2026,
+    _ai_credits_equal_usd,
     _provision,
     _receipt,
     _record,
     _report,
+    _start_attempt_at,
     requires_cloud_billing,
 )
 from simulate.tests.test_hosted_harness_channels import _payload
@@ -147,6 +151,7 @@ def test_seal_finalizes_authoring_credits_from_the_cleanup_spend(
     metered, django_capture_on_commit_callbacks
 ):
     attempt, events = metered
+    _start_attempt_at(attempt, STARTED_IN_2026)
     job = attempt.job
     job.payload["metadata"] = {"harness_spend": {"attempts": {"1": AUTHORING_SPEND}}}
     job.save(update_fields=["payload", "updated_at"])
@@ -166,6 +171,31 @@ def test_seal_finalizes_authoring_credits_from_the_cleanup_spend(
     assert events[0].event_id == str(
         uuid5(UUID(str(attempt.id)), "authoring:build-environment")
     )
+
+
+@pytest.mark.django_db
+@pytest.mark.requires_ee
+@pytest.mark.parametrize(("created_at", "cost"), AT_EACH_PRICE)
+def test_seal_prices_authoring_at_the_attempts_start(
+    metered, monkeypatch, django_capture_on_commit_callbacks, created_at, cost
+):
+    attempt, events = metered
+    _start_attempt_at(attempt, created_at)
+    _ai_credits_equal_usd(monkeypatch)
+    job = attempt.job
+    job.payload["metadata"] = {"harness_spend": {"attempts": {"1": AUTHORING_SPEND}}}
+    job.save(update_fields=["payload", "updated_at"])
+    _cleanup_receipt(attempt)
+
+    with django_capture_on_commit_callbacks(execute=True):
+        _seal(attempt)
+
+    attempt.refresh_from_db()
+    assert attempt.authoring_usage_report["records"][0]["cost_usd"] == pytest.approx(
+        cost
+    )
+    assert len(events) == 1
+    assert events[0].timestamp == created_at
 
 
 @pytest.mark.django_db
@@ -201,6 +231,7 @@ def test_seal_bills_a_job_deleted_while_it_ran(
     metered, django_capture_on_commit_callbacks
 ):
     attempt, events = metered
+    _start_attempt_at(attempt, STARTED_IN_2026)
     record = _record("voice_call", amount=2)
     _measured(attempt, [record], django_capture_on_commit_callbacks)
     _cleanup_receipt(attempt)
