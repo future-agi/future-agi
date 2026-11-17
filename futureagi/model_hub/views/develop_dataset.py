@@ -3,7 +3,6 @@ import base64
 import copy
 import io
 import json
-import math
 import os
 import re
 import time
@@ -364,6 +363,19 @@ def _request_workspace_filter(request, field_name="workspace"):
         )
 
     return Q(**{field_name: workspace})
+
+
+def _cached_comparison_matches_selection(
+    metadata, dataset_id, dataset_ids, base_column_name
+):
+    requested_ids = [str(dataset_id), *(str(ds_id) for ds_id in dataset_ids)]
+    stored_ids = metadata.get("comparison_datasets")
+    return (
+        isinstance(stored_ids, list)
+        and str(metadata.get("base_dataset_id")) == str(dataset_id)
+        and [str(ds_id) for ds_id in stored_ids] == requested_ids
+        and metadata.get("base_column_name") == base_column_name
+    )
 
 
 def _request_dataset_queryset(request):
@@ -14197,10 +14209,15 @@ class CompareDatasetsView(APIView):
         base_column_name,
         dynamic_sources,
         result,
+        *,
+        total_pages,
     ):
         time_start = time.time()
         result.setdefault("table", [])
-        page_range = range(start_page, end_page)
+        # The comparison has pages 1 to total_pages; a page after them is empty.
+        page_range = range(start_page, min(end_page, int(total_pages) + 1))
+        if not page_range:
+            return result
 
         # Dictionary to store future results keyed by page number
         results_by_page: dict[Any, Any] = {}
@@ -14427,6 +14444,12 @@ class CompareDatasetsView(APIView):
         responses={200: CompareDatasetResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
     )
     def post(self, request, dataset_id, *args, **kwargs):
+        organization = getattr(request, "organization", None)
+        if organization is None or (
+            getattr(request, "workspace", None) is None
+            and not request.user.has_global_workspace_access(organization)
+        ):
+            return self._gm.not_found(get_error_message("DATASET_NOT_FOUND"))
         try:
             start_time = time.time()
             # Pagination parameters
@@ -14434,14 +14457,31 @@ class CompareDatasetsView(APIView):
             page_size = validated_data["page_size"]
             current_page = validated_data["current_page_index"]
             base_column_name = validated_data["base_column_name"]
-            compare_id = (
+            requested_compare_id = (
                 str(validated_data["compare_id"])
                 if validated_data.get("compare_id")
                 else None
             )
 
-            if not compare_id:
-                compare_id = str(uuid.uuid4())
+            # Stored pages are served only for the selection they were built
+            # for. Any other compare_id, or one with no stored comparison on
+            # this server, is built again under a new compare_id.
+            compare_id = str(uuid.uuid4())
+            cached_metadata = None
+            if requested_compare_id:
+                requested_metadata_path = get_compare_metadata_path(
+                    requested_compare_id
+                )
+                if os.path.exists(requested_metadata_path):
+                    stored_metadata = self.read_metadata_safely(requested_metadata_path)
+                    if _cached_comparison_matches_selection(
+                        stored_metadata,
+                        dataset_id,
+                        validated_data["dataset_ids"],
+                        base_column_name,
+                    ):
+                        compare_id = requested_compare_id
+                        cached_metadata = stored_metadata
             start = current_page * page_size
             end = start + page_size
 
@@ -14462,21 +14502,45 @@ class CompareDatasetsView(APIView):
                 SourceChoices.EVALUATION_REASON.value,
             ]
 
-            num_pages_to_fetch = (page_size + 9) // 10
-            start_page = math.ceil((start + 1) / 10)
-            end_page = start_page + num_pages_to_fetch
+            # Physical pages covering the half-open requested row interval.
+            start_page = start // 10 + 1
+            end_page = (end + 9) // 10 + 1
 
-            if os.path.exists(metadata_path):
-                metadata = self.read_metadata_safely(metadata_path)
-                if metadata.get("total_pages") < num_pages_to_fetch:
-                    return self._gm.bad_request(
-                        get_error_message("FAILED_TO_COMPARE_DATASETS")
-                    )
+            if cached_metadata is not None:
+                metadata = cached_metadata
+                dataset_ids = [str(did) for did in validated_data["dataset_ids"]]
+                if not dataset_ids:
+                    return self._gm.bad_request("No dataset IDs provided.")
+                ordered_ids = [str(dataset_id)] + [str(did) for did in dataset_ids]
+                if len(set(ordered_ids)) != len(ordered_ids):
+                    return self._gm.bad_request("Invalid dataset IDs provided.")
 
+                # Create the Case/When expressions for ordering
+                preserved_order = Case(
+                    *[When(id=id, then=pos) for pos, id in enumerate(ordered_ids)],
+                    output_field=IntegerField(),
+                )
+
+                datasets = (
+                    _request_dataset_queryset(request)
+                    .filter(id__in=ordered_ids)
+                    .order_by(preserved_order)
+                )
+                if len(datasets) != len(dataset_ids) + 1:
+                    return self._gm.not_found(get_error_message("DATASET_NOT_FOUND"))
+
+                comparison_datasets = list(datasets)
+
+                # While processing, progress is the last uploaded one-based page.
+                # Wait for the whole requested range, but not nonexistent pages.
+                last_required_page = min(
+                    end_page - 1, int(metadata.get("total_pages", 0))
+                )
                 loop_start = time.time()
                 while (
                     metadata.get("status") == "processing"
-                    and metadata.get("total_processed") >= start_page
+                    and start_page <= last_required_page
+                    and (metadata.get("total_processed") or 0) < last_required_page
                 ):
                     logger.info("waiting for files to be created")
                     metadata = self.read_metadata_safely(metadata_path)
@@ -14492,27 +14556,6 @@ class CompareDatasetsView(APIView):
                     "total_pages": (int(metadata.get("total_rows")) + page_size - 1)
                     // page_size,
                 }
-
-                dataset_ids = [str(did) for did in validated_data["dataset_ids"]]
-                if not dataset_ids:
-                    return self._gm.bad_request("No dataset IDs provided.")
-                ordered_ids = [dataset_id] + [str(did) for did in dataset_ids]
-
-                # Create the Case/When expressions for ordering
-                preserved_order = Case(
-                    *[When(id=id, then=pos) for pos, id in enumerate(ordered_ids)],
-                    output_field=IntegerField(),
-                )
-
-                datasets = Dataset.objects.filter(
-                    id__in=ordered_ids, deleted=False
-                ).order_by(preserved_order)
-                if len(datasets) != len(dataset_ids) + 1:
-                    return self._gm.bad_request(
-                        get_error_message("INVALID_DATASET_IDS")
-                    )
-
-                comparison_datasets = list(datasets)
                 columns_qs = (
                     Column.objects.filter(
                         dataset__in=comparison_datasets, deleted=False
@@ -14587,6 +14630,7 @@ class CompareDatasetsView(APIView):
                     base_column_name,
                     dynamic_sources,
                     result,
+                    total_pages=metadata.get("total_pages", 0),
                 )
 
                 return self._gm.success_response(result)
@@ -14614,7 +14658,9 @@ class CompareDatasetsView(APIView):
                     return self._gm.bad_request("No dataset IDs provided.")
 
             # list dataset ids in order main_datset id then other dataset ids
-            ordered_ids = [dataset_id] + [str(did) for did in dataset_ids]
+            ordered_ids = [str(dataset_id)] + [str(did) for did in dataset_ids]
+            if len(set(ordered_ids)) != len(ordered_ids):
+                return self._gm.bad_request("Invalid dataset IDs provided.")
 
             # Create the Case/When expressions for ordering
             preserved_order = Case(
@@ -14623,13 +14669,15 @@ class CompareDatasetsView(APIView):
             )
 
             # Apply the filter and ordering
-            datasets = Dataset.objects.filter(
-                id__in=ordered_ids, deleted=False
-            ).order_by(preserved_order)
+            datasets = (
+                _request_dataset_queryset(request)
+                .filter(id__in=ordered_ids)
+                .order_by(preserved_order)
+            )
+            if len(datasets) != len(dataset_ids) + 1:
+                return self._gm.not_found(get_error_message("DATASET_NOT_FOUND"))
             for dst in datasets:
                 logger.info(f"Datasets: {dst.id}  {dst.name}")
-            if len(datasets) != len(dataset_ids) + 1:
-                return self._gm.bad_request(get_error_message("INVALID_DATASET_IDS"))
 
             comparison_datasets = list(datasets)
             columns_qs = (
@@ -14834,6 +14882,7 @@ class CompareDatasetsView(APIView):
                     base_column_name,
                     dynamic_sources,
                     compare_json,
+                    total_pages=metadata.get("total_pages", 0),
                 )
 
             compare_json.update(
@@ -14878,9 +14927,15 @@ class DownloadComparisonDatasetView(APIView):
         },
     )
     def post(self, request, dataset_id, *args, **kwargs):
+        organization = getattr(request, "organization", None)
+        if organization is None or (
+            getattr(request, "workspace", None) is None
+            and not request.user.has_global_workspace_access(organization)
+        ):
+            return self._gm.not_found(get_error_message("DATASET_NOT_FOUND"))
         try:
-            # Get main dataset and validate request data
-            get_object_or_404(Dataset, id=dataset_id, deleted=False)
+            # Validate request data before resolving the comparison datasets
+            datasets_in_scope = _request_dataset_queryset(request)
             validated_data = request.validated_data
             compare_id = (
                 str(validated_data["compare_id"])
@@ -14891,22 +14946,6 @@ class DownloadComparisonDatasetView(APIView):
             dataset_ids = [str(did) for did in validated_data["dataset_ids"]]
             dataset_info = validated_data.get("dataset_info", {})
             common_column_names = validated_data.get("common_column_names", [])
-            if compare_id:
-                metadata_path = get_compare_metadata_path(compare_id)
-                if os.path.exists(get_compare_local_dir(compare_id)):
-                    metadata = {"status ": "processing"}
-                    loop_start = time.time()
-                    while not metadata.get("status") == "completed":
-                        with open(metadata_path) as f:
-                            metadata = json.load(f)
-                        if time.time() - loop_start > 300:
-                            return self._gm.bad_request(
-                                get_error_message("FAILED_TO_DOWNLOAD_DATASET")
-                            )
-                        time.sleep(0.2)
-
-                    dataset_info = metadata.get("dataset_info")
-                    common_column_names = metadata.get("common_column_names")
 
             if not base_column_name:
                 return self._gm.bad_request(
@@ -14914,12 +14953,41 @@ class DownloadComparisonDatasetView(APIView):
                 )
 
             # Ensure main dataset is included in comparison
+            dataset_ids = list(dict.fromkeys(dataset_ids))
             if str(dataset_id) not in dataset_ids:
                 dataset_ids.insert(0, str(dataset_id))
-            comparison_datasets = [
-                get_object_or_404(Dataset, id=ds_id, deleted=False)
-                for ds_id in dataset_ids
-            ]
+            comparison_datasets = []
+            for ds_id in dataset_ids:
+                dataset = datasets_in_scope.filter(id=ds_id).first()
+                if dataset is None:
+                    return self._gm.not_found(get_error_message("DATASET_NOT_FOUND"))
+                comparison_datasets.append(dataset)
+
+            # Stored rows are used only for the selection they were built for.
+            # Any other compare_id is handled like one with no stored
+            # comparison: the rows sent with the request are used.
+            if compare_id:
+                metadata_path = get_compare_metadata_path(compare_id)
+                if os.path.exists(metadata_path):
+                    with open(metadata_path) as f:
+                        metadata = json.load(f)
+                    if _cached_comparison_matches_selection(
+                        metadata,
+                        dataset_id,
+                        [ds_id for ds_id in dataset_ids if ds_id != str(dataset_id)],
+                        base_column_name,
+                    ):
+                        loop_start = time.time()
+                        while metadata.get("status") != "completed":
+                            if time.time() - loop_start > 300:
+                                return self._gm.bad_request(
+                                    get_error_message("FAILED_TO_DOWNLOAD_DATASET")
+                                )
+                            time.sleep(0.2)
+                            with open(metadata_path) as f:
+                                metadata = json.load(f)
+                        dataset_info = metadata.get("dataset_info")
+                        common_column_names = metadata.get("common_column_names")
 
             if not dataset_info or not common_column_names:
                 return self._gm.bad_request(
@@ -14956,6 +15024,7 @@ class DownloadComparisonDatasetView(APIView):
                         # Fetch all common columns for this row in one query
                         cells = Cell.objects.filter(
                             row_id=row_id,
+                            row__dataset=ds,
                             column__name__in=common_column_names,
                             deleted=False,
                         ).select_related("column")

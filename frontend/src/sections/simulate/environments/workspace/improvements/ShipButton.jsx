@@ -1,6 +1,6 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
-import { Box, Button } from "@mui/material";
+import { Box, Button, Stack, Typography } from "@mui/material";
 import { enqueueSnackbar } from "notistack";
 
 import Iconify from "src/components/iconify";
@@ -14,12 +14,12 @@ import {
 
 import { downloadText } from "./downloadText";
 import ShipConfirmDialog from "./ShipConfirmDialog";
-import { isShipped, winnerOf } from "./fixRunView";
+import { gradingNote, isShipped, winnerOf } from "./fixRunView";
 
 const shipHint = (fix, winner) =>
   fix.agent?.kind === "github"
-    ? `Opens a pull request with Trial ${winner.attempt}'s change on the agent's repository`
-    : `Makes Trial ${winner.attempt}'s version the environment's default`;
+    ? `Opens a pull request with Candidate ${winner.attempt}'s change on the agent's repository`
+    : `Makes Candidate ${winner.attempt}'s version the environment's default`;
 
 // Ship: only the fix's winner, only once the fix is ready, and only after the
 // user confirms what it will do. An uploaded agent's winner becomes the
@@ -87,22 +87,33 @@ export default function ShipButton({ fix }) {
       setBusy(false);
     }
   };
+  const note = gradingNote(fix);
   return (
     <>
-      <CustomTooltip show title={shipHint(fix, winner)} size="small" arrow>
-        <Box component="span">
-          <Button
-            size="small"
-            variant="contained"
-            color="primary"
-            disabled={busy}
-            startIcon={<Iconify icon="solar:upload-linear" width={16} />}
-            onClick={() => setConfirming(true)}
+      <Stack direction="row" alignItems="center" spacing={1}>
+        {note && (
+          <Typography
+            data-testid="ship-grading-note"
+            sx={{ typography: "s3", color: "text.secondary", maxWidth: 280 }}
           >
-            Ship
-          </Button>
-        </Box>
-      </CustomTooltip>
+            {note}
+          </Typography>
+        )}
+        <CustomTooltip show title={shipHint(fix, winner)} size="small" arrow>
+          <Box component="span">
+            <Button
+              size="small"
+              variant="contained"
+              color="primary"
+              disabled={busy || fix.eval_grading === "pending"}
+              startIcon={<Iconify icon="solar:upload-linear" width={16} />}
+              onClick={() => setConfirming(true)}
+            >
+              Ship
+            </Button>
+          </Box>
+        </CustomTooltip>
+      </Stack>
       <ShipConfirmDialog
         fix={fix}
         winner={winner}

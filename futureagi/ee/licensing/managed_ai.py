@@ -5,6 +5,7 @@ from contextlib import aclosing
 from typing import Any
 
 from ee.licensing.activation_client import (
+    MANAGED_STREAM_TIMEOUT_SECONDS,
     ManagedServiceError,
     call_managed_service,
     dispatch_managed_request,
@@ -138,7 +139,7 @@ async def stream_chat_completion(
             url=base_url.rstrip("/") + "/v1/chat/completions",
             api_key=api_key,
             json_body=payload,
-            timeout=300.0,
+            timeout=MANAGED_STREAM_TIMEOUT_SECONDS,
             on_unauthorized=_on_unauthorized,
         )
     ) as stream:

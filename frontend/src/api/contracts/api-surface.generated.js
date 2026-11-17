@@ -5,7 +5,7 @@
 export const API_SURFACE_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1142,
+  endpointCount: 1146,
   groups: {
     accounts: {
       "/accounts/2fa/recovery-codes/": ["get"],
@@ -884,6 +884,18 @@ export const API_SURFACE_CONTRACT = Object.freeze({
         "delete",
         "patch",
       ],
+      "/simulate/api/harness-environments/{id}/evidence-imports/": [
+        "get",
+        "post",
+      ],
+      "/simulate/api/harness-environments/{id}/evidence-imports/{import_id}/": [
+        "delete",
+        "get",
+      ],
+      "/simulate/api/harness-environments/{id}/evidence-imports/{import_id}/add/":
+        ["post"],
+      "/simulate/api/harness-environments/{id}/evidence-imports/{import_id}/draft/":
+        ["post"],
       "/simulate/api/harness-environments/{id}/nudges/": ["get"],
       "/simulate/api/harness-environments/{id}/nudges/{nudge_id}/answer/": [
         "post",
@@ -2262,6 +2274,16 @@ export const API_SURFACE_PATHS = Object.freeze({
     "delete",
     "patch",
   ],
+  "/simulate/api/harness-environments/{id}/evidence-imports/": ["get", "post"],
+  "/simulate/api/harness-environments/{id}/evidence-imports/{import_id}/": [
+    "delete",
+    "get",
+  ],
+  "/simulate/api/harness-environments/{id}/evidence-imports/{import_id}/add/": [
+    "post",
+  ],
+  "/simulate/api/harness-environments/{id}/evidence-imports/{import_id}/draft/":
+    ["post"],
   "/simulate/api/harness-environments/{id}/nudges/": ["get"],
   "/simulate/api/harness-environments/{id}/nudges/{nudge_id}/answer/": ["post"],
   "/simulate/api/harness-environments/{id}/nudges/{nudge_id}/stop/": ["post"],

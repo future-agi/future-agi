@@ -1021,6 +1021,19 @@ ALK_HOSTED_BASE_EGRESS_DOMAINS = [
     for domain in os.getenv("ALK_HOSTED_BASE_EGRESS_DOMAINS", "").split(",")
     if domain.strip()
 ]
+# Sandbox snapshots whose hook may export a hosted run's spans. Empty means no run exports.
+ALK_HOSTED_OBSERVABILITY_EXPORT_SNAPSHOTS = [
+    name.strip()
+    for name in os.getenv("ALK_HOSTED_OBSERVABILITY_EXPORT_SNAPSHOTS", "").split(",")
+    if name.strip()
+]
+# Of those, the snapshots whose hook measures an agent that traces nothing itself
+# (deploy/env-reference.toml says when a snapshot may be listed).
+ALK_HOSTED_OBSERVABILITY_MEASURE_SNAPSHOTS = [
+    name.strip()
+    for name in os.getenv("ALK_HOSTED_OBSERVABILITY_MEASURE_SNAPSHOTS", "").split(",")
+    if name.strip()
+]
 # Hosted simulator credentials are platform configuration, not customer job input. Values are
 # resolved only while launching the sandbox and are never persisted on HostedHarnessJob. Model
 # and speech calls go through AgentCC, so no model or speech vendor's credential is listed here.
@@ -1127,9 +1140,13 @@ AGENT_FIX_CHECK_RUN_PARALLELISM = int(os.getenv("AGENT_FIX_CHECK_RUN_PARALLELISM
 AGENT_FIX_HEARTBEAT_TIMEOUT_SECONDS = int(
     os.getenv("AGENT_FIX_HEARTBEAT_TIMEOUT_SECONDS", "600")
 )
-# A check run reserves this much of a fix's budget for each scenario execution.
+# A check run reserves this much of a fix's budget for each scenario execution, for its
+# simulation, and the second for each platform eval a winner's grading may run on it.
 AGENT_FIX_WORST_CASE_USD_PER_EXECUTION = os.getenv(
     "AGENT_FIX_WORST_CASE_USD_PER_EXECUTION", "0.05"
+)
+AGENT_FIX_WORST_CASE_USD_PER_EVAL = os.getenv(
+    "AGENT_FIX_WORST_CASE_USD_PER_EVAL", "0.02"
 )
 # Failing cases a fix needs at launch. A third are held back, and a fix proven only on the
 # cases it was made on can pass by chance, so this leaves the 4 that verifying it takes.
