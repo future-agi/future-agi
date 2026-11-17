@@ -301,7 +301,7 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
             for index, name in enumerate(scalar_columns, start=1)
         )
         source = f"""(
-            SELECT project_id, trace_id, {projections}
+            SELECT project_id, trace_id, id, {projections}
             FROM (
                 SELECT project_id, trace_id, id,
                     argMax(tuple({', '.join(scalar_values)}), _version) AS cohort_span_state
@@ -325,6 +325,9 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
         ) or "1 = 1"
         bucket = self.time_bucket_expr(self.interval)
         root = "ifNull(parent_span_id, '') = ''"
+        # Match shared runtime metrics: a trace can contain multiple root spans,
+        # but failed requests and latency belong to the same canonical root
+        # (earliest start, then span id), not any error and the slowest root.
         query = f"""
         WITH skill_cohorts AS (
             SELECT project_id, trace_id, cohort_key, {bucket}(start_time) AS time_bucket
@@ -333,8 +336,9 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
         ), skill_trace_metrics AS (
             SELECT project_id, trace_id,
                 countIf({root}) > 0 AS has_root,
-                countIf(({root}) AND status = 'ERROR') > 0 AS failed,
-                maxIf(latency_ms, {root}) AS root_latency,
+                argMinIf(tuple(status, latency_ms), tuple(start_time, id), {root}) AS canonical_root,
+                canonical_root.1 = 'ERROR' AS failed,
+                canonical_root.2 AS root_latency,
                 sum(cost) AS trace_cost,
                 sum(total_tokens) AS trace_tokens
             FROM {source}

@@ -199,6 +199,30 @@ def test_cohort_metrics_include_whole_trace_across_window_boundaries(skill_query
 
 
 @pytest.mark.integration
+def test_cohort_metrics_use_one_canonical_root_for_status_and_latency(skill_query_client, cohort_catalog):
+    project = str(uuid4())
+    root = {"name": "request", "parent_span_id": "", "span_attributes": {}}
+    insert_rows(skill_query_client, [
+        span_row(project, "first-ok"), span_row(project, "tie-error"),
+        span_row(project, "first-ok", **root, id="0000000000000001", latency_ms=100),
+        span_row(project, "first-ok", **root, id="0000000000000002", latency_ms=900,
+                 status="ERROR", start_time=START + timedelta(seconds=1)),
+        span_row(project, "tie-error", **root, id="0000000000000001", latency_ms=200, status="ERROR"),
+        span_row(project, "tie-error", **root, id="0000000000000002", latency_ms=1000),
+    ])
+    sql, params = TimeSeriesQueryBuilder(
+        project_id=project, observe_type="trace", split_by="skill_version",
+        start_date=START, end_date=END,
+    ).build()
+    rows = list(skill_query_client.query(sql, parameters=params).named_results())
+    assert len(rows) == 1
+    assert rows[0]["traces"] == 2
+    assert rows[0]["failed_requests"] == 1
+    assert rows[0]["failed_request_rate"] == pytest.approx(0.5)
+    assert rows[0]["latency_p95"] == 200
+
+
+@pytest.mark.integration
 def test_live_selected_version_split_and_dashboard_share_source(skill_query_client, cohort_catalog):
     client = skill_query_client
     project = str(uuid4())
