@@ -68930,6 +68930,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
                 description:
                   "Optional metric output type metadata used by eval and annotation filters.",
               },
+              group: {
+                type: "integer",
+                minimum: 0,
+                maximum: 2147483647,
+                description:
+                  "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+              },
               filter_config: {
                 type: "object",
                 properties: {
@@ -68950,7 +68957,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                   col_type: {
                     type: "string",
                     description:
-                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
                   },
                   attribute_value_types: {
                     type: "array",
@@ -69754,6 +69761,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
                 description:
                   "Optional metric output type metadata used by eval and annotation filters.",
               },
+              group: {
+                type: "integer",
+                minimum: 0,
+                maximum: 2147483647,
+                description:
+                  "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+              },
               filter_config: {
                 type: "object",
                 properties: {
@@ -69774,7 +69788,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                   col_type: {
                     type: "string",
                     description:
-                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
                   },
                   attribute_value_types: {
                     type: "array",
@@ -70970,6 +70984,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
                 description:
                   "Optional metric output type metadata used by eval and annotation filters.",
               },
+              group: {
+                type: "integer",
+                minimum: 0,
+                maximum: 2147483647,
+                description:
+                  "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+              },
               filter_config: {
                 type: "object",
                 properties: {
@@ -70990,7 +71011,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                   col_type: {
                     type: "string",
                     description:
-                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
                   },
                   attribute_value_types: {
                     type: "array",
@@ -71367,6 +71388,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
                 description:
                   "Optional metric output type metadata used by eval and annotation filters.",
               },
+              group: {
+                type: "integer",
+                minimum: 0,
+                maximum: 2147483647,
+                description:
+                  "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+              },
               filter_config: {
                 type: "object",
                 properties: {
@@ -71387,7 +71415,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                   col_type: {
                     type: "string",
                     description:
-                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
                   },
                   attribute_value_types: {
                     type: "array",
@@ -71815,6 +71843,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
                     description:
                       "Optional metric output type metadata used by eval and annotation filters.",
                   },
+                  group: {
+                    type: "integer",
+                    minimum: 0,
+                    maximum: 2147483647,
+                    description:
+                      "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+                  },
                   filter_config: {
                     type: "object",
                     properties: {
@@ -71835,7 +71870,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                       col_type: {
                         type: "string",
                         description:
-                          "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                          "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
                       },
                       attribute_value_types: {
                         type: "array",
@@ -71884,6 +71919,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
                     description:
                       "Optional metric output type metadata used by eval and annotation filters.",
                   },
+                  group: {
+                    type: "integer",
+                    minimum: 0,
+                    maximum: 2147483647,
+                    description:
+                      "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+                  },
                   filter_config: {
                     type: "object",
                     properties: {
@@ -71904,7 +71946,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                       col_type: {
                         type: "string",
                         description:
-                          "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                          "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
                       },
                       attribute_value_types: {
                         type: "array",
@@ -72171,6 +72213,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
                     description:
                       "Optional metric output type metadata used by eval and annotation filters.",
                   },
+                  group: {
+                    type: "integer",
+                    minimum: 0,
+                    maximum: 2147483647,
+                    description:
+                      "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+                  },
                   filter_config: {
                     type: "object",
                     properties: {
@@ -72191,7 +72240,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                       col_type: {
                         type: "string",
                         description:
-                          "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                          "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
                       },
                       attribute_value_types: {
                         type: "array",
@@ -72240,6 +72289,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
                     description:
                       "Optional metric output type metadata used by eval and annotation filters.",
                   },
+                  group: {
+                    type: "integer",
+                    minimum: 0,
+                    maximum: 2147483647,
+                    description:
+                      "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+                  },
                   filter_config: {
                     type: "object",
                     properties: {
@@ -72260,7 +72316,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                       col_type: {
                         type: "string",
                         description:
-                          "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                          "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
                       },
                       attribute_value_types: {
                         type: "array",
@@ -76533,6 +76589,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
                 description:
                   "Optional metric output type metadata used by eval and annotation filters.",
               },
+              group: {
+                type: "integer",
+                minimum: 0,
+                maximum: 2147483647,
+                description:
+                  "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+              },
               filter_config: {
                 type: "object",
                 properties: {
@@ -76553,7 +76616,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                   col_type: {
                     type: "string",
                     description:
-                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
                   },
                   attribute_value_types: {
                     type: "array",
@@ -80939,6 +81002,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
                 description:
                   "Optional metric output type metadata used by eval and annotation filters.",
               },
+              group: {
+                type: "integer",
+                minimum: 0,
+                maximum: 2147483647,
+                description:
+                  "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+              },
               filter_config: {
                 type: "object",
                 properties: {
@@ -80959,7 +81029,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                   col_type: {
                     type: "string",
                     description:
-                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
                   },
                   attribute_value_types: {
                     type: "array",
@@ -81400,6 +81470,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
                 description:
                   "Optional metric output type metadata used by eval and annotation filters.",
               },
+              group: {
+                type: "integer",
+                minimum: 0,
+                maximum: 2147483647,
+                description:
+                  "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+              },
               filter_config: {
                 type: "object",
                 properties: {
@@ -81420,7 +81497,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                   col_type: {
                     type: "string",
                     description:
-                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
                   },
                   attribute_value_types: {
                     type: "array",
@@ -85177,6 +85254,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
                 description:
                   "Optional metric output type metadata used by eval and annotation filters.",
               },
+              group: {
+                type: "integer",
+                minimum: 0,
+                maximum: 2147483647,
+                description:
+                  "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+              },
               filter_config: {
                 type: "object",
                 properties: {
@@ -85197,7 +85281,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                   col_type: {
                     type: "string",
                     description:
-                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
                   },
                   attribute_value_types: {
                     type: "array",
@@ -88057,6 +88141,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
                 description:
                   "Optional metric output type metadata used by eval and annotation filters.",
               },
+              group: {
+                type: "integer",
+                minimum: 0,
+                maximum: 2147483647,
+                description:
+                  "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+              },
               filter_config: {
                 type: "object",
                 properties: {
@@ -88077,7 +88168,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                   col_type: {
                     type: "string",
                     description:
-                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
                   },
                   attribute_value_types: {
                     type: "array",
@@ -88163,6 +88254,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
                 description:
                   "Optional metric output type metadata used by eval and annotation filters.",
               },
+              group: {
+                type: "integer",
+                minimum: 0,
+                maximum: 2147483647,
+                description:
+                  "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+              },
               filter_config: {
                 type: "object",
                 properties: {
@@ -88183,7 +88281,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                   col_type: {
                     type: "string",
                     description:
-                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
                   },
                   attribute_value_types: {
                     type: "array",
@@ -88250,6 +88348,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
                 description:
                   "Optional metric output type metadata used by eval and annotation filters.",
               },
+              group: {
+                type: "integer",
+                minimum: 0,
+                maximum: 2147483647,
+                description:
+                  "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+              },
               filter_config: {
                 type: "object",
                 properties: {
@@ -88270,7 +88375,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                   col_type: {
                     type: "string",
                     description:
-                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
                   },
                   attribute_value_types: {
                     type: "array",
@@ -93460,6 +93565,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
                 description:
                   "Optional metric output type metadata used by eval and annotation filters.",
               },
+              group: {
+                type: "integer",
+                minimum: 0,
+                maximum: 2147483647,
+                description:
+                  "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+              },
               filter_config: {
                 type: "object",
                 properties: {
@@ -93480,7 +93592,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                   col_type: {
                     type: "string",
                     description:
-                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
                   },
                   attribute_value_types: {
                     type: "array",
@@ -100736,6 +100848,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
                 description:
                   "Optional metric output type metadata used by eval and annotation filters.",
               },
+              group: {
+                type: "integer",
+                minimum: 0,
+                maximum: 2147483647,
+                description:
+                  "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+              },
               filter_config: {
                 type: "object",
                 properties: {
@@ -100756,7 +100875,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                   col_type: {
                     type: "string",
                     description:
-                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
                   },
                   attribute_value_types: {
                     type: "array",
@@ -101203,6 +101322,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
                 description:
                   "Optional metric output type metadata used by eval and annotation filters.",
               },
+              group: {
+                type: "integer",
+                minimum: 0,
+                maximum: 2147483647,
+                description:
+                  "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+              },
               filter_config: {
                 type: "object",
                 properties: {
@@ -101223,7 +101349,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                   col_type: {
                     type: "string",
                     description:
-                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
                   },
                   attribute_value_types: {
                     type: "array",
@@ -105760,6 +105886,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
                 description:
                   "Optional metric output type metadata used by eval and annotation filters.",
               },
+              group: {
+                type: "integer",
+                minimum: 0,
+                maximum: 2147483647,
+                description:
+                  "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+              },
               filter_config: {
                 type: "object",
                 properties: {
@@ -105780,7 +105913,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                   col_type: {
                     type: "string",
                     description:
-                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
                   },
                   attribute_value_types: {
                     type: "array",
@@ -105999,6 +106132,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
                 description:
                   "Optional metric output type metadata used by eval and annotation filters.",
               },
+              group: {
+                type: "integer",
+                minimum: 0,
+                maximum: 2147483647,
+                description:
+                  "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+              },
               filter_config: {
                 type: "object",
                 properties: {
@@ -106019,7 +106159,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                   col_type: {
                     type: "string",
                     description:
-                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
                   },
                   attribute_value_types: {
                     type: "array",
@@ -108134,6 +108274,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
                 description:
                   "Optional metric output type metadata used by eval and annotation filters.",
               },
+              group: {
+                type: "integer",
+                minimum: 0,
+                maximum: 2147483647,
+                description:
+                  "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+              },
               filter_config: {
                 type: "object",
                 properties: {
@@ -108154,7 +108301,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                   col_type: {
                     type: "string",
                     description:
-                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
                   },
                   attribute_value_types: {
                     type: "array",
@@ -110798,6 +110945,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
                 description:
                   "Optional metric output type metadata used by eval and annotation filters.",
               },
+              group: {
+                type: "integer",
+                minimum: 0,
+                maximum: 2147483647,
+                description:
+                  "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+              },
               filter_config: {
                 type: "object",
                 properties: {
@@ -110818,7 +110972,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                   col_type: {
                     type: "string",
                     description:
-                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
                   },
                   attribute_value_types: {
                     type: "array",

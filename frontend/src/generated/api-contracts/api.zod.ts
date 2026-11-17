@@ -15533,6 +15533,9 @@ export const ModelHubAnnotationQueuesAutomationRulesListQueryParams =
 export const modelHubAnnotationQueuesAutomationRulesListResponseResultsItemNameMax = 255;
 
 export const modelHubAnnotationQueuesAutomationRulesListResponseResultsItemConditionsOperatorDefault = `and`;
+export const modelHubAnnotationQueuesAutomationRulesListResponseResultsItemConditionsFilterItemGroupMin = 0;
+export const modelHubAnnotationQueuesAutomationRulesListResponseResultsItemConditionsFilterItemGroupMax = 2147483647;
+
 export const modelHubAnnotationQueuesAutomationRulesListResponseResultsItemConditionsRulesItemOpDefault = `eq`;
 
 export const ModelHubAnnotationQueuesAutomationRulesListResponse = zod.object({
@@ -15592,6 +15595,18 @@ export const ModelHubAnnotationQueuesAutomationRulesListResponse = zod.object({
                   .describe(
                     "Optional metric output type metadata used by eval and annotation filters.",
                   ),
+                group: zod
+                  .number()
+                  .min(
+                    modelHubAnnotationQueuesAutomationRulesListResponseResultsItemConditionsFilterItemGroupMin,
+                  )
+                  .max(
+                    modelHubAnnotationQueuesAutomationRulesListResponseResultsItemConditionsFilterItemGroupMax,
+                  )
+                  .optional()
+                  .describe(
+                    "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+                  ),
                 filter_config: zod.object({
                   filter_type: zod
                     .string()
@@ -15613,7 +15628,7 @@ export const ModelHubAnnotationQueuesAutomationRulesListResponse = zod.object({
                     .string()
                     .optional()
                     .describe(
-                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
                     ),
                   attribute_value_types: zod
                     .array(zod.enum(["string", "number", "boolean"]).nullable())
@@ -15675,6 +15690,9 @@ export const ModelHubAnnotationQueuesAutomationRulesCreateParams = zod.object({
 export const modelHubAnnotationQueuesAutomationRulesCreateBodyNameMax = 255;
 
 export const modelHubAnnotationQueuesAutomationRulesCreateBodyConditionsOperatorDefault = `and`;
+export const modelHubAnnotationQueuesAutomationRulesCreateBodyConditionsFilterItemGroupMin = 0;
+export const modelHubAnnotationQueuesAutomationRulesCreateBodyConditionsFilterItemGroupMax = 2147483647;
+
 export const modelHubAnnotationQueuesAutomationRulesCreateBodyConditionsRulesItemOpDefault = `eq`;
 
 export const ModelHubAnnotationQueuesAutomationRulesCreateBody = zod.object({
@@ -15725,6 +15743,18 @@ export const ModelHubAnnotationQueuesAutomationRulesCreateBody = zod.object({
               .describe(
                 "Optional metric output type metadata used by eval and annotation filters.",
               ),
+            group: zod
+              .number()
+              .min(
+                modelHubAnnotationQueuesAutomationRulesCreateBodyConditionsFilterItemGroupMin,
+              )
+              .max(
+                modelHubAnnotationQueuesAutomationRulesCreateBodyConditionsFilterItemGroupMax,
+              )
+              .optional()
+              .describe(
+                "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+              ),
             filter_config: zod.object({
               filter_type: zod
                 .string()
@@ -15746,7 +15776,7 @@ export const ModelHubAnnotationQueuesAutomationRulesCreateBody = zod.object({
                 .string()
                 .optional()
                 .describe(
-                  "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                  "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
                 ),
               attribute_value_types: zod
                 .array(zod.enum(["string", "number", "boolean"]).nullable())
@@ -15804,6 +15834,9 @@ export const ModelHubAnnotationQueuesAutomationRulesReadParams = zod.object({
 export const modelHubAnnotationQueuesAutomationRulesReadResponseNameMax = 255;
 
 export const modelHubAnnotationQueuesAutomationRulesReadResponseConditionsOperatorDefault = `and`;
+export const modelHubAnnotationQueuesAutomationRulesReadResponseConditionsFilterItemGroupMin = 0;
+export const modelHubAnnotationQueuesAutomationRulesReadResponseConditionsFilterItemGroupMax = 2147483647;
+
 export const modelHubAnnotationQueuesAutomationRulesReadResponseConditionsRulesItemOpDefault = `eq`;
 
 export const ModelHubAnnotationQueuesAutomationRulesReadResponse = zod.object({
@@ -15856,6 +15889,18 @@ export const ModelHubAnnotationQueuesAutomationRulesReadResponse = zod.object({
               .describe(
                 "Optional metric output type metadata used by eval and annotation filters.",
               ),
+            group: zod
+              .number()
+              .min(
+                modelHubAnnotationQueuesAutomationRulesReadResponseConditionsFilterItemGroupMin,
+              )
+              .max(
+                modelHubAnnotationQueuesAutomationRulesReadResponseConditionsFilterItemGroupMax,
+              )
+              .optional()
+              .describe(
+                "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+              ),
             filter_config: zod.object({
               filter_type: zod
                 .string()
@@ -15877,7 +15922,7 @@ export const ModelHubAnnotationQueuesAutomationRulesReadResponse = zod.object({
                 .string()
                 .optional()
                 .describe(
-                  "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                  "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
                 ),
               attribute_value_types: zod
                 .array(zod.enum(["string", "number", "boolean"]).nullable())
@@ -15941,6 +15986,9 @@ export const ModelHubAnnotationQueuesAutomationRulesUpdateParams = zod.object({
 export const modelHubAnnotationQueuesAutomationRulesUpdateBodyNameMax = 255;
 
 export const modelHubAnnotationQueuesAutomationRulesUpdateBodyConditionsOperatorDefault = `and`;
+export const modelHubAnnotationQueuesAutomationRulesUpdateBodyConditionsFilterItemGroupMin = 0;
+export const modelHubAnnotationQueuesAutomationRulesUpdateBodyConditionsFilterItemGroupMax = 2147483647;
+
 export const modelHubAnnotationQueuesAutomationRulesUpdateBodyConditionsRulesItemOpDefault = `eq`;
 
 export const ModelHubAnnotationQueuesAutomationRulesUpdateBody = zod.object({
@@ -15991,6 +16039,18 @@ export const ModelHubAnnotationQueuesAutomationRulesUpdateBody = zod.object({
               .describe(
                 "Optional metric output type metadata used by eval and annotation filters.",
               ),
+            group: zod
+              .number()
+              .min(
+                modelHubAnnotationQueuesAutomationRulesUpdateBodyConditionsFilterItemGroupMin,
+              )
+              .max(
+                modelHubAnnotationQueuesAutomationRulesUpdateBodyConditionsFilterItemGroupMax,
+              )
+              .optional()
+              .describe(
+                "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+              ),
             filter_config: zod.object({
               filter_type: zod
                 .string()
@@ -16012,7 +16072,7 @@ export const ModelHubAnnotationQueuesAutomationRulesUpdateBody = zod.object({
                 .string()
                 .optional()
                 .describe(
-                  "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                  "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
                 ),
               attribute_value_types: zod
                 .array(zod.enum(["string", "number", "boolean"]).nullable())
@@ -16062,6 +16122,9 @@ export const ModelHubAnnotationQueuesAutomationRulesUpdateBody = zod.object({
 export const modelHubAnnotationQueuesAutomationRulesUpdateResponseNameMax = 255;
 
 export const modelHubAnnotationQueuesAutomationRulesUpdateResponseConditionsOperatorDefault = `and`;
+export const modelHubAnnotationQueuesAutomationRulesUpdateResponseConditionsFilterItemGroupMin = 0;
+export const modelHubAnnotationQueuesAutomationRulesUpdateResponseConditionsFilterItemGroupMax = 2147483647;
+
 export const modelHubAnnotationQueuesAutomationRulesUpdateResponseConditionsRulesItemOpDefault = `eq`;
 
 export const ModelHubAnnotationQueuesAutomationRulesUpdateResponse = zod.object(
@@ -16115,6 +16178,18 @@ export const ModelHubAnnotationQueuesAutomationRulesUpdateResponse = zod.object(
                 .describe(
                   "Optional metric output type metadata used by eval and annotation filters.",
                 ),
+              group: zod
+                .number()
+                .min(
+                  modelHubAnnotationQueuesAutomationRulesUpdateResponseConditionsFilterItemGroupMin,
+                )
+                .max(
+                  modelHubAnnotationQueuesAutomationRulesUpdateResponseConditionsFilterItemGroupMax,
+                )
+                .optional()
+                .describe(
+                  "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+                ),
               filter_config: zod.object({
                 filter_type: zod
                   .string()
@@ -16136,7 +16211,7 @@ export const ModelHubAnnotationQueuesAutomationRulesUpdateResponse = zod.object(
                   .string()
                   .optional()
                   .describe(
-                    "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                    "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
                   ),
                 attribute_value_types: zod
                   .array(zod.enum(["string", "number", "boolean"]).nullable())
@@ -16202,6 +16277,9 @@ export const ModelHubAnnotationQueuesAutomationRulesPartialUpdateParams =
 export const modelHubAnnotationQueuesAutomationRulesPartialUpdateBodyNameMax = 255;
 
 export const modelHubAnnotationQueuesAutomationRulesPartialUpdateBodyConditionsOperatorDefault = `and`;
+export const modelHubAnnotationQueuesAutomationRulesPartialUpdateBodyConditionsFilterItemGroupMin = 0;
+export const modelHubAnnotationQueuesAutomationRulesPartialUpdateBodyConditionsFilterItemGroupMax = 2147483647;
+
 export const modelHubAnnotationQueuesAutomationRulesPartialUpdateBodyConditionsRulesItemOpDefault = `eq`;
 
 export const ModelHubAnnotationQueuesAutomationRulesPartialUpdateBody =
@@ -16253,6 +16331,18 @@ export const ModelHubAnnotationQueuesAutomationRulesPartialUpdateBody =
                 .describe(
                   "Optional metric output type metadata used by eval and annotation filters.",
                 ),
+              group: zod
+                .number()
+                .min(
+                  modelHubAnnotationQueuesAutomationRulesPartialUpdateBodyConditionsFilterItemGroupMin,
+                )
+                .max(
+                  modelHubAnnotationQueuesAutomationRulesPartialUpdateBodyConditionsFilterItemGroupMax,
+                )
+                .optional()
+                .describe(
+                  "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+                ),
               filter_config: zod.object({
                 filter_type: zod
                   .string()
@@ -16274,7 +16364,7 @@ export const ModelHubAnnotationQueuesAutomationRulesPartialUpdateBody =
                   .string()
                   .optional()
                   .describe(
-                    "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                    "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
                   ),
                 attribute_value_types: zod
                   .array(zod.enum(["string", "number", "boolean"]).nullable())
@@ -16324,6 +16414,9 @@ export const ModelHubAnnotationQueuesAutomationRulesPartialUpdateBody =
 export const modelHubAnnotationQueuesAutomationRulesPartialUpdateResponseNameMax = 255;
 
 export const modelHubAnnotationQueuesAutomationRulesPartialUpdateResponseConditionsOperatorDefault = `and`;
+export const modelHubAnnotationQueuesAutomationRulesPartialUpdateResponseConditionsFilterItemGroupMin = 0;
+export const modelHubAnnotationQueuesAutomationRulesPartialUpdateResponseConditionsFilterItemGroupMax = 2147483647;
+
 export const modelHubAnnotationQueuesAutomationRulesPartialUpdateResponseConditionsRulesItemOpDefault = `eq`;
 
 export const ModelHubAnnotationQueuesAutomationRulesPartialUpdateResponse =
@@ -16377,6 +16470,18 @@ export const ModelHubAnnotationQueuesAutomationRulesPartialUpdateResponse =
                 .describe(
                   "Optional metric output type metadata used by eval and annotation filters.",
                 ),
+              group: zod
+                .number()
+                .min(
+                  modelHubAnnotationQueuesAutomationRulesPartialUpdateResponseConditionsFilterItemGroupMin,
+                )
+                .max(
+                  modelHubAnnotationQueuesAutomationRulesPartialUpdateResponseConditionsFilterItemGroupMax,
+                )
+                .optional()
+                .describe(
+                  "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+                ),
               filter_config: zod.object({
                 filter_type: zod
                   .string()
@@ -16398,7 +16503,7 @@ export const ModelHubAnnotationQueuesAutomationRulesPartialUpdateResponse =
                   .string()
                   .optional()
                   .describe(
-                    "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                    "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
                   ),
                 attribute_value_types: zod
                   .array(zod.enum(["string", "number", "boolean"]).nullable())
@@ -16686,6 +16791,9 @@ export const ModelHubAnnotationQueuesItemsAddItemsParams = zod.object({
   queue_id: zod.string(),
 });
 
+export const modelHubAnnotationQueuesItemsAddItemsBodySelectionFilterItemGroupMin = 0;
+export const modelHubAnnotationQueuesItemsAddItemsBodySelectionFilterItemGroupMax = 2147483647;
+
 export const modelHubAnnotationQueuesItemsAddItemsBodySelectionFilterDefault =
   [];
 export const modelHubAnnotationQueuesItemsAddItemsBodySelectionExcludeIdsDefault =
@@ -16751,6 +16859,18 @@ export const ModelHubAnnotationQueuesItemsAddItemsBody = zod.object({
               .describe(
                 "Optional metric output type metadata used by eval and annotation filters.",
               ),
+            group: zod
+              .number()
+              .min(
+                modelHubAnnotationQueuesItemsAddItemsBodySelectionFilterItemGroupMin,
+              )
+              .max(
+                modelHubAnnotationQueuesItemsAddItemsBodySelectionFilterItemGroupMax,
+              )
+              .optional()
+              .describe(
+                "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+              ),
             filter_config: zod.object({
               filter_type: zod
                 .string()
@@ -16772,7 +16892,7 @@ export const ModelHubAnnotationQueuesItemsAddItemsBody = zod.object({
                 .string()
                 .optional()
                 .describe(
-                  "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                  "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
                 ),
               attribute_value_types: zod
                 .array(zod.enum(["string", "number", "boolean"]).nullable())
@@ -22882,6 +23002,9 @@ export const ModelHubDevelopsGetRowDataCreateParams = zod.object({
   dataset_id: zod.string(),
 });
 
+export const modelHubDevelopsGetRowDataCreateBodyFiltersItemGroupMin = 0;
+export const modelHubDevelopsGetRowDataCreateBodyFiltersItemGroupMax = 2147483647;
+
 export const modelHubDevelopsGetRowDataCreateBodyFiltersDefault = [];
 export const modelHubDevelopsGetRowDataCreateBodySortDefault = [];
 export const modelHubDevelopsGetRowDataCreateBodySortMax = 1;
@@ -22913,6 +23036,14 @@ export const ModelHubDevelopsGetRowDataCreateBody = zod.object({
           .describe(
             "Optional metric output type metadata used by eval and annotation filters.",
           ),
+        group: zod
+          .number()
+          .min(modelHubDevelopsGetRowDataCreateBodyFiltersItemGroupMin)
+          .max(modelHubDevelopsGetRowDataCreateBodyFiltersItemGroupMax)
+          .optional()
+          .describe(
+            "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+          ),
         filter_config: zod.object({
           filter_type: zod
             .string()
@@ -22934,7 +23065,7 @@ export const ModelHubDevelopsGetRowDataCreateBody = zod.object({
             .string()
             .optional()
             .describe(
-              "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+              "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
             ),
           attribute_value_types: zod
             .array(zod.enum(["string", "number", "boolean"]).nullable())
@@ -27315,6 +27446,9 @@ export const ModelHubGetEvalMetricsListResponse = zod.object({
   }),
 });
 
+export const modelHubGetEvalMetricsCreateBodyFiltersItemGroupMin = 0;
+export const modelHubGetEvalMetricsCreateBodyFiltersItemGroupMax = 2147483647;
+
 export const modelHubGetEvalMetricsCreateBodyFiltersDefault = [];
 
 export const ModelHubGetEvalMetricsCreateBody = zod.object({
@@ -27345,6 +27479,14 @@ export const ModelHubGetEvalMetricsCreateBody = zod.object({
           .describe(
             "Optional metric output type metadata used by eval and annotation filters.",
           ),
+        group: zod
+          .number()
+          .min(modelHubGetEvalMetricsCreateBodyFiltersItemGroupMin)
+          .max(modelHubGetEvalMetricsCreateBodyFiltersItemGroupMax)
+          .optional()
+          .describe(
+            "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+          ),
         filter_config: zod.object({
           filter_type: zod
             .string()
@@ -27366,7 +27508,7 @@ export const ModelHubGetEvalMetricsCreateBody = zod.object({
             .string()
             .optional()
             .describe(
-              "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+              "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
             ),
           attribute_value_types: zod
             .array(zod.enum(["string", "number", "boolean"]).nullable())
@@ -60844,6 +60986,9 @@ export const SimulateApiHarnessEnvironmentsEditEvaluationParams = zod.object({
   eval_config_id: zod.string(),
 });
 
+export const simulateApiHarnessEnvironmentsEditEvaluationBodyFiltersItemGroupMin = 0;
+export const simulateApiHarnessEnvironmentsEditEvaluationBodyFiltersItemGroupMax = 2147483647;
+
 export const SimulateApiHarnessEnvironmentsEditEvaluationBody = zod.object({
   config: zod
     .record(zod.string(), zod.unknown())
@@ -60895,6 +61040,18 @@ export const SimulateApiHarnessEnvironmentsEditEvaluationBody = zod.object({
           .describe(
             "Optional metric output type metadata used by eval and annotation filters.",
           ),
+        group: zod
+          .number()
+          .min(
+            simulateApiHarnessEnvironmentsEditEvaluationBodyFiltersItemGroupMin,
+          )
+          .max(
+            simulateApiHarnessEnvironmentsEditEvaluationBodyFiltersItemGroupMax,
+          )
+          .optional()
+          .describe(
+            "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+          ),
         filter_config: zod.object({
           filter_type: zod
             .string()
@@ -60916,7 +61073,7 @@ export const SimulateApiHarnessEnvironmentsEditEvaluationBody = zod.object({
             .string()
             .optional()
             .describe(
-              "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+              "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
             ),
           attribute_value_types: zod
             .array(zod.enum(["string", "number", "boolean"]).nullable())
@@ -60937,6 +61094,9 @@ export const SimulateApiHarnessEnvironmentsEditEvaluationBody = zod.object({
     .optional()
     .describe("Updated name for the evaluation configuration."),
 });
+
+export const simulateApiHarnessEnvironmentsEditEvaluationResponseFiltersItemGroupMin = 0;
+export const simulateApiHarnessEnvironmentsEditEvaluationResponseFiltersItemGroupMax = 2147483647;
 
 export const simulateApiHarnessEnvironmentsEditEvaluationResponseFiltersDefault =
   [];
@@ -60972,6 +61132,18 @@ export const SimulateApiHarnessEnvironmentsEditEvaluationResponse = zod.object({
           .describe(
             "Optional metric output type metadata used by eval and annotation filters.",
           ),
+        group: zod
+          .number()
+          .min(
+            simulateApiHarnessEnvironmentsEditEvaluationResponseFiltersItemGroupMin,
+          )
+          .max(
+            simulateApiHarnessEnvironmentsEditEvaluationResponseFiltersItemGroupMax,
+          )
+          .optional()
+          .describe(
+            "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+          ),
         filter_config: zod.object({
           filter_type: zod
             .string()
@@ -60993,7 +61165,7 @@ export const SimulateApiHarnessEnvironmentsEditEvaluationResponse = zod.object({
             .string()
             .optional()
             .describe(
-              "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+              "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
             ),
           attribute_value_types: zod
             .array(zod.enum(["string", "number", "boolean"]).nullable())
@@ -67072,8 +67244,14 @@ export const SimulateApiRunTestsListQueryParams = zod.object({
 
 export const simulateApiRunTestsListResponseDatasetRowIdsItemMax = 255;
 
+export const simulateApiRunTestsListResponseSimulateEvalConfigsDetailItemFiltersItemGroupMin = 0;
+export const simulateApiRunTestsListResponseSimulateEvalConfigsDetailItemFiltersItemGroupMax = 2147483647;
+
 export const simulateApiRunTestsListResponseSimulateEvalConfigsDetailItemFiltersDefault =
   [];
+
+export const simulateApiRunTestsListResponseEvalsDetailItemFiltersItemGroupMin = 0;
+export const simulateApiRunTestsListResponseEvalsDetailItemFiltersItemGroupMax = 2147483647;
 
 export const simulateApiRunTestsListResponseEvalsDetailItemFiltersDefault = [];
 
@@ -67163,6 +67341,18 @@ export const SimulateApiRunTestsListResponseItem = zod.object({
                 .describe(
                   "Optional metric output type metadata used by eval and annotation filters.",
                 ),
+              group: zod
+                .number()
+                .min(
+                  simulateApiRunTestsListResponseSimulateEvalConfigsDetailItemFiltersItemGroupMin,
+                )
+                .max(
+                  simulateApiRunTestsListResponseSimulateEvalConfigsDetailItemFiltersItemGroupMax,
+                )
+                .optional()
+                .describe(
+                  "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+                ),
               filter_config: zod.object({
                 filter_type: zod
                   .string()
@@ -67184,7 +67374,7 @@ export const SimulateApiRunTestsListResponseItem = zod.object({
                   .string()
                   .optional()
                   .describe(
-                    "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                    "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
                   ),
                 attribute_value_types: zod
                   .array(zod.enum(["string", "number", "boolean"]).nullable())
@@ -67244,6 +67434,18 @@ export const SimulateApiRunTestsListResponseItem = zod.object({
                 .describe(
                   "Optional metric output type metadata used by eval and annotation filters.",
                 ),
+              group: zod
+                .number()
+                .min(
+                  simulateApiRunTestsListResponseEvalsDetailItemFiltersItemGroupMin,
+                )
+                .max(
+                  simulateApiRunTestsListResponseEvalsDetailItemFiltersItemGroupMax,
+                )
+                .optional()
+                .describe(
+                  "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+                ),
               filter_config: zod.object({
                 filter_type: zod
                   .string()
@@ -67265,7 +67467,7 @@ export const SimulateApiRunTestsListResponseItem = zod.object({
                   .string()
                   .optional()
                   .describe(
-                    "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                    "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
                   ),
                 attribute_value_types: zod
                   .array(zod.enum(["string", "number", "boolean"]).nullable())
@@ -68621,8 +68823,14 @@ export const simulatePromptTemplatesSimulationsListResponseStatusDefault = true;
 
 export const simulatePromptTemplatesSimulationsListResponseResultResultsItemDatasetRowIdsItemMax = 255;
 
+export const simulatePromptTemplatesSimulationsListResponseResultResultsItemSimulateEvalConfigsDetailItemFiltersItemGroupMin = 0;
+export const simulatePromptTemplatesSimulationsListResponseResultResultsItemSimulateEvalConfigsDetailItemFiltersItemGroupMax = 2147483647;
+
 export const simulatePromptTemplatesSimulationsListResponseResultResultsItemSimulateEvalConfigsDetailItemFiltersDefault =
   [];
+
+export const simulatePromptTemplatesSimulationsListResponseResultResultsItemEvalsDetailItemFiltersItemGroupMin = 0;
+export const simulatePromptTemplatesSimulationsListResponseResultResultsItemEvalsDetailItemFiltersItemGroupMax = 2147483647;
 
 export const simulatePromptTemplatesSimulationsListResponseResultResultsItemEvalsDetailItemFiltersDefault =
   [];
@@ -68735,6 +68943,18 @@ export const SimulatePromptTemplatesSimulationsListResponse = zod.object({
                         .describe(
                           "Optional metric output type metadata used by eval and annotation filters.",
                         ),
+                      group: zod
+                        .number()
+                        .min(
+                          simulatePromptTemplatesSimulationsListResponseResultResultsItemSimulateEvalConfigsDetailItemFiltersItemGroupMin,
+                        )
+                        .max(
+                          simulatePromptTemplatesSimulationsListResponseResultResultsItemSimulateEvalConfigsDetailItemFiltersItemGroupMax,
+                        )
+                        .optional()
+                        .describe(
+                          "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+                        ),
                       filter_config: zod.object({
                         filter_type: zod
                           .string()
@@ -68756,7 +68976,7 @@ export const SimulatePromptTemplatesSimulationsListResponse = zod.object({
                           .string()
                           .optional()
                           .describe(
-                            "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                            "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
                           ),
                         attribute_value_types: zod
                           .array(
@@ -68822,6 +69042,18 @@ export const SimulatePromptTemplatesSimulationsListResponse = zod.object({
                         .describe(
                           "Optional metric output type metadata used by eval and annotation filters.",
                         ),
+                      group: zod
+                        .number()
+                        .min(
+                          simulatePromptTemplatesSimulationsListResponseResultResultsItemEvalsDetailItemFiltersItemGroupMin,
+                        )
+                        .max(
+                          simulatePromptTemplatesSimulationsListResponseResultResultsItemEvalsDetailItemFiltersItemGroupMax,
+                        )
+                        .optional()
+                        .describe(
+                          "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+                        ),
                       filter_config: zod.object({
                         filter_type: zod
                           .string()
@@ -68843,7 +69075,7 @@ export const SimulatePromptTemplatesSimulationsListResponse = zod.object({
                           .string()
                           .optional()
                           .describe(
-                            "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                            "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
                           ),
                         attribute_value_types: zod
                           .array(
@@ -68923,6 +69155,9 @@ export const simulatePromptTemplatesSimulationsCreateBodyEvaluationsConfigItemCo
   {};
 export const simulatePromptTemplatesSimulationsCreateBodyEvaluationsConfigItemMappingDefault =
   {};
+export const simulatePromptTemplatesSimulationsCreateBodyEvaluationsConfigItemFiltersItemGroupMin = 0;
+export const simulatePromptTemplatesSimulationsCreateBodyEvaluationsConfigItemFiltersItemGroupMax = 2147483647;
+
 export const simulatePromptTemplatesSimulationsCreateBodyEvaluationsConfigItemFiltersDefault =
   [];
 export const simulatePromptTemplatesSimulationsCreateBodyEvaluationsConfigItemErrorLocalizerDefault =
@@ -69007,6 +69242,18 @@ export const SimulatePromptTemplatesSimulationsCreateBody = zod.object({
                 .describe(
                   "Optional metric output type metadata used by eval and annotation filters.",
                 ),
+              group: zod
+                .number()
+                .min(
+                  simulatePromptTemplatesSimulationsCreateBodyEvaluationsConfigItemFiltersItemGroupMin,
+                )
+                .max(
+                  simulatePromptTemplatesSimulationsCreateBodyEvaluationsConfigItemFiltersItemGroupMax,
+                )
+                .optional()
+                .describe(
+                  "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+                ),
               filter_config: zod.object({
                 filter_type: zod
                   .string()
@@ -69028,7 +69275,7 @@ export const SimulatePromptTemplatesSimulationsCreateBody = zod.object({
                   .string()
                   .optional()
                   .describe(
-                    "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                    "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
                   ),
                 attribute_value_types: zod
                   .array(zod.enum(["string", "number", "boolean"]).nullable())
@@ -69094,8 +69341,14 @@ export const simulatePromptTemplatesSimulationsReadResponseStatusDefault = true;
 
 export const simulatePromptTemplatesSimulationsReadResponseResultDatasetRowIdsItemMax = 255;
 
+export const simulatePromptTemplatesSimulationsReadResponseResultSimulateEvalConfigsDetailItemFiltersItemGroupMin = 0;
+export const simulatePromptTemplatesSimulationsReadResponseResultSimulateEvalConfigsDetailItemFiltersItemGroupMax = 2147483647;
+
 export const simulatePromptTemplatesSimulationsReadResponseResultSimulateEvalConfigsDetailItemFiltersDefault =
   [];
+
+export const simulatePromptTemplatesSimulationsReadResponseResultEvalsDetailItemFiltersItemGroupMin = 0;
+export const simulatePromptTemplatesSimulationsReadResponseResultEvalsDetailItemFiltersItemGroupMax = 2147483647;
 
 export const simulatePromptTemplatesSimulationsReadResponseResultEvalsDetailItemFiltersDefault =
   [];
@@ -69194,6 +69447,18 @@ export const SimulatePromptTemplatesSimulationsReadResponse = zod.object({
                   .describe(
                     "Optional metric output type metadata used by eval and annotation filters.",
                   ),
+                group: zod
+                  .number()
+                  .min(
+                    simulatePromptTemplatesSimulationsReadResponseResultSimulateEvalConfigsDetailItemFiltersItemGroupMin,
+                  )
+                  .max(
+                    simulatePromptTemplatesSimulationsReadResponseResultSimulateEvalConfigsDetailItemFiltersItemGroupMax,
+                  )
+                  .optional()
+                  .describe(
+                    "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+                  ),
                 filter_config: zod.object({
                   filter_type: zod
                     .string()
@@ -69215,7 +69480,7 @@ export const SimulatePromptTemplatesSimulationsReadResponse = zod.object({
                     .string()
                     .optional()
                     .describe(
-                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
                     ),
                   attribute_value_types: zod
                     .array(zod.enum(["string", "number", "boolean"]).nullable())
@@ -69275,6 +69540,18 @@ export const SimulatePromptTemplatesSimulationsReadResponse = zod.object({
                   .describe(
                     "Optional metric output type metadata used by eval and annotation filters.",
                   ),
+                group: zod
+                  .number()
+                  .min(
+                    simulatePromptTemplatesSimulationsReadResponseResultEvalsDetailItemFiltersItemGroupMin,
+                  )
+                  .max(
+                    simulatePromptTemplatesSimulationsReadResponseResultEvalsDetailItemFiltersItemGroupMax,
+                  )
+                  .optional()
+                  .describe(
+                    "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+                  ),
                 filter_config: zod.object({
                   filter_type: zod
                     .string()
@@ -69296,7 +69573,7 @@ export const SimulatePromptTemplatesSimulationsReadResponse = zod.object({
                     .string()
                     .optional()
                     .describe(
-                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
                     ),
                   attribute_value_types: zod
                     .array(zod.enum(["string", "number", "boolean"]).nullable())
@@ -69373,8 +69650,14 @@ export const simulatePromptTemplatesSimulationsPartialUpdateResponseStatusDefaul
 
 export const simulatePromptTemplatesSimulationsPartialUpdateResponseResultDatasetRowIdsItemMax = 255;
 
+export const simulatePromptTemplatesSimulationsPartialUpdateResponseResultSimulateEvalConfigsDetailItemFiltersItemGroupMin = 0;
+export const simulatePromptTemplatesSimulationsPartialUpdateResponseResultSimulateEvalConfigsDetailItemFiltersItemGroupMax = 2147483647;
+
 export const simulatePromptTemplatesSimulationsPartialUpdateResponseResultSimulateEvalConfigsDetailItemFiltersDefault =
   [];
+
+export const simulatePromptTemplatesSimulationsPartialUpdateResponseResultEvalsDetailItemFiltersItemGroupMin = 0;
+export const simulatePromptTemplatesSimulationsPartialUpdateResponseResultEvalsDetailItemFiltersItemGroupMax = 2147483647;
 
 export const simulatePromptTemplatesSimulationsPartialUpdateResponseResultEvalsDetailItemFiltersDefault =
   [];
@@ -69476,6 +69759,18 @@ export const SimulatePromptTemplatesSimulationsPartialUpdateResponse =
                     .describe(
                       "Optional metric output type metadata used by eval and annotation filters.",
                     ),
+                  group: zod
+                    .number()
+                    .min(
+                      simulatePromptTemplatesSimulationsPartialUpdateResponseResultSimulateEvalConfigsDetailItemFiltersItemGroupMin,
+                    )
+                    .max(
+                      simulatePromptTemplatesSimulationsPartialUpdateResponseResultSimulateEvalConfigsDetailItemFiltersItemGroupMax,
+                    )
+                    .optional()
+                    .describe(
+                      "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+                    ),
                   filter_config: zod.object({
                     filter_type: zod
                       .string()
@@ -69497,7 +69792,7 @@ export const SimulatePromptTemplatesSimulationsPartialUpdateResponse =
                       .string()
                       .optional()
                       .describe(
-                        "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                        "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
                       ),
                     attribute_value_types: zod
                       .array(
@@ -69559,6 +69854,18 @@ export const SimulatePromptTemplatesSimulationsPartialUpdateResponse =
                     .describe(
                       "Optional metric output type metadata used by eval and annotation filters.",
                     ),
+                  group: zod
+                    .number()
+                    .min(
+                      simulatePromptTemplatesSimulationsPartialUpdateResponseResultEvalsDetailItemFiltersItemGroupMin,
+                    )
+                    .max(
+                      simulatePromptTemplatesSimulationsPartialUpdateResponseResultEvalsDetailItemFiltersItemGroupMax,
+                    )
+                    .optional()
+                    .describe(
+                      "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+                    ),
                   filter_config: zod.object({
                     filter_type: zod
                       .string()
@@ -69580,7 +69887,7 @@ export const SimulatePromptTemplatesSimulationsPartialUpdateResponse =
                       .string()
                       .optional()
                       .describe(
-                        "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                        "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
                       ),
                     attribute_value_types: zod
                       .array(
@@ -69727,8 +70034,14 @@ export const SimulateRunTestsListQueryParams = zod.object({
 
 export const simulateRunTestsListResponseResultsItemDatasetRowIdsItemMax = 255;
 
+export const simulateRunTestsListResponseResultsItemSimulateEvalConfigsDetailItemFiltersItemGroupMin = 0;
+export const simulateRunTestsListResponseResultsItemSimulateEvalConfigsDetailItemFiltersItemGroupMax = 2147483647;
+
 export const simulateRunTestsListResponseResultsItemSimulateEvalConfigsDetailItemFiltersDefault =
   [];
+
+export const simulateRunTestsListResponseResultsItemEvalsDetailItemFiltersItemGroupMin = 0;
+export const simulateRunTestsListResponseResultsItemEvalsDetailItemFiltersItemGroupMax = 2147483647;
 
 export const simulateRunTestsListResponseResultsItemEvalsDetailItemFiltersDefault =
   [];
@@ -69829,6 +70142,18 @@ export const SimulateRunTestsListResponse = zod.object({
                       .describe(
                         "Optional metric output type metadata used by eval and annotation filters.",
                       ),
+                    group: zod
+                      .number()
+                      .min(
+                        simulateRunTestsListResponseResultsItemSimulateEvalConfigsDetailItemFiltersItemGroupMin,
+                      )
+                      .max(
+                        simulateRunTestsListResponseResultsItemSimulateEvalConfigsDetailItemFiltersItemGroupMax,
+                      )
+                      .optional()
+                      .describe(
+                        "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+                      ),
                     filter_config: zod.object({
                       filter_type: zod
                         .string()
@@ -69850,7 +70175,7 @@ export const SimulateRunTestsListResponse = zod.object({
                         .string()
                         .optional()
                         .describe(
-                          "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                          "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
                         ),
                       attribute_value_types: zod
                         .array(
@@ -69912,6 +70237,18 @@ export const SimulateRunTestsListResponse = zod.object({
                       .describe(
                         "Optional metric output type metadata used by eval and annotation filters.",
                       ),
+                    group: zod
+                      .number()
+                      .min(
+                        simulateRunTestsListResponseResultsItemEvalsDetailItemFiltersItemGroupMin,
+                      )
+                      .max(
+                        simulateRunTestsListResponseResultsItemEvalsDetailItemFiltersItemGroupMax,
+                      )
+                      .optional()
+                      .describe(
+                        "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+                      ),
                     filter_config: zod.object({
                       filter_type: zod
                         .string()
@@ -69933,7 +70270,7 @@ export const SimulateRunTestsListResponse = zod.object({
                         .string()
                         .optional()
                         .describe(
-                          "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                          "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
                         ),
                       attribute_value_types: zod
                         .array(
@@ -70001,6 +70338,9 @@ export const simulateRunTestsCreateCreateBodyEvaluationsConfigItemConfigDefault 
   {};
 export const simulateRunTestsCreateCreateBodyEvaluationsConfigItemMappingDefault =
   {};
+export const simulateRunTestsCreateCreateBodyEvaluationsConfigItemFiltersItemGroupMin = 0;
+export const simulateRunTestsCreateCreateBodyEvaluationsConfigItemFiltersItemGroupMax = 2147483647;
+
 export const simulateRunTestsCreateCreateBodyEvaluationsConfigItemFiltersDefault =
   [];
 export const simulateRunTestsCreateCreateBodyEvaluationsConfigItemErrorLocalizerDefault =
@@ -70080,6 +70420,18 @@ export const SimulateRunTestsCreateCreateBody = zod.object({
                 .describe(
                   "Optional metric output type metadata used by eval and annotation filters.",
                 ),
+              group: zod
+                .number()
+                .min(
+                  simulateRunTestsCreateCreateBodyEvaluationsConfigItemFiltersItemGroupMin,
+                )
+                .max(
+                  simulateRunTestsCreateCreateBodyEvaluationsConfigItemFiltersItemGroupMax,
+                )
+                .optional()
+                .describe(
+                  "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+                ),
               filter_config: zod.object({
                 filter_type: zod
                   .string()
@@ -70101,7 +70453,7 @@ export const SimulateRunTestsCreateCreateBody = zod.object({
                   .string()
                   .optional()
                   .describe(
-                    "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                    "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
                   ),
                 attribute_value_types: zod
                   .array(zod.enum(["string", "number", "boolean"]).nullable())
@@ -70191,8 +70543,14 @@ export const SimulateRunTestsReadParams = zod.object({
 
 export const simulateRunTestsReadResponseDatasetRowIdsItemMax = 255;
 
+export const simulateRunTestsReadResponseSimulateEvalConfigsDetailItemFiltersItemGroupMin = 0;
+export const simulateRunTestsReadResponseSimulateEvalConfigsDetailItemFiltersItemGroupMax = 2147483647;
+
 export const simulateRunTestsReadResponseSimulateEvalConfigsDetailItemFiltersDefault =
   [];
+
+export const simulateRunTestsReadResponseEvalsDetailItemFiltersItemGroupMin = 0;
+export const simulateRunTestsReadResponseEvalsDetailItemFiltersItemGroupMax = 2147483647;
 
 export const simulateRunTestsReadResponseEvalsDetailItemFiltersDefault = [];
 
@@ -70279,6 +70637,18 @@ export const SimulateRunTestsReadResponse = zod.object({
                 .describe(
                   "Optional metric output type metadata used by eval and annotation filters.",
                 ),
+              group: zod
+                .number()
+                .min(
+                  simulateRunTestsReadResponseSimulateEvalConfigsDetailItemFiltersItemGroupMin,
+                )
+                .max(
+                  simulateRunTestsReadResponseSimulateEvalConfigsDetailItemFiltersItemGroupMax,
+                )
+                .optional()
+                .describe(
+                  "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+                ),
               filter_config: zod.object({
                 filter_type: zod
                   .string()
@@ -70300,7 +70670,7 @@ export const SimulateRunTestsReadResponse = zod.object({
                   .string()
                   .optional()
                   .describe(
-                    "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                    "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
                   ),
                 attribute_value_types: zod
                   .array(zod.enum(["string", "number", "boolean"]).nullable())
@@ -70360,6 +70730,18 @@ export const SimulateRunTestsReadResponse = zod.object({
                 .describe(
                   "Optional metric output type metadata used by eval and annotation filters.",
                 ),
+              group: zod
+                .number()
+                .min(
+                  simulateRunTestsReadResponseEvalsDetailItemFiltersItemGroupMin,
+                )
+                .max(
+                  simulateRunTestsReadResponseEvalsDetailItemFiltersItemGroupMax,
+                )
+                .optional()
+                .describe(
+                  "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+                ),
               filter_config: zod.object({
                 filter_type: zod
                   .string()
@@ -70381,7 +70763,7 @@ export const SimulateRunTestsReadResponse = zod.object({
                   .string()
                   .optional()
                   .describe(
-                    "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                    "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
                   ),
                 attribute_value_types: zod
                   .array(zod.enum(["string", "number", "boolean"]).nullable())
@@ -70453,8 +70835,14 @@ export const SimulateRunTestsPartialUpdateBody = zod.object({
 
 export const simulateRunTestsPartialUpdateResponseDatasetRowIdsItemMax = 255;
 
+export const simulateRunTestsPartialUpdateResponseSimulateEvalConfigsDetailItemFiltersItemGroupMin = 0;
+export const simulateRunTestsPartialUpdateResponseSimulateEvalConfigsDetailItemFiltersItemGroupMax = 2147483647;
+
 export const simulateRunTestsPartialUpdateResponseSimulateEvalConfigsDetailItemFiltersDefault =
   [];
+
+export const simulateRunTestsPartialUpdateResponseEvalsDetailItemFiltersItemGroupMin = 0;
+export const simulateRunTestsPartialUpdateResponseEvalsDetailItemFiltersItemGroupMax = 2147483647;
 
 export const simulateRunTestsPartialUpdateResponseEvalsDetailItemFiltersDefault =
   [];
@@ -70545,6 +70933,18 @@ export const SimulateRunTestsPartialUpdateResponse = zod.object({
                 .describe(
                   "Optional metric output type metadata used by eval and annotation filters.",
                 ),
+              group: zod
+                .number()
+                .min(
+                  simulateRunTestsPartialUpdateResponseSimulateEvalConfigsDetailItemFiltersItemGroupMin,
+                )
+                .max(
+                  simulateRunTestsPartialUpdateResponseSimulateEvalConfigsDetailItemFiltersItemGroupMax,
+                )
+                .optional()
+                .describe(
+                  "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+                ),
               filter_config: zod.object({
                 filter_type: zod
                   .string()
@@ -70566,7 +70966,7 @@ export const SimulateRunTestsPartialUpdateResponse = zod.object({
                   .string()
                   .optional()
                   .describe(
-                    "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                    "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
                   ),
                 attribute_value_types: zod
                   .array(zod.enum(["string", "number", "boolean"]).nullable())
@@ -70626,6 +71026,18 @@ export const SimulateRunTestsPartialUpdateResponse = zod.object({
                 .describe(
                   "Optional metric output type metadata used by eval and annotation filters.",
                 ),
+              group: zod
+                .number()
+                .min(
+                  simulateRunTestsPartialUpdateResponseEvalsDetailItemFiltersItemGroupMin,
+                )
+                .max(
+                  simulateRunTestsPartialUpdateResponseEvalsDetailItemFiltersItemGroupMax,
+                )
+                .optional()
+                .describe(
+                  "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+                ),
               filter_config: zod.object({
                 filter_type: zod
                   .string()
@@ -70647,7 +71059,7 @@ export const SimulateRunTestsPartialUpdateResponse = zod.object({
                   .string()
                   .optional()
                   .describe(
-                    "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                    "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
                   ),
                 attribute_value_types: zod
                   .array(zod.enum(["string", "number", "boolean"]).nullable())
@@ -70789,8 +71201,14 @@ export const SimulateRunTestsComponentsPartialUpdateBody = zod.object({
 
 export const simulateRunTestsComponentsPartialUpdateResponseDatasetRowIdsItemMax = 255;
 
+export const simulateRunTestsComponentsPartialUpdateResponseSimulateEvalConfigsDetailItemFiltersItemGroupMin = 0;
+export const simulateRunTestsComponentsPartialUpdateResponseSimulateEvalConfigsDetailItemFiltersItemGroupMax = 2147483647;
+
 export const simulateRunTestsComponentsPartialUpdateResponseSimulateEvalConfigsDetailItemFiltersDefault =
   [];
+
+export const simulateRunTestsComponentsPartialUpdateResponseEvalsDetailItemFiltersItemGroupMin = 0;
+export const simulateRunTestsComponentsPartialUpdateResponseEvalsDetailItemFiltersItemGroupMax = 2147483647;
 
 export const simulateRunTestsComponentsPartialUpdateResponseEvalsDetailItemFiltersDefault =
   [];
@@ -70883,6 +71301,18 @@ export const SimulateRunTestsComponentsPartialUpdateResponse = zod.object({
                 .describe(
                   "Optional metric output type metadata used by eval and annotation filters.",
                 ),
+              group: zod
+                .number()
+                .min(
+                  simulateRunTestsComponentsPartialUpdateResponseSimulateEvalConfigsDetailItemFiltersItemGroupMin,
+                )
+                .max(
+                  simulateRunTestsComponentsPartialUpdateResponseSimulateEvalConfigsDetailItemFiltersItemGroupMax,
+                )
+                .optional()
+                .describe(
+                  "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+                ),
               filter_config: zod.object({
                 filter_type: zod
                   .string()
@@ -70904,7 +71334,7 @@ export const SimulateRunTestsComponentsPartialUpdateResponse = zod.object({
                   .string()
                   .optional()
                   .describe(
-                    "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                    "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
                   ),
                 attribute_value_types: zod
                   .array(zod.enum(["string", "number", "boolean"]).nullable())
@@ -70964,6 +71394,18 @@ export const SimulateRunTestsComponentsPartialUpdateResponse = zod.object({
                 .describe(
                   "Optional metric output type metadata used by eval and annotation filters.",
                 ),
+              group: zod
+                .number()
+                .min(
+                  simulateRunTestsComponentsPartialUpdateResponseEvalsDetailItemFiltersItemGroupMin,
+                )
+                .max(
+                  simulateRunTestsComponentsPartialUpdateResponseEvalsDetailItemFiltersItemGroupMax,
+                )
+                .optional()
+                .describe(
+                  "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+                ),
               filter_config: zod.object({
                 filter_type: zod
                   .string()
@@ -70985,7 +71427,7 @@ export const SimulateRunTestsComponentsPartialUpdateResponse = zod.object({
                   .string()
                   .optional()
                   .describe(
-                    "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                    "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
                   ),
                 attribute_value_types: zod
                   .array(zod.enum(["string", "number", "boolean"]).nullable())
@@ -71073,6 +71515,9 @@ export const simulateRunTestsEvalConfigsCreateBodyEvaluationsConfigItemConfigDef
   {};
 export const simulateRunTestsEvalConfigsCreateBodyEvaluationsConfigItemMappingDefault =
   {};
+export const simulateRunTestsEvalConfigsCreateBodyEvaluationsConfigItemFiltersItemGroupMin = 0;
+export const simulateRunTestsEvalConfigsCreateBodyEvaluationsConfigItemFiltersItemGroupMax = 2147483647;
+
 export const simulateRunTestsEvalConfigsCreateBodyEvaluationsConfigItemFiltersDefault =
   [];
 export const simulateRunTestsEvalConfigsCreateBodyEvaluationsConfigItemErrorLocalizerDefault =
@@ -71134,6 +71579,18 @@ export const SimulateRunTestsEvalConfigsCreateBody = zod.object({
                 .describe(
                   "Optional metric output type metadata used by eval and annotation filters.",
                 ),
+              group: zod
+                .number()
+                .min(
+                  simulateRunTestsEvalConfigsCreateBodyEvaluationsConfigItemFiltersItemGroupMin,
+                )
+                .max(
+                  simulateRunTestsEvalConfigsCreateBodyEvaluationsConfigItemFiltersItemGroupMax,
+                )
+                .optional()
+                .describe(
+                  "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+                ),
               filter_config: zod.object({
                 filter_type: zod
                   .string()
@@ -71155,7 +71612,7 @@ export const SimulateRunTestsEvalConfigsCreateBody = zod.object({
                   .string()
                   .optional()
                   .describe(
-                    "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                    "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
                   ),
                 attribute_value_types: zod
                   .array(zod.enum(["string", "number", "boolean"]).nullable())
@@ -71273,6 +71730,9 @@ export const SimulateRunTestsEvalConfigsUpdateCreateParams = zod.object({
   eval_config_id: zod.string(),
 });
 
+export const simulateRunTestsEvalConfigsUpdateCreateBodyFiltersItemGroupMin = 0;
+export const simulateRunTestsEvalConfigsUpdateCreateBodyFiltersItemGroupMax = 2147483647;
+
 export const simulateRunTestsEvalConfigsUpdateCreateBodyRunDefault = false;
 
 export const SimulateRunTestsEvalConfigsUpdateCreateBody = zod.object({
@@ -71331,6 +71791,14 @@ export const SimulateRunTestsEvalConfigsUpdateCreateBody = zod.object({
           .describe(
             "Optional metric output type metadata used by eval and annotation filters.",
           ),
+        group: zod
+          .number()
+          .min(simulateRunTestsEvalConfigsUpdateCreateBodyFiltersItemGroupMin)
+          .max(simulateRunTestsEvalConfigsUpdateCreateBodyFiltersItemGroupMax)
+          .optional()
+          .describe(
+            "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+          ),
         filter_config: zod.object({
           filter_type: zod
             .string()
@@ -71352,7 +71820,7 @@ export const SimulateRunTestsEvalConfigsUpdateCreateBody = zod.object({
             .string()
             .optional()
             .describe(
-              "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+              "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
             ),
           attribute_value_types: zod
             .array(zod.enum(["string", "number", "boolean"]).nullable())
@@ -76846,7 +77314,13 @@ export const tracerDashboardQueryBodyGranularityDefault = `day`;
 export const tracerDashboardQueryBodyMetricsItemSourceDefault = `traces`;
 export const tracerDashboardQueryBodyMetricsItemAggregationDefault = `avg`;
 export const tracerDashboardQueryBodyMetricsItemDataTypeDefault = `string`;
+export const tracerDashboardQueryBodyMetricsItemFiltersItemGroupMin = 0;
+export const tracerDashboardQueryBodyMetricsItemFiltersItemGroupMax = 2147483647;
+
 export const tracerDashboardQueryBodyMetricsItemFiltersDefault = [];
+export const tracerDashboardQueryBodyFiltersItemGroupMin = 0;
+export const tracerDashboardQueryBodyFiltersItemGroupMax = 2147483647;
+
 export const tracerDashboardQueryBodyFiltersDefault = [];
 
 export const tracerDashboardQueryBodyBreakdownsItemTypeDefault = `system_metric`;
@@ -76970,6 +77444,14 @@ export const TracerDashboardQueryBody = zod.object({
               .describe(
                 "Optional metric output type metadata used by eval and annotation filters.",
               ),
+            group: zod
+              .number()
+              .min(tracerDashboardQueryBodyMetricsItemFiltersItemGroupMin)
+              .max(tracerDashboardQueryBodyMetricsItemFiltersItemGroupMax)
+              .optional()
+              .describe(
+                "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+              ),
             filter_config: zod.object({
               filter_type: zod
                 .string()
@@ -76991,7 +77473,7 @@ export const TracerDashboardQueryBody = zod.object({
                 .string()
                 .optional()
                 .describe(
-                  "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                  "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
                 ),
               attribute_value_types: zod
                 .array(zod.enum(["string", "number", "boolean"]).nullable())
@@ -77031,6 +77513,14 @@ export const TracerDashboardQueryBody = zod.object({
           .describe(
             "Optional metric output type metadata used by eval and annotation filters.",
           ),
+        group: zod
+          .number()
+          .min(tracerDashboardQueryBodyFiltersItemGroupMin)
+          .max(tracerDashboardQueryBodyFiltersItemGroupMax)
+          .optional()
+          .describe(
+            "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+          ),
         filter_config: zod.object({
           filter_type: zod
             .string()
@@ -77052,7 +77542,7 @@ export const TracerDashboardQueryBody = zod.object({
             .string()
             .optional()
             .describe(
-              "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+              "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
             ),
           attribute_value_types: zod
             .array(zod.enum(["string", "number", "boolean"]).nullable())
@@ -77628,8 +78118,14 @@ export const tracerDashboardWidgetsPreviewQueryBodyQueryConfigGranularityDefault
 export const tracerDashboardWidgetsPreviewQueryBodyQueryConfigMetricsItemSourceDefault = `traces`;
 export const tracerDashboardWidgetsPreviewQueryBodyQueryConfigMetricsItemAggregationDefault = `avg`;
 export const tracerDashboardWidgetsPreviewQueryBodyQueryConfigMetricsItemDataTypeDefault = `string`;
+export const tracerDashboardWidgetsPreviewQueryBodyQueryConfigMetricsItemFiltersItemGroupMin = 0;
+export const tracerDashboardWidgetsPreviewQueryBodyQueryConfigMetricsItemFiltersItemGroupMax = 2147483647;
+
 export const tracerDashboardWidgetsPreviewQueryBodyQueryConfigMetricsItemFiltersDefault =
   [];
+export const tracerDashboardWidgetsPreviewQueryBodyQueryConfigFiltersItemGroupMin = 0;
+export const tracerDashboardWidgetsPreviewQueryBodyQueryConfigFiltersItemGroupMax = 2147483647;
+
 export const tracerDashboardWidgetsPreviewQueryBodyQueryConfigFiltersDefault =
   [];
 
@@ -77780,6 +78276,18 @@ export const TracerDashboardWidgetsPreviewQueryBody = zod.object({
                 .describe(
                   "Optional metric output type metadata used by eval and annotation filters.",
                 ),
+              group: zod
+                .number()
+                .min(
+                  tracerDashboardWidgetsPreviewQueryBodyQueryConfigMetricsItemFiltersItemGroupMin,
+                )
+                .max(
+                  tracerDashboardWidgetsPreviewQueryBodyQueryConfigMetricsItemFiltersItemGroupMax,
+                )
+                .optional()
+                .describe(
+                  "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+                ),
               filter_config: zod.object({
                 filter_type: zod
                   .string()
@@ -77801,7 +78309,7 @@ export const TracerDashboardWidgetsPreviewQueryBody = zod.object({
                   .string()
                   .optional()
                   .describe(
-                    "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                    "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
                   ),
                 attribute_value_types: zod
                   .array(zod.enum(["string", "number", "boolean"]).nullable())
@@ -77843,6 +78351,18 @@ export const TracerDashboardWidgetsPreviewQueryBody = zod.object({
             .describe(
               "Optional metric output type metadata used by eval and annotation filters.",
             ),
+          group: zod
+            .number()
+            .min(
+              tracerDashboardWidgetsPreviewQueryBodyQueryConfigFiltersItemGroupMin,
+            )
+            .max(
+              tracerDashboardWidgetsPreviewQueryBodyQueryConfigFiltersItemGroupMax,
+            )
+            .optional()
+            .describe(
+              "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+            ),
           filter_config: zod.object({
             filter_type: zod
               .string()
@@ -77864,7 +78384,7 @@ export const TracerDashboardWidgetsPreviewQueryBody = zod.object({
               .string()
               .optional()
               .describe(
-                "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
               ),
             attribute_value_types: zod
               .array(zod.enum(["string", "number", "boolean"]).nullable())
@@ -79300,6 +79820,12 @@ export const tracerEvalTaskListResponseResultsItemNameMax = 255;
 export const tracerEvalTaskListResponseResultsItemFiltersOneDateRangeMin = 2;
 export const tracerEvalTaskListResponseResultsItemFiltersOneDateRangeMax = 2;
 
+export const tracerEvalTaskListResponseResultsItemFiltersOneFiltersItemGroupMin = 0;
+export const tracerEvalTaskListResponseResultsItemFiltersOneFiltersItemGroupMax = 2147483647;
+
+export const tracerEvalTaskListResponseResultsItemFiltersOneSpanAttributesFiltersItemGroupMin = 0;
+export const tracerEvalTaskListResponseResultsItemFiltersOneSpanAttributesFiltersItemGroupMax = 2147483647;
+
 export const tracerEvalTaskListResponseResultsItemFiltersDefault = {};
 export const tracerEvalTaskListResponseResultsItemSamplingRateMax = 100;
 
@@ -79405,6 +79931,18 @@ export const TracerEvalTaskListResponse = zod.object({
                     .describe(
                       "Optional metric output type metadata used by eval and annotation filters.",
                     ),
+                  group: zod
+                    .number()
+                    .min(
+                      tracerEvalTaskListResponseResultsItemFiltersOneFiltersItemGroupMin,
+                    )
+                    .max(
+                      tracerEvalTaskListResponseResultsItemFiltersOneFiltersItemGroupMax,
+                    )
+                    .optional()
+                    .describe(
+                      "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+                    ),
                   filter_config: zod.object({
                     filter_type: zod
                       .string()
@@ -79426,7 +79964,7 @@ export const TracerEvalTaskListResponse = zod.object({
                       .string()
                       .optional()
                       .describe(
-                        "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                        "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
                       ),
                     attribute_value_types: zod
                       .array(
@@ -79468,6 +80006,18 @@ export const TracerEvalTaskListResponse = zod.object({
                     .describe(
                       "Optional metric output type metadata used by eval and annotation filters.",
                     ),
+                  group: zod
+                    .number()
+                    .min(
+                      tracerEvalTaskListResponseResultsItemFiltersOneSpanAttributesFiltersItemGroupMin,
+                    )
+                    .max(
+                      tracerEvalTaskListResponseResultsItemFiltersOneSpanAttributesFiltersItemGroupMax,
+                    )
+                    .optional()
+                    .describe(
+                      "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+                    ),
                   filter_config: zod.object({
                     filter_type: zod
                       .string()
@@ -79489,7 +80039,7 @@ export const TracerEvalTaskListResponse = zod.object({
                       .string()
                       .optional()
                       .describe(
-                        "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                        "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
                       ),
                     attribute_value_types: zod
                       .array(
@@ -79547,6 +80097,12 @@ export const tracerEvalTaskCreateBodyNameMax = 255;
 
 export const tracerEvalTaskCreateBodyFiltersOneDateRangeMin = 2;
 export const tracerEvalTaskCreateBodyFiltersOneDateRangeMax = 2;
+
+export const tracerEvalTaskCreateBodyFiltersOneFiltersItemGroupMin = 0;
+export const tracerEvalTaskCreateBodyFiltersOneFiltersItemGroupMax = 2147483647;
+
+export const tracerEvalTaskCreateBodyFiltersOneSpanAttributesFiltersItemGroupMin = 0;
+export const tracerEvalTaskCreateBodyFiltersOneSpanAttributesFiltersItemGroupMax = 2147483647;
 
 export const tracerEvalTaskCreateBodyFiltersDefault = {};
 export const tracerEvalTaskCreateBodySamplingRateMax = 100;
@@ -79642,6 +80198,14 @@ export const TracerEvalTaskCreateBody = zod.object({
                 .describe(
                   "Optional metric output type metadata used by eval and annotation filters.",
                 ),
+              group: zod
+                .number()
+                .min(tracerEvalTaskCreateBodyFiltersOneFiltersItemGroupMin)
+                .max(tracerEvalTaskCreateBodyFiltersOneFiltersItemGroupMax)
+                .optional()
+                .describe(
+                  "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+                ),
               filter_config: zod.object({
                 filter_type: zod
                   .string()
@@ -79663,7 +80227,7 @@ export const TracerEvalTaskCreateBody = zod.object({
                   .string()
                   .optional()
                   .describe(
-                    "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                    "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
                   ),
                 attribute_value_types: zod
                   .array(zod.enum(["string", "number", "boolean"]).nullable())
@@ -79703,6 +80267,18 @@ export const TracerEvalTaskCreateBody = zod.object({
                 .describe(
                   "Optional metric output type metadata used by eval and annotation filters.",
                 ),
+              group: zod
+                .number()
+                .min(
+                  tracerEvalTaskCreateBodyFiltersOneSpanAttributesFiltersItemGroupMin,
+                )
+                .max(
+                  tracerEvalTaskCreateBodyFiltersOneSpanAttributesFiltersItemGroupMax,
+                )
+                .optional()
+                .describe(
+                  "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+                ),
               filter_config: zod.object({
                 filter_type: zod
                   .string()
@@ -79724,7 +80300,7 @@ export const TracerEvalTaskCreateBody = zod.object({
                   .string()
                   .optional()
                   .describe(
-                    "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                    "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
                   ),
                 attribute_value_types: zod
                   .array(zod.enum(["string", "number", "boolean"]).nullable())
@@ -79796,6 +80372,12 @@ export const tracerEvalTaskGetEvalDetailsResponseResultsItemNameMax = 255;
 
 export const tracerEvalTaskGetEvalDetailsResponseResultsItemFiltersOneDateRangeMin = 2;
 export const tracerEvalTaskGetEvalDetailsResponseResultsItemFiltersOneDateRangeMax = 2;
+
+export const tracerEvalTaskGetEvalDetailsResponseResultsItemFiltersOneFiltersItemGroupMin = 0;
+export const tracerEvalTaskGetEvalDetailsResponseResultsItemFiltersOneFiltersItemGroupMax = 2147483647;
+
+export const tracerEvalTaskGetEvalDetailsResponseResultsItemFiltersOneSpanAttributesFiltersItemGroupMin = 0;
+export const tracerEvalTaskGetEvalDetailsResponseResultsItemFiltersOneSpanAttributesFiltersItemGroupMax = 2147483647;
 
 export const tracerEvalTaskGetEvalDetailsResponseResultsItemFiltersDefault = {};
 export const tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingRateMax = 100;
@@ -79906,6 +80488,18 @@ export const TracerEvalTaskGetEvalDetailsResponse = zod.object({
                     .describe(
                       "Optional metric output type metadata used by eval and annotation filters.",
                     ),
+                  group: zod
+                    .number()
+                    .min(
+                      tracerEvalTaskGetEvalDetailsResponseResultsItemFiltersOneFiltersItemGroupMin,
+                    )
+                    .max(
+                      tracerEvalTaskGetEvalDetailsResponseResultsItemFiltersOneFiltersItemGroupMax,
+                    )
+                    .optional()
+                    .describe(
+                      "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+                    ),
                   filter_config: zod.object({
                     filter_type: zod
                       .string()
@@ -79927,7 +80521,7 @@ export const TracerEvalTaskGetEvalDetailsResponse = zod.object({
                       .string()
                       .optional()
                       .describe(
-                        "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                        "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
                       ),
                     attribute_value_types: zod
                       .array(
@@ -79969,6 +80563,18 @@ export const TracerEvalTaskGetEvalDetailsResponse = zod.object({
                     .describe(
                       "Optional metric output type metadata used by eval and annotation filters.",
                     ),
+                  group: zod
+                    .number()
+                    .min(
+                      tracerEvalTaskGetEvalDetailsResponseResultsItemFiltersOneSpanAttributesFiltersItemGroupMin,
+                    )
+                    .max(
+                      tracerEvalTaskGetEvalDetailsResponseResultsItemFiltersOneSpanAttributesFiltersItemGroupMax,
+                    )
+                    .optional()
+                    .describe(
+                      "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+                    ),
                   filter_config: zod.object({
                     filter_type: zod
                       .string()
@@ -79990,7 +80596,7 @@ export const TracerEvalTaskGetEvalDetailsResponse = zod.object({
                       .string()
                       .optional()
                       .describe(
-                        "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                        "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
                       ),
                     attribute_value_types: zod
                       .array(
@@ -80067,6 +80673,12 @@ export const tracerEvalTaskGetEvalTaskLogsResponseResultsItemNameMax = 255;
 
 export const tracerEvalTaskGetEvalTaskLogsResponseResultsItemFiltersOneDateRangeMin = 2;
 export const tracerEvalTaskGetEvalTaskLogsResponseResultsItemFiltersOneDateRangeMax = 2;
+
+export const tracerEvalTaskGetEvalTaskLogsResponseResultsItemFiltersOneFiltersItemGroupMin = 0;
+export const tracerEvalTaskGetEvalTaskLogsResponseResultsItemFiltersOneFiltersItemGroupMax = 2147483647;
+
+export const tracerEvalTaskGetEvalTaskLogsResponseResultsItemFiltersOneSpanAttributesFiltersItemGroupMin = 0;
+export const tracerEvalTaskGetEvalTaskLogsResponseResultsItemFiltersOneSpanAttributesFiltersItemGroupMax = 2147483647;
 
 export const tracerEvalTaskGetEvalTaskLogsResponseResultsItemFiltersDefault =
   {};
@@ -80178,6 +80790,18 @@ export const TracerEvalTaskGetEvalTaskLogsResponse = zod.object({
                     .describe(
                       "Optional metric output type metadata used by eval and annotation filters.",
                     ),
+                  group: zod
+                    .number()
+                    .min(
+                      tracerEvalTaskGetEvalTaskLogsResponseResultsItemFiltersOneFiltersItemGroupMin,
+                    )
+                    .max(
+                      tracerEvalTaskGetEvalTaskLogsResponseResultsItemFiltersOneFiltersItemGroupMax,
+                    )
+                    .optional()
+                    .describe(
+                      "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+                    ),
                   filter_config: zod.object({
                     filter_type: zod
                       .string()
@@ -80199,7 +80823,7 @@ export const TracerEvalTaskGetEvalTaskLogsResponse = zod.object({
                       .string()
                       .optional()
                       .describe(
-                        "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                        "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
                       ),
                     attribute_value_types: zod
                       .array(
@@ -80241,6 +80865,18 @@ export const TracerEvalTaskGetEvalTaskLogsResponse = zod.object({
                     .describe(
                       "Optional metric output type metadata used by eval and annotation filters.",
                     ),
+                  group: zod
+                    .number()
+                    .min(
+                      tracerEvalTaskGetEvalTaskLogsResponseResultsItemFiltersOneSpanAttributesFiltersItemGroupMin,
+                    )
+                    .max(
+                      tracerEvalTaskGetEvalTaskLogsResponseResultsItemFiltersOneSpanAttributesFiltersItemGroupMax,
+                    )
+                    .optional()
+                    .describe(
+                      "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+                    ),
                   filter_config: zod.object({
                     filter_type: zod
                       .string()
@@ -80262,7 +80898,7 @@ export const TracerEvalTaskGetEvalTaskLogsResponse = zod.object({
                       .string()
                       .optional()
                       .describe(
-                        "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                        "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
                       ),
                     attribute_value_types: zod
                       .array(
@@ -80763,6 +81399,12 @@ export const tracerEvalTaskUpdateEvalTaskBodyNameMax = 255;
 export const tracerEvalTaskUpdateEvalTaskBodyFiltersOneDateRangeMin = 2;
 export const tracerEvalTaskUpdateEvalTaskBodyFiltersOneDateRangeMax = 2;
 
+export const tracerEvalTaskUpdateEvalTaskBodyFiltersOneFiltersItemGroupMin = 0;
+export const tracerEvalTaskUpdateEvalTaskBodyFiltersOneFiltersItemGroupMax = 2147483647;
+
+export const tracerEvalTaskUpdateEvalTaskBodyFiltersOneSpanAttributesFiltersItemGroupMin = 0;
+export const tracerEvalTaskUpdateEvalTaskBodyFiltersOneSpanAttributesFiltersItemGroupMax = 2147483647;
+
 export const tracerEvalTaskUpdateEvalTaskBodySamplingRateMax = 100;
 
 export const tracerEvalTaskUpdateEvalTaskBodySpansLimitMax = 1000000;
@@ -80857,6 +81499,18 @@ export const TracerEvalTaskUpdateEvalTaskBody = zod.object({
                 .describe(
                   "Optional metric output type metadata used by eval and annotation filters.",
                 ),
+              group: zod
+                .number()
+                .min(
+                  tracerEvalTaskUpdateEvalTaskBodyFiltersOneFiltersItemGroupMin,
+                )
+                .max(
+                  tracerEvalTaskUpdateEvalTaskBodyFiltersOneFiltersItemGroupMax,
+                )
+                .optional()
+                .describe(
+                  "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+                ),
               filter_config: zod.object({
                 filter_type: zod
                   .string()
@@ -80878,7 +81532,7 @@ export const TracerEvalTaskUpdateEvalTaskBody = zod.object({
                   .string()
                   .optional()
                   .describe(
-                    "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                    "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
                   ),
                 attribute_value_types: zod
                   .array(zod.enum(["string", "number", "boolean"]).nullable())
@@ -80918,6 +81572,18 @@ export const TracerEvalTaskUpdateEvalTaskBody = zod.object({
                 .describe(
                   "Optional metric output type metadata used by eval and annotation filters.",
                 ),
+              group: zod
+                .number()
+                .min(
+                  tracerEvalTaskUpdateEvalTaskBodyFiltersOneSpanAttributesFiltersItemGroupMin,
+                )
+                .max(
+                  tracerEvalTaskUpdateEvalTaskBodyFiltersOneSpanAttributesFiltersItemGroupMax,
+                )
+                .optional()
+                .describe(
+                  "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+                ),
               filter_config: zod.object({
                 filter_type: zod
                   .string()
@@ -80939,7 +81605,7 @@ export const TracerEvalTaskUpdateEvalTaskBody = zod.object({
                   .string()
                   .optional()
                   .describe(
-                    "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                    "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
                   ),
                 attribute_value_types: zod
                   .array(zod.enum(["string", "number", "boolean"]).nullable())
@@ -80999,6 +81665,12 @@ export const tracerEvalTaskReadResponseNameMax = 255;
 
 export const tracerEvalTaskReadResponseFiltersOneDateRangeMin = 2;
 export const tracerEvalTaskReadResponseFiltersOneDateRangeMax = 2;
+
+export const tracerEvalTaskReadResponseFiltersOneFiltersItemGroupMin = 0;
+export const tracerEvalTaskReadResponseFiltersOneFiltersItemGroupMax = 2147483647;
+
+export const tracerEvalTaskReadResponseFiltersOneSpanAttributesFiltersItemGroupMin = 0;
+export const tracerEvalTaskReadResponseFiltersOneSpanAttributesFiltersItemGroupMax = 2147483647;
 
 export const tracerEvalTaskReadResponseFiltersDefault = {};
 export const tracerEvalTaskReadResponseSamplingRateMax = 100;
@@ -81095,6 +81767,14 @@ export const TracerEvalTaskReadResponse = zod.object({
                 .describe(
                   "Optional metric output type metadata used by eval and annotation filters.",
                 ),
+              group: zod
+                .number()
+                .min(tracerEvalTaskReadResponseFiltersOneFiltersItemGroupMin)
+                .max(tracerEvalTaskReadResponseFiltersOneFiltersItemGroupMax)
+                .optional()
+                .describe(
+                  "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+                ),
               filter_config: zod.object({
                 filter_type: zod
                   .string()
@@ -81116,7 +81796,7 @@ export const TracerEvalTaskReadResponse = zod.object({
                   .string()
                   .optional()
                   .describe(
-                    "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                    "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
                   ),
                 attribute_value_types: zod
                   .array(zod.enum(["string", "number", "boolean"]).nullable())
@@ -81156,6 +81836,18 @@ export const TracerEvalTaskReadResponse = zod.object({
                 .describe(
                   "Optional metric output type metadata used by eval and annotation filters.",
                 ),
+              group: zod
+                .number()
+                .min(
+                  tracerEvalTaskReadResponseFiltersOneSpanAttributesFiltersItemGroupMin,
+                )
+                .max(
+                  tracerEvalTaskReadResponseFiltersOneSpanAttributesFiltersItemGroupMax,
+                )
+                .optional()
+                .describe(
+                  "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+                ),
               filter_config: zod.object({
                 filter_type: zod
                   .string()
@@ -81177,7 +81869,7 @@ export const TracerEvalTaskReadResponse = zod.object({
                   .string()
                   .optional()
                   .describe(
-                    "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                    "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
                   ),
                 attribute_value_types: zod
                   .array(zod.enum(["string", "number", "boolean"]).nullable())
@@ -81228,6 +81920,12 @@ export const tracerEvalTaskUpdateBodyNameMax = 255;
 
 export const tracerEvalTaskUpdateBodyFiltersOneDateRangeMin = 2;
 export const tracerEvalTaskUpdateBodyFiltersOneDateRangeMax = 2;
+
+export const tracerEvalTaskUpdateBodyFiltersOneFiltersItemGroupMin = 0;
+export const tracerEvalTaskUpdateBodyFiltersOneFiltersItemGroupMax = 2147483647;
+
+export const tracerEvalTaskUpdateBodyFiltersOneSpanAttributesFiltersItemGroupMin = 0;
+export const tracerEvalTaskUpdateBodyFiltersOneSpanAttributesFiltersItemGroupMax = 2147483647;
 
 export const tracerEvalTaskUpdateBodyFiltersDefault = {};
 export const tracerEvalTaskUpdateBodySamplingRateMax = 100;
@@ -81323,6 +82021,14 @@ export const TracerEvalTaskUpdateBody = zod.object({
                 .describe(
                   "Optional metric output type metadata used by eval and annotation filters.",
                 ),
+              group: zod
+                .number()
+                .min(tracerEvalTaskUpdateBodyFiltersOneFiltersItemGroupMin)
+                .max(tracerEvalTaskUpdateBodyFiltersOneFiltersItemGroupMax)
+                .optional()
+                .describe(
+                  "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+                ),
               filter_config: zod.object({
                 filter_type: zod
                   .string()
@@ -81344,7 +82050,7 @@ export const TracerEvalTaskUpdateBody = zod.object({
                   .string()
                   .optional()
                   .describe(
-                    "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                    "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
                   ),
                 attribute_value_types: zod
                   .array(zod.enum(["string", "number", "boolean"]).nullable())
@@ -81384,6 +82090,18 @@ export const TracerEvalTaskUpdateBody = zod.object({
                 .describe(
                   "Optional metric output type metadata used by eval and annotation filters.",
                 ),
+              group: zod
+                .number()
+                .min(
+                  tracerEvalTaskUpdateBodyFiltersOneSpanAttributesFiltersItemGroupMin,
+                )
+                .max(
+                  tracerEvalTaskUpdateBodyFiltersOneSpanAttributesFiltersItemGroupMax,
+                )
+                .optional()
+                .describe(
+                  "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+                ),
               filter_config: zod.object({
                 filter_type: zod
                   .string()
@@ -81405,7 +82123,7 @@ export const TracerEvalTaskUpdateBody = zod.object({
                   .string()
                   .optional()
                   .describe(
-                    "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                    "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
                   ),
                 attribute_value_types: zod
                   .array(zod.enum(["string", "number", "boolean"]).nullable())
@@ -81449,6 +82167,12 @@ export const tracerEvalTaskUpdateResponseNameMax = 255;
 
 export const tracerEvalTaskUpdateResponseFiltersOneDateRangeMin = 2;
 export const tracerEvalTaskUpdateResponseFiltersOneDateRangeMax = 2;
+
+export const tracerEvalTaskUpdateResponseFiltersOneFiltersItemGroupMin = 0;
+export const tracerEvalTaskUpdateResponseFiltersOneFiltersItemGroupMax = 2147483647;
+
+export const tracerEvalTaskUpdateResponseFiltersOneSpanAttributesFiltersItemGroupMin = 0;
+export const tracerEvalTaskUpdateResponseFiltersOneSpanAttributesFiltersItemGroupMax = 2147483647;
 
 export const tracerEvalTaskUpdateResponseFiltersDefault = {};
 export const tracerEvalTaskUpdateResponseSamplingRateMax = 100;
@@ -81545,6 +82269,14 @@ export const TracerEvalTaskUpdateResponse = zod.object({
                 .describe(
                   "Optional metric output type metadata used by eval and annotation filters.",
                 ),
+              group: zod
+                .number()
+                .min(tracerEvalTaskUpdateResponseFiltersOneFiltersItemGroupMin)
+                .max(tracerEvalTaskUpdateResponseFiltersOneFiltersItemGroupMax)
+                .optional()
+                .describe(
+                  "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+                ),
               filter_config: zod.object({
                 filter_type: zod
                   .string()
@@ -81566,7 +82298,7 @@ export const TracerEvalTaskUpdateResponse = zod.object({
                   .string()
                   .optional()
                   .describe(
-                    "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                    "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
                   ),
                 attribute_value_types: zod
                   .array(zod.enum(["string", "number", "boolean"]).nullable())
@@ -81606,6 +82338,18 @@ export const TracerEvalTaskUpdateResponse = zod.object({
                 .describe(
                   "Optional metric output type metadata used by eval and annotation filters.",
                 ),
+              group: zod
+                .number()
+                .min(
+                  tracerEvalTaskUpdateResponseFiltersOneSpanAttributesFiltersItemGroupMin,
+                )
+                .max(
+                  tracerEvalTaskUpdateResponseFiltersOneSpanAttributesFiltersItemGroupMax,
+                )
+                .optional()
+                .describe(
+                  "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+                ),
               filter_config: zod.object({
                 filter_type: zod
                   .string()
@@ -81627,7 +82371,7 @@ export const TracerEvalTaskUpdateResponse = zod.object({
                   .string()
                   .optional()
                   .describe(
-                    "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                    "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
                   ),
                 attribute_value_types: zod
                   .array(zod.enum(["string", "number", "boolean"]).nullable())
@@ -81678,6 +82422,12 @@ export const tracerEvalTaskPartialUpdateBodyNameMax = 255;
 
 export const tracerEvalTaskPartialUpdateBodyFiltersOneDateRangeMin = 2;
 export const tracerEvalTaskPartialUpdateBodyFiltersOneDateRangeMax = 2;
+
+export const tracerEvalTaskPartialUpdateBodyFiltersOneFiltersItemGroupMin = 0;
+export const tracerEvalTaskPartialUpdateBodyFiltersOneFiltersItemGroupMax = 2147483647;
+
+export const tracerEvalTaskPartialUpdateBodyFiltersOneSpanAttributesFiltersItemGroupMin = 0;
+export const tracerEvalTaskPartialUpdateBodyFiltersOneSpanAttributesFiltersItemGroupMax = 2147483647;
 
 export const tracerEvalTaskPartialUpdateBodyFiltersDefault = {};
 export const tracerEvalTaskPartialUpdateBodySamplingRateMax = 100;
@@ -81773,6 +82523,18 @@ export const TracerEvalTaskPartialUpdateBody = zod.object({
                 .describe(
                   "Optional metric output type metadata used by eval and annotation filters.",
                 ),
+              group: zod
+                .number()
+                .min(
+                  tracerEvalTaskPartialUpdateBodyFiltersOneFiltersItemGroupMin,
+                )
+                .max(
+                  tracerEvalTaskPartialUpdateBodyFiltersOneFiltersItemGroupMax,
+                )
+                .optional()
+                .describe(
+                  "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+                ),
               filter_config: zod.object({
                 filter_type: zod
                   .string()
@@ -81794,7 +82556,7 @@ export const TracerEvalTaskPartialUpdateBody = zod.object({
                   .string()
                   .optional()
                   .describe(
-                    "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                    "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
                   ),
                 attribute_value_types: zod
                   .array(zod.enum(["string", "number", "boolean"]).nullable())
@@ -81834,6 +82596,18 @@ export const TracerEvalTaskPartialUpdateBody = zod.object({
                 .describe(
                   "Optional metric output type metadata used by eval and annotation filters.",
                 ),
+              group: zod
+                .number()
+                .min(
+                  tracerEvalTaskPartialUpdateBodyFiltersOneSpanAttributesFiltersItemGroupMin,
+                )
+                .max(
+                  tracerEvalTaskPartialUpdateBodyFiltersOneSpanAttributesFiltersItemGroupMax,
+                )
+                .optional()
+                .describe(
+                  "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+                ),
               filter_config: zod.object({
                 filter_type: zod
                   .string()
@@ -81855,7 +82629,7 @@ export const TracerEvalTaskPartialUpdateBody = zod.object({
                   .string()
                   .optional()
                   .describe(
-                    "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                    "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
                   ),
                 attribute_value_types: zod
                   .array(zod.enum(["string", "number", "boolean"]).nullable())
@@ -81899,6 +82673,12 @@ export const tracerEvalTaskPartialUpdateResponseNameMax = 255;
 
 export const tracerEvalTaskPartialUpdateResponseFiltersOneDateRangeMin = 2;
 export const tracerEvalTaskPartialUpdateResponseFiltersOneDateRangeMax = 2;
+
+export const tracerEvalTaskPartialUpdateResponseFiltersOneFiltersItemGroupMin = 0;
+export const tracerEvalTaskPartialUpdateResponseFiltersOneFiltersItemGroupMax = 2147483647;
+
+export const tracerEvalTaskPartialUpdateResponseFiltersOneSpanAttributesFiltersItemGroupMin = 0;
+export const tracerEvalTaskPartialUpdateResponseFiltersOneSpanAttributesFiltersItemGroupMax = 2147483647;
 
 export const tracerEvalTaskPartialUpdateResponseFiltersDefault = {};
 export const tracerEvalTaskPartialUpdateResponseSamplingRateMax = 100;
@@ -81995,6 +82775,18 @@ export const TracerEvalTaskPartialUpdateResponse = zod.object({
                 .describe(
                   "Optional metric output type metadata used by eval and annotation filters.",
                 ),
+              group: zod
+                .number()
+                .min(
+                  tracerEvalTaskPartialUpdateResponseFiltersOneFiltersItemGroupMin,
+                )
+                .max(
+                  tracerEvalTaskPartialUpdateResponseFiltersOneFiltersItemGroupMax,
+                )
+                .optional()
+                .describe(
+                  "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+                ),
               filter_config: zod.object({
                 filter_type: zod
                   .string()
@@ -82016,7 +82808,7 @@ export const TracerEvalTaskPartialUpdateResponse = zod.object({
                   .string()
                   .optional()
                   .describe(
-                    "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                    "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
                   ),
                 attribute_value_types: zod
                   .array(zod.enum(["string", "number", "boolean"]).nullable())
@@ -82056,6 +82848,18 @@ export const TracerEvalTaskPartialUpdateResponse = zod.object({
                 .describe(
                   "Optional metric output type metadata used by eval and annotation filters.",
                 ),
+              group: zod
+                .number()
+                .min(
+                  tracerEvalTaskPartialUpdateResponseFiltersOneSpanAttributesFiltersItemGroupMin,
+                )
+                .max(
+                  tracerEvalTaskPartialUpdateResponseFiltersOneSpanAttributesFiltersItemGroupMax,
+                )
+                .optional()
+                .describe(
+                  "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+                ),
               filter_config: zod.object({
                 filter_type: zod
                   .string()
@@ -82077,7 +82881,7 @@ export const TracerEvalTaskPartialUpdateResponse = zod.object({
                   .string()
                   .optional()
                   .describe(
-                    "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                    "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
                   ),
                 attribute_value_types: zod
                   .array(zod.enum(["string", "number", "boolean"]).nullable())
@@ -84060,6 +84864,9 @@ export const TracerInstantEvalControlCreateResponse = zod.object({
 /**
  * How many rows a view holds, and what a sample or all of it costs.
  */
+export const tracerInstantEvalEstimateCreateBodyFiltersItemGroupMin = 0;
+export const tracerInstantEvalEstimateCreateBodyFiltersItemGroupMax = 2147483647;
+
 export const tracerInstantEvalEstimateCreateBodyFiltersDefault = [];
 export const tracerInstantEvalEstimateCreateBodyIdsItemMax = 255;
 
@@ -84101,6 +84908,14 @@ export const TracerInstantEvalEstimateCreateBody = zod.object({
           .describe(
             "Optional metric output type metadata used by eval and annotation filters.",
           ),
+        group: zod
+          .number()
+          .min(tracerInstantEvalEstimateCreateBodyFiltersItemGroupMin)
+          .max(tracerInstantEvalEstimateCreateBodyFiltersItemGroupMax)
+          .optional()
+          .describe(
+            "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+          ),
         filter_config: zod.object({
           filter_type: zod
             .string()
@@ -84122,7 +84937,7 @@ export const TracerInstantEvalEstimateCreateBody = zod.object({
             .string()
             .optional()
             .describe(
-              "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+              "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
             ),
           attribute_value_types: zod
             .array(zod.enum(["string", "number", "boolean"]).nullable())
@@ -84718,6 +85533,9 @@ export const TracerInstantEvalRunsListResponse = zod.object({
 handed over), enforces the size and concurrency limits, and starts the
 eval task. The rows are picked by the task's first step.
  */
+export const tracerInstantEvalStartCreateBodyFiltersItemGroupMin = 0;
+export const tracerInstantEvalStartCreateBodyFiltersItemGroupMax = 2147483647;
+
 export const tracerInstantEvalStartCreateBodyFiltersDefault = [];
 export const tracerInstantEvalStartCreateBodyIdsItemMax = 255;
 
@@ -84761,6 +85579,14 @@ export const TracerInstantEvalStartCreateBody = zod.object({
           .describe(
             "Optional metric output type metadata used by eval and annotation filters.",
           ),
+        group: zod
+          .number()
+          .min(tracerInstantEvalStartCreateBodyFiltersItemGroupMin)
+          .max(tracerInstantEvalStartCreateBodyFiltersItemGroupMax)
+          .optional()
+          .describe(
+            "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+          ),
         filter_config: zod.object({
           filter_type: zod
             .string()
@@ -84782,7 +85608,7 @@ export const TracerInstantEvalStartCreateBody = zod.object({
             .string()
             .optional()
             .describe(
-              "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+              "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
             ),
           attribute_value_types: zod
             .array(zod.enum(["string", "number", "boolean"]).nullable())
@@ -87519,6 +88345,9 @@ export const TracerObservationSpanGetGraphMethodsQueryParams = zod.object({
     ),
 });
 
+export const tracerObservationSpanGetGraphMethodsBodyFiltersItemGroupMin = 0;
+export const tracerObservationSpanGetGraphMethodsBodyFiltersItemGroupMax = 2147483647;
+
 export const tracerObservationSpanGetGraphMethodsBodyFiltersDefault = [];
 export const tracerObservationSpanGetGraphMethodsBodyIntervalDefault = `day`;
 export const tracerObservationSpanGetGraphMethodsBodyPropertyDefault = `average`;
@@ -87551,6 +88380,14 @@ export const TracerObservationSpanGetGraphMethodsBody = zod.object({
           .describe(
             "Optional metric output type metadata used by eval and annotation filters.",
           ),
+        group: zod
+          .number()
+          .min(tracerObservationSpanGetGraphMethodsBodyFiltersItemGroupMin)
+          .max(tracerObservationSpanGetGraphMethodsBodyFiltersItemGroupMax)
+          .optional()
+          .describe(
+            "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+          ),
         filter_config: zod.object({
           filter_type: zod
             .string()
@@ -87572,7 +88409,7 @@ export const TracerObservationSpanGetGraphMethodsBody = zod.object({
             .string()
             .optional()
             .describe(
-              "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+              "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
             ),
           attribute_value_types: zod
             .array(zod.enum(["string", "number", "boolean"]).nullable())
@@ -90330,6 +91167,9 @@ export const TracerProjectGetUserGraphDataQueryParams = zod.object({
 
 export const tracerProjectGetUserGraphDataBodyIntervalDefault = `hour`;
 
+export const tracerProjectGetUserGraphDataBodyFiltersItemGroupMin = 0;
+export const tracerProjectGetUserGraphDataBodyFiltersItemGroupMax = 2147483647;
+
 export const tracerProjectGetUserGraphDataBodyFiltersDefault = [];
 
 export const TracerProjectGetUserGraphDataBody = zod.object({
@@ -90363,6 +91203,14 @@ export const TracerProjectGetUserGraphDataBody = zod.object({
           .describe(
             "Optional metric output type metadata used by eval and annotation filters.",
           ),
+        group: zod
+          .number()
+          .min(tracerProjectGetUserGraphDataBodyFiltersItemGroupMin)
+          .max(tracerProjectGetUserGraphDataBodyFiltersItemGroupMax)
+          .optional()
+          .describe(
+            "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+          ),
         filter_config: zod.object({
           filter_type: zod
             .string()
@@ -90384,7 +91232,7 @@ export const TracerProjectGetUserGraphDataBody = zod.object({
             .string()
             .optional()
             .describe(
-              "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+              "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
             ),
           attribute_value_types: zod
             .array(zod.enum(["string", "number", "boolean"]).nullable())
@@ -90477,6 +91325,9 @@ export const TracerProjectGetUserGraphDataResponse = zod.object({
 
 export const tracerProjectGetUserMetricsBodyIntervalDefault = `day`;
 
+export const tracerProjectGetUserMetricsBodyFiltersItemGroupMin = 0;
+export const tracerProjectGetUserMetricsBodyFiltersItemGroupMax = 2147483647;
+
 export const tracerProjectGetUserMetricsBodyFiltersDefault = [];
 
 export const TracerProjectGetUserMetricsBody = zod.object({
@@ -90512,6 +91363,14 @@ export const TracerProjectGetUserMetricsBody = zod.object({
           .describe(
             "Optional metric output type metadata used by eval and annotation filters.",
           ),
+        group: zod
+          .number()
+          .min(tracerProjectGetUserMetricsBodyFiltersItemGroupMin)
+          .max(tracerProjectGetUserMetricsBodyFiltersItemGroupMax)
+          .optional()
+          .describe(
+            "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+          ),
         filter_config: zod.object({
           filter_type: zod
             .string()
@@ -90533,7 +91392,7 @@ export const TracerProjectGetUserMetricsBody = zod.object({
             .string()
             .optional()
             .describe(
-              "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+              "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
             ),
           attribute_value_types: zod
             .array(zod.enum(["string", "number", "boolean"]).nullable())
@@ -90573,6 +91432,9 @@ export const TracerProjectGetUsersAggregateGraphDataQueryParams = zod.object({
 
 export const tracerProjectGetUsersAggregateGraphDataBodyIntervalDefault = `day`;
 
+export const tracerProjectGetUsersAggregateGraphDataBodyFiltersItemGroupMin = 0;
+export const tracerProjectGetUsersAggregateGraphDataBodyFiltersItemGroupMax = 2147483647;
+
 export const tracerProjectGetUsersAggregateGraphDataBodyFiltersDefault = [];
 export const tracerProjectGetUsersAggregateGraphDataBodyPropertyDefault = `average`;
 
@@ -90611,6 +91473,14 @@ export const TracerProjectGetUsersAggregateGraphDataBody = zod.object({
           .describe(
             "Optional metric output type metadata used by eval and annotation filters.",
           ),
+        group: zod
+          .number()
+          .min(tracerProjectGetUsersAggregateGraphDataBodyFiltersItemGroupMin)
+          .max(tracerProjectGetUsersAggregateGraphDataBodyFiltersItemGroupMax)
+          .optional()
+          .describe(
+            "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+          ),
         filter_config: zod.object({
           filter_type: zod
             .string()
@@ -90632,7 +91502,7 @@ export const TracerProjectGetUsersAggregateGraphDataBody = zod.object({
             .string()
             .optional()
             .describe(
-              "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+              "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
             ),
           attribute_value_types: zod
             .array(zod.enum(["string", "number", "boolean"]).nullable())
@@ -93360,6 +94230,9 @@ export const TracerTraceSessionGetSessionGraphDataQueryParams = zod.object({
     ),
 });
 
+export const tracerTraceSessionGetSessionGraphDataBodyFiltersItemGroupMin = 0;
+export const tracerTraceSessionGetSessionGraphDataBodyFiltersItemGroupMax = 2147483647;
+
 export const tracerTraceSessionGetSessionGraphDataBodyFiltersDefault = [];
 export const tracerTraceSessionGetSessionGraphDataBodyIntervalDefault = `day`;
 export const tracerTraceSessionGetSessionGraphDataBodyPropertyDefault = `average`;
@@ -93392,6 +94265,14 @@ export const TracerTraceSessionGetSessionGraphDataBody = zod.object({
           .describe(
             "Optional metric output type metadata used by eval and annotation filters.",
           ),
+        group: zod
+          .number()
+          .min(tracerTraceSessionGetSessionGraphDataBodyFiltersItemGroupMin)
+          .max(tracerTraceSessionGetSessionGraphDataBodyFiltersItemGroupMax)
+          .optional()
+          .describe(
+            "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+          ),
         filter_config: zod.object({
           filter_type: zod
             .string()
@@ -93413,7 +94294,7 @@ export const TracerTraceSessionGetSessionGraphDataBody = zod.object({
             .string()
             .optional()
             .describe(
-              "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+              "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
             ),
           attribute_value_types: zod
             .array(zod.enum(["string", "number", "boolean"]).nullable())
@@ -94874,6 +95755,9 @@ export const TracerTraceGetGraphMethodsQueryParams = zod.object({
     ),
 });
 
+export const tracerTraceGetGraphMethodsBodyFiltersItemGroupMin = 0;
+export const tracerTraceGetGraphMethodsBodyFiltersItemGroupMax = 2147483647;
+
 export const tracerTraceGetGraphMethodsBodyFiltersDefault = [];
 export const tracerTraceGetGraphMethodsBodyIntervalDefault = `day`;
 export const tracerTraceGetGraphMethodsBodyPropertyDefault = `average`;
@@ -94908,6 +95792,14 @@ export const TracerTraceGetGraphMethodsBody = zod.object({
           .describe(
             "Optional metric output type metadata used by eval and annotation filters.",
           ),
+        group: zod
+          .number()
+          .min(tracerTraceGetGraphMethodsBodyFiltersItemGroupMin)
+          .max(tracerTraceGetGraphMethodsBodyFiltersItemGroupMax)
+          .optional()
+          .describe(
+            "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+          ),
         filter_config: zod.object({
           filter_type: zod
             .string()
@@ -94929,7 +95821,7 @@ export const TracerTraceGetGraphMethodsBody = zod.object({
             .string()
             .optional()
             .describe(
-              "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+              "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
             ),
           attribute_value_types: zod
             .array(zod.enum(["string", "number", "boolean"]).nullable())

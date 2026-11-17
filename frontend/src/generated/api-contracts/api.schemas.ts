@@ -7603,7 +7603,7 @@ export type AutomationRuleConditionsApiFilterItemFilterConfig = {
   filter_op: string;
   /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
   filter_value?: unknown;
-  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
+  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL. */
   col_type?: string;
   /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
   attribute_value_types?: AutomationRuleConditionsApiFilterItemFilterConfigAttributeValueTypesItem[];
@@ -7620,6 +7620,12 @@ export type AutomationRuleConditionsApiFilterItem = {
   source?: string;
   /** Optional metric output type metadata used by eval and annotation filters. */
   output_type?: string;
+  /**
+   * SKILL row-correlation group; omitted means 0. Groups are ANDed.
+   * @minimum 0
+   * @maximum 2147483647
+   */
+  group?: number;
   filter_config: AutomationRuleConditionsApiFilterItemFilterConfig;
 };
 
@@ -7813,7 +7819,7 @@ export type SelectionApiFilterItemFilterConfig = {
   filter_op: string;
   /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
   filter_value?: unknown;
-  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
+  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL. */
   col_type?: string;
   /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
   attribute_value_types?: SelectionApiFilterItemFilterConfigAttributeValueTypesItem[];
@@ -7830,6 +7836,12 @@ export type SelectionApiFilterItem = {
   source?: string;
   /** Optional metric output type metadata used by eval and annotation filters. */
   output_type?: string;
+  /**
+   * SKILL row-correlation group; omitted means 0. Groups are ANDed.
+   * @minimum 0
+   * @maximum 2147483647
+   */
+  group?: number;
   filter_config: SelectionApiFilterItemFilterConfig;
 };
 
@@ -11012,7 +11024,7 @@ export type DatasetRowDataRequestApiFiltersItemFilterConfig = {
   filter_op: string;
   /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
   filter_value?: unknown;
-  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
+  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL. */
   col_type?: string;
   /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
   attribute_value_types?: DatasetRowDataRequestApiFiltersItemFilterConfigAttributeValueTypesItem[];
@@ -11029,6 +11041,12 @@ export type DatasetRowDataRequestApiFiltersItem = {
   source?: string;
   /** Optional metric output type metadata used by eval and annotation filters. */
   output_type?: string;
+  /**
+   * SKILL row-correlation group; omitted means 0. Groups are ANDed.
+   * @minimum 0
+   * @maximum 2147483647
+   */
+  group?: number;
   filter_config: DatasetRowDataRequestApiFiltersItemFilterConfig;
 };
 
@@ -13869,7 +13887,7 @@ export type EvalMetricRequestApiFiltersItemFilterConfig = {
   filter_op: string;
   /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
   filter_value?: unknown;
-  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
+  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL. */
   col_type?: string;
   /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
   attribute_value_types?: EvalMetricRequestApiFiltersItemFilterConfigAttributeValueTypesItem[];
@@ -13886,6 +13904,12 @@ export type EvalMetricRequestApiFiltersItem = {
   source?: string;
   /** Optional metric output type metadata used by eval and annotation filters. */
   output_type?: string;
+  /**
+   * SKILL row-correlation group; omitted means 0. Groups are ANDed.
+   * @minimum 0
+   * @maximum 2147483647
+   */
+  group?: number;
   filter_config: EvalMetricRequestApiFiltersItemFilterConfig;
 };
 
@@ -27644,7 +27668,7 @@ export type HarnessEnvironmentEvalEditApiFiltersItemFilterConfig = {
   filter_op: string;
   /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
   filter_value?: unknown;
-  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
+  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL. */
   col_type?: string;
   /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
   attribute_value_types?: HarnessEnvironmentEvalEditApiFiltersItemFilterConfigAttributeValueTypesItem[];
@@ -27661,6 +27685,12 @@ export type HarnessEnvironmentEvalEditApiFiltersItem = {
   source?: string;
   /** Optional metric output type metadata used by eval and annotation filters. */
   output_type?: string;
+  /**
+   * SKILL row-correlation group; omitted means 0. Groups are ANDed.
+   * @minimum 0
+   * @maximum 2147483647
+   */
+  group?: number;
   filter_config: HarnessEnvironmentEvalEditApiFiltersItemFilterConfig;
 };
 
@@ -27714,7 +27744,7 @@ export type SimulateEvalConfigResponseApiFiltersItemFilterConfig = {
   filter_op: string;
   /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
   filter_value?: unknown;
-  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
+  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL. */
   col_type?: string;
   /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
   attribute_value_types?: SimulateEvalConfigResponseApiFiltersItemFilterConfigAttributeValueTypesItem[];
@@ -27731,6 +27761,12 @@ export type SimulateEvalConfigResponseApiFiltersItem = {
   source?: string;
   /** Optional metric output type metadata used by eval and annotation filters. */
   output_type?: string;
+  /**
+   * SKILL row-correlation group; omitted means 0. Groups are ANDed.
+   * @minimum 0
+   * @maximum 2147483647
+   */
+  group?: number;
   filter_config: SimulateEvalConfigResponseApiFiltersItemFilterConfig;
 };
 
@@ -31136,7 +31172,7 @@ export type EvalConfigDefinitionApiFiltersItemFilterConfig = {
   filter_op: string;
   /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
   filter_value?: unknown;
-  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
+  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL. */
   col_type?: string;
   /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
   attribute_value_types?: EvalConfigDefinitionApiFiltersItemFilterConfigAttributeValueTypesItem[];
@@ -31153,6 +31189,12 @@ export type EvalConfigDefinitionApiFiltersItem = {
   source?: string;
   /** Optional metric output type metadata used by eval and annotation filters. */
   output_type?: string;
+  /**
+   * SKILL row-correlation group; omitted means 0. Groups are ANDed.
+   * @minimum 0
+   * @maximum 2147483647
+   */
+  group?: number;
   filter_config: EvalConfigDefinitionApiFiltersItemFilterConfig;
 };
 
@@ -31565,7 +31607,7 @@ export type EvalConfigUpdateRequestApiFiltersItemFilterConfig = {
   filter_op: string;
   /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
   filter_value?: unknown;
-  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
+  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL. */
   col_type?: string;
   /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
   attribute_value_types?: EvalConfigUpdateRequestApiFiltersItemFilterConfigAttributeValueTypesItem[];
@@ -31582,6 +31624,12 @@ export type EvalConfigUpdateRequestApiFiltersItem = {
   source?: string;
   /** Optional metric output type metadata used by eval and annotation filters. */
   output_type?: string;
+  /**
+   * SKILL row-correlation group; omitted means 0. Groups are ANDed.
+   * @minimum 0
+   * @maximum 2147483647
+   */
+  group?: number;
   filter_config: EvalConfigUpdateRequestApiFiltersItemFilterConfig;
 };
 
@@ -34823,7 +34871,7 @@ export type DashboardQueryApiFiltersItemFilterConfig = {
   filter_op: string;
   /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
   filter_value?: unknown;
-  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
+  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL. */
   col_type?: string;
   /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
   attribute_value_types?: DashboardQueryApiFiltersItemFilterConfigAttributeValueTypesItem[];
@@ -34840,6 +34888,12 @@ export type DashboardQueryApiFiltersItem = {
   source?: string;
   /** Optional metric output type metadata used by eval and annotation filters. */
   output_type?: string;
+  /**
+   * SKILL row-correlation group; omitted means 0. Groups are ANDed.
+   * @minimum 0
+   * @maximum 2147483647
+   */
+  group?: number;
   filter_config: DashboardQueryApiFiltersItemFilterConfig;
 };
 
@@ -34956,7 +35010,7 @@ export type DashboardMetricApiFiltersItemFilterConfig = {
   filter_op: string;
   /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
   filter_value?: unknown;
-  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
+  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL. */
   col_type?: string;
   /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
   attribute_value_types?: DashboardMetricApiFiltersItemFilterConfigAttributeValueTypesItem[];
@@ -34973,6 +35027,12 @@ export type DashboardMetricApiFiltersItem = {
   source?: string;
   /** Optional metric output type metadata used by eval and annotation filters. */
   output_type?: string;
+  /**
+   * SKILL row-correlation group; omitted means 0. Groups are ANDed.
+   * @minimum 0
+   * @maximum 2147483647
+   */
+  group?: number;
   filter_config: DashboardMetricApiFiltersItemFilterConfig;
 };
 
@@ -35412,6 +35472,12 @@ export type EvalTaskApiFilters = {
     source?: string;
     /** Optional metric output type metadata used by eval and annotation filters. */
     output_type?: string;
+    /**
+     * SKILL row-correlation group; omitted means 0. Groups are ANDed.
+     * @minimum 0
+     * @maximum 2147483647
+     */
+    group?: number;
     filter_config: {
       /** Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map. */
       filter_type: string;
@@ -35419,7 +35485,7 @@ export type EvalTaskApiFilters = {
       filter_op: string;
       /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
       filter_value?: unknown;
-      /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
+      /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL. */
       col_type?: string;
       /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
       attribute_value_types?: ("string" | "number" | "boolean" | null)[];
@@ -35436,6 +35502,12 @@ export type EvalTaskApiFilters = {
     source?: string;
     /** Optional metric output type metadata used by eval and annotation filters. */
     output_type?: string;
+    /**
+     * SKILL row-correlation group; omitted means 0. Groups are ANDed.
+     * @minimum 0
+     * @maximum 2147483647
+     */
+    group?: number;
     filter_config: {
       /** Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map. */
       filter_type: string;
@@ -35443,7 +35515,7 @@ export type EvalTaskApiFilters = {
       filter_op: string;
       /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
       filter_value?: unknown;
-      /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
+      /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL. */
       col_type?: string;
       /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
       attribute_value_types?: ("string" | "number" | "boolean" | null)[];
@@ -35841,6 +35913,12 @@ export type EvalTaskUpdateRequestApiFilters = {
     source?: string;
     /** Optional metric output type metadata used by eval and annotation filters. */
     output_type?: string;
+    /**
+     * SKILL row-correlation group; omitted means 0. Groups are ANDed.
+     * @minimum 0
+     * @maximum 2147483647
+     */
+    group?: number;
     filter_config: {
       /** Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map. */
       filter_type: string;
@@ -35848,7 +35926,7 @@ export type EvalTaskUpdateRequestApiFilters = {
       filter_op: string;
       /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
       filter_value?: unknown;
-      /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
+      /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL. */
       col_type?: string;
       /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
       attribute_value_types?: ("string" | "number" | "boolean" | null)[];
@@ -35865,6 +35943,12 @@ export type EvalTaskUpdateRequestApiFilters = {
     source?: string;
     /** Optional metric output type metadata used by eval and annotation filters. */
     output_type?: string;
+    /**
+     * SKILL row-correlation group; omitted means 0. Groups are ANDed.
+     * @minimum 0
+     * @maximum 2147483647
+     */
+    group?: number;
     filter_config: {
       /** Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map. */
       filter_type: string;
@@ -35872,7 +35956,7 @@ export type EvalTaskUpdateRequestApiFilters = {
       filter_op: string;
       /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
       filter_value?: unknown;
-      /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
+      /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL. */
       col_type?: string;
       /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
       attribute_value_types?: ("string" | "number" | "boolean" | null)[];
@@ -37193,7 +37277,7 @@ export type InstantEvalEstimateRequestApiFiltersItemFilterConfig = {
   filter_op: string;
   /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
   filter_value?: unknown;
-  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
+  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL. */
   col_type?: string;
   /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
   attribute_value_types?: InstantEvalEstimateRequestApiFiltersItemFilterConfigAttributeValueTypesItem[];
@@ -37210,6 +37294,12 @@ export type InstantEvalEstimateRequestApiFiltersItem = {
   source?: string;
   /** Optional metric output type metadata used by eval and annotation filters. */
   output_type?: string;
+  /**
+   * SKILL row-correlation group; omitted means 0. Groups are ANDed.
+   * @minimum 0
+   * @maximum 2147483647
+   */
+  group?: number;
   filter_config: InstantEvalEstimateRequestApiFiltersItemFilterConfig;
 };
 
@@ -37556,7 +37646,7 @@ export type InstantEvalStartRequestApiFiltersItemFilterConfig = {
   filter_op: string;
   /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
   filter_value?: unknown;
-  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
+  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL. */
   col_type?: string;
   /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
   attribute_value_types?: InstantEvalStartRequestApiFiltersItemFilterConfigAttributeValueTypesItem[];
@@ -37573,6 +37663,12 @@ export type InstantEvalStartRequestApiFiltersItem = {
   source?: string;
   /** Optional metric output type metadata used by eval and annotation filters. */
   output_type?: string;
+  /**
+   * SKILL row-correlation group; omitted means 0. Groups are ANDed.
+   * @minimum 0
+   * @maximum 2147483647
+   */
+  group?: number;
   filter_config: InstantEvalStartRequestApiFiltersItemFilterConfig;
 };
 
@@ -39103,7 +39199,7 @@ export type ObserveGraphDataRequestApiFiltersItemFilterConfig = {
   filter_op: string;
   /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
   filter_value?: unknown;
-  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
+  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL. */
   col_type?: string;
   /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
   attribute_value_types?: ObserveGraphDataRequestApiFiltersItemFilterConfigAttributeValueTypesItem[];
@@ -39120,6 +39216,12 @@ export type ObserveGraphDataRequestApiFiltersItem = {
   source?: string;
   /** Optional metric output type metadata used by eval and annotation filters. */
   output_type?: string;
+  /**
+   * SKILL row-correlation group; omitted means 0. Groups are ANDed.
+   * @minimum 0
+   * @maximum 2147483647
+   */
+  group?: number;
   filter_config: ObserveGraphDataRequestApiFiltersItemFilterConfig;
 };
 
@@ -39803,7 +39905,7 @@ export type ProjectUserGraphDataRequestApiFiltersItemFilterConfig = {
   filter_op: string;
   /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
   filter_value?: unknown;
-  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
+  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL. */
   col_type?: string;
   /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
   attribute_value_types?: ProjectUserGraphDataRequestApiFiltersItemFilterConfigAttributeValueTypesItem[];
@@ -39820,6 +39922,12 @@ export type ProjectUserGraphDataRequestApiFiltersItem = {
   source?: string;
   /** Optional metric output type metadata used by eval and annotation filters. */
   output_type?: string;
+  /**
+   * SKILL row-correlation group; omitted means 0. Groups are ANDed.
+   * @minimum 0
+   * @maximum 2147483647
+   */
+  group?: number;
   filter_config: ProjectUserGraphDataRequestApiFiltersItemFilterConfig;
 };
 
@@ -39882,7 +39990,7 @@ export type ProjectUserMetricsRequestApiFiltersItemFilterConfig = {
   filter_op: string;
   /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
   filter_value?: unknown;
-  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
+  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL. */
   col_type?: string;
   /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
   attribute_value_types?: ProjectUserMetricsRequestApiFiltersItemFilterConfigAttributeValueTypesItem[];
@@ -39899,6 +40007,12 @@ export type ProjectUserMetricsRequestApiFiltersItem = {
   source?: string;
   /** Optional metric output type metadata used by eval and annotation filters. */
   output_type?: string;
+  /**
+   * SKILL row-correlation group; omitted means 0. Groups are ANDed.
+   * @minimum 0
+   * @maximum 2147483647
+   */
+  group?: number;
   filter_config: ProjectUserMetricsRequestApiFiltersItemFilterConfig;
 };
 
@@ -39929,7 +40043,7 @@ export type ProjectUsersAggregateGraphDataRequestApiFiltersItemFilterConfig = {
   filter_op: string;
   /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
   filter_value?: unknown;
-  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
+  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL. */
   col_type?: string;
   /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
   attribute_value_types?: ProjectUsersAggregateGraphDataRequestApiFiltersItemFilterConfigAttributeValueTypesItem[];
@@ -39946,6 +40060,12 @@ export type ProjectUsersAggregateGraphDataRequestApiFiltersItem = {
   source?: string;
   /** Optional metric output type metadata used by eval and annotation filters. */
   output_type?: string;
+  /**
+   * SKILL row-correlation group; omitted means 0. Groups are ANDed.
+   * @minimum 0
+   * @maximum 2147483647
+   */
+  group?: number;
   filter_config: ProjectUsersAggregateGraphDataRequestApiFiltersItemFilterConfig;
 };
 
@@ -41063,7 +41183,7 @@ export type TraceSessionGraphDataRequestApiFiltersItemFilterConfig = {
   filter_op: string;
   /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
   filter_value?: unknown;
-  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
+  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL. */
   col_type?: string;
   /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
   attribute_value_types?: TraceSessionGraphDataRequestApiFiltersItemFilterConfigAttributeValueTypesItem[];
@@ -41080,6 +41200,12 @@ export type TraceSessionGraphDataRequestApiFiltersItem = {
   source?: string;
   /** Optional metric output type metadata used by eval and annotation filters. */
   output_type?: string;
+  /**
+   * SKILL row-correlation group; omitted means 0. Groups are ANDed.
+   * @minimum 0
+   * @maximum 2147483647
+   */
+  group?: number;
   filter_config: TraceSessionGraphDataRequestApiFiltersItemFilterConfig;
 };
 
@@ -41671,7 +41797,7 @@ export type TraceGraphDataRequestApiFiltersItemFilterConfig = {
   filter_op: string;
   /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
   filter_value?: unknown;
-  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
+  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL. */
   col_type?: string;
   /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
   attribute_value_types?: TraceGraphDataRequestApiFiltersItemFilterConfigAttributeValueTypesItem[];
@@ -41688,6 +41814,12 @@ export type TraceGraphDataRequestApiFiltersItem = {
   source?: string;
   /** Optional metric output type metadata used by eval and annotation filters. */
   output_type?: string;
+  /**
+   * SKILL row-correlation group; omitted means 0. Groups are ANDed.
+   * @minimum 0
+   * @maximum 2147483647
+   */
+  group?: number;
   filter_config: TraceGraphDataRequestApiFiltersItemFilterConfig;
 };
 
