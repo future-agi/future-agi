@@ -76,7 +76,7 @@ function EditorTestsContent({
       {!suite.data.cases.length ? (
         <EmptyState
           title="Add a real request"
-          description="Save a reviewed test case before comparing your draft."
+          description="Save an approved test case before comparing your draft."
           action={
             <Button
               size="small"
@@ -100,7 +100,7 @@ function EditorTestsContent({
             {suite.data.cases.map((item) => (
               <MenuItem key={item.id} value={item.id} disabled={!item.reviewed}>
                 {item.title}
-                {item.reviewed ? "" : " · needs review"}
+                {item.reviewed ? "" : " · needs approval"}
               </MenuItem>
             ))}
           </TextField>
