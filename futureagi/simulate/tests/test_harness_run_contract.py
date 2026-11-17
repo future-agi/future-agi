@@ -265,3 +265,73 @@ def test_a_new_version_saved_from_a_chat_reseal_runs_with_the_contract_it_sealed
     assert saved.id != first.id and saved.documents["contract"] == SEALED
     assert _blocked(environment) == [] and _blocked(environment, saved) == []
     assert first.documents["contract"] != SEALED
+
+
+class TestVersionRecordedBeforeItsSealedContract:
+    """A version recorded before its documents carried the sealed contract still holds the authored one; its ready
+    bundle, the one its runs replay, decides."""
+
+    def _version(self, user, workspace, key, monkeypatch):
+        from simulate.tests.test_harness_versioning_backfill import _RealisticStorage
+        from simulate.tests.test_harness_versioning_picks import (
+            _environment as _versioned,
+        )
+        from tfc.utils import storage_client
+
+        # Missing objects raise as the real store does.
+        storage = _RealisticStorage()
+        monkeypatch.setattr(storage_client, "_client", storage)
+        environment = _versioned(user, workspace, key, storage)
+        version = environment.environment_version
+        HarnessEnvironmentVersion._base_manager.filter(id=version.id).update(
+            documents={**(version.documents or {}), "contract": AUTHORED}
+        )
+        version.refresh_from_db()
+        return environment, version, storage
+
+    def _bundle(self, environment, version, storage, contract=SEALED):
+        from simulate.tests.test_harness_versioning_picks import _ready, _suite
+
+        row = _ready(
+            environment, environment.agent_version_id, version, _suite(environment, 1)
+        )
+        if contract is not None:
+            storage.objects[row.object_key] = archives.pack_archive(
+                {
+                    "environment-bundle/manifest.json": b"{}",
+                    "environment-bundle/contract.json": json.dumps(contract).encode(),
+                }
+            )
+        return row
+
+    def test_its_ready_bundle_s_sealed_contract_is_read_for_the_gate_and_the_tools_card(
+        self, user, workspace, monkeypatch
+    ):
+        environment, version, storage = self._version(
+            user, workspace, "rc-legacy", monkeypatch
+        )
+        self._bundle(environment, version, storage)
+
+        assert version.documents["contract"] == AUTHORED
+        assert _blocked(environment, version) == []
+        assert _blocked(environment) == []
+        assert environment_detail(environment)["contract"]["production_only"] == []
+
+    def test_a_version_with_no_ready_bundle_keeps_its_recorded_contract(
+        self, user, workspace, monkeypatch
+    ):
+        environment, version, _ = self._version(
+            user, workspace, "rc-no-bundle", monkeypatch
+        )
+
+        assert _blocked(environment, version) == sorted(TOOLS)
+
+    def test_an_unreadable_bundle_leaves_the_recorded_contract(
+        self, user, workspace, monkeypatch
+    ):
+        environment, version, storage = self._version(
+            user, workspace, "rc-unreadable", monkeypatch
+        )
+        self._bundle(environment, version, storage, contract=None)
+
+        assert _blocked(environment, version) == sorted(TOOLS)
