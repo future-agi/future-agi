@@ -4,6 +4,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Routes, Route, useLocation } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { WORKSPACE_COPY } from "../workspace.constants";
 
 let keySeq = 0;
 vi.mock("src/api/harness/harness", () => ({
@@ -15,6 +16,11 @@ vi.mock("src/api/harness/harness", () => ({
 vi.mock("notistack", async (importOriginal) => ({
   ...(await importOriginal()),
   enqueueSnackbar: vi.fn(),
+}));
+
+const access = { current: { canEdit: true, canRun: true } };
+vi.mock("../../hooks/useSimulationAccess", () => ({
+  default: () => access.current,
 }));
 
 vi.mock("src/utils/axios", async (importOriginal) => {
@@ -177,6 +183,7 @@ describe("EnvironmentWorkspace run start", () => {
     Element.prototype.scrollIntoView = vi.fn();
     resetEnvironmentsStore();
     keySeq = 0;
+    access.current = { canEdit: true, canRun: true };
     dialogPicks.current = { environment: "e1" };
     dialogResolved.current = { agent: "a1", environment: "e1", suite: "s1" };
     enqueueSnackbar.mockReset();
@@ -239,6 +246,23 @@ describe("EnvironmentWorkspace run start", () => {
     await waitFor(() =>
       expect(screen.getByTestId("location")).toHaveTextContent(
         "/dashboard/simulate/environments/job-done/runs/rt1/ex2",
+      ),
+    );
+  });
+
+  it("keeps a Viewer's header Run disabled and says why", async () => {
+    access.current = { canEdit: false, canRun: false };
+    getHarnessJob.mockResolvedValue(JOB);
+    renderWorkspace();
+
+    const button = await screen.findByRole("button", { name: /Run simulation/ });
+    await expect(
+      waitFor(() => expect(button).toBeEnabled(), { timeout: 1000 }),
+    ).rejects.toThrow();
+    await userEvent.hover(button.closest("span") ?? button);
+    await waitFor(() =>
+      expect(screen.getByRole("tooltip")).toHaveTextContent(
+        WORKSPACE_COPY.viewer.run,
       ),
     );
   });

@@ -7,6 +7,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from accounts.authentication import viewer_denied
 from model_hub.models.develop_dataset import KnowledgeBaseFile
 from simulate.models import AgentDefinition, AgentVersion, CallExecution
 from simulate.serializers.requests.agent_version import (
@@ -29,9 +30,12 @@ from simulate.serializers.response.run_test_evals import (
 )
 from simulate.serializers.test_execution import CallExecutionSerializer
 from simulate.services.agent_definition import (
+    CredentialsNeedReentry,
     is_masked,
+    refuse_moved_secrets,
     resolve_api_key_for_version,
     resolve_api_secret_for_version,
+    resolve_server_url_for_version,
     sync_provider_credentials,
 )
 from simulate.services.types.agent_definition import ProviderCredentialsInput
@@ -120,6 +124,7 @@ class CreateAgentVersionView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @viewer_denied("create an agent version")
     @validated_request(
         request_serializer=AgentVersionCreateRequestSerializer,
         responses={
@@ -159,6 +164,14 @@ class CreateAgentVersionView(APIView):
                 incoming_livekit_api_secret is not None
                 and is_masked(incoming_livekit_api_secret)
             )
+            active_version = agent.active_version or agent.latest_version
+            if preserve_livekit_api_key or preserve_livekit_api_secret:
+                refuse_moved_secrets(
+                    stored_url=resolve_server_url_for_version(active_version),
+                    new_url=(validated.get("livekit_url") or "").strip(),
+                    api_key=incoming_livekit_api_key or "",
+                    api_secret=incoming_livekit_api_secret or "",
+                )
 
             # Update agent definition fields directly from validated data
             update_fields = [
@@ -229,7 +242,6 @@ class CreateAgentVersionView(APIView):
                     or preserve_livekit_api_key
                     or preserve_livekit_api_secret
                 ):
-                    active_version = agent.active_version or agent.latest_version
                     if active_version:
                         if preserve_existing_api_key:
                             existing_api_key = resolve_api_key_for_version(
@@ -356,6 +368,8 @@ class CreateAgentVersionView(APIView):
             )
         except ObservabilityRefused as error:
             return Response(refusal_body(error), status=status.HTTP_400_BAD_REQUEST)
+        except CredentialsNeedReentry as error:
+            return _error_response(error.message, status.HTTP_400_BAD_REQUEST)
         except Exception as e:
             return _error_response(
                 f"Failed to create agent version: {str(e)}",
@@ -414,6 +428,7 @@ class ActivateAgentVersionView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @viewer_denied("change the production version")
     @validated_request(
         request_serializer=EmptyRequestSerializer,
         responses={
@@ -464,6 +479,7 @@ class DeleteAgentVersionView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @viewer_denied("delete an agent version")
     @swagger_auto_schema(
         responses={
             200: AgentVersionDeleteResponseSerializer,
@@ -525,6 +541,7 @@ class RestoreAgentVersionView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @viewer_denied("restore an agent version")
     @validated_request(
         request_serializer=EmptyRequestSerializer,
         responses={

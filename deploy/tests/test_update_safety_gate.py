@@ -558,7 +558,7 @@ class InspectedNonClickHousePinsTests(unittest.TestCase):
         'fi-collector/pkg/ingestbench/integration_test.go':
             ('3cbb292f8fdadcd6fa35039c97953ebe204a40d1035a642c95405f1438058ae9', 'CREATE TABLE', 159),
         'futureagi/tfc/utils/error_codes.py':
-            ('a2a7302cd7c94823b460af4faf16a103e78e9fe0bf290ef5681cc35e85559b40', 'CREATE USER', 353),
+            ('115ee3962bcb85f75f547a521f939737c41713be26d25820077b3d49d631faf0', 'CREATE USER', 357),
         'futureagi/tracer/services/instant_eval_answers.py':
             ('2bc88346e3d762a1f6fb9fdf3d8de38f81e820bb049300c5f4b242faa9caf80c', 'DELETE FROM', 173),
     }

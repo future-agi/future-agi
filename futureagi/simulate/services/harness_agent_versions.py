@@ -617,7 +617,10 @@ def _store_provider_credentials(
     """The new version's own provider row: a copy of ``template`` (its keys only when
     ``keep_keys``), then any changed keys. The row exists before syncing, so a
     definition's legacy row is never moved."""
-    from simulate.services.agent_definition import sync_provider_credentials
+    from simulate.services.agent_definition import (
+        CredentialsNeedReentry,
+        sync_provider_credentials,
+    )
 
     if template is not None:
         row = ProviderCredentials(
@@ -640,9 +643,14 @@ def _store_provider_credentials(
     row.save()
     if not provider_secrets or dict(provider_secrets) == _row_values(row):
         return
-    sync_provider_credentials(
-        version, _provider_input(family or row.provider_type, provider_secrets)
-    )
+    try:
+        sync_provider_credentials(
+            version, _provider_input(family or row.provider_type, provider_secrets)
+        )
+    except CredentialsNeedReentry as error:
+        raise HostedHarnessError(
+            "credentials_need_reentry", error.message, status_code=422
+        ) from error
 
 
 # --- create -------------------------------------------------------------------------

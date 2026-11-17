@@ -6,13 +6,14 @@ from django.utils import timezone
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework.decorators import action
 from rest_framework.exceptions import APIException
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import BasePermission, IsAuthenticated
+from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.viewsets import ViewSet
 
 from accounts.key_cache import publish_key_revocation as _publish_key_revocation
-from accounts.models import OrgApiKey
+from accounts.models import OrgApiKey, User
 from accounts.permissions import RequiresIndependentAuth
 from accounts.serializers.contracts import (
     ACCOUNTS_ERROR_RESPONSES,
@@ -26,6 +27,10 @@ from accounts.serializers.org_api_key import (
     OrgApiKeySerializer,
     UserSecretKeySerializer,
 )
+from accounts.services.organization_access import (
+    can_switch_key,
+    is_organization_admin,
+)
 from analytics.utils import (
     MixpanelEvents,
     get_mixpanel_properties,
@@ -33,6 +38,7 @@ from analytics.utils import (
 )
 from model_hub.models.api_key import mask_key
 from tfc.constants.roles import RolePermissions
+from tfc.permissions.rbac import IsNotViewer
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
@@ -51,8 +57,53 @@ def _managed_keys(organization):
     )
 
 
+KEY_SWITCH_DENIED = (
+    "Only organization admins or the key's creator can turn this key on or off."
+)
+
+
+def _is_organization_admin(request: Request) -> bool:
+    user = request.user
+    if not isinstance(user, User):
+        return False
+    organization = getattr(request, "organization", None) or user.organization
+    if organization is None:
+        return False
+    return is_organization_admin(user, organization)
+
+
+def _switch_denied(request: Request, apikey: OrgApiKey) -> Response:
+    logger.info(
+        "access_denied",
+        reason="key_switch_not_allowed",
+        user_id=str(request.user.id),
+        key_id=str(apikey.id),
+        key_type=apikey.type,
+    )
+    denied: Response = GeneralMethods().forbidden_response(KEY_SWITCH_DENIED)
+    return denied
+
+
+class CanReadOrganizationKey(BasePermission):
+    message = (
+        "Only organization admins can see the organization key. "
+        "Ask an admin for an API key."
+    )
+
+    def has_permission(self, request: Request, view) -> bool:
+        if _is_organization_admin(request):
+            return True
+        logger.info(
+            "access_denied",
+            reason="organization_key_admin_only",
+            user_id=str(request.user.id),
+        )
+        return False
+
+
 class GetKeysView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsNotViewer, CanReadOrganizationKey]
+    viewer_denied_action = "see API keys"
     _gm = GeneralMethods()
 
     @swagger_auto_schema(
@@ -89,7 +140,8 @@ class GetKeysView(APIView):
 
 class SecretKeyAPIViewSet(ViewSet):
     _gm = GeneralMethods()
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsNotViewer]
+    viewer_denied_action = "see API keys"
 
     def get_permissions(self):
         permission_classes = list(self.permission_classes)
@@ -171,6 +223,7 @@ class SecretKeyAPIViewSet(ViewSet):
             start = page_number * page_size
             paginated_keys = apiKeys[start : start + page_size]
 
+            is_admin = _is_organization_admin(request)
             table = [
                 {
                     "id": key.id,
@@ -181,6 +234,7 @@ class SecretKeyAPIViewSet(ViewSet):
                     "created_at": key.created_at,
                     "enabled": key.enabled,
                     "type": key.type,
+                    "can_switch": can_switch_key(request.user, key, is_admin),
                     "expires_at": key.expires_at,
                     "is_expired": key.is_expired,
                 }
@@ -221,6 +275,10 @@ class SecretKeyAPIViewSet(ViewSet):
                 apikey = _managed_keys(
                     getattr(request, "organization", None) or request.user.organization
                 ).get(id=key_id)
+                if not can_switch_key(
+                    request.user, apikey, _is_organization_admin(request)
+                ):
+                    return _switch_denied(request, apikey)
                 if apikey.enabled:
                     return self._gm.bad_request(get_error_message("API_KEY_ENABLED"))
                 if apikey.is_expired:
@@ -258,6 +316,10 @@ class SecretKeyAPIViewSet(ViewSet):
                 apikey = _managed_keys(
                     getattr(request, "organization", None) or request.user.organization
                 ).get(id=key_id)
+                if not can_switch_key(
+                    request.user, apikey, _is_organization_admin(request)
+                ):
+                    return _switch_denied(request, apikey)
                 if not apikey.enabled:
                     return self._gm.bad_request(get_error_message("API_KEY_DISABLED"))
                 apikey.enabled = False

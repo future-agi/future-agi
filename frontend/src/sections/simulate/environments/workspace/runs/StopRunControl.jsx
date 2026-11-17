@@ -7,6 +7,9 @@ import Iconify from "src/components/iconify";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import { useCancelExecution } from "src/sections/common/simulation/hooks/useCancelExecution";
 import { refusalText } from "../evals/refusalText";
+import ViewerLock from "../../components/ViewerLock";
+import useSimulationAccess from "../../hooks/useSimulationAccess";
+import { WORKSPACE_COPY } from "../workspace.constants";
 
 const STOP_FALLBACK = "Couldn't stop the run. Try again";
 
@@ -37,9 +40,11 @@ function StopRunButton({ executionId, label }) {
   const [confirming, setConfirming] = useState(false);
   const queryClient = useQueryClient();
   const cancel = useCancelExecution({ errorHandled: true });
+  const { canRun } = useSimulationAccess();
 
   const onConfirm = () => {
     setConfirming(false);
+    if (!canRun) return;
     cancel.mutate(executionId, {
       onSuccess: () => {
         queryClient.invalidateQueries({ queryKey: ["run-test-executions"] });
@@ -63,24 +68,26 @@ function StopRunButton({ executionId, label }) {
     <span onClick={(e) => e.stopPropagation()} role="presentation" style={{ display: "inline-flex" }}>
       {/* Shaped like the product test-runs grid's Stop (TestRunsGrid StatusCell),
           in red since it cancels the run. */}
-      <Button
-        variant="outlined"
-        color="error"
-        size="small"
-        aria-label="Stop simulation"
-        disabled={cancel.isPending}
-        onClick={() => setConfirming(true)}
-        startIcon={<Iconify icon="solar:stop-circle-linear" width={12} />}
-        sx={{
-          flexShrink: 0,
-          whiteSpace: "nowrap",
-          minWidth: 0,
-        }}
-      >
-        {cancel.isPending ? "Stopping…" : label}
-      </Button>
+      <ViewerLock locked={!canRun} title={WORKSPACE_COPY.viewer.stop}>
+        <Button
+          variant="outlined"
+          color="error"
+          size="small"
+          aria-label="Stop simulation"
+          disabled={!canRun || cancel.isPending}
+          onClick={() => setConfirming(true)}
+          startIcon={<Iconify icon="solar:stop-circle-linear" width={12} />}
+          sx={{
+            flexShrink: 0,
+            whiteSpace: "nowrap",
+            minWidth: 0,
+          }}
+        >
+          {cancel.isPending ? "Stopping…" : label}
+        </Button>
+      </ViewerLock>
       <ConfirmDialog
-        open={confirming}
+        open={confirming && canRun}
         onClose={() => setConfirming(false)}
         title="Stop this run?"
         content={(

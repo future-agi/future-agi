@@ -15,6 +15,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.viewsets import ModelViewSet
 
+from accounts.authentication import viewer_denied
 from simulate.models import AgentDefinition, AgentVersion
 from simulate.serializers.agent_definition import AgentDefinitionSerializer
 from simulate.serializers.requests.agent_definition import (
@@ -40,7 +41,9 @@ from simulate.serializers.response.agent_version import (
     AgentVersionListResponseSerializer,
 )
 from simulate.services.agent_definition import (
+    CredentialsNeedReentry,
     is_masked,
+    merge_websocket_secrets,
     resolve_api_key_for_version,
     resolve_stored_api_key,
     sync_provider_credentials,
@@ -206,6 +209,7 @@ class AgentDefinitionView(APIView):
                 f"Failed to retrieve agent definitions: {str(e)}"
             )
 
+    @viewer_denied("delete agents")
     @validated_request(
         request_serializer=AgentDefinitionBulkDeleteRequestSerializer,
         responses={
@@ -258,6 +262,7 @@ class CreateAgentDefinitionView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    @viewer_denied("create an agent")
     @validated_request(
         request_serializer=AgentDefinitionCreateRequestSerializer,
         responses={
@@ -707,6 +712,7 @@ class EditAgentDefinitionView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    @viewer_denied("edit an agent")
     @validated_request(
         request_serializer=AgentDefinitionEditRequestSerializer,
         responses={
@@ -756,6 +762,11 @@ class EditAgentDefinitionView(APIView):
                 "websocket_url",
                 "websocket_headers",
             ]
+            validated.update(
+                merge_websocket_secrets(
+                    validated, agent.websocket_url, agent.websocket_headers
+                )
+            )
             changed_fields = []
             for field in update_fields:
                 if field == "api_key" and preserve_existing_api_key:
@@ -839,6 +850,8 @@ class EditAgentDefinitionView(APIView):
             return self._gm.not_found("Agent definition not found")
         except ObservabilityRefused as error:
             return Response(refusal_body(error), status=status.HTTP_400_BAD_REQUEST)
+        except CredentialsNeedReentry as error:
+            return self._gm.bad_request(error.message)
         except Exception as e:
             return self._gm.internal_server_error_response(
                 f"Failed to update agent definition: {str(e)}"
@@ -853,6 +866,7 @@ class DeleteAgentDefinitionView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    @viewer_denied("delete an agent")
     @swagger_auto_schema(
         responses={
             200: AgentDefinitionDeleteResponseSerializer,

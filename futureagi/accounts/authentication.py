@@ -38,8 +38,9 @@ from accounts.models.organization import Organization
 from accounts.models.workspace import Workspace, WorkspaceMembership
 from accounts.saml_credential import SamlCredentialInvalid, validate_saml_credential
 from accounts.services.workspace_membership import create_workspace_membership
-from tfc.constants.roles import OrganizationRoles
+from tfc.constants.levels import Level
 from tfc.ee_gating import is_oss
+from tfc.permissions.utils import VIEWER_READ_ONLY_CODE, viewer_denied_message
 from tfc.utils.api_errors import (
     ApiErrorCode,
     build_error_envelope,
@@ -113,6 +114,104 @@ def workspace_read_only(view_cls):
     """
     view_cls.workspace_write_exempt = True
     return view_cls
+
+
+class ViewerReadOnly(PermissionDenied):
+    default_code = VIEWER_READ_ONLY_CODE
+
+    def __init__(self, action=None):
+        self.action = action
+        super().__init__(viewer_denied_message(action), code=VIEWER_READ_ONLY_CODE)
+
+
+WORKSPACE_WRITE_DENIED = "Write access denied to this workspace"
+_VIEWER_REASON_PREFIX = "/simulate/"
+
+# These paths are excluded from workspace write checks because they:
+# - Don't modify workspace data (switch operations, profile updates)
+# - Or need to be accessible regardless of workspace role
+WORKSPACE_WRITE_EXEMPT_PATHS = (
+    "/accounts/workspace/switch/",
+    "/accounts/organizations/switch/",
+    "/accounts/update-user-full-name/",  # Users can always update their own profile
+    "/accounts/onboarding/",  # Users can always update their own onboarding profile
+    "/accounts/logout/",  # Users can always invalidate their own access token
+    "/accounts/2fa/",  # Users can always manage their own second factor state
+    "/accounts/passkey/",  # Users can always manage their own passkey challenges
+    "/accounts/passkeys/",  # Users can always manage their own passkey records
+)
+_WRITE_METHODS = ("post", "put", "patch", "delete")
+NO_ORGANIZATION_WRITE_DENIED = "You're not a member of any organization."
+NO_ORGANIZATION_WRITE_PATHS = (
+    "/accounts/organizations/create/",
+    "/accounts/organizations/new/",
+)
+
+
+def _is_workspace_write(request) -> bool:
+    if (getattr(request, "method", "") or "").lower() not in _WRITE_METHODS:
+        return False
+    return not (
+        _is_workspace_write_exempt_view(request)
+        or request.path.startswith(WORKSPACE_WRITE_EXEMPT_PATHS)
+        or _is_annotation_queue_role_scoped_write_path(request.path)
+    )
+
+
+def _with_viewer_refusal(schema):
+    from tfc.utils.api_serializers import ViewerReadOnlyErrorSerializer
+
+    return {
+        **schema,
+        "responses": {
+            403: ViewerReadOnlyErrorSerializer,
+            **schema.get("responses", {}),
+        },
+    }
+
+
+def viewer_denied(action):
+    def mark(handler):
+        handler._viewer_denied_action = action
+        schema = getattr(handler, "_swagger_auto_schema", None) or {}
+        methods = [method for method in _WRITE_METHODS if method in schema]
+        if methods:
+            handler._swagger_auto_schema = {
+                **schema,
+                **{method: _with_viewer_refusal(schema[method]) for method in methods},
+            }
+        else:
+            handler._swagger_auto_schema = _with_viewer_refusal(schema)
+        return handler
+
+    return mark
+
+
+def workspace_write_denied(request) -> PermissionDenied:
+    """The refusal of a write the user's role doesn't allow: simulation routes say
+    what a Viewer tried; every other route keeps its original response."""
+    if request.path.startswith(_VIEWER_REASON_PREFIX):
+        return ViewerReadOnly(_viewer_denied_action(request))
+    return PermissionDenied(WORKSPACE_WRITE_DENIED)
+
+
+def _viewer_denied_action(request):
+    view_cls = _resolve_view_class(request)
+    if view_cls is None:
+        return None
+    callback = request.resolver_match.func
+    method = (getattr(request, "method", "") or "").lower()
+    if hasattr(callback, "actions"):
+        actions = callback.actions if isinstance(callback.actions, dict) else {}
+        handler_name = actions.get(method)
+    else:
+        handler_name = method
+    if not isinstance(handler_name, str):
+        return None
+    action = getattr(
+        getattr(view_cls, handler_name, None), "_viewer_denied_action", None
+    )
+    return action if isinstance(action, str) else None
 
 
 def _resolve_view_class(request):
@@ -316,9 +415,32 @@ class APIKeyAuthentication(BaseAuthentication):
         organization = self._resolve_organization(request, user)
 
         if not organization:
+            if _is_workspace_write(request) and not request.path.startswith(
+                NO_ORGANIZATION_WRITE_PATHS
+            ):
+                logger.info(
+                    "access_denied",
+                    reason="no_organization",
+                    user_id=str(user.id),
+                    path=request.path,
+                    method=request.method,
+                )
+                raise PermissionDenied(NO_ORGANIZATION_WRITE_DENIED)
             request.workspace = None
             request.organization = None
             return
+
+        org_level = user.get_membership_level(organization)
+        if org_level is None:
+            logger.warning(
+                "access_denied",
+                reason="not_an_organization_member",
+                user_id=str(user.id),
+                organization_id=str(organization.id),
+                path=request.path,
+                method=request.method,
+            )
+            raise PermissionDenied("You're not a member of this organization.")
 
         # --- Step 2: Resolve workspace within that org ---
         workspace = self._get_requested_workspace(request, user, organization)
@@ -333,34 +455,25 @@ class APIKeyAuthentication(BaseAuthentication):
         if workspace and not self._user_has_workspace_access(user, workspace):
             raise PermissionDenied("Access denied to this workspace")
 
-        # Check write permissions for write operations
-        # These paths are excluded from workspace write checks because they:
-        # - Don't modify workspace data (switch operations, profile updates)
-        # - Or need to be accessible regardless of workspace role
-        excluded_paths = [
-            "workspace/switch/",
-            "organizations/switch/",
-            "update-user-full-name",  # Users can always update their own profile
-            "onboarding/",  # Users can always update their own onboarding profile
-            "logout/",  # Users can always invalidate their own access token
-            "2fa/",  # Users can always manage their own second factor state
-            "passkey/",  # Users can always manage their own passkey challenges
-            "passkeys/",  # Users can always manage their own passkey records
-        ]
-
-        should_skip_write_check = (
-            _is_workspace_write_exempt_view(request)
-            or any(excluded_path in request.path for excluded_path in excluded_paths)
-            or _is_annotation_queue_role_scoped_write_path(request.path)
-        )
-
-        if (
-            request.method in ["POST", "PUT", "PATCH", "DELETE"]
-            and workspace
-            and not should_skip_write_check
-        ):
-            if not self._can_write_to_workspace(user, workspace):
-                raise PermissionDenied("Write access denied to this workspace")
+        if _is_workspace_write(request):
+            if workspace is None:
+                can_write = org_level >= Level.ADMIN
+            else:
+                can_write = self._can_write_to_workspace(user, workspace)
+            if not can_write:
+                logger.info(
+                    "access_denied",
+                    reason="read_only" if workspace else "no_workspace",
+                    user_id=str(user.id),
+                    organization_id=str(organization.id),
+                    path=request.path,
+                    method=request.method,
+                )
+                if workspace is None and org_level >= Level.MEMBER:
+                    raise PermissionDenied(
+                        "Ask an admin to add you to a workspace before making changes."
+                    )
+                raise workspace_write_denied(request)
 
         # Per-request attributes (safe, no race condition)
         request.workspace = workspace
@@ -646,9 +759,13 @@ class APIKeyAuthentication(BaseAuthentication):
         """Get or create the default workspace for an organization.
 
         Also ensures the user has a WorkspaceMembership for the workspace,
-        creating one (as workspace_admin) if missing.  Without a membership
-        the next request's ``_user_has_workspace_access`` check would fail.
+        creating one at the role their organization level grants if missing.
+        Without a membership the next request's ``_user_has_workspace_access``
+        check would fail.
         """
+        org_level = user.get_membership_level(organization)
+        if org_level is None:
+            return None
         try:
             default_workspace = Workspace.objects.get(
                 organization=organization, is_default=True, is_active=True
@@ -691,7 +808,7 @@ class APIKeyAuthentication(BaseAuthentication):
                 create_workspace_membership(
                     workspace=default_workspace,
                     user=user,
-                    role=OrganizationRoles.WORKSPACE_ADMIN,
+                    role=Level.to_ws_role(Level.get_default_ws_level(org_level)),
                     invited_by=user,
                 )
             except IntegrityError:
@@ -1390,6 +1507,11 @@ def custom_exception_handler(exc, context):
             status_code=response.status_code,
             code=exception_code(exc),
             details=error_details(response.data),
+            extra=(
+                {"action": exc.action}
+                if isinstance(exc, ViewerReadOnly) and exc.action
+                else None
+            ),
         )
 
     return response

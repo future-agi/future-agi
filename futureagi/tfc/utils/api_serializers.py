@@ -182,6 +182,13 @@ class DatasetLimitCheckFailedErrorSerializer(ApiTextErrorResponseSerializer):
     )
 
 
+class ViewerReadOnlyErrorSerializer(ApiDetailErrorResponseSerializer):
+    """403 of a simulation write a Viewer can't make, naming what they tried."""
+
+    code = serializers.CharField(required=False, allow_blank=True)
+    action = serializers.CharField(required=False, allow_blank=True)
+
+
 class ApiSelectionTooLargeDetailSerializer(serializers.Serializer):
     type = serializers.ChoiceField(choices=("selection_too_large",))
     message = serializers.CharField()

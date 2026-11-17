@@ -531,6 +531,7 @@ export interface SecretKeyListItemApi {
   enabled: boolean;
   /** @minLength 1 */
   type: string;
+  can_switch: boolean;
   expires_at: string | null;
   is_expired: boolean;
 }
@@ -16593,6 +16594,42 @@ export interface AgentDefinitionBulkDeleteResponseApi {
   readonly message?: string;
   readonly agents_updated?: number;
   readonly versions_updated?: number;
+}
+
+export type ViewerReadOnlyErrorApiType =
+  (typeof ViewerReadOnlyErrorApiType)[keyof typeof ViewerReadOnlyErrorApiType];
+
+export const ViewerReadOnlyErrorApiType = {
+  validation_error: "validation_error",
+  authentication_error: "authentication_error",
+  payment_required: "payment_required",
+  entitlement_error: "entitlement_error",
+  permission_error: "permission_error",
+  not_found: "not_found",
+  conflict: "conflict",
+  client_error: "client_error",
+  rate_limit: "rate_limit",
+  server_error: "server_error",
+  service_unavailable: "service_unavailable",
+  timeout: "timeout",
+  api_error: "api_error",
+} as const;
+
+export type ViewerReadOnlyErrorApiDetails = { [key: string]: string[] };
+
+export interface ViewerReadOnlyErrorApi {
+  status?: boolean;
+  type?: ViewerReadOnlyErrorApiType;
+  code?: string;
+  detail: string;
+  /** @minLength 1 */
+  result?: string;
+  /** @minLength 1 */
+  message?: string;
+  error?: string;
+  attr?: string;
+  details?: ViewerReadOnlyErrorApiDetails;
+  action?: string;
 }
 
 /**

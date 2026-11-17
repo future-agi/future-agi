@@ -26,6 +26,9 @@ import {
 } from "src/api/simulate-environments/runEvals";
 import SideDrawer from "../../../components/SideDrawer";
 import EmptyState from "../../../components/EmptyState";
+import ViewerLock from "../../../components/ViewerLock";
+import useSimulationAccess from "../../../hooks/useSimulationAccess";
+import { WORKSPACE_COPY } from "../../workspace.constants";
 import { refusalText } from "../../evals/refusalText";
 import {
   EVALS_LOAD_FAILED_TOOLTIP,
@@ -35,6 +38,7 @@ import {
   NOT_EDITABLE_TOOLTIP,
 } from "./allEvaluationsDrawer.constants";
 import { LoadingScreen } from "src/components/loading-screen";
+import ConfirmDialog from "src/components/custom-dialog/confirm-dialog";
 
 const REMOVE_FALLBACK = "Couldn’t remove the evaluation. Try again.";
 // A stable empty-array constant: `= []` as a hook default is a fresh
@@ -68,7 +72,9 @@ export default function AllEvaluationsDrawer({
   onAddEvaluations,
 }) {
   const queryClient = useQueryClient();
+  const access = useSimulationAccess();
   const [ticked, setTicked] = useState(() => new Set());
+  const [removing, setRemoving] = useState(null);
 
   // The run page keeps this drawer mounted while it's closed, so ticks would
   // otherwise still be there on reopening — including on a removed eval that
@@ -172,14 +178,22 @@ export default function AllEvaluationsDrawer({
               }
               label={`Evals (${configs.length})`}
             />
-            <Button
-              variant="outlined"
-              size="small"
-              startIcon={<Iconify icon="solar:add-circle-linear" width={16} />}
-              onClick={() => onAddEvaluations?.()}
+            <ViewerLock
+              locked={!access.canEdit}
+              title={WORKSPACE_COPY.viewer.evals}
             >
-              Add evaluations
-            </Button>
+              <Button
+                variant="outlined"
+                size="small"
+                startIcon={
+                  <Iconify icon="solar:add-circle-linear" width={16} />
+                }
+                disabled={!access.canEdit}
+                onClick={() => onAddEvaluations?.()}
+              >
+                Add evaluations
+              </Button>
+            </ViewerLock>
           </Stack>
         </Box>
 
@@ -216,18 +230,22 @@ export default function AllEvaluationsDrawer({
               {configs.map((config) => {
                 const runnable = config.regradable === true;
                 const editable = config.editable === true;
-                const editTooltip = !editable
-                  ? NOT_EDITABLE_TOOLTIP
-                  : grading
-                    ? GRADING_TOOLTIP
+                const editTooltip = !access.canEdit
+                  ? WORKSPACE_COPY.viewer.evals
+                  : !editable
+                    ? NOT_EDITABLE_TOOLTIP
+                    : grading
+                      ? GRADING_TOOLTIP
+                      : !canRun
+                        ? NOT_COMPLETED_TOOLTIP
+                        : "";
+                const runTooltip = !access.canRun
+                  ? WORKSPACE_COPY.viewer.runEvals
+                  : !runnable
+                    ? HARNESS_ONLY_TOOLTIP
                     : !canRun
-                      ? NOT_COMPLETED_TOOLTIP
+                      ? cannotRunTooltip
                       : "";
-                const runTooltip = !runnable
-                  ? HARNESS_ONLY_TOOLTIP
-                  : !canRun
-                    ? cannotRunTooltip
-                    : "";
                 return (
                   <Stack
                     key={config.id}
@@ -264,7 +282,12 @@ export default function AllEvaluationsDrawer({
                       <span>
                         <IconButton
                           aria-label={`Run ${config.name}`}
-                          disabled={!runnable || !canRun || rerunPending}
+                          disabled={
+                            !access.canRun ||
+                            !runnable ||
+                            !canRun ||
+                            rerunPending
+                          }
                           onClick={() => requestRerun([config])}
                         >
                           <Iconify icon="solar:play-circle-linear" width={18} />
@@ -276,6 +299,7 @@ export default function AllEvaluationsDrawer({
                         <IconButton
                           aria-label={`Edit ${config.name}`}
                           disabled={
+                            !access.canEdit ||
                             !editable ||
                             grading ||
                             !canRun ||
@@ -293,12 +317,23 @@ export default function AllEvaluationsDrawer({
                     {/* The grader copes with a removal mid-run (it drops the
                         pending cell), but the column would vanish from a table
                         that is polling for its scores. Removal waits. */}
-                    <Tooltip arrow title={grading ? GRADING_TOOLTIP : ""}>
+                    <Tooltip
+                      arrow
+                      title={
+                        !access.canEdit
+                          ? WORKSPACE_COPY.viewer.evals
+                          : grading
+                            ? GRADING_TOOLTIP
+                            : ""
+                      }
+                    >
                       <span>
                         <IconButton
                           aria-label={`Remove ${config.name}`}
-                          disabled={grading || removeEval.isPending}
-                          onClick={() => handleRemove(config)}
+                          disabled={
+                            !access.canEdit || grading || removeEval.isPending
+                          }
+                          onClick={() => setRemoving(config)}
                         >
                           <Iconify
                             icon="solar:trash-bin-trash-linear"
@@ -315,13 +350,27 @@ export default function AllEvaluationsDrawer({
         </Box>
 
         <Box sx={{ p: 3, borderTop: "1px solid", borderColor: "divider" }}>
-          <Tooltip arrow title={!canRun ? cannotRunTooltip : ""}>
+          <Tooltip
+            arrow
+            title={
+              !access.canRun
+                ? WORKSPACE_COPY.viewer.runEvals
+                : !canRun
+                  ? cannotRunTooltip
+                  : ""
+            }
+          >
             <span style={{ display: "block" }}>
               <Button
                 fullWidth
                 variant="contained"
                 startIcon={<Iconify icon="solar:play-bold" width={16} />}
-                disabled={selectedIds.length === 0 || !canRun || rerunPending}
+                disabled={
+                  !access.canRun ||
+                  selectedIds.length === 0 ||
+                  !canRun ||
+                  rerunPending
+                }
                 onClick={() => requestRerun(selectedConfigs)}
               >
                 {allTicked && runnableIds.length > 0
@@ -332,6 +381,35 @@ export default function AllEvaluationsDrawer({
           </Tooltip>
         </Box>
       </Box>
+      <ConfirmDialog
+        open={Boolean(removing)}
+        onClose={() => setRemoving(null)}
+        title="Remove this evaluation?"
+        content={
+          <Typography sx={{ typography: "s1", color: "text.secondary" }}>
+            <Box component="span" sx={{ fontWeight: 600 }}>
+              {removing?.name}
+            </Box>{" "}
+            is removed from this environment and its column leaves this
+            run&apos;s results.
+          </Typography>
+        }
+        action={
+          <Button
+            size="small"
+            variant="contained"
+            color="error"
+            disabled={!access.canEdit || removeEval.isPending}
+            onClick={() => {
+              const config = removing;
+              setRemoving(null);
+              if (access.canEdit && config) handleRemove(config);
+            }}
+          >
+            Remove
+          </Button>
+        }
+      />
     </SideDrawer>
   );
 }
