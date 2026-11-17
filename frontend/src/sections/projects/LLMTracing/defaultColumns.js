@@ -1,3 +1,5 @@
+import { OBSERVE_SKILL_COPY } from "./skillFilters";
+
 const makeColumn = (id, name, isVisible = true) => ({
   id,
   name,
@@ -60,9 +62,9 @@ export const SKILLS_COLUMN_ID = "skills";
 export const SKILL_AGENT_COLUMN_ID = "gen_ai.agent.name";
 export const SKILL_CONTEXT_COLUMN_ID = "fi.context.name";
 export const SKILL_TRACE_COLUMNS = Object.freeze([
-  Object.freeze({ id: SKILLS_COLUMN_ID, name: "Skills" }),
-  Object.freeze({ id: SKILL_AGENT_COLUMN_ID, name: "Agent" }),
-  Object.freeze({ id: SKILL_CONTEXT_COLUMN_ID, name: "Context" }),
+  Object.freeze({ id: SKILLS_COLUMN_ID, name: OBSERVE_SKILL_COPY.skillsColumn }),
+  Object.freeze({ id: SKILL_AGENT_COLUMN_ID, name: OBSERVE_SKILL_COPY.agentColumn }),
+  Object.freeze({ id: SKILL_CONTEXT_COLUMN_ID, name: OBSERVE_SKILL_COPY.contextColumn }),
 ]);
 /** Column ids that are not span attributes and must never be requested as attribute keys. */
 export const NON_ATTRIBUTE_CUSTOM_COLUMN_IDS = Object.freeze([SKILLS_COLUMN_ID]);
@@ -88,7 +90,7 @@ export const withDefaultSkillsColumn = (
   return addCustomColumnsToTab(columnsBySlot, "trace", [
     {
       id: SKILLS_COLUMN_ID,
-      name: "Skills",
+      name: OBSERVE_SKILL_COPY.skillsColumn,
       isVisible: true,
       groupBy: "Custom Columns",
     },

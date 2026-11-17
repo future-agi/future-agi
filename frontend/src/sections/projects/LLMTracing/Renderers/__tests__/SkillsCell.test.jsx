@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render } from "src/utils/test-utils";
 import { forbiddenRuntimeWords } from "src/sections/skills/runtime/runtimeCopy";
 import SkillsCell, {
+  chunkTraceIds,
   mapTraceSkillsEntry,
   skillsCellModel,
   skillsColumnDef,
@@ -96,6 +97,16 @@ describe("SkillsCell", () => {
     expect(build(existing).map((item) => [item.column_id, item.group])).toEqual([["skill.id", 1], ["skill.version_id", 1]]);
   });
 
+  it("waits, rather than reading no loads, for a shown trace outside the last request", () => {
+    cell({ traceSkills: { status: "ready", byTrace: {}, requested: ["t2"] } });
+    expect(screen.getByLabelText("Loading skills")).toBeInTheDocument();
+  });
+
+  it("reads a requested trace without loads as empty", () => {
+    const { container } = cell({ traceSkills: { status: "ready", byTrace: {}, requested: ["t1"] } });
+    expect(container.textContent).toBe("");
+  });
+
   it("renders nothing for a trace without loads", () => {
     const { container } = cell({ traceSkills: { status: "ready", byTrace: {} } });
     expect(container.textContent).toBe("");
@@ -103,6 +114,13 @@ describe("SkillsCell", () => {
 
   it("defines a column that never asks for attribute keys", () => {
     expect(skillsColumnDef({ id: "skills", name: "Skills", isVisible: false })).toMatchObject({ colId: "skills", headerName: "Skills", hide: true, sortable: false });
+  });
+});
+
+describe("chunkTraceIds", () => {
+  it("splits a large page into requests of at most 100 ids", () => {
+    const ids = Array.from({ length: 230 }, (_, index) => `t${index}`);
+    expect(chunkTraceIds(ids).map((chunk) => chunk.length)).toEqual([100, 100, 30]);
   });
 });
 

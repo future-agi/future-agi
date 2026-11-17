@@ -77,6 +77,8 @@ export const OBSERVE_SKILL_COPY = Object.freeze({
       : `${name} · ${labelNow("production")}: ${versionName(productionVersion)}`,
   moreChips: (count) => `+${count}`,
   skillsUnavailable: "Skills unavailable",
+  loadingSkills: "Loading skills",
+  moreFor: (label) => `More for ${label}`,
   retry: "Retry",
   traceChip: ({ names, failed }) =>
     `Skills: ${names.join(", ")}${failed ? ` · ${failed} failed to load` : ""}`,
@@ -124,6 +126,10 @@ export const OBSERVE_SKILL_COPY = Object.freeze({
       `${window} after ${label} moved to ${versionName(toVersion)}`,
     beforeMove: ({ window, label, toVersion }) =>
       `${window} before ${label} moved to ${versionName(toVersion)}`,
+    afterMoveNoWindow: ({ label, toVersion }) =>
+      `after ${label} moved to ${versionName(toVersion)}`,
+    beforeMoveNoWindow: ({ label, toVersion }) =>
+      `before ${label} moved to ${versionName(toVersion)}`,
     linkUnreadable:
       "This link's skill filters couldn't be read, so none of its filters were applied.",
     sortNotApplied:
@@ -134,6 +140,8 @@ export const OBSERVE_SKILL_COPY = Object.freeze({
     error: "Couldn't load the numbers for these traces.",
     loading: "Loading the numbers for these traces",
   }),
+  savedViewBlocked:
+    "This view can't be saved yet: saved views don't keep more than one skill filter or a version range.",
   splitBySkillVersion: "Split by skill version",
   widget: Object.freeze({
     skill: "Skill",
@@ -145,7 +153,10 @@ export const OBSERVE_SKILL_COPY = Object.freeze({
 });
 
 // ---------------------------------------------------------------------------
-// The §6.3 column table, as ST6 validates it.
+// The §6.3 column table, mirrored exactly from ST6's validator
+// (tracer/services/clickhouse/query_builders/filters.py SKILL_FILTER_COLUMNS,
+// validate_skill_filter_item, validate_skill_filter_groups). A link is
+// refused here only when the server would refuse it too.
 
 const TEXT = "text";
 const NUMBER = "number";
@@ -155,11 +166,11 @@ export const SKILL_COLUMNS = Object.freeze({
   "skill.id": { type: TEXT, ops: ["equals", "in", "not_in", "not_equals"], failedGroup: true },
   "skill.version_id": { type: TEXT, ops: ["equals", "in", "not_in", "not_equals"], failedGroup: false },
   "skill.name": { type: TEXT, ops: ["equals", "in", "contains"], failedGroup: true },
-  "skill.version": { type: NUMBER, ops: ["equals", "in"], failedGroup: false },
+  "skill.version": { type: NUMBER, ops: ["equals", "in", "gte", "lte"], failedGroup: false },
   "skill.requested_label": { type: TEXT, ops: ["equals", "in"], failedGroup: true },
   "skill.digest": { type: TEXT, ops: ["equals"], failedGroup: false },
   "skill.evidence": { type: TEXT, ops: ["in"], failedGroup: false },
-  "skill.agent": { type: TEXT, ops: ["equals", "in"], failedGroup: true },
+  "skill.agent": { type: TEXT, ops: ["equals", "in"], failedGroup: true, allowEmpty: true },
   "skill.service": { type: TEXT, ops: ["equals", "in"], failedGroup: true },
   "skill.context_id": { type: TEXT, ops: ["equals", "in"], failedGroup: true },
   "skill.context_version_id": { type: TEXT, ops: ["equals", "in"], failedGroup: true },
@@ -180,19 +191,21 @@ const ENUM_VALUES = {
 };
 const NEGATIVE_OPS = new Set(["not_in", "not_equals"]);
 const LIST_OPS = new Set(["in", "not_in"]);
-const MAX_VALUES = 64;
-const MAX_VALUE_LENGTH = 512;
+const MAX_VALUES = 1000;
+const MAX_VALUE_UTF8_BYTES = 16384;
 const MAX_GROUP = 2147483647;
+const MAX_VERSION = 4294967295;
+const ITEM_KEYS = new Set(["column_id", "group", "display_name", "property_id", "filter_config", "id"]);
+const CONFIG_KEYS = new Set(["col_type", "filter_type", "filter_op", "filter_value"]);
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const isUuid = (value) => typeof value === "string" && UUID_RE.test(value);
 
 const configOf = (item) => item?.filter_config || item?.filterConfig || {};
-const colTypeOf = (item) =>
-  String(configOf(item).col_type || configOf(item).colType || "").toUpperCase();
+const colTypeOf = (item) => configOf(item).col_type || configOf(item).colType || "";
 
-/** True for a §6.3 `SKILL` item (any casing of the stored key aliases). */
+/** True for a §6.3 `SKILL` item (the server matches `col_type` exactly). */
 export const isSkillFilterItem = (item) =>
   Boolean(item) && typeof item === "object" && colTypeOf(item) === SKILL_COL_TYPE;
 
@@ -200,49 +213,107 @@ export const isSkillFilterItem = (item) =>
 export const skillGroupOf = (item) =>
   Number.isInteger(item?.group) && item.group >= 0 ? item.group : 0;
 
-const cleanText = (value) => {
-  if (typeof value !== "string") return null;
-  const text = value.trim();
-  return text && text.length <= MAX_VALUE_LENGTH ? text : null;
-};
+const utf8Bytes = (text) => new TextEncoder().encode(text).length;
 
-function normalizeValue(columnId, type, op, raw) {
-  const list = LIST_OPS.has(op);
-  const values = Array.isArray(raw) ? raw : [raw];
-  if (!values.length || values.length > MAX_VALUES) return undefined;
-  const normalized = values.map((value) => {
-    if (type === NUMBER) {
-      const number = typeof value === "number" ? value : Number(value);
-      return Number.isInteger(number) && number > 0 ? number : null;
+/**
+ * Why the server would reject this one `SKILL` item, or null. A mirror of
+ * `validate_skill_filter_item`: exact type and operator, no coercion of
+ * strings to numbers, lists only for in/not_in, at most 1,000 values,
+ * strings up to 16 KiB, an empty string only for `skill.agent` (an unnamed
+ * agent), and the fixed value sets for evidence, load result and root status.
+ */
+export function skillItemError(item) {
+  if (!isSkillFilterItem(item)) return "not_skill";
+  const columnId = item.column_id;
+  const column = SKILL_COLUMNS[columnId];
+  if (!column) return "unknown_column";
+  if (item.group !== undefined && (!Number.isInteger(item.group) || item.group < 0 || item.group > MAX_GROUP)) {
+    return "bad_group";
+  }
+  const config = item.filter_config;
+  if (!config || typeof config !== "object") return "no_config";
+  if (Object.keys(config).some((key) => !CONFIG_KEYS.has(key))) return "unknown_config_key";
+  const op = config.filter_op;
+  if (config.filter_type !== column.type || !column.ops.includes(op)) return "bad_operator";
+  const value = config.filter_value;
+  const values = LIST_OPS.has(op) ? value : [value];
+  if (!Array.isArray(values) || !values.length || values.length > MAX_VALUES) return "bad_list";
+  for (const member of values) {
+    if (column.type === NUMBER) {
+      if (!Number.isInteger(member) || member < 1 || member > MAX_VERSION) return "bad_version";
+    } else if (typeof member !== "string" || utf8Bytes(member) > MAX_VALUE_UTF8_BYTES) {
+      return "bad_text";
+    } else if (!member && !column.allowEmpty) {
+      return "empty_value";
     }
-    const text = cleanText(value);
-    if (text === null) return null;
-    const allowed = ENUM_VALUES[columnId];
-    return allowed && !allowed.includes(text) ? null : text;
-  });
-  if (normalized.some((value) => value === null)) return undefined;
-  if (list) return normalized;
-  return normalized.length === 1 ? normalized[0] : undefined;
+  }
+  const allowed = ENUM_VALUES[columnId];
+  if (allowed && values.some((member) => !allowed.includes(member))) return "bad_choice";
+  return null;
 }
 
-function normalizeOp(columnId, op, value) {
-  const { ops } = SKILL_COLUMNS[columnId];
+/** The item in canonical API shape: known keys only, `group` kept when it is not 0. */
+function canonicalSkillItem(item) {
+  const group = skillGroupOf(item);
+  const displayName = item.display_name;
+  const config = item.filter_config;
+  return {
+    column_id: item.column_id,
+    ...(typeof displayName === "string" && displayName ? { display_name: displayName } : {}),
+    ...(group ? { group } : {}),
+    filter_config: {
+      col_type: SKILL_COL_TYPE,
+      filter_type: config.filter_type,
+      filter_op: config.filter_op,
+      filter_value: config.filter_value,
+    },
+  };
+}
+
+/**
+ * A `SKILL` item exactly as received, in canonical shape, or null when the
+ * server would reject it. Nothing is rewritten: a link's items reach the
+ * list as the link carried them ("landing equals the cell", UX-02). Unknown
+ * item keys make the item unreadable rather than being dropped silently.
+ */
+export function exactSkillItem(item) {
+  if (skillItemError(item)) return null;
+  if (Object.keys(item).some((key) => !ITEM_KEYS.has(key))) return null;
+  return canonicalSkillItem(item);
+}
+
+// --- Items built by the filter panel (not links) ---------------------------
+// The panel stores single equality as a one-item list and multi-value
+// equality as `in`, and numbers as strings. Its items are mapped to an
+// operator and value type the column accepts, then validated like any other.
+
+function panelOp(column, op, value) {
+  const { ops } = column;
   const multi = Array.isArray(value) && value.length > 1;
   let next = op || "equals";
-  // The panel stores single equality as a one-item list and multi-value
-  // equality as `in`. Map only to an operator the column accepts.
   if (next === "equals" && (multi || !ops.includes("equals")) && ops.includes("in")) next = "in";
   if (next === "not_equals" && (multi || !ops.includes("not_equals")) && ops.includes("not_in")) next = "not_in";
   if (next === "in" && !multi && !ops.includes("in")) next = "equals";
   if (next === "not_in" && !multi && !ops.includes("not_in")) next = "not_equals";
+  if (next === "greater_than_or_equal") next = "gte";
+  if (next === "less_than_or_equal") next = "lte";
   return ops.includes(next) ? next : null;
 }
 
+function panelValue(column, op, raw) {
+  const values = (Array.isArray(raw) ? raw : [raw]).map((value) => {
+    if (column.type !== NUMBER) return typeof value === "string" ? value.trim() : value;
+    if (typeof value === "string" && /^\d+$/.test(value.trim())) return Number(value.trim());
+    return value;
+  });
+  if (LIST_OPS.has(op)) return values;
+  return values.length === 1 ? values[0] : undefined;
+}
+
 /**
- * One `SKILL` item in the canonical API shape, or null when the server would
- * reject it. `grain` is "trace" or "span" ("Ran after loading" is span grain
- * only). The `group` key is kept only when it is not the default 0, and
- * `display_name` (an API item key) is kept for chip text.
+ * One `SKILL` item built or edited in the filter panel, mapped to what the
+ * column accepts, or null when it still is not valid. `grain` "trace" refuses
+ * "Ran after loading", which is span grain only (§6.3).
  */
 export function normalizeSkillItem(item, { grain = "trace" } = {}) {
   if (!isSkillFilterItem(item)) return null;
@@ -250,26 +321,19 @@ export function normalizeSkillItem(item, { grain = "trace" } = {}) {
   const column = SKILL_COLUMNS[columnId];
   if (!column) return null;
   if (column.spanOnly && grain !== "span") return null;
-  if (item.group !== undefined && (!Number.isInteger(item.group) || item.group < 0 || item.group > MAX_GROUP)) return null;
   const config = configOf(item);
   const rawValue = config.filter_value ?? config.filterValue;
-  const op = normalizeOp(columnId, config.filter_op ?? config.filterOp, rawValue);
+  const op = panelOp(column, config.filter_op ?? config.filterOp, rawValue);
   if (!op) return null;
-  const value = normalizeValue(columnId, column.type, op, rawValue);
+  const value = panelValue(column, op, rawValue);
   if (value === undefined) return null;
-  const group = skillGroupOf(item);
-  const displayName = item.display_name ?? item.displayName;
-  return {
+  const candidate = {
     column_id: columnId,
-    ...(typeof displayName === "string" && displayName ? { display_name: displayName } : {}),
-    ...(group ? { group } : {}),
-    filter_config: {
-      col_type: SKILL_COL_TYPE,
-      filter_type: column.type,
-      filter_op: op,
-      filter_value: value,
-    },
+    ...(item.group !== undefined ? { group: item.group } : {}),
+    ...(item.display_name ?? item.displayName ? { display_name: item.display_name ?? item.displayName } : {}),
+    filter_config: { col_type: SKILL_COL_TYPE, filter_type: column.type, filter_op: op, filter_value: value },
   };
+  return skillItemError(candidate) ? null : canonicalSkillItem(candidate);
 }
 
 /** Group `SKILL` items by correlation group, in first-seen order, with their indices in `filters`. */
@@ -293,11 +357,13 @@ const firstValue = (item) => {
 };
 
 /**
- * The §6.3 group rules ST6 enforces, so the UI never sends a 400:
+ * The group rules of `validate_skill_filter_groups`, so the UI never sends a
+ * 400 and never refuses a link the server accepts:
  *   - `skill.root_status` needs at least one other `SKILL` item;
- *   - `skill.version` is valid only beside `skill.id` or `skill.name`;
- *   - a `load_result = failed` group rejects version, digest, evidence,
- *     binding and "Ran after loading" items, because failed rows have none.
+ *   - a group cannot be both loaded and failed;
+ *   - a `load_result = failed` group allows only skill id or name, asked for,
+ *     agent, service, context, context version, load result and root status;
+ *   - `skill.version` needs a positive `skill.id` or `skill.name` in its group.
  * Returns `{ ok, reason }`.
  */
 export function validateSkillGroups(filters = []) {
@@ -307,18 +373,22 @@ export function validateSkillGroups(filters = []) {
     return { ok: false, reason: "root_status_alone" };
   }
   for (const { items: members } of skillGroups(items)) {
-    const ids = new Set(members.map((item) => item.column_id));
-    if (ids.has("skill.version") && !ids.has("skill.id") && !ids.has("skill.name")) {
-      return { ok: false, reason: "version_without_skill" };
-    }
-    const failed = members.some(
-      (item) => item.column_id === "skill.load_result" && firstValue(item) === "failed",
+    const results = new Set(
+      members.filter((item) => item.column_id === "skill.load_result").map(firstValue),
     );
-    if (failed && members.some((item) => !SKILL_COLUMNS[item.column_id]?.failedGroup)) {
+    if (results.size > 1) return { ok: false, reason: "loaded_and_failed" };
+    if (results.has("failed") && members.some((item) => !SKILL_COLUMNS[item.column_id]?.failedGroup)) {
       return { ok: false, reason: "failed_group_column" };
     }
-    if (members.filter((item) => item.column_id === "skill.load_result").length > 1) {
-      return { ok: false, reason: "duplicate_load_result" };
+    const ids = new Set(members.map((item) => item.column_id));
+    if (
+      ids.has("skill.version") &&
+      !members.some(
+        (item) =>
+          ["skill.id", "skill.name"].includes(item.column_id) && !NEGATIVE_OPS.has(opOf(item)),
+      )
+    ) {
+      return { ok: false, reason: "version_without_skill" };
     }
   }
   return { ok: true, reason: null };
@@ -357,8 +427,9 @@ export function hydrateFiltersWithSkills(
   let rejected = 0;
   filters.forEach((filter) => {
     if (isSkillFilterItem(filter)) {
-      const normalized = normalizeSkillItem(filter, { grain });
-      if (!normalized) {
+      // Stored and linked items are validated exactly as the server will.
+      const normalized = exactSkillItem(filter);
+      if (!normalized || (!strict && SKILL_COLUMNS[filter.column_id]?.spanOnly && grain !== "span")) {
         rejected += 1;
         return;
       }
@@ -379,37 +450,43 @@ export function hydrateFiltersWithSkills(
 }
 
 /**
- * Persist filters. Lists with only default-group `SKILL` items keep the
- * existing serializer untouched (it accepts `col_type: SKILL`). Lists with a
- * grouped item serialize the other items through `serializeOthers` and the
- * `SKILL` items here, keeping `group`, because the shared contract does not
- * know that key yet (see the ST9 `remaining` list).
+ * Persist filters. `SKILL` items are written here, exactly, keeping their
+ * `group` (the shared serializer does not know that key, and refuses the
+ * `gte`/`lte` version operators); every other item goes through
+ * `serializeOthers`. Order within each kind is kept.
  */
 export function serializeFiltersWithSkills(filters, serializeOthers) {
   const list = filters || [];
-  if (!hasGroupedSkillItems(list)) return serializeOthers(list);
+  if (!hasSkillFilter(list)) return serializeOthers(list);
   const others = serializeOthers(list.filter((item) => !isSkillFilterItem(item)));
   const skills = list
     .filter(isSkillFilterItem)
-    .map((item) => normalizeSkillItem(item, { grain: "span" }))
+    .map((item) => {
+      const { id, ...rest } = item;
+      return exactSkillItem(rest);
+    })
     .filter(Boolean);
   return [...others, ...skills];
 }
 
 const itemIdentity = (item) =>
   JSON.stringify([item?.column_id, opOf(item), valueOf(item)]);
+// `equals`/`in` and `not_equals`/`not_in` read the same to the panel; a
+// change of polarity (a negation edit) is a real change and never matches.
+const polarity = (item) => (NEGATIVE_OPS.has(opOf(item)) ? "negative" : "positive");
 const looseIdentity = (item) => {
   const value = valueOf(item);
   const values = (Array.isArray(value) ? value : [value]).map(String).sort();
-  return JSON.stringify([item?.column_id, values]);
+  return JSON.stringify([item?.column_id, polarity(item), values]);
 };
 
 /**
  * Keep `SKILL` items intact through the filter panel's row round trip. The
  * panel rebuilds every item from a row, which loses `group` and may turn
  * `equals` into `in`. An item the person did not change is restored exactly
- * from `previous`; a changed one is normalized to an operator its column
- * accepts. Items the server would reject are dropped from `next`.
+ * from `previous`; a changed one keeps the group of the item it replaced and
+ * is mapped to an operator its column accepts. Items the server would reject
+ * are dropped from `next`.
  */
 export function reconcileSkillItems(previous = [], next = [], { grain = "trace" } = {}) {
   if (!Array.isArray(next)) return next;
@@ -432,11 +509,35 @@ export function reconcileSkillItems(previous = [], next = [], { grain = "trace" 
       out.push(match);
       return;
     }
-    const normalized = normalizeSkillItem(item, { grain });
+    // An edited item stays in the correlation group of the item it replaced
+    // (the first unused one with the same column); the panel drops `group`.
+    const replaced = before.find(
+      (candidate) => !used.has(candidate) && candidate.column_id === item.column_id,
+    );
+    if (replaced) used.add(replaced);
+    const group = replaced ? skillGroupOf(replaced) : skillGroupOf(item);
+    const normalized = normalizeSkillItem(group ? { ...item, group } : item, { grain });
     if (normalized) out.push({ ...normalized, ...(item.id ? { id: item.id } : {}) });
   });
   return out;
 }
+
+const SAVED_VIEW_FILTER_KEYS = ["filters", "extra_filters", "compare_filters", "compare_extra_filters"];
+
+/**
+ * True when a saved-view config holds `SKILL` items the shared saved-view
+ * serializer (src/api/project/saved-views.js, not this lane's) cannot write
+ * yet: a correlation `group` other than 0, or the `gte`/`lte` version range.
+ * The view's save handlers check this first and say so, instead of failing.
+ */
+export const savedViewNeedsSkillContract = (config) =>
+  SAVED_VIEW_FILTER_KEYS.some((key) =>
+    (Array.isArray(config?.[key]) ? config[key] : []).some(
+      (item) =>
+        isSkillFilterItem(item) &&
+        (skillGroupOf(item) > 0 || ["gte", "lte"].includes(opOf(item))),
+    ),
+  );
 
 /** A stable signature of the `SKILL` and other API items, used to hide the source bar once the person edits. */
 export const filtersSignature = (filters = []) =>

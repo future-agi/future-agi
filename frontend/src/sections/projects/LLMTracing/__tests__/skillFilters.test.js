@@ -74,10 +74,15 @@ describe("normalizeSkillItem", () => {
     expect(normalizeSkillItem(item("skill.root_status", "equals", "ERROR"))).toBeNull();
     expect(normalizeSkillItem(item("skill.evidence", "in", ["guessed"]))).toBeNull();
     expect(normalizeSkillItem(item("skill.version", "equals", "three"))).toBeNull();
+    expect(normalizeSkillItem(item("skill.version", "equals", 0))).toBeNull();
     expect(normalizeSkillItem(item("skill.id", "equals", ""))).toBeNull();
     expect(normalizeSkillItem(item("skill.id", "equals", SKILL, { group: -1 }))).toBeNull();
     expect(normalizeSkillItem(item("skill.id", "equals", SKILL, { group: 1.5 }))).toBeNull();
     expect(normalizeSkillItem(latency)).toBeNull();
+  });
+
+  it("reads the panel's string version as a number", () => {
+    expect(normalizeSkillItem(item("skill.version", "in", ["3"])).filter_config).toMatchObject({ filter_op: "equals", filter_value: 3 });
   });
 
   it("allows Ran after loading only at span grain", () => {
@@ -115,6 +120,25 @@ describe("validateSkillGroups", () => {
       item("skill.id", "equals", SKILL),
       item("skill.version", "equals", 3, { group: 1 }),
     ]).reason).toBe("version_without_skill");
+  });
+
+  it("accepts what the server accepts: an unnamed agent and a version range", () => {
+    expect(validateSkillGroups([item("skill.id", "equals", SKILL), item("skill.agent", "equals", "")]).ok).toBe(true);
+    expect(validateSkillGroups([item("skill.name", "equals", "refund-policy"), item("skill.version", "gte", 3)]).ok).toBe(true);
+    expect(hydrateFiltersWithSkills([item("skill.id", "equals", SKILL), item("skill.agent", "in", ["", "refund-agent"])], { strict: true }).rejected).toBe(0);
+  });
+
+  it("rejects a group that is both loaded and failed", () => {
+    expect(validateSkillGroups([
+      item("skill.id", "equals", SKILL),
+      item("skill.load_result", "equals", "loaded"),
+      item("skill.load_result", "equals", "failed"),
+    ]).reason).toBe("loaded_and_failed");
+  });
+
+  it("needs a positive skill beside a version number", () => {
+    expect(validateSkillGroups([item("skill.id", "not_equals", SKILL), item("skill.version", "equals", 3)]).reason)
+      .toBe("version_without_skill");
   });
 
   it("rejects version, digest and evidence in a failed group", () => {
@@ -170,11 +194,17 @@ describe("hydrateFiltersWithSkills", () => {
 });
 
 describe("serializeFiltersWithSkills", () => {
-  it("leaves lists without grouped skill items to the shared serializer", () => {
+  it("leaves lists without skill items to the shared serializer", () => {
     const serializeOthers = vi.fn((filters) => filters.map((filter) => ({ ...filter, serialized: true })));
-    const list = [item("skill.version_id", "equals", V3), latency];
-    expect(serializeFiltersWithSkills(list, serializeOthers)).toEqual(list.map((filter) => ({ ...filter, serialized: true })));
-    expect(serializeOthers).toHaveBeenCalledWith(list);
+    expect(serializeFiltersWithSkills([latency], serializeOthers)).toEqual([{ ...latency, serialized: true }]);
+  });
+
+  it("writes skill items exactly, including the version range operators", () => {
+    const serializeOthers = vi.fn((filters) => filters);
+    const version = { ...item("skill.version", "gte", 3), id: "row" };
+    expect(serializeFiltersWithSkills([item("skill.name", "equals", "refund-policy"), version, latency], serializeOthers))
+      .toEqual([latency, item("skill.name", "equals", "refund-policy"), item("skill.version", "gte", 3)]);
+    expect(serializeOthers).toHaveBeenCalledWith([latency]);
   });
 
   it("keeps group on grouped skill items", () => {
@@ -193,6 +223,15 @@ describe("reconcileSkillItems", () => {
     const previous = [item("skill.id", "equals", SKILL, { group: 1 }), item("skill.root_status", "equals", "error", { group: 1 })];
     const fromPanel = [item("skill.id", "in", [SKILL]), item("skill.root_status", "in", ["error"]), latency];
     expect(reconcileSkillItems(previous, fromPanel)).toEqual([...previous, latency]);
+  });
+
+  it("keeps a negation edit instead of restoring the positive item", () => {
+    const previous = [item("skill.version_id", "equals", V3, { group: 1 }), item("skill.id", "equals", SKILL, { group: 1 })];
+    const fromPanel = [item("skill.version_id", "not_in", [V3]), item("skill.id", "in", [SKILL])];
+    expect(reconcileSkillItems(previous, fromPanel)).toEqual([
+      { ...item("skill.version_id", "not_equals", V3), group: 1 },
+      previous[1],
+    ]);
   });
 
   it("normalizes an edited item and drops one the server would reject", () => {
@@ -214,7 +253,8 @@ describe("groups", () => {
     expect(nextSkillGroup([latency])).toBe(0);
     expect(hasGroupedSkillItems(list)).toBe(true);
     expect(hasSkillFilter([latency])).toBe(false);
-    expect(isSkillFilterItem({ column_id: "x", filterConfig: { colType: "skill" } })).toBe(true);
+    expect(isSkillFilterItem({ column_id: "x", filterConfig: { colType: "SKILL" } })).toBe(true);
+    expect(isSkillFilterItem({ column_id: "x", filter_config: { col_type: "skill" } })).toBe(false);
   });
 
   it("changes the signature when the person edits a filter", () => {

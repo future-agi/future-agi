@@ -20,8 +20,14 @@ import {
 // skill or context surface carries a `skillSource` parameter; this bar says
 // what the list is ("refund-policy v4 · refund-agent · failed requests · 24 h
 // after production moved to v4"), links back, and offers the matching
-// before/after link. It is presentational: it never changes the filters, and
-// the list view hides it as soon as the person edits them.
+// before/after link. It is presentational: it never changes the filters
+// itself (the switch hands the other side's link to the list view), and the
+// list view hides it as soon as the person edits the filters or dates.
+//
+// The move window: the §6.6 `source` object carries no window yet, so the
+// bar reads one only from `source.window`. Without it the bar leaves the
+// window out of its sentence and offers no before/after switch, because a
+// comparison read at a guessed window would hand back links for other dates.
 
 const COPY = OBSERVE_SKILL_COPY.sourceBar;
 
@@ -48,15 +54,21 @@ export function sourceBarText({ source, skillName, version, contextName, move })
     : contextName || OBSERVE_SKILL_COPY.context;
   const parts = [subject, agentName(source.agentKey), sourceMetricPhrase(source.metric)];
   if (move && source.side) {
-    const words = { window: windowWords(source.window || "24h"), label: move.label || "production", toVersion: move.toVersion };
-    parts.push(source.side === "before" ? COPY.beforeMove(words) : COPY.afterMove(words));
+    const words = { label: move.label || "production", toVersion: move.toVersion };
+    if (source.window) {
+      parts.push(source.side === "before"
+        ? COPY.beforeMove({ ...words, window: windowWords(source.window) })
+        : COPY.afterMove({ ...words, window: windowWords(source.window) }));
+    } else {
+      parts.push(source.side === "before" ? COPY.beforeMoveNoWindow(words) : COPY.afterMoveNoWindow(words));
+    }
   }
   return parts.filter(Boolean).join(" · ");
 }
 
 /** The matching other-side link from the endpoint-3 response, or null. */
 export function otherSideLink({ source, move }) {
-  if (!move || !source?.side || !move.links) return null;
+  if (!move || !source?.side || !source.window || !move.links) return null;
   const other = source.side === "after" ? "before" : "after";
   const key = comparisonMetricKey(source.metric);
   const link = move.links?.[other]?.[key];
@@ -66,6 +78,7 @@ export function otherSideLink({ source, move }) {
   const version = other === "before" ? move.fromVersion : move.toVersion;
   return {
     href,
+    link,
     label: other === "before" ? COPY.compareBefore(version) : COPY.compareAfter(version),
   };
 }
@@ -126,7 +139,7 @@ SkillFilterLabelsProbe.propTypes = {
   onChange: PropTypes.func.isRequired,
 };
 
-export default function SkillSourceBar({ source, sortNotApplied = false, linkUnreadable = false }) {
+export default function SkillSourceBar({ source, sortNotApplied = false, linkUnreadable = false, onSwitch }) {
   const skillId = source?.skillId ?? null;
   const contextId = source?.contextId ?? null;
   const skill = useSkill(skillId);
@@ -135,7 +148,7 @@ export default function SkillSourceBar({ source, sortNotApplied = false, linkUnr
   const comparison = useSkillComparison(skillId, {
     eventId: source?.eventId ?? undefined,
     window: source?.window || "24h",
-    enabled: Boolean(skillId && source?.eventId && source?.side),
+    enabled: Boolean(skillId && source?.eventId && source?.side && source?.window),
   });
 
   if (!source && !linkUnreadable) return null;
@@ -167,7 +180,7 @@ export default function SkillSourceBar({ source, sortNotApplied = false, linkUnr
     (contextId && !skillId && context.isPending && context.fetchStatus !== "idle");
   const text = sourceBarText({ source, skillName, version, contextName, move });
   const backHref = skillId
-    ? runtimeTabUrl({ kind: "skill", id: skillId, eventId: source.eventId, window: source.window || "24h" })
+    ? runtimeTabUrl({ kind: "skill", id: skillId, eventId: source.eventId, window: source.window || undefined })
     : runtimeTabUrl({ kind: "agent_context", id: contextId });
   const backName = skillId ? skillName : contextName;
   const switchLink = otherSideLink({ source, move });
@@ -185,9 +198,15 @@ export default function SkillSourceBar({ source, sortNotApplied = false, linkUnr
         )}
         <Box sx={{ flex: 1 }} />
         {switchLink && (
-          <Button size="small" variant="outlined" component={RouterLink} to={switchLink.href}>
-            {switchLink.label}
-          </Button>
+          onSwitch ? (
+            <Button size="small" variant="outlined" onClick={() => onSwitch(switchLink)}>
+              {switchLink.label}
+            </Button>
+          ) : (
+            <Button size="small" variant="outlined" component={RouterLink} to={switchLink.href}>
+              {switchLink.label}
+            </Button>
+          )
         )}
         {backHref && (
           <Button
@@ -236,4 +255,8 @@ SkillSourceBar.propTypes = {
   }),
   sortNotApplied: PropTypes.bool,
   linkUnreadable: PropTypes.bool,
+  // Called with `{ href, link, label }` for the before/after switch. The
+  // list view re-seeds its filters, dates and source from `link`, since a
+  // same-route navigation does not remount it.
+  onSwitch: PropTypes.func,
 };

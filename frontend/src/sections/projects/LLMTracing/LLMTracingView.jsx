@@ -204,13 +204,16 @@ import { serializeTraceFiltersForPersistence } from "./filter_persistence";
 import useProjectFilterField from "../UsersView/useProjectFilterField";
 import FilterChips from "./FilterChips";
 import {
+  OBSERVE_SKILL_COPY,
   filtersSignature,
   hasSkillFilter,
   hydrateFiltersWithSkills,
   parseLinkSort,
   parseSkillSource,
   reconcileSkillItems,
+  savedViewNeedsSkillContract,
 } from "./skillFilters";
+import { formatDate } from "src/utils/report-utils";
 import { useSkillTracesEnabled } from "src/sections/skills/runtime/skillTracesFlag";
 import {
   OBSERVE_LINK_SORT_PARAM,
@@ -794,10 +797,17 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
         source: parseSkillSource(params.get(SKILL_SOURCE_PARAM)),
         sort: parseLinkSort(params.get(OBSERVE_LINK_SORT_PARAM)),
         signature: null,
+        dateKey: null,
         unreadable: false,
       };
     } catch {
-      return { source: null, sort: null, signature: null, unreadable: false };
+      return {
+        source: null,
+        sort: null,
+        signature: null,
+        dateKey: null,
+        unreadable: false,
+      };
     }
   });
   const [compareExtraFilters, setCompareExtraFiltersRaw] = useState([]);
@@ -2712,6 +2722,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
           setSkillLink((prev) => ({
             ...prev,
             signature: filtersSignature(toBackendFilters(rows)),
+            dateKey: JSON.stringify(primaryTraceDateFilter?.dateFilter ?? null),
           }));
         }
         // Leave filterChipsSaved false so the chip strip renders: unlike the
@@ -2920,6 +2931,10 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
   const handleSaveView = useCallback(() => {
     if (!activeViewTabId) return;
     const config = buildViewConfig();
+    if (savedViewNeedsSkillContract(config)) {
+      enqueueSnackbar(OBSERVE_SKILL_COPY.savedViewBlocked, { variant: "info" });
+      return;
+    }
     const mutate = isUserMode ? updateWorkspaceSavedView : updateSavedView;
     mutate(
       { id: activeViewTabId, config },
@@ -2945,6 +2960,10 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
   // Save view from staying visible for changes that were just saved.
   const saveFiltersToActiveView = useCallback(() => {
     const config = buildViewConfig();
+    if (savedViewNeedsSkillContract(config)) {
+      enqueueSnackbar(OBSERVE_SKILL_COPY.savedViewBlocked, { variant: "info" });
+      return;
+    }
     updateSavedView(
       { id: activeViewTabId, config },
       {
@@ -3129,6 +3148,10 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
 
   const handleSetDefaultView = useCallback(() => {
     const configPayload = buildViewConfig();
+    if (savedViewNeedsSkillContract(configPayload)) {
+      enqueueSnackbar(OBSERVE_SKILL_COPY.savedViewBlocked, { variant: "info" });
+      return;
+    }
     const onDone = {
       onSuccess: () =>
         enqueueSnackbar("View set as default for everyone", {
@@ -3425,6 +3448,9 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
   );
   // The source bar is presentational: it shows while the list still holds
   // exactly the filters the link applied, and disappears once they change.
+  const currentDateKey = JSON.stringify(
+    primaryTraceDateFilter?.dateFilter ?? null,
+  );
   const showSkillSourceBar =
     skillTracesEnabled &&
     !showCompare &&
@@ -3432,8 +3458,53 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
       Boolean(
         skillLink.source &&
           skillLink.signature &&
-          skillLink.signature === extraFiltersSignature,
+          skillLink.signature === extraFiltersSignature &&
+          skillLink.dateKey === currentDateKey,
       ));
+  // The source bar's before/after switch. Navigating to the same route does
+  // not remount this view, so re-seed the filters, dates and source from the
+  // other side's §6.6 link here, then put its URL in the address bar so Back
+  // returns to the side the person came from.
+  const handleSkillSourceSwitch = useCallback(
+    ({ href, link }) => {
+      const from = new Date(link?.from);
+      const to = new Date(link?.to);
+      const { rows, rejected } = hydrateFiltersWithSkills(
+        link?.filters ?? link?.items,
+        {
+          createId: getRandomId,
+          hydrateOthers: hydrateStoredFilterList,
+          strict: true,
+        },
+      );
+      if (
+        rejected > 0 ||
+        !rows.length ||
+        Number.isNaN(from.getTime()) ||
+        Number.isNaN(to.getTime()) ||
+        from >= to
+      ) {
+        setSkillLink((prev) => ({ ...prev, unreadable: true }));
+        return;
+      }
+      const dateFilter = [formatDate(from), formatDate(to)];
+      setExtraFilters(rows);
+      setPrimaryTraceDateFilter((prev) => ({
+        ...prev,
+        dateFilter,
+        dateOption: "Custom",
+      }));
+      setSkillLink({
+        source: parseSkillSource(link.source) ?? skillLink.source,
+        sort: parseLinkSort(link.sort),
+        signature: filtersSignature(toBackendFilters(rows)),
+        dateKey: JSON.stringify(dateFilter),
+        unreadable: false,
+      });
+      if (href) navigate(href);
+    },
+    [navigate, setExtraFilters, setPrimaryTraceDateFilter, skillLink.source],
+  );
   // The Skills column is shown by default only when the project has skill
   // loads in the window, once per project in this browser, and never inside
   // a saved view (SKILL-TRACES §7.1, UX-12).
@@ -3847,6 +3918,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
             source={skillLink.unreadable ? null : skillLink.source}
             sortNotApplied={Boolean(skillLink.sort)}
             linkUnreadable={skillLink.unreadable}
+            onSwitch={handleSkillSourceSwitch}
           />
         )}
         {showSkillCohortStrip && (

@@ -46,6 +46,9 @@ const SOURCE = parseSkillSource(JSON.stringify({
   side: "after",
 }));
 
+// §6.6 `source` has no window yet; a source that names one gets the switch.
+const WINDOWED = { ...SOURCE, window: "24h" };
+
 beforeEach(() => {
   setSkillTracesOverride(true);
   hooks.skill.mockReturnValue(ok({ id: SKILL, name: "refund-policy" }));
@@ -57,8 +60,13 @@ afterEach(() => setSkillTracesOverride(null));
 
 describe("sourceBarText", () => {
   it("names the skill, version, agent, metric and the move window", () => {
-    expect(sourceBarText({ source: SOURCE, skillName: "refund-policy", version: 4, move: MOVE }))
+    expect(sourceBarText({ source: WINDOWED, skillName: "refund-policy", version: 4, move: MOVE }))
       .toBe("refund-policy v4 · refund-agent · failed requests · 24 h after production moved to v4");
+  });
+
+  it("leaves the window out when the source does not name one", () => {
+    expect(sourceBarText({ source: SOURCE, skillName: "refund-policy", version: 4, move: MOVE }))
+      .toBe("refund-policy v4 · refund-agent · failed requests · after production moved to v4");
   });
 
   it("leaves out the move when the comparison is unavailable", () => {
@@ -75,21 +83,23 @@ describe("sourceBarText", () => {
 
 describe("otherSideLink", () => {
   it("swaps to the before-window link for the same metric", () => {
-    const other = otherSideLink({ source: SOURCE, move: MOVE });
+    const other = otherSideLink({ source: WINDOWED, move: MOVE });
+    expect(other.link).toBe(MOVE.links.before.failed_requests);
     expect(other.label).toBe("Compare with v3 before the move");
     expect(other.href).toMatch(/^\/dashboard\/observe\/p1\/llm-tracing\?/);
     expect(decodeURIComponent(other.href)).toContain(V3);
   });
 
   it("has no switch without a side or a matching link", () => {
-    expect(otherSideLink({ source: { ...SOURCE, side: null }, move: MOVE })).toBeNull();
-    expect(otherSideLink({ source: { ...SOURCE, metric: "latency_p95" }, move: MOVE })).toBeNull();
+    expect(otherSideLink({ source: { ...WINDOWED, side: null }, move: MOVE })).toBeNull();
+    expect(otherSideLink({ source: { ...WINDOWED, metric: "latency_p95" }, move: MOVE })).toBeNull();
+    expect(otherSideLink({ source: SOURCE, move: MOVE })).toBeNull();
   });
 });
 
 describe("SkillSourceBar", () => {
   it("renders the bar with the way back and the comparison switch", () => {
-    const { container } = render(<SkillSourceBar source={SOURCE} />);
+    const { container } = render(<SkillSourceBar source={WINDOWED} />);
     expect(screen.getByRole("region", { name: "Opened from a skill" })).toHaveTextContent(
       "refund-policy v4 · refund-agent · failed requests · 24 h after production moved to v4",
     );
@@ -99,9 +109,22 @@ describe("SkillSourceBar", () => {
     expect(forbiddenRuntimeWords(container.textContent)).toEqual([]);
   });
 
+  it("hands the other side's link to the list view instead of navigating", () => {
+    const onSwitch = vi.fn();
+    render(<SkillSourceBar source={WINDOWED} onSwitch={onSwitch} />);
+    screen.getByRole("button", { name: "Compare with v3 before the move" }).click();
+    expect(onSwitch).toHaveBeenCalledWith(expect.objectContaining({ link: MOVE.links.before.failed_requests }));
+  });
+
+  it("offers no switch and reads no comparison without a window", () => {
+    render(<SkillSourceBar source={SOURCE} />);
+    expect(screen.queryByRole("link", { name: /Compare with/ })).toBeNull();
+    expect(hooks.comparison).toHaveBeenLastCalledWith(SKILL, expect.objectContaining({ enabled: false }));
+  });
+
   it("hides the switch when the comparison read fails", () => {
     hooks.comparison.mockReturnValue(failed());
-    render(<SkillSourceBar source={SOURCE} />);
+    render(<SkillSourceBar source={WINDOWED} />);
     expect(screen.queryByRole("link", { name: /Compare with/ })).toBeNull();
     expect(screen.getByRole("region", { name: "Opened from a skill" })).toHaveTextContent("refund-policy v4 · refund-agent · failed requests");
   });

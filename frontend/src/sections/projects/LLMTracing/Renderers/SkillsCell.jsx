@@ -1,8 +1,8 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import { Link as RouterLink } from "react-router-dom";
 import { Box, Chip, Menu, MenuItem, Skeleton, Tooltip, Typography } from "@mui/material";
-import { useQuery } from "@tanstack/react-query";
+import { useQueries } from "@tanstack/react-query";
 import axios, { traceSkillsEndpoint } from "src/utils/axios";
 import Iconify from "src/components/iconify";
 import { runtimeErrorKind } from "src/api/skills/runtime";
@@ -34,10 +34,15 @@ export const TRACE_SKILLS_PAGE_LIMIT = 100;
 // Data: endpoint 6, page-scoped.
 
 const NO_TRACES = Object.freeze({});
-const traceIdsKey = (traceIds) =>
-  [...new Set((traceIds || []).filter((id) => typeof id === "string" && id))]
-    .slice(0, TRACE_SKILLS_PAGE_LIMIT)
-    .sort();
+const NO_IDS = Object.freeze([]);
+const uniqueTraceIds = (traceIds) =>
+  [...new Set((traceIds || []).filter((id) => typeof id === "string" && id))].sort();
+/** Endpoint 6 takes at most 100 trace ids; larger pages are read in chunks. */
+export const chunkTraceIds = (ids, size = TRACE_SKILLS_PAGE_LIMIT) => {
+  const chunks = [];
+  for (let index = 0; index < ids.length; index += size) chunks.push(ids.slice(index, index + size));
+  return chunks;
+};
 
 /** Validate one trace entry of the endpoint-6 response; unknown shapes read as no loads. */
 export function mapTraceSkillsEntry(entry) {
@@ -62,37 +67,65 @@ export function mapTraceSkillsEntry(entry) {
   return { skills, failed, more };
 }
 
+async function readTraceSkills({ projectId, ids, signal }) {
+  const url = traceSkillsEndpoint("pageSkills");
+  const response = await axios.post(url, { project_id: projectId, trace_ids: ids }, { signal });
+  const traces = response?.data?.result?.traces ?? response?.data?.traces ?? {};
+  // Only ids that were asked for are kept; a trace with no loads is absent
+  // from the response and reads as "no loads" because it was requested.
+  const asked = new Set(ids);
+  return Object.fromEntries(
+    Object.entries(traces)
+      .filter(([traceId]) => asked.has(traceId))
+      .map(([traceId, entry]) => [traceId, mapTraceSkillsEntry(entry)]),
+  );
+}
+
+function combineTraceSkills(results) {
+  if (!results.length) return { status: "idle", byTrace: NO_TRACES, errorKind: null, refetch: null };
+  const failed = results.find((result) => result.isError);
+  const pending = results.some((result) => result.isPending);
+  const byTrace = Object.assign({}, ...results.map((result) => result.data || {}));
+  return {
+    status: failed ? "error" : pending ? "loading" : "ready",
+    byTrace,
+    errorKind: failed ? runtimeErrorKind(failed.error) : null,
+    refetch: () => Promise.all(results.map((result) => result.refetch())),
+    // Changes whenever any chunk settles or refreshes, for change detection.
+    version: results.map((result) => `${result.status}:${result.dataUpdatedAt}:${result.errorUpdatedAt}`).join("|"),
+  };
+}
+
 /**
- * Hydrate the Skills column for the traces on one list page (endpoint 6).
- * Returns `{ status: "idle"|"loading"|"error"|"ready", byTrace, errorKind, retry }`.
+ * Hydrate the Skills column for the traces shown in the grid (endpoint 6),
+ * at most 100 ids per request. Returns
+ * `{ status: "idle"|"loading"|"error"|"ready", byTrace, requested, errorKind, retry, version }`.
+ * `requested` lists the ids this result covers: a shown trace outside it is
+ * still loading, never "no loads".
  */
 export function useTracePageSkills({ projectId, traceIds, enabled = true }) {
-  const ids = useMemo(() => traceIdsKey(traceIds), [traceIds]);
+  const idsKey = JSON.stringify(uniqueTraceIds(traceIds));
+  const ids = useMemo(() => JSON.parse(idsKey), [idsKey]);
   const active = Boolean(enabled && projectId && ids.length);
-  const query = useQuery({
-    queryKey: ["observe", "trace-skills", projectId, ids],
-    queryFn: async ({ signal }) => {
-      const url = traceSkillsEndpoint("pageSkills");
-      const response = await axios.post(url, { project_id: projectId, trace_ids: ids }, { signal });
-      const traces = response?.data?.result?.traces ?? response?.data?.traces ?? {};
-      return Object.fromEntries(
-        Object.entries(traces).map(([traceId, entry]) => [traceId, mapTraceSkillsEntry(entry)]),
-      );
-    },
-    enabled: active,
-    retry: false,
-    staleTime: 30 * 1000,
-    meta: { errorHandled: true },
+  const chunks = useMemo(() => (active ? chunkTraceIds(ids) : []), [active, ids]);
+  const combined = useQueries({
+    queries: chunks.map((chunk) => ({
+      queryKey: ["observe", "trace-skills", projectId, chunk],
+      queryFn: ({ signal }) => readTraceSkills({ projectId, ids: chunk, signal }),
+      retry: false,
+      staleTime: 30 * 1000,
+      meta: { errorHandled: true },
+    })),
+    combine: combineTraceSkills,
   });
-  let status = "idle";
-  if (active && query.isPending) status = "loading";
-  else if (query.isError) status = "error";
-  else if (query.data) status = "ready";
+  const requested = active ? ids : NO_IDS;
   return {
-    status,
-    byTrace: query.data || NO_TRACES,
-    errorKind: query.isError ? runtimeErrorKind(query.error) : null,
-    retry: query.refetch,
+    status: combined.status,
+    byTrace: combined.byTrace,
+    requested,
+    errorKind: combined.errorKind,
+    retry: combined.refetch,
+    version: `${idsKey}#${combined.version || ""}`,
   };
 }
 
@@ -102,10 +135,14 @@ export function useTracePageSkills({ projectId, traceIds, enabled = true }) {
  * no read (and no React Query dependency) exists for anyone else.
  */
 export function TracePageSkillsProbe({ projectId, traceIds, onChange }) {
-  const { status, byTrace, errorKind, retry } = useTracePageSkills({ projectId, traceIds });
+  const result = useTracePageSkills({ projectId, traceIds });
+  const latest = useRef(result);
+  latest.current = result;
+  // Report only when the request or a response changes, never per render.
   useEffect(() => {
-    onChange({ status, byTrace, errorKind, retry });
-  }, [status, byTrace, errorKind, retry, onChange]);
+    const { status, byTrace, requested, errorKind, retry } = latest.current;
+    onChange({ status, byTrace, requested, errorKind, retry });
+  }, [result.version, onChange]);
   useEffect(() => () => onChange(null), [onChange]);
   return null;
 }
@@ -182,7 +219,7 @@ function SkillChip({ chip, onAddFilter }) {
               : undefined
           }
           deleteIcon={href ? (
-            <Iconify icon="solar:alt-arrow-down-linear" width={12} aria-label={`More for ${chip.label}`} />
+            <Iconify icon="solar:alt-arrow-down-linear" width={12} aria-label={OBSERVE_SKILL_COPY.moreFor(chip.label)} />
           ) : undefined}
           sx={{
             maxWidth: 180,
@@ -231,7 +268,10 @@ SkillChip.propTypes = {
 export default function SkillsCell({ data, context }) {
   const traceId = data?.trace_id;
   const hydration = context?.traceSkills;
-  const status = hydration?.status ?? "idle";
+  const requested =
+    !traceId || !Array.isArray(hydration?.requested) || hydration.requested.includes(traceId);
+  // A shown trace outside the last request is waiting for the next one.
+  const status = requested ? hydration?.status ?? "idle" : "loading";
   const entry = traceId ? hydration?.byTrace?.[traceId] : undefined;
   const model = useMemo(() => skillsCellModel(entry), [entry]);
   const onAddFilter = context?.onAddSkillFilters
@@ -241,7 +281,7 @@ export default function SkillsCell({ data, context }) {
   if (status === "loading" && !entry) {
     return (
       <Box sx={{ display: "flex", alignItems: "center", height: "100%", px: 1 }}>
-        <Skeleton variant="rounded" width={96} height={18} aria-label="Loading skills" />
+        <Skeleton variant="rounded" width={96} height={18} aria-label={OBSERVE_SKILL_COPY.loadingSkills} />
       </Box>
     );
   }
