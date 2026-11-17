@@ -39,6 +39,7 @@ from simulate.constants.harness_environment import (
     STATUS_RUNNING,
     ActorsTab,
 )
+from simulate.constants.hosted_harness import WORKER_ENFORCEMENT_LABELS
 from simulate.models import (
     AgentVersion,
     HarnessEnvironmentVersion,
@@ -61,7 +62,7 @@ from simulate.services.harness_scenarios import (
 )
 from simulate.services.run_outcome import outcome_fields, receipt_outcome_counts
 from simulate.services.run_reliability_v3 import trial_passes
-from simulate.types import ContractCallActor, ContractWorker
+from simulate.types import ContractCallActor, ContractWorker, worker_enforcement
 
 if TYPE_CHECKING:
     from simulate.services.harness_actor_rules import ActorRecord, ActorRules
@@ -1036,7 +1037,8 @@ def _contract_worker(worker: dict[str, Any]) -> ContractWorker:
     allowed = [str(one) for one in allowed] if isinstance(allowed, list) else []
     narrower = bool(allowed) and any(tool not in allowed for tool in tools)
     binding = worker.get("binding")
-    name = worker.get("name") if isinstance(worker.get("name"), str) else ""
+    raw_name = worker.get("name")
+    name = raw_name if isinstance(raw_name, str) else ""
     out: ContractWorker = {
         "id": str(worker["id"]),
         "display_name": name.strip() or str(worker["id"]),
@@ -1044,6 +1046,8 @@ def _contract_worker(worker: dict[str, Any]) -> ContractWorker:
         "allowed_tools": allowed if narrower else [],
         "tools_shown": allowed if narrower else tools,
         "binding": binding if binding in ("separate", "shared") else "not_declared",
+        "enforcement": (enforcement := worker_enforcement(binding)),
+        "enforcement_label": WORKER_ENFORCEMENT_LABELS[enforcement],
     }
     if isinstance(worker.get("name"), str):
         out["name"] = worker["name"]

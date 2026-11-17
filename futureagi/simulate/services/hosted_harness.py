@@ -3162,9 +3162,7 @@ def project_terminal_job_onto_run(job: HostedHarnessJob, now: datetime) -> None:
     )
     # A call cut short keeps what its workers did before the end.
     for call_id in ended:
-        transaction.on_commit(
-            lambda call_id=call_id: dispatch_worker_read(call_id), robust=True
-        )
+        transaction.on_commit(partial(dispatch_worker_read, call_id), robust=True)
     execution_status = {
         HostedHarnessJob.State.COMPLETED: TestExecution.ExecutionStatus.COMPLETED,
         HostedHarnessJob.State.CANCELED: TestExecution.ExecutionStatus.CANCELLED,

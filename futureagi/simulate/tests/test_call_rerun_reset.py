@@ -98,3 +98,28 @@ def test_a_native_rerun_keeps_the_metadata_less_the_eval_flags(call_execution):
     )
     assert call.call_metadata["alk_batch_claimed"] is True
     assert call.call_metadata["base_prompt"] == "You are a test agent"
+
+
+def test_a_native_rerun_never_carries_the_earlier_attempt_s_worker_record_into_the_new_one(
+    call_execution,
+):
+    from simulate.models.test_execution import CallExecutionSnapshot
+    from simulate.services.harness_workers import READ_KEY, WORKERS_KEY
+
+    call = _finished(call_execution)
+    record = {"workers": [{"id": "refund"}], "events": []}
+    call.call_metadata = {
+        **call.call_metadata,
+        WORKERS_KEY: record,
+        READ_KEY: {"at": "2026-11-17T09:00:00+00:00", "failed": False},
+    }
+    call.save()
+
+    clear_call_for_rerun(call, clear_metadata=False)
+    call.refresh_from_db()
+
+    # The new attempt starts with no record of its own; the earlier one is kept in its snapshot.
+    assert WORKERS_KEY not in call.call_metadata and READ_KEY not in call.call_metadata
+    assert call.call_metadata["alk_batch_claimed"] is True
+    snapshot = CallExecutionSnapshot.objects.get(call_execution=call)
+    assert snapshot.call_metadata[WORKERS_KEY] == record

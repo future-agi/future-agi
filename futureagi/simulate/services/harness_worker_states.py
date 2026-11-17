@@ -12,6 +12,7 @@ from simulate.constants.hosted_harness import (
     TRIAL_STATE_KEY,
     USER_CANCELED,
     WORKER_CHANNEL_BYPASSED,
+    WORKER_ENFORCEMENT_LABELS,
 )
 from simulate.models import (
     CallExecution,
@@ -28,6 +29,7 @@ from simulate.types import (
     WorkerState,
     WorkerTimeline,
     is_worker_subject,
+    worker_enforcement,
     worker_subject_id,
 )
 
@@ -98,9 +100,7 @@ def worker_states(
         # A hand-off with no return of its own is still out, whatever another hand-off to the same worker returned.
         out = any(one is None for one in back)
         if worker["id"] in late:
-            # Refused past its deadline, whether or not it then returned: its later calls never reached the world,
-            # so it never finished as asked.
-            # The world refused its calls, so the world saw it: observed, whatever the trace recorded.
+            # Refused past its deadline, even if it returned: it never finished as asked, and the world saw it.
             ended["observed"] = True
             ended["state"] = "deadline_passed"
             if worker["id"] in stopped:
@@ -297,25 +297,33 @@ def served_workers(
     call: CallExecution,
     timeline: WorkerTimeline,
     metadata: Mapping[str, Any] | None = None,
+    bindings: Mapping[str, str] | None = None,
 ) -> WorkerTimeline:
     """The stored record as served: a `cancel_requested` the job has since confirmed reads `cancelled`, each cut-short
     worker carries its cleanup, and a worker the trial (`metadata`, the call's or an earlier attempt's) says bypassed
     its channel says so. The stored record is never rewritten."""
     bypassed = _bypassed(metadata)
     late = refused_past_deadline(metadata)
-    workers = [
-        {
+    trial = (metadata or {}).get(TRIAL_STATE_KEY)
+    door = trial.get("door") if isinstance(trial, Mapping) else None
+    workers: list[HarnessWorker] = []
+    for one in timeline["workers"]:
+        enforcement = worker_enforcement(
+            (bindings or {}).get(str(one.get("id"))),
+            door=door,
+            bypassed=str(one.get("id")) in bypassed,
+        )
+        served: HarnessWorker = {
             **one,
             "channel_bypassed": str(one.get("id")) in bypassed,
-            # A record read before door refusals counted still says how its worker ended: past its deadline.
-            **(
-                {"state": "deadline_passed", "observed": True}
-                if str(one.get("id")) in late and one.get("state") != "deadline_passed"
-                else {}
-            ),
+            "enforcement": enforcement,
+            "enforcement_label": WORKER_ENFORCEMENT_LABELS[enforcement],
         }
-        for one in timeline["workers"]
-    ]
+        if str(one.get("id")) in late:
+            # A record read before door refusals counted still says how its worker ended: past its deadline.
+            served["state"] = "deadline_passed"
+            served["observed"] = True
+        workers.append(served)
     if not any(one.get("state") in CUT_SHORT_STATES for one in workers):
         return {**timeline, "workers": workers}
     execution = _execution(call)

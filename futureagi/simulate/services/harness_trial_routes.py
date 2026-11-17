@@ -3,12 +3,14 @@ trials first went different ways. Read from each trial's worker record; nothing 
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from typing import Any
 
 from simulate.types import (
     CallWorkersRecord,
     RouteCell,
+    RouteCellState,
     RouteColumn,
     RouteParty,
     RouteSplit,
@@ -23,7 +25,7 @@ from simulate.types import (
 # compared, as its missing steps would read as steps it did not take.
 COMPARED = ("recorded", "no_hand_off")
 # How a hand-off's end reads in its cell: an answer is a step, a failure failed, a worker that never came back no answer.
-_HAND_OFF_CELL = {
+_HAND_OFF_CELL: dict[str, RouteCellState] = {
     "finished": "step",
     "passed": "step",
     "failed": "failed",
@@ -42,7 +44,7 @@ class Trial:
     route: TrialRoute
 
 
-def _local(record: CallWorkersRecord) -> dict[str, tuple[str, str]]:
+def _local(record: CallWorkersRecord) -> dict[str, tuple[str, str | None]]:
     # A worker's id within the run and its name, so the same worker matches across trials.
     return {
         str(one["worker_id"]): (str(one["id"]), str(one["name"]))
@@ -60,14 +62,14 @@ def _column(step: WorkerStep, record: CallWorkersRecord) -> RouteColumn:
         """Who took part: a worker by its id within the run, the coordinator, or unknown when the record does not
         say; a worker the record does not list keeps its id and has no name."""
         if worker_id is not None:
-            local, name = workers.get(worker_id, (worker_id, None))
+            local, name = workers.get(str(worker_id), (str(worker_id), None))
             return "worker", local, name
         if unknown:
             return "unknown", None, None
         return "coordinator", None, coordinator
 
     if step["kind"] == "handoff":
-        handoff = step.get("handoff") or step.get("returned") or {}
+        handoff: Mapping[str, Any] = step.get("handoff") or step.get("returned") or {}
         # A hand-off the record names no maker for, and cannot place, was not shown to be the coordinator's.
         maker_kind, maker_id, maker = who(
             handoff.get("by"), unknown=step.get("relationship") == "unknown"
@@ -84,7 +86,7 @@ def _column(step: WorkerStep, record: CallWorkersRecord) -> RouteColumn:
             "to_name": worker,
             "tool": None,
         }
-    call = step.get("call") or {}
+    call: Mapping[str, Any] = step.get("call") or {}
     caller_kind, caller_id, caller = who(
         step["worker_id"], unknown=call.get("attribution") == "unattributed"
     )
@@ -102,15 +104,16 @@ def _column(step: WorkerStep, record: CallWorkersRecord) -> RouteColumn:
     }
 
 
-def _state(step: WorkerStep) -> str:
+def _state(step: WorkerStep) -> RouteCellState:
     if step["kind"] == "handoff":
         return _HAND_OFF_CELL.get(str(step.get("end") or ""), "step")
-    return "failed" if (step.get("call") or {}).get("status") == "error" else "step"
+    call: Mapping[str, Any] = step.get("call") or {}
+    return "failed" if call.get("status") == "error" else "step"
 
 
 def _route(
     record: CallWorkersRecord, tool_calls: bool
-) -> list[tuple[RouteColumn, int, str]]:
+) -> list[tuple[RouteColumn, int, RouteCellState]]:
     """Each step of the record that is a column, in reading order: its column, its key in the record, its state."""
     return [
         (_column(step, record), step["key"], _state(step))
@@ -135,7 +138,7 @@ def _merged(routes: Iterable[list[RouteColumn]]) -> list[RouteColumn]:
     return merged
 
 
-def _cell(found: list[tuple[int, str]]) -> RouteCell:
+def _cell(found: list[tuple[int, RouteCellState]]) -> RouteCell:
     if not found:
         return {"state": "absent", "step": None, "steps": [], "count": 0}
     if len(found) == 1:
@@ -177,7 +180,7 @@ def trial_routes(
     scenario_key: str, trials: list[Trial], *, tool_calls: bool = False
 ) -> TrialRoutes:
     """The scenario's trials lined up: columns in order, each trial's cell in each, and the first split."""
-    routes: dict[int, list[tuple[RouteColumn, int, str]]] = {
+    routes: dict[int, list[tuple[RouteColumn, int, RouteCellState]]] = {
         index: _route(one.record, tool_calls) if one.record is not None else []
         for index, one in enumerate(trials)
         if one.route in COMPARED
@@ -188,7 +191,7 @@ def trial_routes(
         route = routes.get(index)
         cells = None
         if route is not None:
-            found: dict[str, list[tuple[int, str]]] = {}
+            found: dict[str, list[tuple[int, RouteCellState]]] = {}
             for column, number, state in route:
                 found.setdefault(column["key"], []).append((number, state))
             cells = [_cell(found.get(column["key"], [])) for column in columns]

@@ -89,7 +89,8 @@ def clear_call_for_rerun(
 ) -> None:
     """Snapshot a call's result, then reset the row so a rerun can fill it again.
 
-    ``clear_metadata`` drops ``call_metadata`` except ``row_id`` and ``keep_metadata_keys``."""
+    ``clear_metadata`` drops ``call_metadata`` except ``row_id`` and ``keep_metadata_keys``; without it, only the worker
+    record and its read note go."""
     call_snapshot(call_execution).save()
     call_execution.transcripts.all().delete()
     call_execution.reset_to_default(save=False)
@@ -100,4 +101,13 @@ def clear_call_for_rerun(
         if metadata.get("row_id"):
             kept["row_id"] = metadata["row_id"]
         call_execution.call_metadata = kept
+    elif isinstance(call_execution.call_metadata, dict):
+        # The earlier attempt's worker record lives on in its snapshot, never in the new attempt's.
+        from simulate.services.harness_workers import READ_KEY, WORKERS_KEY
+
+        call_execution.call_metadata = {
+            key: value
+            for key, value in call_execution.call_metadata.items()
+            if key not in (WORKERS_KEY, READ_KEY)
+        }
     call_execution.save()

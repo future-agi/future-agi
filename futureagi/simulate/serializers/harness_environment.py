@@ -30,7 +30,7 @@ from simulate.serializers.requests.run_test_evals import (
 )
 from simulate.serializers.response.run_test import RunVersionLabelSerializer
 from simulate.serializers.trial_pass import TrialPassFieldsSerializer
-from simulate.types import WorkerBinding
+from simulate.types import WorkerBinding, WorkerEnforcement
 from tfc.utils.api_serializers import StrictInputSerializer
 
 
@@ -653,6 +653,9 @@ class HarnessEnvironmentWorkerSerializer(serializers.Serializer):
     tools_shown = serializers.ListField(child=serializers.CharField())
     # `not_declared` when its contract entry does not say how it reaches the world.
     binding = serializers.ChoiceField(choices=get_args(WorkerBinding))
+    # How the world holds it to its limits, decided from its binding, and the words the cards show.
+    enforcement = serializers.ChoiceField(choices=get_args(WorkerEnforcement))
+    enforcement_label = serializers.CharField()
     address_env = serializers.CharField(required=False, allow_blank=True)
     # The process that runs it alone, when the app serves it as its own service.
     process = serializers.CharField(required=False, allow_blank=True)

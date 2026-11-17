@@ -404,7 +404,9 @@ def record_call_workers(
     declared = declared_workers(job) if job is not None else []
     # A declared team with no evidence is still recorded, so the call never reads like a single-agent one.
     if traces.project_id is None and not traced_calls and not declared:
-        mark_read(call.id, failed=False)
+        # Spans may still be on their way: only the later read says there were none.
+        if second_read:
+            mark_read(call.id, failed=False)
         return None
     spans: list[CHSpan] = []
     partial, unavailable = False, False
@@ -473,8 +475,10 @@ def record_call_workers(
     if not timeline["workers"] and not any(
         one["type"] in HAND_OFF_TYPES for one in timeline["events"]
     ):
-        # A read that could not reach the spans found nothing because it saw nothing, not because there was none.
-        mark_read(call.id, failed=unavailable)
+        # A read that could not reach the spans found nothing because it saw nothing, not because there was none;
+        # a first read that found nothing leaves the answer to the later one.
+        if second_read or unavailable:
+            mark_read(call.id, failed=unavailable)
         return None
 
     kept: list[WorkerTimeline] = []

@@ -11,14 +11,21 @@ from uuid import UUID
 from django.http import Http404
 from rest_framework import status
 
+from simulate.constants.hosted_harness import HAND_OFFS_INCOMPLETE, TRIAL_STATE_KEY
 from simulate.models import CallExecution, HostedHarnessJob, TestExecution
-from simulate.services.harness_worker_states import served_workers, stopped_by_user
+from simulate.models.test_execution import CallExecutionSnapshot
+from simulate.services.harness_worker_states import (
+    job_for_call,
+    served_workers,
+    stopped_by_user,
+)
 from simulate.services.harness_worker_steps import served_record
 from simulate.services.harness_workers import (
     FIRST_READ,
     READ_KEY,
     WORKERS_KEY,
     check_again_at,
+    declared_workers,
     first_read_due,
     read_pending,
 )
@@ -69,8 +76,14 @@ def _answer(
     record = metadata.get(WORKERS_KEY)
     if isinstance(record, Mapping) and record:
         # A worker's own checks and the failed checks' places come from the same metadata as the record.
+        job = job_for_call(call)
+        # How each declared worker reaches the world, from the contract of the version the run was pinned to.
+        bindings = {
+            str(one["id"]): str(cast(Mapping[str, object], one).get("binding") or "")
+            for one in (declared_workers(job) if job is not None else [])
+        }
         served = served_record(
-            served_workers(call, cast(WorkerTimeline, record), metadata),
+            served_workers(call, cast(WorkerTimeline, record), metadata, bindings),
             now,
             receipt_sub_goals(metadata),
             stopped_by_user=stopped_by_user(call, attempt),
@@ -88,7 +101,14 @@ def call_workers(
     """The call's worker answer, or an earlier attempt's as its rerun snapshot kept it; 404 for an attempt id that is
     not one of this call's."""
     if attempt is not None:
-        snapshot = call.snapshots.filter(id=attempt).only("call_metadata").first()
+        # Only an attempt a rerun of the call kept, as `earlier_attempts` lists them; an evals-only rerun is none.
+        snapshot = (
+            call.snapshots.filter(
+                id=attempt, rerun_type=CallExecutionSnapshot.RerunType.CALL_AND_EVAL
+            )
+            .only("call_metadata")
+            .first()
+        )
         if snapshot is None:
             raise Http404
         if snapshot.call_metadata is None:
@@ -110,12 +130,24 @@ def call_workers(
     return WorkersReply(status.HTTP_204_NO_CONTENT)
 
 
+def _hand_offs_incomplete(metadata: Mapping[str, object]) -> bool:
+    """Whether the harness said some of the trial's hand-offs could not be recorded."""
+    trial = metadata.get(TRIAL_STATE_KEY)
+    notices = trial.get("notices") if isinstance(trial, Mapping) else None
+    return any(
+        isinstance(one, Mapping) and one.get("code") == HAND_OFFS_INCOMPLETE
+        for one in (notices if isinstance(notices, list) else [])
+    )
+
+
 def _trial_route(
     call: CallExecution, now: datetime, *, hosted: bool
 ) -> tuple[TrialRoute, CallWorkersRecord | None]:
-    """How far a trial's worker record can be compared, read from the call alone: a whole record; a read that ran and
-    found no hand-off; or why it is not compared (cut short or a later read due, a read not yet run, a call that did
-    not complete, a read that failed or never ran)."""
+    """How far a trial's worker record can be compared, read from the call alone: a whole record of a completed call;
+    a read that found no hand-off; or why it is not compared, never as a route it did not take."""
+    # A call that did not complete stopped part way: whatever was kept of it is not its whole route.
+    if call.status != CallExecution.CallStatus.COMPLETED or call.completed_at is None:
+        return "not_finished", None
     metadata = call.call_metadata if isinstance(call.call_metadata, dict) else {}
     kept = metadata.get(WORKERS_KEY)
     read = metadata.get(READ_KEY)
@@ -123,13 +155,13 @@ def _trial_route(
         record = served_record(cast(WorkerTimeline, kept), now)
         if record["state"] != "recorded":
             return "unreadable", None
-        if record["cut_off"] or record["pending"]:
+        if record["cut_off"] or record["pending"] or _hand_offs_incomplete(metadata):
             return "partial", None
         return "recorded", record
     if isinstance(read, Mapping):
-        return ("unreadable" if read.get("failed") else "no_hand_off"), None
-    if call.status != CallExecution.CallStatus.COMPLETED or call.completed_at is None:
-        return "not_finished", None
+        if read.get("failed"):
+            return "unreadable", None
+        return ("partial" if _hand_offs_incomplete(metadata) else "no_hand_off"), None
     due = (call.completed_at + timedelta(seconds=FIRST_READ)).isoformat()
     if hosted and read_pending(due, now):
         return "pending", None
