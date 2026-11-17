@@ -1630,26 +1630,6 @@
 - the picker opens, toggles, reorders and closes by keyboard alone: focus stays on the pressed Move button, moves to the opposite Move button when the column reaches the end of its group, and returns to Columns on Escape
 - a tenant value longer than 80 characters shows its preview in the cell, and Tab to it shows the full value in a tooltip
 
-### GW-E2E-020 — named providers save their native API format
-
-**Goal:** A user changes named providers without saving a connection under the previous provider’s protocol
-
-**Spec:** `flows/gateway/provider-format.spec.ts:17`
-
-**Tags:** —
-
-**User steps:**
-
-1. open Add Provider and switch from OpenAI to Anthropic, Google and Azure in turn
-2. see the selected native API format, with no incompatible choices
-3. save each provider with a synthetic endpoint, key and unique manually entered model
-4. reopen each saved provider and see the same API format
-5. switch from Anthropic back to OpenAI, then to Custom and choose a format explicitly
-
-**Backend state verified:**
-
-- the gateway config API returns each named provider with its native api_format and the unique model entered in the UI
-
 ### GW-E2E-004 — an organization explicitly opts into continuing after a guardrail outage
 
 **Goal:** An organization owner explicitly opts into continuing through a failed guardrail, and can turn that permission off again
@@ -1671,6 +1651,26 @@
 - the active organization config and pushed gateway config store false before opt-in, true after opt-in, and false after revocation
 - the gateway refuses the local webhook outage before opt-in and after revocation, and returns the unique mock echo only while opted in
 - an invalid boolean is refused without creating a configuration version
+
+### GW-E2E-020 — named providers save their native API format
+
+**Goal:** A user changes named providers without saving a connection under the previous provider’s protocol
+
+**Spec:** `flows/gateway/provider-format.spec.ts:17`
+
+**Tags:** —
+
+**User steps:**
+
+1. open Add Provider and switch from OpenAI to Anthropic, Google and Azure in turn
+2. see the selected native API format, with no incompatible choices
+3. save each provider with a synthetic endpoint, key and unique manually entered model
+4. reopen each saved provider and see the same API format
+5. switch from Anthropic back to OpenAI, then to Custom and choose a format explicitly
+
+**Backend state verified:**
+
+- the gateway config API returns each named provider with its native api_format and the unique model entered in the UI
 
 ## knowledge-base
 
