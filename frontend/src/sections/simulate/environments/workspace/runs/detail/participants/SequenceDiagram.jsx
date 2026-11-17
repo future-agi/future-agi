@@ -671,26 +671,27 @@ export default function SequenceDiagram({
           s,
           loopText(r),
         ),
+        /* One line, anchored at the loop: left of it the line ends there, so
+           wider-than-estimated words never run into the arrow. */
         <text
           key="n"
-          x={tx}
+          x={side.left ? x - 22 : x + 22}
           y={yy + 4}
+          textAnchor={side.left ? "end" : "start"}
           fontSize="11"
           fontWeight={wt}
           fill={c.fg}
         >
           {kindTag("TOOL", tone)}
           <tspan fontFamily={mono}>{name}</tspan>
-        </text>,
-        <text
-          key="r"
-          x={tx + tagW + name.length * nameW + 8}
-          y={yy + 4}
-          fontSize="11.5"
-          fontWeight={tone ? 600 : 400}
-          fill={tone || c.sub}
-        >
-          {res}
+          <tspan
+            dx="8"
+            fontSize="11.5"
+            fontWeight={tone ? 600 : 400}
+            fill={tone || c.sub}
+          >
+            {res}
+          </tspan>
         </text>,
       );
       if (lchip)
