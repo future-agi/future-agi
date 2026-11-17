@@ -14531,10 +14531,16 @@ class CompareDatasetsView(APIView):
 
                 comparison_datasets = list(datasets)
 
+                # While processing, progress is the last uploaded one-based page.
+                # Wait for the whole requested range, but not nonexistent pages.
+                last_required_page = min(
+                    end_page - 1, int(metadata.get("total_pages", 0))
+                )
                 loop_start = time.time()
                 while (
                     metadata.get("status") == "processing"
-                    and metadata.get("total_processed") >= start_page
+                    and start_page <= last_required_page
+                    and (metadata.get("total_processed") or 0) < last_required_page
                 ):
                     logger.info("waiting for files to be created")
                     metadata = self.read_metadata_safely(metadata_path)
