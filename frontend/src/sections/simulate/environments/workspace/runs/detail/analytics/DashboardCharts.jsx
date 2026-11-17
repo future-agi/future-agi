@@ -113,9 +113,7 @@ export function Widget({ id, title, subtitle, help, children, wide = false }) {
             )}
           </Typography>
           {subtitle && (
-            <Typography
-              sx={{ typography: "s3", color: "text.secondary", mt: 0.5 }}
-            >
+            <Typography sx={{ typography: "s3", color: "text.secondary", mt: 0.5 }}>
               {subtitle}
             </Typography>
           )}
@@ -163,10 +161,7 @@ export const chartTooltipProps = (theme) => ({
   labelStyle: { color: theme.palette.text.secondary },
   wrapperStyle: { zIndex: 1 },
 });
-const tickOf = (theme) => ({
-  fontSize: 11,
-  fill: theme.palette.text.secondary,
-});
+const tickOf = (theme) => ({ fontSize: 11, fill: theme.palette.text.secondary });
 const pieLabel = (label) =>
   ({
     true: "Successful",
@@ -502,7 +497,10 @@ export function TrendLine({
           data={rows}
           margin={{ top: 14, right: 20, left: 0, bottom: 5 }}
         >
-          <CartesianGrid stroke={theme.palette.divider} strokeDasharray="3 4" />
+          <CartesianGrid
+            stroke={theme.palette.divider}
+            strokeDasharray="3 4"
+          />
           <XAxis
             dataKey={xKey}
             type={percentile ? "number" : "category"}

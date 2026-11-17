@@ -53,6 +53,12 @@ export default function DeclaredWorkerRows({ workers }) {
                 .join(" · ")}
             </Typography>
           </Stack>
+          <Typography
+            data-testid="worker-enforcement"
+            sx={{ typography: "s3", color: "text.subtitle", pl: 3.5 }}
+          >
+            {worker.enforcement_label}
+          </Typography>
           {worker.tools_shown.length > 0 && (
             <Stack
               direction="row"
@@ -83,6 +89,8 @@ DeclaredWorkerRows.propTypes = {
       tools_shown: PropTypes.arrayOf(PropTypes.string).isRequired,
       binding: PropTypes.oneOf(["separate", "shared", "not_declared"])
         .isRequired,
+      // The server's words for how the world holds it to its limits.
+      enforcement_label: PropTypes.string.isRequired,
       process: PropTypes.string,
     }),
   ).isRequired,

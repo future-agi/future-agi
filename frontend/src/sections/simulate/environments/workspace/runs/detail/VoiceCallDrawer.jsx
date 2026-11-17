@@ -120,8 +120,11 @@ export default function VoiceCallDrawer({
     setAttempt(null);
   }
   // Stays on Participants while the next call's record is unread; a call known to have none has no tab.
+  // An earlier attempt's record is read on its own, whatever the latest attempt kept.
   const showWorkers =
-    hasWorkers || (hasWorkers === undefined && chosenTab === "workers");
+    hasWorkers ||
+    (hasWorkers === undefined && chosenTab === "workers") ||
+    Boolean(attempt);
   // Participants and World state are kept per attempt: each says which attempt it shows.
   const attemptSelect = data?.earlier_attempts?.length ? (
     <Box sx={{ px: 2, pt: 1 }}>

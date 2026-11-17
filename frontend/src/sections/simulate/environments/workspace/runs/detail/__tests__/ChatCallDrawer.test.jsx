@@ -19,6 +19,7 @@ vi.mock("src/api/simulate-environments/runDetail", async (importOriginal) => {
       error: mocks.detailError ?? null,
     }),
     useHasWorkers: () => false,
+    useCallWorkers: () => ({ data: undefined, isError: false }),
     useCallTraces: (...args) => mocks.runTraces(...args),
   };
 });
@@ -255,5 +256,41 @@ describe("ChatCallDrawer World state", () => {
     ).toBeNull();
     expect(screen.getByRole("progressbar")).toBeInTheDocument();
     mocks.loading = false;
+  });
+});
+
+describe("ChatCallDrawer, an earlier attempt", () => {
+  it("opens Participants for an earlier attempt even when the latest attempt kept no record", async () => {
+    const user = userEvent.setup();
+    mocks.callDetail = {
+      turns: [],
+      stats: {},
+      attemptNumber: 2,
+      earlierAttempts: [
+        {
+          attempt: "a1",
+          number: 1,
+          rerun_at: "2026-11-17T09:00:00+00:00",
+          kept: true,
+          trial_state: null,
+        },
+      ],
+    };
+    render(
+      <ChatCallDrawer
+        task={{ id: "call-1", status: "completed" }}
+        onClose={vi.fn()}
+      />,
+    );
+    // The latest attempt has no record: no Participants tab yet.
+    expect(screen.queryByRole("tab", { name: "Participants" })).toBeNull();
+    await user.click(screen.getByRole("combobox", { name: "Attempt" }));
+    await user.click(
+      screen.getByRole("option", { name: /Attempt 1, re-run at/ }),
+    );
+    expect(
+      screen.getByRole("tab", { name: "Participants" }),
+    ).toBeInTheDocument();
+    mocks.callDetail = null;
   });
 });

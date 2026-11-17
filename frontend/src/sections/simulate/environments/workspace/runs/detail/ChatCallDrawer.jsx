@@ -131,7 +131,8 @@ export default function ChatCallDrawer({
     chosenArtifact === "workers" && hasWorkers === false
       ? "transcript"
       : chosenArtifact;
-  const showWorkers = hasWorkers || artifact === "workers";
+  // An earlier attempt's record is read on its own, whatever the latest attempt kept.
+  const showWorkers = hasWorkers || artifact === "workers" || Boolean(attempt);
   const { callDetail, isLoading, error: detailError } = useCallDetail(task.id);
   const callTraces = useCallTraces(executionId, task.id);
   const traceIds = useMemo(

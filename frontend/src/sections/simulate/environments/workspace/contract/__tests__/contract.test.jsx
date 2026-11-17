@@ -192,6 +192,8 @@ describe("Workers card", () => {
       allowed_tools: ["get_order", "list_refunds"],
       tools_shown: ["get_order", "list_refunds"],
       binding: "separate",
+      enforcement: "held_at_world",
+      enforcement_label: "Held at the world: its own channel",
     },
     {
       id: "refund",
@@ -201,6 +203,8 @@ describe("Workers card", () => {
       allowed_tools: [],
       tools_shown: ["list_refunds", "issue_refund"],
       binding: "not_declared",
+      enforcement: "not_enforced",
+      enforcement_label: "Not enforced: it shares the app's address",
     },
   ];
 
