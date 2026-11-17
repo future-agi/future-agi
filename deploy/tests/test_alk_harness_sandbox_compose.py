@@ -20,8 +20,26 @@ def _seconds(value: str) -> float:
     return total
 
 
+class _ComposeLoader(yaml.SafeLoader):
+    """Reads Compose's merge tags (!override, !reset) as their plain values."""
+
+
+def _plain(loader: yaml.SafeLoader, node: yaml.Node):
+    if isinstance(node, yaml.MappingNode):
+        return loader.construct_mapping(node, deep=True)
+    if isinstance(node, yaml.SequenceNode):
+        return loader.construct_sequence(node, deep=True)
+    return loader.construct_scalar(node)
+
+
+for _tag in ("!override", "!reset"):
+    _ComposeLoader.add_constructor(_tag, _plain)
+
+
 def _sandbox() -> dict:
-    overlay = yaml.safe_load((ROOT / "docker-compose.distributed.dev.yml").read_text())
+    overlay = yaml.load(  # noqa: S506 - a SafeLoader subclass
+        (ROOT / "docker-compose.distributed.dev.yml").read_text(), Loader=_ComposeLoader
+    )
     return overlay["services"]["alk-harness-sandbox"]
 
 
